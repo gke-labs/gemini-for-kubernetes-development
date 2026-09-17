@@ -269,7 +269,7 @@ func TestFixTerminalAndRefix(t *testing.T) {
 }
 
 // A finished review invocation's stdout draft is harvested onto the sandbox.
-func TestReviewDraftHarvest(t *testing.T) {
+func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
@@ -288,9 +288,9 @@ func TestReviewDraftHarvest(t *testing.T) {
 	}}
 
 	fake := newFakeLauncher()
-	fake.results["alice/review-pr-42"] = factorycli.Result{
-		Output: "...\n================= CODE REVIEW =================\nreview:\n  body: looks good\n================= CODE REVIEW =================\n",
-	}
+	// The invocation ran with --publish draft: the pending review is already
+	// on GitHub; no banner output to harvest.
+	fake.results["alice/review-pr-42"] = factorycli.Result{Output: "Posting review as a draft (pending) review to GitHub PR...\n"}
 	// Mailbox holds the review request so ensureReview runs for PR 42.
 	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
 	r := newTestReconciler(fake, ghClient, board, githubSecret(), prSandbox)
@@ -301,16 +301,39 @@ func TestReviewDraftHarvest(t *testing.T) {
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("looks good"))
-	g.Expect(updated.GetAnnotations()[AnnotationAgentState]).To(gomega.Equal("review ready"))
+	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
 	g.Expect(updated.GetAnnotations()[AnnotationReviewedAt]).NotTo(gomega.BeEmpty())
+	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
 
-	// No launch happened (harvest short-circuits), and the mailbox entry is
-	// cleared because the sandbox exists.
+	// No launch happened (completion short-circuits), and the mailbox entry
+	// is cleared because the sandbox exists.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 	fetched := &boardv1alpha1.RepoBoard{}
 	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, fetched)).To(gomega.Succeed())
 	g.Expect(fetched.GetAnnotations()).NotTo(gomega.HaveKey(AnnotationRequests))
+}
+
+// A mailbox review click launches in the clicker's namespace under their
+// identity with --publish draft (the pending review must be authored by
+// them to be visible to them).
+func TestMailboxReviewLaunchAsExecutor(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-42"))
+	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
+	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
+	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
 
 // Mailbox fix requests launch and stay queued until the sandbox exists.

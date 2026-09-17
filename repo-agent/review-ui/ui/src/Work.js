@@ -24,6 +24,7 @@ const STAGE_LABEL = {
   'review-queued': 'Review queued',
   'review-requested': 'Review requested',
   'review-ready': 'Review ready',
+  'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
   'triaging': 'Triaging…',
@@ -113,9 +114,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   } else if (group === 'mine-pr') {
     // Your own PR: promote drafts, merge, or send the agent back to iterate
     // on the folded issue.
-    if (item.stage === 'review-ready') {
-      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
-    }
     if (readOnly) {
       // Merge/promote would 403 without push.
     } else if (item.draftPR) {
@@ -128,9 +126,14 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     }
   } else {
     if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
-      actions.push({ label: 'Review', path: `prs/${item.number}/review` });
+      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
+    } else if (item.stage === 'review-pending') {
+      actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
+      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
     } else if (item.stage === 'review-ready') {
-      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
+      // Intake/labeled draft: display-only. Reviewing as you posts a
+      // pending review on GitHub under your identity.
+      actions.push({ label: 'Review as me', path: `prs/${item.number}/review`, title: 'Run the review under your identity — leaves a pending review on GitHub for you to finalize' });
       actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
     }
   }
@@ -187,7 +190,17 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       </td>
       <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {actions.map(a => (
+        {actions.map(a => a.href ? (
+          <a
+            key={a.label}
+            className="btn btn-sm"
+            style={{ marginLeft: '4px', textDecoration: 'none' }}
+            title={a.title}
+            href={a.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >{a.label}</a>
+        ) : (
           <button
             key={a.label}
             className="btn btn-sm"

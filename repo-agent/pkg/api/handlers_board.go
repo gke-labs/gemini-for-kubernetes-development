@@ -31,7 +31,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
-	yamlv3 "go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -626,6 +625,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	switch {
 	case reviewState == "submitted":
 		stage = "review-submitted"
+	case reviewState == "pending":
+		// The agent posted a pending review under the member's identity;
+		// GitHub is where they finalize it.
+		stage, attention = "review-pending", attentionNeedsYou
 	case draft != "":
 		stage, attention = "review-ready", attentionNeedsYou
 	case state == "Running":
@@ -985,68 +988,6 @@ func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructur
 		return ctx, nil, "", "", "", 0, false
 	}
 	return ctx, board, owner, repo, token, number, true
-}
-
-// publishBoardReview posts the stored (or payload-overridden) review draft
-// to GitHub as a pending review under the clicker's token.
-func (s *Server) publishBoardReview(c *gin.Context) {
-	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	var payload struct {
-		Review string `json:"review"`
-	}
-	_ = c.ShouldBindJSON(&payload)
-
-	// Resolve the review sandbox holding the draft.
-	var draftSB *unstructured.Unstructured
-	prStr := strconv.Itoa(number)
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		for _, sb := range sandboxes {
-			if sb.GetLabels()["factory.gemini.google.com/pr"] == prStr && sb.GetAnnotations()["agentDraft"] != "" {
-				draftSB = sb
-				break
-			}
-		}
-		if draftSB != nil {
-			break
-		}
-	}
-
-	draft := payload.Review
-	if draft == "" && draftSB != nil {
-		draft = draftSB.GetAnnotations()["agentDraft"]
-	}
-	if draft == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no review draft to publish"})
-		return
-	}
-
-	agentOutput := &models.ReviewAgentOutput{}
-	reviewRequest := &github.PullRequestReviewRequest{}
-	if err := yamlv3.Unmarshal([]byte(draft), agentOutput); err != nil || agentOutput.Review == nil {
-		reviewRequest.Body = github.String(draft)
-	} else {
-		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
-	}
-	reviewRequest.Event = nil // pending (draft) review; the human finalizes on GitHub
-
-	gh := githubClientForToken(ctx, token)
-	if _, _, err := gh.PullRequests.CreateReview(ctx, owner, repo, number, reviewRequest); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to publish review", "details": err.Error()})
-		return
-	}
-	if draftSB != nil {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), "reviewState", "submitted"); err == nil {
-			_ = s.K8sManager.ScaledownSandboxByName(ctx, draftSB.GetNamespace(), draftSB.GetName())
-		}
-	}
-	c.Status(http.StatusOK)
 }
 
 // promoteBoardPR marks a draft PR ready for review (GraphQL — the REST API
