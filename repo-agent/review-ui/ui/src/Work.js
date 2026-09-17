@@ -27,6 +27,19 @@ const STAGE_LABEL = {
   'triage-ready': 'Triage ready',
 };
 
+// Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
+const GROUPS = [
+  { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
+  { key: 'fix', label: 'Fix / Triage', hint: 'Incoming issues to triage or fix' },
+  { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
+  { key: 'mine-issue', label: 'My issues', hint: 'Issues you filed, waiting on others' },
+];
+const UP_NEXT_CAP = 5;
+
+function groupOf(item) {
+  return item.group || (item.type === 'issue' ? 'fix' : 'review');
+}
+
 function ageOf(ts) {
   if (!ts) return '';
   const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
@@ -46,9 +59,10 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, namespace }) {
+function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
   const attention = ATTENTION_STYLE[item.attention];
   const stage = STAGE_LABEL[item.stage] || item.stage;
+  const group = groupOf(item);
 
   // Row actions: kickoffs, re-runs, and the human-gated writes
   // (publish/promote/merge run under the clicker's own token — GitHub
@@ -71,6 +85,20 @@ function WorkRow({ item, boardName, onAction, namespace }) {
       }
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     }
+  } else if (group === 'mine-pr') {
+    // Your own PR: promote drafts, merge, or send the agent back to iterate
+    // on the folded issue.
+    if (item.stage === 'review-ready') {
+      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
+    }
+    if (item.draftPR) {
+      actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
+    } else {
+      actions.push({ label: 'Merge', path: `prs/${item.number}/merge`, confirm: `Merge PR #${item.number}? Branch protection still applies.` });
+    }
+    if (item.fixes && item.fixes.length && item.sandbox) {
+      actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
+    }
   } else {
     if (['open', 'review-queued'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Review', path: `prs/${item.number}/review` });
@@ -83,13 +111,21 @@ function WorkRow({ item, boardName, onAction, namespace }) {
   return (
     <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
       <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
-        {item.type === 'issue' ? '◉' : '⇄'} #{item.number}
+        {groupTag && (
+          <Chip text={groupTag} color="var(--text-secondary)" bg="var(--bg-secondary)" title={GROUPS.find(g => g.key === group)?.hint} />
+        )}
+        {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
       <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
         {item.prURL && item.type === 'issue' && (
           <a href={item.prURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', fontSize: 'small' }}>PR ↗</a>
         )}
+        {(item.fixes || []).map(n => (
+          <a key={n} href={item.htmlURL.replace(/\/pull\/\d+.*/, `/issues/${n}`)} target="_blank" rel="noopener noreferrer"
+            style={{ marginLeft: '8px', fontSize: 'small', color: 'var(--text-secondary)' }}
+            title="Issue folded into this PR — the PR is the focus now">↳ fixes #{n}</a>
+        ))}
         {item.draft && (
           <details style={{ marginTop: '4px' }}>
             <summary style={{ cursor: 'pointer', fontSize: 'small', color: 'var(--text-secondary)' }}>
@@ -143,6 +179,7 @@ function Work({ onBack, namespace }) {
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState('');
   const [work, setWork] = useState([]);
+  const [activeGroup, setActiveGroup] = useState(''); // '' = auto-pick
   const [loading, setLoading] = useState(false);
   const [addURL, setAddURL] = useState('');
   const [error, setError] = useState('');
@@ -246,7 +283,7 @@ function Work({ onBack, namespace }) {
             <button
               key={b.name}
               className={`tab-btn ${activeBoard === b.name ? 'active' : ''}`}
-              onClick={() => { setActiveBoard(b.name); setWork([]); }}
+              onClick={() => { setActiveBoard(b.name); setWork([]); setActiveGroup(''); }}
             >
               {b.name}
               {b.needsHuman > 0 && (
@@ -291,8 +328,18 @@ function Work({ onBack, namespace }) {
 
       {!boards.length ? (
         <p>No boards yet. Paste a repository URL above to create one.</p>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+      ) : (() => {
+        const byGroup = {};
+        GROUPS.forEach(g => { byGroup[g.key] = []; });
+        work.forEach(item => { (byGroup[groupOf(item)] = byGroup[groupOf(item)] || []).push(item); });
+        const upNext = work.filter(i => i.attention === 'needs-you');
+        const shown = activeGroup
+          || (GROUPS.find(g => byGroup[g.key].some(i => i.attention === 'needs-you')) || {}).key
+          || (GROUPS.find(g => byGroup[g.key].length) || {}).key
+          || 'review';
+        const rows = byGroup[shown] || [];
+        const groupLabel = { review: 'REVIEW', fix: 'FIX', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
+        const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>#</th>
@@ -305,18 +352,68 @@ function Work({ onBack, namespace }) {
               <th style={{ padding: '6px 8px' }}></th>
             </tr>
           </thead>
-          <tbody>
-            {work.map(item => (
-              <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} />
-            ))}
-            {!work.length && (
-              <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
-                Nothing here — issues assigned to you, your PRs, and trigger-labeled items will appear as rows.
-              </td></tr>
+        );
+        return (
+          <div>
+            {upNext.length > 0 && (
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: 'small', fontWeight: 'bold', color: '#d73a49', marginBottom: '2px' }}>
+                  UP NEXT — needs you ({upNext.length})
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <tbody>
+                    {upNext.slice(0, UP_NEXT_CAP).map(item => (
+                      <WorkRow key={`up-${item.type}-${item.number}`} item={item} boardName={activeBoard}
+                        onAction={handleAction} namespace={namespace} groupTag={groupLabel[groupOf(item)]} />
+                    ))}
+                  </tbody>
+                </table>
+                {upNext.length > UP_NEXT_CAP && (
+                  <div style={{ fontSize: 'small', color: 'var(--text-secondary)', padding: '4px 8px' }}>
+                    +{upNext.length - UP_NEXT_CAP} more need you — see the tab badges below.
+                  </div>
+                )}
+              </div>
             )}
-          </tbody>
-        </table>
-      )}
+
+            <nav className="repo-tabs" style={{ margin: '0 0 4px 0' }}>
+              {GROUPS.map(g => {
+                const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
+                return (
+                  <button
+                    key={g.key}
+                    className={`tab-btn ${shown === g.key ? 'active' : ''}`}
+                    title={g.hint}
+                    onClick={() => setActiveGroup(g.key)}
+                  >
+                    {g.label} {byGroup[g.key].length > 0 && <span style={{ color: 'var(--text-secondary)' }}>{byGroup[g.key].length}</span>}
+                    {needs > 0 && (
+                      <span style={{
+                        marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
+                        borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
+                      }}>{needs}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              {header}
+              <tbody>
+                {rows.map(item => (
+                  <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} />
+                ))}
+                {!rows.length && (
+                  <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                    Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }

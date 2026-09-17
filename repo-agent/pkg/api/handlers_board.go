@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -271,13 +272,15 @@ func (s *Server) getBoardWork(c *gin.Context) {
 
 	items := map[string]*models.WorkItem{}
 
-	// Issues: assigned to the member, plus trigger-labeled ones.
-	collect := func(issues []*github.Issue) {
+	// Incoming issues (fix/triage): assigned to the member, plus
+	// trigger-labeled ones. Issues the member filed land in "mine-issue"
+	// unless they already qualify as incoming work.
+	collect := func(issues []*github.Issue, group string) {
 		for _, issue := range issues {
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, triggerLabel)
+			s.mergeIssueRow(items, sandboxes, issue, repo, member, triggerLabel, group)
 		}
 	}
 	assigned, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member})
@@ -291,6 +294,10 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			log.Info("failed to list labeled issues", "err", err)
 		}
 	}
+	created, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member})
+	if err != nil {
+		log.Info("failed to list created issues", "err", err)
+	}
 	// Load claimed executors' namespaces before merging rows so their
 	// sandboxes surface on the shared board.
 	for _, issue := range append(append([]*github.Issue{}, assigned...), labeled...) {
@@ -298,8 +305,9 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			loadSandboxNamespace(strings.ToLower(a.GetLogin()))
 		}
 	}
-	collect(assigned)
-	collect(labeled)
+	collect(assigned, "fix")
+	collect(labeled, "fix")
+	collect(created, "mine-issue")
 
 	// PRs: authored by / review-requested to the member, trigger-labeled, or
 	// with an existing factory sandbox.
@@ -309,6 +317,29 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	}
 	for _, pr := range prs {
 		s.mergePRRow(items, sandboxes, pr, member, triggerLabel)
+	}
+
+	// Fold issues into the PR that addresses them: once a fix PR exists the
+	// PR row is the focus. Linkage comes from GitHub closing keywords in the
+	// PR body and from the fix sandbox's recorded PR URL.
+	for _, item := range items {
+		if item.Type != "pr" {
+			continue
+		}
+		for _, n := range item.Fixes {
+			delete(items, fmt.Sprintf("issue-%d", n))
+		}
+	}
+	for key, item := range items {
+		if item.Type != "issue" || item.PRURL == "" {
+			continue
+		}
+		if prNum := prNumberFromURL(item.PRURL); prNum > 0 {
+			if prItem, ok := items[fmt.Sprintf("pr-%d", prNum)]; ok {
+				prItem.Fixes = appendUnique(prItem.Fixes, item.Number)
+				delete(items, key)
+			}
+		}
 	}
 
 	work := make([]models.WorkItem, 0, len(items))
@@ -385,7 +416,7 @@ func hasLabel(labels []*github.Label, name string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member, triggerLabel string) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member, triggerLabel, group string) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
@@ -441,6 +472,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 
 	items[key] = &models.WorkItem{
 		Type:      "issue",
+		Group:     group,
 		Number:    issue.GetNumber(),
 		Title:     issue.GetTitle(),
 		HTMLURL:   issue.GetHTMLURL(),
@@ -452,6 +484,40 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
+}
+
+// closingRefRe matches GitHub closing keywords ("Fixes #123") in PR bodies;
+// used to fold issue rows into the PR that addresses them.
+var closingRefRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+#(\d+)`)
+
+var prURLRe = regexp.MustCompile(`/pull/(\d+)`)
+
+func prNumberFromURL(u string) int {
+	if m := prURLRe.FindStringSubmatch(u); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func appendUnique(nums []int, n int) []int {
+	for _, v := range nums {
+		if v == n {
+			return nums
+		}
+	}
+	return append(nums, n)
+}
+
+func closingRefs(body string) []int {
+	var refs []int
+	for _, m := range closingRefRe.FindAllStringSubmatch(body, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			refs = append(refs, n)
+		}
+	}
+	return refs
 }
 
 func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string) {
@@ -509,9 +575,15 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		rowDraft = draft
 	}
 
+	group := "review"
+	if authored {
+		group = "mine-pr"
+	}
+
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
 	items[key] = &models.WorkItem{
 		Type:      "pr",
+		Group:     group,
 		Number:    pr.GetNumber(),
 		Title:     pr.GetTitle(),
 		HTMLURL:   pr.GetHTMLURL(),
@@ -520,6 +592,8 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		ClaimedBy: claimedBy,
 		PRURL:     pr.GetHTMLURL(),
 		Draft:     rowDraft,
+		DraftPR:   pr.GetDraft(),
+		Fixes:     closingRefs(pr.GetBody()),
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}

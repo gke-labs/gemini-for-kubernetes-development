@@ -432,3 +432,60 @@ func TestPromoteBoardPR(t *testing.T) {
 		t.Errorf("expected GraphQL promote to be called")
 	}
 }
+
+// Grouping and issue→PR folding: an issue with an open fix PR disappears in
+// favor of the PR row (which records the linkage); authored PRs land in
+// mine-pr, incoming reviews in review, self-filed issues in mine-issue.
+func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[
+			{"number": 10, "title": "assigned, being fixed", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
+			 "assignees": [{"login": "alice"}]}
+		]`,
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open": `[
+			{"number": 12, "title": "my filed issue", "html_url": "https://github.com/test/repo/issues/12", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 50, "title": "my fix", "html_url": "https://github.com/test/repo/pull/50", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "alice"}, "draft": true, "body": "This change...\n\nFixes #10"},
+			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T11:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	byKey := map[string]models.WorkItem{}
+	for _, item := range work {
+		byKey[item.Type+"-"+itoa(item.Number)] = item
+	}
+
+	if _, ok := byKey["issue-10"]; ok {
+		t.Errorf("issue-10 should be folded into PR 50: %s", w.Body.String())
+	}
+	pr50 := byKey["pr-50"]
+	if pr50.Group != "mine-pr" || !pr50.DraftPR || len(pr50.Fixes) != 1 || pr50.Fixes[0] != 10 {
+		t.Errorf("pr-50 row wrong: %+v", pr50)
+	}
+	if row := byKey["pr-42"]; row.Group != "review" {
+		t.Errorf("pr-42 should be group review: %+v", row)
+	}
+	if row := byKey["issue-12"]; row.Group != "mine-issue" {
+		t.Errorf("issue-12 should be group mine-issue: %+v", row)
+	}
+	if len(work) != 3 {
+		t.Errorf("expected 3 rows after folding, got %d: %s", len(work), w.Body.String())
+	}
+}
