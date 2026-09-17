@@ -42,7 +42,11 @@ func newTimelineTestClient(t *testing.T, opts timelineServerOpts) (*Client, func
 				_, _ = w.Write([]byte(`{"message":"API rate limit exceeded"}`))
 				return
 			}
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"total_count":%d,"items":[]}`, opts.searchTotal)))
+			items := "[]"
+			if opts.searchTotal > 0 {
+				items = `[{"number":12689,"title":"Fixes #9259","body":"This resolves #9259","state":"open"}]`
+			}
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"total_count":%d,"items":%s}`, opts.searchTotal, items)))
 
 		case "/repos/test-owner/test-repo/issues/9259/timeline":
 			timelineRequests++
@@ -83,8 +87,8 @@ const crossRefIssue = `{"event":"cross-referenced","source":{"issue":{"number":8
 // crossRefClosedPR is a cross-reference from a PR that has since been closed.
 const crossRefClosedPR = `{"event":"cross-referenced","source":{"issue":{"number":11169,"state":"closed","pull_request":{"url":"https://api.github.com/repos/test-owner/test-repo/pulls/11169"}}}}`
 
-// crossRefOpenPR is a cross-reference from the open PR that fixes the issue.
-const crossRefOpenPR = `{"event":"cross-referenced","source":{"issue":{"number":12689,"state":"open","pull_request":{"url":"https://api.github.com/repos/test-owner/test-repo/pulls/12689"}}}}`
+// crossRefOpenPR is a connected event from the open PR that fixes the issue.
+const crossRefOpenPR = `{"event":"connected","source":{"issue":{"number":12689,"state":"open","pull_request":{"url":"https://api.github.com/repos/test-owner/test-repo/pulls/12689"}}}}`
 
 func TestListIssueTimeline_FollowsPagination(t *testing.T) {
 	client, closeFn, requests := newTimelineTestClient(t, timelineServerOpts{
@@ -228,7 +232,7 @@ func TestHasLinkedPRWithTimeline_ReusesSuppliedTimeline(t *testing.T) {
 	state := "open"
 	timeline := []*githubv39.Timeline{
 		{
-			Event: githubv39.String("cross-referenced"),
+			Event: githubv39.String("connected"),
 			Source: &githubv39.Source{
 				Issue: &githubv39.Issue{
 					Number:           &num,
