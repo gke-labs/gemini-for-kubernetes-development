@@ -501,14 +501,18 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		return
 	}
 
-	claimedBy := ""
+	// All assignees, viewer first; the UI shows the first two plus a count.
+	var assignees []string
 	for _, a := range issue.Assignees {
-		if claimedBy == "" {
-			claimedBy = a.GetLogin()
-		}
 		if strings.EqualFold(a.GetLogin(), member) {
-			claimedBy = a.GetLogin()
+			assignees = append([]string{a.GetLogin()}, assignees...)
+		} else {
+			assignees = append(assignees, a.GetLogin())
 		}
+	}
+	claimedBy := strings.Join(assignees, ", ")
+	if len(assignees) > 2 {
+		claimedBy = strings.Join(assignees[:2], ", ") + fmt.Sprintf(" +%d", len(assignees)-2)
 	}
 
 	sb := sandboxes[fmt.Sprintf("fix-%s-%d", repo, issue.GetNumber())]
