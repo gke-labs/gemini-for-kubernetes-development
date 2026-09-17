@@ -104,10 +104,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     } else if (item.stage === 'pr-open') {
+      // Merging happens on GitHub — the row links to the PR.
       const prNum = prNumFromURL(item.prURL);
       if (prNum) {
         actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
-        actions.push({ label: 'Merge', path: `prs/${prNum}/merge`, confirm: `Merge PR #${prNum}? Branch protection still applies.` });
       }
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     }
