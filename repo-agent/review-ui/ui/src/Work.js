@@ -133,7 +133,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // Intake/labeled draft: display-only. Review runs under your
       // identity and leaves a pending review on GitHub.
       actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
-      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun`, title: 'Regenerate the intake draft' });
     }
   }
 

@@ -785,12 +785,10 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) rerunBoardIssue(c *gin.Context) { s.rerunBoardWork(c, "issues") }
-func (s *Server) rerunBoardPR(c *gin.Context)    { s.rerunBoardWork(c, "prs") }
-
-// rerunBoardWork marks a finished fix/review for re-run via the sandbox
-// annotations the controller honors.
-func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
+// rerunBoardIssue marks a finished fix for re-run via the sandbox
+// annotation the controller honors. (Reviews have no rerun endpoint: the
+// Review kickoff stamps the re-review marker itself.)
+func (s *Server) rerunBoardIssue(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
@@ -809,40 +807,17 @@ func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 	}
 
 	// Fix sandboxes live in the executor's namespace (session user for
-	// their own reruns); review sandboxes live in the board namespace.
-	var sandboxNS, sandboxName, annotation string
-	switch kind {
-	case "issues":
-		annotation = annoRefixRequest
-		name := fmt.Sprintf("fix-%s-%s", repo, number)
-		for _, ns := range []string{namespace, board.GetNamespace()} {
-			if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
-				if _, ok := sandboxes[name]; ok {
-					sandboxNS, sandboxName = ns, name
-					break
-				}
-			}
-		}
-	case "prs":
-		annotation = annoRereviewRequest
-		for _, ns := range []string{board.GetNamespace(), namespace} {
-			sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-			if err != nil {
-				continue
-			}
-			for name, sb := range sandboxes {
-				if sb.GetLabels()["factory.gemini.google.com/pr"] == number {
-					sandboxNS, sandboxName = ns, name
-					break
-				}
-			}
-			if sandboxName != "" {
+	// their own reruns).
+	var sandboxNS, sandboxName string
+	annotation := annoRefixRequest
+	name := fmt.Sprintf("fix-%s-%s", repo, number)
+	for _, ns := range []string{namespace, board.GetNamespace()} {
+		if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
+			if _, ok := sandboxes[name]; ok {
+				sandboxNS, sandboxName = ns, name
 				break
 			}
 		}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be issues or prs"})
-		return
 	}
 	if sandboxName == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no sandbox for this item yet"})
