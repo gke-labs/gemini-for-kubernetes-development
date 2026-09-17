@@ -379,20 +379,27 @@ function Work({ onBack, namespace }) {
               </div>
             )}
 
-            <nav className="repo-tabs" style={{ margin: '0 0 4px 0' }}>
+            <nav className="group-tabs">
               {GROUPS.map(g => {
                 const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
                 return (
                   <button
                     key={g.key}
-                    className={`tab-btn ${shown === g.key ? 'active' : ''}`}
+                    className={`group-tab ${shown === g.key ? 'active' : ''}`}
                     title={g.hint}
                     onClick={() => setActiveGroup(g.key)}
                   >
-                    {g.label} {byGroup[g.key].length > 0 && <span style={{ color: 'var(--text-secondary)' }}>{byGroup[g.key].length}</span>}
+                    {g.label}
+                    {byGroup[g.key].length > 0 && (
+                      <span style={{
+                        marginLeft: '6px', backgroundColor: 'var(--bg-secondary)',
+                        borderRadius: '9px', padding: '0 7px', fontSize: 'x-small',
+                        color: 'var(--text-secondary)',
+                      }}>{byGroup[g.key].length}</span>
+                    )}
                     {needs > 0 && (
                       <span style={{
-                        marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
+                        marginLeft: '4px', backgroundColor: '#d73a49', color: 'white',
                         borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
                       }}>{needs}</span>
                     )}

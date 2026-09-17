@@ -195,6 +195,37 @@ input:checked + .slider:before {
   box-shadow: 0 2px 5px rgba(0, 123, 255, 0.2);
 }
 
+/* Work-board group tabs: flat, underlined tabs (unlike the pill-style
+   board/tab buttons above). */
+.group-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid var(--border-color);
+  margin-bottom: 8px;
+}
+
+.group-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px; /* sit on the container's baseline */
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.group-tab:hover {
+  color: var(--text-primary);
+  border-bottom-color: var(--border-color);
+}
+
+.group-tab.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--bg-active);
+}
+
 .pr-list {
   padding: 20px;
   display: flex;
