@@ -267,52 +267,94 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return nil
 }
 
+// ReviewSandboxName is the review sandbox for a PR. PR numbers are only
+// unique within a repo, so the repo is part of the name — two repos in the
+// same namespace can each carry a PR with the same number.
+func ReviewSandboxName(repo string, prNum int) string {
+	slug := strings.ToLower(repo)
+	var b strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	slug = strings.Trim(b.String(), "-")
+	suffix := fmt.Sprintf("-%d", prNum)
+	// The companion "<name>-lb" Service must fit the 63-char DNS label cap.
+	if budget := 60 - len("factory-pr-") - len(suffix); len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "factory-pr-" + slug + suffix
+}
+
+// sandboxBelongsToRepo guards adoption of an existing sandbox found by PR
+// number: pre-repo-scoping sandboxes (plain factory-pr-<n> names, pr-number
+// label lookups) may belong to a different repo's PR with the same number.
+func sandboxBelongsToRepo(sb *unstructured.Unstructured, repo, prHTMLURL string) bool {
+	annotations := sb.GetAnnotations()
+	if r := annotations["repo"]; r != "" {
+		return r == repo
+	}
+	if u := annotations["htmlURL"]; u != "" {
+		return u == prHTMLURL
+	}
+	return false
+}
+
+func ensureSandboxUserLabel(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
+	labels := sb.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	if labels["factory.gemini.google.com/user"] != user && user != "" {
+		labels["factory.gemini.google.com/user"] = user
+		sb.SetLabels(labels)
+		_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
+		if err != nil {
+			klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+		}
+	}
+}
+
 func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	parts := strings.Split(strings.TrimSuffix(prCloneURL, ".git"), "/")
+	repo := parts[len(parts)-1]
+
 	listOpts := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
 	}
 	sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOpts)
 	if err == nil && len(sbs.Items) > 0 {
-		sb := sbs.Items[0]
-		labels := sb.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sb.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, &sb, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+		for i := range sbs.Items {
+			sb := &sbs.Items[i]
+			if !sandboxBelongsToRepo(sb, repo, prHTMLURL) {
+				continue
 			}
+			ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
+			return sb.GetName(), nil
 		}
-		return sb.GetName(), nil
 	}
 
-	name := fmt.Sprintf("factory-pr-%d", prNum)
+	name := ReviewSandboxName(repo, prNum)
 
-	sbGet, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
-		labels := sbGet.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sbGet.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sbGet, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+	// The legacy repo-less name is checked too so existing sandboxes keep
+	// being reused across the naming change.
+	for _, candidate := range []string{name, fmt.Sprintf("factory-pr-%d", prNum)} {
+		sbGet, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, candidate, metav1.GetOptions{})
+		if err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				return "", fmt.Errorf("checking sandbox existence: %w", err)
 			}
+			continue
 		}
-		return name, nil
+		if candidate != name && !sandboxBelongsToRepo(sbGet, repo, prHTMLURL) {
+			continue
+		}
+		ensureSandboxUserLabel(ctx, kubeClient, namespace, sbGet, user)
+		return candidate, nil
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		return "", fmt.Errorf("checking sandbox existence: %w", err)
-	}
-
-	parts := strings.Split(strings.TrimSuffix(prCloneURL, ".git"), "/")
-	repo := parts[len(parts)-1]
 
 	if diskSize == "" {
 		diskSize = "10Gi"
