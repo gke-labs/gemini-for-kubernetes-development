@@ -145,67 +145,23 @@ func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, 
 	return allowed
 }
 
-// boardMember applies the access gates (design §4.1): the viewer is a
-// member if the board lives in their namespace, their login is in the
-// allow list (mode list), or their own token proves push+ on the repo
-// (mode github). Returns the member login used for involvement queries.
-func (s *Server) boardMember(ctx context.Context, board *unstructured.Unstructured, namespace, sessionUser string) (string, error) {
-	mode, _, _ := unstructured.NestedString(board.Object, "spec", "access", "mode")
-	if mode == "list" {
-		allow, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "access", "allow")
-		for _, u := range allow {
-			if strings.EqualFold(u, sessionUser) {
-				return u, nil
-			}
-		}
-		return "", fmt.Errorf("user %s is not a member of board %s", sessionUser, board.GetName())
-	}
-	// mode github (or empty)
-	if board.GetNamespace() == namespace {
-		return sessionUser, nil
-	}
-	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	if s.hasPushPermission(ctx, namespace, sessionUser, repoURL) {
-		return sessionUser, nil
-	}
-	return "", fmt.Errorf("user %s has no push permission on %s", sessionUser, repoURL)
-}
+// Boards are personal: each lives in its owner's namespace and is visible
+// only to them. GitHub is the shared view.
 
-// visibleBoards lists boards across namespaces the session may see.
 func (s *Server) visibleBoards(ctx context.Context, namespace, sessionUser string) []unstructured.Unstructured {
-	list, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace("").List(ctx, v1.ListOptions{})
+	list, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).List(ctx, v1.ListOptions{})
 	if err != nil {
 		return nil
 	}
-	var visible []unstructured.Unstructured
-	for _, item := range list.Items {
-		if _, err := s.boardMember(ctx, &item, namespace, sessionUser); err == nil {
-			visible = append(visible, item)
-		}
-	}
-	return visible
+	return list.Items
 }
 
-// resolveBoard finds a visible board by name, preferring the session
-// namespace on name collisions.
 func (s *Server) resolveBoard(ctx context.Context, namespace, sessionUser, name string) (*unstructured.Unstructured, string, error) {
-	if board, err := s.getBoard(ctx, namespace, name); err == nil {
-		member, err := s.boardMember(ctx, board, namespace, sessionUser)
-		if err == nil {
-			return board, member, nil
-		}
+	board, err := s.getBoard(ctx, namespace, name)
+	if err != nil {
+		return nil, "", fmt.Errorf("board %s not found: %w", name, err)
 	}
-	for _, board := range s.visibleBoards(ctx, namespace, sessionUser) {
-		if board.GetName() == name {
-			member, err := s.boardMember(ctx, &board, namespace, sessionUser)
-			if err != nil {
-				return nil, "", err
-			}
-			b := board
-			return &b, member, nil
-		}
-	}
-	return nil, "", fmt.Errorf("board %s not found", name)
+	return board, sessionUser, nil
 }
 
 func (s *Server) getBoards(c *gin.Context) {
@@ -885,7 +841,6 @@ func (s *Server) rerunBoardIssue(c *gin.Context) {
 func (s *Server) createBoard(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
-	sessionUser := s.Auth.GetUserFromContext(c)
 
 	var payload struct {
 		RepoURL string `json:"repoURL"`
@@ -911,7 +866,6 @@ func (s *Server) createBoard(c *gin.Context) {
 		"metadata":   map[string]interface{}{"name": name, "namespace": namespace},
 		"spec": map[string]interface{}{
 			"repoURL": payload.RepoURL,
-			"access":  map[string]interface{}{"mode": "list", "allow": []interface{}{sessionUser}},
 		},
 	}}
 	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Create(ctx, board, v1.CreateOptions{}); err != nil {
@@ -1166,7 +1120,7 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
-	view := boardSpecView{Editable: board.GetNamespace() == namespace}
+	view := boardSpecView{Editable: true}
 	view.TriggerLabel, _, _ = unstructured.NestedString(board.Object, "spec", "triggers", "label")
 	view.TriageIssues, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "triageIssues")
 	view.DraftReviews, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "draftReviews")
@@ -1196,11 +1150,6 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
-	if board.GetNamespace() != namespace {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only the board owner can edit its settings"})
-		return
-	}
-
 	set := func(value interface{}, fields ...string) bool {
 		if err := unstructured.SetNestedField(board.Object, value, fields...); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})

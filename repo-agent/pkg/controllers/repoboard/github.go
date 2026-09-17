@@ -100,19 +100,6 @@ func (r *Reconciler) executorToken(ctx context.Context, namespace string) (strin
 	return token, nil
 }
 
-// prepToken reads the shared board's prep-identity secret (factory-user
-// format) from the board namespace.
-func (r *Reconciler) prepToken(ctx context.Context, namespace, secretName string) (string, error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
-		return "", err
-	}
-	if v, ok := secret.Data[factoryKeyGithubToken]; ok && len(v) > 0 {
-		return string(v), nil
-	}
-	return "", fmt.Errorf("secret %s/%s has no %s", namespace, secretName, factoryKeyGithubToken)
-}
-
 // identityFromSecret reads the member identity recorded alongside the PAT in
 // the github-pat secret (schema keys "name" and "email"), for tokens that
 // cannot answer GET /user (e.g. CI installation tokens).

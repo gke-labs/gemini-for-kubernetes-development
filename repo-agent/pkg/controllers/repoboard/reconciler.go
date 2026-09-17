@@ -185,19 +185,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			logger.Error(err, "trigger-label discovery failed")
 		}
 		fixes = f
-		// Labeled PRs review as the personal-board member; on shared
-		// boards a label alone names nobody, so nothing runs without a
-		// click or a review request to an opted-in member.
-		if work.personal {
-			for _, pr := range rv {
-				reviews = append(reviews, reviewPlan{pr: pr, executor: board.Namespace})
-			}
+		// Labeled PRs review as the board owner.
+		for _, pr := range rv {
+			reviews = append(reviews, reviewPlan{pr: pr, executor: board.Namespace})
 		}
 	}
 	if board.Spec.Intake.DraftReviews {
 		rv, err := r.discoverIntakePRs(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "review intake discovery failed")
+		}
+		reviews = append(reviews, rv...)
+	}
+	if r.memberOptedInAutoReview(ctx, board.Namespace, board) {
+		// Standing opt-in: PRs that request the owner's review run as
+		// them, independent of full review intake.
+		rv, err := r.discoverRequestedReviews(ctx, ghClient, work)
+		if err != nil {
+			logger.Error(err, "requested-review discovery failed")
 		}
 		reviews = append(reviews, rv...)
 	}
@@ -209,7 +214,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		triageCandidates = tc
 	}
-	if autoFixWithoutLabel(board) && work.personal {
+	if autoFixWithoutLabel(board) {
 		// Aggressive personal variant: every issue assigned to the member
 		// is a candidate, gated by their own standing opt-in.
 		f, err := r.discoverAssigned(ctx, ghClient, work)
@@ -295,7 +300,6 @@ type workState struct {
 	board     *boardv1alpha1.RepoBoard
 	owner     string
 	repo      string
-	personal  bool   // board namespace is a member namespace
 	discToken string // discovery-identity token (reads only)
 	sandboxes []*unstructured.Unstructured
 }
@@ -323,8 +327,9 @@ func (w *workState) findPRSandbox(pr int) *unstructured.Unstructured {
 	return nil
 }
 
-// discoveryClient resolves the identity used for GitHub reads and, for
-// personal boards, syncs the member's factory-user secret.
+// discoveryClient resolves the owner's identity: boards are personal, so
+// the board namespace holds the member's github-pat, and discovery reads,
+// automation and the factory-user secret all belong to them.
 func (r *Reconciler) discoveryClient(ctx context.Context, work *workState) (*github.Client, error) {
 	newClient := r.NewGithubClient
 	if newClient == nil {
@@ -333,38 +338,25 @@ func (r *Reconciler) discoveryClient(ctx context.Context, work *workState) (*git
 		}
 	}
 
-	if ghClient, token, err := newClient(ctx, r, work.board.Namespace); err == nil {
-		work.personal = true
-		work.discToken = token
-		var login, email string
-		if user, _, userErr := ghClient.Users.Get(ctx, ""); userErr == nil {
-			login, email = user.GetLogin(), user.GetEmail()
-		} else if fbLogin, fbEmail, ok := r.identityFromSecret(ctx, work.board.Namespace); ok {
-			// Tokens that cannot answer GET /user (e.g. CI installation
-			// tokens) fall back to the identity recorded alongside the PAT.
-			login, email = fbLogin, fbEmail
-		} else {
-			return nil, fmt.Errorf("github token invalid: %w", userErr)
-		}
-		if err := r.ensureFactoryUserSecret(ctx, work.board.Namespace, login, email); err != nil {
-			log.FromContext(ctx).Error(err, "unable to sync factory-user secret", "namespace", work.board.Namespace)
-		}
-		return ghClient, nil
-	}
-
-	// Shared board: prep identity holds a factory-user-format secret in the
-	// board namespace. Intake and review drafts never write to GitHub, so a
-	// bot identity is acceptable here.
-	secretName := work.board.Spec.PrepIdentity.SecretName
-	if secretName == "" {
-		return nil, fmt.Errorf("shared board requires spec.prepIdentity.secretName (no github-pat in namespace %s)", work.board.Namespace)
-	}
-	token, err := r.prepToken(ctx, work.board.Namespace, secretName)
+	ghClient, token, err := newClient(ctx, r, work.board.Namespace)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("board owner has no github token: %w", err)
 	}
 	work.discToken = token
-	return newGithubClientFromToken(ctx, token), nil
+	var login, email string
+	if user, _, userErr := ghClient.Users.Get(ctx, ""); userErr == nil {
+		login, email = user.GetLogin(), user.GetEmail()
+	} else if fbLogin, fbEmail, ok := r.identityFromSecret(ctx, work.board.Namespace); ok {
+		// Tokens that cannot answer GET /user (e.g. CI installation
+		// tokens) fall back to the identity recorded alongside the PAT.
+		login, email = fbLogin, fbEmail
+	} else {
+		return nil, fmt.Errorf("github token invalid: %w", userErr)
+	}
+	if err := r.ensureFactoryUserSecret(ctx, work.board.Namespace, login, email); err != nil {
+		log.FromContext(ctx).Error(err, "unable to sync factory-user secret", "namespace", work.board.Namespace)
+	}
+	return ghClient, nil
 }
 
 // newGithubClientFromToken is injectable for tests.
@@ -435,28 +427,10 @@ func (r *Reconciler) consentedAssignee(ctx context.Context, ghClient *github.Cli
 		return ""
 	}
 
-	if work.personal {
-		for _, login := range assignees {
-			if strings.EqualFold(login, work.board.Namespace) {
-				return login
-			}
-		}
-		return ""
-	}
-
-	// Skip the events call when the work is already running or terminal:
-	// consent was established at launch time.
-	if sb := work.findAnySandboxNamed(work.fixSandboxName(issue.GetNumber())); sb != nil {
-		for _, login := range assignees {
-			if strings.EqualFold(login, sb.GetNamespace()) {
-				return login
-			}
-		}
-	}
-
-	labeler := latestLabelerOf(ctx, ghClient, work, issue.GetNumber())
+	// Personal board: the owner is the only executor; they must be among
+	// the assignees.
 	for _, login := range assignees {
-		if strings.EqualFold(login, labeler) {
+		if strings.EqualFold(login, work.board.Namespace) {
 			return login
 		}
 	}
@@ -503,7 +477,6 @@ func autoFixWithoutLabel(board *boardv1alpha1.RepoBoard) bool {
 //     member with the standing auto-review opt-in (two-key, like auto-fix).
 func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
 	var reviews []reviewPlan
-	optedIn := map[string]bool{}
 	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
 	for {
 		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
@@ -514,19 +487,33 @@ func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Cli
 			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
 				continue
 			}
-			if work.personal {
-				reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
+			reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
+		}
+		if resp.NextPage == 0 {
+			return reviews, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// discoverRequestedReviews plans reviews for open PRs that explicitly
+// request the owner's review (the standing auto-review opt-in tier).
+func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
+	var reviews []reviewPlan
+	owner := work.board.Namespace
+	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
+		if err != nil {
+			return reviews, err
+		}
+		for _, pr := range prs {
+			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
 				continue
 			}
 			for _, reviewer := range pr.RequestedReviewers {
-				member := strings.ToLower(reviewer.GetLogin())
-				opted, ok := optedIn[member]
-				if !ok {
-					opted = r.memberOptedInAutoReview(ctx, member, work.board)
-					optedIn[member] = opted
-				}
-				if opted {
-					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: member})
+				if strings.EqualFold(reviewer.GetLogin(), owner) {
+					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: owner})
 					break
 				}
 			}
@@ -560,38 +547,6 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 		}
 		if resp.NextPage == 0 {
 			return fixes, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-func (w *workState) findAnySandboxNamed(name string) *unstructured.Unstructured {
-	for _, sb := range w.sandboxes {
-		if sb.GetName() == name {
-			return sb
-		}
-	}
-	return nil
-}
-
-// latestLabelerOf returns the actor of the most recent trigger-label
-// "labeled" event on the issue.
-func latestLabelerOf(ctx context.Context, ghClient *github.Client, work *workState, issue int) string {
-	label := work.board.Spec.Triggers.Label
-	labeler := ""
-	opts := &github.ListOptions{PerPage: 100}
-	for {
-		events, resp, err := ghClient.Issues.ListIssueEvents(ctx, work.owner, work.repo, issue, opts)
-		if err != nil {
-			return ""
-		}
-		for _, ev := range events {
-			if ev.GetEvent() == "labeled" && strings.EqualFold(ev.GetLabel().GetName(), label) {
-				labeler = ev.GetActor().GetLogin()
-			}
-		}
-		if resp.NextPage == 0 {
-			return labeler
 		}
 		opts.Page = resp.NextPage
 	}
@@ -870,14 +825,7 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		// sandbox outside the board namespace belongs to the executor
 		// whose namespace hosts it, and on personal boards the member is
 		// the only possible executor.
-		executor := annotations[AnnotationExecutor]
-		if executor == "" && sb.GetNamespace() != work.board.Namespace {
-			executor = sb.GetNamespace()
-		}
-		if executor == "" && work.personal {
-			executor = work.board.Namespace
-		}
-		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: executor})
+		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: work.board.Namespace})
 	}
 }
 
@@ -896,13 +844,7 @@ func (r *Reconciler) settleSubmittedReviews(ctx context.Context, work *workState
 		if err != nil {
 			continue
 		}
-		executor := annotations[AnnotationExecutor]
-		if executor == "" && sb.GetNamespace() != work.board.Namespace {
-			executor = sb.GetNamespace()
-		}
-		if executor == "" && work.personal {
-			executor = work.board.Namespace
-		}
+		executor := work.board.Namespace
 		if executor == "" {
 			continue
 		}
