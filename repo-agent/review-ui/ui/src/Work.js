@@ -298,17 +298,22 @@ function Work({ onBack, namespace }) {
             </button>
           ))}
         </nav>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <input
-            type="text"
-            placeholder="https://github.com/org/repo"
-            value={addURL}
-            onChange={e => setAddURL(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAddBoard()}
-            style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '260px' }}
-          />
-          <button className="btn" onClick={handleAddBoard} disabled={loading}>Add board</button>
-        </div>
+        <input
+          type="text"
+          placeholder="https://github.com/org/repo"
+          title="Add a board for a repository"
+          value={addURL}
+          onChange={e => setAddURL(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAddBoard()}
+          style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '230px' }}
+        />
+        <button
+          className="btn"
+          onClick={handleAddBoard}
+          disabled={loading}
+          title="Add board"
+          style={{ padding: '4px 10px', fontWeight: 'bold' }}
+        >+</button>
       </div>
 
       {error && (
