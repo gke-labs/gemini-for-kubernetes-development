@@ -66,7 +66,11 @@ const (
 	// AnnotationReviewState tracks GitHub-side review lifecycle: "pending"
 	// (posted as the executor's pending review, finalize on GitHub) or
 	// "submitted" (the API published a draft as a pending review).
-	AnnotationReviewState       = "reviewState"
+	AnnotationReviewState = "reviewState"
+	// AnnotationReviewAbandoned is stamped by the API when the member
+	// deletes their pending review on GitHub; invocation results older
+	// than this must not be re-recorded as pending.
+	AnnotationReviewAbandoned   = "review.gemini.google.com/abandoned-at"
 	reviewStatePending          = "pending"
 	agentStateReviewReady       = "review ready"
 	defaultRequeue              = time.Minute
@@ -715,7 +719,10 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != ""
+	// An abandoned review is terminal too: relaunch only on a fresh
+	// re-review marker (a new click stamps one).
+	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
+		annotations[AnnotationReviewAbandoned] != ""
 	if done && !rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt) {
 		return
 	}
@@ -723,7 +730,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok {
+	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
 		if res.Err == nil {
 			if publish == "draft" && sb != nil {
 				// The pending review is already on GitHub; record that so
@@ -776,7 +783,8 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		if !reviewish && !rerun {
 			continue
 		}
-		done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != ""
+		done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
+			annotations[AnnotationReviewAbandoned] != ""
 		if done && !rerun {
 			continue
 		}
@@ -987,6 +995,21 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	if err := r.Status().Update(ctx, work.board); err != nil {
 		log.FromContext(ctx).Error(err, "unable to update board status")
 	}
+}
+
+// resultSuperseded reports whether a remembered invocation result predates a
+// member action (abandon or re-review request) and must not be re-recorded.
+func resultSuperseded(sb *unstructured.Unstructured, res factorycli.Result) bool {
+	if sb == nil {
+		return false
+	}
+	annotations := sb.GetAnnotations()
+	for _, key := range []string{AnnotationReviewAbandoned, AnnotationRereviewRequested} {
+		if at, err := time.Parse(time.RFC3339, annotations[key]); err == nil && res.FinishedAt.Before(at) {
+			return true
+		}
+	}
+	return false
 }
 
 func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey string) bool {

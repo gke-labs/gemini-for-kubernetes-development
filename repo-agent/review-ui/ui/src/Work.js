@@ -114,12 +114,9 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   } else if (group === 'mine-pr') {
     // Your own PR: promote drafts, merge, or send the agent back to iterate
     // on the folded issue.
-    if (readOnly) {
-      // Merge/promote would 403 without push.
-    } else if (item.draftPR) {
+    if (!readOnly && item.draftPR) {
+      // Merging happens on GitHub; promote is the one repo-write left here.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
-    } else {
-      actions.push({ label: 'Merge', path: `prs/${item.number}/merge`, confirm: `Merge PR #${item.number}? Branch protection still applies.` });
     }
     if (!readOnly && item.fixes && item.fixes.length && item.sandbox) {
       actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
@@ -128,13 +125,15 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
     } else if (item.stage === 'review-pending') {
+      // GitHub allows one pending review per user: finalize it there, or
+      // abandon it to start over.
       actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
-      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
+      actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
     } else if (item.stage === 'review-ready') {
-      // Intake/labeled draft: display-only. Reviewing as you posts a
-      // pending review on GitHub under your identity.
-      actions.push({ label: 'Review as me', path: `prs/${item.number}/review`, title: 'Run the review under your identity — leaves a pending review on GitHub for you to finalize' });
-      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
+      // Intake/labeled draft: display-only. Review runs under your
+      // identity and leaves a pending review on GitHub.
+      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
+      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun`, title: 'Regenerate the intake draft' });
     }
   }
 
