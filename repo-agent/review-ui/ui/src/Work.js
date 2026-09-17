@@ -26,6 +26,7 @@ const STAGE_LABEL = {
   'needs-reviewer': 'Needs a reviewer',
   'review-starting': 'Starting…',
   'fix-starting': 'Starting…',
+  'review-failed': 'Review failed',
   'review-ready': 'Review ready',
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
@@ -100,6 +101,11 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   // buttons are suppressed so failure is prevented, not discovered.
   const actions = [];
   if (item.type === 'issue') {
+    if (item.stage === 'untriaged') {
+      // Triage is draft-only (discovery identity) — available even on
+      // read-only boards; runs only on this click or auto-triage.
+      actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
+    }
     if (readOnly) {
       // No fix pipeline without push: the agent's PR could not land.
     } else if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
@@ -138,6 +144,8 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // Submitting freed your pending-review slot; a voluntary re-run is
       // always available (re-requested reviews surface as needs-you).
       actions.push({ label: 'Review again', path: `prs/${item.number}/review`, title: 'Run a fresh review as you — posts a new pending review on GitHub' });
+    } else if (item.stage === 'review-failed') {
+      actions.push({ label: 'Retry', path: `prs/${item.number}/review`, title: 'Relaunch the review' });
     }
   }
 
@@ -230,6 +238,8 @@ function Work({ onBack, namespace }) {
   const [error, setError] = useState('');
   const [autoFix, setAutoFix] = useState(false);
   const [autoReview, setAutoReview] = useState(false);
+  const [specOpen, setSpecOpen] = useState(false);
+  const [spec, setSpec] = useState(null);
 
   const fetchBoards = useCallback(() => {
     fetch('/api/boards')
@@ -328,6 +338,26 @@ function Work({ onBack, namespace }) {
     savePrefs(autoFix, enabled, () => setAutoReview(!enabled));
   };
 
+  const openSpec = () => {
+    fetch(`/api/board/${activeBoard}/spec`)
+      .then(res => res.ok ? res.json() : Promise.reject(res.statusText))
+      .then(data => { setSpec(data); setSpecOpen(true); })
+      .catch(err => setError(`Load settings failed: ${err}`));
+  };
+
+  const saveSpec = () => {
+    fetch(`/api/board/${activeBoard}/spec`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(spec),
+    })
+      .then(res => {
+        if (res.ok) { setSpecOpen(false); fetchWork(); fetchBoards(); }
+        else { res.text().then(t => setError(`Save settings failed: ${t}`)); }
+      })
+      .catch(err => setError(`Save settings failed: ${err}`));
+  };
+
   const board = boards.find(b => b.name === activeBoard);
   const readOnly = !!board && board.role === 'read-only';
 
@@ -404,10 +434,16 @@ function Work({ onBack, namespace }) {
             Auto-review PRs assigned to me
           </label>
           <button
+            className="btn btn-sm"
+            onClick={openSpec}
+            title="Board settings (trigger label, intake, limits, policy)"
+            style={{ marginLeft: 'auto' }}
+          >⚙</button>
+          <button
             className="btn btn-delete btn-sm"
             onClick={handleDeleteBoard}
             title="Remove this board (running sandboxes are not touched)"
-            style={{ marginLeft: 'auto' }}
+            style={{ marginLeft: '6px' }}
           >Delete</button>
         </div>
       )}
@@ -513,6 +549,69 @@ function Work({ onBack, namespace }) {
           </div>
         );
       })()}
+
+      {specOpen && spec && (
+        <div className="modal-overlay" onClick={() => setSpecOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', textAlign: 'left' }}>
+            <h4 style={{ marginTop: 0 }}>Board settings — {activeBoard}</h4>
+            {!spec.editable && (
+              <p style={{ fontSize: 'small', color: 'var(--text-secondary)' }}>
+                Read-only: only the board owner can edit these settings.
+              </p>
+            )}
+            <fieldset disabled={!spec.editable} style={{ border: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
+                Trigger label <span style={{ color: 'var(--text-secondary)' }}>(labeling an issue/PR on GitHub queues it; empty disables)</span>
+                <input type="text" value={spec.triggerLabel || ''} onChange={e => setSpec({ ...spec, triggerLabel: e.target.value })} />
+              </label>
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Runs the triage agent for every open unclaimed issue (token cost scales with open issues). Off: triage runs only on your per-issue Triage click.">
+                <input type="checkbox" checked={!!spec.triageIssues} onChange={e => setSpec({ ...spec, triageIssues: e.target.checked })} style={{ marginRight: '6px' }} />
+                Auto-triage all open issues
+              </label>
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Personal board: reviews every open PR as you (pending reviews on GitHub). Shared board: enables auto-review for members who opted in.">
+                <input type="checkbox" checked={!!spec.draftReviews} onChange={e => setSpec({ ...spec, draftReviews: e.target.checked })} style={{ marginRight: '6px' }} />
+                Review intake
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
+                Exclude labels <span style={{ color: 'var(--text-secondary)' }}>(comma-separated; hard veto for all agent work)</span>
+                <input
+                  type="text"
+                  value={(spec.excludeLabels || []).join(', ')}
+                  onChange={e => setSpec({ ...spec, excludeLabels: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
+                />
+              </label>
+              <div style={{ display: 'flex', gap: '12px', fontSize: 'small' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  Max active sandboxes
+                  <input type="number" min="1" value={spec.maxActive || 5} style={{ width: '80px' }}
+                    onChange={e => setSpec({ ...spec, maxActive: parseInt(e.target.value, 10) || 5 })} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  Max per member
+                  <input type="number" min="1" value={spec.maxActivePerUser || 2} style={{ width: '80px' }}
+                    onChange={e => setSpec({ ...spec, maxActivePerUser: parseInt(e.target.value, 10) || 2 })} />
+                </label>
+              </div>
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">
+                <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />
+                Auto-iterate on factory PRs
+              </label>
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Agent-created PRs open as drafts; you promote them.">
+                <input type="checkbox" checked={!!spec.draftPR} onChange={e => setSpec({ ...spec, draftPR: e.target.checked })} style={{ marginRight: '6px' }} />
+                Open agent PRs as drafts
+              </label>
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Add an AI-assistance disclosure line to agent-created PR descriptions.">
+                <input type="checkbox" checked={!!spec.disclose} onChange={e => setSpec({ ...spec, disclose: e.target.checked })} style={{ marginRight: '6px' }} />
+                Disclose agent assistance in PRs
+              </label>
+            </fieldset>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+              <button className="btn" onClick={() => setSpecOpen(false)}>Cancel</button>
+              {spec.editable && <button className="btn btn-submit" onClick={saveSpec}>Save</button>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
