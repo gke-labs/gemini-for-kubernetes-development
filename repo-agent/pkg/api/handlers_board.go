@@ -236,6 +236,10 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 	gh := githubClientForToken(ctx, token)
+	// Maintainers see the repo's whole review queue: for push+ viewers
+	// every open PR lists (view only — nothing runs without a click or a
+	// standing opt-in). Others see involvement only.
+	maintainer := s.hasPushPermission(ctx, namespace, sessionUser, repoURL)
 
 	// Sandboxes live where claims point: the board namespace plus every
 	// namespace named by an assignee claim on this repo's items.
@@ -321,7 +325,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, false)
+		s.mergePRRow(items, sandboxes, pr, member, maintainer)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
