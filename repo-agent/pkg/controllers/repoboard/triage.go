@@ -18,6 +18,8 @@ package repoboard
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,5 +129,37 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		GithubToken: work.discToken,
 	}) {
 		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
+	}
+}
+
+// resumeTriages re-drives triage sandboxes whose suggestions have not been
+// harvested: a clicked triage's mailbox entry is consumed when the sandbox
+// appears, minutes before the run completes, so without this pass the
+// finished invocation's output would never be stored (and the row would
+// show Triaging… forever).
+func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
+	prefix := "triage-" + work.repo + "-"
+	for _, sb := range work.sandboxes {
+		if sb.GetNamespace() != work.board.Namespace {
+			continue
+		}
+		name := sb.GetName()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		annotations := sb.GetAnnotations()
+		if annotations[AnnotationTriagedAt] != "" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
+		if err != nil {
+			continue
+		}
+		num := n
+		url := annotations["htmlURL"]
+		if url == "" {
+			url = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, n)
+		}
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url})
 	}
 }

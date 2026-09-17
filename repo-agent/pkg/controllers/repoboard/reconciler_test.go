@@ -833,3 +833,41 @@ func TestSettleSubmittedReview(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("submitted"))
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
+
+// A clicked triage's mailbox entry is consumed at sandbox creation, minutes
+// before completion — the resume pass must harvest the finished result.
+func TestResumeTriageHarvest(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	triageSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "triage-repo-30", "namespace": "alice",
+			"labels": map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/30",
+				"sandbox.gemini.google.com/last-task-state": "Completed",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	fake := newFakeLauncher()
+	fake.results["alice/triage-repo-30"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
+	}
+	// No mailbox, no intake: only the resume pass can harvest this.
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), triageSandbox)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("labels: [bug]"))
+	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}
