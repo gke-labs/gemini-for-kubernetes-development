@@ -36,12 +36,19 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/repowatch-c
 WORKDIR /workspace/factory
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o factory ./main.go
 
+# Install kubectl: the factory CLI's envd layer shells out to it (sandbox
+# lookup, port-forward), same requirement overseer's image satisfies.
+WORKDIR /workspace
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x kubectl
+
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/repo-agent/manager .
 COPY --from=builder /workspace/factory/factory /usr/local/bin/factory
+COPY --from=builder /workspace/kubectl /usr/local/bin/kubectl
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
