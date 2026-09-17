@@ -18,7 +18,7 @@ const AgentsDir = ".agents"
 // reports as a 404 and this reports as an empty list: it is the ordinary state
 // of most repositories, not a failure to look.
 func (c *Client) ListAgentFiles(ctx context.Context) ([]string, error) {
-	if !c.ready() {
+	if !c.Ready() {
 		return nil, errNoClient
 	}
 
@@ -45,7 +45,7 @@ func (c *Client) ListAgentFiles(ctx context.Context) ([]string, error) {
 
 // ReadAgentFile returns the decoded contents of the agent definition at path.
 func (c *Client) ReadAgentFile(ctx context.Context, path string) (string, error) {
-	if !c.ready() {
+	if !c.Ready() {
 		return "", errNoClient
 	}
 

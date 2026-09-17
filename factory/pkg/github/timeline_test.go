@@ -1,4 +1,4 @@
-package watch
+package github
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type timelineServerOpts struct {
 
 // newTimelineTestClient spins up a fake GitHub API that paginates the timeline
 // endpoint via the Link header, exactly like the real API does.
-func newTimelineTestClient(t *testing.T, opts timelineServerOpts) (*githubv39.Client, func(), *int) {
+func newTimelineTestClient(t *testing.T, opts timelineServerOpts) (*Client, func(), *int) {
 	t.Helper()
 
 	timelineRequests := 0
@@ -71,10 +71,10 @@ func newTimelineTestClient(t *testing.T, opts timelineServerOpts) (*githubv39.Cl
 	}))
 	serverURL = server.URL
 
-	client := githubv39.NewClient(nil)
-	client.BaseURL, _ = url.Parse(server.URL + "/")
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
 
-	return client, server.Close, &timelineRequests
+	return ForRepo(gh, "test-owner", "test-repo"), server.Close, &timelineRequests
 }
 
 // crossRefIssue is a cross-reference from a plain issue (not a PR).
@@ -86,7 +86,7 @@ const crossRefClosedPR = `{"event":"cross-referenced","source":{"issue":{"number
 // crossRefOpenPR is a cross-reference from the open PR that fixes the issue.
 const crossRefOpenPR = `{"event":"cross-referenced","source":{"issue":{"number":12689,"state":"open","pull_request":{"url":"https://api.github.com/repos/test-owner/test-repo/pulls/12689"}}}}`
 
-func TestListAllIssueTimeline_FollowsPagination(t *testing.T) {
+func TestListIssueTimeline_FollowsPagination(t *testing.T) {
 	client, closeFn, requests := newTimelineTestClient(t, timelineServerOpts{
 		pages: []string{
 			"[" + crossRefIssue + "," + crossRefClosedPR + "]",
@@ -95,9 +95,9 @@ func TestListAllIssueTimeline_FollowsPagination(t *testing.T) {
 	})
 	defer closeFn()
 
-	timeline, complete, err := listAllIssueTimeline(context.Background(), client, "test-owner", "test-repo", 9259)
+	timeline, complete, err := client.ListIssueTimeline(context.Background(), 9259)
 	if err != nil {
-		t.Fatalf("listAllIssueTimeline() returned error: %v", err)
+		t.Fatalf("ListIssueTimeline() returned error: %v", err)
 	}
 	if !complete {
 		t.Errorf("complete = false; want true")
@@ -110,11 +110,11 @@ func TestListAllIssueTimeline_FollowsPagination(t *testing.T) {
 	}
 }
 
-func TestListAllIssueTimeline_ErrorReturnsNilTimeline(t *testing.T) {
+func TestListIssueTimeline_ErrorReturnsNilTimeline(t *testing.T) {
 	client, closeFn, _ := newTimelineTestClient(t, timelineServerOpts{failTimeline: true})
 	defer closeFn()
 
-	timeline, complete, err := listAllIssueTimeline(context.Background(), client, "test-owner", "test-repo", 9259)
+	timeline, complete, err := client.ListIssueTimeline(context.Background(), 9259)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -145,12 +145,12 @@ func TestHasLinkedPR_DetectsPROnLaterPage(t *testing.T) {
 	})
 	defer closeFn()
 
-	linked, err := hasLinkedPR(context.Background(), client, "test-owner", "test-repo", 9259)
+	linked, err := client.HasLinkedPR(context.Background(), 9259)
 	if err != nil {
-		t.Fatalf("hasLinkedPR() returned error: %v", err)
+		t.Fatalf("HasLinkedPR() returned error: %v", err)
 	}
 	if !linked {
-		t.Error("hasLinkedPR() = false; want true (open PR #12689 is on timeline page 2)")
+		t.Error("HasLinkedPR() = false; want true (open PR #12689 is on timeline page 2)")
 	}
 }
 
@@ -161,12 +161,12 @@ func TestHasLinkedPR_NoOpenPR(t *testing.T) {
 	})
 	defer closeFn()
 
-	linked, err := hasLinkedPR(context.Background(), client, "test-owner", "test-repo", 9259)
+	linked, err := client.HasLinkedPR(context.Background(), 9259)
 	if err != nil {
-		t.Fatalf("hasLinkedPR() returned error: %v", err)
+		t.Fatalf("HasLinkedPR() returned error: %v", err)
 	}
 	if linked {
-		t.Error("hasLinkedPR() = true; want false (only a closed PR and a plain issue reference it)")
+		t.Error("HasLinkedPR() = true; want false (only a closed PR and a plain issue reference it)")
 	}
 }
 
@@ -177,12 +177,12 @@ func TestHasLinkedPR_FallsBackToSearchWhenTimelineFails(t *testing.T) {
 	})
 	defer closeFn()
 
-	linked, err := hasLinkedPR(context.Background(), client, "test-owner", "test-repo", 9259)
+	linked, err := client.HasLinkedPR(context.Background(), 9259)
 	if err != nil {
-		t.Fatalf("hasLinkedPR() returned error: %v", err)
+		t.Fatalf("HasLinkedPR() returned error: %v", err)
 	}
 	if !linked {
-		t.Error("hasLinkedPR() = false; want true from the search fallback")
+		t.Error("HasLinkedPR() = false; want true from the search fallback")
 	}
 }
 
@@ -195,8 +195,8 @@ func TestHasLinkedPR_ErrorsWhenBothChecksFail(t *testing.T) {
 	})
 	defer closeFn()
 
-	if _, err := hasLinkedPR(context.Background(), client, "test-owner", "test-repo", 9259); err == nil {
-		t.Error("hasLinkedPR() returned nil error; want an error so the caller skips the issue")
+	if _, err := client.HasLinkedPR(context.Background(), 9259); err == nil {
+		t.Error("HasLinkedPR() returned nil error; want an error so the caller skips the issue")
 	}
 }
 
@@ -208,12 +208,12 @@ func TestHasLinkedPRWithTimeline_NilTimelineFallsBack(t *testing.T) {
 
 	// A nil timeline means the caller could not determine the answer, so the
 	// helper must fetch it itself instead of reporting "no linked PR".
-	linked, err := hasLinkedPRWithTimeline(context.Background(), client, "test-owner", "test-repo", 9259, nil)
+	linked, err := client.HasLinkedPRWithTimeline(context.Background(), 9259, nil)
 	if err != nil {
-		t.Fatalf("hasLinkedPRWithTimeline() returned error: %v", err)
+		t.Fatalf("HasLinkedPRWithTimeline() returned error: %v", err)
 	}
 	if !linked {
-		t.Error("hasLinkedPRWithTimeline() = false; want true")
+		t.Error("HasLinkedPRWithTimeline() = false; want true")
 	}
 	if *requests == 0 {
 		t.Error("expected a timeline fetch when the supplied timeline is nil")
@@ -239,12 +239,12 @@ func TestHasLinkedPRWithTimeline_ReusesSuppliedTimeline(t *testing.T) {
 		},
 	}
 
-	linked, err := hasLinkedPRWithTimeline(context.Background(), client, "test-owner", "test-repo", 9259, timeline)
+	linked, err := client.HasLinkedPRWithTimeline(context.Background(), 9259, timeline)
 	if err != nil {
-		t.Fatalf("hasLinkedPRWithTimeline() returned error: %v", err)
+		t.Fatalf("HasLinkedPRWithTimeline() returned error: %v", err)
 	}
 	if !linked {
-		t.Error("hasLinkedPRWithTimeline() = false; want true")
+		t.Error("HasLinkedPRWithTimeline() = false; want true")
 	}
 	if *requests != 0 {
 		t.Errorf("made %d timeline requests; want 0 (supplied timeline should be reused)", *requests)

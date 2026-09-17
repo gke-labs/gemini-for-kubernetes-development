@@ -130,6 +130,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	repoClient := github.ForRepo(ghClient, owner, repo)
 	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("fetching github PR #%d: %w", prNum, err)
@@ -137,7 +138,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	// Fetch failed check runs to populate FailedRuns
 	headSHA := pr.GetHead().GetSHA()
-	checkRuns, err := common.ListAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+	checkRuns, err := repoClient.ListCheckRuns(ctx, headSHA)
 	if err != nil {
 		return fmt.Errorf("listing check runs: %w", err)
 	}
@@ -162,7 +163,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	var failedProwRuns []string
-	statuses, err := common.ListAllStatuses(ctx, ghClient, owner, repo, headSHA)
+	statuses, err := repoClient.ListStatuses(ctx, headSHA)
 	if err == nil {
 		for _, status := range statuses {
 			if status.GetState() == "failure" || status.GetState() == "error" {
@@ -182,7 +183,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	// Fetch PR comments
-	comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
+	comments, err := repoClient.ListIssueComments(ctx, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
@@ -386,13 +387,14 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	repoClient := github.ForRepo(ghClient, owner, repo)
 	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
 	if err != nil {
 		return fmt.Errorf("fetching github PR #%d: %w", prNum, err)
 	}
 
 	// Fetch PR commits
-	prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, prNum)
+	prCommits, err := repoClient.ListCommits(ctx, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR commits: %w", err)
 	}
@@ -409,7 +411,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	// Fetch PR comments
-	comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
+	comments, err := repoClient.ListIssueComments(ctx, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
@@ -430,7 +432,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	// Fetch PR reviews
-	reviews, err := github.ListAllReviews(ctx, ghClient, owner, repo, prNum)
+	reviews, err := repoClient.ListReviews(ctx, prNum)
 	if err != nil {
 		return fmt.Errorf("listing PR reviews: %w", err)
 	}
@@ -443,7 +445,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 			Body:      r.GetBody(),
 		}
 		// Fetch review comments for this review
-		revComments, err := github.ListAllReviewComments(ctx, ghClient, owner, repo, prNum, r.GetID())
+		revComments, err := repoClient.ListReviewComments(ctx, prNum, r.GetID())
 		if err == nil {
 			for _, rc := range revComments {
 				rev.PullRequestComments = append(rev.PullRequestComments, tasks.PullRequestComment{
@@ -639,6 +641,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	repoClient := github.ForRepo(ghClient, owner, repo)
 
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -699,7 +702,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		headSHA := pr.GetHead().GetSHA()
 		hasFailure := false
 
-		checkRuns, err := common.ListAllCheckRuns(ctx, ghClient, owner, repo, headSHA)
+		checkRuns, err := repoClient.ListCheckRuns(ctx, headSHA)
 		if err == nil {
 			for _, run := range checkRuns {
 				c := run.GetConclusion()
@@ -710,7 +713,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 
-		statuses, err := common.ListAllStatuses(ctx, ghClient, owner, repo, headSHA)
+		statuses, err := repoClient.ListStatuses(ctx, headSHA)
 		if err == nil {
 			for _, status := range statuses {
 				if status.GetState() == "failure" || status.GetState() == "error" {
@@ -736,7 +739,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 		}
 
 		// Check 2: Check new comments/reviews after latest commit
-		prCommits, err := github.ListAllCommits(ctx, ghClient, owner, repo, prNum)
+		prCommits, err := repoClient.ListCommits(ctx, prNum)
 		if err == nil {
 			var lastCommitTime time.Time
 			for _, c := range prCommits {
@@ -745,7 +748,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				}
 			}
 
-			comments, err := github.ListAllIssueComments(ctx, ghClient, owner, repo, prNum)
+			comments, err := repoClient.ListIssueComments(ctx, prNum)
 			if err == nil {
 				hasNewComments := false
 				for _, c := range comments {

@@ -1,15 +1,10 @@
-package watch
+package prs
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
-	githubv39 "github.com/google/go-github/v39/github"
-	"sigs.k8s.io/yaml"
 )
 
 func TestParseProcessedPRTask(t *testing.T) {
@@ -58,7 +53,7 @@ completedAt: "2026-07-23T14:00:00Z"
 		t.Fatalf("failed to write iterate task file: %v", err)
 	}
 
-	initialState := prWatchState{}
+	initialState := prState{}
 
 	// Process review task
 	fInfoReview, _ := os.Stat(reviewTaskPath)
@@ -115,26 +110,11 @@ completedAt: "2026-07-23T20:00:00Z"
 	}
 }
 
-func TestGetIssuePriority(t *testing.T) {
-	nameUrgent := "priority/urgent"
-	issue := &githubv39.Issue{
-		Labels: []*githubv39.Label{
-			{Name: &nameUrgent},
-		},
-	}
-	if getIssuePriority(issue) != api.PriorityUrgent {
-		t.Errorf("expected 'urgent', got %q", getIssuePriority(issue))
-	}
-
-	issueNoLabel := &githubv39.Issue{}
-	if getIssuePriority(issueNoLabel) != api.PriorityMedium {
-		t.Errorf("expected 'medium', got %q", getIssuePriority(issueNoLabel))
-	}
-}
-
-func TestLoadProcessedTasks(t *testing.T) {
+func TestLoadProcessedPRs(t *testing.T) {
 	dir := t.TempDir()
 
+	// Issue state is loaded by the issue scanner from the same directory, so
+	// this loader must ignore it rather than silently claim it.
 	issueTask := filepath.Join(dir, "task-issue-100.yaml")
 	_ = os.WriteFile(issueTask, []byte("type: issue-fix\ncompletedAt: \"2026-08-01T10:00:00Z\"\n"), 0644)
 
@@ -150,9 +130,9 @@ func TestLoadProcessedTasks(t *testing.T) {
 	prIterateTask := filepath.Join(dir, "task-pr-200-iterate.yaml")
 	_ = os.WriteFile(prIterateTask, []byte("type: pr-iterate\ncommitSHA: sha-iter\ncompletedAt: \"2026-08-01T14:00:00Z\"\n"), 0644)
 
-	issues, prs := loadProcessedTasks(dir)
-	if _, ok := issues[100]; !ok {
-		t.Errorf("expected issue 100 in loaded issues")
+	prs := loadProcessedPRs(dir)
+	if len(prs) != 1 {
+		t.Errorf("loaded %d pull requests, want 1 (issue tasks must be ignored): %v", len(prs), prs)
 	}
 	if state, ok := prs[200]; !ok {
 		t.Errorf("expected pr 200 in loaded prs")
@@ -169,34 +149,5 @@ func TestLoadProcessedTasks(t *testing.T) {
 		if state.lastIteratedSHA != "sha-iter" {
 			t.Errorf("expected lastIteratedSHA 'sha-iter', got %q", state.lastIteratedSHA)
 		}
-	}
-}
-
-func TestWorkflowCooldownCompletedAt(t *testing.T) {
-	tempDir := t.TempDir()
-	processedPath := filepath.Join(tempDir, "task-workflow-test-issue-1.yaml")
-
-	// Task completed 5 hours ago
-	completedAt := time.Now().Add(-5 * time.Hour)
-	taskYAML := fmt.Sprintf("completedAt: %s\n", completedAt.Format(time.RFC3339Nano))
-	if err := os.WriteFile(processedPath, []byte(taskYAML), 0644); err != nil {
-		t.Fatalf("Failed to write test task yaml: %v", err)
-	}
-
-	info, err := os.Stat(processedPath)
-	if err != nil {
-		t.Fatalf("Stat failed: %v", err)
-	}
-
-	lastRunTime := info.ModTime()
-	if data, err := os.ReadFile(processedPath); err == nil {
-		var q api.QueueTask
-		if err := yaml.Unmarshal(data, &q); err == nil && !q.CompletedAt.IsZero() {
-			lastRunTime = q.CompletedAt
-		}
-	}
-
-	if !lastRunTime.Equal(completedAt) {
-		t.Fatalf("lastRunTime = %v, want %v", lastRunTime, completedAt)
 	}
 }

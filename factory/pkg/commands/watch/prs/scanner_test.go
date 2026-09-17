@@ -1,4 +1,4 @@
-package watch
+package prs
 
 import (
 	"context"
@@ -13,95 +13,55 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
 
-func TestProcessPRs_Filters(t *testing.T) {
+// TestEvaluate_Filters covers the two reasons a candidate is dropped before any
+// GitHub round trip is made for it: it predates the configured minimum, or it
+// carries the stop label - in which case its pending work is withdrawn too.
+func TestEvaluate_Filters(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
-	processingDir := filepath.Join(tempDir, "processing")
-	processedDir := filepath.Join(tempDir, "processed")
-	_ = os.MkdirAll(incomingDir, 0755)
-	_ = os.MkdirAll(processingDir, 0755)
-	_ = os.MkdirAll(processedDir, 0755)
 
-	w := &Watcher{
-		RootFlags: common.RootFlags{
-			Namespace: "test-ns",
-		},
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-	}
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+		MinNumber:    10,
+	})
 
-	stopPRNum := 20
-	// Create a dummy pending task file for the stop PR to verify removal
+	// A pending task for the stopped pull request, which must be withdrawn.
 	stopTaskFile := filepath.Join(incomingDir, "task-pr-20-iterate.yaml")
-	_ = os.WriteFile(stopTaskFile, []byte("type: pr-iterate\n"), 0644)
-
-	cfg := &config.FactoryConfig{
-		MinNumber: 10,
+	if err := os.WriteFile(stopTaskFile, []byte("type: pr-iterate\n"), 0644); err != nil {
+		t.Fatalf("writing task file: %v", err)
 	}
+	_ = queue.LoadFromDisk()
 
 	lowPRNum := 5
+	stopPRNum := 20
 	prIssues := []*githubv39.Issue{
-		{
-			Number: &lowPRNum,
-		},
+		{Number: &lowPRNum},
 		{
 			Number: &stopPRNum,
-			Labels: []*githubv39.Label{
-				{Name: stringPtr("overseer/stop")},
-			},
+			Labels: []*githubv39.Label{{Name: stringPtr("overseer/stop")}},
 		},
 	}
 
-	processedPRs := make(map[int]prWatchState)
-	allBotUsers := []string{"bot1"}
+	s.evaluateAll(context.Background(), prIssues)
 
-	w.cfg = cfg
-	w.processedPRs = processedPRs
-	w.allBotUsers = allBotUsers
-	w.githubLogin = "bot1"
-	w.incomingDir = incomingDir
-	w.processingDir = processingDir
-	w.processedDir = processedDir
-	w.triggerLabel = "factory"
-	w.initComponents()
-	_ = w.queueMgr.LoadFromDisk()
-
-	w.processPRs(context.Background(), prIssues)
-
-	// Verify stop task was removed
 	if _, err := os.Stat(stopTaskFile); !os.IsNotExist(err) {
 		t.Errorf("expected stop PR task file to be removed, but it still exists")
 	}
 }
 
-func TestProcessPRs_DisabledMode(t *testing.T) {
-	w := &Watcher{
-		Flags: Flags{
-			PRMode: "disabled",
-		},
-	}
-	w.initComponents()
-	// Should return immediately without doing any operations
-	w.processPRs(context.Background(), nil)
-}
-
-func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
+func TestEvaluate_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -177,29 +137,13 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	ghClient := githubv39.NewClient(nil)
 	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		cfg: &config.FactoryConfig{
-			Roles: map[string]config.RoleConfig{
-				"reviewer": {Users: []string{"reviewbot"}},
-			},
-		},
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -215,7 +159,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	taskPath := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
 	_ = os.WriteFile(taskPath, []byte("type: pr-comments\n"), 0644)
 
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if len(addedLabels) != 0 {
 		t.Errorf("expected 0 added labels while task is in incomingDir, got %d (%v)", len(addedLabels), addedLabels)
@@ -229,7 +173,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	processingTaskPath := filepath.Join(processingDir, "task-pr-10-comments.yaml")
 	_ = os.WriteFile(processingTaskPath, []byte("type: pr-comments\n"), 0644)
 
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if len(addedLabels) != 0 {
 		t.Errorf("expected 0 added labels while task is in processingDir, got %d (%v)", len(addedLabels), addedLabels)
@@ -243,7 +187,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	processedTaskPath := filepath.Join(processedDir, "task-pr-10-comments.yaml")
 	_ = os.WriteFile(processedTaskPath, []byte("type: pr-comments\nstatus: Completed\n"), 0644)
 
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if len(addedLabels) != 1 || addedLabels[0] != "factory/ready-for-human" {
 		t.Errorf("expected ready-for-human label added after task completion, got %v", addedLabels)
@@ -253,7 +197,7 @@ func TestProcessPRs_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 	}
 }
 
-func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
+func TestEvaluate_UnassignOnReadyForHuman(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -324,29 +268,13 @@ func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
 	ghClient := githubv39.NewClient(nil)
 	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		cfg: &config.FactoryConfig{
-			Roles: map[string]config.RoleConfig{
-				"reviewer": {Users: []string{"reviewbot"}},
-			},
-		},
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -358,7 +286,7 @@ func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
 		},
 	}
 
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if len(unassignCalls) != 1 {
 		t.Fatalf("expected 1 unassign API call, got %d (%v)", len(unassignCalls), unassignCalls)
@@ -368,7 +296,7 @@ func TestProcessPRs_UnassignOnReadyForHuman(t *testing.T) {
 	}
 }
 
-func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
+func TestEvaluate_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -449,24 +377,12 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 	ghClient := githubv39.NewClient(nil)
 	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -479,7 +395,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 	}
 
 	// 1. Check runs are in_progress -> label must NOT be added
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if len(addedLabels) != 0 {
 		t.Errorf("expected 0 added labels while check runs are in_progress, got %v", addedLabels)
 	}
@@ -487,7 +403,7 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 	// 2. Check runs complete successfully -> label SHOULD be added
 	checkRunStatus = "completed"
 	checkRunConclusion = "success"
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if len(addedLabels) != 1 || addedLabels[0] != "factory/ready-for-human" {
 		t.Errorf("expected ready-for-human label added after check runs completed, got %v", addedLabels)
 	}
@@ -496,13 +412,13 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 	prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: stringPtr("factory/ready-for-human")})
 	checkRunStatus = "queued"
 	checkRunConclusion = ""
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if len(removedLabels) != 1 || removedLabels[0] != "factory/ready-for-human" {
 		t.Errorf("expected ready-for-human label removed when checks become queued, got %v", removedLabels)
 	}
 }
 
-func TestProcessPRs_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
+func TestEvaluate_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -574,24 +490,12 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 	ghClient := githubv39.NewClient(nil)
 	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -604,20 +508,20 @@ func TestProcessPRs_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 	}
 
 	// 1. Status is pending -> label must NOT be added
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if len(addedLabels) != 0 {
 		t.Errorf("expected 0 added labels while commit status is pending, got %v", addedLabels)
 	}
 
 	// 2. Status is success -> label SHOULD be added
 	commitState = "success"
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if len(addedLabels) != 1 || addedLabels[0] != "factory/ready-for-human" {
 		t.Errorf("expected ready-for-human label added after commit status became success, got %v", addedLabels)
 	}
 }
 
-func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
+func TestEvaluate_Review_GatedByPendingCheckRuns(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -694,30 +598,14 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 		DynamicClient: fakeDynamic,
 	}
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		kubeClient:    kubeClient,
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		cfg: &config.FactoryConfig{
-			Roles: map[string]config.RoleConfig{
-				"reviewer": {Users: []string{"reviewbot"}},
-			},
-		},
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		Kube:           kubeClient,
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -731,7 +619,7 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 	}
 
 	// 1. While CI is in_progress -> review task must NOT be queued
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-review.yaml")
 	if _, err := os.Stat(reviewTaskFile); !os.IsNotExist(err) {
 		t.Errorf("expected review task NOT to be created while CI is in_progress")
@@ -740,13 +628,13 @@ func TestProcessPRs_Review_GatedByPendingCheckRuns(t *testing.T) {
 	// 2. Once CI completes successfully -> review task SHOULD be queued
 	checkRunStatus = "completed"
 	checkRunConclusion = "success"
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 	if _, err := os.Stat(reviewTaskFile); os.IsNotExist(err) {
 		t.Errorf("expected review task to be created once CI completes successfully")
 	}
 }
 
-func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
+func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -830,25 +718,13 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 		DynamicClient: fakeDynamic,
 	}
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		githubLogin:   "bot1",
-		allBotUsers:   []string{"bot1"},
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		ghClient:      ghClient,
-		kubeClient:    kubeClient,
-	}
-	w.initComponents()
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         kubeClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -861,7 +737,7 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	}
 
 	// When both failing CI and new comments exist, comments (Phase 1) must be prioritized over investigate (Phase 3)
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
@@ -876,20 +752,20 @@ func TestProcessPRs_CommentsPrioritizedOverCIFailures(t *testing.T) {
 	// 2. Clear incomingDir and simulate that investigate already ran for this SHA without fixing CI.
 	// When another new comment arrives, comments task MUST still be created (no starvation due to failing CI).
 	_ = os.Remove(commentsTaskFile)
-	_ = w.queueMgr.RemoveTask("task-pr-10-comments.yaml")
-	w.processedPRs[10] = prWatchState{
+	_ = queue.RemoveTask("task-pr-10-comments.yaml")
+	s.state.set(10, prState{
 		lastInvestigatedSHA:  headSHA,
 		lastInvestigatedTime: time.Now(),
-	}
+	})
 	commentTime = commentTime.Add(10 * time.Minute)
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
 		t.Fatalf("expected task-pr-10-comments.yaml to be created when new comment arrives on a PR with previously investigated failing CI")
 	}
 }
 
-func TestProcessPRs_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
+func TestEvaluate_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -961,25 +837,13 @@ func TestProcessPRs_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 		DynamicClient: fakeDynamic,
 	}
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		githubLogin:   "bot1",
-		allBotUsers:   []string{"bot1"},
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		ghClient:      ghClient,
-		kubeClient:    kubeClient,
-	}
-	w.initComponents()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         kubeClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -992,7 +856,7 @@ func TestProcessPRs_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 	}
 
 	// When both merge conflicts and new comments exist, comments (Phase 1) must be prioritized over iterate (Phase 2)
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
 	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
@@ -1005,7 +869,7 @@ func TestProcessPRs_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 	}
 }
 
-func TestProcessPRs_InMergeQueue(t *testing.T) {
+func TestEvaluate_InMergeQueue(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
 	processingDir := filepath.Join(tempDir, "processing")
@@ -1069,29 +933,13 @@ func TestProcessPRs_InMergeQueue(t *testing.T) {
 	ghClient := githubv39.NewClient(nil)
 	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 
-	w := &Watcher{
-		Flags: Flags{
-			Repo: RepoFlag{
-				Owner: "test-owner",
-				Repo:  "test-repo",
-			},
-			QueueDir: tempDir,
-		},
-		ghClient:      ghClient,
-		allBotUsers:   []string{"bot1"},
-		githubLogin:   "bot1",
-		incomingDir:   incomingDir,
-		processingDir: processingDir,
-		processedDir:  processedDir,
-		triggerLabel:  "factory",
-		processedPRs:  make(map[int]prWatchState),
-		cfg: &config.FactoryConfig{
-			Roles: map[string]config.RoleConfig{
-				"reviewer": {Users: []string{"reviewbot"}},
-			},
-		},
-	}
-	w.initComponents()
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+	})
 
 	prIssue := &githubv39.Issue{
 		Number: &prNum,
@@ -1106,10 +954,10 @@ func TestProcessPRs_InMergeQueue(t *testing.T) {
 	// Create a dummy pending task file to verify it gets removed when PR is in merge queue
 	taskFile := filepath.Join(incomingDir, "task-pr-10-iterate.yaml")
 	_ = os.WriteFile(taskFile, []byte("type: pr-iterate\n"), 0644)
-	_ = w.queueMgr.LoadFromDisk()
+	_ = queue.LoadFromDisk()
 
-	// Execute processPRs
-	w.processPRs(context.Background(), []*githubv39.Issue{prIssue})
+	// Execute one evaluation cycle
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
 
 	// Check if taskFile was removed
 	if _, err := os.Stat(taskFile); !os.IsNotExist(err) {

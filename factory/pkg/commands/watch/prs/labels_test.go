@@ -1,4 +1,4 @@
-package watch
+package prs
 
 import (
 	"context"
@@ -11,13 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
 )
-
-func stringPtr(s string) *string {
-	return &s
-}
 
 func TestGetMissingLabelsForPR(t *testing.T) {
 	tests := []struct {
@@ -358,137 +354,6 @@ func TestHasInactivityComment(t *testing.T) {
 	}
 }
 
-func TestHasIgnorePrefix(t *testing.T) {
-	tests := []struct {
-		body         string
-		triggerLabel string
-		expected     bool
-	}{
-		{
-			body:         "/overseer-ignore",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "  /OVERSEER-IGNORE: some message  ",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "/factory-ignore",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "  /FACTORY-IGNORE: custom prefix  ",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "/other-ignore",
-			triggerLabel: "factory",
-			expected:     false,
-		},
-		{
-			body:         "/overseer-ignore",
-			triggerLabel: "overseer",
-			expected:     true,
-		},
-		{
-			body:         "/overseer-ignore",
-			triggerLabel: "",
-			expected:     true,
-		},
-		{
-			body:         "just a regular comment",
-			triggerLabel: "factory",
-			expected:     false,
-		},
-		{
-			body:         "line 1\n/overseer-ignore\nline 3",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "line 1\n  /FACTORY-IGNORE: some message\nline 3",
-			triggerLabel: "factory",
-			expected:     true,
-		},
-		{
-			body:         "line 1\n  some comment containing /overseer-ignore but not at start",
-			triggerLabel: "factory",
-			expected:     false,
-		},
-	}
-
-	for _, tc := range tests {
-		got := hasIgnorePrefix(tc.body, tc.triggerLabel)
-		if got != tc.expected {
-			t.Errorf("hasIgnorePrefix(%q, %q) = %v; expected %v", tc.body, tc.triggerLabel, got, tc.expected)
-		}
-	}
-}
-
-func TestIsReviewerBot(t *testing.T) {
-	loginReviewBot := "reviewbot-robot"
-	userReviewBot := &githubv39.User{Login: &loginReviewBot}
-	loginCoderBot := "neumann-coder-bot"
-	userCoderBot := &githubv39.User{Login: &loginCoderBot}
-
-	cfg := &config.FactoryConfig{
-		Roles: map[string]config.RoleConfig{
-			"reviewer": {Users: []string{"reviewbot-robot"}},
-		},
-	}
-
-	if !isReviewerBot(userReviewBot, cfg) {
-		t.Errorf("expected reviewbot-robot to be identified as reviewer bot")
-	}
-	if isReviewerBot(userCoderBot, cfg) {
-		t.Errorf("expected neumann-coder-bot to not be identified as reviewer bot")
-	}
-}
-
-func TestShouldIgnoreUser(t *testing.T) {
-	selfLogin := "factory-bot"
-	allowlistedBots := []string{"trusted-bot"}
-
-	tests := []struct {
-		user     *githubv39.User
-		expected bool
-	}{
-		{nil, false},
-		{&githubv39.User{Login: stringPtr("factory-bot")}, true},
-		{&githubv39.User{Login: stringPtr("trusted-bot"), Type: stringPtr("Bot")}, false},
-		{&githubv39.User{Login: stringPtr("untrusted-bot"), Type: stringPtr("Bot")}, true},
-		{&githubv39.User{Login: stringPtr("some-user[bot]")}, true},
-		{&githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, false},
-	}
-
-	for _, tc := range tests {
-		got := shouldIgnoreUser(tc.user, selfLogin, allowlistedBots)
-		if got != tc.expected {
-			t.Errorf("shouldIgnoreUser(%v) = %v, want %v", tc.user, got, tc.expected)
-		}
-	}
-}
-
-func TestHasStopLabel(t *testing.T) {
-	labelsWithOverseerStop := []*githubv39.Label{{Name: stringPtr("overseer/stop")}}
-	labelsWithCustomStop := []*githubv39.Label{{Name: stringPtr("mybot/stop")}}
-	labelsWithoutStop := []*githubv39.Label{{Name: stringPtr("bug")}}
-
-	if !hasStopLabel(labelsWithOverseerStop, "") {
-		t.Errorf("expected hasStopLabel with overseer/stop to be true")
-	}
-	if !hasStopLabel(labelsWithCustomStop, "mybot") {
-		t.Errorf("expected hasStopLabel with mybot/stop and triggerLabel=mybot to be true")
-	}
-	if hasStopLabel(labelsWithoutStop, "mybot") {
-		t.Errorf("expected hasStopLabel with no stop label to be false")
-	}
-}
-
 func TestHasReviewLabel(t *testing.T) {
 	labelsWithOverseerReview := []*githubv39.Label{{Name: stringPtr("overseer/review")}}
 	labelsWithCustomReview := []*githubv39.Label{{Name: stringPtr("mybot/review")}}
@@ -505,43 +370,15 @@ func TestHasReviewLabel(t *testing.T) {
 	}
 }
 
-func TestGetStopLabel(t *testing.T) {
-	if getStopLabel("") != "overseer/stop" {
-		t.Errorf("getStopLabel(\"\") = %q, want 'overseer/stop'", getStopLabel(""))
-	}
-	if getStopLabel("mybot") != "mybot/stop" {
-		t.Errorf("getStopLabel(\"mybot\") = %q, want 'mybot/stop'", getStopLabel("mybot"))
-	}
-}
-
-func TestAssignedBotUser(t *testing.T) {
-	issue := &githubv39.Issue{
-		Assignees: []*githubv39.User{
-			{Login: stringPtr("human-user")},
-			{Login: stringPtr("bot-1")},
-		},
-	}
-	botUsers := []string{"bot-1", "bot-2"}
-	got := assignedBotUser(issue, botUsers)
-	if got != "bot-1" {
-		t.Errorf("assignedBotUser = %q, want 'bot-1'", got)
-	}
-
-	gotNone := assignedBotUser(issue, []string{"other-bot"})
-	if gotNone != "" {
-		t.Errorf("assignedBotUser = %q, want empty", gotNone)
-	}
-}
-
 func TestGetReadyForHumanLabel(t *testing.T) {
-	if getReadyForHumanLabel("") != "overseer/ready-for-human" {
-		t.Errorf("getReadyForHumanLabel(\"\") = %q, want 'overseer/ready-for-human'", getReadyForHumanLabel(""))
+	if readyForHumanLabel("") != "overseer/ready-for-human" {
+		t.Errorf("readyForHumanLabel(\"\") = %q, want 'overseer/ready-for-human'", readyForHumanLabel(""))
 	}
-	if getReadyForHumanLabel("overseer") != "overseer/ready-for-human" {
-		t.Errorf("getReadyForHumanLabel(\"overseer\") = %q, want 'overseer/ready-for-human'", getReadyForHumanLabel("overseer"))
+	if readyForHumanLabel("overseer") != "overseer/ready-for-human" {
+		t.Errorf("readyForHumanLabel(\"overseer\") = %q, want 'overseer/ready-for-human'", readyForHumanLabel("overseer"))
 	}
-	if getReadyForHumanLabel("mybot") != "mybot/ready-for-human" {
-		t.Errorf("getReadyForHumanLabel(\"mybot\") = %q, want 'mybot/ready-for-human'", getReadyForHumanLabel("mybot"))
+	if readyForHumanLabel("mybot") != "mybot/ready-for-human" {
+		t.Errorf("readyForHumanLabel(\"mybot\") = %q, want 'mybot/ready-for-human'", readyForHumanLabel("mybot"))
 	}
 }
 
@@ -565,11 +402,7 @@ func TestHasReadyForHumanLabel(t *testing.T) {
 }
 
 func TestHasCompletedBotReviewOnHead(t *testing.T) {
-	cfg := &config.FactoryConfig{
-		Roles: map[string]config.RoleConfig{
-			"reviewer": {Users: []string{"custom-reviewbot"}},
-		},
-	}
+	s := &Scanner{cfg: Config{ReviewerLogins: []string{"custom-reviewbot"}}}
 	now := time.Now()
 	commitTime := now.Add(-10 * time.Minute)
 	headSHA := "abc1234"
@@ -583,7 +416,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 		},
 	}
 	*reviews1[0].SubmittedAt = now.Add(-5 * time.Minute)
-	if !hasCompletedBotReviewOnHead(reviews1, headSHA, commitTime, cfg) {
+	if !s.hasCompletedBotReviewOnHead(reviews1, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with recent review to be true")
 	}
 
@@ -597,7 +430,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 		},
 	}
 	*reviews2[0].SubmittedAt = now.Add(-15 * time.Minute)
-	if !hasCompletedBotReviewOnHead(reviews2, headSHA, commitTime, cfg) {
+	if !s.hasCompletedBotReviewOnHead(reviews2, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with matching headSHA to be true")
 	}
 
@@ -611,7 +444,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 		},
 	}
 	*reviews3[0].SubmittedAt = now.Add(-5 * time.Minute)
-	if hasCompletedBotReviewOnHead(reviews3, headSHA, commitTime, cfg) {
+	if s.hasCompletedBotReviewOnHead(reviews3, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with CHANGES_REQUESTED to be false")
 	}
 
@@ -625,7 +458,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 		},
 	}
 	*reviews4[0].SubmittedAt = now.Add(-5 * time.Minute)
-	if hasCompletedBotReviewOnHead(reviews4, headSHA, commitTime, cfg) {
+	if s.hasCompletedBotReviewOnHead(reviews4, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with non-reviewer bot to be false")
 	}
 
@@ -639,7 +472,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 		},
 	}
 	*reviews5[0].SubmittedAt = now.Add(-20 * time.Minute)
-	if hasCompletedBotReviewOnHead(reviews5, headSHA, commitTime, cfg) {
+	if s.hasCompletedBotReviewOnHead(reviews5, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with stale review on old SHA to be false")
 	}
 
@@ -660,7 +493,7 @@ func TestHasCompletedBotReviewOnHead(t *testing.T) {
 	}
 	*reviews6[0].SubmittedAt = now.Add(-10 * time.Minute)
 	*reviews6[1].SubmittedAt = now.Add(-2 * time.Minute)
-	if !hasCompletedBotReviewOnHead(reviews6, headSHA, commitTime, cfg) {
+	if !s.hasCompletedBotReviewOnHead(reviews6, headSHA, commitTime) {
 		t.Errorf("expected hasCompletedBotReviewOnHead with latest APPROVED to be true")
 	}
 }
@@ -789,16 +622,12 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 				ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 			}
 
-			w := &Watcher{
-				Flags: Flags{
-					DryRun: tc.dryRun,
-					Repo: RepoFlag{
-						Owner: "test-owner",
-						Repo:  "test-repo",
-					},
+			s := &Scanner{
+				cfg: Config{
+					TriggerLabel: tc.triggerLabel,
+					DryRun:       tc.dryRun,
 				},
-				ghClient:     ghClient,
-				triggerLabel: tc.triggerLabel,
+				gh: github.ForRepo(ghClient, "test-owner", "test-repo"),
 			}
 
 			prNum := 100
@@ -811,7 +640,7 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 				Labels: labels,
 			}
 
-			w.reconcileReadyForHumanLabel(context.Background(), prNum, prIssue, tc.isReady, "sha123")
+			s.reconcileReadyForHumanLabel(context.Background(), prNum, prIssue, tc.isReady, "sha123")
 
 			if len(recordedCalls) != len(tc.expectedCalls) {
 				t.Fatalf("recorded %d API calls (%v); want %d (%v)", len(recordedCalls), recordedCalls, len(tc.expectedCalls), tc.expectedCalls)

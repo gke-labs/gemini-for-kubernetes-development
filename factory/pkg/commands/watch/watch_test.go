@@ -4,59 +4,40 @@ import (
 	"testing"
 )
 
-func TestCanQueueIssueTasks(t *testing.T) {
-	tests := []struct {
-		name             string
-		issueMode        string
-		prCachePopulated bool
-		want             bool
+// TestIssuesEnabled pins the modes the issue scanner goroutine starts in.
+//
+// Mode gating decides whether the subcontroller runs at all, rather than being
+// re-evaluated inside a shared cycle: a mode that does not scan issues should
+// not pay for a scanner that wakes up every interval to find nothing to do.
+func TestIssuesEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		mode      string
+		issueMode string
+		want      bool
 	}{
-		{
-			name:             "queues when issue mode enabled and PR cache populated",
-			issueMode:        "",
-			prCachePopulated: true,
-			want:             true,
-		},
-		{
-			// Regression for k8s-config-connector#9259: after a restart into a
-			// rate limit window the PR cache was empty, which made every issue
-			// look like it had no linked PR.
-			name:             "fails closed when PR cache is not populated",
-			issueMode:        "",
-			prCachePopulated: false,
-			want:             false,
-		},
-		{
-			name:             "never queues when issue mode is disabled",
-			issueMode:        "disabled",
-			prCachePopulated: true,
-			want:             false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			w := &Watcher{Flags: Flags{IssueMode: tc.issueMode}}
-			if got := w.canQueueIssueTasks(tc.prCachePopulated); got != tc.want {
-				t.Errorf("canQueueIssueTasks(%v) = %v; want %v", tc.prCachePopulated, got, tc.want)
-			}
-		})
+		{mode: "all", want: true},
+		{mode: "scan", want: true},
+		{mode: "scan-issue", want: true},
+		{mode: "scan-pr", want: false},
+		{mode: "run", want: false},
+		{mode: "all", issueMode: "disabled", want: false},
+	} {
+		w := &Watcher{Flags: Flags{Mode: tc.mode, IssueMode: tc.issueMode}}
+		if got := w.issuesEnabled(); got != tc.want {
+			t.Errorf("issuesEnabled(mode=%q, issueMode=%q) = %v, want %v", tc.mode, tc.issueMode, got, tc.want)
+		}
 	}
 }
 
-// TestCheckRepoHasPRsSignal documents the state that drives canQueueIssueTasks:
-// a fresh watcher has never listed open PRs, so it must not be treated as
-// "no issue has a linked PR". The signal lives in EntityStateCache, which is
-// what checkRepo consults.
-func TestCheckRepoHasPRsSignal(t *testing.T) {
+// TestEntityCacheStartsUnpopulated documents the signal the issue scanner fails
+// closed on: a fresh watcher has never listed open PRs, and that must not be
+// read as "no issue has a linked PR".
+func TestEntityCacheStartsUnpopulated(t *testing.T) {
 	w := &Watcher{}
 	w.initComponents()
 
 	if w.entityCache.HasOpenPRs() {
 		t.Error("HasOpenPRs() = true for a watcher that has never scanned; want false")
-	}
-	if w.canQueueIssueTasks(w.entityCache.HasOpenPRs()) {
-		t.Error("canQueueIssueTasks() = true before any successful PR scan; want false")
 	}
 
 	// A successful scan that finds no open PRs is still authoritative: the
@@ -67,8 +48,29 @@ func TestCheckRepoHasPRsSignal(t *testing.T) {
 	if !w.entityCache.HasOpenPRs() {
 		t.Error("HasOpenPRs() = false after a successful scan returning no PRs; want true")
 	}
-	if !w.canQueueIssueTasks(w.entityCache.HasOpenPRs()) {
-		t.Error("canQueueIssueTasks() = false after a successful PR scan; want true")
+}
+
+// TestPRsEnabled pins the modes the pull request scanner goroutine starts in.
+//
+// The disabled case used to be checked at the top of the scan itself; it is
+// asserted here because the gate moved to where the goroutine is started.
+func TestPRsEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		mode   string
+		prMode string
+		want   bool
+	}{
+		{mode: "all", want: true},
+		{mode: "scan", want: true},
+		{mode: "scan-pr", want: true},
+		{mode: "scan-issue", want: false},
+		{mode: "run", want: false},
+		{mode: "all", prMode: "disabled", want: false},
+	} {
+		w := &Watcher{Flags: Flags{Mode: tc.mode, PRMode: tc.prMode}}
+		if got := w.prsEnabled(); got != tc.want {
+			t.Errorf("prsEnabled(mode=%q, prMode=%q) = %v, want %v", tc.mode, tc.prMode, got, tc.want)
+		}
 	}
 }
 

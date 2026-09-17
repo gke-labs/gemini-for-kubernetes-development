@@ -1,7 +1,6 @@
 package common
 
 import (
-	"context"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,78 +35,6 @@ func GetReferencedIssues(pr *githubv39.PullRequest) map[int]bool {
 	}
 
 	return referenced
-}
-
-// ListAllCheckRuns retrieves all check runs for a ref handling pagination and deduplicating by name.
-func ListAllCheckRuns(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.CheckRun, error) {
-	var allRuns []*githubv39.CheckRun
-	opts := &githubv39.ListCheckRunsOptions{
-		ListOptions: githubv39.ListOptions{
-			PerPage: 200,
-		},
-	}
-	for {
-		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
-		if err != nil {
-			return nil, err
-		}
-		allRuns = append(allRuns, runs.CheckRuns...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	// Deduplicate check runs by name, keeping only the latest run (highest ID)
-	latestRuns := make(map[string]*githubv39.CheckRun)
-	for _, run := range allRuns {
-		name := run.GetName()
-		if existing, ok := latestRuns[name]; ok {
-			if run.GetID() > existing.GetID() {
-				latestRuns[name] = run
-			}
-		} else {
-			latestRuns[name] = run
-		}
-	}
-
-	var deduplicated []*githubv39.CheckRun
-	for _, run := range latestRuns {
-		deduplicated = append(deduplicated, run)
-	}
-	return deduplicated, nil
-}
-
-// ListAllStatuses retrieves all commit statuses for a ref handling pagination and deduplicating by context (keeping the latest status per context).
-func ListAllStatuses(ctx context.Context, client *githubv39.Client, owner, repo, ref string) ([]*githubv39.RepoStatus, error) {
-	var allStatuses []*githubv39.RepoStatus
-	opts := &githubv39.ListOptions{
-		PerPage: 100,
-	}
-	for {
-		statuses, resp, err := client.Repositories.ListStatuses(ctx, owner, repo, ref, opts)
-		if err != nil {
-			return nil, err
-		}
-		allStatuses = append(allStatuses, statuses...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	// Deduplicate statuses by context, keeping only the latest status (first encountered since ListStatuses is reverse-chronological)
-	seenContexts := make(map[string]bool)
-	var deduplicated []*githubv39.RepoStatus
-	for _, status := range allStatuses {
-		ctxName := status.GetContext()
-		if seenContexts[ctxName] {
-			continue
-		}
-		seenContexts[ctxName] = true
-		deduplicated = append(deduplicated, status)
-	}
-	return deduplicated, nil
 }
 
 // ExtractRelatedIssuesAndPRs parses the issue body and comments to find all referenced issue and PR numbers.

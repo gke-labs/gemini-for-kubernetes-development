@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -13,8 +12,11 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -71,9 +73,13 @@ type Watcher struct {
 	common.RootFlags
 	Flags
 
-	cfg              *config.FactoryConfig
-	triggerLabel     string
-	ghClient         *githubv39.Client
+	cfg          *config.FactoryConfig
+	triggerLabel string
+	ghClient     *githubv39.Client
+	// repoClient is the repository-bound view of ghClient, built once and
+	// shared so that subcontrollers take the owner and repo with the client
+	// rather than as three separate pieces of configuration.
+	repoClient       *github.Client
 	kubeClient       *clients.KubernetesClient
 	githubLogin      string
 	targetAssignee   string
@@ -83,8 +89,6 @@ type Watcher struct {
 	processedDir     string
 	processingLogDir string
 	processedLogDir  string
-	processedIssues  map[int]time.Time
-	processedPRs     map[int]prWatchState
 	queueMgr         *concurrency.TaskQueueManager
 	sandboxLocks     *concurrency.SandboxLockRegistry
 	entityCache      *concurrency.EntityStateCache
@@ -92,7 +96,8 @@ type Watcher struct {
 	dispatcher       *dispatcher.Dispatcher
 	reconciler       *sandbox.Reconciler
 	chores           *chores.Scheduler
-	state            *watchState
+	issueScanner     *issues.Scanner
+	prScanner        *prs.Scanner
 	timeoutChan      <-chan time.Time
 }
 
@@ -121,11 +126,9 @@ func (w *Watcher) initComponents() {
 		ProcessedLogDir:  w.processedLogDir,
 		DryRun:           w.DryRun,
 	})
+	w.repoClient = github.ForRepo(w.ghClient, w.Repo.Owner, w.Repo.Repo)
 	w.sandboxLocks = concurrency.NewSandboxLockRegistry()
 	w.entityCache = concurrency.NewEntityStateCache()
-	// Allocated before the subcontrollers below, because the reconciler's pause
-	// signal reads the shutdown flag out of it.
-	w.state = &watchState{}
 	w.sandboxes = sandbox.NewService(sandbox.ServiceConfig{
 		Namespace: w.Namespace,
 		Owner:     w.Repo.Owner,
@@ -137,6 +140,8 @@ func (w *Watcher) initComponents() {
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
+	w.issueScanner = w.newIssueScanner()
+	w.prScanner = w.newPRScanner()
 }
 
 // Wait blocks until all in-flight tasks have completed.
@@ -153,31 +158,4 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	}
 	w.initComponents()
 	return w
-}
-
-// prWatchState tracks the progress and state of automated tasks for a monitored pull request.
-type prWatchState struct {
-	// lastInvestigatedTime is the timestamp when a CI failure investigation was last queued or completed.
-	lastInvestigatedTime time.Time
-	// lastInvestigatedSHA is the head commit SHA when CI failures were last investigated.
-	lastInvestigatedSHA string
-	// lastCommentAddressedTime is the timestamp when PR comments were last addressed by the bot.
-	lastCommentAddressedTime time.Time
-	// lastCommentAddressedSHA is the head commit SHA when review comments were last addressed, preventing duplicate comment processing on the same commit.
-	lastCommentAddressedSHA string
-	// lastReviewedSHA is the commit SHA for which an automated PR review was last queued or completed.
-	lastReviewedSHA string
-	// lastIteratedSHA is the commit SHA for which a rebase/conflict-resolution task was last queued or completed.
-	lastIteratedSHA string
-	// lastIteratedTime is the timestamp when a rebase/conflict-resolution task was last queued or completed.
-	lastIteratedTime time.Time
-}
-
-// watchState tracks the cadence of the scan cycles and the shutdown signal.
-// Open pull request and issue state lives in the shared EntityStateCache.
-type watchState struct {
-	mu            sync.Mutex
-	lastPRScan    time.Time
-	lastIssueScan time.Time
-	shuttingDown  bool
 }
