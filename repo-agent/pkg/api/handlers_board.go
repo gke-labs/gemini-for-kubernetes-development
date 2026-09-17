@@ -571,7 +571,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		HTMLURL:   issue.GetHTMLURL(),
 		Stage:     stage,
 		Attention: attention,
-		ClaimedBy: claimedBy,
+		Assignee:  claimedBy,
 		PRURL:     prURL,
 		Labels:    labels,
 		Draft:     triageDraft,
@@ -701,9 +701,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		stage, attention = "open", attentionWaiting
 	}
 
-	// A review request is not a claim — nobody is executing anything yet.
-	claimedBy := ""
-
 	group := "review"
 	if authored {
 		group = "mine-pr"
@@ -718,7 +715,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		HTMLURL:   pr.GetHTMLURL(),
 		Stage:     stage,
 		Attention: attention,
-		ClaimedBy: claimedBy,
 		PRURL:     pr.GetHTMLURL(),
 		DraftPR:   pr.GetDraft(),
 		Fixes:     closingRefs(pr.GetBody()),

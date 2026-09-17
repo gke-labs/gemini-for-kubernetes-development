@@ -99,9 +99,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   // buttons are suppressed so failure is prevented, not discovered.
   const actions = [];
   if (item.type === 'issue') {
-    if (item.stage === 'untriaged') {
+    if (['untriaged', 'open'].includes(item.stage) && !item.draft) {
       // Triage is draft-only (discovery identity) — available even on
-      // read-only boards; runs only on this click or auto-triage.
+      // read-only boards and on issues assigned to you; runs only on this
+      // click or auto-triage.
       actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
     }
     if (item.stage === 'triage-ready' && !readOnly) {
@@ -184,7 +185,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       <td style={{ padding: '6px 8px' }}>
         {attention && <Chip text={attention.label} color={attention.color} bg={attention.bg} />}
       </td>
-      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.claimedBy}</td>
+      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
       <td style={{ padding: '6px 8px' }}>
         {item.sandbox && (
           <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
@@ -487,7 +488,7 @@ function Work({ onBack, namespace }) {
               <th style={{ padding: '6px 8px' }}>Title</th>
               <th style={{ padding: '6px 8px' }}>Stage</th>
               <th style={{ padding: '6px 8px' }}>Attention</th>
-              <th style={{ padding: '6px 8px' }}>Claimed by</th>
+              <th style={{ padding: '6px 8px' }}>Assignee</th>
               <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
               <th style={{ padding: '6px 8px' }}></th>

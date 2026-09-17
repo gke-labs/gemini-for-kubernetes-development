@@ -84,7 +84,7 @@ type WorkItem struct {
 	HTMLURL   string       `json:"htmlURL"`
 	Stage     string       `json:"stage"`
 	Attention string       `json:"attention,omitempty"` // needs-you | working | waiting
-	ClaimedBy string       `json:"claimedBy,omitempty"`
+	Assignee  string       `json:"assignee,omitempty"`
 	PRURL     string       `json:"prURL,omitempty"`
 	Labels    []string     `json:"labels,omitempty"`
 	Draft     string       `json:"draft,omitempty"`   // triage/review draft, when ready

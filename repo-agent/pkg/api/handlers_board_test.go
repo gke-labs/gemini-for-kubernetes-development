@@ -569,10 +569,10 @@ func TestGetBoardWorkReviewRequested(t *testing.T) {
 		byKey[item.Type+"-"+itoa(item.Number)] = item
 	}
 
-	if row := byKey["pr-70"]; row.Stage != "review-requested" || row.Attention != "needs-you" || row.ClaimedBy != "" {
+	if row := byKey["pr-70"]; row.Stage != "review-requested" || row.Attention != "needs-you" || row.Assignee != "" {
 		t.Errorf("fresh request row wrong: %+v", row)
 	}
-	if row := byKey["pr-71"]; row.Stage != "review-requested" || row.Attention != "waiting" || row.ClaimedBy != "" {
+	if row := byKey["pr-71"]; row.Stage != "review-requested" || row.Attention != "waiting" || row.Assignee != "" {
 		t.Errorf("fossil request row wrong: %+v", row)
 	}
 }
