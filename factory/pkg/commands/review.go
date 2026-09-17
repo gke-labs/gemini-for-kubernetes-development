@@ -300,8 +300,44 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	if rootFlags.Detached {
 		return nil
 	}
+	// The task state must reflect the WHOLE review including output
+	// parsing and GitHub posting: stamping Completed here used to leave a
+	// completed-looking sandbox when the post step later failed.
+	if err := finishReview(ctx, client, ghClient, kubeClient, pr, owner, repo, prNum, sandboxName, taskDir, publishPolicy); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Failed")
+		return err
+	}
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "review", "Completed")
+	return nil
+}
 
+// trimmedString trims agent-emitted whitespace; empty becomes nil.
+func trimmedString(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*s)
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+// sanitizedSide normalizes a review-comment side to GitHub's LEFT/RIGHT
+// enum; anything else (including whitespace-damaged values) is dropped
+// rather than rejecting the whole review.
+func sanitizedSide(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	v := strings.ToUpper(strings.TrimSpace(*s))
+	if v != "LEFT" && v != "RIGHT" {
+		return nil
+	}
+	return &v
+}
+
+func finishReview(ctx context.Context, client *envd.Client, ghClient *githubv39.Client, kubeClient *clients.KubernetesClient, pr *githubv39.PullRequest, owner, repo string, prNum int, sandboxName, taskDir, publishPolicy string) error {
 	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
 		Repo:     owner + "/" + repo,
 		TaskType: "review",
@@ -378,14 +414,16 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		if structuredOutput != nil && structuredOutput.Review != nil {
 			var comments []*githubv39.DraftReviewComment
 			for _, c := range structuredOutput.Review.Comments {
+				// LLM output is not whitespace-clean: GitHub rejects the
+				// whole review over "RIGHT\n" in an enum field.
 				comments = append(comments, &githubv39.DraftReviewComment{
-					Path:      c.Path,
+					Path:      trimmedString(c.Path),
 					Position:  c.Position,
 					Body:      c.Body,
 					Line:      c.Line,
-					Side:      c.Side,
+					Side:      sanitizedSide(c.Side),
 					StartLine: c.StartLine,
-					StartSide: c.StartSide,
+					StartSide: sanitizedSide(c.StartSide),
 				})
 			}
 			reviewRequest = &githubv39.PullRequestReviewRequest{
@@ -399,8 +437,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 				Event: reviewEvent,
 			}
 		}
-		_, _, err = ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest)
-		if err != nil {
+		if _, _, err := ghClient.PullRequests.CreateReview(ctx, owner, repo, prNum, reviewRequest); err != nil {
 			return fmt.Errorf("failed to create review on GitHub: %w", err)
 		}
 		if !isDraft {
