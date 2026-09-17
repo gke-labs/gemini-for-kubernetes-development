@@ -781,7 +781,11 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 				}
 				return
 			}
-		} else if time.Since(res.FinishedAt) < launchRetryBackoff {
+		}
+		// Error, or a success with nothing recognizable in its output:
+		// back off rather than hot-looping the agent (a broken harvest
+		// once re-ran a review nine times back to back).
+		if time.Since(res.FinishedAt) < launchRetryBackoff {
 			return
 		}
 	}
