@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import './App.css';
 import SandboxTerminal from './Terminal';
 
-export const formatQueueTimestamp = (ts) => {
-    if (!ts) return '-';
+export const getTimestampDetails = (ts) => {
+    if (!ts) return null;
     try {
         const d = new Date(ts);
-        if (isNaN(d.getTime())) return ts;
+        if (isNaN(d.getTime())) return null;
         const exact = d.toLocaleString();
         const diffMs = Date.now() - d.getTime();
         let rel = '';
@@ -31,15 +31,57 @@ export const formatQueueTimestamp = (ts) => {
         } else {
             rel = 'just now';
         }
-        return (
-            <div>
-                <div>{exact}</div>
-                {rel && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>{`(${rel})`}</div>}
-            </div>
-        );
+        return { exact, rel };
     } catch (e) {
-        return ts;
+        return null;
     }
+};
+
+export const formatQueueTimestamp = (ts) => {
+    if (!ts) return '-';
+    const details = getTimestampDetails(ts);
+    if (!details) return ts;
+    const { exact, rel } = details;
+    return (
+        <div>
+            <div>{exact}</div>
+            {rel && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>{`(${rel})`}</div>}
+        </div>
+    );
+};
+
+export const formatInlineTimestamp = (ts) => {
+    if (!ts) return '';
+    const details = getTimestampDetails(ts);
+    if (!details) return ts;
+    const { exact, rel } = details;
+    return rel ? `${exact} (${rel})` : exact;
+};
+
+export const sortTasksByTimestamp = (tasks) => {
+    if (!tasks || !Array.isArray(tasks)) return [];
+    return tasks
+        .filter(Boolean)
+        .map((task) => {
+            const ts = task?.metadata?.creationTimestamp;
+            let time = 0;
+            if (ts) {
+                const date = new Date(ts);
+                if (!isNaN(date.getTime())) {
+                    time = date.getTime();
+                }
+            }
+            return { task, time };
+        })
+        .sort((a, b) => {
+            if (b.time !== a.time) {
+                return b.time - a.time;
+            }
+            const nameA = a.task?.metadata?.name || '';
+            const nameB = b.task?.metadata?.name || '';
+            return nameA.localeCompare(nameB);
+        })
+        .map((item) => item.task);
 };
 
 export const formatTriggerReason = (reason) => {
@@ -62,6 +104,7 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [sandboxes, setSandboxes] = useState([]);
     const [activeSandbox, setActiveSandbox] = useState(null);
     const [tasks, setTasks] = useState([]);
+    const sortedTasks = useMemo(() => sortTasksByTimestamp(tasks), [tasks]);
     const [searchFilter, setSearchFilter] = useState('');
     
     const [logs, setLogs] = useState('');
@@ -1334,25 +1377,32 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                 </div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    {tasks.map((task) => {
-                                        const taskName = task.metadata?.name || 'unknown-task';
-                                        const taskType = task.spec?.taskType || task.spec?.type || taskName;
-                                        const state = task.status?.state || task.status?.taskState || 'Pending';
-                                        const exitCode = task.status?.exitCode;
-                                        const badgeColor = getStatusBadgeColor(state);
-                                        const logInfo = taskLogs[taskName];
+                                    {sortedTasks
+                                        .map((task) => {
+                                            const taskName = task.metadata?.name || 'unknown-task';
+                                            const taskType = task.spec?.taskType || task.spec?.type || taskName;
+                                            const state = task.status?.state || task.status?.taskState || 'Pending';
+                                            const exitCode = task.status?.exitCode;
+                                            const badgeColor = getStatusBadgeColor(state);
+                                            const logInfo = taskLogs[taskName];
+                                            const tsDetails = task.metadata?.creationTimestamp ? getTimestampDetails(task.metadata.creationTimestamp) : null;
 
-                                        return (
-                                            <div key={taskName} style={{ border: '1px solid var(--border-color)', borderRadius: '6px', backgroundColor: 'var(--bg-review-section)', overflow: 'hidden' }}>
-                                                <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                                                    <div>
-                                                        <span style={{ fontWeight: 'bold', fontSize: '1rem', color: 'var(--text-primary)' }}>{taskType}</span>
-                                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: '12px', fontFamily: 'monospace' }}>
-                                                            {taskName}
-                                                        </span>
-                                                    </div>
+                                            return (
+                                                <div key={taskName} style={{ border: '1px solid var(--border-color)', borderRadius: '6px', backgroundColor: 'var(--bg-review-section)', overflow: 'hidden' }}>
+                                                    <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                                                        <div>
+                                                            <span style={{ fontWeight: 'bold', fontSize: '1rem', color: 'var(--text-primary)' }}>{taskType}</span>
+                                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: '12px', fontFamily: 'monospace' }}>
+                                                                {taskName}
+                                                            </span>
+                                                            {tsDetails && (
+                                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '12px' }} title={tsDetails.exact}>
+                                                                    • {tsDetails.rel ? `${tsDetails.exact} (${tsDetails.rel})` : tsDetails.exact}
+                                                                </span>
+                                                            )}
+                                                        </div>
 
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                                         {exitCode !== undefined && exitCode !== null && (
                                                             <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
                                                                 Exit Code: <strong>{exitCode}</strong>
