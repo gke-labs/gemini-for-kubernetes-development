@@ -440,6 +440,8 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[
 			{"number": 10, "title": "assigned, being fixed", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
+			 "assignees": [{"login": "alice"}]},
+			{"number": 13, "title": "assigned, bot PR open", "html_url": "https://github.com/test/repo/issues/13", "updated_at": "2026-09-16T08:00:00Z",
 			 "assignees": [{"login": "alice"}]}
 		]`,
 		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": `[]`,
@@ -450,7 +452,9 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 			{"number": 50, "title": "my fix", "html_url": "https://github.com/test/repo/pull/50", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "alice"}, "draft": true, "body": "This change...\n\nFixes #10"},
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T11:00:00Z",
-			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
+			{"number": 60, "title": "bot fix for 13", "html_url": "https://github.com/test/repo/pull/60", "updated_at": "2026-09-16T07:00:00Z",
+			 "user": {"login": "hopper-coder-bot"}, "body": "This PR resolves issue #13.\n\nFixes #13"}
 		]`,
 	}
 
@@ -485,7 +489,18 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 	if row := byKey["issue-12"]; row.Group != "mine-issue" {
 		t.Errorf("issue-12 should be group mine-issue: %+v", row)
 	}
-	if len(work) != 3 {
-		t.Errorf("expected 3 rows after folding, got %d: %s", len(work), w.Body.String())
+
+	// A bot-authored PR with no involvement signals still surfaces (and
+	// swallows the issue) because it addresses board work.
+	if _, ok := byKey["issue-13"]; ok {
+		t.Errorf("issue-13 should be folded into bot PR 60: %s", w.Body.String())
+	}
+	pr60 := byKey["pr-60"]
+	if pr60.Group != "review" || len(pr60.Fixes) != 1 || pr60.Fixes[0] != 13 {
+		t.Errorf("pr-60 row wrong: %+v", pr60)
+	}
+
+	if len(work) != 4 {
+		t.Errorf("expected 4 rows after folding, got %d: %s", len(work), w.Body.String())
 	}
 }

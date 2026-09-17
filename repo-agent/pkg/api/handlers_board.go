@@ -316,7 +316,22 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, triggerLabel)
+		s.mergePRRow(items, sandboxes, pr, member, triggerLabel, false)
+	}
+
+	// A PR that addresses an issue on this board is board work even when
+	// nothing else selects it (e.g. a bot-authored fix): surface it for
+	// review so it can swallow the issue row below.
+	for _, pr := range prs {
+		if _, ok := items[fmt.Sprintf("pr-%d", pr.GetNumber())]; ok {
+			continue
+		}
+		for _, n := range closingRefs(pr.GetBody()) {
+			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
+				s.mergePRRow(items, sandboxes, pr, member, triggerLabel, true)
+				break
+			}
+		}
 	}
 
 	// Fold issues into the PR that addresses them: once a fix PR exists the
@@ -520,7 +535,10 @@ func closingRefs(body string) []int {
 	return refs
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string) {
+// mergePRRow adds a PR row when it involves the member (authored,
+// review-requested, trigger-labeled, or has a factory sandbox); force
+// includes it regardless (used for PRs that address an issue on the board).
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string, force bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -538,7 +556,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
 	labeled := triggerLabel != "" && hasLabel(pr.Labels, triggerLabel)
-	if sb == nil && !authored && !reviewRequested && !labeled {
+	if sb == nil && !authored && !reviewRequested && !labeled && !force {
 		return
 	}
 
