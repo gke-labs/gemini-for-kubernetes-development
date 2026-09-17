@@ -679,3 +679,47 @@ func TestKickoffFeedbackStages(t *testing.T) {
 		t.Errorf("provisioning PR: want review-starting/working, got %v", s)
 	}
 }
+
+// Maintainers see the whole review queue; uninvolved PRs list for them
+// (view only) while non-maintainers keep involvement-only.
+func TestMaintainerSeesFullReviewQueue(t *testing.T) {
+	prsJSON := `[
+		{"number": 300, "title": "someone elses PR", "html_url": "https://github.com/test/repo/pull/300", "updated_at": "2026-09-17T10:00:00Z",
+		 "user": {"login": "carol"}, "requested_reviewers": [{"login": "dave"}]}
+	]`
+	// Maintainer: repo permissions grant push.
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
+		"https://api.github.com/repos/test/repo":                               `{"permissions": {"push": true}}`,
+	}
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	found := false
+	for _, item := range work {
+		if item.Number == 300 && item.Group == "review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("maintainer should see uninvolved PR 300 in review: %s", w.Body.String())
+	}
+
+	// Non-maintainer (permission check 404s): involvement-only.
+	ghNo := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
+	}
+	_, r2, _ := boardTestServer(t, ghNo, boardCR())
+	w2 := httptest.NewRecorder()
+	r2.ServeHTTP(w2, req)
+	var work2 []models.WorkItem
+	_ = json.Unmarshal(w2.Body.Bytes(), &work2)
+	for _, item := range work2 {
+		if item.Number == 300 {
+			t.Fatalf("non-maintainer should not see uninvolved PR 300: %s", w2.Body.String())
+		}
+	}
+}
