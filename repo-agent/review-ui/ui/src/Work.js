@@ -25,12 +25,15 @@ const STAGE_LABEL = {
   'review-ready': 'Review ready',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
+  'triaging': 'Triaging…',
+  'untriaged': 'Untriaged',
 };
 
 // Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
 const GROUPS = [
   { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
-  { key: 'fix', label: 'Fix / Triage', hint: 'Incoming issues to triage or fix' },
+  { key: 'fix', label: 'Fix', hint: 'Issues assigned to you or trigger-labeled' },
+  { key: 'triage', label: 'Triage', hint: 'Repo-wide triage inbox (board intake.triageIssues)' },
   { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
   { key: 'mine-issue', label: 'My issues', hint: 'Issues you filed, waiting on others' },
 ];
@@ -73,7 +76,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag }) {
   };
   const actions = [];
   if (item.type === 'issue') {
-    if (['open', 'awaiting-go', 'queued'].includes(item.stage) && !item.sandbox) {
+    if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
       actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
@@ -338,7 +341,7 @@ function Work({ onBack, namespace }) {
           || (GROUPS.find(g => byGroup[g.key].length) || {}).key
           || 'review';
         const rows = byGroup[shown] || [];
-        const groupLabel = { review: 'REVIEW', fix: 'FIX', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
+        const groupLabel = { review: 'REVIEW', fix: 'FIX', triage: 'TRIAGE', 'mine-pr': 'MY PR', 'mine-issue': 'MY ISSUE' };
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>

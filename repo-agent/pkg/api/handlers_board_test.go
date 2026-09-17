@@ -504,3 +504,61 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 		t.Errorf("expected 4 rows after folding, got %d: %s", len(work), w.Body.String())
 	}
 }
+
+// The triage group: with intake.triageIssues on, every open issue (minus
+// excluded and trigger-labeled) gets a row — triage-ready when a draft
+// exists, untriaged otherwise. Rows claimed by fix/mine keep their group.
+func TestGetBoardWorkTriageGroup(t *testing.T) {
+	board := boardCR()
+	_ = unstructured.SetNestedField(board.Object, true, "spec", "intake", "triageIssues")
+	_ = unstructured.SetNestedStringSlice(board.Object, []string{"wontfix"}, "spec", "intake", "filters", "excludeLabels")
+
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":   `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+			{"number": 20, "title": "draft ready", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T10:00:00Z"},
+			{"number": 21, "title": "plain", "html_url": "https://github.com/test/repo/issues/21", "updated_at": "2026-09-16T09:00:00Z"},
+			{"number": 22, "title": "excluded", "html_url": "https://github.com/test/repo/issues/22", "updated_at": "2026-09-16T08:00:00Z",
+			 "labels": [{"name": "wontfix"}]},
+			{"number": 23, "title": "labeled routes to fix", "html_url": "https://github.com/test/repo/issues/23", "updated_at": "2026-09-16T07:00:00Z",
+			 "labels": [{"name": "agent"}]}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+	}
+	triageSandbox := sandboxCR("triage-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+
+	_, r, _ := boardTestServer(t, ghResponses, board, triageSandbox)
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	byKey := map[string]models.WorkItem{}
+	for _, item := range work {
+		byKey[item.Type+"-"+itoa(item.Number)] = item
+	}
+
+	if row := byKey["issue-20"]; row.Group != "triage" || row.Stage != "triage-ready" || row.Draft == "" {
+		t.Errorf("issue-20 row wrong: %+v", row)
+	}
+	if row := byKey["issue-21"]; row.Group != "triage" || row.Stage != "untriaged" {
+		t.Errorf("issue-21 row wrong: %+v", row)
+	}
+	if _, ok := byKey["issue-22"]; ok {
+		t.Errorf("excluded issue-22 should not appear: %s", w.Body.String())
+	}
+	// Trigger-labeled issues route through the labeled list (group fix), not triage.
+	if _, ok := byKey["issue-23"]; ok {
+		t.Errorf("issue-23 is trigger-labeled and not in the labeled response; it must not land in triage: %s", w.Body.String())
+	}
+}
