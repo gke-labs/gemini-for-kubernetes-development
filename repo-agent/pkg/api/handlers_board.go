@@ -630,14 +630,20 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 
 	stage, attention := "open", ""
 	switch {
-	case reviewState == "submitted":
+	case state == "Running":
+		// An active run always wins — stale reviewState from a previous
+		// cycle must not mask a re-review in flight.
+		stage, attention = "reviewing", attentionWorking
+	case reviewState == "submitted" && !reviewRequested:
 		stage = "review-submitted"
+	// A review request on an already-submitted row is GitHub's native
+	// "please review again" (submitting clears you from
+	// requested_reviewers; a re-request re-adds you) — fall through to the
+	// review-requested handling below.
 	case reviewState == "pending":
 		// The agent posted a pending review under the member's identity;
 		// GitHub is where they finalize it.
 		stage, attention = "review-pending", attentionNeedsYou
-	case state == "Running":
-		stage, attention = "reviewing", attentionWorking
 	case labeled && personalBoard:
 		// Trigger-labeled on an owner-driven board: the controller will
 		// launch a review — genuinely queued for the agent.

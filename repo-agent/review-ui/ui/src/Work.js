@@ -132,6 +132,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // abandon it to start over.
       actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
       actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
+    } else if (item.stage === 'review-submitted') {
+      // Submitting freed your pending-review slot; a voluntary re-run is
+      // always available (re-requested reviews surface as needs-you).
+      actions.push({ label: 'Review again', path: `prs/${item.number}/review`, title: 'Run a fresh review as you — posts a new pending review on GitHub' });
     }
   }
 
