@@ -172,13 +172,13 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
   return (
     <React.Fragment>
     <tr>
-      <td className="work-num" style={{ padding: '6px 8px' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
+      <td className="work-num" style={{ padding: '6px 4px 6px 8px', width: '1%' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
         {groupTag && (
           <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={GROUPS.find(g => g.key === group)?.hint} />
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
-      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{ageOf(item.updatedAt)}</td>
+      <td style={{ padding: '6px 6px 6px 4px', fontSize: 'small', color: 'var(--text-secondary)', whiteSpace: 'nowrap', width: '1%' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {item.assignee && (
           <span style={{ marginRight: '6px' }}>
@@ -519,8 +519,8 @@ function Work({ onBack, namespace }) {
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
-              <th style={{ padding: '6px 8px' }}>#</th>
-              <th style={{ padding: '6px 8px' }}>Age</th>
+              <th style={{ padding: '6px 4px 6px 8px', width: '1%' }}>#</th>
+              <th style={{ padding: '6px 6px 6px 4px', width: '1%' }}>Age</th>
               <th style={{ padding: '6px 8px' }}>Title</th>
               <th style={{ padding: '6px 8px' }}>Status</th>
               <th style={{ padding: '6px 8px' }}>Agent</th>
