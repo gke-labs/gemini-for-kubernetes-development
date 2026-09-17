@@ -245,10 +245,8 @@ input:checked + .slider:before {
 
 /* Each group underlines (and labels) in its own accent when active. */
 .group-tab.g-review.active { color: var(--group-review); border-bottom-color: var(--group-review); }
-.group-tab.g-fix.active { color: var(--group-fix); border-bottom-color: var(--group-fix); }
-.group-tab.g-triage.active { color: var(--group-triage); border-bottom-color: var(--group-triage); }
+.group-tab.g-issues.active { color: var(--group-fix); border-bottom-color: var(--group-fix); }
 .group-tab.g-mine-pr.active { color: var(--group-mine-pr); border-bottom-color: var(--group-mine-pr); }
-.group-tab.g-mine-issue.active { color: var(--group-mine-issue); border-bottom-color: var(--group-mine-issue); }
 
 /* UP NEXT: warm tinted card with an urgency accent bar. */
 .up-next-card {

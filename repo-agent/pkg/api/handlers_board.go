@@ -251,8 +251,6 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
 		return
 	}
-	triggerLabel, _, _ := unstructured.NestedString(board.Object, "spec", "triggers", "label")
-
 	token, err := s.memberToken(ctx, namespace)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub token unavailable", "details": err.Error()})
@@ -281,37 +279,22 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	loadSandboxNamespace(board.GetNamespace())
 	loadSandboxNamespace(namespace)
 
-	// Mirror of the controller's personal-board test: a board whose
-	// namespace holds a github-pat is owner-driven — labeled PRs really do
-	// auto-queue there. On shared boards a label alone launches nothing.
-	personalBoard := false
-	if _, err := s.K8sManager.Clientset.CoreV1().Secrets(board.GetNamespace()).Get(ctx, "github-pat", v1.GetOptions{}); err == nil {
-		personalBoard = true
-	}
-
 	items := map[string]*models.WorkItem{}
 
-	// Incoming issues (fix/triage): assigned to the member, plus
-	// trigger-labeled ones. Issues the member filed land in "mine-issue"
-	// unless they already qualify as incoming work.
-	collect := func(issues []*github.Issue, group string) {
+	// One issues surface: assigned to you, filed by you, and the unclaimed
+	// repo-wide remainder all land in the single "issues" group — ownership
+	// shows on the row (Claimed by, labels), actions follow row state.
+	collect := func(issues []*github.Issue) {
 		for _, issue := range issues {
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, triggerLabel, group)
+			s.mergeIssueRow(items, sandboxes, issue, repo, member)
 		}
 	}
 	assigned, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member})
 	if err != nil {
 		log.Info("failed to list assigned issues", "err", err)
-	}
-	var labeled []*github.Issue
-	if triggerLabel != "" {
-		labeled, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Labels: []string{triggerLabel}})
-		if err != nil {
-			log.Info("failed to list labeled issues", "err", err)
-		}
 	}
 	created, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member})
 	if err != nil {
@@ -319,14 +302,13 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	}
 	// Load claimed executors' namespaces before merging rows so their
 	// sandboxes surface on the shared board.
-	for _, issue := range append(append([]*github.Issue{}, assigned...), labeled...) {
+	for _, issue := range assigned {
 		for _, a := range issue.Assignees {
 			loadSandboxNamespace(strings.ToLower(a.GetLogin()))
 		}
 	}
-	collect(assigned, "fix")
-	collect(labeled, "fix")
-	collect(created, "mine-issue")
+	collect(assigned)
+	collect(created)
 
 	// Repo-wide triage inbox: listing is free (one issues call), so it is
 	// always shown — the agent only RUNS on a member's Triage click or the
@@ -342,13 +324,14 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			if issue.IsPullRequest() {
 				continue
 			}
-			if triggerLabel != "" && hasLabel(issue.Labels, triggerLabel) {
+			// Assigned to anyone = owned, not awaiting triage.
+			if len(issue.Assignees) > 0 {
 				continue
 			}
 			if hasAnyLabel(issue.Labels, excludeLabels) {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, triggerLabel, "triage")
+			s.mergeIssueRow(items, sandboxes, issue, repo, member)
 		}
 	}
 
@@ -359,7 +342,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, triggerLabel, personalBoard, false)
+		s.mergePRRow(items, sandboxes, pr, member, false)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -371,7 +354,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, triggerLabel, personalBoard, true)
+				s.mergePRRow(items, sandboxes, pr, member, true)
 				break
 			}
 		}
@@ -407,8 +390,8 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
 		requests := map[string]string{}
 		if err := json.Unmarshal([]byte(raw), &requests); err == nil {
-			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-queued": true, "needs-reviewer": true, "review-submitted": true}
-			preRunIssue := map[string]bool{"open": true, "awaiting-go": true, "queued": true, "untriaged": true, "triage-ready": true}
+			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
+			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true}
 			for key := range requests {
 				if n, ok := strings.CutPrefix(key, "review-"); ok {
 					if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
@@ -512,24 +495,21 @@ func hasAnyLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member, triggerLabel, group string) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
 	}
 
-	assignedToMember := false
 	claimedBy := ""
 	for _, a := range issue.Assignees {
 		if claimedBy == "" {
 			claimedBy = a.GetLogin()
 		}
 		if strings.EqualFold(a.GetLogin(), member) {
-			assignedToMember = true
 			claimedBy = a.GetLogin()
 		}
 	}
-	labeled := triggerLabel != "" && hasLabel(issue.Labels, triggerLabel)
 
 	sb := sandboxes[fmt.Sprintf("fix-%s-%d", repo, issue.GetNumber())]
 	state := ""
@@ -561,12 +541,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		stage, attention = "pr-open", attentionNeedsYou
 	case state == "Completed":
 		stage, attention = "fix-done", attentionNeedsYou
-	case labeled && assignedToMember:
-		stage, attention = "queued", attentionWaiting
-	case labeled && !assignedToMember:
-		// Executor-consent rule: labeled but not consented — awaiting the
-		// member's go.
-		stage, attention = "awaiting-go", attentionNeedsYou
 	case triageDraft != "" && triagePublished:
 		stage = "triaged"
 	case triageDraft != "":
@@ -576,7 +550,8 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	case triageSB != nil && triageDraft == "":
 		// Triage sandbox provisioning (no task state yet).
 		stage, attention = "triaging", attentionWorking
-	case group == "triage":
+	case claimedBy == "":
+		// Unclaimed and untouched: the triage inbox state.
 		stage = "untriaged"
 	}
 	if sb == nil && triageSB != nil && stage == "triaging" {
@@ -584,9 +559,13 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		sb = triageSB
 	}
 
+	var labels []string
+	for _, l := range issue.Labels {
+		labels = append(labels, l.GetName())
+	}
 	items[key] = &models.WorkItem{
 		Type:      "issue",
-		Group:     group,
+		Group:     "issues",
 		Number:    issue.GetNumber(),
 		Title:     issue.GetTitle(),
 		HTMLURL:   issue.GetHTMLURL(),
@@ -594,6 +573,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Attention: attention,
 		ClaimedBy: claimedBy,
 		PRURL:     prURL,
+		Labels:    labels,
 		Draft:     triageDraft,
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
@@ -637,7 +617,7 @@ func closingRefs(body string) []int {
 // mergePRRow adds a PR row when it involves the member (authored,
 // review-requested, trigger-labeled, or has a factory sandbox); force
 // includes it regardless (used for PRs that address an issue on the board).
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member, triggerLabel string, personalBoard, force bool) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, force bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -654,8 +634,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
-	labeled := triggerLabel != "" && hasLabel(pr.Labels, triggerLabel)
-	if sb == nil && !authored && !reviewRequested && !labeled && !force {
+	// The trigger label is automation-only: it never selects rows for the
+	// view. PRs appear through involvement (authored / review-requested),
+	// an existing sandbox, or an issue-fix link.
+	if sb == nil && !authored && !reviewRequested && !force {
 		return
 	}
 
@@ -707,15 +689,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// The agent posted a pending review under the member's identity;
 		// GitHub is where they finalize it.
 		stage, attention = "review-pending", attentionNeedsYou
-	case labeled && personalBoard:
-		// Trigger-labeled on an owner-driven board: the controller will
-		// launch a review — genuinely queued for the agent.
-		stage, attention = "review-queued", attentionWaiting
-	case labeled:
-		// Shared board: a label names nobody and launches nothing —
-		// a member's click (or a review request to an opted-in member)
-		// is what makes it run.
-		stage, attention = "needs-reviewer", attentionNeedsYou
 	case reviewRequested:
 		// A bare GitHub review request: nothing is queued, a human is
 		// waiting on the member. Fresh requests demand attention; fossils
