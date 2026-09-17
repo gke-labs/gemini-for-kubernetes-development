@@ -234,6 +234,7 @@ var DefaultModels = []string{
 	"gemini-3.5-flash",
 	"gemini-3.1-pro-preview",
 	"gemini-2.5-pro",
+	"gemini-2.5-flash",
 }
 
 // GetAvailableModels returns the list of models (from the given candidates) whose quota is not exceeded for the key, loading the quota list exactly once.
