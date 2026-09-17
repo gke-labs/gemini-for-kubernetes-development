@@ -327,8 +327,13 @@ in-progress draft); sandbox lifecycle actions are owner-only at first
   sandbox{name, replicas, taskState}, updatedAt}`.
 - `POST /api/board/:name/issues/:n/fix` — assign + label/mailbox per mode.
 - `POST /api/board/:name/prs/:n/review` — self-review-request + kickoff.
-- `POST /api/board/:name/prs/:n/publish|merge|promote` — human-gated writes
-  under the clicker's token (draft review publish, merge, draft-PR promote).
+  A clicked review runs in the clicker's namespace under their identity
+  with `factory pr review --publish draft`: the pending review lands on
+  GitHub (visible only to its author) and the member finalizes it there —
+  no in-app publish step. Intake/labeled reviews stay draft-only under the
+  discovery identity.
+- `POST /api/board/:name/prs/:n/merge|promote` — human-gated writes
+  under the clicker's token (merge, draft-PR promote).
 - `POST /api/board/:name/issues/:n/refix` — re-run (annotation, as today).
 - `PUT  /api/board/:name/settings` — per-member opt-ins (auto-fix, etc.).
 - Sandbox subresources (pause/resume/logs/terminal) reuse today's endpoints,

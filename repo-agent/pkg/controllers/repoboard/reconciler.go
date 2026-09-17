@@ -63,6 +63,15 @@ const (
 	AnnotationPreventAutoPause  = "sandbox.gemini.google.com/prevent-auto-shutdown"
 	AnnotationUnpausedAt        = "sandbox.gemini.google.com/unpaused-at"
 	AnnotationBoard             = "board.gemini.google.com/board"
+	// AnnotationReviewState tracks GitHub-side review lifecycle: "pending"
+	// (posted as the executor's pending review, finalize on GitHub) or
+	// "submitted" (the API published a draft as a pending review).
+	AnnotationReviewState = "reviewState"
+	// AnnotationReviewAbandoned is stamped by the API when the member
+	// deletes their pending review on GitHub; invocation results older
+	// than this must not be re-recorded as pending.
+	AnnotationReviewAbandoned   = "review.gemini.google.com/abandoned-at"
+	reviewStatePending          = "pending"
 	agentStateReviewReady       = "review ready"
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
@@ -101,6 +110,17 @@ type fixPlan struct {
 	auto bool
 }
 
+// reviewPlan is one review to ensure. With an executor (a member's click),
+// the review runs in their namespace under their identity with
+// --publish draft: the pending review lands on GitHub, visible only to
+// them, finalized natively there. Without an executor (trigger label or
+// intake), it runs draft-only in the board namespace under the discovery
+// identity — nothing is written to GitHub.
+type reviewPlan struct {
+	pr       int
+	executor string
+}
+
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -130,20 +150,25 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Build the work plan from GitHub (remote tier) and the mailbox
 	// (manual tier), applying the executor-consent rule.
 	var fixes []fixPlan
-	var reviews []int
+	var reviews []reviewPlan
 	if board.Spec.Triggers.Label != "" {
 		f, rv, err := r.discoverLabeled(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "trigger-label discovery failed")
 		}
-		fixes, reviews = f, rv
+		fixes = f
+		for _, pr := range rv {
+			reviews = append(reviews, reviewPlan{pr: pr})
+		}
 	}
 	if board.Spec.Intake.DraftReviews {
 		rv, err := r.discoverIntakePRs(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "draft-review intake discovery failed")
 		}
-		reviews = append(reviews, rv...)
+		for _, pr := range rv {
+			reviews = append(reviews, reviewPlan{pr: pr})
+		}
 	}
 	var triageCandidates []*github.Issue
 	if board.Spec.Intake.TriageIssues {
@@ -177,6 +202,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, plan := range fixes {
 		namespaces[plan.executor] = true
 	}
+	for _, plan := range reviews {
+		if plan.executor != "" {
+			namespaces[plan.executor] = true
+		}
+	}
 	if err := r.loadSandboxes(ctx, work, namespaces); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -184,8 +214,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, plan := range fixes {
 		r.ensureFix(ctx, work, plan)
 	}
-	for _, pr := range dedupeInts(reviews) {
-		r.ensureReview(ctx, work, pr)
+	for _, plan := range dedupeReviews(reviews) {
+		r.ensureReview(ctx, work, plan)
 	}
 	for _, issue := range triageCandidates {
 		r.ensureTriage(ctx, work, issue)
@@ -500,7 +530,7 @@ func latestLabelerOf(ctx context.Context, ghClient *github.Client, work *workSta
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []int) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
 		return nil, nil
@@ -510,7 +540,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []int) {
 		return nil, nil
 	}
 	var fixes []fixPlan
-	var reviews []int
+	var reviews []reviewPlan
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -519,11 +549,34 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []int) {
 			}
 		case strings.HasPrefix(key, "review-"):
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "review-")); err == nil {
-				reviews = append(reviews, n)
+				reviews = append(reviews, reviewPlan{pr: n, executor: member})
 			}
 		}
 	}
 	return fixes, reviews
+}
+
+// dedupeReviews keeps one plan per PR, preferring a consented executor
+// (member click) over an anonymous discovery plan.
+func dedupeReviews(in []reviewPlan) []reviewPlan {
+	byPR := map[int]reviewPlan{}
+	var order []int
+	for _, plan := range in {
+		existing, seen := byPR[plan.pr]
+		if !seen {
+			order = append(order, plan.pr)
+			byPR[plan.pr] = plan
+			continue
+		}
+		if existing.executor == "" && plan.executor != "" {
+			byPR[plan.pr] = plan
+		}
+	}
+	out := make([]reviewPlan, 0, len(order))
+	for _, pr := range order {
+		out = append(out, byPR[pr])
+	}
+	return out
 }
 
 func (r *Reconciler) filterOnboarded(ctx context.Context, logger interface{ Info(string, ...interface{}) }, fixes []fixPlan) []fixPlan {
@@ -637,27 +690,59 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 // ensureReview launches (or harvests) a draft review. Drafts are
 // unattributed prep: they run in the board namespace under the discovery
 // identity and write nothing to GitHub.
-func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) {
+func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan reviewPlan) {
 	logger := log.FromContext(ctx)
-	key := fmt.Sprintf("%s/review-pr-%d", work.board.Namespace, pr)
 
-	sb := work.findPRSandbox(pr)
-	draft := ""
-	if sb != nil {
-		draft = sb.GetAnnotations()[AnnotationAgentDraft]
+	// Executor reviews (a member's click) run in that member's namespace
+	// under their identity and publish a pending review on GitHub — only
+	// its author can see or finalize it. Discovery reviews stay draft-only
+	// under the discovery identity.
+	namespace := work.board.Namespace
+	token := work.discToken
+	publish := "no"
+	if plan.executor != "" {
+		t, err := r.executorToken(ctx, plan.executor)
+		if err != nil {
+			logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
+			return
+		}
+		namespace, token, publish = plan.executor, t, "draft"
+		if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
+			logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
+			return
+		}
 	}
-	if draft != "" && !rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt) {
+	key := fmt.Sprintf("%s/review-pr-%d", namespace, plan.pr)
+
+	sb := work.findPRSandbox(plan.pr)
+	annotations := map[string]string{}
+	if sb != nil && sb.GetAnnotations() != nil {
+		annotations = sb.GetAnnotations()
+	}
+	// An abandoned review is terminal too: relaunch only on a fresh
+	// re-review marker (a new click stamps one).
+	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
+		annotations[AnnotationReviewAbandoned] != ""
+	if done && !rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt) {
 		return
 	}
 	if r.Factory.IsRunning(key) {
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok {
+	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
 		if res.Err == nil {
+			if publish == "draft" && sb != nil {
+				// The pending review is already on GitHub; record that so
+				// the board points the member there.
+				if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
+					logger.Error(err, "unable to mark review pending", "pr", plan.pr)
+				}
+				return
+			}
 			if yaml := factorycli.ExtractReviewYAML(res.Output); yaml != "" && sb != nil {
 				if err := r.storeDraft(ctx, sb, work.board.Name, yaml); err != nil {
-					logger.Error(err, "unable to store review draft", "pr", pr)
+					logger.Error(err, "unable to store review draft", "pr", plan.pr)
 				}
 				return
 			}
@@ -670,13 +755,14 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) 
 		return
 	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
-		Namespace:         work.board.Namespace,
-		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, pr),
+		Namespace:         namespace,
+		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
-		GithubToken:       work.discToken,
+		GithubToken:       token,
+		Publish:           publish,
 	}) {
-		logger.Info("launched factory review", "pr", pr, "board", work.board.Name)
+		logger.Info("launched factory review", "pr", plan.pr, "board", work.board.Name, "namespace", namespace, "publish", publish)
 	}
 }
 
@@ -686,9 +772,6 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, pr int) 
 // unrequested review launched on it.
 func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 	for _, sb := range work.sandboxes {
-		if sb.GetNamespace() != work.board.Namespace {
-			continue
-		}
 		prStr := sb.GetLabels()[factorycli.LabelPR]
 		if prStr == "" {
 			continue
@@ -700,15 +783,37 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		if !reviewish && !rerun {
 			continue
 		}
-		if annotations[AnnotationAgentDraft] != "" && !rerun {
+		done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
+			annotations[AnnotationReviewAbandoned] != ""
+		if done && !rerun {
 			continue
 		}
 		pr, err := strconv.Atoi(prStr)
 		if err != nil {
 			continue
 		}
-		r.ensureReview(ctx, work, pr)
+		// A sandbox outside the board namespace belongs to the executor
+		// whose namespace hosts it — resume it as their review.
+		executor := ""
+		if sb.GetNamespace() != work.board.Namespace {
+			executor = sb.GetNamespace()
+		}
+		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: executor})
 	}
+}
+
+// markReviewPending records that the review was posted as a pending review
+// on GitHub under the executor's identity — the member finalizes it there.
+func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Unstructured, boardName string) error {
+	annotations := sb.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[AnnotationReviewState] = reviewStatePending
+	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
+	annotations[AnnotationBoard] = boardName
+	sb.SetAnnotations(annotations)
+	return r.Update(ctx, sb)
 }
 
 // storeDraft stamps the draft and board decoration onto a factory sandbox.
@@ -892,16 +997,19 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	}
 }
 
-func dedupeInts(in []int) []int {
-	seen := map[int]bool{}
-	out := in[:0]
-	for _, n := range in {
-		if !seen[n] {
-			seen[n] = true
-			out = append(out, n)
+// resultSuperseded reports whether a remembered invocation result predates a
+// member action (abandon or re-review request) and must not be re-recorded.
+func resultSuperseded(sb *unstructured.Unstructured, res factorycli.Result) bool {
+	if sb == nil {
+		return false
+	}
+	annotations := sb.GetAnnotations()
+	for _, key := range []string{AnnotationReviewAbandoned, AnnotationRereviewRequested} {
+		if at, err := time.Parse(time.RFC3339, annotations[key]); err == nil && res.FinishedAt.Before(at) {
+			return true
 		}
 	}
-	return out
+	return false
 }
 
 func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey string) bool {

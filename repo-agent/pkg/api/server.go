@@ -57,10 +57,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/board/:board/issues/:id/fix", s.kickoffFix)
 		api.POST("/board/:board/prs/:id/review", s.kickoffReview)
 		api.POST("/board/:board/issues/:id/rerun", s.rerunBoardIssue)
-		api.POST("/board/:board/prs/:id/rerun", s.rerunBoardPR)
-		api.POST("/board/:board/prs/:id/publish", s.publishBoardReview)
 		api.POST("/board/:board/prs/:id/promote", s.promoteBoardPR)
-		api.POST("/board/:board/prs/:id/merge", s.mergeBoardPR)
+		api.POST("/board/:board/prs/:id/abandon", s.abandonBoardReview)
 
 		api.POST("/feedback", s.submitFeedback)
 		api.GET("/proxy", s.proxy)

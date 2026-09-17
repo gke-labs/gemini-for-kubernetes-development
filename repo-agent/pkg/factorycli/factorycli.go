@@ -90,6 +90,11 @@ type ReviewOptions struct {
 	WorkspaceDiskSize string
 	GithubToken       string
 	Timeout           time.Duration
+	// Publish is factory's --publish policy. "no" (default) prints the
+	// review between CODE REVIEW banners for draft harvesting; "draft"
+	// posts a pending review on GitHub under the invoking identity (only
+	// visible to that identity — use the consenting member's token).
+	Publish string
 }
 
 // PRWatchOptions are the inputs for a `factory pr watch` invocation, the
@@ -207,12 +212,14 @@ func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	if timeout <= 0 {
 		timeout = 45 * time.Minute
 	}
+	publish := opts.Publish
+	if publish == "" {
+		publish = "no"
+	}
 	args := []string{
 		"pr", "review",
 		"--pr-url", opts.PRURL,
-		// Draft-first flow: the human publishes via the repo-agent API, so
-		// factory only produces the review (printed on stdout).
-		"--publish", "no",
+		"--publish", publish,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",

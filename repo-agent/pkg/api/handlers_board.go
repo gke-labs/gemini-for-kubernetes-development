@@ -31,7 +31,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
-	yamlv3 "go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -71,6 +70,7 @@ const (
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
 	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
+	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 )
 
 // nowRFC3339 timestamps re-run request annotations.
@@ -626,6 +626,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	switch {
 	case reviewState == "submitted":
 		stage = "review-submitted"
+	case reviewState == "pending":
+		// The agent posted a pending review under the member's identity;
+		// GitHub is where they finalize it.
+		stage, attention = "review-pending", attentionNeedsYou
 	case draft != "":
 		stage, attention = "review-ready", attentionNeedsYou
 	case state == "Running":
@@ -738,6 +742,24 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		log.Info("member token unavailable; mailbox-only kickoff", "err", err)
 	}
 
+	// A fresh review consent also stamps the re-review marker on any
+	// existing sandbox for this PR, so a previously finished (or
+	// abandoned) review relaunches instead of staying terminal.
+	if kind == "pr" {
+		prStr := strconv.Itoa(number)
+		for _, ns := range []string{namespace, board.GetNamespace()} {
+			sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+			if err != nil {
+				continue
+			}
+			for _, sb := range sandboxes {
+				if sb.GetLabels()[labelFactoryPR] == prStr {
+					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoRereviewRequest, nowRFC3339())
+				}
+			}
+		}
+	}
+
 	// Authoritative mailbox request; the controller consumes and clears it
 	// once the sandbox exists.
 	reqKey := fmt.Sprintf("fix-%d", number)
@@ -763,12 +785,10 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	c.Status(http.StatusOK)
 }
 
-func (s *Server) rerunBoardIssue(c *gin.Context) { s.rerunBoardWork(c, "issues") }
-func (s *Server) rerunBoardPR(c *gin.Context)    { s.rerunBoardWork(c, "prs") }
-
-// rerunBoardWork marks a finished fix/review for re-run via the sandbox
-// annotations the controller honors.
-func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
+// rerunBoardIssue marks a finished fix for re-run via the sandbox
+// annotation the controller honors. (Reviews have no rerun endpoint: the
+// Review kickoff stamps the re-review marker itself.)
+func (s *Server) rerunBoardIssue(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
@@ -787,40 +807,17 @@ func (s *Server) rerunBoardWork(c *gin.Context, kind string) {
 	}
 
 	// Fix sandboxes live in the executor's namespace (session user for
-	// their own reruns); review sandboxes live in the board namespace.
-	var sandboxNS, sandboxName, annotation string
-	switch kind {
-	case "issues":
-		annotation = annoRefixRequest
-		name := fmt.Sprintf("fix-%s-%s", repo, number)
-		for _, ns := range []string{namespace, board.GetNamespace()} {
-			if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
-				if _, ok := sandboxes[name]; ok {
-					sandboxNS, sandboxName = ns, name
-					break
-				}
-			}
-		}
-	case "prs":
-		annotation = annoRereviewRequest
-		for _, ns := range []string{board.GetNamespace(), namespace} {
-			sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-			if err != nil {
-				continue
-			}
-			for name, sb := range sandboxes {
-				if sb.GetLabels()["factory.gemini.google.com/pr"] == number {
-					sandboxNS, sandboxName = ns, name
-					break
-				}
-			}
-			if sandboxName != "" {
+	// their own reruns).
+	var sandboxNS, sandboxName string
+	annotation := annoRefixRequest
+	name := fmt.Sprintf("fix-%s-%s", repo, number)
+	for _, ns := range []string{namespace, board.GetNamespace()} {
+		if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
+			if _, ok := sandboxes[name]; ok {
+				sandboxNS, sandboxName = ns, name
 				break
 			}
 		}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be issues or prs"})
-		return
 	}
 	if sandboxName == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no sandbox for this item yet"})
@@ -987,68 +984,6 @@ func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructur
 	return ctx, board, owner, repo, token, number, true
 }
 
-// publishBoardReview posts the stored (or payload-overridden) review draft
-// to GitHub as a pending review under the clicker's token.
-func (s *Server) publishBoardReview(c *gin.Context) {
-	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	var payload struct {
-		Review string `json:"review"`
-	}
-	_ = c.ShouldBindJSON(&payload)
-
-	// Resolve the review sandbox holding the draft.
-	var draftSB *unstructured.Unstructured
-	prStr := strconv.Itoa(number)
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		for _, sb := range sandboxes {
-			if sb.GetLabels()["factory.gemini.google.com/pr"] == prStr && sb.GetAnnotations()["agentDraft"] != "" {
-				draftSB = sb
-				break
-			}
-		}
-		if draftSB != nil {
-			break
-		}
-	}
-
-	draft := payload.Review
-	if draft == "" && draftSB != nil {
-		draft = draftSB.GetAnnotations()["agentDraft"]
-	}
-	if draft == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no review draft to publish"})
-		return
-	}
-
-	agentOutput := &models.ReviewAgentOutput{}
-	reviewRequest := &github.PullRequestReviewRequest{}
-	if err := yamlv3.Unmarshal([]byte(draft), agentOutput); err != nil || agentOutput.Review == nil {
-		reviewRequest.Body = github.String(draft)
-	} else {
-		reviewRequest = agentOutput.Review.ToGitHubReviewRequest()
-	}
-	reviewRequest.Event = nil // pending (draft) review; the human finalizes on GitHub
-
-	gh := githubClientForToken(ctx, token)
-	if _, _, err := gh.PullRequests.CreateReview(ctx, owner, repo, number, reviewRequest); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to publish review", "details": err.Error()})
-		return
-	}
-	if draftSB != nil {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), "reviewState", "submitted"); err == nil {
-			_ = s.K8sManager.ScaledownSandboxByName(ctx, draftSB.GetNamespace(), draftSB.GetName())
-		}
-	}
-	c.Status(http.StatusOK)
-}
-
 // promoteBoardPR marks a draft PR ready for review (GraphQL — the REST API
 // cannot un-draft) under the clicker's token.
 func (s *Server) promoteBoardPR(c *gin.Context) {
@@ -1073,19 +1008,53 @@ func (s *Server) promoteBoardPR(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// mergeBoardPR merges under the clicker's token; GitHub branch protection
-// is the enforcement.
-func (s *Server) mergeBoardPR(c *gin.Context) {
-	ctx, _, owner, repo, token, number, ok := s.boardWriteContext(c)
+// abandonBoardReview deletes the clicker's pending review on GitHub (only
+// one pending review may exist per user, so this is how a bad agent review
+// is discarded) and clears the board's memory of the run.
+func (s *Server) abandonBoardReview(c *gin.Context) {
+	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
 	if !ok {
 		return
 	}
+
 	gh := githubClientForToken(ctx, token)
-	if _, _, err := gh.PullRequests.Merge(ctx, owner, repo, number, "", &github.PullRequestOptions{MergeMethod: "squash"}); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Merge failed", "details": err.Error()})
+	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, number, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list reviews", "details": err.Error()})
 		return
 	}
-	c.Status(http.StatusOK)
+	deleted := false
+	for _, review := range reviews {
+		// PENDING reviews are only visible to their author — any returned
+		// here belongs to the clicker.
+		if strings.EqualFold(review.GetState(), "PENDING") {
+			if _, _, err := gh.PullRequests.DeletePendingReview(ctx, owner, repo, number, review.GetID()); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete pending review", "details": err.Error()})
+				return
+			}
+			deleted = true
+		}
+	}
+
+	// Clear the sandbox's review state so the row returns to its plain
+	// stage; the abandoned-at marker stops the controller from re-marking
+	// the stale invocation result as pending.
+	prStr := strconv.Itoa(number)
+	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		for _, sb := range sandboxes {
+			if sb.GetLabels()[labelFactoryPR] != prStr {
+				continue
+			}
+			_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "reviewState", "")
+			_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
+			_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }
 
 // markPRReadyForReview is injectable for tests.

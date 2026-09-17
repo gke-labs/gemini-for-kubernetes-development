@@ -24,6 +24,7 @@ const STAGE_LABEL = {
   'review-queued': 'Review queued',
   'review-requested': 'Review requested',
   'review-ready': 'Review ready',
+  'review-pending': 'Pending on GitHub',
   'review-submitted': 'Review submitted',
   'triage-ready': 'Triage ready',
   'triaging': 'Triaging…',
@@ -100,38 +101,37 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // No fix pipeline without push: the agent's PR could not land.
     } else if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
-    } else if (['fix-failed', 'fix-done'].includes(item.stage)) {
-      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
+    } else if (item.stage === 'fix-failed') {
+      // Nothing shipped, so relaunching in the same sandbox is a clean
+      // retry. Successful fixes have no re-run: candidate PRs would need
+      // per-run sandboxes, which the shared fix sandbox can't provide.
+      actions.push({ label: 'Retry', path: `issues/${item.number}/rerun` });
     } else if (item.stage === 'pr-open') {
+      // Merging happens on GitHub — the row links to the PR.
       const prNum = prNumFromURL(item.prURL);
       if (prNum) {
         actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
-        actions.push({ label: 'Merge', path: `prs/${prNum}/merge`, confirm: `Merge PR #${prNum}? Branch protection still applies.` });
       }
-      actions.push({ label: 'Fix again', path: `issues/${item.number}/rerun` });
     }
   } else if (group === 'mine-pr') {
     // Your own PR: promote drafts, merge, or send the agent back to iterate
     // on the folded issue.
-    if (item.stage === 'review-ready') {
-      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
-    }
-    if (readOnly) {
-      // Merge/promote would 403 without push.
-    } else if (item.draftPR) {
+    if (!readOnly && item.draftPR) {
+      // Merging happens on GitHub; promote is the one repo-write left here.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
-    } else {
-      actions.push({ label: 'Merge', path: `prs/${item.number}/merge`, confirm: `Merge PR #${item.number}? Branch protection still applies.` });
-    }
-    if (!readOnly && item.fixes && item.fixes.length && item.sandbox) {
-      actions.push({ label: 'Fix again', path: `issues/${item.fixes[0]}/rerun`, title: `Re-run the fix for #${item.fixes[0]}` });
     }
   } else {
     if (['open', 'review-queued', 'review-requested'].includes(item.stage) && !item.sandbox) {
-      actions.push({ label: 'Review', path: `prs/${item.number}/review` });
+      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
+    } else if (item.stage === 'review-pending') {
+      // GitHub allows one pending review per user: finalize it there, or
+      // abandon it to start over.
+      actions.push({ label: 'Finalize on GitHub ↗', href: `${item.htmlURL}/files`, title: 'Your pending review is on GitHub — edit and submit it there' });
+      actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
     } else if (item.stage === 'review-ready') {
-      actions.push({ label: 'Publish review', path: `prs/${item.number}/publish`, confirm: `Publish the review draft on PR #${item.number} as your pending review?` });
-      actions.push({ label: 'Re-review', path: `prs/${item.number}/rerun` });
+      // Intake/labeled draft: display-only. Review runs under your
+      // identity and leaves a pending review on GitHub.
+      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
     }
   }
 
@@ -187,7 +187,17 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       </td>
       <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {actions.map(a => (
+        {actions.map(a => a.href ? (
+          <a
+            key={a.label}
+            className="btn btn-sm"
+            style={{ marginLeft: '4px', textDecoration: 'none' }}
+            title={a.title}
+            href={a.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >{a.label}</a>
+        ) : (
           <button
             key={a.label}
             className="btn btn-sm"
