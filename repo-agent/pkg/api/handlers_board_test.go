@@ -121,7 +121,6 @@ func boardCR() *unstructured.Unstructured {
 		"metadata":   map[string]interface{}{"name": "myboard", "namespace": "alice"},
 		"spec": map[string]interface{}{
 			"repoURL":  "https://github.com/test/repo",
-			"access":   map[string]interface{}{"mode": "list", "allow": []interface{}{"alice"}},
 			"triggers": map[string]interface{}{"label": "agent"},
 		},
 	}}
@@ -221,8 +220,9 @@ func TestKickoffFixWritesMailbox(t *testing.T) {
 }
 
 func TestKickoffForbiddenForNonMember(t *testing.T) {
+	// Personal model: a board outside the session namespace does not resolve.
 	board := boardCR()
-	_ = unstructured.SetNestedStringSlice(board.Object, []string{"someoneelse"}, "spec", "access", "allow")
+	board.SetNamespace("board-kcc")
 	_, r, _ := boardTestServer(t, map[string]string{}, board)
 
 	req, _ := http.NewRequest("POST", "/board/myboard/issues/77/fix", strings.NewReader(`{}`))
@@ -278,10 +278,6 @@ func TestCreateAndDeleteBoard(t *testing.T) {
 	if repoURL != "https://github.com/test/repo" {
 		t.Errorf("unexpected repoURL %q", repoURL)
 	}
-	allow, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "access", "allow")
-	if len(allow) != 1 || allow[0] != "alice" {
-		t.Errorf("expected access.allow=[alice], got %v", allow)
-	}
 
 	req, _ = http.NewRequest("DELETE", "/board/repo", nil)
 	w = httptest.NewRecorder()
@@ -296,38 +292,16 @@ func TestCreateAndDeleteBoard(t *testing.T) {
 
 // Shared boards (mode github) are visible only when the viewer's own token
 // proves push permission on the repo.
-func TestSharedBoardPermissionGate(t *testing.T) {
-	mkBoard := func(repoURL string) *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "board.gemini.google.com/v1alpha1",
-			"kind":       "RepoBoard",
-			"metadata":   map[string]interface{}{"name": "shared", "namespace": "board-kcc"},
-			"spec": map[string]interface{}{
-				"repoURL": repoURL,
-				"access":  map[string]interface{}{"mode": "github"},
-			},
-		}}
-	}
-
-	run := func(t *testing.T, repoURL, permsJSON string) int {
-		t.Helper()
-		repoPermCache.Lock()
-		repoPermCache.entries = map[string]repoPermEntry{}
-		repoPermCache.Unlock()
-
-		apiPath := strings.Replace(repoURL, "https://github.com", "https://api.github.com/repos", 1)
-		_, r, _ := boardTestServer(t, map[string]string{apiPath: permsJSON}, mkBoard(repoURL))
-		req, _ := http.NewRequest("GET", "/board/shared/work", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		return w.Code
-	}
-
-	if code := run(t, "https://github.com/test/repo-yes", `{"permissions": {"push": true}}`); code == http.StatusForbidden {
-		t.Errorf("maintainer should access shared board, got %d", code)
-	}
-	if code := run(t, "https://github.com/test/repo-no", `{"permissions": {"pull": true}}`); code != http.StatusForbidden {
-		t.Errorf("non-maintainer should be forbidden, got %d", code)
+func TestOtherNamespaceBoardInvisible(t *testing.T) {
+	// Boards are personal: a board in another namespace is not resolvable.
+	other := boardCR()
+	other.SetNamespace("board-kcc")
+	_, r, _ := boardTestServer(t, map[string]string{}, other)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for another namespace's board, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

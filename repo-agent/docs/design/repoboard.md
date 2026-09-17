@@ -70,6 +70,15 @@ state: **Needs you** > *Waiting on others* > *Agent working*.
 
 ## 4. A new CRD, not RepoWatch v2
 
+> **Amendment (2026-09-17): personal boards only.** Shared boards
+> (`access`, `prepIdentity`, cross-namespace visibility, prep-identity
+> discovery) were removed after live use: GitHub itself is the shared
+> view — assignments, labels, PRs and submitted reviews coordinate the
+> team, so a board is strictly its owner's lens. Every board lives in its
+> owner's namespace (namespace == GitHub login), is visible only to them,
+> and all automation executes as the owner. References to shared boards,
+> `access` modes and `prepIdentity` below are historical.
+
 RepoBoard is a new kind rather than a RepoWatch revision because the object
 changes identity: user-scoped watch → repo-scoped shared board, with
 different placement, access semantics, and lifecycle. A new kind means no

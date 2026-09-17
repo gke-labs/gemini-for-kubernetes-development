@@ -24,22 +24,10 @@ import (
 // configuration — GitHub is the coordination plane, sandboxes are execution
 // state (see docs/design/repoboard.md).
 //
-// Placement decides sharing: a board in a repo-scoped namespace is shared;
-// a board in a user's own namespace is personal.
-
-// AccessSpec controls who may view the board and orchestrate work.
-type AccessSpec struct {
-	// Mode selects how membership is decided:
-	// github: the viewer's own token must show push/maintain/admin on the
-	// repo. list: membership is exactly Allow.
-	// +kubebuilder:validation:Enum=github;list
-	// +kubebuilder:default=github
-	Mode string `json:"mode,omitempty"`
-
-	// Allow lists member GitHub logins when mode is "list".
-	// +kubebuilder:validation:Optional
-	Allow []string `json:"allow,omitempty"`
-}
+// Boards are personal: each lives in its owner's namespace (namespace ==
+// GitHub login) and is visible only to them. GitHub itself is the shared
+// view — assignments, labels, PRs and submitted reviews coordinate the
+// team; boards never do.
 
 // TriggersSpec controls how intent enters the system. Claims (assignment,
 // self-requested review) are invariants of every action and not configurable.
@@ -149,14 +137,6 @@ type SandboxSpec struct {
 	IdleMinutes int `json:"idleMinutes,omitempty"`
 }
 
-// PrepIdentitySpec names the identity secret (factory-user format) for
-// draft-only intake tasks in the board namespace. May be a bot: intake never
-// writes to GitHub. Empty disables intake.
-type PrepIdentitySpec struct {
-	// +kubebuilder:validation:Optional
-	SecretName string `json:"secretName,omitempty"`
-}
-
 // RepoBoardSpec defines the desired state of a RepoBoard.
 type RepoBoardSpec struct {
 	// RepoURL is the GitHub repository this board serves. Immutable:
@@ -164,9 +144,6 @@ type RepoBoardSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="repoURL is immutable"
 	RepoURL string `json:"repoURL"`
-
-	// +kubebuilder:validation:Optional
-	Access AccessSpec `json:"access,omitempty"`
 
 	// +kubebuilder:validation:Optional
 	Triggers TriggersSpec `json:"triggers,omitempty"`
@@ -185,9 +162,6 @@ type RepoBoardSpec struct {
 
 	// +kubebuilder:validation:Optional
 	Sandbox SandboxSpec `json:"sandbox,omitempty"`
-
-	// +kubebuilder:validation:Optional
-	PrepIdentity PrepIdentitySpec `json:"prepIdentity,omitempty"`
 }
 
 // BoardCounts are cheap badge numbers; the board itself is computed live by

@@ -18,7 +18,6 @@ package repoboard
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -153,7 +152,6 @@ func testBoard(annotations map[string]string) *boardv1alpha1.RepoBoard {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-board", Namespace: "alice", Annotations: annotations},
 		Spec: boardv1alpha1.RepoBoardSpec{
 			RepoURL:  "https://github.com/test/repo",
-			Access:   boardv1alpha1.AccessSpec{Mode: "list", Allow: []string{"alice"}},
 			Triggers: boardv1alpha1.TriggersSpec{Label: "agent", Discreet: &discreet},
 			Limits:   boardv1alpha1.LimitsSpec{MaxActive: 5, MaxActivePerUser: 2},
 			Sandbox:  boardv1alpha1.SandboxSpec{DiskSize: "10Gi", IdleMinutes: 60},
@@ -432,160 +430,35 @@ func TestFollowUpPRWatch(t *testing.T) {
 	g.Expect(launches[0].PRWatchOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/101"))
 }
 
-// Shared board: execution routes to the consenting assignee's namespace with
-// their identity; a label applied by someone else never executes (degrades
-// to awaiting-go).
-func TestSharedBoardExecutorConsent(t *testing.T) {
-	g := gomega.NewWithT(t)
-
-	sharedBoard := &boardv1alpha1.RepoBoard{
-		ObjectMeta: metav1.ObjectMeta{Name: "kcc", Namespace: "board-kcc"},
-		Spec: boardv1alpha1.RepoBoardSpec{
-			RepoURL:      "https://github.com/test/repo",
-			Access:       boardv1alpha1.AccessSpec{Mode: "github"},
-			Triggers:     boardv1alpha1.TriggersSpec{Label: "agent"},
-			Limits:       boardv1alpha1.LimitsSpec{MaxActive: 5, MaxActivePerUser: 2},
-			PrepIdentity: boardv1alpha1.PrepIdentitySpec{SecretName: "prep-bot"},
-		},
-	}
-	prepSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "prep-bot", Namespace: "board-kcc"},
-		Data:       map[string][]byte{"GITHUB_TOKEN": []byte("gho_prep")},
-	}
-	bobSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "github-pat", Namespace: "bob"},
-		Data:       map[string][]byte{"oauth_pat": []byte("gho_bob")},
-	}
-
-	mkClient := func(events10, events11 string) *github.Client {
-		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
-			"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[
-				{"number": 10, "title": "bob self-labeled", "html_url": "https://github.com/test/repo/issues/10",
-				 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]},
-				{"number": 11, "title": "carol labeled for bob", "html_url": "https://github.com/test/repo/issues/11",
-				 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]}
-			]`),
-			"https://api.github.com/repos/test/repo/issues/10/events?per_page=100": jsonResp(events10),
-			"https://api.github.com/repos/test/repo/issues/11/events?per_page=100": jsonResp(events11),
-		}}})
-	}
-	ghClient := mkClient(
-		`[{"event": "labeled", "label": {"name": "agent"}, "actor": {"login": "bob"}}]`,
-		`[{"event": "labeled", "label": {"name": "agent"}, "actor": {"login": "carol"}}]`,
-	)
-
-	prevFromToken := newGithubClientFromToken
-	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return ghClient }
-	t.Cleanup(func() { newGithubClientFromToken = prevFromToken })
-
-	fake := newFakeLauncher()
-	builder := clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{}).
-		WithObjects(sharedBoard, prepSecret, bobSecret)
-	r := &Reconciler{
-		Client:  builder.Build(),
-		Scheme:  testScheme(),
-		Factory: fake,
-		// Board namespace has no github-pat: personal path fails, prep path
-		// engages.
-		NewGithubClient: func(_ context.Context, _ *Reconciler, ns string) (*github.Client, string, error) {
-			return nil, "", fmt.Errorf("no github-pat in %s", ns)
-		},
-	}
-
-	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "kcc", Namespace: "board-kcc"}})
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	// Only issue 10 (labeled by its assignee bob) executes — as bob, in
-	// bob's namespace, with bob's token.
-	launches := fake.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("bob/fix-10"))
-	g.Expect(launches[0].FixOpts.Namespace).To(gomega.Equal("bob"))
-	g.Expect(launches[0].FixOpts.GithubToken).To(gomega.Equal("gho_bob"))
-
-	// Bob's factory-user secret was materialized in bob's namespace.
-	secret := &corev1.Secret{}
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-user", Namespace: "bob"}, secret)).To(gomega.Succeed())
-	g.Expect(secret.Data["GITHUB_LOGIN"]).To(gomega.Equal([]byte("bob")))
-}
-
-// Two-key auto-fix: a label applied by a triager executes for an assignee
-// who holds the standing opt-in (forced draft PR); without the opt-in the
-// item stays awaiting-go.
+// On a personal board a labeled issue assigned to the owner is direct
+// consent — it executes as them without the auto-tier draft rail.
 func TestAutoFixTwoKeyConsent(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	falseVal := false
 	mkBoard := func() *boardv1alpha1.RepoBoard {
-		return &boardv1alpha1.RepoBoard{
-			ObjectMeta: metav1.ObjectMeta{Name: "kcc", Namespace: "board-kcc"},
-			Spec: boardv1alpha1.RepoBoardSpec{
-				RepoURL:      "https://github.com/test/repo",
-				Access:       boardv1alpha1.AccessSpec{Mode: "github"},
-				Triggers:     boardv1alpha1.TriggersSpec{Label: "agent"},
-				Intake:       boardv1alpha1.IntakeSpec{AutoFix: boardv1alpha1.AutoFixSpec{Enabled: true, Require: []string{"assigned", "label"}}},
-				Limits:       boardv1alpha1.LimitsSpec{MaxActive: 5, MaxActivePerUser: 2},
-				Policy:       boardv1alpha1.PolicySpec{DraftPR: &falseVal}, // rails override policy
-				PrepIdentity: boardv1alpha1.PrepIdentitySpec{SecretName: "prep-bot"},
-			},
-		}
-	}
-	prepSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "prep-bot", Namespace: "board-kcc"},
-		Data:       map[string][]byte{"GITHUB_TOKEN": []byte("gho_prep")},
-	}
-	bobSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "github-pat", Namespace: "bob"},
-		Data:       map[string][]byte{"oauth_pat": []byte("gho_bob")},
+		b := testBoard(nil)
+		b.Spec.Intake.AutoFix = boardv1alpha1.AutoFixSpec{Enabled: true, Require: []string{"assigned", "label"}}
+		b.Spec.Policy = boardv1alpha1.PolicySpec{DraftPR: &falseVal} // rails override policy
+		return b
 	}
 	optIn := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent-preferences", Namespace: "bob"},
-		Data:       map[string]string{AutoFixPreferenceKey("board-kcc", "kcc"): "true"},
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-preferences", Namespace: "alice"},
+		Data:       map[string]string{AutoFixPreferenceKey("alice", "test-board"): "true"},
 	}
 
-	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
-		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[
-			{"number": 20, "title": "triaged to bob", "html_url": "https://github.com/test/repo/issues/20",
-			 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]}
-		]`),
-		"https://api.github.com/repos/test/repo/issues/20/events?per_page=100": jsonResp(
-			`[{"event": "labeled", "label": {"name": "agent"}, "actor": {"login": "carol"}}]`),
-	}}})
+	ghClient := testGithubClient(`[
+		{"number": 20, "title": "assigned to alice", "html_url": "https://github.com/test/repo/issues/20",
+		 "labels": [{"name": "agent"}], "assignees": [{"login": "alice"}]}
+	]`)
 
-	prevFromToken := newGithubClientFromToken
-	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return ghClient }
-	t.Cleanup(func() { newGithubClientFromToken = prevFromToken })
-
-	failPersonal := func(_ context.Context, _ *Reconciler, ns string) (*github.Client, string, error) {
-		return nil, "", fmt.Errorf("no github-pat in %s", ns)
-	}
-	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "kcc", Namespace: "board-kcc"}}
-
-	// With bob's opt-in: executes as bob with the forced draft-PR rail.
+	// With the opt-in: executes as the owner with the forced draft-PR rail.
 	fake := newFakeLauncher()
-	r := &Reconciler{
-		Client:          clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{}).WithObjects(mkBoard(), prepSecret, bobSecret, optIn).Build(),
-		Scheme:          testScheme(),
-		Factory:         fake,
-		NewGithubClient: failPersonal,
-	}
-	_, err := r.Reconcile(context.Background(), req)
+	r := newTestReconciler(fake, ghClient, mkBoard(), githubSecret(), optIn)
+	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake.launches()[0].Key).To(gomega.Equal("bob/fix-20"))
-	g.Expect(fake.launches()[0].FixOpts.Instruction).To(gomega.ContainSubstring("draft pull request"))
-
-	// Without the opt-in: never executes.
-	fake2 := newFakeLauncher()
-	r2 := &Reconciler{
-		Client:          clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{}).WithObjects(mkBoard(), prepSecret, bobSecret).Build(),
-		Scheme:          testScheme(),
-		Factory:         fake2,
-		NewGithubClient: failPersonal,
-	}
-	_, err = r2.Reconcile(context.Background(), req)
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake2.launches()).To(gomega.BeEmpty())
+	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/fix-20"))
 }
 
 // Draft-review intake prepares a review for every inbound PR.

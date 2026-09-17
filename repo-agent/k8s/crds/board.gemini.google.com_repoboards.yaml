@@ -36,19 +36,6 @@ spec:
             type: object
           spec:
             properties:
-              access:
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                  mode:
-                    default: github
-                    enum:
-                    - github
-                    - list
-                    type: string
-                type: object
               intake:
                 properties:
                   autoFix:
@@ -98,11 +85,6 @@ spec:
                   draftPR:
                     default: true
                     type: boolean
-                type: object
-              prepIdentity:
-                properties:
-                  secretName:
-                    type: string
                 type: object
               ready:
                 properties:

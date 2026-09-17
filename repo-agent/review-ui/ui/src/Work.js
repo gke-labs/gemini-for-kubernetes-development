@@ -573,11 +573,6 @@ function Work({ onBack, namespace }) {
         <div className="modal-overlay" onClick={() => setSpecOpen(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', textAlign: 'left' }}>
             <h4 style={{ marginTop: 0 }}>Board settings — {activeBoard}</h4>
-            {!spec.editable && (
-              <p style={{ fontSize: 'small', color: 'var(--text-secondary)' }}>
-                Read-only: only the board owner can edit these settings.
-              </p>
-            )}
             <fieldset disabled={!spec.editable} style={{ border: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
                 Trigger label <span style={{ color: 'var(--text-secondary)' }}>(labeling an issue/PR on GitHub queues it; empty disables)</span>
@@ -587,9 +582,9 @@ function Work({ onBack, namespace }) {
                 <input type="checkbox" checked={!!spec.triageIssues} onChange={e => setSpec({ ...spec, triageIssues: e.target.checked })} style={{ marginRight: '6px' }} />
                 Auto-triage all open issues
               </label>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Personal board: reviews every open PR as you (pending reviews on GitHub). Shared board: enables auto-review for members who opted in.">
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Reviews every open PR as you; each run parks a pending review on GitHub, visible only to you. Token cost scales with open PRs.">
                 <input type="checkbox" checked={!!spec.draftReviews} onChange={e => setSpec({ ...spec, draftReviews: e.target.checked })} style={{ marginRight: '6px' }} />
-                Review intake
+                Auto-review all open PRs (as you)
               </label>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
                 Exclude labels <span style={{ color: 'var(--text-secondary)' }}>(comma-separated; hard veto for all agent work)</span>
