@@ -443,16 +443,6 @@ function Work({ onBack, namespace }) {
             </span>
           )}
           <span style={{ margin: '0 6px' }}>—</span>{board.active} active, {board.needsHuman} need you
-          {board.role !== 'read-only' && (
-          <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's auto-fix intake enabled, issues assigned to you (with the trigger label) start fixing automatically as you. Your consent, your identity, draft PRs only.">
-            <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '4px' }} />
-            Auto-fix issues assigned to me
-          </label>
-          )}
-          <label style={{ marginLeft: '16px', cursor: 'pointer' }} title="With the board's review intake enabled, PRs that request your review run the agent as you and park a pending review on GitHub — visible only to you until you submit it.">
-            <input type="checkbox" checked={autoReview} onChange={e => handleAutoReviewToggle(e.target.checked)} style={{ marginRight: '4px' }} />
-            Auto-review PRs assigned to me
-          </label>
           <button
             className="btn btn-sm"
             onClick={openSpec}
@@ -625,9 +615,25 @@ function Work({ onBack, namespace }) {
                 Disclose agent assistance in PRs
               </label>
             </fieldset>
+            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '14px 0 10px 0' }} />
+            <div style={{ fontSize: 'small', fontWeight: 600, marginBottom: '6px' }}>
+              My automation <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(only affects you; saved immediately)</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {(!board || board.role !== 'read-only') && (
+                <label style={{ cursor: 'pointer', fontSize: 'small' }} title="With the board's auto-fix intake enabled, issues assigned to you start fixing automatically as you. Your consent, your identity, draft PRs only.">
+                  <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '6px' }} />
+                  Auto-fix issues assigned to me
+                </label>
+              )}
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="With the board's review intake enabled, PRs that request your review run the agent as you and park a pending review on GitHub — visible only to you until you submit it.">
+                <input type="checkbox" checked={autoReview} onChange={e => handleAutoReviewToggle(e.target.checked)} style={{ marginRight: '6px' }} />
+                Auto-review PRs assigned to me
+              </label>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <button className="btn" onClick={() => setSpecOpen(false)}>Cancel</button>
-              {spec.editable && <button className="btn btn-submit" onClick={saveSpec}>Save</button>}
+              {spec.editable && <button className="btn btn-submit" onClick={saveSpec}>Save board settings</button>}
             </div>
           </div>
         </div>
