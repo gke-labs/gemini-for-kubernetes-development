@@ -218,9 +218,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews := r.mailboxPlans(work)
+	mailFixes, mailReviews, mailTriages := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
+	// A clicked triage needs only number+URL; no GitHub fetch required.
+	seenTriage := map[int]bool{}
+	for _, issue := range triageCandidates {
+		seenTriage[issue.GetNumber()] = true
+	}
+	for _, n := range mailTriages {
+		if seenTriage[n] {
+			continue
+		}
+		num := n
+		url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, n)
+		triageCandidates = append(triageCandidates, &github.Issue{Number: &num, HTMLURL: &url})
+	}
 
 	// Drop plans whose executor never onboarded (no namespace/token — we
 	// could not execute as them anyway).
@@ -585,17 +598,18 @@ func latestLabelerOf(ctx context.Context, ghClient *github.Client, work *workSta
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	requests := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var fixes []fixPlan
 	var reviews []reviewPlan
+	var triages []int
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -606,9 +620,13 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan) {
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "review-")); err == nil {
 				reviews = append(reviews, reviewPlan{pr: n, executor: member})
 			}
+		case strings.HasPrefix(key, "triage-"):
+			if n, err := strconv.Atoi(strings.TrimPrefix(key, "triage-")); err == nil {
+				triages = append(triages, n)
+			}
 		}
 	}
-	return fixes, reviews
+	return fixes, reviews, triages
 }
 
 // dedupeReviews keeps one plan per PR, preferring a consented executor
@@ -979,6 +997,14 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 				}
 				continue
 			}
+		case strings.HasPrefix(key, "triage-"):
+			n, err := strconv.Atoi(strings.TrimPrefix(key, "triage-"))
+			if err != nil {
+				continue
+			}
+			if work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)) != nil {
+				continue
+			}
 		default:
 			continue
 		}
@@ -1051,6 +1077,19 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		}
 		if unpausedAt, err := time.Parse(time.RFC3339, annotations[AnnotationUnpausedAt]); err == nil && unpausedAt.After(idleSince) {
 			idleSince = unpausedAt
+		}
+		// A rerun marker newer than the last completion means a relaunch
+		// is waking this sandbox (factory patches replicas directly and
+		// stamps no unpaused-at) — pausing now would kill the container
+		// mid-provision and fail the run.
+		restarting := false
+		for _, key := range []string{AnnotationRereviewRequested, AnnotationRefixRequested} {
+			if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(idleSince) {
+				restarting = true
+			}
+		}
+		if restarting {
+			continue
 		}
 		if time.Since(idleSince) < after {
 			continue

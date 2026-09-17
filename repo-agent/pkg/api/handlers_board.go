@@ -326,10 +326,11 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	collect(labeled, "fix")
 	collect(created, "mine-issue")
 
-	// Repo-wide triage inbox: with triage intake on, every open issue is a
-	// candidate (minus excluded and trigger-labeled ones, which route to
-	// fix). Rows already claimed above keep their group.
-	if triageOn, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "triageIssues"); triageOn {
+	// Repo-wide triage inbox: listing is free (one issues call), so it is
+	// always shown — the agent only RUNS on a member's Triage click or the
+	// board's auto-triage intake. Excluded and trigger-labeled issues are
+	// out (the latter route to fix); rows already claimed keep their group.
+	{
 		excludeLabels, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
 		all, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open"})
 		if err != nil {
@@ -415,6 +416,11 @@ func (s *Server) getBoardWork(c *gin.Context) {
 				if n, ok := strings.CutPrefix(key, "fix-"); ok {
 					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
 						item.Stage, item.Attention = "fix-starting", attentionWorking
+					}
+				}
+				if n, ok := strings.CutPrefix(key, "triage-"); ok {
+					if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
+						item.Stage, item.Attention = "triaging", attentionWorking
 					}
 				}
 			}
@@ -561,6 +567,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		stage, attention = "triage-ready", attentionNeedsYou
 	case triageState == "Running":
 		stage, attention = "triaging", attentionWorking
+	case triageSB != nil && triageDraft == "":
+		// Triage sandbox provisioning (no task state yet).
+		stage, attention = "triaging", attentionWorking
 	case group == "triage":
 		stage = "untriaged"
 	}
@@ -646,10 +655,23 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 
 	reviewState := ""
 	state := ""
+	restarting := false
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		reviewState = annotations["reviewState"]
 		state = annotations[annoTaskState]
+		// A re-review marker newer than the last task activity means a
+		// relaunch is waking the sandbox: stale Failed/Completed stamps
+		// must render as starting, not as the old outcome.
+		if markerAt, err := time.Parse(time.RFC3339, annotations[annoRereviewRequest]); err == nil {
+			lastActivity := time.Time{}
+			for _, key := range []string{"sandbox.gemini.google.com/last-task-time", annoCompletionTime} {
+				if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(lastActivity) {
+					lastActivity = t
+				}
+			}
+			restarting = markerAt.After(lastActivity)
+		}
 	}
 
 	stage, attention := "open", ""
@@ -658,11 +680,17 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// An active run always wins — stale reviewState from a previous
 		// cycle must not mask a re-review in flight.
 		stage, attention = "reviewing", attentionWorking
+	case restarting:
+		stage, attention = "review-starting", attentionWorking
 	case sb != nil && state == "" && reviewState == "":
 		// Sandbox exists but the task hasn't stamped a state yet:
 		// provisioning (pod scheduling, image pull, clone). Not the
 		// member's move.
 		stage, attention = "review-starting", attentionWorking
+	case state == "Failed" && reviewState == "":
+		// The run died without posting anything — surface it instead of
+		// falling back to the pre-click stage.
+		stage, attention = "review-failed", attentionNeedsYou
 	case reviewState == "submitted" && !reviewRequested:
 		stage = "review-submitted"
 	// A review request on an already-submitted row is GitHub's native
@@ -734,6 +762,12 @@ func (s *Server) kickoffReview(c *gin.Context) {
 	s.kickoff(c, "pr")
 }
 
+// kickoffTriage handles the Triage click: mailbox only — triage is
+// draft-only, so there is no GitHub-side claim to make.
+func (s *Server) kickoffTriage(c *gin.Context) {
+	s.kickoff(c, "triage")
+}
+
 func (s *Server) kickoff(c *gin.Context, kind string) {
 	log := klog.FromContext(c.Request.Context())
 	ctx := c.Request.Context()
@@ -761,7 +795,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	// The trigger label is deliberately NOT written: a click is a one-time
 	// consent, while a label is a standing trigger that would relaunch the
 	// item forever after cleanup.
-	if token, err := s.memberToken(ctx, namespace); err == nil {
+	if token, err := s.memberToken(ctx, namespace); err == nil && kind != "triage" {
 		gh := githubClientForToken(ctx, token)
 		if kind == "issue" {
 			if _, _, err := gh.Issues.AddAssignees(ctx, owner, repo, number, []string{member}); err != nil {
@@ -797,8 +831,11 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	// Authoritative mailbox request; the controller consumes and clears it
 	// once the sandbox exists.
 	reqKey := fmt.Sprintf("fix-%d", number)
-	if kind == "pr" {
+	switch kind {
+	case "pr":
 		reqKey = fmt.Sprintf("review-%d", number)
+	case "triage":
+		reqKey = fmt.Sprintf("triage-%d", number)
 	}
 	annotations := board.GetAnnotations()
 	if annotations == nil {
@@ -1122,4 +1159,97 @@ var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error
 		return fmt.Errorf("graphql markPullRequestReadyForReview failed: %s", string(respBody))
 	}
 	return nil
+}
+
+// boardSpecView is the editable subset of a RepoBoard spec exposed to the
+// gear panel. Access/prepIdentity/sandbox stay kubectl-only (owner-level
+// governance and operator concerns).
+type boardSpecView struct {
+	Editable         bool     `json:"editable"`
+	TriggerLabel     string   `json:"triggerLabel"`
+	TriageIssues     bool     `json:"triageIssues"`
+	DraftReviews     bool     `json:"draftReviews"`
+	ExcludeLabels    []string `json:"excludeLabels"`
+	MaxActive        int64    `json:"maxActive"`
+	MaxActivePerUser int64    `json:"maxActivePerUser"`
+	AutoIterate      bool     `json:"autoIterate"`
+	DraftPR          bool     `json:"draftPR"`
+	Disclose         bool     `json:"disclose"`
+}
+
+func (s *Server) getBoardSpec(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	view := boardSpecView{Editable: board.GetNamespace() == namespace}
+	view.TriggerLabel, _, _ = unstructured.NestedString(board.Object, "spec", "triggers", "label")
+	view.TriageIssues, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "triageIssues")
+	view.DraftReviews, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "draftReviews")
+	view.ExcludeLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
+	view.MaxActive, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActive")
+	view.MaxActivePerUser, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActivePerUser")
+	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
+	view.DraftPR, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "draftPR")
+	view.Disclose, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "disclose")
+	c.JSON(http.StatusOK, view)
+}
+
+// putBoardSpec updates the editable spec subset. Board governance stays
+// with its owner: only boards in the session's own namespace are writable.
+func (s *Server) putBoardSpec(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+
+	var payload boardSpecView
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	if board.GetNamespace() != namespace {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only the board owner can edit its settings"})
+		return
+	}
+
+	set := func(value interface{}, fields ...string) bool {
+		if err := unstructured.SetNestedField(board.Object, value, fields...); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
+			return false
+		}
+		return true
+	}
+	labels := make([]interface{}, 0, len(payload.ExcludeLabels))
+	for _, l := range payload.ExcludeLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			labels = append(labels, l)
+		}
+	}
+	ok := set(payload.TriggerLabel, "spec", "triggers", "label") &&
+		set(payload.TriageIssues, "spec", "intake", "triageIssues") &&
+		set(payload.DraftReviews, "spec", "intake", "draftReviews") &&
+		set(labels, "spec", "intake", "filters", "excludeLabels") &&
+		set(payload.MaxActive, "spec", "limits", "maxActive") &&
+		set(payload.MaxActivePerUser, "spec", "limits", "maxActivePerUser") &&
+		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
+		set(payload.DraftPR, "spec", "policy", "draftPR") &&
+		set(payload.Disclose, "spec", "policy", "disclose")
+	if !ok {
+		return
+	}
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save board settings", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
 }
