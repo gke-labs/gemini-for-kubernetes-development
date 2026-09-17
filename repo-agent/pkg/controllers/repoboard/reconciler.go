@@ -1078,6 +1078,19 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		if unpausedAt, err := time.Parse(time.RFC3339, annotations[AnnotationUnpausedAt]); err == nil && unpausedAt.After(idleSince) {
 			idleSince = unpausedAt
 		}
+		// A rerun marker newer than the last completion means a relaunch
+		// is waking this sandbox (factory patches replicas directly and
+		// stamps no unpaused-at) — pausing now would kill the container
+		// mid-provision and fail the run.
+		restarting := false
+		for _, key := range []string{AnnotationRereviewRequested, AnnotationRefixRequested} {
+			if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(idleSince) {
+				restarting = true
+			}
+		}
+		if restarting {
+			continue
+		}
 		if time.Since(idleSince) < after {
 			continue
 		}
