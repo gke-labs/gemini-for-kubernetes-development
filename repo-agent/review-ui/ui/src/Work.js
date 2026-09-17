@@ -106,9 +106,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
       // read-only boards; runs only on this click or auto-triage.
       actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
     }
-    if (readOnly) {
-      // No fix pipeline without push: the agent's PR could not land.
-    } else if (['open', 'awaiting-go', 'queued', 'untriaged', 'triage-ready'].includes(item.stage) && !item.sandbox) {
+    if (readOnly || group === 'triage') {
+      // No fix pipeline without push; and the Triage tab stays a
+      // single-verb inbox — issues move to Fix via assignment or label.
+    } else if (['open', 'awaiting-go', 'queued'].includes(item.stage) && !item.sandbox) {
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (item.stage === 'fix-failed') {
       // Nothing shipped, so relaunching in the same sandbox is a clean
