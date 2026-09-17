@@ -78,6 +78,10 @@ func nowRFC3339() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+// reviewRequestFreshWindow bounds how long a bare review request counts as
+// needs-you; older requests stay listed but out of UP NEXT.
+const reviewRequestFreshWindow = 14 * 24 * time.Hour
+
 // githubClientForToken is injectable for tests.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
 	return clients.NewGitHubClient(ctx, token)
@@ -621,16 +625,24 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		stage, attention = "review-ready", attentionNeedsYou
 	case state == "Running":
 		stage, attention = "reviewing", attentionWorking
-	case labeled || reviewRequested:
+	case labeled:
+		// Trigger-labeled: the controller will launch a review — genuinely
+		// queued for the agent.
 		stage, attention = "review-queued", attentionWaiting
+	case reviewRequested:
+		// A bare GitHub review request: nothing is queued, a human is
+		// waiting on the member. Fresh requests demand attention; fossils
+		// stay out of UP NEXT.
+		stage, attention = "review-requested", attentionWaiting
+		if time.Since(pr.GetUpdatedAt()) <= reviewRequestFreshWindow {
+			attention = attentionNeedsYou
+		}
 	case authored:
 		stage, attention = "open", attentionWaiting
 	}
 
+	// A review request is not a claim — nobody is executing anything yet.
 	claimedBy := ""
-	if reviewRequested {
-		claimedBy = member
-	}
 	rowDraft := ""
 	if stage == "review-ready" {
 		rowDraft = draft

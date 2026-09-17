@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
@@ -560,5 +561,47 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	// Trigger-labeled issues route through the labeled list (group fix), not triage.
 	if _, ok := byKey["issue-23"]; ok {
 		t.Errorf("issue-23 is trigger-labeled and not in the labeled response; it must not land in triage: %s", w.Body.String())
+	}
+}
+
+// A bare GitHub review request is "review-requested" (not "queued" — nothing
+// launches without a click), is nobody's claim, and only fresh requests are
+// needs-you; fossils stay out of UP NEXT.
+func TestGetBoardWorkReviewRequested(t *testing.T) {
+	fresh := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":   `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 70, "title": "fresh request", "html_url": "https://github.com/test/repo/pull/70", "updated_at": "` + fresh + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
+			{"number": 71, "title": "fossil request", "html_url": "https://github.com/test/repo/pull/71", "updated_at": "2026-01-01T00:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	byKey := map[string]models.WorkItem{}
+	for _, item := range work {
+		byKey[item.Type+"-"+itoa(item.Number)] = item
+	}
+
+	if row := byKey["pr-70"]; row.Stage != "review-requested" || row.Attention != "needs-you" || row.ClaimedBy != "" {
+		t.Errorf("fresh request row wrong: %+v", row)
+	}
+	if row := byKey["pr-71"]; row.Stage != "review-requested" || row.Attention != "waiting" || row.ClaimedBy != "" {
+		t.Errorf("fossil request row wrong: %+v", row)
 	}
 }
