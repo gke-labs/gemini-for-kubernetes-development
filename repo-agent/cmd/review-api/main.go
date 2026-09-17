@@ -1,8 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
+	"context"
 	"os"
 	"strings"
 
@@ -58,12 +57,12 @@ func main() {
 	router := gin.Default()
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
-		// Generate a random secret if not provided
-		b := make([]byte, 32)
-		if _, err := rand.Read(b); err != nil {
-			klog.Fatalf("Failed to generate random session secret: %v", err)
+		// Persisted in the system namespace so restarts keep the same
+		// cookie-encryption key and users stay logged in.
+		sessionSecret, err = k8s.EnsureSessionSecret(context.Background(), kube.Clientset)
+		if err != nil {
+			klog.Fatalf("Failed to ensure session secret: %v", err)
 		}
-		sessionSecret = base64.StdEncoding.EncodeToString(b)
 	}
 	store := cookie.NewStore([]byte(sessionSecret))
 	router.Use(sessions.Sessions(sessionName, store))
