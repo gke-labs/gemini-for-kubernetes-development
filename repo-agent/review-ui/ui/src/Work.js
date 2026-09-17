@@ -160,7 +160,13 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
+      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {item.assignee && (
+          <span style={{ marginRight: '6px' }}>
+            <Chip text={`⦿ ${item.assignee}`} color="var(--text-secondary)" bg="var(--bg-secondary)" title="GitHub assignee" />
+          </span>
+        )}
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
         {item.prURL && item.type === 'issue' && (
           <a href={item.prURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', fontSize: 'small' }}>PR ↗</a>
@@ -180,8 +186,6 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right. */}
-      <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
-      <td style={{ padding: '6px 8px', fontSize: 'small', color: 'var(--text-secondary)' }}>{ageOf(item.updatedAt)}</td>
       <td style={{ padding: '6px 8px' }}>
         <Chip
           text={stage}
@@ -237,7 +241,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     </tr>
     {showDraft && item.draft && (
       <tr>
-        <td colSpan="7" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
           <pre style={{
             whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
             padding: '10px', backgroundColor: 'var(--bg-secondary)',
@@ -478,9 +482,8 @@ function Work({ onBack, namespace }) {
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>#</th>
-              <th style={{ padding: '6px 8px' }}>Title</th>
-              <th style={{ padding: '6px 8px' }}>Assignee</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
+              <th style={{ padding: '6px 8px' }}>Title</th>
               <th style={{ padding: '6px 8px' }}>Status</th>
               <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}></th>
@@ -551,7 +554,7 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
-                    <tr><td colSpan="7" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                    <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
                       Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
                     </td></tr>
                   )}
