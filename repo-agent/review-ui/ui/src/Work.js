@@ -180,10 +180,12 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         )}
       </td>
       <td style={{ padding: '6px 8px' }}>
-        <Chip text={stage} color={accentOf(item)} bg={tintOf(item)} />
-      </td>
-      <td style={{ padding: '6px 8px' }}>
-        {attention && <Chip text={attention.label} color={attention.color} bg={attention.bg} />}
+        <Chip
+          text={stage}
+          color={attention ? attention.color : 'var(--text-secondary)'}
+          bg={attention ? attention.bg : 'var(--bg-secondary)'}
+          title={attention ? attention.label : ''}
+        />
       </td>
       <td style={{ padding: '6px 8px', fontSize: 'small' }}>{item.assignee}</td>
       <td style={{ padding: '6px 8px' }}>
@@ -234,7 +236,7 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     </tr>
     {showDraft && item.draft && (
       <tr>
-        <td colSpan="8" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="7" style={{ padding: '0 8px 10px 8px' }}>
           <pre style={{
             whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
             padding: '10px', backgroundColor: 'var(--bg-secondary)',
@@ -476,8 +478,7 @@ function Work({ onBack, namespace }) {
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>#</th>
               <th style={{ padding: '6px 8px' }}>Title</th>
-              <th style={{ padding: '6px 8px' }}>Stage</th>
-              <th style={{ padding: '6px 8px' }}>Attention</th>
+              <th style={{ padding: '6px 8px' }}>Status</th>
               <th style={{ padding: '6px 8px' }}>Assignee</th>
               <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
@@ -549,7 +550,7 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
-                    <tr><td colSpan="8" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                    <tr><td colSpan="7" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
                       Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
                     </td></tr>
                   )}
