@@ -370,6 +370,338 @@ func TestHasReviewLabel(t *testing.T) {
 	}
 }
 
+func TestIsReviewLabel(t *testing.T) {
+	tests := []struct {
+		name         string
+		label        string
+		triggerLabel string
+		want         bool
+	}{
+		{name: "Default spelling", label: "overseer/review", triggerLabel: "", want: true},
+		{name: "Default spelling under a custom trigger", label: "overseer/review", triggerLabel: "mybot", want: true},
+		{name: "Custom spelling", label: "mybot/review", triggerLabel: "mybot", want: true},
+		{name: "Custom spelling without the matching trigger", label: "mybot/review", triggerLabel: "", want: false},
+		{name: "Case insensitive", label: "Overseer/Review", triggerLabel: "", want: true},
+		{name: "Unrelated label", label: "needs-review", triggerLabel: "", want: false},
+		{name: "Empty label", label: "", triggerLabel: "", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isReviewLabel(tc.label, tc.triggerLabel); got != tc.want {
+				t.Errorf("isReviewLabel(%q, %q) = %v; want %v", tc.label, tc.triggerLabel, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNonStickyLabels pins the membership of the non-sticky set. Enrolling a
+// label changes how the watcher and a human share control of it, so it should
+// be a deliberate decision rather than something that drifts in.
+func TestNonStickyLabels(t *testing.T) {
+	if got, want := nonStickyLabels(""), []string{"overseer/review"}; !sameStrings(got, want) {
+		t.Errorf("nonStickyLabels(%q) = %v; want %v", "", got, want)
+	}
+	if got, want := nonStickyLabels("mybot"), []string{"overseer/review", "mybot/review"}; !sameStrings(got, want) {
+		t.Errorf("nonStickyLabels(%q) = %v; want %v", "mybot", got, want)
+	}
+
+	// The labels that direct the watcher from the parent issue stay sticky:
+	// unlike review, they have no per-PR meaning a human could be asserting.
+	for _, label := range []string{"overseer/stop", "mybot/stop", "overseer/ready-for-human", "priority/high", "mybot"} {
+		if isNonStickyLabel(label, "mybot") {
+			t.Errorf("isNonStickyLabel(%q, \"mybot\") = true; want false", label)
+		}
+	}
+}
+
+// TestSyncReferencedIssueLabels_NonStickyLabels pins the handoff a non-sticky
+// label is meant to be: inherited onto a pull request that has never carried
+// it, and never re-applied once someone has taken it off. Labels outside the
+// non-sticky set must keep following the parent issue as before.
+func TestSyncReferencedIssueLabels_NonStickyLabels(t *testing.T) {
+	const (
+		prNum     = 100
+		parentNum = 42
+	)
+
+	tests := []struct {
+		name string
+		// parentLabels are the labels on the issue the pull request closes.
+		parentLabels []string
+		// prLabels are the labels already on the pull request.
+		prLabels []string
+		// removedLabels are the labels an 'unlabeled' event exists for on the
+		// pull request, i.e. the ones somebody has taken off it.
+		removedLabels []string
+		// failEvents makes the events endpoint return an error.
+		failEvents bool
+		// wantAdded is the label set expected in the POST, or nil for no POST.
+		wantAdded []string
+		// wantEventsFetched is whether the label history had to be consulted.
+		wantEventsFetched bool
+	}{
+		{
+			name:              "Fresh PR inherits the review label from its parent issue",
+			parentLabels:      []string{"factory", "factory/review", "priority/high"},
+			wantAdded:         []string{"factory", "factory/review", "priority/high"},
+			wantEventsFetched: true,
+		},
+		{
+			name:              "Review label removed from the PR is not re-added",
+			parentLabels:      []string{"factory", "factory/review", "priority/high"},
+			removedLabels:     []string{"factory/review"},
+			wantAdded:         []string{"factory", "priority/high"},
+			wantEventsFetched: true,
+		},
+		{
+			name:              "Removal is honoured for the default spelling too",
+			parentLabels:      []string{"overseer/review"},
+			removedLabels:     []string{"overseer/review"},
+			wantAdded:         nil,
+			wantEventsFetched: true,
+		},
+		{
+			name:              "Removing an unrelated label does not block the review label",
+			parentLabels:      []string{"factory/review"},
+			removedLabels:     []string{"priority/high"},
+			wantAdded:         []string{"factory/review"},
+			wantEventsFetched: true,
+		},
+		{
+			// Only the labels in the non-sticky set get the handoff treatment.
+			// Everything else is still reconciled from the parent issue, so a
+			// removed 'overseer/stop' comes back as it always did.
+			name:          "Sticky labels are still re-added after removal",
+			parentLabels:  []string{"overseer/stop", "priority/high"},
+			removedLabels: []string{"overseer/stop", "priority/high"},
+			wantAdded:     []string{"overseer/stop", "priority/high"},
+		},
+		{
+			name:              "Unreadable label history holds the review label back but not the rest",
+			parentLabels:      []string{"factory", "factory/review"},
+			failEvents:        true,
+			wantAdded:         []string{"factory"},
+			wantEventsFetched: true,
+		},
+		{
+			name:         "No non-sticky label to inherit means no label history lookup",
+			parentLabels: []string{"factory", "priority/high"},
+			wantAdded:    []string{"factory", "priority/high"},
+		},
+		{
+			name:         "Review label already on the PR is left alone",
+			parentLabels: []string{"factory/review"},
+			prLabels:     []string{"factory/review"},
+			wantAdded:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var addedLabels []string
+			eventsFetched := false
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/42":
+					var labels []*githubv39.Label
+					for _, name := range tc.parentLabels {
+						labels = append(labels, &githubv39.Label{Name: stringPtr(name)})
+					}
+					_ = json.NewEncoder(w).Encode(&githubv39.Issue{
+						Number: githubv39.Int(parentNum),
+						Labels: labels,
+					})
+
+				case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/100/events":
+					eventsFetched = true
+					if tc.failEvents {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					events := []*githubv39.IssueEvent{
+						{Event: githubv39.String("labeled"), Label: &githubv39.Label{Name: stringPtr("factory")}},
+					}
+					for _, name := range tc.removedLabels {
+						events = append(events, &githubv39.IssueEvent{
+							Event: githubv39.String("unlabeled"),
+							Label: &githubv39.Label{Name: stringPtr(name)},
+						})
+					}
+					_ = json.NewEncoder(w).Encode(events)
+
+				case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/100/labels":
+					body, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(body, &addedLabels)
+					_, _ = w.Write([]byte(`[]`))
+
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			ghClient := githubv39.NewClient(nil)
+			ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+			s := &Scanner{
+				cfg:   Config{TriggerLabel: "factory"},
+				gh:    github.ForRepo(ghClient, "test-owner", "test-repo"),
+				state: newStateStore(nil),
+			}
+
+			pr := &githubv39.PullRequest{
+				Number: githubv39.Int(prNum),
+				Body:   stringPtr("Fixes #42"),
+			}
+			var prLabels []*githubv39.Label
+			for _, name := range tc.prLabels {
+				prLabels = append(prLabels, &githubv39.Label{Name: stringPtr(name)})
+			}
+			prIssue := &githubv39.Issue{Number: githubv39.Int(prNum), Labels: prLabels}
+
+			s.syncReferencedIssueLabels(context.Background(), pr, prIssue)
+
+			if !sameStrings(addedLabels, tc.wantAdded) {
+				t.Errorf("added labels = %v; want %v", addedLabels, tc.wantAdded)
+			}
+			if eventsFetched != tc.wantEventsFetched {
+				t.Errorf("label history fetched = %v; want %v", eventsFetched, tc.wantEventsFetched)
+			}
+
+			// Whatever was added must also be visible on the in-memory issue:
+			// the rest of the evaluation reads it rather than re-fetching.
+			for _, name := range tc.wantAdded {
+				if !hasLabelNamed(prIssue.Labels, name) {
+					t.Errorf("label %q was added on GitHub but is missing from the in-memory PR issue", name)
+				}
+			}
+		})
+	}
+}
+
+// TestSyncReferencedIssueLabels_ReclaimedLabelIsRememberedOnce checks that a
+// reclaimed label does not cost a label-history lookup on every later cycle.
+// Without the memo this is the one case that would pay for the lookup forever.
+func TestSyncReferencedIssueLabels_ReclaimedLabelIsRememberedOnce(t *testing.T) {
+	eventsFetches := 0
+	labelPosts := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/42":
+			_ = json.NewEncoder(w).Encode(&githubv39.Issue{
+				Number: githubv39.Int(42),
+				Labels: []*githubv39.Label{{Name: stringPtr("factory/review")}},
+			})
+
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/100/events":
+			eventsFetches++
+			_ = json.NewEncoder(w).Encode([]*githubv39.IssueEvent{
+				{Event: githubv39.String("unlabeled"), Label: &githubv39.Label{Name: stringPtr("factory/review")}},
+			})
+
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/100/labels":
+			labelPosts++
+			_, _ = w.Write([]byte(`[]`))
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s := &Scanner{
+		cfg:   Config{TriggerLabel: "factory"},
+		gh:    github.ForRepo(ghClient, "test-owner", "test-repo"),
+		state: newStateStore(nil),
+	}
+
+	pr := &githubv39.PullRequest{Number: githubv39.Int(100), Body: stringPtr("Fixes #42")}
+	for i := 0; i < 3; i++ {
+		prIssue := &githubv39.Issue{Number: githubv39.Int(100)}
+		s.syncReferencedIssueLabels(context.Background(), pr, prIssue)
+	}
+
+	if eventsFetches != 1 {
+		t.Errorf("fetched the label history %d times across 3 cycles; want 1", eventsFetches)
+	}
+	if labelPosts != 0 {
+		t.Errorf("posted labels %d times; want 0, the only label to inherit was reclaimed", labelPosts)
+	}
+}
+
+// TestShouldAutoReviewPR_IgnoresParentIssue pins the other half of the handoff:
+// with the label off the pull request, the parent issue must not put it back.
+func TestShouldAutoReviewPR_IgnoresParentIssue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected GitHub request %s %s: the review opt-in must be answered from the PR's own labels", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s := &Scanner{
+		cfg: Config{TriggerLabel: "factory"},
+		gh:  github.ForRepo(ghClient, "test-owner", "test-repo"),
+	}
+
+	withLabel := &githubv39.Issue{
+		Number: githubv39.Int(100),
+		Labels: []*githubv39.Label{{Name: stringPtr("factory/review")}},
+	}
+	if !s.shouldAutoReviewPR(withLabel) {
+		t.Error("shouldAutoReviewPR() = false for a PR carrying the review label; want true")
+	}
+
+	withoutLabel := &githubv39.Issue{
+		Number: githubv39.Int(100),
+		Labels: []*githubv39.Label{{Name: stringPtr("factory")}},
+	}
+	if s.shouldAutoReviewPR(withoutLabel) {
+		t.Error("shouldAutoReviewPR() = true for a PR whose review label was removed; want false")
+	}
+}
+
+// sameStrings compares two label lists as sets, since neither the order the
+// labels are inherited in nor the order GitHub returns them is meaningful.
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	counts := make(map[string]int, len(want))
+	for _, s := range want {
+		counts[s]++
+	}
+	for _, s := range got {
+		counts[s]--
+		if counts[s] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// hasLabelNamed reports whether labels contains one named name.
+func hasLabelNamed(labels []*githubv39.Label, name string) bool {
+	for _, label := range labels {
+		if label.GetName() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGetReadyForHumanLabel(t *testing.T) {
 	if readyForHumanLabel("") != "overseer/ready-for-human" {
 		t.Errorf("readyForHumanLabel(\"\") = %q, want 'overseer/ready-for-human'", readyForHumanLabel(""))

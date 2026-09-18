@@ -55,6 +55,22 @@ type stateStore struct {
 	// from the queue. Loading lazily keeps construction free of I/O, which is
 	// what lets a test build a Scanner without a populated queue.
 	byNumber map[int]prState
+	// reclaimedLabels remembers, per pull request, the non-sticky labels that
+	// have been taken off it by hand. See nonStickyLabels.
+	//
+	// It is a cache of an answer GitHub already holds - the 'unlabeled' entry
+	// stays in the pull request's event log forever - so losing it on restart
+	// costs nothing but the lookup. Caching only matters because the lookup
+	// otherwise repeats every cycle for exactly the pull requests that will
+	// never need it again: a pull request whose label was reclaimed is one the
+	// watcher would re-check for the rest of its life.
+	//
+	// Only removals are remembered, never their absence: a person can reclaim
+	// a label at any time, so "not removed yet" has to be re-read. And a
+	// removal that is later undone is harmless to remember, because a pull
+	// request carrying the label again is honoured on that label's own
+	// strength and never reaches this path.
+	reclaimedLabels map[int]map[string]bool
 }
 
 // newStateStore returns a store that recovers its contents from the queue's
@@ -78,6 +94,33 @@ func (s *stateStore) set(num int, state prState) {
 	defer s.mu.Unlock()
 	s.recoverLocked()
 	s.byNumber[num] = state
+}
+
+// markLabelsReclaimed records that non-sticky labels have been removed from a
+// pull request. Names are matched case-insensitively.
+func (s *stateStore) markLabelsReclaimed(num int, labels map[string]bool) {
+	if len(labels) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reclaimedLabels == nil {
+		s.reclaimedLabels = make(map[int]map[string]bool)
+	}
+	if s.reclaimedLabels[num] == nil {
+		s.reclaimedLabels[num] = make(map[string]bool, len(labels))
+	}
+	for name := range labels {
+		s.reclaimedLabels[num][strings.ToLower(name)] = true
+	}
+}
+
+// isLabelReclaimed reports whether a label is already known to have been
+// removed from a pull request.
+func (s *stateStore) isLabelReclaimed(num int, label string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reclaimedLabels[num][strings.ToLower(label)]
 }
 
 // recoverLocked populates the store from the queue on first access. The caller

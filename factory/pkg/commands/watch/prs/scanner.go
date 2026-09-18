@@ -398,7 +398,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
-		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, pr, prIssue) {
+		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(prIssue) {
 			canReview = !hasBotReviewAfterLastCommit(history.reviews, history.lastCommitTime, headSHA, s.cfg.GitHubLogin, s.cfg.AllowlistedBots)
 		}
 	}
@@ -467,7 +467,7 @@ func (s *Scanner) reconcileReadiness(
 ) {
 	num := pc.prIssue.GetNumber()
 
-	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.pr, pc.prIssue)
+	isReviewRequired := s.shouldAutoReviewPR(pc.prIssue)
 	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
