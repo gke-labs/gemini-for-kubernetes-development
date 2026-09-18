@@ -164,6 +164,11 @@ func issueIsClosingPR(issue *githubv39.Issue, issueNum int) bool {
 	if issue == nil {
 		return false
 	}
+	// Note: We construct a PullRequest here using only Title and Body.
+	// The Search API returns a githubv39.Issue which does not include head ref information.
+	// Consequently, branch-name-based closing patterns (e.g., branch names matching branchIssueRe)
+	// cannot be checked for PRs found via the Search API fallback. This is a known API limitation;
+	// however, the primary timeline check (TimelineHasOpenLinkedPR) handles branch-based connections correctly.
 	pr := &githubv39.PullRequest{
 		Title: issue.Title,
 		Body:  issue.Body,

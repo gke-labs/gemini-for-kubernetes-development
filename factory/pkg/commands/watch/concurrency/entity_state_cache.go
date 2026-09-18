@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -59,7 +59,7 @@ func (c *EntityStateCache) UpdateOpenPRs(prs []*githubv39.PullRequest) {
 		if pr == nil {
 			continue
 		}
-		for num := range common.GetClosingIssues(pr) {
+		for num := range github.GetClosingIssues(pr) {
 			c.referencedIssues[num] = true
 		}
 	}
