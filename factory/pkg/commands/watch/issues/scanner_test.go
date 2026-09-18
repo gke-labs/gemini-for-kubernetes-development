@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,16 +17,22 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
-// fakeQueue records what the scanner queued and withdrew.
+// fakeQueue records what the scanner queued and withdrew, and stands in for the
+// finished work the real queue would hand back.
 type fakeQueue struct {
-	mu       sync.Mutex
-	existing map[string]bool
-	enqueued map[string]*api.QueueTask
-	removed  []int
+	mu        sync.Mutex
+	existing  map[string]bool
+	enqueued  map[string]*api.QueueTask
+	processed map[string]*api.QueueTask
+	removed   []int
 }
 
 func newFakeQueue() *fakeQueue {
-	return &fakeQueue{existing: map[string]bool{}, enqueued: map[string]*api.QueueTask{}}
+	return &fakeQueue{
+		existing:  map[string]bool{},
+		enqueued:  map[string]*api.QueueTask{},
+		processed: map[string]*api.QueueTask{},
+	}
 }
 
 func (q *fakeQueue) TaskExists(filename string) bool {
@@ -47,6 +54,29 @@ func (q *fakeQueue) RemovePendingTasksForNumber(number int) error {
 	defer q.mu.Unlock()
 	q.removed = append(q.removed, number)
 	return nil
+}
+
+func (q *fakeQueue) GetProcessedTask(filename string) *api.QueueTask {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.processed[filename]
+}
+
+func (q *fakeQueue) ListProcessedTasks() map[string]*api.QueueTask {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	snapshot := make(map[string]*api.QueueTask, len(q.processed))
+	for fn, t := range q.processed {
+		snapshot[fn] = t
+	}
+	return snapshot
+}
+
+// finish records a task as completed, as the real queue does when a task ends.
+func (q *fakeQueue) finish(filename string, task *api.QueueTask) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.processed[filename] = task
 }
 
 // fakeEntities stands in for the shared entity cache.
@@ -97,9 +127,6 @@ func newScanner(t *testing.T, cfg Config, deps Deps) (*Scanner, *fakeQueue, *fak
 	if cfg.TriggerLabel == "" {
 		cfg.TriggerLabel = "factory"
 	}
-	if cfg.ProcessedDir == "" {
-		cfg.ProcessedDir = t.TempDir()
-	}
 	if deps.GitHub == nil {
 		// A client with no transport still carries the owner and repo, which
 		// the scanner reads for sandbox names and task URLs.
@@ -142,6 +169,120 @@ func TestQueueTasks_Filters(t *testing.T) {
 	if len(queue.removed) != 1 || queue.removed[0] != 10 {
 		t.Errorf("withdrew pending tasks for %v, want [10]", queue.removed)
 	}
+}
+
+// TestQueueTasks_ReadsFinishedWorkFromQueue covers the two points at which the
+// scanner asks the queue what has already been done. Both used to be reads of
+// the processed/ directory.
+//
+// The control case comes first and is what makes the rest mean anything: an
+// issue with nothing recorded against it must actually be queued. Without it
+// the "not queued" assertions would pass for any reason at all, including a
+// scan that never got as far as the queue.
+//
+// The two gating cases are then separated by timing so that each can only be
+// explained by one of the two lookups. The default workflow cooldown is ten
+// minutes, so a task that finished two hours ago is well out of cooldown and
+// can only be caught by the last-worked-on record; an issue updated just now
+// is newer than its last task and can only be caught by the cooldown.
+func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
+	// newIssueScanner returns a scanner whose GitHub calls are served well
+	// enough for an issue to make it all the way to the queue.
+	newIssueScanner := func(t *testing.T) (*Scanner, *fakeQueue) {
+		t.Helper()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, "/timeline") {
+				// An empty but complete timeline settles the linked-PR check
+				// without a fall back to the Search API.
+				_ = json.NewEncoder(w).Encode([]*githubv39.Timeline{})
+				return
+			}
+			_, _ = w.Write([]byte("{}"))
+		}))
+		t.Cleanup(server.Close)
+
+		gh := githubv39.NewClient(nil)
+		gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+		s, queue, _ := newScanner(t, Config{TargetAssignee: "bot1"}, Deps{
+			GitHub: github.ForRepo(gh, "test-owner", "test-repo"),
+		})
+		return s, queue
+	}
+
+	issue := func(num int, updated time.Time) *githubv39.Issue {
+		return &githubv39.Issue{Number: githubv39.Int(num), UpdatedAt: &updated}
+	}
+
+	t.Run("queues an issue with no finished work against it", func(t *testing.T) {
+		s, queue := newIssueScanner(t)
+
+		s.queueTasks(context.Background(), []*githubv39.Issue{
+			issue(7, time.Now().Add(-3*time.Hour)),
+		}, map[int]bool{})
+
+		if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+			t.Fatalf("issue 7 was not queued; queued: %v", queue.enqueued)
+		}
+	})
+
+	t.Run("skips an issue not updated since its last task finished", func(t *testing.T) {
+		s, queue := newIssueScanner(t)
+		queue.finish("task-issue-7.yaml", &api.QueueTask{
+			Type:        api.TypeIssueFix,
+			Number:      7,
+			Status:      api.StatusCompleted,
+			CompletedAt: time.Now().Add(-2 * time.Hour),
+		})
+
+		s.queueTasks(context.Background(), []*githubv39.Issue{
+			issue(7, time.Now().Add(-3*time.Hour)),
+		}, map[int]bool{})
+
+		if len(queue.enqueued) != 0 {
+			t.Errorf("queued %v, want nothing: the issue has not been updated since its last task finished", queue.enqueued)
+		}
+	})
+
+	t.Run("skips an issue whose last task is still in cooldown", func(t *testing.T) {
+		s, queue := newIssueScanner(t)
+		queue.finish("task-issue-7.yaml", &api.QueueTask{
+			Type:        api.TypeIssueFix,
+			Number:      7,
+			Status:      api.StatusCompleted,
+			CompletedAt: time.Now().Add(-time.Minute),
+		})
+
+		s.queueTasks(context.Background(), []*githubv39.Issue{
+			issue(7, time.Now()),
+		}, map[int]bool{})
+
+		if len(queue.enqueued) != 0 {
+			t.Errorf("queued %v, want nothing: the last task finished a minute ago, inside the cooldown", queue.enqueued)
+		}
+	})
+
+	// A failed task did not do the work, so it must gate nothing: the issue
+	// still needs an agent, and recording the failure would park it until
+	// someone touched the issue again.
+	t.Run("a failed task gates nothing", func(t *testing.T) {
+		s, queue := newIssueScanner(t)
+		queue.finish("task-issue-7.yaml", &api.QueueTask{
+			Type:        api.TypeIssueFix,
+			Number:      7,
+			Status:      api.StatusFailed,
+			CompletedAt: time.Now().Add(-2 * time.Hour),
+		})
+
+		s.queueTasks(context.Background(), []*githubv39.Issue{
+			issue(7, time.Now().Add(-3*time.Hour)),
+		}, map[int]bool{})
+
+		if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+			t.Errorf("issue 7 was gated by a task that failed; queued: %v", queue.enqueued)
+		}
+	})
 }
 
 // TestScanOnce_ColdPRCacheFailsClosed is the regression test for

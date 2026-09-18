@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
@@ -144,15 +142,8 @@ func (s *Scanner) canInvestigatePR(
 // in failure, which makes the same revision worth retrying: the agent never got
 // to finish, so its verdict says nothing about the CI failure.
 func (s *Scanner) lastInvestigationFailed(filename string) bool {
-	data, err := os.ReadFile(filepath.Join(s.cfg.ProcessedDir, filename))
-	if err != nil {
-		return false
-	}
-	var t api.QueueTask
-	if err := yaml.Unmarshal(data, &t); err != nil {
-		return false
-	}
-	return t.Status == api.StatusFailed
+	last := s.queue.GetProcessedTask(filename)
+	return last != nil && last.Status == api.StatusFailed
 }
 
 // handlePRInvestigate queues an investigation of the pull request's CI

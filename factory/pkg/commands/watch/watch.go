@@ -186,20 +186,10 @@ func (w *Watcher) init(ctx context.Context) error {
 	w.initComponents()
 
 	if !w.DryRun {
-		if err := os.MkdirAll(w.incomingDir, 0755); err != nil {
-			return fmt.Errorf("failed to create incoming queue dir: %w", err)
-		}
-		if err := os.MkdirAll(w.processingDir, 0755); err != nil {
-			return fmt.Errorf("failed to create processing queue dir: %w", err)
-		}
-		if err := os.MkdirAll(w.processedDir, 0755); err != nil {
-			return fmt.Errorf("failed to create processed queue dir: %w", err)
-		}
-		if err := os.MkdirAll(w.processingLogDir, 0755); err != nil {
-			return fmt.Errorf("failed to create processing log dir: %w", err)
-		}
-		if err := os.MkdirAll(w.processedLogDir, 0755); err != nil {
-			return fmt.Errorf("failed to create processed log dir: %w", err)
+		// The queue lays out its own directories: it is the only component
+		// that reads or writes the task files inside them.
+		if err := w.queueMgr.EnsureDirs(); err != nil {
+			return err
 		}
 		go startQueueHTTPServer(ctx, w.queueMgr, ":13338")
 	}

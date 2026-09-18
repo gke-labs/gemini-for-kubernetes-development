@@ -16,13 +16,11 @@ package issues
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
@@ -46,7 +44,13 @@ const (
 )
 
 // Queue is the subset of the task queue the Scanner needs: it adds issue tasks,
-// and withdraws the pending ones for an issue that has since been stopped.
+// withdraws the pending ones for an issue that has since been stopped, and
+// reports what has already finished.
+//
+// The finished work is read through here rather than off the filesystem
+// because the queue owns the task files. A scanner that opened the processed
+// directory itself would be a second reader of state it does not control, and
+// would miss everything that finished after it first looked.
 type Queue interface {
 	// TaskExists reports whether a task with the given file name is queued or running.
 	TaskExists(filename string) bool
@@ -54,6 +58,11 @@ type Queue interface {
 	Enqueue(filename string, task *api.QueueTask) error
 	// RemovePendingTasksForNumber drops the not-yet-started tasks targeting an issue.
 	RemovePendingTasksForNumber(number int) error
+	// GetProcessedTask returns the finished task recorded under the given file
+	// name, or nil when nothing by that name has finished.
+	GetProcessedTask(filename string) *api.QueueTask
+	// ListProcessedTasks returns every finished task, keyed by task file name.
+	ListProcessedTasks() map[string]*api.QueueTask
 }
 
 // Entities is the shared view of what the scanners have observed. The Scanner
@@ -107,9 +116,6 @@ type Config struct {
 	// MinNumber skips issues numbered below it, which is how a deployment
 	// ignores a repository's history. Zero scans everything.
 	MinNumber int
-	// ProcessedDir is the queue directory holding completed task files, read to
-	// recover when each issue was last worked on.
-	ProcessedDir string
 	// PrimeOpenPRs makes this scanner populate the open pull request half of
 	// the entity cache itself, which it must do when no pull request scanner is
 	// running to do it. See primeOpenPRs.
@@ -481,22 +487,17 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 // must not be queued again yet. The cooldown is declared by the workflow
 // definition; a standard fix uses the default.
 func (s *Scanner) inCooldown(ctx context.Context, filename, workflowPath string) bool {
-	processedPath := filepath.Join(s.cfg.ProcessedDir, filename)
-	info, err := os.Stat(processedPath)
-	if err != nil {
+	last := s.queue.GetProcessedTask(filename)
+	if last == nil {
 		return false
 	}
-
-	// The file's timestamp is only a proxy for when the task finished; the
-	// recorded completion time is authoritative when the file holds one.
-	lastRunTime := info.ModTime()
-	if data, err := os.ReadFile(processedPath); err == nil {
-		var t api.QueueTask
-		if err := yaml.Unmarshal(data, &t); err == nil && !t.CompletedAt.IsZero() {
-			lastRunTime = t.CompletedAt
-		}
+	// The queue dates every finished task, falling back to the task file's own
+	// timestamp for one that never recorded a completion time, so a zero here
+	// means only that there is nothing to measure the cooldown against.
+	if last.CompletedAt.IsZero() {
+		return false
 	}
-	return time.Since(lastRunTime) < common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+	return time.Since(last.CompletedAt) < common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
 }
 
 // applyTriggerLabel adopts an issue that was picked up by assignment rather
@@ -529,11 +530,15 @@ func (s *Scanner) selectUser(ctx context.Context, taskType api.TaskType, num int
 	return assignee
 }
 
-// processedIssues returns when each issue was last worked on, reading the
-// processed queue directory on first use.
+// processedIssues returns when each issue was last worked on, recovered from
+// the queue's finished tasks on first use.
+//
+// The snapshot is taken once and then kept: queueTask stamps an issue here as
+// it queues it, which is what stops a second cycle from queueing the same work
+// before the first has finished.
 func (s *Scanner) processedIssues() map[int]time.Time {
 	if s.processed == nil {
-		s.processed = loadProcessedIssues(s.cfg.ProcessedDir)
+		s.processed = processedIssueTimes(s.queue.ListProcessedTasks())
 	}
 	return s.processed
 }

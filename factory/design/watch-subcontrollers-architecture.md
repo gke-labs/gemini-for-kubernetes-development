@@ -144,7 +144,7 @@ flowchart TB
 To guarantee maintainability and eliminate circular dependencies, subcontrollers must have strictly defined boundaries and communicate only via shared memory primitives and Go channels.
 
 ### 1. `IssueScanner`
-* **Location**: Dedicated `watch/issues` package, built via `issues.New(Config, Deps)`. It reaches the daemon through four narrow collaborators — a `Queue` (`TaskExists` / `Enqueue` / `RemovePendingTasksForNumber`), an `Entities` view of `EntityStateCache`, a `Sandboxes` probe, and a `UserSelector` — plus a GitHub client for its own queries. Role-based bot selection stays with the `Watcher` behind `UserSelector`, because it reads the factory config and can pin a task to the account an existing sandbox already belongs to.
+* **Location**: Dedicated `watch/issues` package, built via `issues.New(Config, Deps)`. It reaches the daemon through four narrow collaborators — a `Queue` (`TaskExists` / `Enqueue` / `RemovePendingTasksForNumber` / `GetProcessedTask` / `ListProcessedTasks`), an `Entities` view of `EntityStateCache`, a `Sandboxes` probe, and a `UserSelector` — plus a GitHub client for its own queries. Role-based bot selection stays with the `Watcher` behind `UserSelector`, because it reads the factory config and can pin a task to the account an existing sandbox already belongs to.
 * **Cadence**: Two intervals, split along the same line as the other subcontrollers — what is cheap runs often, what paginates does not:
   * `Interval` (default **30s**) scans the issues that are the watcher's business by ownership: those assigned to a bot in the pool, and those the operator filed themselves. Each is a single page sorted by update time, which is what makes it cheap enough to run at this cadence, and it is what sets pickup latency for a new issue.
   * `SweepInterval` (default **5m**) paginates over every trigger-labelled issue and publishes the open-issue set to `EntityStateCache`. This is the expensive half; running it on the fast ticker would multiply its GitHub traffic tenfold to discover the same issues the fast queries already surface while they are being worked on. It also fires on the first cycle, so a restart does not wait out a full sweep interval.
@@ -155,7 +155,7 @@ To guarantee maintainability and eliminate circular dependencies, subcontrollers
   * Consults `EntityStateCache.GetReferencedIssuesMap()` for instant O(1) in-memory checks rather than calling the GitHub Timeline API, and falls back to the Timeline and Search APIs only for the issues that survive it.
   * Probes `SandboxService.IsTaskRunning(sandboxName)` to avoid duplicate work if a sandbox is currently active.
   * Uses `TaskQueueManager.TaskExists(filename)` as the authoritative in-memory check before falling back to disk, and withdraws the pending tasks of an issue that has since been stopped.
-  * Keeps its own record of when each issue was last worked on, loaded from `processed/` on first use. It is a plain map with no mutex, because `ScanOnce` is only ever called from the `Run` loop or from the caller itself in `--once` mode.
+  * Keeps its own record of when each issue was last worked on, recovered on first use from `Queue.ListProcessedTasks()` rather than by reading `processed/`. It is a plain map with no mutex, because `ScanOnce` is only ever called from the `Run` loop or from the caller itself in `--once` mode. The per-workflow cooldown is answered the same way, from `Queue.GetProcessedTask(filename)`.
   * Enqueues `issue-fix` (or `agent-chore` if the issue specifies an `.agents/` workflow) directly into `TaskQueueManager`.
 * **Cold Cache Guard**: An unpopulated open PR cache is indistinguishable from "no open PR references this issue", so a scan that trusted it would re-trigger fixes for issues that already have one — which is exactly what happened after a restart into a rate limit window. The scanner fails closed on `HasOpenPRs()`. Because the two scanners are gated independently and a deployment can scan issues with pull request scanning switched off, the issue scanner primes that half of the cache itself with a single listing when — and only when — no pull request scanner is running to fill it. It is not a fallback for a cache the owner has simply not reached yet: priming on cold alone would duplicate the listing on every start and give the cache two writers.
 * **Pause Signal**: `Deps.Paused` is the same read-only drain signal the reconciler and chore scheduler take. Queueing a fix is taking on new work, which is precisely what a drain stops.
@@ -183,7 +183,7 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
     4. **Automated Code Review**: opt-in by label (`pr-review`), strictly gated on `!hasPending && !hasFailure`.
   * **Deterministic Ready-for-Human Reconciler**: gated on clean CI, addressed comments, completed reviews and no active task (`!HasActivePRTask`, read from memory so the label does not flap while a task file is renamed between directories). Runs in both directions — removing the label matters as much as adding it — and unassigns the bot on qualification.
   * Enqueues tasks directly into `TaskQueueManager`.
-* **State ownership**: the `lastReviewedSHA` / `lastCommentAddressedSHA` / `lastInvestigatedSHA` / `lastIteratedSHA` gating record lives in a mutex-guarded `stateStore` **inside the package**, not on `EntityStateCache` as §5C originally proposed. Nothing outside this scanner reads it, and the shared cache is for state that crosses subcontroller boundaries; putting single-owner bookkeeping there would make it look shared when it is not. The mutex is what the worker pool requires, and it is cheaper than a shared primitive.
+* **State ownership**: the `lastReviewedSHA` / `lastCommentAddressedSHA` / `lastInvestigatedSHA` / `lastIteratedSHA` gating record lives in a mutex-guarded `stateStore` **inside the package**, not on `EntityStateCache` as §5C originally proposed. Nothing outside this scanner reads it, and the shared cache is for state that crosses subcontroller boundaries; putting single-owner bookkeeping there would make it look shared when it is not. The mutex is what the worker pool requires, and it is cheaper than a shared primitive. The store recovers itself on first use by folding `Queue.ListProcessedTasks()`, and the "did the last investigation fail, so is this revision worth another attempt?" check reads `Queue.GetProcessedTask(filename)`; neither opens a task file.
 * **Decoupling Guarantee**: Does **not** scan issues or chores. Issue-typed items returned by its queries are dropped.
 
 ### 3. `ChoreScheduler`
@@ -279,7 +279,11 @@ type TaskQueueManager struct {
 ```
 
 * **Thread-Safety**: All reads and writes to `incoming`, `processing`, and `processed` maps are guarded by `mu`.
-* **In-Memory Authority**: Subcontrollers (`PRScanner`, `IssueScanner`, `ChoreScheduler`) MUST consult `queueMgr.TaskExists(filename)` and `queueMgr.HasActivePRTask(num)` rather than reading disk directories, eliminating race conditions during atomic file renames.
+* **Sole Owner of Task Files**: The `TaskQueueManager` is the only component that opens a task file. Subcontrollers (`PRScanner`, `IssueScanner`, `ChoreScheduler`) MUST reach task state through it rather than reading the queue directories:
+  * `TaskExists(filename)` and `HasActivePRTask(num)` for work that is queued or running, which eliminates race conditions during atomic file renames.
+  * `GetProcessedTask(filename)` and `ListProcessedTasks()` for work that has finished. The scanners recover their gating state — when an issue was last worked on, and which commit of a pull request was last reviewed, investigated or rebased — from these rather than walking `processedDir`. Going through the queue also hands them the tasks that finished *since* start-up, which a one-shot directory read missed.
+  * Both accessors return copies. A caller that could mutate what it read back would be editing queue state without the queue knowing.
+* **Directory Ownership**: `EnsureDirs()` creates the five directories the queue stores tasks and task logs in. The queue creates them because it owns them; callers do not lay out queue storage.
 * **Drain Awareness**: `IsDrainMode()` reports whether processing is paused (drain marker files in `queueDir` or drain environment variables), giving the dispatcher and the watcher a single source of truth.
 * **Atomic Write-Through**:
   * `Enqueue()`:
@@ -298,7 +302,7 @@ type TaskQueueManager struct {
     2. Renames disk file from `processingDir` $\rightarrow$ `processedDir`.
     3. Moves corresponding `.log` file from `processingLogDir` $\rightarrow$ `processedLogDir`.
     4. Records `Completed` or `Failed` in `journal.jsonl`.
-* **Recovery on Startup**: `LoadFromDisk()` populates in-memory maps from disk on daemon initialization.
+* **Recovery on Startup**: `LoadFromDisk()` populates in-memory maps from disk on daemon initialization. A recovered task in `processedDir` that carries no `completedAt` is dated by its file's modification time, so that readers of the processed set never have to stat the file themselves.
 
 ### B. `SandboxLockRegistry` (In-Memory Leases)
 
