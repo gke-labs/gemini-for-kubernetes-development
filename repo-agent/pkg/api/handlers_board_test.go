@@ -1027,3 +1027,45 @@ func TestGetRepoSuggestions(t *testing.T) {
 		}
 	}
 }
+
+// Clicks beyond the launch limits render "queued", not "starting": with
+// two active sandboxes (the per-user default), a third review click has
+// no capacity until a slot frees.
+func TestMailboxQueuedAtCapacity(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 90, "title": "reviewing a", "html_url": "https://github.com/test/repo/pull/90", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
+			{"number": 91, "title": "reviewing b", "html_url": "https://github.com/test/repo/pull/91", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
+			{"number": 92, "title": "third click", "html_url": "https://github.com/test/repo/pull/92", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+	running := func(n string, pr string) *unstructured.Unstructured {
+		return sandboxCR(n,
+			map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": pr},
+			map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/pull/" + pr}, 1)
+	}
+	board := boardCR()
+	board.SetAnnotations(map[string]string{"board.gemini.google.com/requests": `{"review-92": "alice"}`})
+
+	_, r, _ := boardTestServer(t, ghResponses, board, running("factory-pr-repo-90", "90"), running("factory-pr-repo-91", "91"))
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	for _, item := range work {
+		if item.Number == 92 {
+			if item.Stage != "queued" || item.Attention != "waiting" {
+				t.Errorf("pr-92 should be queued/waiting, got %s/%s", item.Stage, item.Attention)
+			}
+			return
+		}
+	}
+	t.Fatalf("pr-92 missing: %s", w.Body.String())
+}

@@ -36,6 +36,7 @@ const AGENT_STAGE = {
   'reviewing': 'reviewing',
   'triaging': 'triaging',
   'planning': 'planning',
+  'queued': 'queued',
 };
 
 // Action-first grouping (tabs). Up Next is the default tab: every
