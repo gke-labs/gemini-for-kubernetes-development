@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 // Work: the RepoBoard work queue (docs/design/repoboard.md §8).
 // One high-density table per board: rows are issues/PRs merged with agent
@@ -555,6 +555,11 @@ function Work({ onBack, namespace }) {
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState('');
   const [work, setWork] = useState([]);
+  const [loadingWork, setLoadingWork] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // Guards against the stale-response race: a fetch launched for the
+  // previous board must never overwrite the board you switched to.
+  const activeBoardRef = useRef('');
   const [activeGroup, setActiveGroup] = useState(''); // '' = auto-pick
   const [loading, setLoading] = useState(false);
   const [addURL, setAddURL] = useState('');
@@ -580,10 +585,17 @@ function Work({ onBack, namespace }) {
 
   const fetchWork = useCallback(() => {
     if (!activeBoard) return;
-    fetch(`/api/board/${activeBoard}/work`)
+    const board = activeBoard;
+    setSyncing(true);
+    fetch(`/api/board/${board}/work`)
       .then(res => res.ok ? res.json() : Promise.reject(res.statusText))
-      .then(data => { if (Array.isArray(data)) setWork(data); })
-      .catch(err => console.error('Failed to fetch work feed', err));
+      .then(data => {
+        if (board !== activeBoardRef.current) return; // stale response
+        if (Array.isArray(data)) setWork(data);
+        setLoadingWork(false);
+      })
+      .catch(err => console.error('Failed to fetch work feed', err))
+      .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
   }, [activeBoard]);
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
@@ -597,7 +609,12 @@ function Work({ onBack, namespace }) {
       .catch(() => {});
   }, []);
   useEffect(() => {
+    activeBoardRef.current = activeBoard;
     if (!activeBoard) return;
+    // Board switch: clear the previous board's rows immediately and show
+    // the loading state — never render another board's items.
+    setWork([]);
+    setLoadingWork(true);
     try {
       const saved = JSON.parse(localStorage.getItem(`repoboard.view.${activeBoard}`));
       setView(saved ? { ...defaultView, ...saved } : defaultView);
@@ -857,6 +874,9 @@ function Work({ onBack, namespace }) {
                     ))}
                   </span>
                 )}
+                {syncing && !loadingWork && (
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }} title="Refreshing from the server">↻</span>
+                )}
                 <input
                   type="text"
                   value={view.labels}
@@ -872,12 +892,17 @@ function Work({ onBack, namespace }) {
               <table className="work-table">
                 {header}
                 <tbody>
-                  {rows.map(item => (
+                  {loadingWork && (
+                    <tr><td colSpan="6" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                      Loading {activeBoard}…
+                    </td></tr>
+                  )}
+                  {!loadingWork && rows.map(item => (
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
                       onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
                       groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly} />
                   ))}
-                  {!rows.length && (
+                  {!loadingWork && !rows.length && (
                     shown === UP_NEXT ? (
                       <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
                         ✓ Nothing needs you right now.
