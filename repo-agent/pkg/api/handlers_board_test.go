@@ -111,6 +111,10 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
+	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
+	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
+	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
+	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
 	r.PUT("/board/:board/issues/:id/draft", server.putBoardTriageDraft)
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
@@ -872,5 +876,94 @@ func TestPutBoardTriageDraft(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
+	}
+}
+
+// The plan loop, API side: a plan-carrying fix sandbox renders plan-ready
+// with the draft; feedback stamps the refinement markers; approve stamps
+// approval and files the fix request; reject clears the draft.
+func TestPlanEndpoints(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+			{"number": 42, "title": "needs planning", "html_url": "https://github.com/test/repo/issues/42", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+	}
+	planSandbox := sandboxCR("fix-repo-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			"htmlURL": "https://github.com/test/repo/issues/42",
+			"sandbox.gemini.google.com/last-task-type":  "plan",
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"board.gemini.google.com/plan":              "## Summary\nDo the thing.",
+			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
+		}, 1)
+
+	srv, r, dyn := boardTestServer(t, ghResponses, boardCR(), planSandbox)
+	_ = srv
+
+	// Feed: plan-ready with the draft attached.
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if len(work) != 1 || work[0].Stage != "plan-ready" || work[0].Attention != "needs-you" || !strings.Contains(work[0].Plan, "Do the thing.") {
+		t.Fatalf("expected plan-ready row with draft, got %s", w.Body.String())
+	}
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("POST", "/board/myboard/issues/42/"+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	getAnnotations := func() map[string]string {
+		sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "fix-repo-42", v1.GetOptions{})
+		if err != nil {
+			t.Fatalf("get sandbox: %v", err)
+		}
+		return sb.GetAnnotations()
+	}
+
+	// Refine: feedback stamped.
+	if w := post("plan-feedback", `{"feedback": ""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty feedback: expected 400, got %d", w.Code)
+	}
+	if w := post("plan-feedback", `{"feedback": "merge steps 2 and 3"}`); w.Code != http.StatusOK {
+		t.Fatalf("feedback: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	annotations := getAnnotations()
+	if annotations["board.gemini.google.com/plan-feedback"] != "merge steps 2 and 3" || annotations["board.gemini.google.com/plan-feedback-at"] == "" {
+		t.Errorf("feedback not stamped: %v", annotations)
+	}
+
+	// Approve: approval stamped and the fix request filed.
+	if w := post("plan-approve", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("approve: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if getAnnotations()["board.gemini.google.com/plan-approved-at"] == "" {
+		t.Error("approval not stamped")
+	}
+	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get board: %v", err)
+	}
+	if !strings.Contains(board.GetAnnotations()["board.gemini.google.com/requests"], "fix-42") {
+		t.Errorf("approve did not file the fix request: %v", board.GetAnnotations())
+	}
+
+	// Reject: draft cleared, reject stamped.
+	if w := post("plan-reject", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	annotations = getAnnotations()
+	if annotations["board.gemini.google.com/plan"] != "" || annotations["board.gemini.google.com/plan-rejected-at"] == "" {
+		t.Errorf("reject did not clear the draft: %v", annotations)
 	}
 }

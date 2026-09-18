@@ -82,8 +82,18 @@ const (
 	// member clicks Review again. Auto-retrying re-runs the whole agent,
 	// and failures that need a human (org blocks the token, bad PAT)
 	// never fix themselves.
-	AnnotationReviewError       = "review.gemini.google.com/error"
-	AnnotationReviewErrorAt     = "review.gemini.google.com/error-at"
+	AnnotationReviewError   = "review.gemini.google.com/error"
+	AnnotationReviewErrorAt = "review.gemini.google.com/error-at"
+	// Plan-loop annotations live on the issue's FIX sandbox (`factory
+	// plan` runs there so the approved plan sits next to the code the fix
+	// will touch). The draft is board-only until the member approves;
+	// approval publishes it via the fix PR's description.
+	AnnotationPlanDraft         = "board.gemini.google.com/plan"
+	AnnotationPlannedAt         = "board.gemini.google.com/planned-at"
+	AnnotationPlanFeedback      = "board.gemini.google.com/plan-feedback"
+	AnnotationPlanFeedbackAt    = "board.gemini.google.com/plan-feedback-at"
+	AnnotationPlanApproved      = "board.gemini.google.com/plan-approved-at"
+	AnnotationPlanRejected      = "board.gemini.google.com/plan-rejected-at"
 	reviewStatePending          = "pending"
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
@@ -154,6 +164,15 @@ func maxActivePerUser(board *boardv1alpha1.RepoBoard) int {
 type reviewPlan struct {
 	pr       int
 	executor string
+}
+
+// planRequest is one plan (or plan refinement) to ensure: PLAN -> human
+// REFINE -> UPDATE_PLAN rounds run in the requesting member's fix sandbox,
+// write nothing to GitHub, and end at APPROVE (fix launches --with-plan)
+// or REJECT (draft cleared).
+type planRequest struct {
+	issue  int
+	member string
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -230,7 +249,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews, mailTriages := r.mailboxPlans(work)
+	mailFixes, mailReviews, mailTriages, mailPlans := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
@@ -258,6 +277,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, plan := range fixes {
 		namespaces[plan.executor] = true
 	}
+	for _, req := range mailPlans {
+		namespaces[req.member] = true
+	}
 	for _, plan := range reviews {
 		if plan.executor != "" {
 			namespaces[plan.executor] = true
@@ -276,11 +298,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, issue := range triageCandidates {
 		r.ensureTriage(ctx, work, issue)
 	}
+	for _, req := range mailPlans {
+		r.ensurePlan(ctx, work, req)
+	}
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
 	r.resumeTriages(ctx, work)
+	r.resumePlans(ctx, work)
 	r.settleSubmittedReviews(ctx, work)
 
 	if err := r.trimMailbox(ctx, work); err != nil {
@@ -561,18 +587,19 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	requests := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var fixes []fixPlan
 	var reviews []reviewPlan
 	var triages []int
+	var plans []planRequest
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -587,9 +614,13 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "triage-")); err == nil {
 				triages = append(triages, n)
 			}
+		case strings.HasPrefix(key, "plan-"):
+			if n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-")); err == nil {
+				plans = append(plans, planRequest{issue: n, member: member})
+			}
 		}
 	}
-	return fixes, reviews, triages
+	return fixes, reviews, triages, plans
 }
 
 // dedupeReviews keeps one plan per PR, preferring a consented executor
@@ -715,6 +746,15 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		instruction = strings.TrimSpace(instruction + " " + discloseInstructionTemplate)
 	}
 
+	// An approved plan on the sandbox rides along: the fix follows it and
+	// publishes it as the PR description's Plan section. Only approval
+	// consents this — a plain Fix click on a merely drafted (or rejected)
+	// plan ignores it.
+	withPlan := false
+	if sb != nil {
+		annotations := sb.GetAnnotations()
+		withPlan = annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
+	}
 	if r.Factory.StartFix(key, factorycli.FixOptions{
 		Namespace:         plan.executor,
 		IssueURL:          issueURL,
@@ -722,6 +762,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
+		WithPlan:          withPlan,
 	}) {
 		logger.Info("launched factory fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name)
 	}
@@ -1018,6 +1059,17 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 				continue
 			}
 			if work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)) != nil {
+				continue
+			}
+		case strings.HasPrefix(key, "plan-"):
+			n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-"))
+			if err != nil {
+				continue
+			}
+			// The plan request stands until a draft is stored: the fix
+			// sandbox may predate the click, so existence alone proves
+			// nothing.
+			if sb := work.findSandbox(member, work.fixSandboxName(n)); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
 				continue
 			}
 		default:

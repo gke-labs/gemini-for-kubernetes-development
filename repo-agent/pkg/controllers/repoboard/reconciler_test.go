@@ -49,6 +49,7 @@ type fakeLaunch struct {
 	ReviewOpts  *factorycli.ReviewOptions
 	PRWatchOpts *factorycli.PRWatchOptions
 	TriageOpts  *factorycli.TriageOptions
+	PlanOpts    *factorycli.PlanOptions
 }
 
 type fakeLauncher struct {
@@ -90,6 +91,16 @@ func (f *fakeLauncher) StartTriage(key string, opts factorycli.TriageOptions) bo
 		return false
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, TriageOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartPlan(key string, opts factorycli.PlanOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, PlanOpts: &opts})
 	return true
 }
 
@@ -865,4 +876,139 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
 	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
+}
+
+// The plan loop, controller side: a Plan click launches `factory plan` in
+// the member's fix sandbox; the finished run's banner output is stored as
+// the draft; feedback newer than the draft re-launches with --feedback;
+// approval makes the eventual fix run --with-plan.
+func TestPlanLifecycle(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	// 1. Click: mailbox plan-42, no sandbox yet -> fresh plan launch.
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{AnnotationRequests: `{"plan-42": "alice"}`})
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/plan-repo-42"))
+	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].PlanOpts.Namespace).To(gomega.Equal("alice"))
+	g.Expect(launches[0].PlanOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
+	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.BeEmpty())
+
+	// 2. Harvest: finished run + fix sandbox -> draft stored, mailbox kept
+	// until stored, then trimmed.
+	fixSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "fix-repo-42",
+			"namespace": "alice",
+			"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/42",
+				"sandbox.gemini.google.com/last-task-type":  "plan",
+				"sandbox.gemini.google.com/last-task-state": "Completed",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	fake2 := newFakeLauncher()
+	fake2.results["alice/plan-repo-42"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "banner\n================== ISSUE PLAN ==================\n## Summary\nDo the thing.\n================================================\ntrailer",
+	}
+	board2 := testBoard(map[string]string{AnnotationRequests: `{"plan-42": "alice"}`})
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), fixSandbox)
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationPlanDraft]).To(gomega.ContainSubstring("Do the thing."))
+	g.Expect(updated.GetAnnotations()[AnnotationPlannedAt]).NotTo(gomega.BeEmpty())
+
+	// Draft stored: the next reconcile trims the mailbox entry and does
+	// not relaunch.
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
+	fetched := &boardv1alpha1.RepoBoard{}
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "test-board", Namespace: "alice"}, fetched)).To(gomega.Succeed())
+	g.Expect(fetched.GetAnnotations()[AnnotationRequests]).NotTo(gomega.ContainSubstring("plan-42"))
+
+	// 3. Refine: feedback newer than the draft relaunches with --feedback,
+	// even with no mailbox entry (resume pass drives it).
+	annotations := updated.GetAnnotations()
+	annotations[AnnotationPlanFeedback] = "merge steps 2 and 3"
+	annotations[AnnotationPlanFeedbackAt] = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
+	updated.SetAnnotations(annotations)
+	g.Expect(r2.Update(context.Background(), updated)).To(gomega.Succeed())
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches = fake2.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.Equal("merge steps 2 and 3"))
+}
+
+// An approved plan rides into the fix (--with-plan); a merely drafted or
+// rejected plan does not.
+func TestFixWithApprovedPlan(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	sbWithPlan := func(approved bool) *unstructured.Unstructured {
+		annotations := map[string]interface{}{
+			"htmlURL":           "https://github.com/test/repo/issues/7",
+			AnnotationPlanDraft: "## Summary\nplanned",
+			AnnotationPlannedAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+			"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
+		}
+		if approved {
+			annotations[AnnotationPlanApproved] = time.Now().UTC().Format(time.RFC3339)
+		}
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":        "fix-repo-7",
+				"namespace":   "alice",
+				"labels":      map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+				"annotations": annotations,
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	for _, approved := range []bool{true, false} {
+		fake := newFakeLauncher()
+		board := testBoard(map[string]string{AnnotationRequests: `{"fix-7": "alice"}`})
+		r := newTestReconciler(fake, ghClient, board, githubSecret(), sbWithPlan(approved))
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		launches := fake.launches()
+		g.Expect(launches).To(gomega.HaveLen(1), "approved=%v", approved)
+		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil())
+		g.Expect(launches[0].FixOpts.WithPlan).To(gomega.Equal(approved), "approved=%v", approved)
+	}
+}
+
+// A rejected plan's stale invocation result must not resurrect the draft.
+func TestPlanResultStale(t *testing.T) {
+	g := gomega.NewWithT(t)
+	now := time.Now()
+	g.Expect(planResultStale(map[string]string{
+		AnnotationPlanRejected: now.UTC().Format(time.RFC3339),
+	}, now.Add(-time.Minute))).To(gomega.BeTrue())
+	g.Expect(planResultStale(map[string]string{}, now)).To(gomega.BeFalse())
+	g.Expect(planResultStale(map[string]string{
+		AnnotationPlanFeedbackAt: now.Add(-time.Hour).UTC().Format(time.RFC3339),
+	}, now)).To(gomega.BeFalse())
 }
