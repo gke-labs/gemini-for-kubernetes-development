@@ -1020,3 +1020,48 @@ func TestPlanResultStale(t *testing.T) {
 		AnnotationPlanFeedbackAt: now.Add(-time.Hour).UTC().Format(time.RFC3339),
 	}, now)).To(gomega.BeFalse())
 }
+
+// Automation defers to a review the executor already submitted (GitHub is
+// the record — survives lost sandbox breadcrumbs); a member's click still
+// deliberately reviews again.
+func TestAutoReviewDefersToSubmitted(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fresh := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": jsonResp(`[
+			{"number": 42, "title": "pr", "updated_at": "` + fresh + `",
+			 "requested_reviewers": [{"login": "alice"}], "labels": []}
+		]`),
+	}}})
+	submittedReviews := func() {
+		newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
+			return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
+				suffix: "/reviews",
+				body:   `[{"id": 9, "state": "APPROVED", "user": {"login": "alice"}}]`,
+			}})
+		}
+	}
+
+	// Auto plan (review: requested): the submitted review is done-is-done.
+	board := testBoard(nil)
+	board.Spec.Auto.Fix = "off"
+	board.Spec.Auto.Review = "requested"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	submittedReviews()
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	// A click (mailbox) deliberately reviews again despite it.
+	board2 := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
+	board2.Spec.Auto.Fix = "off"
+	fake2 := newFakeLauncher()
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret())
+	submittedReviews()
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.HaveLen(1))
+	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
+}

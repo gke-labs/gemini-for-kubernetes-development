@@ -156,6 +156,11 @@ func maxActive(board *boardv1alpha1.RepoBoard) int {
 type reviewPlan struct {
 	pr       int
 	executor string
+	// auto marks standing-automation plans: they defer to any review the
+	// executor already has on the PR (pending OR submitted — GitHub is
+	// the record, so this survives lost breadcrumbs), while a member's
+	// click may deliberately review again.
+	auto bool
 }
 
 // planRequest is one plan (or plan refinement) to ensure: PLAN -> human
@@ -426,7 +431,7 @@ func (r *Reconciler) discoverAllPRs(ctx context.Context, ghClient *github.Client
 			if !autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) {
 				continue
 			}
-			reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
+			reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace, auto: true})
 		}
 		if resp.NextPage == 0 {
 			return reviews, nil
@@ -452,7 +457,7 @@ func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *git
 			}
 			for _, reviewer := range pr.RequestedReviewers {
 				if strings.EqualFold(reviewer.GetLogin(), owner) {
-					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: owner})
+					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: owner, auto: true})
 					break
 				}
 			}
@@ -526,8 +531,9 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 	return fixes, reviews, triages, plans
 }
 
-// dedupeReviews keeps one plan per PR, preferring a consented executor
-// (member click) over an anonymous discovery plan.
+// dedupeReviews keeps one plan per PR, preferring a member's click over a
+// standing-automation plan (the click may deliberately re-review where
+// automation defers to an existing review).
 func dedupeReviews(in []reviewPlan) []reviewPlan {
 	byPR := map[int]reviewPlan{}
 	var order []int
@@ -538,7 +544,7 @@ func dedupeReviews(in []reviewPlan) []reviewPlan {
 			byPR[plan.pr] = plan
 			continue
 		}
-		if existing.executor == "" && plan.executor != "" {
+		if existing.auto && !plan.auto {
 			byPR[plan.pr] = plan
 		}
 	}
@@ -740,13 +746,22 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	// already parked there (the post step would 422 and burn a full run).
 	if sb == nil || reviewRerunRequested(sb) {
 		gh := newGithubClientFromToken(ctx, token)
-		pending, err := executorHasPendingReview(ctx, gh, work.owner, work.repo, plan.pr, plan.executor)
+		pending, reviewed, err := executorReviewStates(ctx, gh, work.owner, work.repo, plan.pr, plan.executor)
 		if err != nil {
-			logger.Error(err, "unable to check for an existing pending review; deferring launch", "pr", plan.pr)
+			logger.Error(err, "unable to check for existing reviews; deferring launch", "pr", plan.pr)
 			return
 		}
 		if pending {
+			// GitHub allows one pending review per author: launching would
+			// 422 at the post step after burning a full run.
 			logger.Info("pending review already parked on GitHub; not launching", "pr", plan.pr, "executor", plan.executor)
+			return
+		}
+		if reviewed && plan.auto {
+			// GitHub already carries the executor's submitted review: done
+			// is done for automation (this survives lost sandbox
+			// breadcrumbs). Only a member's explicit click reviews again.
+			logger.Info("review already submitted on GitHub; automation defers", "pr", plan.pr, "executor", plan.executor)
 			return
 		}
 	}
@@ -1102,20 +1117,27 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	}
 }
 
-// executorHasPendingReview reports whether the executor already has a
-// pending review parked on the PR. Pending reviews are only visible to
-// their author, so the check must run under the executor's own token.
-func executorHasPendingReview(ctx context.Context, gh *github.Client, owner, repo string, pr int, executor string) (bool, error) {
+// executorReviewStates reports whether the executor has a pending review
+// parked on the PR and whether they have any submitted one. Pending
+// reviews are only visible to their author, so the check must run under
+// the executor's own token.
+func executorReviewStates(ctx context.Context, gh *github.Client, owner, repo string, pr int, executor string) (pending, reviewed bool, err error) {
 	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	for _, rv := range reviews {
-		if strings.EqualFold(rv.GetUser().GetLogin(), executor) && strings.EqualFold(rv.GetState(), "PENDING") {
-			return true, nil
+		if !strings.EqualFold(rv.GetUser().GetLogin(), executor) {
+			continue
+		}
+		switch strings.ToUpper(rv.GetState()) {
+		case "PENDING":
+			pending = true
+		case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
+			reviewed = true
 		}
 	}
-	return false, nil
+	return pending, reviewed, nil
 }
 
 // resultSuperseded reports whether a remembered invocation result predates a

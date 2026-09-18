@@ -22,6 +22,7 @@ const STAGE_LABEL = {
   'review-requested': 'Review requested',
   'review-failed': 'Review failed',
   'review-pending': 'Pending on GitHub',
+  'review-submitted': 'Reviewed ✓',
   'triage-ready': 'Triage ready',
   'plan-ready': 'Plan ready',
   'plan-failed': 'Plan failed',
@@ -42,6 +43,15 @@ const AGENT_STAGE = {
 // Action-first grouping (tabs). Up Next is the default tab: every
 // needs-you row across groups, uncapped — the inbox. Group tabs are the
 // complete per-group views.
+// Stage-specific status colors: states that read similar must not look
+// identical. Requested = red (someone waits on you, via attention);
+// pending = purple (your saved draft awaits your finalize); reviewed =
+// green (settled, done).
+const STAGE_STYLE = {
+  'review-pending': { color: '#8250df', bg: 'rgba(130,80,223,0.14)' },
+  'review-submitted': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
+};
+
 const UP_NEXT = 'up-next';
 const GROUPS = [
   { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
@@ -219,6 +229,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         return { href: `${item.htmlURL}/files`, title: 'Open your pending review on GitHub' };
       case 'review-requested':
         return { href: item.htmlURL, title: 'Open the PR on GitHub' };
+      case 'review-submitted':
+        return { href: item.htmlURL, title: 'Open the PR — your review is submitted' };
       case 'pr-open':
         return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
       case 'review-failed':
@@ -231,6 +243,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         return null;
     }
   })();
+
+  const statusStyle = STAGE_STYLE[item.stage] ||
+    (attention ? { color: attention.color, bg: attention.bg } : { color: 'var(--text-secondary)', bg: 'var(--bg-secondary)' });
 
   return (
     <React.Fragment>
@@ -286,18 +301,18 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         {STAGE_LABEL[item.stage] && (statusAction ? (
           statusAction.href ? (
             <a href={statusAction.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} title={statusAction.title}>
-              <Chip text={STAGE_LABEL[item.stage] + ' ↗'} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+              <Chip text={STAGE_LABEL[item.stage] + ' ↗'} color={statusStyle.color} bg={statusStyle.bg} />
             </a>
           ) : (
             <span onClick={statusAction.onClick} style={{ cursor: 'pointer' }} title={statusAction.title}>
-              <Chip text={STAGE_LABEL[item.stage] + (showDraft ? ' ▴' : ' ▾')} color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+              <Chip text={STAGE_LABEL[item.stage] + (showDraft ? ' ▴' : ' ▾')} color={statusStyle.color} bg={statusStyle.bg} />
             </span>
           )
         ) : (
           <Chip
             text={STAGE_LABEL[item.stage]}
-            color={attention ? attention.color : 'var(--text-secondary)'}
-            bg={attention ? attention.bg : 'var(--bg-secondary)'}
+            color={statusStyle.color}
+            bg={statusStyle.bg}
             title={attention ? attention.label : ''}
           />
         ))}
