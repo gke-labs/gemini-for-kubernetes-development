@@ -33,6 +33,7 @@ type FixFlags struct {
 	Name            string
 	NoPR            bool
 	Watch           bool
+	WithPlan        bool
 	PollInterval    time.Duration
 	WatchTimeout    time.Duration
 }
@@ -118,7 +119,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, timeout)
 				defer cancel()
 			}
-			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.PollInterval, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runFix(ctx, flags.URL, prompt, flags.Name, flags.NoPR, flags.Watch, flags.WithPlan, flags.PollInterval, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
@@ -127,6 +128,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.InstructionFile, "instruction-file", "", "Path to a file containing custom instruction for the fix task")
 	cmd.Flags().StringVar(&flags.Name, "name", "", "Short name for the sandbox (required when URL is a repository URL without an issue number)")
 	cmd.Flags().BoolVar(&flags.NoPR, "no-pr", false, "Commit changes and push branch remotely, but do not create a pull request")
+	cmd.Flags().BoolVar(&flags.WithPlan, "with-plan", false, "Fold the approved plan from a prior `factory plan` run (found in the sandbox) into the fix prompt")
 	cmd.Flags().BoolVar(&flags.Watch, "watch", false, "Watch the created pull request for check failures and new review comments")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval for watching the PR")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching the PR (default forever)")
@@ -134,7 +136,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, withPlan bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		klog.Warningf("Failed to load factory config: %v", err)
@@ -320,6 +322,12 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch boo
 		"BRANCH_NAME":                branchName,
 		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"NO_PR":                      strconv.FormatBool(noPR),
+	}
+	if withPlan {
+		// The approved plan lives inside the sandbox (written by a prior
+		// `factory plan` run); the task script folds it into the prompt.
+		envMap["WITH_PLAN"] = "true"
+		envMap["PLAN_FILE"] = tasks.PlanFilePath(issueNum)
 	}
 
 	fmt.Println("Running fix-issue task via envd...")
