@@ -10,6 +10,7 @@ require (
 	github.com/google/cel-go v0.29.0
 	github.com/google/go-github/v39 v39.2.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
+	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79
 	github.com/onsi/gomega v1.38.2
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.50.0

@@ -31,13 +31,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
+	"github.com/gregjones/httpcache"
 	yamlv3 "go.yaml.in/yaml/v3"
+	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
@@ -90,9 +91,20 @@ func nowRFC3339() string {
 // needs-you; older requests stay listed but out of UP NEXT.
 const reviewRequestFreshWindow = 14 * 24 * time.Hour
 
-// githubClientForToken is injectable for tests.
+// ghConditionalCache backs conditional requests (ETags): GitHub answers
+// unchanged resources with 304, which costs ZERO rate-limit quota — the
+// difference between polling being a quota problem and being nearly free
+// at steady state. Responses carry Vary: Authorization, so entries are
+// keyed per token and never leak across members.
+var ghConditionalCache = httpcache.NewMemoryCache()
+
+// githubClientForToken is injectable for tests. The oauth2 transport runs
+// inside the cache transport so the Authorization header is set before
+// the conditional-request layer sees it.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
-	return clients.NewGitHubClient(ctx, token)
+	cached := httpcache.NewTransport(ghConditionalCache)
+	cached.Transport = &oauth2.Transport{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})}
+	return github.NewClient(&http.Client{Transport: cached})
 }
 
 // memberToken resolves the session member's GitHub token (manual_pat >
@@ -262,8 +274,81 @@ func (s *Server) getBoards(c *gin.Context) {
 	c.JSON(http.StatusOK, boards)
 }
 
+// workFeedCache makes the board fast and steady: building the feed costs
+// dozens of serial GitHub calls on big repos (the 20s stutters), so the
+// handler serves cached results instantly and refreshes in the
+// background (stale-while-revalidate, singleflight). Mutating handlers
+// invalidate so clicks reflect immediately.
+var workFeedCache = struct {
+	sync.Mutex
+	entries    map[string]workFeedEntry
+	refreshing map[string]bool
+}{entries: map[string]workFeedEntry{}, refreshing: map[string]bool{}}
+
+type workFeedEntry struct {
+	items []models.WorkItem
+	at    time.Time
+}
+
+const (
+	workFeedFreshFor      = 15 * time.Second
+	workFeedServeStaleFor = 3 * time.Minute
+)
+
+// workFeedGet returns cached items when usable; needsRefresh asks the
+// caller to kick a background rebuild (claimed here, under the lock, so
+// only one refresher runs per board).
+func workFeedGet(key string) (items []models.WorkItem, ok, needsRefresh bool) {
+	workFeedCache.Lock()
+	defer workFeedCache.Unlock()
+	e, found := workFeedCache.entries[key]
+	if !found {
+		return nil, false, false
+	}
+	age := time.Since(e.at)
+	if age <= workFeedFreshFor {
+		return e.items, true, false
+	}
+	if age <= workFeedServeStaleFor {
+		refresh := !workFeedCache.refreshing[key]
+		if refresh {
+			workFeedCache.refreshing[key] = true
+		}
+		return e.items, true, refresh
+	}
+	return nil, false, false
+}
+
+func workFeedPut(key string, items []models.WorkItem) {
+	workFeedCache.Lock()
+	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now()}
+	delete(workFeedCache.refreshing, key)
+	workFeedCache.Unlock()
+}
+
+func invalidateWorkFeed(namespace, boardName string) {
+	workFeedCache.Lock()
+	delete(workFeedCache.entries, namespace+"/"+boardName)
+	workFeedCache.Unlock()
+}
+
+func (s *Server) refreshWorkFeed(ctx context.Context, key string, board *unstructured.Unstructured, member, namespace string) {
+	defer func() {
+		workFeedCache.Lock()
+		delete(workFeedCache.refreshing, key)
+		workFeedCache.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	items, err := s.buildBoardWork(ctx, board, member, namespace)
+	if err != nil {
+		klog.FromContext(ctx).Info("background feed refresh failed", "board", key, "err", err)
+		return
+	}
+	workFeedPut(key, items)
+}
+
 func (s *Server) getBoardWork(c *gin.Context) {
-	log := klog.FromContext(c.Request.Context())
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
@@ -274,16 +359,41 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 
+	key := board.GetNamespace() + "/" + board.GetName()
+	if items, ok, needsRefresh := workFeedGet(key); ok {
+		if needsRefresh {
+			// Detached: an aborted poll must not cancel the rebuild (the
+			// suggestion-prefetch lesson).
+			go s.refreshWorkFeed(context.WithoutCancel(ctx), key, board, member, namespace)
+		}
+		c.JSON(http.StatusOK, items)
+		return
+	}
+
+	items, err := s.buildBoardWork(ctx, board, member, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build board feed", "details": err.Error()})
+		return
+	}
+	workFeedPut(key, items)
+	c.JSON(http.StatusOK, items)
+}
+
+// buildBoardWork assembles the feed universe. The independent GitHub
+// listings run concurrently and are page-capped, newest first: the board
+// is a work queue, not an archive — on huge repos the tail belongs on
+// GitHub search, not in every 20-second poll.
+func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstructured, member, namespace string) ([]models.WorkItem, error) {
+	log := klog.FromContext(ctx)
+
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
 	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
-		return
+		return nil, fmt.Errorf("invalid repoURL on board: %w", err)
 	}
 	token, err := s.memberToken(ctx, namespace)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub token unavailable", "details": err.Error()})
-		return
+		return nil, fmt.Errorf("github token unavailable: %w", err)
 	}
 	gh := githubClientForToken(ctx, token)
 	// Sandboxes live where claims point: the board namespace plus every
@@ -326,14 +436,41 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
 		}
 	}
-	assigned, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member})
-	if err != nil {
-		log.Info("failed to list assigned issues", "err", err)
+	var assigned, created, allIssues []*github.Issue
+	var prs []*github.PullRequest
+	var wg sync.WaitGroup
+	concurrently := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
 	}
-	created, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member})
-	if err != nil {
-		log.Info("failed to list created issues", "err", err)
-	}
+	concurrently(func() {
+		var err error
+		if assigned, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member, Sort: "updated", Direction: "desc"}); err != nil {
+			log.Info("failed to list assigned issues", "err", err)
+		}
+	})
+	concurrently(func() {
+		var err error
+		if created, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member, Sort: "updated", Direction: "desc"}); err != nil {
+			log.Info("failed to list created issues", "err", err)
+		}
+	})
+	concurrently(func() {
+		var err error
+		if allIssues, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Sort: "updated", Direction: "desc"}); err != nil {
+			log.Info("failed to list issues for triage", "err", err)
+		}
+	})
+	concurrently(func() {
+		var err error
+		if prs, _, err = gh.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open", Sort: "updated", Direction: "desc", ListOptions: github.ListOptions{PerPage: 100}}); err != nil {
+			log.Info("failed to list PRs", "err", err)
+		}
+	})
+	wg.Wait()
 	// Load claimed executors' namespaces before merging rows so their
 	// sandboxes surface on the shared board.
 	for _, issue := range assigned {
@@ -347,41 +484,42 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	// Repo-wide triage inbox: the feed returns the full universe — what
 	// the member LOOKS at is fluid client-side view state (scopes, label
 	// filters), never server logic. Rows already claimed keep their group.
-	{
-		all, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open"})
-		if err != nil {
-			log.Info("failed to list issues for triage", "err", err)
+	for _, issue := range allIssues {
+		if issue.IsPullRequest() {
+			continue
 		}
-		for _, issue := range all {
-			if issue.IsPullRequest() {
-				continue
-			}
-			// Assigned to anyone = owned, not awaiting triage.
-			if len(issue.Assignees) > 0 {
-				continue
-			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
+		// Assigned to anyone = owned, not awaiting triage.
+		if len(issue.Assignees) > 0 {
+			continue
 		}
+		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
 	}
 
-	// PRs: authored by / review-requested to the member, trigger-labeled, or
-	// with an existing factory sandbox.
-	prs, _, err := gh.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}})
-	if err != nil {
-		log.Info("failed to list PRs", "err", err)
-	}
-	for _, pr := range prs {
-		// Every attributed review self-requests the member's review at
-		// kickoff, so requested-reviewer rows are where parked pending
-		// reviews can hide.
-		pendingOnGitHub := false
-		for _, reviewer := range pr.RequestedReviewers {
-			if strings.EqualFold(reviewer.GetLogin(), member) {
-				pendingOnGitHub = s.viewerHasPendingReview(ctx, gh, owner, repo, pr.GetNumber(), member)
-				break
+	// Pending-review rediscovery per requested PR, concurrently — each is
+	// a GitHub round-trip (cached 60s in viewerHasPendingReview).
+	pendingByPR := map[int]bool{}
+	{
+		var mu sync.Mutex
+		var pwg sync.WaitGroup
+		for _, pr := range prs {
+			for _, reviewer := range pr.RequestedReviewers {
+				if strings.EqualFold(reviewer.GetLogin(), member) {
+					pwg.Add(1)
+					go func(num int) {
+						defer pwg.Done()
+						pending := s.viewerHasPendingReview(ctx, gh, owner, repo, num, member)
+						mu.Lock()
+						pendingByPR[num] = pending
+						mu.Unlock()
+					}(pr.GetNumber())
+					break
+				}
 			}
 		}
-		s.mergePRRow(items, sandboxes, pr, member, pendingOnGitHub, viewLabels)
+		pwg.Wait()
+	}
+	for _, pr := range prs {
+		s.mergePRRow(items, sandboxes, pr, member, pendingByPR[pr.GetNumber()], viewLabels)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -488,7 +626,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 		return work[i].UpdatedAt > work[j].UpdatedAt
 	})
-	c.JSON(http.StatusOK, work)
+	return work, nil
 }
 
 // boardLimit mirrors the controller's absent-parent defaulting: zero or
@@ -501,20 +639,25 @@ func boardLimit(board *unstructured.Unstructured, field string, def int64) int64
 	return v
 }
 
+// listIssues is page-capped: sorted newest-updated first by the callers,
+// so the cap keeps the live edge and drops the archive tail — unbounded
+// pagination on big repos was the feed's 20-second stall.
 func listIssues(ctx context.Context, gh *github.Client, owner, repo string, opts *github.IssueListByRepoOptions) ([]*github.Issue, error) {
+	const maxPages = 3
 	opts.ListOptions = github.ListOptions{PerPage: 100}
 	var all []*github.Issue
-	for {
-		page, resp, err := gh.Issues.ListByRepo(ctx, owner, repo, opts)
+	for page := 0; page < maxPages; page++ {
+		items, resp, err := gh.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
 			return all, err
 		}
-		all = append(all, page...)
+		all = append(all, items...)
 		if resp.NextPage == 0 {
-			return all, nil
+			break
 		}
 		opts.Page = resp.NextPage
 	}
+	return all, nil
 }
 
 func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo string) (map[string]*unstructured.Unstructured, error) {
@@ -985,6 +1128,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record request", "details": err.Error()})
 		return
 	}
+	invalidateWorkFeed(board.GetNamespace(), board.GetName())
 	c.Status(http.StatusOK)
 }
 
@@ -1107,6 +1251,9 @@ func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructur
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub token unavailable", "details": err.Error()})
 		return ctx, nil, "", "", "", 0, false
 	}
+	// Any write invalidates the feed cache: the member's next poll must
+	// reflect their click, not a cached pre-click universe.
+	invalidateWorkFeed(board.GetNamespace(), board.GetName())
 	return ctx, board, owner, repo, token, number, true
 }
 

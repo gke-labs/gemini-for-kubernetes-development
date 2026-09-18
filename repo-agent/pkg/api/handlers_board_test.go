@@ -63,6 +63,10 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	// Package-global caches; drop verdicts from earlier tests.
+	workFeedCache.Lock()
+	workFeedCache.entries = map[string]workFeedEntry{}
+	workFeedCache.refreshing = map[string]bool{}
+	workFeedCache.Unlock()
 	repoSuggestionCache.Lock()
 	repoSuggestionCache.entries = map[string]repoSuggestionEntry{}
 	repoSuggestionCache.Unlock()
@@ -154,11 +158,11 @@ func sandboxCR(name string, labels, annotations map[string]interface{}, replicas
 
 func TestGetBoardWork(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 10, "title": "fixing", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
 			 "labels": [{"name": "agent"}], "assignees": [{"login": "alice"}]}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
@@ -400,17 +404,17 @@ func TestPromoteBoardPR(t *testing.T) {
 // mine-pr, incoming reviews in review, self-filed issues in mine-issue.
 func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 10, "title": "assigned, being fixed", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
 			 "assignees": [{"login": "alice"}]},
 			{"number": 13, "title": "assigned, bot PR open", "html_url": "https://github.com/test/repo/issues/13", "updated_at": "2026-09-16T08:00:00Z",
 			 "assignees": [{"login": "alice"}]}
 		]`,
 		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 12, "title": "my filed issue", "html_url": "https://github.com/test/repo/issues/12", "updated_at": "2026-09-16T09:00:00Z"}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 50, "title": "my fix", "html_url": "https://github.com/test/repo/pull/50", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "alice"}, "draft": true, "body": "This change...\n\nFixes #10"},
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T11:00:00Z",
@@ -474,10 +478,10 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	board := boardCR()
 
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":   `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":                               `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 20, "title": "draft ready", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T10:00:00Z"},
 			{"number": 21, "title": "plain", "html_url": "https://github.com/test/repo/issues/21", "updated_at": "2026-09-16T09:00:00Z"},
 			{"number": 22, "title": "excluded", "html_url": "https://github.com/test/repo/issues/22", "updated_at": "2026-09-16T08:00:00Z",
@@ -485,7 +489,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 			{"number": 23, "title": "labeled routes to fix", "html_url": "https://github.com/test/repo/issues/23", "updated_at": "2026-09-16T07:00:00Z",
 			 "labels": [{"name": "agent"}]}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
 	triageSandbox := sandboxCR("triage-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
@@ -536,10 +540,10 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 func TestGetBoardWorkReviewRequested(t *testing.T) {
 	fresh := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":   `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open":                               `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 70, "title": "fresh request", "html_url": "https://github.com/test/repo/pull/70", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
 			{"number": 71, "title": "fossil request", "html_url": "https://github.com/test/repo/pull/71", "updated_at": "2026-01-01T00:00:00Z",
@@ -619,7 +623,7 @@ func TestFeedReturnsFullUniverse(t *testing.T) {
 		 "user": {"login": "carol"}, "labels": [{"name": "agent"}]}
 	]`
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": prsJSON,
 	}
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR())
@@ -645,7 +649,7 @@ func TestFeedReturnsFullUniverse(t *testing.T) {
 func TestSubmittedThenReRequested(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 90, "title": "re-requested", "html_url": "https://github.com/test/repo/pull/90", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
@@ -677,7 +681,7 @@ func TestSubmittedThenReRequested(t *testing.T) {
 func TestKickoffFeedbackStages(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 5, "title": "clicked", "html_url": "https://github.com/test/repo/pull/5", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
 			{"number": 6, "title": "provisioning", "html_url": "https://github.com/test/repo/pull/6", "updated_at": "` + fresh + `",
@@ -716,7 +720,7 @@ func TestFeedIncludesUninvolvedPRs(t *testing.T) {
 		 "user": {"login": "carol"}, "requested_reviewers": [{"login": "dave"}]}
 	]`
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": prsJSON,
 	}
 	_, r, _ := boardTestServer(t, ghResponses, boardCR())
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -754,7 +758,7 @@ func TestFriendlyReviewError(t *testing.T) {
 // review row must still render "Pending on GitHub", not "Review requested".
 func TestGetBoardWorkRediscoversPendingReview(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
@@ -788,7 +792,7 @@ func TestGetBoardWorkRediscoversPendingReview(t *testing.T) {
 // review request.
 func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
@@ -815,12 +819,12 @@ func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
 // rejected with the reason; a valid edit replaces the stored draft.
 func TestPutBoardTriageDraft(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
 	triageSandbox := sandboxCR("triage-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
@@ -882,12 +886,12 @@ func TestPutBoardTriageDraft(t *testing.T) {
 // approval and files the fix request; reject clears the draft.
 func TestPlanEndpoints(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 42, "title": "needs planning", "html_url": "https://github.com/test/repo/issues/42", "updated_at": "2026-09-16T09:00:00Z"}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
 	planSandbox := sandboxCR("fix-repo-42",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
@@ -1022,7 +1026,7 @@ func TestGetRepoSuggestions(t *testing.T) {
 // no capacity until a slot frees.
 func TestMailboxQueuedAtCapacity(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 90, "title": "reviewing a", "html_url": "https://github.com/test/repo/pull/90", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
 			{"number": 91, "title": "reviewing b", "html_url": "https://github.com/test/repo/pull/91", "updated_at": "2026-09-16T12:00:00Z",
@@ -1068,14 +1072,14 @@ func TestBoardViewLabelFilter(t *testing.T) {
 	_ = unstructured.SetNestedStringSlice(board.Object, []string{"area/net"}, "spec", "view", "labels")
 
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 60, "title": "in scope", "html_url": "https://github.com/test/repo/issues/60", "updated_at": "2026-09-16T10:00:00Z", "labels": [{"name": "area/net"}]},
 			{"number": 61, "title": "out of scope", "html_url": "https://github.com/test/repo/issues/61", "updated_at": "2026-09-16T10:00:00Z"},
 			{"number": 62, "title": "out of scope but fixing", "html_url": "https://github.com/test/repo/issues/62", "updated_at": "2026-09-16T10:00:00Z"}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 70, "title": "scoped pr", "html_url": "https://github.com/test/repo/pull/70", "updated_at": "2026-09-16T12:00:00Z",
 			 "user": {"login": "carol"}, "labels": [{"name": "area/net"}]},
 			{"number": 71, "title": "unscoped pr", "html_url": "https://github.com/test/repo/pull/71", "updated_at": "2026-09-16T12:00:00Z",
@@ -1115,12 +1119,12 @@ func TestBoardViewLabelFilter(t *testing.T) {
 // Plan / Fix are available again.
 func TestRejectBoardTriage(t *testing.T) {
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 20, "title": "drafted", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
 		]`,
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
 	triageSandbox := sandboxCR("triage-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
@@ -1177,7 +1181,7 @@ func TestRejectBoardTriage(t *testing.T) {
 func TestPrelaunchFailureRendersFailed(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 55, "title": "stuck", "html_url": "https://github.com/test/repo/pull/55", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
