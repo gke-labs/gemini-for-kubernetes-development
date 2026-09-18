@@ -167,7 +167,26 @@ func githubSecret() *corev1.Secret {
 	}
 }
 
+// suffixRoundTripper serves one body for any URL path with the suffix.
+type suffixRoundTripper struct{ suffix, body string }
+
+func (rt *suffixRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Path, rt.suffix) {
+		resp := jsonResp(rt.body)()
+		resp.Header = http.Header{"Content-Type": []string{"application/json"}}
+		resp.Request = req
+		return resp, nil
+	}
+	return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{}`)), Request: req, Header: http.Header{}}, nil
+}
+
 func newTestReconciler(fake *fakeLauncher, ghClient *github.Client, objs ...runtime.Object) *Reconciler {
+	// Launch paths consult GitHub for parked pending reviews under the
+	// executor token; default to "none" so tests exercise launches. Tests
+	// that need review listings override after construction.
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{suffix: "/reviews", body: `[]`}})
+	}
 	builder := clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{})
 	for _, o := range objs {
 		builder = builder.WithRuntimeObjects(o)
@@ -674,10 +693,6 @@ func TestSettleSubmittedReview(t *testing.T) {
 			{"id": 1, "state": "COMMENTED", "user": {"login": "alice"}}
 		]`),
 	}}})
-	prev := newGithubClientFromToken
-	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return reviewsClient }
-	defer func() { newGithubClientFromToken = prev }()
-
 	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
@@ -698,6 +713,7 @@ func TestSettleSubmittedReview(t *testing.T) {
 
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return reviewsClient }
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -813,4 +829,40 @@ func TestReviewErrorLine(t *testing.T) {
 	})).To(gomega.Equal("failed to create review on GitHub: 403 restricted"))
 	g.Expect(reviewErrorLine(factorycli.Result{Output: "no error banner", Err: fmt.Errorf("exit status 1")})).To(gomega.Equal("exit status 1"))
 	g.Expect(reviewErrorLine(factorycli.Result{})).To(gomega.Equal("review failed"))
+}
+
+// A pending review already parked on GitHub blocks a new launch for the
+// same PR/executor: GitHub allows one pending review per author, so the
+// duplicate run would burn tokens and 422 at the post step. This is also
+// how a clean-slate cluster avoids re-reviewing saved work.
+func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
+			suffix: "/reviews",
+			body:   `[{"id": 7, "state": "PENDING", "user": {"login": "alice"}}]`,
+		}})
+	}
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	// Someone else's pending review is invisible anyway, but a submitted
+	// one by the executor must not block.
+	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
+			suffix: "/reviews",
+			body:   `[{"id": 7, "state": "COMMENTED", "user": {"login": "alice"}}]`,
+		}})
+	}
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.HaveLen(1))
+	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
 }
