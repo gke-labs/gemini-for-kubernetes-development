@@ -49,6 +49,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/settings", s.updateSettings)
 
 		api.GET("/boards", s.getBoards)
+		api.GET("/repo-suggestions", s.getRepoSuggestions)
 		api.POST("/boards", s.createBoard)
 		api.DELETE("/board/:board", s.deleteBoard)
 		api.GET("/board/:board/settings", s.getBoardSettings)
