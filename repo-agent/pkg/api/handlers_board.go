@@ -121,6 +121,50 @@ type repoPermEntry struct {
 	expires time.Time
 }
 
+// pendingReviewCache caches "does the viewer have a pending review parked
+// on that PR". GitHub is the only storage for pending reviews, so the board
+// rediscovers them even when no sandbox breadcrumb survives (restart,
+// cleanup). Short TTL: a finalize/discard on GitHub reflects within a
+// minute.
+var pendingReviewCache = struct {
+	sync.Mutex
+	entries map[string]pendingReviewEntry
+}{entries: map[string]pendingReviewEntry{}}
+
+type pendingReviewEntry struct {
+	pending bool
+	expires time.Time
+}
+
+// viewerHasPendingReview runs under the viewer's own token — GitHub shows
+// pending reviews only to their author. Errors are not definitive: render
+// without the pending state rather than caching a wrong verdict.
+func (s *Server) viewerHasPendingReview(ctx context.Context, gh *github.Client, owner, repo string, pr int, member string) bool {
+	key := fmt.Sprintf("%s|%s/%s#%d", member, owner, repo, pr)
+	pendingReviewCache.Lock()
+	if e, ok := pendingReviewCache.entries[key]; ok && time.Now().Before(e.expires) {
+		pendingReviewCache.Unlock()
+		return e.pending
+	}
+	pendingReviewCache.Unlock()
+
+	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return false
+	}
+	pending := false
+	for _, rv := range reviews {
+		if strings.EqualFold(rv.GetUser().GetLogin(), member) && rv.GetState() == "PENDING" {
+			pending = true
+			break
+		}
+	}
+	pendingReviewCache.Lock()
+	pendingReviewCache.entries[key] = pendingReviewEntry{pending: pending, expires: time.Now().Add(time.Minute)}
+	pendingReviewCache.Unlock()
+	return pending
+}
+
 func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, repoURL string) bool {
 	key := sessionUser + "|" + repoURL
 	repoPermCache.Lock()
@@ -326,7 +370,17 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		log.Info("failed to list PRs", "err", err)
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, maintainer)
+		// Every attributed review self-requests the member's review at
+		// kickoff, so requested-reviewer rows are where parked pending
+		// reviews can hide.
+		pendingOnGitHub := false
+		for _, reviewer := range pr.RequestedReviewers {
+			if strings.EqualFold(reviewer.GetLogin(), member) {
+				pendingOnGitHub = s.viewerHasPendingReview(ctx, gh, owner, repo, pr.GetNumber(), member)
+				break
+			}
+		}
+		s.mergePRRow(items, sandboxes, pr, member, maintainer, pendingOnGitHub)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -338,7 +392,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, true)
+				s.mergePRRow(items, sandboxes, pr, member, true, false)
 				break
 			}
 		}
@@ -621,7 +675,7 @@ func friendlyReviewError(msg string) string {
 	}
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, force bool) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, force, pendingOnGitHub bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -691,9 +745,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	// "please review again" (submitting clears you from
 	// requested_reviewers; a re-request re-adds you) — fall through to the
 	// review-requested handling below.
-	case reviewState == "pending":
+	case reviewState == "pending" || pendingOnGitHub:
 		// The agent posted a pending review under the member's identity;
-		// GitHub is where they finalize it.
+		// GitHub is where they finalize it. pendingOnGitHub is the
+		// rediscovered form: GitHub said so directly, no sandbox needed.
 		stage, attention = "review-pending", attentionNeedsYou
 	case reviewRequested:
 		// A bare GitHub review request: nothing is queued, a human is
@@ -1099,6 +1154,16 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 			deleted = true
 		}
 	}
+
+	// The rediscovery cache must not keep announcing the deleted review.
+	suffix := fmt.Sprintf("|%s/%s#%d", owner, repo, number)
+	pendingReviewCache.Lock()
+	for key := range pendingReviewCache.entries {
+		if strings.HasSuffix(key, suffix) {
+			delete(pendingReviewCache.entries, key)
+		}
+	}
+	pendingReviewCache.Unlock()
 
 	// Clear the sandbox's review state so the row returns to its plain
 	// stage; the abandoned-at marker stops the controller from re-marking

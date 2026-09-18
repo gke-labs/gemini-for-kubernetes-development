@@ -800,6 +800,21 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		logger.Info("review deferred: executor at maxActivePerUser", "pr", plan.pr, "executor", plan.executor, "limit", maxActivePerUser(work.board))
 		return
 	}
+	// GitHub is the only storage for pending reviews and allows one per
+	// author per PR: a fresh or re-armed launch must not race a review
+	// already parked there (the post step would 422 and burn a full run).
+	if sb == nil || reviewRerunRequested(sb) {
+		gh := newGithubClientFromToken(ctx, token)
+		pending, err := executorHasPendingReview(ctx, gh, work.owner, work.repo, plan.pr, plan.executor)
+		if err != nil {
+			logger.Error(err, "unable to check for an existing pending review; deferring launch", "pr", plan.pr)
+			return
+		}
+		if pending {
+			logger.Info("pending review already parked on GitHub; not launching", "pr", plan.pr, "executor", plan.executor)
+			return
+		}
+	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
 		Namespace:         plan.executor,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
@@ -1153,6 +1168,22 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	if err := r.Status().Update(ctx, work.board); err != nil {
 		log.FromContext(ctx).Error(err, "unable to update board status")
 	}
+}
+
+// executorHasPendingReview reports whether the executor already has a
+// pending review parked on the PR. Pending reviews are only visible to
+// their author, so the check must run under the executor's own token.
+func executorHasPendingReview(ctx context.Context, gh *github.Client, owner, repo string, pr int, executor string) (bool, error) {
+	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
+	if err != nil {
+		return false, err
+	}
+	for _, rv := range reviews {
+		if strings.EqualFold(rv.GetUser().GetLogin(), executor) && strings.EqualFold(rv.GetState(), "PENDING") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // resultSuperseded reports whether a remembered invocation result predates a

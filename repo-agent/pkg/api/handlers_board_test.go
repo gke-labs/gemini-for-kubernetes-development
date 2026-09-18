@@ -62,7 +62,10 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
-	// repoPermCache is package-global; drop verdicts from earlier tests.
+	// Package-global caches; drop verdicts from earlier tests.
+	pendingReviewCache.Lock()
+	pendingReviewCache.entries = map[string]pendingReviewEntry{}
+	pendingReviewCache.Unlock()
 	repoPermCache.Lock()
 	repoPermCache.entries = map[string]repoPermEntry{}
 	repoPermCache.Unlock()
@@ -740,5 +743,66 @@ func TestFriendlyReviewError(t *testing.T) {
 	}
 	if got := friendlyReviewError("some novel failure"); got != "some novel failure" {
 		t.Errorf("unknown errors must pass through, got %q", got)
+	}
+}
+
+// A pending review parked on GitHub is rediscovered from GitHub itself:
+// with no sandbox breadcrumb at all (clean slate, restart) the requested-
+// review row must still render "Pending on GitHub", not "Review requested".
+func TestGetBoardWorkRediscoversPendingReview(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls/42/reviews?per_page=100": `[
+			{"id": 7, "state": "PENDING", "user": {"login": "alice"}}
+		]`,
+	}
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("expected 1 row, got %d: %s", len(work), w.Body.String())
+	}
+	if work[0].Stage != "review-pending" || work[0].Attention != "needs-you" {
+		t.Errorf("expected rediscovered review-pending row, got %+v", work[0])
+	}
+}
+
+// Someone else's pending review (or none) leaves the row as a plain
+// review request.
+func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls/42/reviews?per_page=100": `[]`,
+	}
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if len(work) != 1 || work[0].Stage != "review-requested" {
+		t.Errorf("expected review-requested row, got %s", w.Body.String())
 	}
 }
