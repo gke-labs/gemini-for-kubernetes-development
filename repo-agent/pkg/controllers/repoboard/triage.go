@@ -126,6 +126,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		return
 	}
+	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{
 		Namespace:   work.board.Namespace,
 		IssueURL:    issue.GetHTMLURL(),

@@ -664,6 +664,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		annotations := sb.GetAnnotations()
 		withPlan = annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
 	}
+	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartFix(key, factorycli.FixOptions{
 		Namespace:         plan.executor,
 		IssueURL:          issueURL,
@@ -770,6 +771,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 			return
 		}
 	}
+	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
 		Namespace:         plan.executor,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
@@ -1160,6 +1162,30 @@ func resultSuperseded(sb *unstructured.Unstructured, res factorycli.Result) bool
 		}
 	}
 	return false
+}
+
+// stampUnpaused marks a paused sandbox we are about to relaunch into.
+// pauseFinished treats unpaused-at as the new idle baseline, so the pause
+// pass cannot kill the pod mid-boot — the #1423 race, generalized: rerun
+// markers only cover review/fix wakes, while triage/plan clicks (and any
+// resume) wake sandboxes markerlessly.
+func (r *Reconciler) stampUnpaused(ctx context.Context, sb *unstructured.Unstructured) {
+	if sb == nil {
+		return
+	}
+	replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+	if err != nil || !found || replicas != 0 {
+		return
+	}
+	annotations := sb.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[AnnotationUnpausedAt] = time.Now().UTC().Format(time.RFC3339)
+	sb.SetAnnotations(annotations)
+	if err := r.Update(ctx, sb); err != nil {
+		log.FromContext(ctx).Error(err, "unable to stamp wake on paused sandbox", "sandbox", sb.GetName())
+	}
 }
 
 func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey string) bool {
