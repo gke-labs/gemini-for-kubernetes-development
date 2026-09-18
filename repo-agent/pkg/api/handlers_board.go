@@ -799,6 +799,12 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		stage, attention = "reviewing", attentionWorking
 	case restarting:
 		stage, attention = "review-starting", attentionWorking
+	case reviewError != "" && reviewState == "":
+		// Parked failure — including pre-task failures (sandbox-ready
+		// timeout, connect errors) that never stamp a task state. Without
+		// this case they fall into "provisioning" below and render as
+		// starting forever, with no Retry to unstick them.
+		stage, attention = "review-failed", attentionNeedsYou
 	case sb != nil && state == "" && reviewState == "":
 		// Sandbox exists but the task hasn't stamped a state yet:
 		// provisioning (pod scheduling, image pull, clone). Not the
