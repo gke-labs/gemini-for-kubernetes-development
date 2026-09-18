@@ -1,23 +1,17 @@
 #!/bin/bash
 set -e
 set -o pipefail
-set -x
-
-USER_HOME="${HOME:-/root}"
-mkdir -p "${USER_HOME}"
 
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
-# - REPO_OWNER
 # - REPO_NAME
 # - CLONE_URL
-# - ISSUE_NUMBER
 # - PROMPT_FILE
 # - GITHUB_USER_ID
 # - GITHUB_USER_EMAIL
 # - GITHUB_USER_NAME
-# - BRANCH_NAME
+# - ISSUE_NUMBER
 # - MODELS
 
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
@@ -34,9 +28,8 @@ fi
 
 function setupGit {
     echo "Running setupGit..."
-
-    echo "creating ${USER_HOME}/.config/gh directory"
-    mkdir -p "${USER_HOME}/.config/gh"
+    echo "creating /root/.config/gh directory"
+    mkdir -p /root/.config/gh
 
     local GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
@@ -44,7 +37,7 @@ function setupGit {
     fi
 
     echo "writing gh config"
-    cat <<EOF > "${USER_HOME}/.config/gh/hosts.yml"
+    cat <<EOF > /root/.config/gh/hosts.yml
 github.com:
     users:
         ${GH_USER}:
@@ -74,8 +67,8 @@ EOF
     git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 
     echo "Configuring global git ignore"
-    git config --global core.excludesfile "${USER_HOME}/.gitignore_global"
-    cat <<EOF > "${USER_HOME}/.gitignore_global"
+    git config --global core.excludesfile /root/.gitignore_global
+    cat <<EOF > /root/.gitignore_global
 manager
 bin/
 EOF
@@ -107,81 +100,23 @@ function setupGitRepos {
 
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
-
-    echo "running git config local user.email"
-    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
-
-    echo "running git config local user.name"
-    (cd "/workspaces/${REPO_NAME}" && git config user.name "${GITHUB_USER_NAME}")
-
-    echo "waiting for checkout to be ready (branch check)"
-    (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
 
-function checkForExistingPR {
-    echo "Checking for existing PRs..."
-    if [ "$NO_PR" = "true" ]; then
-        echo "NO_PR is true; skipping check for existing PR."
-        return
-    fi
-    if [ "${ISSUE_NUMBER:-0}" -eq 0 ]; then
-        echo "No issue number specified; skipping check for existing PR."
-        return
-    fi
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-
-    # Try to find a PR by the current user first, restricting search to title and body to be safer
-    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
-    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
-
-    # If not found, look for any PR linked to the issue via the timeline API
-    if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
-        pr_number=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.number' 2>/dev/null | head -n 1)
-        pr_url=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.html_url' 2>/dev/null | head -n 1)
-    fi
-
-    if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
-        echo "Found existing PR:"
-        echo $pr_number
-        echo $pr_url
-
-        echo "Found existing PR #${pr_number}"
-        git rebase --abort 2>/dev/null || true
-        git merge --abort 2>/dev/null || true
-        git cherry-pick --abort 2>/dev/null || true
-        git reset --hard HEAD
-        git clean -fd
-        /usr/bin/gh pr checkout "$pr_number" --force
-
-        local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
-
-        echo "We are not generating anything because there is an existing PR." > "$output_file"
-        echo "${pr_url}" >> "$output_file"
-        exit 0
-    fi
-
-    popd > /dev/null
-}
-
-function checkoutNewBranch {
-    echo "Running checkoutNewBranch..."
-    echo "creating new branch"
-    local branch_name="${BRANCH_NAME:-issue-${ISSUE_NUMBER}}"
+function checkoutDefaultBranch {
+    echo "Running checkoutDefaultBranch..."
     (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
-    (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
+    (cd "/workspaces/${REPO_NAME}" && BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) && git reset --hard HEAD && git clean -fd && git checkout "${BASE_BRANCH}" && git fetch origin "${BASE_BRANCH}" && git reset --hard "origin/${BASE_BRANCH}")
 }
 
 function configureGemini {
     echo "Running configureGemini..."
-    echo "creating ${USER_HOME}/.gemini directory"
-    mkdir -p "${USER_HOME}/.gemini"
+    echo "creating /root/.gemini directory"
+    mkdir -p /root/.gemini
 
     echo "writing gemini config"
-    cat <<EOF > "${USER_HOME}/.gemini/settings.json"
+    cat <<EOF > /root/.gemini/settings.json
 {
   "general": {
     "enableAutoUpdate": false,
@@ -190,15 +125,6 @@ function configureGemini {
   }
 }
 EOF
-}
-
-function installExtensions {
-    echo "Installing extensions..."
-    if [ -n "$EXTENSIONS" ]; then
-        for ext in $EXTENSIONS; do
-            gemini extensions install "$ext" --consent
-        done
-    fi
 }
 
 function record_gemini_usage {
@@ -342,10 +268,8 @@ except Exception:
 }
 
 function runGemini {
+    echo "Running runGemini..."
     echo "running gemini in yolo mode"
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    set +x
-    export GEMINI_API_KEY="${GEMINI_API_KEY}"
 
     if [ -n "$GITHUB_BOT_NAME" ]; then
         echo "Using bot identity for commits"
@@ -359,95 +283,38 @@ function runGemini {
     SUCCESS=false
     for MODEL in $MODELS_LIST; do
         echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" --output-format json < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-            echo "Gemini execution successful with model: $MODEL"
-            record_gemini_usage "$(dirname "${PROMPT_FILE}")/gemini-output.json"
-            SUCCESS=true
-            break
+        GEMINI_ARGS=("--yolo" "--model" "$MODEL" "--output-format" "json")
+        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
+             echo "Gemini execution successful with model: $MODEL"
+             record_gemini_usage "$(dirname "${PROMPT_FILE}")/gemini-output.json"
+             python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+        resp = data.get("response", "")
+        if resp:
+            print(resp)
+        else:
+            print(data)
+except Exception:
+    with open(sys.argv[1]) as f:
+        print(f.read())
+'  "$(dirname "${PROMPT_FILE}")/gemini-output.json" > "$(dirname "${PROMPT_FILE}")/plan-output.txt"
+             # The plan file is the durable in-sandbox contract: a later
+             # `factory fix --with-plan` folds it into the fix prompt.
+             cp "$(dirname "${PROMPT_FILE}")/plan-output.txt" "/workspaces/plan-issue-${ISSUE_NUMBER}.md"
+             SUCCESS=true
+             break
         else
-            echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
+             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
         fi
     done
-
+    
     if [ "$SUCCESS" = false ]; then
         echo "All models failed."
         exit 1
     fi
-    set -x
-    popd > /dev/null
-}
-
-function injectConfigDirData {
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
-      echo "Injecting configdir files into repository..."
-      shopt -s dotglob
-      cp -R /configdir/* .
-      shopt -u dotglob
-    fi
-    popd > /dev/null
-}
-
-function recordPRLink {
-    echo "Recording PR link..."
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
-    if [ "$NO_PR" = "true" ]; then
-        echo "Branch successfully pushed to origin/${BRANCH_NAME}" > "$output_file"
-        popd > /dev/null
-        return
-    fi
-    local pr_url=""
-
-    # Try current branch PR status
-    echo "Checking pr status..."
-    pr_url=$(gh pr status --json url --jq '.currentBranch.url // empty')
-
-    # If not found, try listing PRs for this branch
-    if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
-        echo "Checking pr list by branch..."
-        pr_url=$(gh pr list --head "${BRANCH_NAME:-issue_${ISSUE_NUMBER}}" --json url --jq '.[0].url // empty')
-    fi
-
-    # If still not found, try searching PRs by issue number and author (matching only title and body to be safer)
-    if [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
-        if [ "${ISSUE_NUMBER:-0}" -gt 0 ]; then
-            echo "Searching for PR..."
-            pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0].url // empty' --limit 1 2>/dev/null)
-        fi
-    fi
-
-    if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then
-        echo "Successfully found PR: ${pr_url}"
-        echo "${pr_url}" > "$output_file"
-        popd > /dev/null
-    else
-        echo "Could not find PR link automatically." | tee "$output_file"
-        popd > /dev/null
-        echo "Task finished without creating a pull request." >&2
-        exit 1
-    fi
-}
-
-function appendApprovedPlan {
-    if [ "${WITH_PLAN:-false}" != "true" ]; then
-        return
-    fi
-    if [ ! -f "${PLAN_FILE}" ]; then
-        echo "WITH_PLAN=true but ${PLAN_FILE} not found; continuing without a plan"
-        return
-    fi
-    echo "Folding approved plan from ${PLAN_FILE} into the prompt..."
-    {
-        echo ""
-        echo "---"
-        echo "APPROVED IMPLEMENTATION PLAN"
-        echo "A human maintainer reviewed and approved the following plan. Follow it: it is the agreed scope and approach for this fix. If reality on the ground contradicts a step, deviate minimally and call the deviation out in the PR description."
-        echo ""
-        cat "${PLAN_FILE}"
-        echo ""
-        echo "Include a section titled '## Plan' in the pull request description containing this plan."
-    } >> "${PROMPT_FILE}"
 }
 
 # Main execution
@@ -455,11 +322,6 @@ setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
-checkForExistingPR
-checkoutNewBranch
+checkoutDefaultBranch
 configureGemini
-installExtensions
-injectConfigDirData
-appendApprovedPlan
 runGemini
-recordPRLink
