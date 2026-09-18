@@ -1,6 +1,7 @@
 package geminitokens
 
 import (
+	"bytes"
 	"os"
 	"testing"
 	"time"
@@ -18,7 +19,12 @@ func TestIsFatalQuotaError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "true daily billing quota exhaustion",
+			name:     "transient 429 with standard googleapis boilerplate and backoff retry",
+			input:    `Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			expected: false,
+		},
+		{
+			name:     "unretried quota exhaustion message",
 			input:    `You exceeded your current quota, please check your plan and billing details.`,
 			expected: true,
 		},
@@ -33,8 +39,8 @@ func TestIsFatalQuotaError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "fatal billing quota during retry attempt",
-			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			name:     "fatal RPD daily quota during retry attempt",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"Quota exceeded for quota metric 'Generate requests per day'","code":429,"status":"Too Many Requests"}}`,
 			expected: true,
 		},
 		{
@@ -66,13 +72,18 @@ func TestIsTransientRateLimit(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "fatal billing quota log",
+			name:     "transient retry log with standard googleapis boilerplate",
+			input:    `Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			expected: true,
+		},
+		{
+			name:     "unretried quota exhaustion log",
 			input:    `You exceeded your current quota, please check your plan and billing details.`,
 			expected: false,
 		},
 		{
-			name:     "fatal billing quota during retry attempt",
-			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			name:     "fatal RPD daily quota during retry attempt",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"Quota exceeded for quota metric 'Generate requests per day'","code":429,"status":"Too Many Requests"}}`,
 			expected: false,
 		},
 	}
@@ -304,5 +315,206 @@ fi
 	}
 	if !foundDegraded {
 		t.Errorf("Expected ActiveList to contain 'AIzaSyDU... (Degraded: exceeded gemini-3.6-flash)', got %v", status.ActiveList)
+	}
+}
+
+func TestQuotaStreamTracker(t *testing.T) {
+	t.Run("retry backoff in poll 1 and RESOURCE_EXHAUSTED in poll 2", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, transient := tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... "))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false, got true")
+		}
+		if !transient {
+			t.Fatalf("Poll 1: expected transient=true, got false")
+		}
+
+		fatal, _ = tracker.ObservePoll([]byte(`_ApiError: {"error":{"message":"RESOURCE_EXHAUSTED"}}` + "\n"))
+		if fatal {
+			t.Fatalf("Poll 2: expected fatal=false when RESOURCE_EXHAUSTED follows retry backoff from Poll 1, got true")
+		}
+	})
+
+	t.Run("RESOURCE_EXHAUSTED in poll 1 and retry backoff in poll 2", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, _ := tracker.ObservePoll([]byte(`_ApiError: {"error":{"message":"RESOURCE_EXHAUSTED"}}` + "\n"))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false during 1-poll grace period, got true")
+		}
+
+		fatal, transient := tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff...\n"))
+		if fatal {
+			t.Fatalf("Poll 2: expected fatal=false when retry backoff arrives in Poll 2, got true")
+		}
+		if !transient {
+			t.Fatalf("Poll 2: expected transient=true, got false")
+		}
+	})
+
+	t.Run("mid-word split of Retrying with backoff across polls", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, _ := tracker.ObservePoll([]byte("Attempt 1 failed with status: 429. Retrying with "))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false during grace period, got true")
+		}
+
+		fatal, transient := tracker.ObservePoll([]byte(`backoff... _ApiError: {"error":{"message":"RESOURCE_EXHAUSTED"}}` + "\n"))
+		if fatal {
+			t.Fatalf("Poll 2: expected fatal=false after mid-word retry backoff completion, got true")
+		}
+		if !transient {
+			t.Fatalf("Poll 2: expected transient=true, got false")
+		}
+	})
+
+	t.Run("mid-word split of unambiguous fatal error across polls", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, _ := tracker.ObservePoll([]byte("Error: Quota exceeded for quota metric 'Generate requests per "))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false, got true")
+		}
+
+		fatal, _ = tracker.ObservePoll([]byte("day' and limit 'GenerateRequestsPerDayPerProject'\n"))
+		if !fatal {
+			t.Fatalf("Poll 2: expected fatal=true immediately on unambiguous RPD quota error, got false")
+		}
+	})
+
+	t.Run("production googleapis 429 with exceeded your current quota and Retrying with backoff is not fatal", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		prodLog := `Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"{\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details.\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n","code":429,"status":"Too Many Requests"}}` + "\n"
+		fatal, transient := tracker.ObservePoll([]byte(prodLog))
+		if fatal {
+			t.Fatalf("expected fatal=false on production transient retry log, got true")
+		}
+		if !transient {
+			t.Fatalf("expected transient=true on production transient retry log, got false")
+		}
+	})
+
+	t.Run("unhandled ambiguous 429 confirmed fatal on next poll even if empty", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, _ := tracker.ObservePoll([]byte("Error: status: 429 Too Many Requests\n"))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false on first poll (grace period), got true")
+		}
+
+		fatal, _ = tracker.ObservePoll(nil)
+		if !fatal {
+			t.Fatalf("Poll 2: expected fatal=true after grace period elapsed with no retry backoff, got false")
+		}
+	})
+
+	t.Run("unhandled ambiguous 429 confirmed fatal immediately on process exit", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		fatal, _ := tracker.ObservePoll([]byte(`_ApiError: {"error":{"message":"RESOURCE_EXHAUSTED"}}` + "\n"))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false during grace period, got true")
+		}
+
+		if !tracker.ObserveFinal(nil, true) {
+			t.Fatalf("ObserveFinal: expected fatal=true when process exits with failure and pending quota error")
+		}
+	})
+
+	t.Run("no window pollution: old retry does not mask subsequent unretried 429", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Poll 1: transient retry
+		fatal, _ := tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false, got true")
+		}
+
+		// Poll 2: normal output followed by a new unretried 429 on a new line
+		fatal, _ = tracker.ObservePoll([]byte("Doing work...\nError: status: 429 Too Many Requests\n"))
+		if fatal {
+			t.Fatalf("Poll 2: expected fatal=false on first poll of new error (grace period), got true")
+		}
+
+		// Poll 3: no retry arrives
+		fatal, _ = tracker.ObservePoll([]byte("Process exiting...\n"))
+		if !fatal {
+			t.Fatalf("Poll 3: expected fatal=true for unretried 429 despite earlier retry in window, got false")
+		}
+	})
+
+	t.Run("oversized poll chunk keeps the window bounded", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Simulate reattaching to a long-running task: the first tail reads the whole
+		// backlog in one chunk, which is much larger than the sliding window.
+		huge := bytes.Repeat([]byte("noise line that is perfectly normal output\n"), 4000)
+		fatal, _ := tracker.ObservePoll(huge)
+		if fatal {
+			t.Fatalf("expected fatal=false for benign backlog, got true")
+		}
+		if got := len(tracker.Window()); got > DefaultQuotaWindowSize {
+			t.Fatalf("window not bounded: got %d bytes, want <= %d", got, DefaultQuotaWindowSize)
+		}
+	})
+
+	t.Run("oversized poll chunk still detects fatal marker in the discarded prefix", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		var chunk []byte
+		chunk = append(chunk, []byte("Quota exceeded for metric: Generate requests per day\n")...)
+		chunk = append(chunk, bytes.Repeat([]byte("trailing benign output\n"), 2000)...)
+		if len(chunk) <= DefaultQuotaWindowSize {
+			t.Fatalf("test setup: chunk must exceed the window size")
+		}
+
+		fatal, _ := tracker.ObservePoll(chunk)
+		if !fatal {
+			t.Fatalf("expected fatal=true for RPD exhaustion at the head of an oversized chunk, got false")
+		}
+	})
+
+	t.Run("oversized poll chunk preserves grace-period offsets", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		chunk := append(bytes.Repeat([]byte("benign output line\n"), 2000),
+			[]byte("Error: status: 429 Too Many Requests\n")...)
+		fatal, _ := tracker.ObservePoll(chunk)
+		if fatal {
+			t.Fatalf("Poll 1: expected fatal=false during grace period, got true")
+		}
+
+		fatal, _ = tracker.ObservePoll(nil)
+		if !fatal {
+			t.Fatalf("Poll 2: expected fatal=true after grace period elapsed, got false")
+		}
+	})
+
+	t.Run("steady-state polling is allocation-free", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+		// Fill the window past maxWindowSize so every subsequent poll trims.
+		tracker.ObservePoll(bytes.Repeat([]byte("normal task output line\n"), 400))
+		delta := []byte("still working on the task...\n")
+
+		if allocs := testing.AllocsPerRun(200, func() { tracker.ObservePoll(delta) }); allocs != 0 {
+			t.Fatalf("ObservePoll allocated %v times per poll in steady state, want 0 (is trimWindow reslicing instead of shifting?)", allocs)
+		}
+	})
+}
+
+// BenchmarkQuotaStreamTrackerObservePoll exercises the steady-state hot path: a full
+// 8KB window scanned on every poll tick. Matching on []byte keeps this allocation-free.
+func BenchmarkQuotaStreamTrackerObservePoll(b *testing.B) {
+	tracker := NewQuotaStreamTracker()
+	tracker.ObservePoll(bytes.Repeat([]byte("normal task output line\n"), 400))
+	delta := []byte("still working on the task...\n")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tracker.ObservePoll(delta)
 	}
 }

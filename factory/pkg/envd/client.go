@@ -423,6 +423,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	// 2. Tailing & status loop
 	var offset int64
 	var lastModelTried string
+	quotaTracker := geminitokens.NewQuotaStreamTracker()
 
 	// Set up signal channel for Ctrl+C
 	sigChan := make(chan os.Signal, 1)
@@ -442,6 +443,31 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		case <-loopCtx.Done():
 		}
 	}()
+
+	flushAndCheckFinalQuota := func(processFailed bool) error {
+		var finalBuf bytes.Buffer
+		finalTailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
+		var finalData []byte
+		if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
+			finalData = finalBuf.Bytes()
+			if len(finalData) > 0 {
+				_, _ = os.Stdout.Write(finalData)
+				offset += int64(len(finalData))
+			}
+		}
+		isFatalQuota := quotaTracker.ObserveFinal(finalData, processFailed)
+		evidence := quotaEvidence(finalData, quotaTracker.Window())
+		if model := extractModelFromLogs(evidence); model != "" {
+			lastModelTried = model
+		}
+		if isFatalQuota {
+			killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer killCancel()
+			_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
+			return handleQuotaOrSuspensionError(evidence, lastModelTried, envs)
+		}
+		return nil
+	}
 
 	startTime := time.Now()
 	pollInterval := 2 * time.Second
@@ -473,21 +499,22 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				newData := logBuf.Bytes()
 				if len(newData) > 0 {
 					_, _ = os.Stdout.Write(newData)
-					if model := extractModelFromLogs(newData); model != "" {
-						lastModelTried = model
-					}
 					offset += int64(len(newData))
-
-					if geminitokens.IsFatalQuotaError(newData) {
-						klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
-						killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
-						defer killCancel()
-						killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
-						_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
-						return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
-					} else if geminitokens.IsTransientRateLimit(newData) {
-						klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
-					}
+				}
+				isFatal, isTransient := quotaTracker.ObservePoll(newData)
+				evidence := quotaEvidence(newData, quotaTracker.Window())
+				if model := extractModelFromLogs(evidence); model != "" {
+					lastModelTried = model
+				}
+				if isFatal {
+					klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
+					killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer killCancel()
+					killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
+					_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
+					return handleQuotaOrSuspensionError(evidence, lastModelTried, envs)
+				} else if isTransient {
+					klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
 				}
 			} else {
 				klog.Warningf("Log streaming connection flaked: %v. Reconnecting...", err)
@@ -525,29 +552,13 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 
 			if exitCodeExists {
 				// Process completed!
-				// Do one final tail to flush any remaining log lines.
-				var finalBuf bytes.Buffer
-				finalTailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
-				if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
-					newData := finalBuf.Bytes()
-					if len(newData) > 0 {
-						_, _ = os.Stdout.Write(newData)
-						if model := extractModelFromLogs(newData); model != "" {
-							lastModelTried = model
-						}
-						if geminitokens.IsFatalQuotaError(newData) {
-							killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
-							defer killCancel()
-							_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
-							return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
-						}
-					}
+				code, convErr := strconv.Atoi(exitStr)
+				processFailed := convErr != nil || code != 0
+				if quotaErr := flushAndCheckFinalQuota(processFailed); quotaErr != nil {
+					return quotaErr
 				}
-
-				// Parse exit code
-				code, err := strconv.Atoi(exitStr)
-				if err != nil {
-					return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
+				if convErr != nil {
+					return fmt.Errorf("invalid exit code '%s': %w", exitStr, convErr)
 				}
 				if code != 0 {
 					return fmt.Errorf("task failed with exit code %d", code)
@@ -562,32 +573,22 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 					exitStr = strings.TrimSpace(exitBuf.String())
 					if exitStr != "" {
 						// Process completed!
-						var finalBuf bytes.Buffer
-						finalTailCmd := BuildTailLogCmd(taskFiles.LogFile, offset)
-						if err := c.Exec(loopCtx, finalTailCmd, "/workspaces", nil, nil, &finalBuf, nil); err == nil {
-							newData := finalBuf.Bytes()
-							if len(newData) > 0 {
-								_, _ = os.Stdout.Write(newData)
-								if model := extractModelFromLogs(newData); model != "" {
-									lastModelTried = model
-								}
-								if geminitokens.IsFatalQuotaError(newData) {
-									killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
-									defer killCancel()
-									_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
-									return handleQuotaOrSuspensionError(newData, lastModelTried, envs)
-								}
-							}
+						code, convErr := strconv.Atoi(exitStr)
+						processFailed := convErr != nil || code != 0
+						if quotaErr := flushAndCheckFinalQuota(processFailed); quotaErr != nil {
+							return quotaErr
 						}
-						code, err := strconv.Atoi(exitStr)
-						if err != nil {
-							return fmt.Errorf("invalid exit code '%s': %w", exitStr, err)
+						if convErr != nil {
+							return fmt.Errorf("invalid exit code '%s': %w", exitStr, convErr)
 						}
 						if code != 0 {
 							return fmt.Errorf("task failed with exit code %d", code)
 						}
 						return nil
 					}
+				}
+				if quotaErr := flushAndCheckFinalQuota(true); quotaErr != nil {
+					return quotaErr
 				}
 				killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer killCancel()
@@ -611,6 +612,22 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 }
 
 var modelRegexp = regexp.MustCompile(`Trying model:\s*([a-zA-Z0-9\-\.]+)`)
+
+// quotaEvidence returns the buffer to use for post-mortem extraction of failure metadata
+// (model name, API key, suspension vs. quota classification).
+//
+// The tracker window is capped at geminitokens.DefaultQuotaWindowSize, so the two buffers
+// are not interchangeable: for an ordinary poll the window is a superset of the chunk (it
+// also carries history from previous ticks), but for an oversized chunk the window holds
+// only its trailing bytes and the chunk is the superset. Whichever is longer contains the
+// other, so picking the longer one never loses information - notably a "Trying model: ..."
+// line printed near the start of a large chunk.
+func quotaEvidence(chunk []byte, window []byte) []byte {
+	if len(chunk) > len(window) {
+		return chunk
+	}
+	return window
+}
 
 func extractModelFromLogs(logs []byte) string {
 	matches := modelRegexp.FindAllSubmatch(logs, -1)
