@@ -252,6 +252,16 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
             />
           </span>
         )}
+        {item.author && group === 'review' && (
+          <span style={{ marginRight: '6px' }}>
+            <Chip
+              text={`⦿ ${item.author}`}
+              color={item.author.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'}
+              bg={`color-mix(in srgb, ${item.author.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'} 14%, transparent)`}
+              title="PR author"
+            />
+          </span>
+        )}
         <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" title={item.title}>{item.title}</a>
         {item.prURL && item.type === 'issue' && (
           <a href={item.prURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px', fontSize: 'small' }}>PR ↗</a>

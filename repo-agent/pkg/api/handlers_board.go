@@ -817,6 +817,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Type:      "pr",
 		Group:     group,
 		Number:    pr.GetNumber(),
+		Author:    pr.GetUser().GetLogin(),
 		Title:     pr.GetTitle(),
 		HTMLURL:   pr.GetHTMLURL(),
 		Stage:     stage,
