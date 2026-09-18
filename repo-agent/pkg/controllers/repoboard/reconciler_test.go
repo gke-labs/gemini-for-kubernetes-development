@@ -165,7 +165,7 @@ func testBoard(annotations map[string]string) *boardv1alpha1.RepoBoard {
 		Spec: boardv1alpha1.RepoBoardSpec{
 			RepoURL:  "https://github.com/test/repo",
 			Triggers: boardv1alpha1.TriggersSpec{Label: "agent", Discreet: &discreet},
-			Limits:   boardv1alpha1.LimitsSpec{MaxActive: 5, MaxActivePerUser: 2},
+			Limits:   boardv1alpha1.LimitsSpec{MaxActive: 5},
 			Sandbox:  boardv1alpha1.SandboxSpec{DiskSize: "10Gi", IdleMinutes: 60},
 		},
 	}

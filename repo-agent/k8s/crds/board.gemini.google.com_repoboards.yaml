@@ -70,9 +70,6 @@ spec:
                   maxActive:
                     default: 5
                     type: integer
-                  maxActivePerUser:
-                    default: 2
-                    type: integer
                 type: object
               policy:
                 properties:
