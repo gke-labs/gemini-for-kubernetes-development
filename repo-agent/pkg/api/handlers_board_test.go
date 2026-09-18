@@ -508,6 +508,11 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	if row := byKey["issue-20"]; row.Group != "issues" || row.Stage != "triage-ready" || row.Draft == "" {
 		t.Errorf("issue-20 row wrong: %+v", row)
 	}
+	// The paused triage sandbox surfaces on the resting row (Agent column
+	// chip + logs link), like plan-ready and fix-done rows do.
+	if row := byKey["issue-20"]; row.Sandbox == nil || row.Sandbox.Name != "triage-repo-20" {
+		t.Errorf("issue-20 should carry its triage sandbox: %+v", row.Sandbox)
+	}
 	if row := byKey["issue-21"]; row.Group != "issues" || row.Stage != "untriaged" {
 		t.Errorf("issue-21 row wrong: %+v", row)
 	}

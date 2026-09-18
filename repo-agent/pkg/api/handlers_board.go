@@ -633,8 +633,11 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		// Unclaimed and untouched: the triage inbox state.
 		stage = "untriaged"
 	}
-	if sb == nil && triageSB != nil && stage == "triaging" {
-		// Surface the triage sandbox on rows without a fix sandbox.
+	if sb == nil && triageSB != nil {
+		// Surface the triage sandbox on rows without a fix sandbox — in
+		// every triage stage, not just while running: a paused sandbox
+		// holding a draft should render (and link its logs) exactly like
+		// plan-ready and fix-done rows do.
 		sb = triageSB
 	}
 
