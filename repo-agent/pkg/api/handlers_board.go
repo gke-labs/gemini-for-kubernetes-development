@@ -32,14 +32,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
 	yamlv3 "go.yaml.in/yaml/v3"
-	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
@@ -1087,12 +1085,10 @@ func (s *Server) getBoardSettings(c *gin.Context) {
 		return
 	}
 
-	autoFix := false
-	autoReview := false
-	if cm, err := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{}); err == nil {
-		autoFix = cm.Data[repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName())] == "true"
-		autoReview = cm.Data[repoboard.AutoReviewPreferenceKey(board.GetNamespace(), board.GetName())] == "true"
-	}
+	// Boards are personal: automation consent lives on the board spec —
+	// one owner, one place, no side ConfigMap.
+	autoFix, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoFix", "enabled")
+	autoReview, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoReview")
 	c.JSON(http.StatusOK, gin.H{"autoFix": autoFix, "autoReview": autoReview})
 }
 
@@ -1114,46 +1110,20 @@ func (s *Server) putBoardSettings(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
-
-	prefs := map[string]bool{
-		repoboard.AutoFixPreferenceKey(board.GetNamespace(), board.GetName()):    payload.AutoFix,
-		repoboard.AutoReviewPreferenceKey(board.GetNamespace(), board.GetName()): payload.AutoReview,
-	}
-	apply := func(data map[string]string) {
-		for key, on := range prefs {
-			if on {
-				data[key] = "true"
-			} else {
-				delete(data, key)
-			}
-		}
-	}
-	cms := s.K8sManager.Clientset.CoreV1().ConfigMaps(namespace)
-	cm, err := cms.Get(ctx, repoboard.PreferencesConfigMap, v1.GetOptions{})
-	if err != nil {
-		cm = &corev1.ConfigMap{ObjectMeta: v1.ObjectMeta{Name: repoboard.PreferencesConfigMap, Namespace: namespace}, Data: map[string]string{}}
-		apply(cm.Data)
-		if _, err := cms.Create(ctx, cm, v1.CreateOptions{}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
-			return
-		}
-		c.Status(http.StatusOK)
+	if err := unstructured.SetNestedField(board.Object, payload.AutoFix, "spec", "intake", "autoFix", "enabled"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
 		return
 	}
-	if cm.Data == nil {
-		cm.Data = map[string]string{}
+	if err := unstructured.SetNestedField(board.Object, payload.AutoReview, "spec", "intake", "autoReview"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
+		return
 	}
-	apply(cm.Data)
-	if _, err := cms.Update(ctx, cm, v1.UpdateOptions{}); err != nil {
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
 		return
 	}
 	c.Status(http.StatusOK)
 }
-
-// Human-gated writes (design §6): publish a review draft, promote a draft
-// PR, or merge — always under the acting member's own token, so GitHub
-// re-enforces permissions and branch protection at the point of action.
 
 func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructured.Unstructured, string, string, string, int, bool) {
 	ctx := c.Request.Context()

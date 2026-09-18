@@ -7,7 +7,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
   - pods
   verbs:
   - get

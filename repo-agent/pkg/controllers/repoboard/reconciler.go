@@ -119,7 +119,6 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // The factory CLI runs under this ServiceAccount: it creates each sandbox's
 // -lb Service, waits on the pod, and execs the task inside it.
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -216,7 +215,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		reviews = append(reviews, rv...)
 	}
-	if r.memberOptedInAutoReview(ctx, board.Namespace, board) {
+	if board.Spec.Intake.AutoReview {
 		// Standing opt-in: PRs that request the owner's review run as
 		// them, independent of full review intake.
 		rv, err := r.discoverRequestedReviews(ctx, ghClient, work)
@@ -464,17 +463,16 @@ func (r *Reconciler) consentedAssignee(ctx context.Context, ghClient *github.Cli
 }
 
 // autoConsentedAssignee returns an assignee holding standing auto-fix
-// consent (two-key: board intake.autoFix.enabled AND the member's own
-// opt-in), for items satisfying the require gate.
-func (r *Reconciler) autoConsentedAssignee(ctx context.Context, work *workState, issue *github.Issue) string {
-	autoFix := work.board.Spec.Intake.AutoFix
-	if !autoFix.Enabled {
+// consent: the board's intake.autoFix.enabled, and only for the board
+// owner — boards are personal, so nobody else's assignment can consent a
+// run in the owner's namespace.
+func (r *Reconciler) autoConsentedAssignee(_ context.Context, work *workState, issue *github.Issue) string {
+	if !work.board.Spec.Intake.AutoFix.Enabled {
 		return ""
 	}
 	for _, a := range issue.Assignees {
-		login := a.GetLogin()
-		if r.memberOptedInAutoFix(ctx, login, work.board) {
-			return login
+		if strings.EqualFold(a.GetLogin(), work.board.Namespace) {
+			return work.board.Namespace
 		}
 	}
 	return ""
@@ -555,9 +553,6 @@ func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *git
 // for the require=[assigned] auto tier.
 func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Client, work *workState) ([]fixPlan, error) {
 	member := work.board.Namespace
-	if !r.memberOptedInAutoFix(ctx, member, work.board) {
-		return nil, nil
-	}
 	var fixes []fixPlan
 	opts := &github.IssueListByRepoOptions{State: "open", Assignee: member, ListOptions: github.ListOptions{PerPage: 100}}
 	for {

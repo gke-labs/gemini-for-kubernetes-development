@@ -463,19 +463,15 @@ func TestFollowUpPRWatch(t *testing.T) {
 
 // On a personal board a labeled issue assigned to the owner is direct
 // consent — it executes as them without the auto-tier draft rail.
-func TestAutoFixTwoKeyConsent(t *testing.T) {
+func TestAutoFixBoardConsent(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	falseVal := false
-	mkBoard := func() *boardv1alpha1.RepoBoard {
+	mkBoard := func(enabled bool) *boardv1alpha1.RepoBoard {
 		b := testBoard(nil)
-		b.Spec.Intake.AutoFix = boardv1alpha1.AutoFixSpec{Enabled: true, Require: []string{"assigned", "label"}}
+		b.Spec.Intake.AutoFix = boardv1alpha1.AutoFixSpec{Enabled: enabled, Require: []string{"assigned", "label"}}
 		b.Spec.Policy = boardv1alpha1.PolicySpec{DraftPR: &falseVal} // rails override policy
 		return b
-	}
-	optIn := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "agent-preferences", Namespace: "alice"},
-		Data:       map[string]string{AutoFixPreferenceKey("alice", "test-board"): "true"},
 	}
 
 	ghClient := testGithubClient(`[
@@ -483,13 +479,24 @@ func TestAutoFixTwoKeyConsent(t *testing.T) {
 		 "labels": [{"name": "agent"}], "assignees": [{"login": "alice"}]}
 	]`)
 
-	// With the opt-in: executes as the owner with the forced draft-PR rail.
+	// Boards are personal: intake.autoFix.enabled on the spec is the whole
+	// consent — no side ConfigMap. Executes as the owner with the forced
+	// draft-PR rail.
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, mkBoard(), githubSecret(), optIn)
+	r := newTestReconciler(fake, ghClient, mkBoard(true), githubSecret())
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
 	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/fix-repo-20"))
+
+	// Disabled, and no trigger label in play: assignment alone does not
+	// consent an auto run. (A trigger-labeled owner-assigned issue would
+	// still launch via the label tier — tiers are independent.)
+	fake2 := newFakeLauncher()
+	r2 := newTestReconciler(fake2, testGithubClient(`[]`), mkBoard(false), githubSecret())
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
 }
 
 // Draft-review intake prepares a review for every inbound PR.
