@@ -77,22 +77,23 @@ type WorkSandbox struct {
 // WorkItem is one row of the board work feed: an issue or PR merged with
 // its agent/sandbox state.
 type WorkItem struct {
-	Type      string       `json:"type"`            // issue | pr
-	Group     string       `json:"group,omitempty"` // review | fix | mine-pr | mine-issue
-	Number    int          `json:"number"`
-	Title     string       `json:"title"`
-	HTMLURL   string       `json:"htmlURL"`
-	Stage     string       `json:"stage"`
-	Attention string       `json:"attention,omitempty"` // needs-you | working | waiting
-	Assignee  string       `json:"assignee,omitempty"`
-	Author    string       `json:"author,omitempty"` // PR author (review rows show it as a chip)
-	PRURL     string       `json:"prURL,omitempty"`
-	Labels    []string     `json:"labels,omitempty"`
-	Draft     string       `json:"draft,omitempty"`   // triage/review draft, when ready
-	Error     string       `json:"error,omitempty"`   // why the last agent run failed, human-readable
-	Plan      string       `json:"plan,omitempty"`    // implementation-plan draft awaiting refine/approve
-	DraftPR   bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
-	Fixes     []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
-	Sandbox   *WorkSandbox `json:"sandbox,omitempty"`
-	UpdatedAt string       `json:"updatedAt,omitempty"`
+	Type            string       `json:"type"`            // issue | pr
+	Group           string       `json:"group,omitempty"` // review | fix | mine-pr | mine-issue
+	Number          int          `json:"number"`
+	Title           string       `json:"title"`
+	HTMLURL         string       `json:"htmlURL"`
+	Stage           string       `json:"stage"`
+	Attention       string       `json:"attention,omitempty"` // needs-you | working | waiting
+	Assignee        string       `json:"assignee,omitempty"`
+	Author          string       `json:"author,omitempty"`          // PR author (review rows show it as a chip)
+	ReviewRequested bool         `json:"reviewRequested,omitempty"` // PR asks for the viewer's review (client-side scope)
+	PRURL           string       `json:"prURL,omitempty"`
+	Labels          []string     `json:"labels,omitempty"`
+	Draft           string       `json:"draft,omitempty"`   // triage/review draft, when ready
+	Error           string       `json:"error,omitempty"`   // why the last agent run failed, human-readable
+	Plan            string       `json:"plan,omitempty"`    // implementation-plan draft awaiting refine/approve
+	DraftPR         bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
+	Fixes           []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
+	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
+	UpdatedAt       string       `json:"updatedAt,omitempty"`
 }

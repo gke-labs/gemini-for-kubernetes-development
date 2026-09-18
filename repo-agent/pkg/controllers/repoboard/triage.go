@@ -44,9 +44,12 @@ const (
 	AnnotationDraftType = "agentDraftType"
 )
 
-// discoverTriage lists open issues needing triage: not PRs, not vetoed, and
-// not already routed to the fix flow via the trigger label.
+// discoverTriage lists open issues needing auto-triage: not PRs, eligible
+// under the universal auto filters (recency, labels, veto), and — for the
+// "unclaimed" scope — carrying no assignees (anyone's assignment is a
+// claim; "all" is for repos where assignment does not imply triaged).
 func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client, work *workState) ([]*github.Issue, error) {
+	unclaimedOnly := work.board.Spec.Auto.Triage != "all"
 	var candidates []*github.Issue
 	opts := &github.IssueListByRepoOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
 	for {
@@ -58,10 +61,10 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 			if item.IsPullRequest() {
 				continue
 			}
-			if vetoed(item.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+			if unclaimedOnly && len(item.Assignees) > 0 {
 				continue
 			}
-			if work.board.Spec.Triggers.Label != "" && hasGithubLabel(item.Labels, work.board.Spec.Triggers.Label) {
+			if !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
 				continue
 			}
 			candidates = append(candidates, item)
@@ -71,15 +74,6 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 		}
 		opts.Page = resp.NextPage
 	}
-}
-
-func hasGithubLabel(labels []*github.Label, name string) bool {
-	for _, l := range labels {
-		if strings.EqualFold(l.GetName(), name) {
-			return true
-		}
-	}
-	return false
 }
 
 // ensureTriage drives one issue's triage state machine: harvest a finished

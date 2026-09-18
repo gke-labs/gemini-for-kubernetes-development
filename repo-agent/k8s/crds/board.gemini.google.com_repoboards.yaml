@@ -36,37 +36,40 @@ spec:
             type: object
           spec:
             properties:
-              intake:
+              auto:
                 properties:
-                  autoFix:
-                    properties:
-                      enabled:
-                        default: false
-                        type: boolean
-                      require:
-                        items:
-                          enum:
-                          - assigned
-                          - label
-                          type: string
-                        type: array
-                    type: object
-                  autoReview:
-                    default: false
-                    type: boolean
-                  draftReviews:
-                    default: false
-                    type: boolean
-                  filters:
-                    properties:
-                      excludeLabels:
-                        items:
-                          type: string
-                        type: array
-                    type: object
-                  triageIssues:
-                    default: false
-                    type: boolean
+                  excludeLabels:
+                    items:
+                      type: string
+                    type: array
+                  fix:
+                    default: "off"
+                    enum:
+                    - "off"
+                    - assigned
+                    type: string
+                  labels:
+                    items:
+                      type: string
+                    type: array
+                  recencyDays:
+                    default: 7
+                    minimum: 1
+                    type: integer
+                  review:
+                    default: "off"
+                    enum:
+                    - "off"
+                    - requested
+                    - all
+                    type: string
+                  triage:
+                    default: "off"
+                    enum:
+                    - "off"
+                    - unclaimed
+                    - all
+                    type: string
                 type: object
               limits:
                 properties:
@@ -111,14 +114,12 @@ spec:
                   image:
                     type: string
                 type: object
-              triggers:
+              view:
                 properties:
-                  discreet:
-                    default: true
-                    type: boolean
-                  label:
-                    default: agent
-                    type: string
+                  labels:
+                    items:
+                      type: string
+                    type: array
                 type: object
             required:
             - repoURL

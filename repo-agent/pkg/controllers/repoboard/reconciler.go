@@ -193,31 +193,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
 
-	// Build the work plan from GitHub (remote tier) and the mailbox
-	// (manual tier), applying the executor-consent rule.
+	// Build the work plan: standing automation (spec.auto — deliberate,
+	// recency-bounded, verb scopes named by their values) plus the mailbox
+	// (clicks). Nothing else launches anything; what the member VIEWS is
+	// client-side state the controller never reads.
 	var fixes []fixPlan
 	var reviews []reviewPlan
-	if board.Spec.Triggers.Label != "" {
-		f, rv, err := r.discoverLabeled(ctx, ghClient, work)
+	switch board.Spec.Auto.Review {
+	case "all":
+		rv, err := r.discoverAllPRs(ctx, ghClient, work)
 		if err != nil {
-			logger.Error(err, "trigger-label discovery failed")
-		}
-		fixes = f
-		// Labeled PRs review as the board owner.
-		for _, pr := range rv {
-			reviews = append(reviews, reviewPlan{pr: pr, executor: board.Namespace})
-		}
-	}
-	if board.Spec.Intake.DraftReviews {
-		rv, err := r.discoverIntakePRs(ctx, ghClient, work)
-		if err != nil {
-			logger.Error(err, "review intake discovery failed")
+			logger.Error(err, "auto-review discovery failed")
 		}
 		reviews = append(reviews, rv...)
-	}
-	if board.Spec.Intake.AutoReview {
-		// Standing opt-in: PRs that request the owner's review run as
-		// them, independent of full review intake.
+	case "requested":
 		rv, err := r.discoverRequestedReviews(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "requested-review discovery failed")
@@ -225,16 +214,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		reviews = append(reviews, rv...)
 	}
 	var triageCandidates []*github.Issue
-	if board.Spec.Intake.TriageIssues {
+	if board.Spec.Auto.Triage == "unclaimed" || board.Spec.Auto.Triage == "all" {
 		tc, err := r.discoverTriage(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "triage discovery failed")
 		}
 		triageCandidates = tc
 	}
-	if autoFixWithoutLabel(board) {
-		// Aggressive personal variant: every issue assigned to the member
-		// is a candidate, gated by their own standing opt-in.
+	if board.Spec.Auto.Fix == "assigned" {
 		f, err := r.discoverAssigned(ctx, ghClient, work)
 		if err != nil {
 			logger.Error(err, "assigned-issue discovery failed")
@@ -389,117 +376,45 @@ var newGithubClientFromToken = githubClientFromToken
 
 // discoverLabeled scans open items carrying the trigger label and returns
 // consented fix plans plus review candidates.
-func (r *Reconciler) discoverLabeled(ctx context.Context, ghClient *github.Client, work *workState) ([]fixPlan, []int, error) {
-	logger := log.FromContext(ctx)
-	label := work.board.Spec.Triggers.Label
-
-	var fixes []fixPlan
-	var reviews []int
-
-	opts := &github.IssueListByRepoOptions{
-		State:       "open",
-		Labels:      []string{label},
-		ListOptions: github.ListOptions{PerPage: 100},
-	}
-	for {
-		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return fixes, reviews, err
-		}
-		for _, item := range items {
-			if vetoed(item.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
-				continue
-			}
-			if item.IsPullRequest() {
-				// Review drafts are unattributed prep — no consent needed.
-				reviews = append(reviews, item.GetNumber())
-				continue
-			}
-			executor := r.consentedAssignee(ctx, ghClient, work, item)
-			auto := false
-			if executor == "" {
-				// Standing consent (two-key auto-fix) can substitute for a
-				// direct act when the require gate holds; the label
-				// requirement is satisfied here by construction.
-				executor = r.autoConsentedAssignee(ctx, work, item)
-				auto = executor != ""
-			}
-			if executor == "" {
-				logger.V(4).Info("labeled item awaiting assignee consent", "issue", item.GetNumber())
-				continue
-			}
-			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: executor, auto: auto})
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return fixes, reviews, nil
-}
-
-// consentedAssignee applies the executor-consent rule: an assignee may
-// execute if they applied the trigger label themselves (verified against the
-// issue's labeled events), or — personal-board fast path — the board lives
-// in the assignee's own namespace. Standing consent (auto-fix opt-in)
-// arrives with the intake phase.
-func (r *Reconciler) consentedAssignee(ctx context.Context, ghClient *github.Client, work *workState, issue *github.Issue) string {
-	var assignees []string
-	for _, a := range issue.Assignees {
-		assignees = append(assignees, a.GetLogin())
-	}
-	if len(assignees) == 0 {
-		return ""
-	}
-
-	// Personal board: the owner is the only executor; they must be among
-	// the assignees.
-	for _, login := range assignees {
-		if strings.EqualFold(login, work.board.Namespace) {
-			return login
-		}
-	}
-	return ""
-}
-
-// autoConsentedAssignee returns an assignee holding standing auto-fix
-// consent: the board's intake.autoFix.enabled, and only for the board
-// owner — boards are personal, so nobody else's assignment can consent a
-// run in the owner's namespace.
-func (r *Reconciler) autoConsentedAssignee(_ context.Context, work *workState, issue *github.Issue) string {
-	if !work.board.Spec.Intake.AutoFix.Enabled {
-		return ""
-	}
-	for _, a := range issue.Assignees {
-		if strings.EqualFold(a.GetLogin(), work.board.Namespace) {
-			return work.board.Namespace
-		}
-	}
-	return ""
-}
-
-func autoFixWithoutLabel(board *boardv1alpha1.RepoBoard) bool {
-	autoFix := board.Spec.Intake.AutoFix
-	if !autoFix.Enabled {
+// autoEligible applies the universal automation filters: the recency
+// window (cold-start protection — enabling auto on an old repo processes
+// the live edge, not the archive), the labels allowlist, and the
+// excludeLabels veto.
+func autoEligible(board *boardv1alpha1.RepoBoard, labels []*github.Label, updatedAt time.Time) bool {
+	if !updatedAt.IsZero() && time.Since(updatedAt) > autoRecency(board) {
 		return false
 	}
-	for _, req := range autoFix.Require {
-		if req == "label" {
-			return false
-		}
+	if vetoed(labels, board.Spec.Auto.ExcludeLabels) {
+		return false
+	}
+	if len(board.Spec.Auto.Labels) > 0 && !hasAnyGithubLabel(labels, board.Spec.Auto.Labels) {
+		return false
 	}
 	return true
 }
 
-// discoverIntakePRs lists every open PR for draft-review intake.
-// discoverIntakePRs plans intake reviews. Every review needs a named,
-// consenting executor — anonymous prep-identity reviews never run (tokens
-// spent on a review nobody asked for, invisible to everyone):
-//   - personal board: the member IS the board; every open PR is reviewed
-//     as them (enabling intake was their consent).
-//   - shared board: only PRs whose review is explicitly requested from a
-//     member with the standing auto-review opt-in (two-key, like auto-fix).
-func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
+func autoRecency(board *boardv1alpha1.RepoBoard) time.Duration {
+	days := board.Spec.Auto.RecencyDays
+	if days <= 0 {
+		days = 7
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+func hasAnyGithubLabel(labels []*github.Label, names []string) bool {
+	for _, l := range labels {
+		for _, name := range names {
+			if strings.EqualFold(l.GetName(), name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// discoverAllPRs plans auto reviews for every eligible open PR (auto.review
+// "all"). Reviews run as the owner — enabling the verb was their consent.
+func (r *Reconciler) discoverAllPRs(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
 	var reviews []reviewPlan
 	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
 	for {
@@ -508,7 +423,7 @@ func (r *Reconciler) discoverIntakePRs(ctx context.Context, ghClient *github.Cli
 			return reviews, err
 		}
 		for _, pr := range prs {
-			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+			if !autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) {
 				continue
 			}
 			reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
@@ -532,7 +447,7 @@ func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *git
 			return reviews, err
 		}
 		for _, pr := range prs {
-			if vetoed(pr.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+			if !autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) {
 				continue
 			}
 			for _, reviewer := range pr.RequestedReviewers {
@@ -561,7 +476,7 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 			return fixes, err
 		}
 		for _, item := range items {
-			if item.IsPullRequest() || vetoed(item.Labels, work.board.Spec.Intake.Filters.ExcludeLabels) {
+			if item.IsPullRequest() || !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
 				continue
 			}
 			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: member, auto: true})

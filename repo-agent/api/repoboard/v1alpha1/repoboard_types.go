@@ -29,65 +29,59 @@ import (
 // view — assignments, labels, PRs and submitted reviews coordinate the
 // team; boards never do.
 
-// TriggersSpec controls how intent enters the system. Claims (assignment,
-// self-requested review) are invariants of every action and not configurable.
-type TriggersSpec struct {
-	// Label is the trigger-label prefix. Applying it on GitHub triggers
-	// work, subject to the executor-consent rule (the labeler must be the
-	// assignee, or the assignee must hold the auto-fix opt-in). Empty
-	// disables GitHub-side label triggering.
-	// +kubebuilder:default=agent
-	Label string `json:"label,omitempty"`
-
-	// Discreet permits UI-only kickoff via the transient request mailbox,
-	// without applying the trigger label.
-	// +kubebuilder:default=true
-	Discreet *bool `json:"discreet,omitempty"`
-}
-
-// AutoFixSpec is the standing auto-fix consent. Boards are personal
-// (owner == executor), so the board spec is the single source of consent —
-// no member-side key.
-type AutoFixSpec struct {
-	// +kubebuilder:default=false
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Require lists the predicates that must all hold before an auto-fix
-	// launches for an opted-in member. "assigned" plus "label" is the
-	// recommended gate.
+// ViewSpec is the board's persistent view filter — VIEW ONLY. It narrows
+// what the feed surfaces (items with an active sandbox always surface) and
+// never affects automation: spec.auto is scoped by spec.auto alone.
+// Ad-hoc narrowing on top of this is fluid client-side UI state.
+type ViewSpec struct {
+	// Labels: when set, the board only surfaces items carrying one of
+	// these labels.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:items:Enum=assigned;label
-	Require []string `json:"require,omitempty"`
+	Labels []string `json:"labels,omitempty"`
 }
 
-// IntakeFilters vetoes items from any intake or automatic processing.
-type IntakeFilters struct {
+// AutoSpec is everything that launches without a click — the deliberate,
+// rarely-touched half of the board. What the member LOOKS at (view scopes,
+// filters) is fluid per-user UI state and never lives on this CR: changing
+// a view must never change what runs. Every verb is an enum whose value
+// names its scope, every verb is bounded by the recency window, and all
+// writes stay draft-shaped (triage drafts on the board, draft PRs, pending
+// reviews visible only to the owner).
+type AutoSpec struct {
+	// Triage prepares triage drafts for recent issues: "unclaimed" (no
+	// assignees) or "all" (assignment does not imply triaged).
+	// +kubebuilder:default=off
+	// +kubebuilder:validation:Enum=off;unclaimed;all
+	Triage string `json:"triage,omitempty"`
+
+	// Fix starts draft-PR fixes for recent issues: "assigned" (assigned
+	// to the owner — the only scope where running as the owner is safe).
+	// +kubebuilder:default=off
+	// +kubebuilder:validation:Enum=off;assigned
+	Fix string `json:"fix,omitempty"`
+
+	// Review runs reviews as the owner (parked as pending reviews) for
+	// recent PRs: "requested" (asking for the owner's review) or "all".
+	// +kubebuilder:default=off
+	// +kubebuilder:validation:Enum=off;requested;all
+	Review string `json:"review,omitempty"`
+
+	// Labels: when set, automation only touches items carrying one of
+	// these labels — a filter within the scopes above, not a trigger.
+	// +kubebuilder:validation:Optional
+	Labels []string `json:"labels,omitempty"`
+
+	// ExcludeLabels is the absolute veto: automation never touches items
+	// carrying one of these.
 	// +kubebuilder:validation:Optional
 	ExcludeLabels []string `json:"excludeLabels,omitempty"`
-}
 
-// IntakeSpec configures draft-only automation. Nothing under intake may
-// write to GitHub; drafts surface on the board until a human publishes.
-type IntakeSpec struct {
-	// TriageIssues prepares triage suggestions (labels/priority/duplicates)
-	// for inbound issues.
-	// +kubebuilder:default=false
-	TriageIssues bool `json:"triageIssues,omitempty"`
-
-	// DraftReviews prepares unpublished review drafts for inbound PRs.
-	// +kubebuilder:default=false
-	DraftReviews bool `json:"draftReviews,omitempty"`
-
-	// AutoReview runs a review as the owner for PRs that request their
-	// review, parking a pending review on GitHub (visible only to them).
-	// +kubebuilder:default=false
-	AutoReview bool `json:"autoReview,omitempty"`
-
-	// +kubebuilder:validation:Optional
-	AutoFix AutoFixSpec `json:"autoFix,omitempty"`
-
-	// +kubebuilder:validation:Optional
-	Filters IntakeFilters `json:"filters,omitempty"`
+	// RecencyDays bounds every verb to items updated within this window,
+	// so enabling automation on an old repo processes the live edge, not
+	// the archive. The rest stays a per-item manual click.
+	// +kubebuilder:default=7
+	// +kubebuilder:validation:Minimum=1
+	RecencyDays int `json:"recencyDays,omitempty"`
 }
 
 // ReadySpec defines when a PR row lights up "ready to merge" on the board.
@@ -150,10 +144,10 @@ type RepoBoardSpec struct {
 	RepoURL string `json:"repoURL"`
 
 	// +kubebuilder:validation:Optional
-	Triggers TriggersSpec `json:"triggers,omitempty"`
+	View ViewSpec `json:"view,omitempty"`
 
 	// +kubebuilder:validation:Optional
-	Intake IntakeSpec `json:"intake,omitempty"`
+	Auto AutoSpec `json:"auto,omitempty"`
 
 	// +kubebuilder:validation:Optional
 	Ready ReadySpec `json:"ready,omitempty"`
