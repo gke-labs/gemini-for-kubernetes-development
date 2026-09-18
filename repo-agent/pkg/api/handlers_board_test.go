@@ -63,6 +63,9 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	// Package-global caches; drop verdicts from earlier tests.
+	repoSuggestionCache.Lock()
+	repoSuggestionCache.entries = map[string]repoSuggestionEntry{}
+	repoSuggestionCache.Unlock()
 	pendingReviewCache.Lock()
 	pendingReviewCache.entries = map[string]pendingReviewEntry{}
 	pendingReviewCache.Unlock()
@@ -108,6 +111,7 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 		c.Next()
 	})
 	r.GET("/board/:board/work", server.getBoardWork)
+	r.GET("/repo-suggestions", server.getRepoSuggestions)
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
@@ -965,5 +969,56 @@ func TestPlanEndpoints(t *testing.T) {
 	annotations = getAnnotations()
 	if annotations["board.gemini.google.com/plan"] != "" || annotations["board.gemini.google.com/plan-rejected-at"] == "" {
 		t.Errorf("reject did not clear the draft: %v", annotations)
+	}
+}
+
+// Onboarding suggestions: involvement-searched repos rank first by
+// frequency, then activity events, then the member's own non-fork repos;
+// the member's copy of an already-suggested upstream is dropped as a fork.
+func TestGetRepoSuggestions(t *testing.T) {
+	prevNow := suggestionNow
+	suggestionNow = func() time.Time { return time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC) }
+	defer func() { suggestionNow = prevNow }()
+
+	ghResponses := map[string]string{
+		"https://api.github.com/search/issues?per_page=100&q=involves%3Aalice+updated%3A%3E2026-06-18": `{
+			"total_count": 4, "items": [
+				{"repository_url": "https://api.github.com/repos/org/main-repo"},
+				{"repository_url": "https://api.github.com/repos/other/side-repo"},
+				{"repository_url": "https://api.github.com/repos/org/main-repo"},
+				{"repository_url": "https://api.github.com/repos/alice/main-repo"}
+			]
+		}`,
+		"https://api.github.com/users/alice/events?per_page=100": `[
+			{"repo": {"name": "org/evented-repo"}},
+			{"repo": {"name": "org/main-repo"}}
+		]`,
+		"https://api.github.com/user/repos?affiliation=owner&per_page=30&sort=pushed": `[
+			{"full_name": "alice/own-repo", "fork": false},
+			{"full_name": "alice/forked-repo", "fork": true}
+		]`,
+	}
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+
+	req, _ := http.NewRequest("GET", "/repo-suggestions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got []repoSuggestion
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	// alice/main-repo is dropped (fork of the suggested org/main-repo);
+	// alice/forked-repo is dropped (fork flag).
+	want := []string{"org/main-repo", "other/side-repo", "org/evented-repo", "alice/own-repo"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %+v", want, got)
+	}
+	for i, name := range want {
+		if got[i].FullName != name || got[i].URL != "https://github.com/"+name {
+			t.Errorf("suggestion %d: got %+v, want %s", i, got[i], name)
+		}
 	}
 }

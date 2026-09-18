@@ -473,6 +473,7 @@ function Work({ onBack, namespace }) {
   const [activeGroup, setActiveGroup] = useState(''); // '' = auto-pick
   const [loading, setLoading] = useState(false);
   const [addURL, setAddURL] = useState('');
+  const [repoSuggestions, setRepoSuggestions] = useState([]);
   const [error, setError] = useState('');
   const [autoFix, setAutoFix] = useState(false);
   const [autoReview, setAutoReview] = useState(false);
@@ -499,6 +500,15 @@ function Work({ onBack, namespace }) {
   }, [activeBoard]);
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
+
+  // Prefetch onboarding suggestions in the background so the add-repo box
+  // has them ready by the first click (server caches per user).
+  useEffect(() => {
+    fetch('/api/repo-suggestions')
+      .then(res => (res.ok ? res.json() : []))
+      .then(data => setRepoSuggestions(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     if (!activeBoard) return;
     fetch(`/api/board/${activeBoard}/settings`)
@@ -623,13 +633,21 @@ function Work({ onBack, namespace }) {
         </nav>
         <input
           type="text"
+          list="repo-suggestions"
           placeholder="https://github.com/org/repo"
-          title="Add a board for a repository"
+          title="Add a board for a repository — repos you work in are suggested"
           value={addURL}
           onChange={e => setAddURL(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleAddBoard()}
           style={{ padding: '6px', borderRadius: '4px', border: '1px solid var(--border-color)', width: '230px' }}
         />
+        <datalist id="repo-suggestions">
+          {repoSuggestions
+            .filter(sug => !boards.some(b => (b.repoURL || '').replace(/\.git$/, '') === sug.url))
+            .map(sug => (
+              <option key={sug.url} value={sug.url}>{sug.fullName}</option>
+            ))}
+        </datalist>
         <button
           className="btn"
           onClick={handleAddBoard}
