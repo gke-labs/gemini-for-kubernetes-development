@@ -160,8 +160,10 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
         return { href: item.htmlURL, title: 'Open the PR on GitHub' };
       case 'pr-open':
         return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
-      case 'fix-failed':
       case 'review-failed':
+        if (item.error) return { onClick: () => setShowDraft(v => !v), title: 'Show why the review failed' };
+        return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
+      case 'fix-failed':
       case 'fix-done':
         return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
       default:
@@ -291,6 +293,23 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
             borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
             textAlign: 'left',
           }}>{item.draft}</pre>
+        </td>
+      </tr>
+    )}
+    {showDraft && item.error && (
+      <tr>
+        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
+          <div style={{
+            fontSize: 'small', padding: '10px', borderRadius: '6px',
+            backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
+            color: 'var(--text-primary)', textAlign: 'left',
+          }}>
+            {item.error}
+            {item.sandbox && (
+              <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer"
+                style={{ marginLeft: '8px', fontSize: 'small' }}>agent logs ↗</a>
+            )}
+          </div>
         </td>
       </tr>
     )}

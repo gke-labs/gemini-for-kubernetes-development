@@ -76,7 +76,14 @@ const (
 	// AnnotationReviewAbandoned is stamped by the API when the member
 	// deletes their pending review on GitHub; invocation results older
 	// than this must not be re-recorded as pending.
-	AnnotationReviewAbandoned   = "review.gemini.google.com/abandoned-at"
+	AnnotationReviewAbandoned = "review.gemini.google.com/abandoned-at"
+	// AnnotationReviewError parks a failed review invocation: the message
+	// renders on the board and its timestamp gates relaunch until the
+	// member clicks Review again. Auto-retrying re-runs the whole agent,
+	// and failures that need a human (org blocks the token, bad PAT)
+	// never fix themselves.
+	AnnotationReviewError       = "review.gemini.google.com/error"
+	AnnotationReviewErrorAt     = "review.gemini.google.com/error-at"
 	reviewStatePending          = "pending"
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
@@ -655,7 +662,9 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	logger := log.FromContext(ctx)
 	name := work.fixSandboxName(plan.issue)
 	sb := work.findSandbox(plan.executor, name)
-	key := fmt.Sprintf("%s/fix-%d", plan.executor, plan.issue)
+	// PR/issue numbers repeat across repos, so runner keys carry the repo:
+	// two boards in one namespace must never share a single-flight slot.
+	key := fmt.Sprintf("%s/fix-%s-%d", plan.executor, work.repo, plan.issue)
 
 	if r.Factory.IsRunning(key) {
 		return
@@ -741,18 +750,18 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
 		return
 	}
-	key := fmt.Sprintf("%s/review-pr-%d", plan.executor, plan.pr)
+	key := fmt.Sprintf("%s/review-%s-%d", plan.executor, work.repo, plan.pr)
 
 	sb := work.findPRSandbox(plan.pr)
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	// Abandoned and legacy draft-bearing sandboxes are terminal: relaunch
-	// only on a fresh re-review marker (a new click stamps one).
+	// Abandoned, errored and legacy draft-bearing sandboxes are terminal:
+	// relaunch only on a fresh re-review marker (a new click stamps one).
 	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
-		annotations[AnnotationReviewAbandoned] != ""
-	if done && !rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt) {
+		annotations[AnnotationReviewAbandoned] != "" || annotations[AnnotationReviewError] != ""
+	if done && !reviewRerunRequested(sb) {
 		return
 	}
 	if r.Factory.IsRunning(key) {
@@ -768,8 +777,16 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 			}
 			return
 		}
-		// Error, or a success with nothing recognizable in its output:
-		// back off rather than hot-looping the agent.
+		if res.Err != nil && sb != nil {
+			// A failed run parks the review until the member clicks again
+			// — no auto-retry.
+			if err := r.markReviewError(ctx, sb, work.board.Name, reviewErrorLine(res)); err != nil {
+				logger.Error(err, "unable to record review error", "pr", plan.pr)
+			}
+			return
+		}
+		// Pre-sandbox failure, or a success with nothing recognizable in
+		// its output: back off rather than hot-looping the agent.
 		if time.Since(res.FinishedAt) < launchRetryBackoff {
 			return
 		}
@@ -808,12 +825,12 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 		annotations := sb.GetAnnotations()
 		reviewish := annotations[factorycli.AnnotationTaskType] == "review" ||
 			strings.HasPrefix(sb.GetName(), "factory-pr-")
-		rerun := rerunRequested(sb, AnnotationRereviewRequested, AnnotationReviewedAt)
+		rerun := reviewRerunRequested(sb)
 		if !reviewish && !rerun {
 			continue
 		}
 		done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
-			annotations[AnnotationReviewAbandoned] != ""
+			annotations[AnnotationReviewAbandoned] != "" || annotations[AnnotationReviewError] != ""
 		if done && !rerun {
 			continue
 		}
@@ -892,8 +909,48 @@ func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Uns
 	annotations[AnnotationReviewState] = reviewStatePending
 	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
 	annotations[AnnotationBoard] = boardName
+	delete(annotations, AnnotationReviewError)
+	delete(annotations, AnnotationReviewErrorAt)
 	sb.SetAnnotations(annotations)
 	return r.Update(ctx, sb)
+}
+
+// markReviewError parks a failed review invocation on the sandbox: the
+// message renders on the board, and its timestamp is the baseline a
+// re-review click must beat before the controller launches again.
+func (r *Reconciler) markReviewError(ctx context.Context, sb *unstructured.Unstructured, boardName, msg string) error {
+	annotations := sb.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[AnnotationReviewError] = msg
+	annotations[AnnotationReviewErrorAt] = time.Now().UTC().Format(time.RFC3339)
+	annotations[AnnotationBoard] = boardName
+	sb.SetAnnotations(annotations)
+	return r.Update(ctx, sb)
+}
+
+// reviewErrorLine digs the most useful line out of a failed invocation's
+// output — factory prints "Error: ..." on its way out.
+func reviewErrorLine(res factorycli.Result) string {
+	lines := strings.Split(strings.TrimSpace(res.Output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "Error:") {
+			return clipMessage(strings.TrimSpace(strings.TrimPrefix(line, "Error:")), 300)
+		}
+	}
+	if res.Err != nil {
+		return clipMessage(res.Err.Error(), 300)
+	}
+	return "review failed"
+}
+
+func clipMessage(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // trimMailbox clears request entries whose sandbox now exists.
@@ -1131,6 +1188,27 @@ func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey stri
 
 func refixRequested(sb *unstructured.Unstructured) bool {
 	return rerunRequested(sb, AnnotationRefixRequested, factorycli.AnnotationCompletionTime)
+}
+
+// reviewRerunRequested reports whether a re-review click is newer than the
+// last closed-out review attempt (posted or errored). Without the error
+// baseline, one click would re-arm a permanently failing review forever.
+func reviewRerunRequested(sb *unstructured.Unstructured) bool {
+	if sb == nil {
+		return false
+	}
+	annotations := sb.GetAnnotations()
+	requestedAt, err := time.Parse(time.RFC3339, annotations[AnnotationRereviewRequested])
+	if err != nil {
+		return false
+	}
+	baseline := time.Time{}
+	for _, key := range []string{AnnotationReviewedAt, AnnotationReviewErrorAt} {
+		if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(baseline) {
+			baseline = t
+		}
+	}
+	return baseline.IsZero() || requestedAt.After(baseline)
 }
 
 func vetoed(labels []*github.Label, excluded []string) bool {
