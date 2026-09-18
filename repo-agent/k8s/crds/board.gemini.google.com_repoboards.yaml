@@ -51,6 +51,9 @@ spec:
                           type: string
                         type: array
                     type: object
+                  autoReview:
+                    default: false
+                    type: boolean
                   draftReviews:
                     default: false
                     type: boolean

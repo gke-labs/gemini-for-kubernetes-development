@@ -45,9 +45,9 @@ type TriggersSpec struct {
 	Discreet *bool `json:"discreet,omitempty"`
 }
 
-// AutoFixSpec is the board-side key of the two-key auto-fix consent. The
-// member-side key lives in the member's own namespace and is never part of
-// this CR.
+// AutoFixSpec is the standing auto-fix consent. Boards are personal
+// (owner == executor), so the board spec is the single source of consent —
+// no member-side key.
 type AutoFixSpec struct {
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
@@ -77,6 +77,11 @@ type IntakeSpec struct {
 	// DraftReviews prepares unpublished review drafts for inbound PRs.
 	// +kubebuilder:default=false
 	DraftReviews bool `json:"draftReviews,omitempty"`
+
+	// AutoReview runs a review as the owner for PRs that request their
+	// review, parking a pending review on GitHub (visible only to them).
+	// +kubebuilder:default=false
+	AutoReview bool `json:"autoReview,omitempty"`
 
 	// +kubebuilder:validation:Optional
 	AutoFix AutoFixSpec `json:"autoFix,omitempty"`
