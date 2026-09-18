@@ -435,27 +435,52 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
 		requests := map[string]string{}
 		if err := json.Unmarshal([]byte(raw), &requests); err == nil {
+			// Clicks beyond the launch limits are honestly "queued", not
+			// "starting": the controller defers them until a slot frees
+			// (which includes the finished-but-idle hour today).
+			running := 0
+			for _, sb := range sandboxes {
+				if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
+					running++
+				}
+			}
+			limit := boardLimit(board, "maxActivePerUser", 2)
+			if ma := boardLimit(board, "maxActive", 5); ma < limit {
+				limit = ma
+			}
+			atCapacity := int64(running) >= limit
 			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
 			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
+			mark := func(item *models.WorkItem, startingStage string) {
+				// A sandbox-backed row is already launched (its stage came
+				// from the sandbox, not this pre-run map); only truly
+				// pre-sandbox clicks can be queued.
+				if atCapacity && item.Sandbox == nil {
+					item.Stage, item.Attention = "queued", attentionWaiting
+					return
+				}
+				item.Stage, item.Attention = startingStage, attentionWorking
+			}
 			for key := range requests {
 				if n, ok := strings.CutPrefix(key, "review-"); ok {
 					if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
-						item.Stage, item.Attention = "review-starting", attentionWorking
+						mark(item, "review-starting")
 					}
 				}
 				if n, ok := strings.CutPrefix(key, "fix-"); ok {
 					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-						item.Stage, item.Attention = "fix-starting", attentionWorking
+						mark(item, "fix-starting")
 					}
 				}
 				if n, ok := strings.CutPrefix(key, "triage-"); ok {
 					if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
+						// Triage is only board-capacity gated, not per-user.
 						item.Stage, item.Attention = "triaging", attentionWorking
 					}
 				}
 				if n, ok := strings.CutPrefix(key, "plan-"); ok {
 					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-						item.Stage, item.Attention = "planning", attentionWorking
+						mark(item, "planning")
 					}
 				}
 			}
@@ -474,6 +499,16 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return work[i].UpdatedAt > work[j].UpdatedAt
 	})
 	c.JSON(http.StatusOK, work)
+}
+
+// boardLimit mirrors the controller's absent-parent defaulting: zero or
+// missing means the default, never "block everything".
+func boardLimit(board *unstructured.Unstructured, field string, def int64) int64 {
+	v, found, err := unstructured.NestedInt64(board.Object, "spec", "limits", field)
+	if err != nil || !found || v <= 0 {
+		return def
+	}
+	return v
 }
 
 func listIssues(ctx context.Context, gh *github.Client, owner, repo string, opts *github.IssueListByRepoOptions) ([]*github.Issue, error) {
@@ -817,6 +852,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Type:      "pr",
 		Group:     group,
 		Number:    pr.GetNumber(),
+		Author:    pr.GetUser().GetLogin(),
 		Title:     pr.GetTitle(),
 		HTMLURL:   pr.GetHTMLURL(),
 		Stage:     stage,

@@ -36,6 +36,7 @@ const AGENT_STAGE = {
   'reviewing': 'reviewing',
   'triaging': 'triaging',
   'planning': 'planning',
+  'queued': 'queued',
 };
 
 // Action-first grouping (tabs). Up Next is the default tab: every
@@ -249,6 +250,16 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
               color={item.assignee.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'}
               bg={`color-mix(in srgb, ${item.assignee.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'} 14%, transparent)`}
               title="GitHub assignee"
+            />
+          </span>
+        )}
+        {item.author && group === 'review' && (
+          <span style={{ marginRight: '6px' }}>
+            <Chip
+              text={`⦿ ${item.author}`}
+              color={item.author.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'}
+              bg={`color-mix(in srgb, ${item.author.startsWith(namespace) ? 'var(--group-fix)' : 'var(--group-review)'} 14%, transparent)`}
+              title="PR author"
             />
           </span>
         )}
