@@ -24,6 +24,7 @@ const STAGE_LABEL = {
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Reviewed ✓',
   'triage-ready': 'Triage ready',
+  'triaged': 'Triaged ✓',
   'plan-ready': 'Plan ready',
   'plan-failed': 'Plan failed',
 };
@@ -50,6 +51,7 @@ const AGENT_STAGE = {
 const STAGE_STYLE = {
   'review-pending': { color: '#8250df', bg: 'rgba(130,80,223,0.14)' },
   'review-submitted': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
+  'triaged': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
 };
 
 const UP_NEXT = 'up-next';
@@ -249,6 +251,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     switch (item.stage) {
       case 'triage-ready':
         return { onClick: () => setShowDraft(v => !v), title: 'Show the triage suggestions' };
+      case 'triaged':
+        return { onClick: () => setShowDraft(v => !v), title: 'Triage published — show the suggestions' };
       case 'plan-ready':
         return { onClick: () => setShowPlan(v => !v), title: 'Show the plan — refine, approve, or reject' };
       case 'review-pending':
@@ -364,7 +368,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.draft && item.stage !== 'triage-ready' && (
+        {item.draft && !['triage-ready', 'triaged'].includes(item.stage) && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: '4px' }}
