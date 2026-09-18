@@ -29,7 +29,7 @@ func (m *TaskQueueManager) UpdateTaskPriority(filename string, priority api.Task
 
 	if m.incomingDir != "" {
 		incomingPath := filepath.Join(m.incomingDir, filename)
-		t, err := loadTaskFromDisk(incomingPath)
+		t, _, err := loadTaskFromDisk(incomingPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("task %s not found in incoming queue: %w", filename, os.ErrNotExist)

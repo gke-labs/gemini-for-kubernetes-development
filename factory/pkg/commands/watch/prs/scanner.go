@@ -50,8 +50,14 @@ const (
 
 // Queue is the subset of the task queue the Scanner needs. It adds pull request
 // tasks, withdraws the pending ones for a pull request that has been stopped,
-// and reports whether a pull request has work in flight - which is what keeps
-// the ready-for-human label from flapping while a task is running.
+// reports whether a pull request has work in flight - which is what keeps the
+// ready-for-human label from flapping while a task is running - and reports
+// what has already finished.
+//
+// The finished work is read through here rather than off the filesystem
+// because the queue owns the task files. A scanner that opened the processed
+// directory itself would be a second reader of state it does not control, and
+// would miss everything that finished after it first looked.
 type Queue interface {
 	// TaskExists reports whether a task with the given file name is queued or running.
 	TaskExists(filename string) bool
@@ -61,6 +67,11 @@ type Queue interface {
 	Enqueue(filename string, task *api.QueueTask) error
 	// RemovePendingTasksForNumber drops the not-yet-started tasks targeting a pull request.
 	RemovePendingTasksForNumber(number int) error
+	// GetProcessedTask returns the finished task recorded under the given file
+	// name, or nil when nothing by that name has finished.
+	GetProcessedTask(filename string) *api.QueueTask
+	// ListProcessedTasks returns every finished task, keyed by task file name.
+	ListProcessedTasks() map[string]*api.QueueTask
 }
 
 // Entities is the shared view of what the scanners have observed. The Scanner
@@ -110,9 +121,6 @@ type Config struct {
 	// InactivityTimeout pauses a pull request that has seen no human activity
 	// for this long. Zero disables the check.
 	InactivityTimeout time.Duration
-	// ProcessedDir is the queue directory holding completed task files, read to
-	// recover what has already been done for each pull request.
-	ProcessedDir string
 	// DryRun reports what would be queued without touching the queue or GitHub.
 	DryRun bool
 }
@@ -177,7 +185,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		entities:  deps.Entities,
 		sandboxes: deps.Sandboxes,
 		paused:    deps.Paused,
-		state:     newStateStore(cfg.ProcessedDir),
+		state:     newStateStore(deps.Queue),
 	}
 }
 

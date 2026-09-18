@@ -1,6 +1,7 @@
 package api
 
 import (
+	"slices"
 	"time"
 )
 
@@ -117,6 +118,21 @@ func (t *QueueTask) Duration() time.Duration {
 		return t.CompletedAt.Sub(t.StartedAt)
 	}
 	return 0
+}
+
+// DeepCopy returns a deep copy of the task.
+//
+// A plain struct copy is not enough to hand a task to a caller safely:
+// Instructions is a slice, so the copy would carry a second reference to the
+// same backing array, and whoever held it could rewrite the original's
+// elements. DeepCopy gives the copy its own array.
+func (t *QueueTask) DeepCopy() *QueueTask {
+	if t == nil {
+		return nil
+	}
+	copied := *t
+	copied.Instructions = slices.Clone(t.Instructions)
+	return &copied
 }
 
 // TaskItem represents a queue task bundled with its filename.

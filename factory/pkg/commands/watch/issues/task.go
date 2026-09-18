@@ -2,14 +2,11 @@ package issues
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
@@ -95,51 +92,37 @@ func triggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, trigger
 	return createTime, api.TriggerReasonIssueCreated, notes
 }
 
-// loadProcessedIssues recovers when each issue was last worked on from the
-// completed task files on disk, so that a restart does not re-queue everything
-// it had already finished.
+// processedIssueTimes recovers when each issue was last worked on from the
+// queue's finished tasks, so that a restart does not re-queue everything it had
+// already finished.
 //
 // A task that failed is deliberately not recorded: the issue still needs work,
 // and treating the failure as a completion would park it until someone touched
 // the issue again.
-func loadProcessedIssues(processedDir string) map[int]time.Time {
+//
+// Only the standard fix task shape is folded in. A workflow task is named after
+// its workflow, and is gated by its own cooldown rather than by this map.
+func processedIssueTimes(tasks map[string]*api.QueueTask) map[int]time.Time {
 	processed := make(map[int]time.Time)
-	files, err := os.ReadDir(processedDir)
-	if err != nil {
-		return processed
-	}
-	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") || !strings.HasPrefix(f.Name(), "task-issue-") {
+	for filename, t := range tasks {
+		if t == nil || !strings.HasPrefix(filename, "task-issue-") {
 			continue
 		}
-		trimmed := strings.TrimSuffix(strings.TrimPrefix(f.Name(), "task-issue-"), ".yaml")
+		trimmed := strings.TrimSuffix(strings.TrimPrefix(filename, "task-issue-"), ".yaml")
 		num, err := strconv.Atoi(trimmed)
 		if err != nil {
 			continue
 		}
-
-		var t api.QueueTask
-		hasTask := false
-		if data, err := os.ReadFile(filepath.Join(processedDir, f.Name())); err == nil {
-			if err := yaml.Unmarshal(data, &t); err == nil {
-				hasTask = true
-			}
-		}
-		if hasTask && strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
+		if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 			continue
 		}
-
-		info, err := f.Info()
-		if err != nil {
+		// The queue dates every finished task, so a zero completion time means
+		// it could not be established at all - which says nothing about when
+		// the issue was last worked on.
+		if t.CompletedAt.IsZero() {
 			continue
 		}
-		// The file's timestamp is only a proxy for when the task finished; the
-		// recorded completion time is authoritative when the file holds one.
-		tTime := info.ModTime()
-		if hasTask && !t.CompletedAt.IsZero() {
-			tTime = t.CompletedAt
-		}
-		processed[num] = tTime
+		processed[num] = t.CompletedAt
 	}
 	return processed
 }

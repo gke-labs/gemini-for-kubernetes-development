@@ -96,7 +96,6 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 		ReviewerLogins:  opts.ReviewerLogins,
 		AllowlistedBots: opts.AllowlistedBots,
 		MinNumber:       opts.MinNumber,
-		ProcessedDir:    processedDir,
 	}, Deps{
 		GitHub:    github.ForRepo(opts.GitHub, "test-owner", "test-repo"),
 		Queue:     queue,

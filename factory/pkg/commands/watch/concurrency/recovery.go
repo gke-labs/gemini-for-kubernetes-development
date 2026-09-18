@@ -52,7 +52,7 @@ func (m *TaskQueueManager) SyncProcessingFromDisk() error {
 		}
 
 		filePath := filepath.Join(m.processingDir, e.Name())
-		t, err := loadTaskFromDisk(filePath)
+		t, _, err := loadTaskFromDisk(filePath)
 		if err != nil {
 			klog.Errorf("Failed to load task file %s during processing sync: %v", filePath, err)
 			continue

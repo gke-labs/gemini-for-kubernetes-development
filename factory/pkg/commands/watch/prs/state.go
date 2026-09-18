@@ -1,14 +1,10 @@
 package prs
 
 import (
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
@@ -52,18 +48,19 @@ type prState struct {
 // between GitHub round trips.
 type stateStore struct {
 	mu sync.Mutex
-	// processedDir is the queue directory holding completed task files.
-	processedDir string
+	// queue is where the finished tasks are recovered from. The scanner does
+	// not read the task files itself: the queue owns them.
+	queue Queue
 	// byNumber is nil until the first access, at which point it is recovered
-	// from disk. Loading lazily keeps construction free of I/O, which is what
-	// lets a test build a Scanner without laying out a queue directory.
+	// from the queue. Loading lazily keeps construction free of I/O, which is
+	// what lets a test build a Scanner without a populated queue.
 	byNumber map[int]prState
 }
 
-// newStateStore returns a store that recovers its contents from processedDir on
-// first use.
-func newStateStore(processedDir string) *stateStore {
-	return &stateStore{processedDir: processedDir}
+// newStateStore returns a store that recovers its contents from the queue's
+// finished tasks on first use.
+func newStateStore(queue Queue) *stateStore {
+	return &stateStore{queue: queue}
 }
 
 // get returns the recorded state for a pull request, or the zero state when
@@ -71,9 +68,7 @@ func newStateStore(processedDir string) *stateStore {
 func (s *stateStore) get(num int) prState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.byNumber == nil {
-		s.byNumber = loadProcessedPRs(s.processedDir)
-	}
+	s.recoverLocked()
 	return s.byNumber[num]
 }
 
@@ -81,110 +76,98 @@ func (s *stateStore) get(num int) prState {
 func (s *stateStore) set(num int, state prState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.byNumber == nil {
-		s.byNumber = loadProcessedPRs(s.processedDir)
-	}
+	s.recoverLocked()
 	s.byNumber[num] = state
 }
 
-// loadProcessedPRs recovers the gating state from the completed task files on
-// disk, so that a restart does not re-run work that has already been done for a
-// commit.
-func loadProcessedPRs(processedDir string) map[int]prState {
-	processedPRs := make(map[int]prState)
-	files, err := os.ReadDir(processedDir)
-	if err != nil {
-		return processedPRs
+// recoverLocked populates the store from the queue on first access. The caller
+// must hold s.mu.
+func (s *stateStore) recoverLocked() {
+	if s.byNumber != nil {
+		return
 	}
-	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") || !strings.HasPrefix(f.Name(), "task-pr-") {
+	var tasks map[string]*api.QueueTask
+	if s.queue != nil {
+		tasks = s.queue.ListProcessedTasks()
+	}
+	s.byNumber = processedPRStates(tasks)
+}
+
+// processedPRStates recovers the gating state from the queue's finished tasks,
+// so that a restart does not re-run work that has already been done for a
+// commit.
+func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
+	processedPRs := make(map[int]prState)
+	for filename, t := range tasks {
+		if t == nil || !strings.HasPrefix(filename, "task-pr-") {
 			continue
 		}
-		filePath := filepath.Join(processedDir, f.Name())
-		name := strings.TrimPrefix(f.Name(), "task-pr-")
-		name = strings.TrimSuffix(name, ".yaml")
-
-		isComments := strings.HasSuffix(name, "-comments")
-		isInvestigate := strings.HasSuffix(name, "-investigate")
-		isReview := strings.HasSuffix(name, "-review")
-		isIterate := strings.HasSuffix(name, "-iterate")
+		name := strings.TrimSuffix(strings.TrimPrefix(filename, "task-pr-"), ".yaml")
 
 		var numStr string
-		if isComments {
+		switch {
+		case strings.HasSuffix(name, "-comments"):
 			numStr = strings.TrimSuffix(name, "-comments")
-		} else if isInvestigate {
+		case strings.HasSuffix(name, "-investigate"):
 			numStr = strings.TrimSuffix(name, "-investigate")
-		} else if isReview {
+		case strings.HasSuffix(name, "-review"):
 			numStr = strings.TrimSuffix(name, "-review")
-		} else if isIterate {
+		case strings.HasSuffix(name, "-iterate"):
 			numStr = strings.TrimSuffix(name, "-iterate")
+		default:
+			continue
 		}
 
-		if numStr != "" {
-			if num, err := strconv.Atoi(numStr); err == nil {
-				state := processedPRs[num]
-				info, _ := f.Info()
-				processedPRs[num] = parseProcessedPRTask(filePath, name, info, state)
-			}
+		num, err := strconv.Atoi(numStr)
+		if err != nil {
+			continue
 		}
+		processedPRs[num] = foldProcessedPRTask(t, name, processedPRs[num])
 	}
 	return processedPRs
 }
 
-// parseProcessedPRTask folds one completed task file into the state of its pull
+// foldProcessedPRTask folds one finished task into the state of its pull
 // request.
 //
 // A failed task is folded in as nothing at all: the work it represents did not
 // actually happen, so recording it would suppress the retry.
-func parseProcessedPRTask(filePath string, name string, fInfo os.FileInfo, state prState) prState {
-	isComments := strings.HasSuffix(name, "-comments")
-	isInvestigate := strings.HasSuffix(name, "-investigate")
-	isReview := strings.HasSuffix(name, "-review")
-	isIterate := strings.HasSuffix(name, "-iterate")
-
-	var t api.QueueTask
-	hasTask := false
-	if data, err := os.ReadFile(filePath); err == nil {
-		if err := yaml.Unmarshal(data, &t); err == nil {
-			hasTask = true
-			if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-				return state
-			}
-		}
+func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
+	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
+		return state
 	}
 
-	if fInfo != nil {
-		// The file's modification time is only a stand-in for when the task
-		// finished; the task's own timestamp is preferred whenever it recorded one.
-		tTime := fInfo.ModTime()
-		if hasTask && !t.CompletedAt.IsZero() {
-			tTime = t.CompletedAt
+	// The queue dates every finished task, falling back to the task file's own
+	// timestamp for one that recorded no completion time. A zero survivor is
+	// not special-cased: it simply loses every comparison below, which leaves
+	// the SHA - all a review has to record - intact.
+	tTime := t.CompletedAt
+
+	switch {
+	case strings.HasSuffix(name, "-comments"):
+		if tTime.After(state.lastCommentAddressedTime) {
+			state.lastCommentAddressedTime = tTime
 		}
-		if isComments {
-			if tTime.After(state.lastCommentAddressedTime) {
-				state.lastCommentAddressedTime = tTime
-			}
-			if hasTask && t.CommitSHA != "" {
-				state.lastCommentAddressedSHA = t.CommitSHA
-			}
-		} else if isInvestigate {
-			if tTime.After(state.lastInvestigatedTime) {
-				state.lastInvestigatedTime = tTime
-			}
-			if hasTask && t.CommitSHA != "" {
-				state.lastInvestigatedSHA = t.CommitSHA
-			}
-		} else if isReview {
-			if hasTask && t.CommitSHA != "" {
-				state.lastReviewedSHA = t.CommitSHA
-			}
-		} else if isIterate {
-			if tTime.After(state.lastIteratedTime) {
-				state.lastIteratedTime = tTime
-			}
-			if hasTask && t.CommitSHA != "" {
-				state.lastIteratedSHA = t.CommitSHA
-			}
+		if t.CommitSHA != "" {
+			state.lastCommentAddressedSHA = t.CommitSHA
+		}
+	case strings.HasSuffix(name, "-investigate"):
+		if tTime.After(state.lastInvestigatedTime) {
+			state.lastInvestigatedTime = tTime
+		}
+		if t.CommitSHA != "" {
+			state.lastInvestigatedSHA = t.CommitSHA
+		}
+	case strings.HasSuffix(name, "-review"):
+		if t.CommitSHA != "" {
+			state.lastReviewedSHA = t.CommitSHA
+		}
+	case strings.HasSuffix(name, "-iterate"):
+		if tTime.After(state.lastIteratedTime) {
+			state.lastIteratedTime = tTime
+		}
+		if t.CommitSHA != "" {
+			state.lastIteratedSHA = t.CommitSHA
 		}
 	}
 	return state

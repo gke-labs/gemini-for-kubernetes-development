@@ -1,8 +1,6 @@
 package issues
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -89,28 +87,22 @@ func TestTriggerInfo(t *testing.T) {
 	})
 }
 
-func TestLoadProcessedIssues(t *testing.T) {
-	dir := t.TempDir()
-
+func TestProcessedIssueTimes(t *testing.T) {
 	completedAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-	write := func(name, body string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
-			t.Fatalf("writing %s: %v", name, err)
-		}
+
+	tasks := map[string]*api.QueueTask{
+		"task-issue-100.yaml": {Type: api.TypeIssueFix, CompletedAt: completedAt},
+		// A failed task leaves the issue still needing work, so it must not be
+		// recorded: doing so would park the issue until someone touched it again.
+		"task-issue-101.yaml": {Type: api.TypeIssueFix, Status: api.StatusFailed, CompletedAt: completedAt},
+		// Pull request state belongs to the pull request scanner.
+		"task-pr-200-comments.yaml": {Type: api.TypePRComments, CommitSHA: "sha200", CompletedAt: completedAt},
 	}
 
-	write("task-issue-100.yaml", "type: issue-fix\ncompletedAt: \"2026-08-01T10:00:00Z\"\n")
-	// A failed task leaves the issue still needing work, so it must not be
-	// recorded: doing so would park the issue until someone touched it again.
-	write("task-issue-101.yaml", "type: issue-fix\nstatus: Failed\ncompletedAt: \"2026-08-01T10:00:00Z\"\n")
-	// Pull request state belongs to the pull request scanner.
-	write("task-pr-200-comments.yaml", "type: pr-comments\ncommitSHA: sha200\n")
-
-	processed := loadProcessedIssues(dir)
+	processed := processedIssueTimes(tasks)
 
 	if got, ok := processed[100]; !ok {
-		t.Error("issue 100 missing from the loaded state")
+		t.Error("issue 100 missing from the recovered state")
 	} else if !got.Equal(completedAt) {
 		t.Errorf("issue 100 recorded at %v, want the recorded completion time %v", got, completedAt)
 	}
@@ -118,30 +110,20 @@ func TestLoadProcessedIssues(t *testing.T) {
 		t.Error("issue 101 was recorded despite its task having failed")
 	}
 	if len(processed) != 1 {
-		t.Errorf("loaded %d issues, want 1: %v", len(processed), processed)
+		t.Errorf("recovered %d issues, want 1: %v", len(processed), processed)
 	}
 }
 
-// TestLoadProcessedIssues_FallsBackToModTime pins the behaviour a workflow
-// cooldown depends on: the recorded completion time wins when the file carries
-// one, and the file's own timestamp stands in when it does not.
-func TestLoadProcessedIssues_FallsBackToModTime(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "task-issue-1.yaml")
-	if err := os.WriteFile(path, []byte("type: issue-fix\n"), 0644); err != nil {
-		t.Fatalf("writing task: %v", err)
-	}
-	modTime := time.Now().Add(-5 * time.Hour)
-	if err := os.Chtimes(path, modTime, modTime); err != nil {
-		t.Fatalf("setting mtime: %v", err)
-	}
-
-	processed := loadProcessedIssues(dir)
-	got, ok := processed[1]
-	if !ok {
-		t.Fatal("issue 1 missing from the loaded state")
-	}
-	if !got.Equal(modTime.Truncate(time.Second)) && got.Sub(modTime).Abs() > time.Second {
-		t.Errorf("issue 1 recorded at %v, want the file timestamp %v", got, modTime)
+// TestProcessedIssueTimes_SkipsUndatedTasks pins the other half of the
+// cooldown contract. The queue dates every task it hands back - falling back to
+// the task file's own timestamp for one that recorded no completion time - so a
+// zero here means the time could not be established at all, and says nothing
+// about when the issue was last worked on.
+func TestProcessedIssueTimes_SkipsUndatedTasks(t *testing.T) {
+	processed := processedIssueTimes(map[string]*api.QueueTask{
+		"task-issue-1.yaml": {Type: api.TypeIssueFix},
+	})
+	if _, ok := processed[1]; ok {
+		t.Errorf("issue 1 was recorded from a task with no completion time: %v", processed)
 	}
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -49,4 +50,45 @@ func TestIsPRTask(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueueTask_DeepCopy(t *testing.T) {
+	t.Run("nil task", func(t *testing.T) {
+		var task *QueueTask
+		if got := task.DeepCopy(); got != nil {
+			t.Errorf("DeepCopy of a nil task = %v, want nil", got)
+		}
+	})
+
+	t.Run("copies every field", func(t *testing.T) {
+		original := &QueueTask{
+			Type:         TypeIssueFix,
+			Number:       7,
+			Status:       StatusCompleted,
+			CompletedAt:  time.Now(),
+			Instructions: []string{"first", "second"},
+		}
+
+		copied := original.DeepCopy()
+		if !reflect.DeepEqual(copied, original) {
+			t.Errorf("DeepCopy = %+v, want %+v", copied, original)
+		}
+	})
+
+	t.Run("instructions do not share a backing array", func(t *testing.T) {
+		original := &QueueTask{Instructions: []string{"first"}}
+
+		copied := original.DeepCopy()
+		copied.Instructions[0] = "rewritten"
+
+		if original.Instructions[0] != "first" {
+			t.Errorf("writing to the copy changed the original: %q", original.Instructions[0])
+		}
+	})
+
+	t.Run("a nil instructions list stays nil", func(t *testing.T) {
+		if got := (&QueueTask{}).DeepCopy(); got.Instructions != nil {
+			t.Errorf("DeepCopy gave an empty task instructions %v, want nil", got.Instructions)
+		}
+	})
 }

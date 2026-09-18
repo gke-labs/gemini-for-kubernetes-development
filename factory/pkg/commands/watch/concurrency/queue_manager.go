@@ -82,14 +82,19 @@ func NewTaskQueueManager(cfg TaskQueueManagerConfig) *TaskQueueManager {
 
 // loadTaskFromDisk reads and parses a task YAML file from disk, applying defaults for
 // Priority ("medium"), Status ("Pending"), and EnqueuedAt (derived from file modTime or CreatedAt).
-func loadTaskFromDisk(filePath string) (*api.QueueTask, error) {
+//
+// The file's modification time is returned alongside the task because it is the
+// only record of when a hand-written or pre-timestamp task file was last
+// touched, and the caller knows which directory the file came from - and so
+// what that timestamp means.
+func loadTaskFromDisk(filePath string) (*api.QueueTask, time.Time, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	var t api.QueueTask
 	if err := yaml.Unmarshal(data, &t); err != nil {
-		return nil, fmt.Errorf("parsing task file %s: %w", filePath, err)
+		return nil, time.Time{}, fmt.Errorf("parsing task file %s: %w", filePath, err)
 	}
 	if t.Priority == "" {
 		t.Priority = api.PriorityMedium
@@ -97,14 +102,48 @@ func loadTaskFromDisk(filePath string) (*api.QueueTask, error) {
 	if t.Status == "" {
 		t.Status = api.StatusPending
 	}
+
+	var modTime time.Time
+	if info, statErr := os.Stat(filePath); statErr == nil {
+		modTime = info.ModTime()
+	}
 	if t.EnqueuedAt.IsZero() {
-		var modTime time.Time
-		if info, statErr := os.Stat(filePath); statErr == nil {
-			modTime = info.ModTime()
-		}
 		t.EnqueuedAt = GetEnqueueTime(&t, modTime)
 	}
-	return &t, nil
+	return &t, modTime, nil
+}
+
+// EnsureDirs creates the directories the queue stores tasks and task logs in.
+//
+// The queue creates them because it owns them: it is the only component that
+// reads or writes what is inside, so leaving the caller to lay them out would
+// hand a second component a say in the queue's storage layout.
+//
+// Creating a directory that already exists is not an error, so this is safe to
+// call on every start-up. A dry-run queue touches no files at all and so
+// creates nothing.
+func (m *TaskQueueManager) EnsureDirs() error {
+	if m.dryRun {
+		return nil
+	}
+	for _, dir := range []struct {
+		path string
+		name string
+	}{
+		{m.incomingDir, "incoming queue"},
+		{m.processingDir, "processing queue"},
+		{m.processedDir, "processed queue"},
+		{m.processingLogDir, "processing log"},
+		{m.processedLogDir, "processed log"},
+	} {
+		if dir.path == "" {
+			continue
+		}
+		if err := os.MkdirAll(dir.path, 0755); err != nil {
+			return fmt.Errorf("failed to create %s dir: %w", dir.name, err)
+		}
+	}
+	return nil
 }
 
 // LoadFromDisk populates the in-memory queues by scanning incomingDir, processingDir,
@@ -117,7 +156,7 @@ func (m *TaskQueueManager) LoadFromDisk() error {
 	m.processing = make(map[string]*api.QueueTask)
 	m.processed = make(map[string]*api.QueueTask)
 
-	loadDir := func(dir string, onTask func(filename string, t *api.QueueTask)) error {
+	loadDir := func(dir string, onTask func(filename string, t *api.QueueTask, modTime time.Time)) error {
 		if dir == "" {
 			return nil
 		}
@@ -133,27 +172,34 @@ func (m *TaskQueueManager) LoadFromDisk() error {
 				continue
 			}
 			filePath := filepath.Join(dir, e.Name())
-			t, err := loadTaskFromDisk(filePath)
+			t, modTime, err := loadTaskFromDisk(filePath)
 			if err != nil {
 				klog.Errorf("Failed to load task file %s: %v", filePath, err)
 				continue
 			}
-			onTask(e.Name(), t)
+			onTask(e.Name(), t, modTime)
 		}
 		return nil
 	}
 
-	if err := loadDir(m.incomingDir, func(fn string, t *api.QueueTask) {
+	if err := loadDir(m.incomingDir, func(fn string, t *api.QueueTask, _ time.Time) {
 		m.incoming.Enqueue(fn, t)
 	}); err != nil {
 		return fmt.Errorf("loading incoming queue: %w", err)
 	}
-	if err := loadDir(m.processingDir, func(fn string, t *api.QueueTask) {
+	if err := loadDir(m.processingDir, func(fn string, t *api.QueueTask, _ time.Time) {
 		m.processing[fn] = t
 	}); err != nil {
 		return fmt.Errorf("loading processing queue: %w", err)
 	}
-	if err := loadDir(m.processedDir, func(fn string, t *api.QueueTask) {
+	if err := loadDir(m.processedDir, func(fn string, t *api.QueueTask, modTime time.Time) {
+		// Everything in the processed directory has finished, whatever its
+		// recorded status says. A file that did not record when it finished is
+		// dated by its own timestamp, so that readers of the processed set
+		// never have to open the file to find out.
+		if t.CompletedAt.IsZero() {
+			t.CompletedAt = modTime
+		}
 		m.processed[fn] = t
 	}); err != nil {
 		return fmt.Errorf("loading processed queue: %w", err)
@@ -196,7 +242,7 @@ func (m *TaskQueueManager) SyncIncomingFromDisk() error {
 		}
 
 		filePath := filepath.Join(m.incomingDir, filename)
-		t, err := loadTaskFromDisk(filePath)
+		t, _, err := loadTaskFromDisk(filePath)
 		if err != nil {
 			klog.Errorf("Failed to load task file %s during sync: %v", filePath, err)
 			continue
@@ -237,7 +283,10 @@ func (m *TaskQueueManager) Enqueue(filename string, task *api.QueueTask) error {
 		}
 	}
 
-	taskCopy := *task
+	// The queue takes its own copy on the way in, for the same reason it hands
+	// out copies on the way out: the caller must not keep a reference into
+	// queue state through a shared slice.
+	taskCopy := *task.DeepCopy()
 	if taskCopy.EnqueuedAt.IsZero() {
 		taskCopy.EnqueuedAt = time.Now()
 	}
@@ -399,7 +448,10 @@ func (m *TaskQueueManager) finishTask(filename string, task *api.QueueTask, stat
 
 	m.incoming.Remove(filename)
 	delete(m.processing, filename)
-	m.processed[filename] = t
+	// The processed set keeps the queue's own copy. Holding the caller's task
+	// would leave it able to edit finished state after the fact, which is the
+	// same leak the read accessors guard against.
+	m.processed[filename] = t.DeepCopy()
 
 	m.writeJournalEvent(filename, t, string(status), duration)
 	return nil
@@ -477,6 +529,49 @@ func (m *TaskQueueManager) HasActivePRTask(prNumber int) bool {
 	}
 
 	return false
+}
+
+// GetProcessedTask returns the finished task recorded under filename, or nil
+// when nothing by that name has finished.
+//
+// The task is returned as a deep copy. The queue owns the task files and the
+// state derived from them, so a caller that could mutate what it reads back
+// would be editing queue state behind the queue's back.
+func (m *TaskQueueManager) GetProcessedTask(filename string) *api.QueueTask {
+	filename = filepath.Base(filename)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	t, ok := m.processed[filename]
+	if !ok {
+		return nil
+	}
+	return t.DeepCopy()
+}
+
+// ListProcessedTasks returns a snapshot of every finished task, keyed by task
+// file name. Each task in the snapshot is a deep copy, for the same reason
+// GetProcessedTask returns one.
+//
+// This is how the scanners recover what has already been done for an issue or
+// pull request across a restart. They used to read the processed directory
+// themselves; routing it through the queue keeps the task files under a single
+// owner, and hands them the tasks that finished since start-up as well as the
+// ones recovered from disk.
+//
+// Every task in the snapshot carries a non-zero CompletedAt: the queue records
+// one when it finishes a task, and dates the files it recovers by their own
+// timestamp. Callers can therefore order the processed set without going back
+// to the filesystem for it.
+func (m *TaskQueueManager) ListProcessedTasks() map[string]*api.QueueTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	snapshot := make(map[string]*api.QueueTask, len(m.processed))
+	for filename, t := range m.processed {
+		snapshot[filename] = t.DeepCopy()
+	}
+	return snapshot
 }
 
 // RemoveTask removes a task from incoming and processing in memory and deletes its file from disk.

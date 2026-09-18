@@ -707,7 +707,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 			t.Fatalf("failed to write task file: %v", err)
 		}
 
-		task, err := loadTaskFromDisk(fn)
+		task, _, err := loadTaskFromDisk(fn)
 		if err != nil {
 			t.Fatalf("unexpected error loading task: %v", err)
 		}
@@ -732,7 +732,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 			t.Fatalf("failed to write task file: %v", err)
 		}
 
-		task, err := loadTaskFromDisk(fn)
+		task, _, err := loadTaskFromDisk(fn)
 		if err != nil {
 			t.Fatalf("unexpected error loading task: %v", err)
 		}
@@ -759,17 +759,20 @@ func TestLoadTaskFromDisk(t *testing.T) {
 			t.Fatalf("failed to set modTime: %v", err)
 		}
 
-		task, err := loadTaskFromDisk(fn)
+		task, modTime, err := loadTaskFromDisk(fn)
 		if err != nil {
 			t.Fatalf("unexpected error loading task: %v", err)
 		}
 		if !task.EnqueuedAt.Equal(customModTime) {
 			t.Errorf("expected enqueuedAt %v, got %v", customModTime, task.EnqueuedAt)
 		}
+		if !modTime.Equal(customModTime) {
+			t.Errorf("expected reported modTime %v, got %v", customModTime, modTime)
+		}
 	})
 
 	t.Run("non-existent file", func(t *testing.T) {
-		_, err := loadTaskFromDisk(filepath.Join(tempDir, "does-not-exist.yaml"))
+		_, _, err := loadTaskFromDisk(filepath.Join(tempDir, "does-not-exist.yaml"))
 		if err == nil {
 			t.Fatalf("expected error for non-existent file, got nil")
 		}
@@ -784,7 +787,7 @@ func TestLoadTaskFromDisk(t *testing.T) {
 			t.Fatalf("failed to write file: %v", err)
 		}
 
-		_, err := loadTaskFromDisk(fn)
+		_, _, err := loadTaskFromDisk(fn)
 		if err == nil {
 			t.Fatalf("expected error for invalid YAML, got nil")
 		}
@@ -1122,4 +1125,133 @@ func TestTaskQueueManager_CompleteDirectlyFromCandidate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(queueDir, "processing", fn)); !os.IsNotExist(err) {
 		t.Errorf("expected %s never entered processing", fn)
 	}
+}
+
+// TestProcessedTaskAccessors covers the read side the scanners now depend on.
+// They used to open the processed directory themselves; these accessors are
+// what replaced that, so they have to answer for both the tasks recovered from
+// disk and the ones that finished while the daemon was up.
+func TestProcessedTaskAccessors(t *testing.T) {
+	t.Run("recovers tasks from disk and dates undated ones", func(t *testing.T) {
+		mgr, tempDir := setupTestQueueManager(t)
+		processedDir := filepath.Join(tempDir, "processed")
+
+		datedAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+		dated := filepath.Join(processedDir, "task-pr-200-comments.yaml")
+		if err := os.WriteFile(dated, []byte("type: pr-comments\ncommitSHA: sha200\nstatus: Completed\ncompletedAt: \"2026-08-01T10:00:00Z\"\n"), 0644); err != nil {
+			t.Fatalf("writing dated task: %v", err)
+		}
+
+		// A task file that never recorded when it finished is dated by its own
+		// timestamp, so that a reader never has to go back to the file for it.
+		undated := filepath.Join(processedDir, "task-issue-7.yaml")
+		if err := os.WriteFile(undated, []byte("type: issue-fix\n"), 0644); err != nil {
+			t.Fatalf("writing undated task: %v", err)
+		}
+		modTime := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+		if err := os.Chtimes(undated, modTime, modTime); err != nil {
+			t.Fatalf("setting mtime: %v", err)
+		}
+
+		if err := mgr.LoadFromDisk(); err != nil {
+			t.Fatalf("LoadFromDisk: %v", err)
+		}
+
+		got := mgr.GetProcessedTask("task-pr-200-comments.yaml")
+		if got == nil {
+			t.Fatal("dated task missing from the processed set")
+		}
+		if got.CommitSHA != "sha200" || !got.CompletedAt.Equal(datedAt) {
+			t.Errorf("dated task recovered as %+v, want sha200 at %v", got, datedAt)
+		}
+
+		got = mgr.GetProcessedTask("task-issue-7.yaml")
+		if got == nil {
+			t.Fatal("undated task missing from the processed set")
+		}
+		if !got.CompletedAt.Equal(modTime) {
+			t.Errorf("undated task dated %v, want the file timestamp %v", got.CompletedAt, modTime)
+		}
+
+		if all := mgr.ListProcessedTasks(); len(all) != 2 {
+			t.Errorf("listed %d processed tasks, want 2: %v", len(all), all)
+		}
+	})
+
+	t.Run("reports tasks finished since start-up", func(t *testing.T) {
+		mgr, _ := setupTestQueueManager(t)
+
+		task := &api.QueueTask{Type: api.TypeIssueFix, Number: 42}
+		if err := mgr.Enqueue("task-issue-42.yaml", task); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if mgr.GetProcessedTask("task-issue-42.yaml") != nil {
+			t.Error("a merely queued task was reported as finished")
+		}
+
+		if _, _, err := claimAndStartTask(mgr); err != nil {
+			t.Fatalf("starting task: %v", err)
+		}
+		if err := mgr.CompleteTask("task-issue-42.yaml", task); err != nil {
+			t.Fatalf("CompleteTask: %v", err)
+		}
+
+		got := mgr.GetProcessedTask("task-issue-42.yaml")
+		if got == nil {
+			t.Fatal("completed task missing from the processed set")
+		}
+		if got.Status != api.StatusCompleted {
+			t.Errorf("completed task has status %q, want %q", got.Status, api.StatusCompleted)
+		}
+		if got.CompletedAt.IsZero() {
+			t.Error("completed task was handed back with no completion time")
+		}
+	})
+
+	t.Run("hands back copies", func(t *testing.T) {
+		mgr, _ := setupTestQueueManager(t)
+
+		task := &api.QueueTask{Type: api.TypeIssueFix, Number: 9, Instructions: []string{"first"}}
+		if err := mgr.Enqueue("task-issue-9.yaml", task); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if _, _, err := claimAndStartTask(mgr); err != nil {
+			t.Fatalf("starting task: %v", err)
+		}
+		if err := mgr.CompleteTask("task-issue-9.yaml", task); err != nil {
+			t.Fatalf("CompleteTask: %v", err)
+		}
+
+		// The queue owns the task files and the state derived from them, so a
+		// caller must not be able to edit that state by writing to what it read.
+		mgr.GetProcessedTask("task-issue-9.yaml").Status = api.StatusFailed
+		mgr.ListProcessedTasks()["task-issue-9.yaml"].CommitSHA = "tampered"
+
+		// A struct copy would share the Instructions backing array, so writing
+		// to an element of what was read back would reach queue state too.
+		mgr.GetProcessedTask("task-issue-9.yaml").Instructions[0] = "tampered"
+		mgr.ListProcessedTasks()["task-issue-9.yaml"].Instructions[0] = "tampered"
+
+		// Nor may the task the caller handed in stay a handle on queue state.
+		task.Instructions[0] = "tampered"
+		task.CommitSHA = "tampered"
+
+		got := mgr.GetProcessedTask("task-issue-9.yaml")
+		if got.Status != api.StatusCompleted {
+			t.Errorf("queue state was mutated through GetProcessedTask: status is %q", got.Status)
+		}
+		if got.CommitSHA != "" {
+			t.Errorf("queue state was mutated: commitSHA is %q", got.CommitSHA)
+		}
+		if got.Instructions[0] != "first" {
+			t.Errorf("queue state was mutated through the instructions slice: %q", got.Instructions[0])
+		}
+	})
+
+	t.Run("unknown task", func(t *testing.T) {
+		mgr, _ := setupTestQueueManager(t)
+		if got := mgr.GetProcessedTask("task-issue-404.yaml"); got != nil {
+			t.Errorf("expected nil for a task that never finished, got %+v", got)
+		}
+	})
 }
