@@ -1210,3 +1210,37 @@ func TestPrelaunchFailureRendersFailed(t *testing.T) {
 	}
 	t.Fatalf("pr-55 missing: %s", w.Body.String())
 }
+
+// Within needs-you, finished agent work awaiting a verdict outranks a
+// bare review request: Up Next shows what is ready for you before what
+// merely asks of you.
+func TestUpNextDefersBareReviewRequests(t *testing.T) {
+	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 20, "title": "drafted", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "` + fresh + `"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 42, "title": "asks of you", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "` + time.Now().UTC().Format(time.RFC3339) + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+	triageSandbox := sandboxCR("triage-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	if len(work) < 2 {
+		t.Fatalf("expected 2 rows: %s", w.Body.String())
+	}
+	// Both are needs-you, and the PR is newer — yet the triage draft
+	// (ready for a verdict) must come first.
+	if work[0].Number != 20 || work[1].Number != 42 {
+		t.Errorf("expected triage-ready before review-requested, got %d then %d", work[0].Number, work[1].Number)
+	}
+}

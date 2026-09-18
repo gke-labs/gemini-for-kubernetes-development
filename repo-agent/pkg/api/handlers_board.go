@@ -620,9 +620,21 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		work = append(work, *item)
 	}
 	rank := map[string]int{attentionNeedsYou: 0, attentionWorking: 1, attentionWaiting: 2, "": 3}
+	// Within needs-you, finished agent work awaiting a verdict (drafts,
+	// pending reviews, failures with Retry) outranks a bare review
+	// request — the latter is an incoming ask with nothing prepared yet.
+	deferred := func(item models.WorkItem) int {
+		if item.Stage == "review-requested" {
+			return 1
+		}
+		return 0
+	}
 	sort.Slice(work, func(i, j int) bool {
 		if rank[work[i].Attention] != rank[work[j].Attention] {
 			return rank[work[i].Attention] < rank[work[j].Attention]
+		}
+		if deferred(work[i]) != deferred(work[j]) {
+			return deferred(work[i]) < deferred(work[j])
 		}
 		return work[i].UpdatedAt > work[j].UpdatedAt
 	})

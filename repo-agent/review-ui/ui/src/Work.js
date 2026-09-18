@@ -54,6 +54,10 @@ const STAGE_STYLE = {
   'triaged': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
 };
 
+// The cross-board inbox: a synthetic board whose only view is Up Next —
+// "what do I owe right now" is a question about you, not a repo.
+const ALL_BOARDS = '__all__';
+
 const UP_NEXT = 'up-next';
 const GROUPS = [
   { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
@@ -100,7 +104,7 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, readOnly }) {
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, readOnly }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -290,7 +294,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     <tr>
       <td className="work-num" style={{ padding: '6px 4px 6px 8px', width: '1%' }} title={item.type === 'issue' ? 'Issue' : 'Pull request'}>
         {groupTag && (
-          <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={GROUPS.find(g => g.key === group)?.hint} />
+          <span onClick={onGroupTagClick} style={onGroupTagClick ? { cursor: 'pointer' } : undefined}
+            title={onGroupTagClick ? `Open the ${groupTag} board` : undefined}>
+            <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={onGroupTagClick ? undefined : GROUPS.find(g => g.key === group)?.hint} />
+          </span>
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
       </td>
@@ -578,7 +585,7 @@ function Work({ onBack, namespace }) {
       .then(data => {
         if (!Array.isArray(data)) return;
         setBoards(data);
-        setActiveBoard(prev => prev || (data[0] && data[0].name) || '');
+        setActiveBoard(prev => prev || (data.length ? ALL_BOARDS : ''));
       })
       .catch(err => console.error('Failed to fetch boards', err));
   }, []);
@@ -587,16 +594,30 @@ function Work({ onBack, namespace }) {
     if (!activeBoard) return;
     const board = activeBoard;
     setSyncing(true);
+    const done = (rows) => {
+      if (board !== activeBoardRef.current) return; // stale response
+      if (Array.isArray(rows)) setWork(rows);
+      setLoadingWork(false);
+    };
+    if (board === ALL_BOARDS) {
+      // Aggregate every board's (server-cached) feed; rows are tagged
+      // with their board so actions post to the right endpoints.
+      Promise.all(boards.map(b =>
+        fetch(`/api/board/${b.name}/work`)
+          .then(res => (res.ok ? res.json() : []))
+          .then(rows => (Array.isArray(rows) ? rows.map(i => ({ ...i, board: b.name })) : []))
+          .catch(() => [])
+      ))
+        .then(all => done(all.flat()))
+        .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
+      return;
+    }
     fetch(`/api/board/${board}/work`)
       .then(res => res.ok ? res.json() : Promise.reject(res.statusText))
-      .then(data => {
-        if (board !== activeBoardRef.current) return; // stale response
-        if (Array.isArray(data)) setWork(data);
-        setLoadingWork(false);
-      })
+      .then(done)
       .catch(err => console.error('Failed to fetch work feed', err))
       .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
-  }, [activeBoard]);
+  }, [activeBoard, boards]);
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
 
@@ -615,6 +636,7 @@ function Work({ onBack, namespace }) {
     // the loading state — never render another board's items.
     setWork([]);
     setLoadingWork(true);
+    if (activeBoard === ALL_BOARDS) return; // no per-board view state
     try {
       const saved = JSON.parse(localStorage.getItem(`repoboard.view.${activeBoard}`));
       setView(saved ? { ...defaultView, ...saved } : defaultView);
@@ -635,8 +657,8 @@ function Work({ onBack, namespace }) {
     return () => clearInterval(interval);
   }, [fetchWork, fetchBoards]);
 
-  const handleAction = (path, label) => {
-    fetch(`/api/board/${activeBoard}/${path}`, {
+  const handleAction = (path, label, boardName) => {
+    fetch(`/api/board/${boardName || activeBoard}/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -704,6 +726,21 @@ function Work({ onBack, namespace }) {
         {onBack && <button className="btn" onClick={onBack}>← Back</button>}
         <h2 style={{ margin: 0 }}>Work</h2>
         <nav className="repo-tabs" style={{ margin: 0 }}>
+          {boards.length > 1 && (
+            <button
+              className={`tab-btn ${activeBoard === ALL_BOARDS ? 'active' : ''}`}
+              title="Everything that needs you, across every board"
+              onClick={() => { setActiveBoard(ALL_BOARDS); setWork([]); setActiveGroup(''); }}
+            >
+              All
+              {boards.reduce((n, b) => n + (b.needsHuman || 0), 0) > 0 && (
+                <span style={{
+                  marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
+                  borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
+                }}>{boards.reduce((n, b) => n + (b.needsHuman || 0), 0)}</span>
+              )}
+            </button>
+          )}
           {boards.map(b => (
             <button
               key={b.name}
@@ -785,7 +822,46 @@ function Work({ onBack, namespace }) {
 
       {!boards.length ? (
         <p>No boards yet. Paste a repository URL above to create one.</p>
-      ) : (() => {
+      ) : activeBoard === ALL_BOARDS ? (() => {
+        // The cross-board inbox: needs-you rows from every board, oldest
+        // demands first, actions inline (each row posts to its own
+        // board). Just Up Next — a cross-repo triage queue would mix
+        // hats, but an inbox of things waiting on YOU is one hat.
+        const stageDeferred = i => (i.stage === 'review-requested' ? 1 : 0);
+        const upNextAll = work
+          .filter(i => i.attention === 'needs-you')
+          .sort((x, y) => (stageDeferred(x) - stageDeferred(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
+        return (
+          <div>
+            <div style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: '#d73a49', margin: '0 0 8px 2px', textAlign: 'left' }}>
+              UP NEXT — across {boards.length} boards
+            </div>
+            <div className="work-card">
+              <table className="work-table">
+                <tbody>
+                  {loadingWork && (
+                    <tr><td colSpan="6" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                      Gathering your boards…
+                    </td></tr>
+                  )}
+                  {!loadingWork && upNextAll.map(item => (
+                    <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={item} boardName={item.board}
+                      onAction={(p, l) => handleAction(p, l, item.board)} onRefresh={fetchWork}
+                      namespace={namespace} groupTag={item.board}
+                      onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
+                      readOnly={(boards.find(b => b.name === item.board) || {}).role === 'read-only'} />
+                  ))}
+                  {!loadingWork && !upNextAll.length && (
+                    <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
+                      ✓ Nothing needs you anywhere.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })() : (() => {
         // The feed is the full universe; the view narrows it here, client
         // side. In-flight items (sandbox, agent motion) always surface —
         // tightening a filter must never hide running work.
