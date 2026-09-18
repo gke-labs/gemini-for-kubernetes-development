@@ -9,7 +9,8 @@ This document describes the design, lifecycle, and identity model for automated 
 Pull Requests created by automated workflows (such as migration checklists in `.agents/workflows/kcc-example.txt`) or standalone issue-fix agents require rigorous, independent code review before human approval or merging.
 
 Rather than coupling review lifecycle loops into individual workflow scripts, the AI Factory uses a **Watch-Driven Automated Review** model combined with **Markdown-Bounded Contextual Hints**:
-- **Opt-In Triggering (`overseer/review`)**: To prevent reviewing too many PRs unnecessarily, automated AI review is gated on the presence of the `overseer/review` label (or `<triggerLabel>/review`) on either the PR or its referenced parent Issue. Once opted in, the PR automatically receives a code review when CI passes on the current HEAD SHA.
+- **Opt-In Triggering (`overseer/review`)**: To prevent reviewing too many PRs unnecessarily, automated AI review is gated on the presence of the `overseer/review` label (or `<triggerLabel>/review`) on the PR itself. A new PR inherits the label from its referenced parent Issue the first time the watcher sees it, so labelling the Issue is still all a repository has to do. Once opted in, the PR automatically receives a code review when CI passes on the current HEAD SHA.
+- **Human Takeover (Non-Sticky Label)**: The inheritance is a one-time handoff, not a continuous sync. Removing `overseer/review` from a PR opts that PR out for good: the watcher reads the PR's own label history (`unlabeled` events) and will not re-apply a review label it has previously had taken off, even across restarts. This lets a reviewer take over a single PR without opting the parent Issue — and every sibling PR — out of automated review. This is a general mechanism (`nonStickyLabels`) for labels whose *absence* on a PR is itself an instruction; the review opt-in is its only member today, and all other inherited labels remain sticky.
 - **Context-Aware Criteria (`## Review Instructions`)**: Workflows and PR authors can provide domain-specific review rules (such as `generate.sh` verification or round-trip fuzzer checklists) directly inside the PR description or its referenced parent Issue body.
 - **Identity Isolation**: Reviews are executed in a dedicated Kubernetes Sandbox Pod under a distinct **Reviewer Bot** identity (`reviewbot-robot`), maintaining separation of duties from the Coder Bot (`lovelace-coder-bot`, etc.).
 
@@ -104,7 +105,7 @@ Once a PR successfully passes automated code review by the reviewer bot, the fac
 
 ### A. Ready Conditions
 The label is applied when all of the following conditions are met:
-1. **Review Completed on HEAD (if enabled)**: If automated bot review is opted in via `overseer/review` (or inherited from parent issue), a configured reviewer bot must have completed its review on the latest `headSHA`. If automated review is not enabled, this prerequisite is automatically satisfied.
+1. **Review Completed on HEAD (if enabled)**: If the PR carries `overseer/review` (inherited from its parent issue when the PR was first seen), a configured reviewer bot must have completed its review on the latest `headSHA`. If the label is absent — never inherited, or removed by a human taking over the review — this prerequisite is automatically satisfied.
 2. **Review Passed**: The latest review from the reviewer bot is not `CHANGES_REQUESTED` and all review feedback has been resolved (`!hasNewComments`).
 3. **Passing CI Checks**: All GitHub check runs and commit statuses for `headSHA` are green (`!hasFailure`).
 4. **Mergeable**: No merge conflicts or pending rebases (`!isConflicting`).
