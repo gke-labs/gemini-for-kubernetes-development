@@ -88,13 +88,21 @@ const (
 	// plan` runs there so the approved plan sits next to the code the fix
 	// will touch). The draft is board-only until the member approves;
 	// approval publishes it via the fix PR's description.
-	AnnotationPlanDraft         = "board.gemini.google.com/plan"
-	AnnotationPlannedAt         = "board.gemini.google.com/planned-at"
-	AnnotationPlanFeedback      = "board.gemini.google.com/plan-feedback"
-	AnnotationPlanFeedbackAt    = "board.gemini.google.com/plan-feedback-at"
-	AnnotationPlanApproved      = "board.gemini.google.com/plan-approved-at"
-	AnnotationPlanRejected      = "board.gemini.google.com/plan-rejected-at"
-	reviewStatePending          = "pending"
+	AnnotationPlanDraft      = "board.gemini.google.com/plan"
+	AnnotationPlannedAt      = "board.gemini.google.com/planned-at"
+	AnnotationPlanFeedback   = "board.gemini.google.com/plan-feedback"
+	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
+	AnnotationPlanApproved   = "board.gemini.google.com/plan-approved-at"
+	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
+	reviewStatePending       = "pending"
+	// reviewIdlePause caps how long a finished review sandbox idles before
+	// pausing: once the pending review is on GitHub the sandbox has served
+	// its purpose, and a re-review wakes it from paused anyway. Fix (and
+	// plan) sandboxes keep the board's idleMinutes — their warm checkout
+	// pays off across iterations. The finished pod holding its slot until
+	// the pause is deliberate: maxActive counts running pods, so the pause
+	// window doubles as the churn throttle on auto-intake.
+	reviewIdlePause             = 5 * time.Minute
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
 	prWatchRelaunchInterval     = 10 * time.Minute
@@ -1142,7 +1150,11 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		if restarting {
 			continue
 		}
-		if time.Since(idleSince) < after {
+		window := after
+		if annotations[factorycli.AnnotationTaskType] == "review" && reviewIdlePause < window {
+			window = reviewIdlePause
+		}
+		if time.Since(idleSince) < window {
 			continue
 		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")

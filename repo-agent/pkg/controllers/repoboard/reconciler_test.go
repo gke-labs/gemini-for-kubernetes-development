@@ -1012,3 +1012,49 @@ func TestPlanResultStale(t *testing.T) {
 		AnnotationPlanFeedbackAt: now.Add(-time.Hour).UTC().Format(time.RFC3339),
 	}, now)).To(gomega.BeFalse())
 }
+
+// Review sandboxes pause fast (5m): once the pending review is posted the
+// sandbox is spent. Fix sandboxes keep the board's idle window — the warm
+// checkout pays off across iterations.
+func TestPauseFinishedReviewFast(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	finished := func(name, taskType string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": "alice",
+				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+				"annotations": map[string]interface{}{
+					"htmlURL": "https://github.com/test/repo/pull/9",
+					"sandbox.gemini.google.com/last-task-state": "Completed",
+					"sandbox.gemini.google.com/last-task-type":  taskType,
+					"sandbox.gemini.google.com/completion-time": time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339),
+					"reviewState": "submitted",
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(),
+		finished("factory-pr-repo-9", "review"), finished("fix-repo-9", "fix"))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	replicasOf := func(name string) int64 {
+		sb := &unstructured.Unstructured{}
+		sb.SetGroupVersionKind(sandboxGVK)
+		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "alice"}, sb)).To(gomega.Succeed())
+		replicas, _, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		return replicas
+	}
+	// 10 minutes idle: past the 5m review window, inside the 60m default.
+	g.Expect(replicasOf("factory-pr-repo-9")).To(gomega.Equal(int64(0)), "finished review should pause fast")
+	g.Expect(replicasOf("fix-repo-9")).To(gomega.Equal(int64(1)), "finished fix keeps the board idle window")
+}
