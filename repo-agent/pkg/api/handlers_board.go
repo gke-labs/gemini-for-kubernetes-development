@@ -70,6 +70,7 @@ const (
 	annoTaskState       = "sandbox.gemini.google.com/last-task-state"
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
 	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
+	annoReviewError     = "review.gemini.google.com/error"
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	annoTriagePublished = "board.gemini.google.com/triage-published-at"
@@ -604,6 +605,22 @@ func closingRefs(body string) []int {
 // mergePRRow adds a PR row when it involves the member (authored,
 // review-requested, trigger-labeled, or has a factory sandbox); force
 // includes it regardless (used for PRs that address an issue on the board).
+// friendlyReviewError rewrites known agent-run failures into an
+// instruction the member can act on; anything unrecognized passes through
+// verbatim. Empty stays empty — old sandboxes predate the error annotation.
+func friendlyReviewError(msg string) string {
+	switch {
+	case msg == "":
+		return ""
+	case strings.Contains(msg, "OAuth App access restrictions"):
+		return "This organization blocks OAuth app tokens. Add a personal access token (manual_pat key in your github-pat secret), then click Review again. Agent said: " + msg
+	case strings.Contains(msg, "Bad credentials"):
+		return "GitHub rejected your token — sign in again or add a personal access token (manual_pat), then click Review again. Agent said: " + msg
+	default:
+		return msg
+	}
+}
+
 func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, force bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
@@ -630,11 +647,13 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 
 	reviewState := ""
 	state := ""
+	reviewError := ""
 	restarting := false
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		reviewState = annotations["reviewState"]
 		state = annotations[annoTaskState]
+		reviewError = annotations[annoReviewError]
 		// A re-review marker newer than the last task activity means a
 		// relaunch is waking the sandbox: stale Failed/Completed stamps
 		// must render as starting, not as the old outcome.
@@ -694,6 +713,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
+	itemError := ""
+	if stage == "review-failed" {
+		itemError = friendlyReviewError(reviewError)
+	}
 	items[key] = &models.WorkItem{
 		Type:      "pr",
 		Group:     group,
@@ -702,6 +725,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		HTMLURL:   pr.GetHTMLURL(),
 		Stage:     stage,
 		Attention: attention,
+		Error:     itemError,
 		PRURL:     pr.GetHTMLURL(),
 		DraftPR:   pr.GetDraft(),
 		Fixes:     closingRefs(pr.GetBody()),

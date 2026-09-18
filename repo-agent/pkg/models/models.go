@@ -88,6 +88,7 @@ type WorkItem struct {
 	PRURL     string       `json:"prURL,omitempty"`
 	Labels    []string     `json:"labels,omitempty"`
 	Draft     string       `json:"draft,omitempty"`   // triage/review draft, when ready
+	Error     string       `json:"error,omitempty"`   // why the last agent run failed, human-readable
 	DraftPR   bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
 	Fixes     []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
 	Sandbox   *WorkSandbox `json:"sandbox,omitempty"`

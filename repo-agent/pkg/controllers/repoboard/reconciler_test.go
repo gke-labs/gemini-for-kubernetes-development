@@ -18,6 +18,7 @@ package repoboard
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -206,7 +207,7 @@ func TestLabelDiscovery_ExecutorConsent(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-10"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-10"))
 	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
 	g.Expect(launches[0].FixOpts.Instruction).To(gomega.ContainSubstring("draft pull request"))
 	g.Expect(launches[0].FixOpts.GithubToken).To(gomega.Equal("gho_alice"))
@@ -263,7 +264,7 @@ func TestFixTerminalAndRefix(t *testing.T) {
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/fix-10"))
+	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/fix-repo-10"))
 }
 
 // A finished review invocation's stdout draft is harvested onto the sandbox.
@@ -288,7 +289,7 @@ func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	fake := newFakeLauncher()
 	// The invocation ran with --publish draft: the pending review is already
 	// on GitHub; no banner output to harvest.
-	fake.results["alice/review-pr-42"] = factorycli.Result{Output: "Posting review as a draft (pending) review to GitHub PR...\n"}
+	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "Posting review as a draft (pending) review to GitHub PR...\n"}
 	// Mailbox holds the review request so ensureReview runs for PR 42.
 	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
 	r := newTestReconciler(fake, ghClient, board, githubSecret(), prSandbox)
@@ -336,7 +337,7 @@ func TestResumeRecognizesPostedDraftWithoutExecutor(t *testing.T) {
 	}}
 
 	fake := newFakeLauncher()
-	fake.results["alice/review-pr-42"] = factorycli.Result{
+	fake.results["alice/review-repo-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
 		Output:     "...\nPosting review as a draft (pending) review to GitHub PR...\n",
 	}
@@ -368,7 +369,7 @@ func TestMailboxReviewLaunchAsExecutor(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-42"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-42"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
@@ -388,7 +389,7 @@ func TestMailboxFix(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-77"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-77"))
 	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/77"))
 
 	// No sandbox yet: the request stays queued for the next reconcile.
@@ -458,7 +459,7 @@ func TestAutoFixTwoKeyConsent(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/fix-20"))
+	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/fix-repo-20"))
 }
 
 // Draft-review intake prepares a review for every inbound PR.
@@ -485,7 +486,7 @@ func TestDraftReviewIntake(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-5"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-5"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
 	// Personal board: the member is the executor — attributed, publish draft.
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
@@ -616,7 +617,7 @@ func TestMailboxReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-pr-1163"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-1163"))
 	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
 }
 
@@ -643,7 +644,7 @@ func TestNoDraftHarvestAndNoHotLoop(t *testing.T) {
 	}}
 
 	fake := newFakeLauncher()
-	fake.results["alice/review-pr-42"] = factorycli.Result{
+	fake.results["alice/review-repo-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
 		Output:     "Reading output...\n\n================= CODE REVIEW =================\nreview:\n  body: legacy banner\n===============================================\n",
 	}
@@ -743,4 +744,73 @@ func TestResumeTriageHarvest(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("labels: [bug]"))
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}
+
+// A failed review invocation parks the review: the error lands on the
+// sandbox and no relaunch happens until a member's re-review click is
+// newer than the recorded failure. Auto-retrying re-runs the whole agent
+// against failures (org OAuth restrictions, dead tokens) that only a
+// human can clear.
+func TestReviewErrorParksUntilRetryClick(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	prSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "factory-pr-42",
+			"namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "42",
+			},
+			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	fake := newFakeLauncher()
+	fake.results["alice/review-repo-42"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "checking out PR #42\nError: failed to create review on GitHub: 403 the org has enabled OAuth App access restrictions\n",
+		Err:        fmt.Errorf("exit status 1"),
+	}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), prSandbox)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationReviewError]).To(gomega.ContainSubstring("OAuth App access restrictions"))
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	// Still parked on the next reconcile — no auto-retry.
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	// A fresh Review click (re-review marker newer than the failure)
+	// re-arms it.
+	annotations := updated.GetAnnotations()
+	annotations[AnnotationRereviewRequested] = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
+	updated.SetAnnotations(annotations)
+	g.Expect(r.Update(context.Background(), updated)).To(gomega.Succeed())
+
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.HaveLen(1))
+	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
+}
+
+func TestReviewErrorLine(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(reviewErrorLine(factorycli.Result{
+		Output: "cloning...\nError: failed to create review on GitHub: 403 restricted\ntrailer\n",
+		Err:    fmt.Errorf("exit status 1"),
+	})).To(gomega.Equal("failed to create review on GitHub: 403 restricted"))
+	g.Expect(reviewErrorLine(factorycli.Result{Output: "no error banner", Err: fmt.Errorf("exit status 1")})).To(gomega.Equal("exit status 1"))
+	g.Expect(reviewErrorLine(factorycli.Result{})).To(gomega.Equal("review failed"))
 }

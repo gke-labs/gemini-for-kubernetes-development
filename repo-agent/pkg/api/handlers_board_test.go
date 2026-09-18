@@ -723,3 +723,22 @@ func TestMaintainerSeesFullReviewQueue(t *testing.T) {
 		}
 	}
 }
+
+// Known agent-run failures become instructions the member can act on;
+// unknown ones pass through verbatim.
+func TestFriendlyReviewError(t *testing.T) {
+	if got := friendlyReviewError(""); got != "" {
+		t.Errorf("empty error must stay empty, got %q", got)
+	}
+	got := friendlyReviewError("failed to create review on GitHub: 403 the `kubernetes-sigs` organization has enabled OAuth App access restrictions")
+	if !strings.Contains(got, "manual_pat") {
+		t.Errorf("OAuth-restriction error should point at manual_pat, got %q", got)
+	}
+	got = friendlyReviewError("HTTP 401: Bad credentials (https://api.github.com/graphql)")
+	if !strings.Contains(got, "sign in again") && !strings.Contains(got, "personal access token") {
+		t.Errorf("bad-credentials error should point at re-auth, got %q", got)
+	}
+	if got := friendlyReviewError("some novel failure"); got != "some novel failure" {
+		t.Errorf("unknown errors must pass through, got %q", got)
+	}
+}
