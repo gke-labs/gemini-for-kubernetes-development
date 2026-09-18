@@ -1086,3 +1086,54 @@ func TestSandboxSettled(t *testing.T) {
 		"sandbox.gemini.google.com/last-task-state": "Completed",
 	})).To(gomega.BeFalse())
 }
+
+// maxActive caps pods: when the budget is full, the oldest settled
+// sandbox yields its keep-warm window immediately; working sandboxes are
+// never evicted.
+func TestReclaimPodSlots(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	pod := func(name, state string, completedAgo time.Duration) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": "alice",
+				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+				"annotations": map[string]interface{}{
+					"htmlURL": "https://github.com/test/repo/pull/1",
+					"sandbox.gemini.google.com/last-task-state": state,
+					"sandbox.gemini.google.com/last-task-type":  "review",
+					"sandbox.gemini.google.com/completion-time": time.Now().Add(-completedAgo).UTC().Format(time.RFC3339),
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	fake := newFakeLauncher()
+	board := testBoard(nil)
+	board.Spec.Limits.MaxActive = 2
+	// 3 running pods over a budget of 2: two settled (old + newer), one
+	// genuinely working. Only the OLDEST settled one yields.
+	r := newTestReconciler(fake, ghClient, board, githubSecret(),
+		pod("factory-pr-repo-1", "Completed", 4*time.Minute),
+		pod("factory-pr-repo-2", "Completed", 1*time.Minute),
+		pod("factory-pr-repo-3", "Running", time.Minute))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	replicasOf := func(name string) int64 {
+		sb := &unstructured.Unstructured{}
+		sb.SetGroupVersionKind(sandboxGVK)
+		g.Expect(r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "alice"}, sb)).To(gomega.Succeed())
+		replicas, _, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		return replicas
+	}
+	g.Expect(replicasOf("factory-pr-repo-1")).To(gomega.Equal(int64(0)), "oldest settled yields")
+	g.Expect(replicasOf("factory-pr-repo-2")).To(gomega.Equal(int64(1)), "newer settled keeps its window")
+	g.Expect(replicasOf("factory-pr-repo-3")).To(gomega.Equal(int64(1)), "working pod never evicted")
+}

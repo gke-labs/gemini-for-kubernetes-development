@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -281,6 +282,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.loadSandboxes(ctx, work, namespaces); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	// maxActive caps PODS — the cluster footprint. Settled sandboxes do
+	// not block launches (they are not work), but they must not pile up
+	// either: when the pod budget is full, the oldest settled pods yield
+	// their keep-warm window early so the budget holds.
+	r.reclaimPodSlots(ctx, work)
 
 	for _, plan := range fixes {
 		r.ensureFix(ctx, work, plan)
@@ -1167,6 +1174,55 @@ func (r *Reconciler) activeCount(work *workState) int {
 		}
 	}
 	return active
+}
+
+// reclaimPodSlots pauses settled sandboxes early when running pods exceed
+// the board's maxActive: the idle keep-warm window is a nicety, yielded on
+// demand. Oldest completions go first; waking and working sandboxes are
+// never touched.
+func (r *Reconciler) reclaimPodSlots(ctx context.Context, work *workState) {
+	logger := log.FromContext(ctx)
+	type settledPod struct {
+		sb        *unstructured.Unstructured
+		completed time.Time
+	}
+	running := 0
+	var settled []settledPod
+	for _, sb := range work.sandboxes {
+		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		if err != nil || !found || replicas == 0 {
+			continue
+		}
+		running++
+		annotations := sb.GetAnnotations()
+		if annotations[AnnotationPreventAutoPause] == "true" || !sandboxSettled(annotations) {
+			continue
+		}
+		completed, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
+		if err != nil {
+			continue
+		}
+		settled = append(settled, settledPod{sb: sb, completed: completed})
+	}
+	over := running - maxActive(work.board)
+	if over <= 0 {
+		return
+	}
+	sort.Slice(settled, func(i, j int) bool { return settled[i].completed.Before(settled[j].completed) })
+	for _, pod := range settled {
+		if over <= 0 {
+			return
+		}
+		if err := unstructured.SetNestedField(pod.sb.Object, int64(0), "spec", "replicas"); err != nil {
+			continue
+		}
+		if err := r.Update(ctx, pod.sb); err != nil {
+			logger.Error(err, "unable to reclaim settled sandbox", "sandbox", pod.sb.GetName(), "namespace", pod.sb.GetNamespace())
+			continue
+		}
+		logger.Info("reclaimed settled sandbox for pod budget", "sandbox", pod.sb.GetName(), "namespace", pod.sb.GetNamespace())
+		over--
+	}
 }
 
 // sandboxSettled reports a sandbox whose last task finished and which
