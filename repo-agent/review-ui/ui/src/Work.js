@@ -24,6 +24,7 @@ const STAGE_LABEL = {
   'review-pending': 'Pending on GitHub',
   'review-submitted': 'Reviewed ✓',
   'triage-ready': 'Triage ready',
+  'triaged': 'Triaged ✓',
   'plan-ready': 'Plan ready',
   'plan-failed': 'Plan failed',
 };
@@ -50,6 +51,7 @@ const AGENT_STAGE = {
 const STAGE_STYLE = {
   'review-pending': { color: '#8250df', bg: 'rgba(130,80,223,0.14)' },
   'review-submitted': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
+  'triaged': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
 };
 
 const UP_NEXT = 'up-next';
@@ -127,6 +129,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
 
   const [showPlan, setShowPlan] = useState(false);
   const [feedbackText, setFeedbackText] = useState('');
+  const [editingPlan, setEditingPlan] = useState(false);
+  const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
   const planPost = (path, body, label) => {
     fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
@@ -142,6 +146,24 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         const t = await res.text();
         let msg = t;
         try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw text */ }
+        setPlanErr(`${label} failed: ${msg}`);
+      }
+    }).catch(err => setPlanErr(`${label} failed: ${err}`));
+  };
+  const planPut = (path, body, label, onOk) => {
+    fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(async res => {
+      if (res.ok) {
+        setPlanErr('');
+        if (onOk) onOk();
+        if (onRefresh) onRefresh();
+      } else {
+        const t = await res.text();
+        let msg = t;
+        try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw */ }
         setPlanErr(`${label} failed: ${msg}`);
       }
     }).catch(err => setPlanErr(`${label} failed: ${err}`));
@@ -169,10 +191,19 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     }
     if (item.stage === 'triage-ready' && !readOnly) {
       actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
+      actions.push({ label: 'Reject triage', path: `issues/${item.number}/triage-reject`, confirm: `Discard the triage suggestions for issue #${item.number}?`, title: 'Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will' });
+    }
+    if (item.stage === 'plan-ready' && !readOnly) {
+      actions.push({ label: 'Approve & Fix', path: `issues/${item.number}/plan-approve`, confirm: `Approve this plan and launch the fix for issue #${item.number} as you?`, title: 'Approves the plan and launches the fix — the plan ships in the PR description' });
+      actions.push({ label: 'Reject plan', path: `issues/${item.number}/plan-reject`, confirm: `Discard the plan for issue #${item.number}?`, title: 'Discards this plan draft' });
     }
     if (readOnly) {
       // No fix pipeline without push: the agent's PR could not land.
-    } else if (['open', 'untriaged', 'triage-ready', 'triaged'].includes(item.stage) && !item.sandbox) {
+    } else if (['open', 'untriaged', 'triaged'].includes(item.stage)) {
+      // Stage is the guard (a resting sandbox chip must not hide verbs).
+      // Triage-ready deliberately isn't here: a pending draft demands its
+      // verdict (Publish | Reject) before other verbs return — otherwise
+      // a Plan/Fix started on top buries the draft unpublished.
       // Plan first (agent drafts, you refine and approve — the approved
       // plan launches the fix), or Fix directly.
       actions.push({ label: 'Plan', path: `issues/${item.number}/plan`, title: 'Agent drafts an implementation plan for you to refine and approve — nothing is written to GitHub until you approve' });
@@ -223,6 +254,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     switch (item.stage) {
       case 'triage-ready':
         return { onClick: () => setShowDraft(v => !v), title: 'Show the triage suggestions' };
+      case 'triaged':
+        return { onClick: () => setShowDraft(v => !v), title: 'Triage published — show the suggestions' };
       case 'plan-ready':
         return { onClick: () => setShowPlan(v => !v), title: 'Show the plan — refine, approve, or reject' };
       case 'review-pending':
@@ -338,7 +371,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.draft && item.stage !== 'triage-ready' && (
+        {item.draft && !['triage-ready', 'triaged'].includes(item.stage) && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: '4px' }}
@@ -421,24 +454,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     {showPlan && item.plan && (
       <tr>
         <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
-          <pre style={{
-            whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
-            padding: '10px', backgroundColor: 'var(--bg-secondary)',
-            borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
-            textAlign: 'left',
-          }}>{item.plan}</pre>
-          {!readOnly && item.stage === 'plan-ready' && (
-            <div style={{ marginTop: '6px' }}>
+          {editingPlan ? (
+            <div>
               <textarea
-                value={feedbackText}
-                onChange={e => setFeedbackText(e.target.value)}
-                placeholder="Feedback for the agent — what should change in this plan?"
+                value={planText}
+                onChange={e => setPlanText(e.target.value)}
                 spellCheck={false}
                 style={{
-                  width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
-                  fontSize: 'small', padding: '8px', backgroundColor: 'var(--bg-secondary)',
+                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace',
+                  fontSize: 'small', padding: '10px', backgroundColor: 'var(--bg-secondary)',
                   color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
-                  borderRadius: '6px', minHeight: '60px', textAlign: 'left',
+                  borderRadius: '6px', minHeight: '220px', textAlign: 'left',
                 }}
               />
               {planErr && (
@@ -449,23 +475,51 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
                 }}>{planErr}</div>
               )}
               <div style={{ marginTop: '6px', textAlign: 'right' }}>
-                <button className="btn btn-sm" disabled={!feedbackText.trim()}
-                  title="Send feedback — the agent revises the plan"
-                  onClick={() => planPost('plan-feedback', { feedback: feedbackText }, 'Refine')}>Refine</button>
+                <button className="btn btn-sm" title="Save your edits as the plan"
+                  onClick={() => planPut('plan-draft', { plan: planText }, 'Save plan', () => setEditingPlan(false))}>Save</button>
                 <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                  title="Approve the plan and launch the fix — the plan ships in the PR description"
-                  onClick={() => {
-                    if (!window.confirm(`Approve this plan and launch the fix for issue #${item.number} as you?`)) return;
-                    planPost('plan-approve', {}, 'Approve');
-                  }}>Approve &amp; Fix</button>
-                <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                  title="Discard this plan"
-                  onClick={() => {
-                    if (!window.confirm(`Discard the plan for issue #${item.number}?`)) return;
-                    setShowPlan(false);
-                    planPost('plan-reject', {}, 'Reject');
-                  }}>Reject</button>
+                  onClick={() => { setEditingPlan(false); setPlanErr(''); }}>Cancel</button>
               </div>
+            </div>
+          ) : (
+            <div>
+              <pre style={{
+                whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
+                padding: '10px', backgroundColor: 'var(--bg-secondary)',
+                borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
+                textAlign: 'left',
+              }}>{item.plan}</pre>
+              {!readOnly && item.stage === 'plan-ready' && (
+                <div style={{ marginTop: '6px' }}>
+                  <textarea
+                    value={feedbackText}
+                    onChange={e => setFeedbackText(e.target.value)}
+                    placeholder="Feedback for the agent — what should change in this plan?"
+                    spellCheck={false}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
+                      fontSize: 'small', padding: '8px', backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
+                      borderRadius: '6px', minHeight: '60px', textAlign: 'left',
+                    }}
+                  />
+                  {planErr && (
+                    <div style={{
+                      fontSize: 'small', marginTop: '4px', padding: '6px 10px', borderRadius: '6px',
+                      backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
+                      textAlign: 'left', whiteSpace: 'pre-wrap',
+                    }}>{planErr}</div>
+                  )}
+                  <div style={{ marginTop: '6px', textAlign: 'right' }}>
+                    <button className="btn btn-sm" disabled={!feedbackText.trim()}
+                      title="Send feedback — the agent revises the plan"
+                      onClick={() => planPost('plan-feedback', { feedback: feedbackText }, 'Refine')}>Refine</button>
+                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                      title="Edit the plan text directly"
+                      onClick={() => { setPlanText(item.plan); setEditingPlan(true); setPlanErr(''); }}>Edit</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </td>

@@ -119,6 +119,8 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
 	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
 	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
+	r.POST("/board/:board/issues/:id/triage-reject", server.rejectBoardTriage)
+	r.PUT("/board/:board/issues/:id/plan-draft", server.putBoardPlanDraft)
 	r.PUT("/board/:board/issues/:id/draft", server.putBoardTriageDraft)
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
@@ -1106,4 +1108,65 @@ func TestBoardViewLabelFilter(t *testing.T) {
 			t.Errorf("#%d should be hidden by spec.view.labels: %s", hidden, w.Body.String())
 		}
 	}
+}
+
+// Rejecting a triage clears the breadcrumbs, tombstones the sandbox, and
+// the row returns to its resting stage with no sandbox chip — Triage /
+// Plan / Fix are available again.
+func TestRejectBoardTriage(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+			{"number": 20, "title": "drafted", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+	}
+	triageSandbox := sandboxCR("triage-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			"agentDraft":                                "triage:\n  labels: [bug]",
+			"agentDraftType":                            "triage",
+			"board.gemini.google.com/triaged-at":        "2026-09-17T00:00:00Z",
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"htmlURL": "https://github.com/test/repo/issues/20",
+		}, 1)
+
+	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+
+	req, _ := http.NewRequest("POST", "/board/myboard/issues/20/triage-reject", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "triage-repo-20", v1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	annotations := sb.GetAnnotations()
+	if annotations["agentDraft"] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
+		t.Errorf("breadcrumbs not cleared: %v", annotations)
+	}
+	if annotations["board.gemini.google.com/triage-rejected-at"] == "" {
+		t.Error("tombstone missing")
+	}
+
+	// The feed shows a fully reset row: untriaged, no sandbox chip.
+	req, _ = http.NewRequest("GET", "/board/myboard/work", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	for _, item := range work {
+		if item.Number == 20 {
+			if item.Stage != "untriaged" || item.Sandbox != nil || item.Draft != "" {
+				t.Errorf("row not reset: %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("issue-20 missing: %s", w.Body.String())
 }

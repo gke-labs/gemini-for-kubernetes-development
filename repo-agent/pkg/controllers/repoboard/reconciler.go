@@ -237,6 +237,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
+	// Clicks override the rejected-draft tombstone; auto candidates don't.
+	clickedTriage := map[int]bool{}
+	for _, n := range mailTriages {
+		clickedTriage[n] = true
+	}
 	seenTriage := map[int]bool{}
 	for _, issue := range triageCandidates {
 		seenTriage[issue.GetNumber()] = true
@@ -280,7 +285,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensureReview(ctx, work, plan)
 	}
 	for _, issue := range triageCandidates {
-		r.ensureTriage(ctx, work, issue)
+		r.ensureTriage(ctx, work, issue, clickedTriage[issue.GetNumber()])
 	}
 	for _, req := range mailPlans {
 		r.ensurePlan(ctx, work, req)
@@ -967,7 +972,9 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if err != nil {
 				continue
 			}
-			if work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)) != nil {
+			// The click stands until a draft is stored: the sandbox may be
+			// a rejected leftover whose tombstone the click overrides.
+			if sb := work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 				continue
 			}
 		case strings.HasPrefix(key, "plan-"):

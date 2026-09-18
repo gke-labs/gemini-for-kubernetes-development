@@ -654,18 +654,19 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		stage, attention = "triage-ready", attentionNeedsYou
 	case triageState == "Running":
 		stage, attention = "triaging", attentionWorking
-	case triageSB != nil && triageDraft == "":
-		// Triage sandbox provisioning (no task state yet).
+	case triageSB != nil && triageDraft == "" && triageState != "Completed" && triageState != "Failed":
+		// Triage sandbox provisioning (no task state yet). Finished
+		// sandboxes without a draft (rejected, failed) rest instead.
 		stage, attention = "triaging", attentionWorking
 	case claimedBy == "":
 		// Unclaimed and untouched: the triage inbox state.
 		stage = "untriaged"
 	}
-	if sb == nil && triageSB != nil {
-		// Surface the triage sandbox on rows without a fix sandbox — in
-		// every triage stage, not just while running: a paused sandbox
-		// holding a draft should render (and link its logs) exactly like
-		// plan-ready and fix-done rows do.
+	if sb == nil && triageSB != nil && (triageDraft != "" || triageState != "Completed") {
+		// Surface the triage sandbox on rows without a fix sandbox while
+		// it carries a draft or is still moving. A rejected leftover
+		// (completed, draft cleared) stays off the row so it reads fully
+		// reset — Triage / Plan / Fix again.
 		sb = triageSB
 	}
 
@@ -1418,6 +1419,75 @@ func (s *Server) planBoardReject(c *gin.Context) {
 		return
 	}
 	_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
+	c.Status(http.StatusOK)
+}
+
+// rejectBoardTriage discards a triage draft: breadcrumbs are cleared so
+// the row returns to its resting stage (Triage / Plan / Fix again), and
+// the tombstone stops auto-triage from redoing thrown-away work. A fresh
+// Triage click re-arms.
+func (s *Server) rejectBoardTriage(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	name := fmt.Sprintf("triage-%s-%d", repo, number)
+	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		sb, found := sandboxes[name]
+		if !found || sb.GetAnnotations()["agentDraft"] == "" {
+			continue
+		}
+		for _, key := range []string{"agentDraft", "agentDraftType", "board.gemini.google.com/triaged-at", annoTriagePublished} {
+			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
+				return
+			}
+		}
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "board.gemini.google.com/triage-rejected-at", nowRFC3339()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject triage", "details": err.Error()})
+			return
+		}
+		_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, name)
+		c.Status(http.StatusOK)
+		return
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to reject"})
+}
+
+// putBoardPlanDraft saves a member-edited plan back onto the plan sandbox
+// — quick refinement by hand, alongside the agent Refine loop. Plans are
+// markdown: the only validation is non-emptiness.
+func (s *Server) putBoardPlanDraft(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Plan string `json:"plan"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Plan) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "plan text is required"})
+		return
+	}
+	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to edit"})
+		return
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanDraft, strings.TrimSpace(req.Plan)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save plan", "details": err.Error()})
+		return
+	}
+	// The edit is the newest human word on the plan: bump planned-at so a
+	// stale feedback stamp cannot trigger a refine that overwrites it.
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlannedAt, nowRFC3339()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save plan", "details": err.Error()})
+		return
+	}
 	c.Status(http.StatusOK)
 }
 

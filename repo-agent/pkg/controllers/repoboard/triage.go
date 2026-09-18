@@ -42,6 +42,10 @@ const (
 	// AnnotationDraftType distinguishes triage drafts from review drafts on
 	// the shared agentDraft key (legacy name the UI already understands).
 	AnnotationDraftType = "agentDraftType"
+	// AnnotationTriageRejected tombstones a rejected draft: auto-triage
+	// must not redo work a human threw away, and a stale invocation
+	// result must not resurrect the draft. A fresh Triage click re-arms.
+	AnnotationTriageRejected = "board.gemini.google.com/triage-rejected-at"
 )
 
 // discoverTriage lists open issues needing auto-triage: not PRs, eligible
@@ -78,26 +82,31 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 
 // ensureTriage drives one issue's triage state machine: harvest a finished
 // run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue) {
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, clicked bool) {
 	logger := log.FromContext(ctx)
 	name := factorycli.TriageSandboxName(work.repo, issue.GetNumber())
 	sb := work.findSandbox(work.board.Namespace, name)
 	key := work.board.Namespace + "/" + name
 
-	if sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
+	annotations := map[string]string{}
+	if sb != nil && sb.GetAnnotations() != nil {
+		annotations = sb.GetAnnotations()
+	}
+	if annotations[AnnotationTriagedAt] != "" {
+		return
+	}
+	if !clicked && annotations[AnnotationTriageRejected] != "" {
+		// A human rejected the last draft: automation does not redo
+		// thrown-away work. A fresh Triage click re-arms.
 		return
 	}
 	if r.Factory.IsRunning(key) {
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok {
+	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
 		if res.Err == nil && sb != nil {
 			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
-				annotations := sb.GetAnnotations()
-				if annotations == nil {
-					annotations = map[string]string{}
-				}
 				annotations[AnnotationAgentDraft] = report
 				annotations[AnnotationDraftType] = "triage"
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
@@ -154,6 +163,15 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		if url == "" {
 			url = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, n)
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url})
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, false)
 	}
+}
+
+// resultStaleSince reports whether a remembered invocation result predates
+// the given marker (RFC3339) and must be ignored: a rejected draft's old
+// result would otherwise resurrect it, or its backoff would block the
+// member's fresh click.
+func resultStaleSince(marker string, finishedAt time.Time) bool {
+	at, err := time.Parse(time.RFC3339, marker)
+	return err == nil && finishedAt.Before(at)
 }
