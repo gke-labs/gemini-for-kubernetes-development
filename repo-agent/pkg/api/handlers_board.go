@@ -286,11 +286,6 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 	gh := githubClientForToken(ctx, token)
-	// Maintainers see the repo's whole review queue: for push+ viewers
-	// every open PR lists (view only — nothing runs without a click or a
-	// standing opt-in). Others see involvement only.
-	maintainer := s.hasPushPermission(ctx, namespace, sessionUser, repoURL)
-
 	// Sandboxes live where claims point: the board namespace plus every
 	// namespace named by an assignee claim on this repo's items.
 	sandboxNamespaces := map[string]bool{}
@@ -312,6 +307,12 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	loadSandboxNamespace(board.GetNamespace())
 	loadSandboxNamespace(namespace)
 
+	// The board's persistent view filter (spec.view.labels) narrows the
+	// universe server-side — VIEW ONLY, automation is scoped by spec.auto
+	// alone. Items with an active sandbox always surface. Client-side
+	// filters can only narrow further, never widen past this.
+	viewLabels, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "view", "labels")
+
 	items := map[string]*models.WorkItem{}
 
 	// One issues surface: assigned to you, filed by you, and the unclaimed
@@ -322,7 +323,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member)
+			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
 		}
 	}
 	assigned, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member})
@@ -343,12 +344,10 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	collect(assigned)
 	collect(created)
 
-	// Repo-wide triage inbox: listing is free (one issues call), so it is
-	// always shown — the agent only RUNS on a member's Triage click or the
-	// board's auto-triage intake. Excluded and trigger-labeled issues are
-	// out (the latter route to fix); rows already claimed keep their group.
+	// Repo-wide triage inbox: the feed returns the full universe — what
+	// the member LOOKS at is fluid client-side view state (scopes, label
+	// filters), never server logic. Rows already claimed keep their group.
 	{
-		excludeLabels, _, _ := unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
 		all, err := listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open"})
 		if err != nil {
 			log.Info("failed to list issues for triage", "err", err)
@@ -361,10 +360,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			if len(issue.Assignees) > 0 {
 				continue
 			}
-			if hasAnyLabel(issue.Labels, excludeLabels) {
-				continue
-			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member)
+			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
 		}
 	}
 
@@ -385,7 +381,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 				break
 			}
 		}
-		s.mergePRRow(items, sandboxes, pr, member, maintainer, pendingOnGitHub)
+		s.mergePRRow(items, sandboxes, pr, member, pendingOnGitHub, viewLabels)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -397,7 +393,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, true, false)
+				s.mergePRRow(items, sandboxes, pr, member, false, viewLabels)
 				break
 			}
 		}
@@ -574,7 +570,7 @@ func hasAnyLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
@@ -621,6 +617,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	triageState := ""
 	triagePublished := false
 	triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]
+	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
+		return
+	}
 	if triageSB != nil {
 		triageDraft = triageSB.GetAnnotations()["agentDraft"]
 		triageState = triageSB.GetAnnotations()[annoTaskState]
@@ -678,6 +677,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Type:      "issue",
 		Group:     "issues",
 		Number:    issue.GetNumber(),
+		Author:    issue.GetUser().GetLogin(),
 		Title:     issue.GetTitle(),
 		HTMLURL:   issue.GetHTMLURL(),
 		Stage:     stage,
@@ -745,7 +745,7 @@ func friendlyReviewError(msg string) string {
 	}
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, force, pendingOnGitHub bool) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub bool, viewLabels []string) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -755,6 +755,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 
+	if len(viewLabels) > 0 && !hasAnyLabel(pr.Labels, viewLabels) && sb == nil {
+		return
+	}
+
 	reviewRequested := false
 	for _, reviewer := range pr.RequestedReviewers {
 		if strings.EqualFold(reviewer.GetLogin(), member) {
@@ -762,12 +766,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
-	// The trigger label is automation-only: it never selects rows for the
-	// view. PRs appear through involvement (authored / review-requested),
-	// an existing sandbox, or an issue-fix link.
-	if sb == nil && !authored && !reviewRequested && !force {
-		return
-	}
 
 	reviewState := ""
 	state := ""
@@ -837,26 +835,33 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		group = "mine-pr"
 	}
 
+	var prLabels []string
+	for _, l := range pr.Labels {
+		prLabels = append(prLabels, l.GetName())
+	}
+
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
 	itemError := ""
 	if stage == "review-failed" {
 		itemError = friendlyReviewError(reviewError)
 	}
 	items[key] = &models.WorkItem{
-		Type:      "pr",
-		Group:     group,
-		Number:    pr.GetNumber(),
-		Author:    pr.GetUser().GetLogin(),
-		Title:     pr.GetTitle(),
-		HTMLURL:   pr.GetHTMLURL(),
-		Stage:     stage,
-		Attention: attention,
-		Error:     itemError,
-		PRURL:     pr.GetHTMLURL(),
-		DraftPR:   pr.GetDraft(),
-		Fixes:     closingRefs(pr.GetBody()),
-		Sandbox:   workSandbox(sb),
-		UpdatedAt: pr.GetUpdatedAt().UTC().Format(time.RFC3339),
+		Type:            "pr",
+		Group:           group,
+		Number:          pr.GetNumber(),
+		Author:          pr.GetUser().GetLogin(),
+		Title:           pr.GetTitle(),
+		Labels:          prLabels,
+		ReviewRequested: reviewRequested,
+		HTMLURL:         pr.GetHTMLURL(),
+		Stage:           stage,
+		Attention:       attention,
+		Error:           itemError,
+		PRURL:           pr.GetHTMLURL(),
+		DraftPR:         pr.GetDraft(),
+		Fixes:           closingRefs(pr.GetBody()),
+		Sandbox:         workSandbox(sb),
+		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -1069,62 +1074,6 @@ func (s *Server) deleteBoard(c *gin.Context) {
 	}
 	c.Status(http.StatusOK)
 }
-
-// Board settings: per-member opt-ins stored in the member's own namespace
-// (design §4.2) — the target namespace comes from the session, never the
-// request, so nobody can write another member's consent.
-
-func (s *Server) getBoardSettings(c *gin.Context) {
-	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	sessionUser := s.Auth.GetUserFromContext(c)
-
-	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
-		return
-	}
-
-	// Boards are personal: automation consent lives on the board spec —
-	// one owner, one place, no side ConfigMap.
-	autoFix, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoFix", "enabled")
-	autoReview, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoReview")
-	c.JSON(http.StatusOK, gin.H{"autoFix": autoFix, "autoReview": autoReview})
-}
-
-func (s *Server) putBoardSettings(c *gin.Context) {
-	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	sessionUser := s.Auth.GetUserFromContext(c)
-
-	var payload struct {
-		AutoFix    bool `json:"autoFix"`
-		AutoReview bool `json:"autoReview"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
-		return
-	}
-	if err := unstructured.SetNestedField(board.Object, payload.AutoFix, "spec", "intake", "autoFix", "enabled"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
-		return
-	}
-	if err := unstructured.SetNestedField(board.Object, payload.AutoReview, "spec", "intake", "autoReview"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
-		return
-	}
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save settings", "details": err.Error()})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
 func (s *Server) boardWriteContext(c *gin.Context) (context.Context, *unstructured.Unstructured, string, string, string, int, bool) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -1265,15 +1214,18 @@ var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error
 // gear panel. Access/prepIdentity/sandbox stay kubectl-only (owner-level
 // governance and operator concerns).
 type boardSpecView struct {
-	Editable      bool     `json:"editable"`
-	TriggerLabel  string   `json:"triggerLabel"`
-	TriageIssues  bool     `json:"triageIssues"`
-	DraftReviews  bool     `json:"draftReviews"`
-	ExcludeLabels []string `json:"excludeLabels"`
-	MaxActive     int64    `json:"maxActive"`
-	AutoIterate   bool     `json:"autoIterate"`
-	DraftPR       bool     `json:"draftPR"`
-	Disclose      bool     `json:"disclose"`
+	Editable          bool     `json:"editable"`
+	ViewLabels        []string `json:"viewLabels"`
+	AutoTriage        string   `json:"autoTriage"`
+	AutoFix           string   `json:"autoFix"`
+	AutoReview        string   `json:"autoReview"`
+	AutoLabels        []string `json:"autoLabels"`
+	AutoExcludeLabels []string `json:"autoExcludeLabels"`
+	RecencyDays       int64    `json:"recencyDays"`
+	MaxActive         int64    `json:"maxActive"`
+	AutoIterate       bool     `json:"autoIterate"`
+	DraftPR           bool     `json:"draftPR"`
+	Disclose          bool     `json:"disclose"`
 }
 
 func (s *Server) getBoardSpec(c *gin.Context) {
@@ -1286,11 +1238,22 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
-	view := boardSpecView{Editable: true}
-	view.TriggerLabel, _, _ = unstructured.NestedString(board.Object, "spec", "triggers", "label")
-	view.TriageIssues, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "triageIssues")
-	view.DraftReviews, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "draftReviews")
-	view.ExcludeLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
+	view := boardSpecView{Editable: true, AutoTriage: "off", AutoFix: "off", AutoReview: "off", RecencyDays: 7}
+	view.ViewLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "view", "labels")
+	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage"); v != "" {
+		view.AutoTriage = v
+	}
+	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "fix"); v != "" {
+		view.AutoFix = v
+	}
+	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review"); v != "" {
+		view.AutoReview = v
+	}
+	view.AutoLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "auto", "labels")
+	view.AutoExcludeLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "auto", "excludeLabels")
+	if v, _, _ := unstructured.NestedInt64(board.Object, "spec", "auto", "recencyDays"); v > 0 {
+		view.RecencyDays = v
+	}
 	view.MaxActive, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActive")
 	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
 	view.DraftPR, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "draftPR")
@@ -1322,16 +1285,34 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		}
 		return true
 	}
-	labels := make([]interface{}, 0, len(payload.ExcludeLabels))
-	for _, l := range payload.ExcludeLabels {
-		if l = strings.TrimSpace(l); l != "" {
-			labels = append(labels, l)
+	cleanLabels := func(in []string) []interface{} {
+		out := make([]interface{}, 0, len(in))
+		for _, l := range in {
+			if l = strings.TrimSpace(l); l != "" {
+				out = append(out, l)
+			}
 		}
+		return out
 	}
-	ok := set(payload.TriggerLabel, "spec", "triggers", "label") &&
-		set(payload.TriageIssues, "spec", "intake", "triageIssues") &&
-		set(payload.DraftReviews, "spec", "intake", "draftReviews") &&
-		set(labels, "spec", "intake", "filters", "excludeLabels") &&
+	enum := func(v string, allowed ...string) string {
+		for _, a := range allowed {
+			if v == a {
+				return v
+			}
+		}
+		return "off"
+	}
+	recency := payload.RecencyDays
+	if recency <= 0 {
+		recency = 7
+	}
+	ok := set(cleanLabels(payload.ViewLabels), "spec", "view", "labels") &&
+		set(enum(payload.AutoTriage, "off", "unclaimed", "all"), "spec", "auto", "triage") &&
+		set(enum(payload.AutoFix, "off", "assigned"), "spec", "auto", "fix") &&
+		set(enum(payload.AutoReview, "off", "requested", "all"), "spec", "auto", "review") &&
+		set(cleanLabels(payload.AutoLabels), "spec", "auto", "labels") &&
+		set(cleanLabels(payload.AutoExcludeLabels), "spec", "auto", "excludeLabels") &&
+		set(recency, "spec", "auto", "recencyDays") &&
 		set(payload.MaxActive, "spec", "limits", "maxActive") &&
 		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
 		set(payload.DraftPR, "spec", "policy", "draftPR") &&

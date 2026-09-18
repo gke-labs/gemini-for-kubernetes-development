@@ -317,17 +317,16 @@ func TestOtherNamespaceBoardInvisible(t *testing.T) {
 	}
 }
 
-// Settings roundtrip: the opt-in lands in the session member's own
-// namespace keyed by the board.
-// Automation consent lives on the board spec — one owner, one place, no
-// side ConfigMap.
-func TestBoardSettings(t *testing.T) {
+// The gear edits the auto block on the spec: verbs are scope enums,
+// invalid values fall back to off, recency defaults sensibly.
+func TestBoardSpecAuto(t *testing.T) {
 	server, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
-	_ = server
-	r.GET("/board/:board/settings", server.getBoardSettings)
-	r.PUT("/board/:board/settings", server.putBoardSettings)
+	r.GET("/board/:board/spec", server.getBoardSpec)
+	r.PUT("/board/:board/spec", server.putBoardSpec)
 
-	req, _ := http.NewRequest("PUT", "/board/myboard/settings", strings.NewReader(`{"autoFix": true, "autoReview": true}`))
+	body := `{"autoTriage": "unclaimed", "autoFix": "assigned", "autoReview": "requested",
+		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5}`
+	req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -338,36 +337,34 @@ func TestBoardSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get board: %v", err)
 	}
-	autoFix, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoFix", "enabled")
-	autoReview, _, _ := unstructured.NestedBool(board.Object, "spec", "intake", "autoReview")
-	if !autoFix || !autoReview {
-		t.Errorf("expected consent on the spec, got autoFix=%v autoReview=%v", autoFix, autoReview)
+	triage, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage")
+	review, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review")
+	recency, _, _ := unstructured.NestedInt64(board.Object, "spec", "auto", "recencyDays")
+	if triage != "unclaimed" || review != "requested" || recency != 30 {
+		t.Errorf("auto block not stored: triage=%q review=%q recency=%d", triage, review, recency)
 	}
 
-	req, _ = http.NewRequest("GET", "/board/myboard/settings", nil)
+	req, _ = http.NewRequest("GET", "/board/myboard/spec", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"autoFix":true`) || !strings.Contains(w.Body.String(), `"autoReview":true`) {
-		t.Errorf("get: expected both true, got %d %s", w.Code, w.Body.String())
+	for _, want := range []string{`"autoTriage":"unclaimed"`, `"autoReview":"requested"`, `"recencyDays":30`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("spec view missing %s: %s", want, w.Body.String())
+		}
 	}
 
-	req, _ = http.NewRequest("PUT", "/board/myboard/settings", strings.NewReader(`{"autoFix": false, "autoReview": false}`))
+	// Junk enum values degrade to off, never to a launch.
+	req, _ = http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(`{"autoReview": "everything", "recencyDays": 0}`))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("put off: expected 200, got %d", w.Code)
-	}
 	board, _ = dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	autoFix, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "autoFix", "enabled")
-	if autoFix {
-		t.Errorf("expected consent cleared on the spec")
+	review, _, _ = unstructured.NestedString(board.Object, "spec", "auto", "review")
+	recency, _, _ = unstructured.NestedInt64(board.Object, "spec", "auto", "recencyDays")
+	if review != "off" || recency != 7 {
+		t.Errorf("expected off/7 fallback, got %q/%d", review, recency)
 	}
 }
 
-// Publish posts the stored draft as a pending review under the member's
-// token and marks the sandbox submitted.
-// Promote no-ops on a non-draft PR and calls the GraphQL mutation for a
-// draft one.
 func TestPromoteBoardPR(t *testing.T) {
 	called := false
 	prev := markPRReadyForReview
@@ -473,8 +470,6 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 // exists, untriaged otherwise. Rows claimed by fix/mine keep their group.
 func TestGetBoardWorkTriageGroup(t *testing.T) {
 	board := boardCR()
-	_ = unstructured.SetNestedField(board.Object, true, "spec", "intake", "triageIssues")
-	_ = unstructured.SetNestedStringSlice(board.Object, []string{"wontfix"}, "spec", "intake", "filters", "excludeLabels")
 
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
@@ -522,13 +517,14 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	if row := byKey["issue-21"]; row.Group != "issues" || row.Stage != "untriaged" {
 		t.Errorf("issue-21 row wrong: %+v", row)
 	}
-	if _, ok := byKey["issue-22"]; ok {
-		t.Errorf("excluded issue-22 should not appear: %s", w.Body.String())
+	// The feed is the universe: label-carrying rows surface with their
+	// labels as metadata; hiding is client-side view state (or the
+	// board's view.labels filter).
+	if row, ok := byKey["issue-22"]; !ok || len(row.Labels) != 1 || row.Labels[0] != "wontfix" {
+		t.Errorf("issue-22 should appear with its labels: %s", w.Body.String())
 	}
-	// The trigger label is automation-only: a labeled, unassigned issue
-	// still lists in the triage view.
 	if row, ok := byKey["issue-23"]; !ok || row.Group != "issues" {
-		t.Errorf("issue-23 (labeled, unassigned) should list in triage: %s", w.Body.String())
+		t.Errorf("issue-23 should list in triage: %s", w.Body.String())
 	}
 }
 
@@ -612,9 +608,12 @@ func TestGetBoardsRole(t *testing.T) {
 // The trigger label is automation-only: a labeled PR with no involvement
 // signal (not authored, no review request, no sandbox, no issue link) does
 // not appear in the view at all.
-func TestLabeledPRNotAView(t *testing.T) {
+func TestFeedReturnsFullUniverse(t *testing.T) {
+	// The feed carries every open PR plus the metadata client-side views
+	// filter on (labels, author, reviewRequested) — what the member LOOKS
+	// at is UI state, not server logic.
 	prsJSON := `[
-		{"number": 80, "title": "labeled", "html_url": "https://github.com/test/repo/pull/80", "updated_at": "2026-09-17T10:00:00Z",
+		{"number": 80, "title": "uninvolved", "html_url": "https://github.com/test/repo/pull/80", "updated_at": "2026-09-17T10:00:00Z",
 		 "user": {"login": "carol"}, "labels": [{"name": "agent"}]}
 	]`
 	ghResponses := map[string]string{
@@ -629,9 +628,13 @@ func TestLabeledPRNotAView(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 80 {
-			t.Errorf("labeled-only PR must not appear in the view: %+v", item)
+			if item.ReviewRequested || len(item.Labels) != 1 || item.Labels[0] != "agent" || item.Author != "carol" {
+				t.Errorf("universe row missing view metadata: %+v", item)
+			}
+			return
 		}
 	}
+	t.Fatalf("uninvolved PR must be in the feed universe: %s", w.Body.String())
 }
 
 // GitHub's native "review again": submitting clears you from
@@ -703,17 +706,15 @@ func TestKickoffFeedbackStages(t *testing.T) {
 	}
 }
 
-// Maintainers see the whole review queue; uninvolved PRs list for them
-// (view only) while non-maintainers keep involvement-only.
-func TestMaintainerSeesFullReviewQueue(t *testing.T) {
+// Everyone gets the whole PR queue in the feed — scope narrowing (mine /
+// requested) is client-side view state, not a permission perk.
+func TestFeedIncludesUninvolvedPRs(t *testing.T) {
 	prsJSON := `[
 		{"number": 300, "title": "someone elses PR", "html_url": "https://github.com/test/repo/pull/300", "updated_at": "2026-09-17T10:00:00Z",
 		 "user": {"login": "carol"}, "requested_reviewers": [{"login": "dave"}]}
 	]`
-	// Maintainer: repo permissions grant push.
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
-		"https://api.github.com/repos/test/repo":                               `{"permissions": {"push": true}}`,
 	}
 	_, r, _ := boardTestServer(t, ghResponses, boardCR())
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -721,34 +722,14 @@ func TestMaintainerSeesFullReviewQueue(t *testing.T) {
 	r.ServeHTTP(w, req)
 	var work []models.WorkItem
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
-	found := false
 	for _, item := range work {
-		if item.Number == 300 && item.Group == "review" {
-			found = true
+		if item.Number == 300 && item.Group == "review" && !item.ReviewRequested {
+			return
 		}
 	}
-	if !found {
-		t.Fatalf("maintainer should see uninvolved PR 300 in review: %s", w.Body.String())
-	}
-
-	// Non-maintainer (permission check 404s): involvement-only.
-	ghNo := map[string]string{
-		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": prsJSON,
-	}
-	_, r2, _ := boardTestServer(t, ghNo, boardCR())
-	w2 := httptest.NewRecorder()
-	r2.ServeHTTP(w2, req)
-	var work2 []models.WorkItem
-	_ = json.Unmarshal(w2.Body.Bytes(), &work2)
-	for _, item := range work2 {
-		if item.Number == 300 {
-			t.Fatalf("non-maintainer should not see uninvolved PR 300: %s", w2.Body.String())
-		}
-	}
+	t.Fatalf("uninvolved PR should be in the universe: %s", w.Body.String())
 }
 
-// Known agent-run failures become instructions the member can act on;
-// unknown ones pass through verbatim.
 func TestFriendlyReviewError(t *testing.T) {
 	if got := friendlyReviewError(""); got != "" {
 		t.Errorf("empty error must stay empty, got %q", got)
@@ -1076,4 +1057,53 @@ func TestMailboxQueuedAtCapacity(t *testing.T) {
 		}
 	}
 	t.Fatalf("pr-92 missing: %s", w.Body.String())
+}
+
+// spec.view.labels narrows the feed server-side (view only) — the UI can
+// only narrow further, never widen. In-flight items always surface.
+func TestBoardViewLabelFilter(t *testing.T) {
+	board := boardCR()
+	_ = unstructured.SetNestedStringSlice(board.Object, []string{"area/net"}, "spec", "view", "labels")
+
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+			{"number": 60, "title": "in scope", "html_url": "https://github.com/test/repo/issues/60", "updated_at": "2026-09-16T10:00:00Z", "labels": [{"name": "area/net"}]},
+			{"number": 61, "title": "out of scope", "html_url": "https://github.com/test/repo/issues/61", "updated_at": "2026-09-16T10:00:00Z"},
+			{"number": 62, "title": "out of scope but fixing", "html_url": "https://github.com/test/repo/issues/62", "updated_at": "2026-09-16T10:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 70, "title": "scoped pr", "html_url": "https://github.com/test/repo/pull/70", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}, "labels": [{"name": "area/net"}]},
+			{"number": 71, "title": "unscoped pr", "html_url": "https://github.com/test/repo/pull/71", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}}
+		]`,
+	}
+	fixSandbox := sandboxCR("fix-repo-62",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/issues/62"}, 1)
+
+	_, r, _ := boardTestServer(t, ghResponses, board, fixSandbox)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	got := map[int]bool{}
+	for _, item := range work {
+		got[item.Number] = true
+	}
+	for _, want := range []int{60, 62, 70} {
+		if !got[want] {
+			t.Errorf("expected #%d in the filtered view: %s", want, w.Body.String())
+		}
+	}
+	for _, hidden := range []int{61, 71} {
+		if got[hidden] {
+			t.Errorf("#%d should be hidden by spec.view.labels: %s", hidden, w.Body.String())
+		}
+	}
 }

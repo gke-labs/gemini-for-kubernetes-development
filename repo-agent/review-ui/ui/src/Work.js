@@ -486,8 +486,10 @@ function Work({ onBack, namespace }) {
   const [addURL, setAddURL] = useState('');
   const [repoSuggestions, setRepoSuggestions] = useState([]);
   const [error, setError] = useState('');
-  const [autoFix, setAutoFix] = useState(false);
-  const [autoReview, setAutoReview] = useState(false);
+  // View is fluid per-user UI state (localStorage, per board) — it never
+  // touches the board spec, so flipping it can never change what runs.
+  const defaultView = { issues: 'all', reviews: 'requested', labels: '' };
+  const [view, setView] = useState(defaultView);
   const [specOpen, setSpecOpen] = useState(false);
   const [spec, setSpec] = useState(null);
 
@@ -522,11 +524,18 @@ function Work({ onBack, namespace }) {
   }, []);
   useEffect(() => {
     if (!activeBoard) return;
-    fetch(`/api/board/${activeBoard}/settings`)
-      .then(res => res.ok ? res.json() : { autoFix: false, autoReview: false })
-      .then(data => { setAutoFix(!!data.autoFix); setAutoReview(!!data.autoReview); })
-      .catch(() => { setAutoFix(false); setAutoReview(false); });
+    try {
+      const saved = JSON.parse(localStorage.getItem(`repoboard.view.${activeBoard}`));
+      setView(saved ? { ...defaultView, ...saved } : defaultView);
+    } catch (e) { setView(defaultView); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBoard]);
+
+  const updateView = (patch) => {
+    const next = { ...view, ...patch };
+    setView(next);
+    try { localStorage.setItem(`repoboard.view.${activeBoard}`, JSON.stringify(next)); } catch (e) { /* private mode */ }
+  };
   useEffect(() => {
     fetchWork();
     const interval = setInterval(() => {
@@ -573,28 +582,6 @@ function Work({ onBack, namespace }) {
         else { res.text().then(t => setError(`Delete failed: ${t}`)); }
       })
       .catch(err => setError(`Delete failed: ${err}`));
-  };
-
-  // The settings PUT carries the full preference set; sending one flag
-  // alone would clear the other.
-  const savePrefs = (nextAutoFix, nextAutoReview, revert) => {
-    fetch(`/api/board/${activeBoard}/settings`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ autoFix: nextAutoFix, autoReview: nextAutoReview }),
-    })
-      .then(res => { if (!res.ok) { revert(); res.text().then(t => setError(`Settings save failed: ${t}`)); } })
-      .catch(err => { revert(); setError(`Settings save failed: ${err}`); });
-  };
-
-  const handleAutoFixToggle = (enabled) => {
-    setAutoFix(enabled);
-    savePrefs(enabled, autoReview, () => setAutoFix(!enabled));
-  };
-
-  const handleAutoReviewToggle = (enabled) => {
-    setAutoReview(enabled);
-    savePrefs(autoFix, enabled, () => setAutoReview(!enabled));
   };
 
   const openSpec = () => {
@@ -708,10 +695,27 @@ function Work({ onBack, namespace }) {
       {!boards.length ? (
         <p>No boards yet. Paste a repository URL above to create one.</p>
       ) : (() => {
+        // The feed is the full universe; the view narrows it here, client
+        // side. In-flight items (sandbox, agent motion) always surface —
+        // tightening a filter must never hide running work.
+        const inFlight = i => !!i.sandbox ||
+          ['queued', 'fix-starting', 'review-starting', 'planning', 'triaging', 'fixing', 'reviewing'].includes(i.stage);
+        const labelFilters = (view.labels || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+        const visible = work.filter(item => {
+          if (inFlight(item)) return true;
+          if (labelFilters.length && !(item.labels || []).some(l => labelFilters.includes(l.toLowerCase()))) return false;
+          const g = groupOf(item);
+          if (g === 'issues' && view.issues === 'mine') {
+            // Assignee list is viewer-first, so a simple prefix test works.
+            if (!(item.assignee || '').startsWith(namespace) && item.author !== namespace) return false;
+          }
+          if (g === 'review' && view.reviews === 'requested' && !item.reviewRequested) return false;
+          return true;
+        });
         const byGroup = {};
         GROUPS.forEach(g => { byGroup[g.key] = []; });
-        work.forEach(item => { (byGroup[groupOf(item)] = byGroup[groupOf(item)] || []).push(item); });
-        byGroup[UP_NEXT] = work.filter(i => i.attention === 'needs-you');
+        visible.forEach(item => { (byGroup[groupOf(item)] = byGroup[groupOf(item)] || []).push(item); });
+        byGroup[UP_NEXT] = visible.filter(i => i.attention === 'needs-you');
         // Always land on Up Next: consistent muscle memory, and its empty
         // state ("nothing needs you") is the good news, not a dead end.
         const shown = activeGroup || UP_NEXT;
@@ -731,7 +735,7 @@ function Work({ onBack, namespace }) {
         );
         return (
           <div>
-            <nav className="group-tabs">
+            <nav className="group-tabs" style={{ display: 'flex', alignItems: 'center' }}>
               {GROUPS.map(g => {
                 const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
                 return (
@@ -758,6 +762,36 @@ function Work({ onBack, namespace }) {
                   </button>
                 );
               })}
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
+                {shown === 'issues' && (
+                  <span title="View scope — display only, never changes what runs">
+                    {['all', 'mine'].map(v => (
+                      <button key={v} className="btn btn-sm"
+                        style={{ marginLeft: '2px', opacity: view.issues === v ? 1 : 0.5 }}
+                        onClick={() => updateView({ issues: v })}
+                      >{v === 'all' ? 'All' : 'Mine'}</button>
+                    ))}
+                  </span>
+                )}
+                {shown === 'review' && (
+                  <span title="View scope — display only, never changes what runs">
+                    {['requested', 'all'].map(v => (
+                      <button key={v} className="btn btn-sm"
+                        style={{ marginLeft: '2px', opacity: view.reviews === v ? 1 : 0.5 }}
+                        onClick={() => updateView({ reviews: v })}
+                      >{v === 'requested' ? 'Requested' : 'All'}</button>
+                    ))}
+                  </span>
+                )}
+                <input
+                  type="text"
+                  value={view.labels}
+                  placeholder="filter labels…"
+                  title="Show only items with these labels (comma-separated) — display only"
+                  onChange={e => updateView({ labels: e.target.value })}
+                  style={{ width: '120px', padding: '3px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: 'small' }}
+                />
+              </span>
             </nav>
 
             <div className="work-card">
@@ -793,25 +827,67 @@ function Work({ onBack, namespace }) {
             <h4 style={{ marginTop: 0 }}>Board settings — {activeBoard}</h4>
             <fieldset disabled={!spec.editable} style={{ border: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
-                Trigger label <span style={{ color: 'var(--text-secondary)' }}>(labeling an issue/PR on GitHub queues it; empty disables)</span>
-                <input type="text" value={spec.triggerLabel || ''} onChange={e => setSpec({ ...spec, triggerLabel: e.target.value })} />
-              </label>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Runs the triage agent for every open unclaimed issue (token cost scales with open issues). Off: triage runs only on your per-issue Triage click.">
-                <input type="checkbox" checked={!!spec.triageIssues} onChange={e => setSpec({ ...spec, triageIssues: e.target.checked })} style={{ marginRight: '6px' }} />
-                Auto-triage all open issues
-              </label>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Reviews every open PR as you; each run parks a pending review on GitHub, visible only to you. Token cost scales with open PRs.">
-                <input type="checkbox" checked={!!spec.draftReviews} onChange={e => setSpec({ ...spec, draftReviews: e.target.checked })} style={{ marginRight: '6px' }} />
-                Auto-review all open PRs (as you)
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
-                Exclude labels <span style={{ color: 'var(--text-secondary)' }}>(comma-separated; hard veto for all agent work)</span>
+                Board view filter — labels <span style={{ color: 'var(--text-secondary)' }}>(view only: narrows what the board shows, never what runs; the table's filter box narrows further, temporarily)</span>
                 <input
                   type="text"
-                  value={(spec.excludeLabels || []).join(', ')}
-                  onChange={e => setSpec({ ...spec, excludeLabels: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
+                  value={(spec.viewLabels || []).join(', ')}
+                  onChange={e => setSpec({ ...spec, viewLabels: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
                 />
               </label>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '4px 0' }} />
+              <div style={{ fontSize: 'small', fontWeight: 600 }}>
+                Automation <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(what runs without a click — everything is draft-shaped and recency-bounded)</span>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', fontSize: 'small', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Triage drafts for recent issues: unclaimed = no assignees; all = assignment doesn't imply triaged.">
+                  Auto-triage
+                  <select value={spec.autoTriage || 'off'} onChange={e => setSpec({ ...spec, autoTriage: e.target.value })}>
+                    <option value="off">off</option>
+                    <option value="unclaimed">unclaimed issues</option>
+                    <option value="all">all issues</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Draft-PR fixes for recent issues assigned to you, run as you.">
+                  Auto-fix
+                  <select value={spec.autoFix || 'off'} onChange={e => setSpec({ ...spec, autoFix: e.target.value })}>
+                    <option value="off">off</option>
+                    <option value="assigned">assigned to me</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Reviews run as you and park pending reviews on GitHub, visible only to you until you submit.">
+                  Auto-review
+                  <select value={spec.autoReview || 'off'} onChange={e => setSpec({ ...spec, autoReview: e.target.value })}>
+                    <option value="off">off</option>
+                    <option value="requested">requesting my review</option>
+                    <option value="all">all open PRs</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Automation only touches items updated within this window — enabling auto on an old repo processes the live edge, not the archive.">
+                  Recency window
+                  <select value={String(spec.recencyDays || 7)} onChange={e => setSpec({ ...spec, recencyDays: parseInt(e.target.value, 10) || 7 })}>
+                    <option value="1">1 day</option>
+                    <option value="7">1 week</option>
+                    <option value="30">1 month</option>
+                  </select>
+                </label>
+              </div>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
+                Auto only for labels <span style={{ color: 'var(--text-secondary)' }}>(comma-separated; empty = everything in scope)</span>
+                <input
+                  type="text"
+                  value={(spec.autoLabels || []).join(', ')}
+                  onChange={e => setSpec({ ...spec, autoLabels: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: 'small' }}>
+                Never auto-touch labels <span style={{ color: 'var(--text-secondary)' }}>(comma-separated; absolute veto)</span>
+                <input
+                  type="text"
+                  value={(spec.autoExcludeLabels || []).join(', ')}
+                  onChange={e => setSpec({ ...spec, autoExcludeLabels: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
+                />
+              </label>
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '4px 0' }} />
               <div style={{ display: 'flex', gap: '12px', fontSize: 'small' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   Max active sandboxes
@@ -832,22 +908,6 @@ function Work({ onBack, namespace }) {
                 Disclose agent assistance in PRs
               </label>
             </fieldset>
-            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '14px 0 10px 0' }} />
-            <div style={{ fontSize: 'small', fontWeight: 600, marginBottom: '6px' }}>
-              My automation <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(only affects you; saved immediately)</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(!board || board.role !== 'read-only') && (
-                <label style={{ cursor: 'pointer', fontSize: 'small' }} title="With the board's auto-fix intake enabled, issues assigned to you start fixing automatically as you. Your consent, your identity, draft PRs only.">
-                  <input type="checkbox" checked={autoFix} onChange={e => handleAutoFixToggle(e.target.checked)} style={{ marginRight: '6px' }} />
-                  Auto-fix issues assigned to me
-                </label>
-              )}
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="With the board's review intake enabled, PRs that request your review run the agent as you and park a pending review on GitHub — visible only to you until you submit it.">
-                <input type="checkbox" checked={autoReview} onChange={e => handleAutoReviewToggle(e.target.checked)} style={{ marginRight: '6px' }} />
-                Auto-review PRs assigned to me
-              </label>
-            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
               <button className="btn" onClick={() => setSpecOpen(false)}>Cancel</button>
               {spec.editable && <button className="btn btn-submit" onClick={saveSpec}>Save board settings</button>}

@@ -146,7 +146,7 @@ func jsonResp(body string) func() *http.Response {
 func testGithubClient(issuesJSON string) *github.Client {
 	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
 		"https://api.github.com/user": jsonResp(`{"login": "alice", "email": "alice@example.com"}`),
-		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(issuesJSON),
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": jsonResp(issuesJSON),
 	}}})
 }
 
@@ -159,14 +159,15 @@ func testScheme() *runtime.Scheme {
 }
 
 func testBoard(annotations map[string]string) *boardv1alpha1.RepoBoard {
-	discreet := true
 	return &boardv1alpha1.RepoBoard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-board", Namespace: "alice", Annotations: annotations},
 		Spec: boardv1alpha1.RepoBoardSpec{
-			RepoURL:  "https://github.com/test/repo",
-			Triggers: boardv1alpha1.TriggersSpec{Label: "agent", Discreet: &discreet},
-			Limits:   boardv1alpha1.LimitsSpec{MaxActive: 5},
-			Sandbox:  boardv1alpha1.SandboxSpec{DiskSize: "10Gi", IdleMinutes: 60},
+			RepoURL: "https://github.com/test/repo",
+			// The fixture board runs the assigned-fix tier so discovery
+			// paths are exercised; individual tests override.
+			Auto:    boardv1alpha1.AutoSpec{Fix: "assigned"},
+			Limits:  boardv1alpha1.LimitsSpec{MaxActive: 5},
+			Sandbox: boardv1alpha1.SandboxSpec{DiskSize: "10Gi", IdleMinutes: 60},
 		},
 	}
 }
@@ -216,18 +217,13 @@ func boardRequest() reconcile.Request {
 	return reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-board", Namespace: "alice"}}
 }
 
-// A labeled issue assigned to the member launches a fix (with the draft-PR
-// instruction); a labeled issue assigned to someone else never executes
-// (executor-consent rule).
+// auto.fix "assigned": issues assigned to the owner launch as them (with
+// the draft-PR rail).
 func TestLabelDiscovery_ExecutorConsent(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[
 		{"number": 10, "title": "mine", "html_url": "https://github.com/test/repo/issues/10",
-		 "labels": [{"name": "agent"}], "assignees": [{"login": "alice"}]},
-		{"number": 11, "title": "bobs", "html_url": "https://github.com/test/repo/issues/11",
-		 "labels": [{"name": "agent"}], "assignees": [{"login": "bob"}]},
-		{"number": 12, "title": "unassigned", "html_url": "https://github.com/test/repo/issues/12",
-		 "labels": [{"name": "agent"}], "assignees": []}
+		 "assignees": [{"login": "alice"}]}
 	]`)
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret())
@@ -469,7 +465,11 @@ func TestAutoFixBoardConsent(t *testing.T) {
 	falseVal := false
 	mkBoard := func(enabled bool) *boardv1alpha1.RepoBoard {
 		b := testBoard(nil)
-		b.Spec.Intake.AutoFix = boardv1alpha1.AutoFixSpec{Enabled: enabled, Require: []string{"assigned", "label"}}
+		if enabled {
+			b.Spec.Auto.Fix = "assigned"
+		} else {
+			b.Spec.Auto.Fix = "off"
+		}
 		b.Spec.Policy = boardv1alpha1.PolicySpec{DraftPR: &falseVal} // rails override policy
 		return b
 	}
@@ -504,8 +504,8 @@ func TestDraftReviewIntake(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	board := testBoard(nil)
-	board.Spec.Triggers.Label = ""
-	board.Spec.Intake.DraftReviews = true
+	board.Spec.Auto.Fix = "off"
+	board.Spec.Auto.Review = "all"
 
 	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
 		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
@@ -515,7 +515,7 @@ func TestDraftReviewIntake(t *testing.T) {
 		]`),
 	}}})
 
-	board.Spec.Intake.Filters.ExcludeLabels = []string{"no-agent"}
+	board.Spec.Auto.ExcludeLabels = []string{"no-agent"}
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, ghClient, board, githubSecret())
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -537,14 +537,15 @@ func TestTriageIntake(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	board := testBoard(nil)
-	board.Spec.Intake.TriageIssues = true
+	board.Spec.Auto.Fix = "off"
+	board.Spec.Auto.Triage = "unclaimed"
 
 	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
 		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
 		"https://api.github.com/repos/test/repo/issues?labels=agent&per_page=100&state=open": jsonResp(`[]`),
 		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(`[
 			{"number": 30, "title": "untriaged", "html_url": "https://github.com/test/repo/issues/30", "labels": []},
-			{"number": 31, "title": "already fixing", "html_url": "https://github.com/test/repo/issues/31", "labels": [{"name": "agent"}]}
+			{"number": 31, "title": "claimed", "html_url": "https://github.com/test/repo/issues/31", "assignees": [{"login": "bob"}]}
 		]`),
 	}}})
 
@@ -591,7 +592,8 @@ func TestTriageIntake(t *testing.T) {
 
 func testBoardWithTriage() *boardv1alpha1.RepoBoard {
 	b := testBoard(nil)
-	b.Spec.Intake.TriageIssues = true
+	b.Spec.Auto.Fix = "off"
+	b.Spec.Auto.Triage = "unclaimed"
 	return b
 }
 
@@ -644,7 +646,6 @@ func TestMailboxReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 
 	board := testBoard(map[string]string{AnnotationRequests: `{"review-1163": "alice"}`})
 	board.Spec.Limits = boardv1alpha1.LimitsSpec{} // UI-created boards omit limits entirely
-	board.Spec.Triggers = boardv1alpha1.TriggersSpec{}
 
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, ghClient, board, githubSecret())
