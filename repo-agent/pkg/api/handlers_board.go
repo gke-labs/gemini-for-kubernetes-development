@@ -1298,6 +1298,64 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// putBoardTriageDraft saves a member-edited triage suggestion back onto
+// the draft sandbox. The edit is validated against the same schema publish
+// consumes, so a save that publish could not act on is rejected up front.
+func (s *Server) putBoardTriageDraft(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Draft string `json:"draft"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+	if err := validateTriageDraft(req.Draft); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "draft does not match the triage schema", "details": err.Error()})
+		return
+	}
+
+	name := fmt.Sprintf("triage-%s-%d", repo, number)
+	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		if sb, found := sandboxes[name]; found && sb.GetAnnotations()["agentDraft"] != "" {
+			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "agentDraft", strings.TrimSpace(req.Draft)+"\n"); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
+				return
+			}
+			c.Status(http.StatusOK)
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to edit"})
+}
+
+// validateTriageDraft enforces the schema publish consumes: well-formed
+// YAML, only known fields, and at least one actionable suggestion.
+func validateTriageDraft(draft string) error {
+	if strings.TrimSpace(draft) == "" {
+		return fmt.Errorf("draft is empty")
+	}
+	dec := yamlv3.NewDecoder(strings.NewReader(draft))
+	dec.KnownFields(true)
+	suggestion := &triageSuggestion{}
+	if err := dec.Decode(suggestion); err != nil {
+		return err
+	}
+	t := suggestion.Triage
+	if len(t.Labels) == 0 && t.Priority == "" && len(t.Duplicates) == 0 && t.Assessment == "" {
+		return fmt.Errorf("nothing to publish: set at least one of triage.labels, triage.priority, triage.duplicates, triage.assessment")
+	}
+	return nil
+}
+
 // triageSuggestion mirrors the YAML factory's triage task emits.
 type triageSuggestion struct {
 	Triage struct {

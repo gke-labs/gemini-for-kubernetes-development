@@ -111,6 +111,7 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
+	r.PUT("/board/:board/issues/:id/draft", server.putBoardTriageDraft)
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
@@ -804,5 +805,72 @@ func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
 	}
 	if len(work) != 1 || work[0].Stage != "review-requested" {
 		t.Errorf("expected review-requested row, got %s", w.Body.String())
+	}
+}
+
+// Triage drafts are member-editable, but only within the schema publish
+// consumes: malformed YAML, unknown fields, and empty suggestions are
+// rejected with the reason; a valid edit replaces the stored draft.
+func TestPutBoardTriageDraft(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&per_page=100&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": `[
+			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[]`,
+	}
+	triageSandbox := sandboxCR("triage-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+
+	put := func(draft string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"draft": draft})
+		req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := put("triage: ["); w.Code != http.StatusBadRequest {
+		t.Errorf("malformed YAML: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := put("triage:\n  bogus: field"); w.Code != http.StatusBadRequest {
+		t.Errorf("unknown field: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := put("triage: {}"); w.Code != http.StatusBadRequest {
+		t.Errorf("empty suggestion: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := put(""); w.Code != http.StatusBadRequest {
+		t.Errorf("empty draft: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	edited := "triage:\n  labels: [bug, p1]\n  assessment: human-refined"
+	if w := put(edited); w.Code != http.StatusOK {
+		t.Fatalf("valid edit: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The stored draft (and hence the work feed) reflects the edit.
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	found := false
+	for _, item := range work {
+		if item.Type == "issue" && item.Number == 20 {
+			found = true
+			if !strings.Contains(item.Draft, "human-refined") {
+				t.Errorf("draft not updated: %q", item.Draft)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
 	}
 }
