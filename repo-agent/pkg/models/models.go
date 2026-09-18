@@ -89,11 +89,12 @@ type WorkItem struct {
 	ReviewRequested bool         `json:"reviewRequested,omitempty"` // PR asks for the viewer's review (client-side scope)
 	PRURL           string       `json:"prURL,omitempty"`
 	Labels          []string     `json:"labels,omitempty"`
-	Draft           string       `json:"draft,omitempty"`   // triage/review draft, when ready
-	Error           string       `json:"error,omitempty"`   // why the last agent run failed, human-readable
-	Plan            string       `json:"plan,omitempty"`    // implementation-plan draft awaiting refine/approve
-	DraftPR         bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
-	Fixes           []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
+	Draft           string       `json:"draft,omitempty"`           // triage/review draft, when ready
+	TriagePublished bool         `json:"triagePublished,omitempty"` // published triage rides the row as a done-state chip
+	Error           string       `json:"error,omitempty"`           // why the last agent run failed, human-readable
+	Plan            string       `json:"plan,omitempty"`            // implementation-plan draft awaiting refine/approve
+	DraftPR         bool         `json:"draftPR,omitempty"`         // PR is a GitHub draft (promotable)
+	Fixes           []int        `json:"fixes,omitempty"`           // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt       string       `json:"updatedAt,omitempty"`
 }
