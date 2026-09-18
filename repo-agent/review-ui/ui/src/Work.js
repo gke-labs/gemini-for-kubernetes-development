@@ -361,6 +361,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             title={attention ? attention.label : ''}
           />
         ))}
+        {item.triagePublished && item.stage !== 'triaged' && (
+          <span onClick={() => setShowDraft(v => !v)} style={{ cursor: 'pointer', marginLeft: '6px' }}
+            title="Triage published — show the suggestions">
+            <Chip text="Triaged ✓" color="#22863a" bg="rgba(34,134,58,0.14)" />
+          </span>
+        )}
       </td>
       <td style={{ padding: '6px 8px' }}>
         {AGENT_STAGE[item.stage] ? (
@@ -383,7 +389,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.draft && !['triage-ready', 'triaged'].includes(item.stage) && (
+        {item.draft && !item.triagePublished && !['triage-ready', 'triaged'].includes(item.stage) && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: '4px' }}

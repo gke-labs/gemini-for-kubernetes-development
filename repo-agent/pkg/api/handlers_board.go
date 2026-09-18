@@ -830,21 +830,22 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		labels = append(labels, l.GetName())
 	}
 	items[key] = &models.WorkItem{
-		Type:      "issue",
-		Group:     "issues",
-		Number:    issue.GetNumber(),
-		Author:    issue.GetUser().GetLogin(),
-		Title:     issue.GetTitle(),
-		HTMLURL:   issue.GetHTMLURL(),
-		Stage:     stage,
-		Attention: attention,
-		Assignee:  claimedBy,
-		PRURL:     prURL,
-		Labels:    labels,
-		Draft:     triageDraft,
-		Plan:      planDraft,
-		Sandbox:   workSandbox(sb),
-		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
+		Type:            "issue",
+		Group:           "issues",
+		Number:          issue.GetNumber(),
+		Author:          issue.GetUser().GetLogin(),
+		Title:           issue.GetTitle(),
+		HTMLURL:         issue.GetHTMLURL(),
+		Stage:           stage,
+		Attention:       attention,
+		Assignee:        claimedBy,
+		PRURL:           prURL,
+		Labels:          labels,
+		Draft:           triageDraft,
+		TriagePublished: triagePublished,
+		Plan:            planDraft,
+		Sandbox:         workSandbox(sb),
+		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 }
 
