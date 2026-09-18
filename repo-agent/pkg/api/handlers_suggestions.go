@@ -67,21 +67,33 @@ func (s *Server) getRepoSuggestions(c *gin.Context) {
 		c.JSON(http.StatusOK, []repoSuggestion{})
 		return
 	}
-	gh := githubClientForToken(ctx, token)
+	// Detached from the request: the browser's prefetch is fire-and-forget
+	// and gets aborted on re-renders/reloads — a canceled request must not
+	// cancel the GitHub calls (live failure: every signal died with
+	// "context canceled" and the empty result was cached for an hour).
+	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	gh := githubClientForToken(bg, token)
 
-	suggestions := collectRepoSuggestions(ctx, gh, namespace)
+	suggestions, complete := collectRepoSuggestions(bg, gh, namespace)
 
-	// Errors upstream yield a short or empty list; cache it anyway — a
-	// broken token should not be re-probed on every page load, and the
-	// TTL retries soon enough.
+	// A complete answer holds for an hour; a partial one (some signal
+	// errored) retries soon — never park a degraded verdict long-term.
+	ttl := time.Hour
+	if !complete {
+		ttl = 2 * time.Minute
+	}
 	repoSuggestionCache.Lock()
-	repoSuggestionCache.entries[namespace] = repoSuggestionEntry{suggestions: suggestions, expires: time.Now().Add(time.Hour)}
+	repoSuggestionCache.entries[namespace] = repoSuggestionEntry{suggestions: suggestions, expires: time.Now().Add(ttl)}
 	repoSuggestionCache.Unlock()
 	c.JSON(http.StatusOK, suggestions)
 }
 
-func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string) []repoSuggestion {
+// collectRepoSuggestions returns the ranked suggestions and whether every
+// signal answered (false = degraded, cache briefly).
+func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string) ([]repoSuggestion, bool) {
 	log := klog.FromContext(ctx)
+	complete := true
 	var ranked []string
 	counted := map[string]bool{}
 
@@ -111,6 +123,7 @@ func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string
 	query := fmt.Sprintf("involves:%s updated:>%s", login, cutoff)
 	if result, _, err := gh.Search.Issues(ctx, query, &github.SearchOptions{ListOptions: github.ListOptions{PerPage: 100}}); err != nil {
 		log.Info("repo suggestions: involvement search unavailable", "user", login, "err", err)
+		complete = false
 	} else {
 		var names []string
 		for _, issue := range result.Issues {
@@ -122,6 +135,7 @@ func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string
 	// 2. Recent activity events.
 	if events, _, err := gh.Activity.ListEventsPerformedByUser(ctx, login, false, &github.ListOptions{PerPage: 100}); err != nil {
 		log.Info("repo suggestions: events unavailable", "user", login, "err", err)
+		complete = false
 	} else {
 		var names []string
 		for _, ev := range events {
@@ -139,6 +153,7 @@ func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string
 		ListOptions: github.ListOptions{PerPage: 30},
 	}); err != nil {
 		log.Info("repo suggestions: repo list unavailable", "user", login, "err", err)
+		complete = false
 	} else {
 		for _, repo := range repos {
 			name := repo.GetFullName()
@@ -172,7 +187,7 @@ func collectRepoSuggestions(ctx context.Context, gh *github.Client, login string
 			break
 		}
 	}
-	return suggestions
+	return suggestions, complete
 }
 
 // repoFullNameFromAPIURL turns https://api.github.com/repos/org/repo into
