@@ -189,17 +189,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
       // click or auto-triage.
       actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
     }
-    if (item.stage === 'triage-ready' && !readOnly) {
-      actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
+    if (item.stage === 'triage-ready') {
+      // Publishing writes labels — the one verb that truly needs push
+      // rights. Rejecting is board-local: available to everyone.
+      if (!readOnly) {
+        actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
+      }
       actions.push({ label: 'Reject triage', path: `issues/${item.number}/triage-reject`, confirm: `Discard the triage suggestions for issue #${item.number}?`, title: 'Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will' });
     }
-    if (item.stage === 'plan-ready' && !readOnly) {
+    if (item.stage === 'plan-ready') {
       actions.push({ label: 'Approve & Fix', path: `issues/${item.number}/plan-approve`, confirm: `Approve this plan and launch the fix for issue #${item.number} as you?`, title: 'Approves the plan and launches the fix — the plan ships in the PR description' });
       actions.push({ label: 'Reject plan', path: `issues/${item.number}/plan-reject`, confirm: `Discard the plan for issue #${item.number}?`, title: 'Discards this plan draft' });
     }
-    if (readOnly) {
-      // No fix pipeline without push: the agent's PR could not land.
-    } else if (['open', 'untriaged', 'triaged'].includes(item.stage)) {
+    if (['open', 'untriaged', 'triaged'].includes(item.stage)) {
+      // Fixing is fork-based (factory forks, pushes to the member's fork,
+      // opens the PR against upstream) — the normal external-contributor
+      // path, no push rights needed. Plan writes nothing to GitHub.
       // Stage is the guard (a resting sandbox chip must not hide verbs).
       // Triage-ready deliberately isn't here: a pending draft demands its
       // verdict (Publish | Reject) before other verbs return — otherwise
@@ -225,8 +230,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
   } else if (group === 'mine-pr') {
     // Your own PR: promote drafts, merge, or send the agent back to iterate
     // on the folded issue.
-    if (!readOnly && item.draftPR) {
-      // Merging happens on GitHub; promote is the one repo-write left here.
+    if (item.draftPR) {
+      // Promoting your own draft PR is an author right, not a repo write.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
     }
   } else {
@@ -440,7 +445,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
                 borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
                 textAlign: 'left',
               }}>{item.draft}</pre>
-              {!readOnly && item.type === 'issue' && (
+              {item.type === 'issue' && (
                 <div style={{ marginTop: '4px', textAlign: 'right' }}>
                   <button className="btn btn-sm" title="Edit the suggestion before publishing"
                     onClick={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}>Edit</button>
@@ -489,7 +494,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
                 borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
                 textAlign: 'left',
               }}>{item.plan}</pre>
-              {!readOnly && item.stage === 'plan-ready' && (
+              {item.stage === 'plan-ready' && (
                 <div style={{ marginTop: '6px' }}>
                   <textarea
                     value={feedbackText}
