@@ -81,8 +81,32 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, readOnly }) {
   const [showDraft, setShowDraft] = useState(false);
+  const [editingDraft, setEditingDraft] = useState(false);
+  const [draftText, setDraftText] = useState('');
+  const [draftErr, setDraftErr] = useState('');
+
+  // Edits are validated server-side against the publish schema; a rejected
+  // save keeps the editor open with the reason.
+  const saveDraft = () => {
+    fetch(`/api/board/${boardName}/issues/${item.number}/draft`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft: draftText }),
+    }).then(async res => {
+      if (res.ok) {
+        setEditingDraft(false);
+        setDraftErr('');
+        if (onRefresh) onRefresh();
+      } else {
+        const t = await res.text();
+        let msg = t;
+        try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw text */ }
+        setDraftErr(msg);
+      }
+    }).catch(err => setDraftErr(String(err)));
+  };
   const attention = ATTENTION_STYLE[item.attention];
   const group = groupOf(item);
 
@@ -287,12 +311,48 @@ function WorkRow({ item, boardName, onAction, namespace, groupTag, readOnly }) {
     {showDraft && item.draft && (
       <tr>
         <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
-          <pre style={{
-            whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
-            padding: '10px', backgroundColor: 'var(--bg-secondary)',
-            borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
-            textAlign: 'left',
-          }}>{item.draft}</pre>
+          {editingDraft ? (
+            <div>
+              <textarea
+                value={draftText}
+                onChange={e => setDraftText(e.target.value)}
+                spellCheck={false}
+                style={{
+                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace',
+                  fontSize: 'small', padding: '10px', backgroundColor: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
+                  borderRadius: '6px', minHeight: '160px', textAlign: 'left',
+                }}
+              />
+              {draftErr && (
+                <div style={{
+                  fontSize: 'small', marginTop: '4px', padding: '6px 10px', borderRadius: '6px',
+                  backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
+                  textAlign: 'left', whiteSpace: 'pre-wrap',
+                }}>{draftErr}</div>
+              )}
+              <div style={{ marginTop: '6px', textAlign: 'right' }}>
+                <button className="btn btn-sm" onClick={saveDraft} title="Validate against the triage schema and save">Save</button>
+                <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                  onClick={() => { setEditingDraft(false); setDraftErr(''); }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <pre style={{
+                whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
+                padding: '10px', backgroundColor: 'var(--bg-secondary)',
+                borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
+                textAlign: 'left',
+              }}>{item.draft}</pre>
+              {!readOnly && item.type === 'issue' && (
+                <div style={{ marginTop: '4px', textAlign: 'right' }}>
+                  <button className="btn btn-sm" title="Edit the suggestion before publishing"
+                    onClick={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}>Edit</button>
+                </div>
+              )}
+            </div>
+          )}
         </td>
       </tr>
     )}
@@ -563,7 +623,7 @@ function Work({ onBack, namespace }) {
                   <tbody>
                     {upNext.slice(0, UP_NEXT_CAP).map(item => (
                       <WorkRow key={`up-${item.type}-${item.number}`} item={item} boardName={activeBoard}
-                        onAction={handleAction} namespace={namespace} groupTag={groupLabel[groupOf(item)]} readOnly={readOnly} />
+                        onAction={handleAction} onRefresh={fetchWork} namespace={namespace} groupTag={groupLabel[groupOf(item)]} readOnly={readOnly} />
                     ))}
                   </tbody>
                 </table>
@@ -613,7 +673,7 @@ function Work({ onBack, namespace }) {
                 {header}
                 <tbody>
                   {rows.map(item => (
-                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} namespace={namespace} readOnly={readOnly} />
+                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} onRefresh={fetchWork} namespace={namespace} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
                     <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
