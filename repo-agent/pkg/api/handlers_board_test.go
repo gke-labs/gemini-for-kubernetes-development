@@ -1170,3 +1170,39 @@ func TestRejectBoardTriage(t *testing.T) {
 	}
 	t.Fatalf("issue-20 missing: %s", w.Body.String())
 }
+
+// A pre-task launch failure (sandbox-ready timeout) stamps the review
+// error but never a task state: the row must read Review failed with a
+// Retry path, not sit on "starting" forever.
+func TestPrelaunchFailureRendersFailed(t *testing.T) {
+	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": `[
+			{"number": 55, "title": "stuck", "html_url": "https://github.com/test/repo/pull/55", "updated_at": "` + fresh + `",
+			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
+		]`,
+	}
+	stuck := sandboxCR("factory-pr-repo-55",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "55"},
+		map[string]interface{}{
+			"htmlURL":                           "https://github.com/test/repo/pull/55",
+			"review.gemini.google.com/error":    "connecting to sandbox: timed out waiting for sandbox pod",
+			"review.gemini.google.com/error-at": fresh,
+		}, 1)
+
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), stuck)
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	for _, item := range work {
+		if item.Number == 55 {
+			if item.Stage != "review-failed" || item.Error == "" {
+				t.Errorf("expected review-failed with reason, got %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("pr-55 missing: %s", w.Body.String())
+}
