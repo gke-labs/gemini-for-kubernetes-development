@@ -109,6 +109,9 @@ type FixOptions struct {
 	IssueURL string
 	// Instruction is an optional custom prompt (factory --instruction).
 	Instruction string
+	// WithPlan folds the approved plan from a prior `factory plan` run
+	// (living in the fix sandbox) into the fix prompt.
+	WithPlan bool
 	// Image overrides the sandbox base image; must be factory-compatible.
 	Image string
 	// WorkspaceDiskSize overrides the workspace PVC size.
@@ -119,6 +122,22 @@ type FixOptions struct {
 	// killed on timeout (--abort-on-cancel=false) and is reattached to by
 	// the next invocation.
 	Timeout time.Duration
+}
+
+// PlanOptions are the inputs for a `factory plan` invocation: an
+// implementation plan prepared in the issue's fix sandbox, printed between
+// ISSUE PLAN banners (see ExtractPlan) and left in the sandbox for a later
+// `factory fix --with-plan`. Nothing is written to GitHub.
+type PlanOptions struct {
+	Namespace string
+	IssueURL  string
+	// Feedback revises the previous plan in the sandbox against maintainer
+	// feedback instead of planning fresh.
+	Feedback          string
+	Image             string
+	WorkspaceDiskSize string
+	GithubToken       string
+	Timeout           time.Duration
 }
 
 // Result records the outcome of a finished invocation.
@@ -140,6 +159,10 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
+	// StartPlan launches `factory plan` for key unless one is already
+	// running; a controller pass harvests the finished invocation's output
+	// (see ExtractPlan) via LastResult.
+	StartPlan(key string, opts PlanOptions) bool
 	// StartTriage launches `factory triage --publish no` for key unless
 	// one is already running. The triage YAML is recovered from the
 	// invocation's output (see ExtractTriageYAML) via LastResult.
@@ -188,6 +211,9 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	}
 	if opts.Instruction != "" {
 		args = append(args, "--instruction", opts.Instruction)
+	}
+	if opts.WithPlan {
+		args = append(args, "--with-plan")
 	}
 	if opts.Image != "" {
 		args = append(args, "--image", opts.Image)
@@ -263,6 +289,30 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
+	}
+	return r.start(key, args, opts.GithubToken, timeout)
+}
+
+func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Minute
+	}
+	args := []string{
+		"plan",
+		"--url", opts.IssueURL,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	if opts.Feedback != "" {
+		args = append(args, "--feedback", opts.Feedback)
+	}
+	if opts.Image != "" {
+		args = append(args, "--image", opts.Image)
+	}
+	if opts.WorkspaceDiskSize != "" {
+		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
 	return r.start(key, args, opts.GithubToken, timeout)
 }
@@ -348,6 +398,24 @@ func ExtractTriageYAML(output string) string {
 		return ""
 	}
 	rest := output[start+len(triageBanner):]
+	if end := strings.Index(rest, "================"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// planBanner opens the plan text on `factory plan` output; the closer is
+// any run of at least sixteen '=' characters.
+const planBanner = "================== ISSUE PLAN =================="
+
+// ExtractPlan extracts the plan markdown from a `factory plan` invocation's
+// output; empty when no plan was produced.
+func ExtractPlan(output string) string {
+	start := strings.Index(output, planBanner)
+	if start < 0 {
+		return ""
+	}
+	rest := output[start+len(planBanner):]
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}

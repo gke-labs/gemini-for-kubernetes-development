@@ -71,6 +71,13 @@ const (
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
 	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
 	annoReviewError     = "review.gemini.google.com/error"
+	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
+	annoPlanDraft       = "board.gemini.google.com/plan"
+	annoPlannedAt       = "board.gemini.google.com/planned-at"
+	annoPlanFeedback    = "board.gemini.google.com/plan-feedback"
+	annoPlanFeedbackAt  = "board.gemini.google.com/plan-feedback-at"
+	annoPlanApproved    = "board.gemini.google.com/plan-approved-at"
+	annoPlanRejected    = "board.gemini.google.com/plan-rejected-at"
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	annoTriagePublished = "board.gemini.google.com/triage-published-at"
@@ -429,7 +436,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		requests := map[string]string{}
 		if err := json.Unmarshal([]byte(raw), &requests); err == nil {
 			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
-			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true}
+			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
 			for key := range requests {
 				if n, ok := strings.CutPrefix(key, "review-"); ok {
 					if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
@@ -444,6 +451,11 @@ func (s *Server) getBoardWork(c *gin.Context) {
 				if n, ok := strings.CutPrefix(key, "triage-"); ok {
 					if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
 						item.Stage, item.Attention = "triaging", attentionWorking
+					}
+				}
+				if n, ok := strings.CutPrefix(key, "plan-"); ok {
+					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
+						item.Stage, item.Attention = "planning", attentionWorking
 					}
 				}
 			}
@@ -556,9 +568,22 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	sb := sandboxes[fmt.Sprintf("fix-%s-%d", repo, issue.GetNumber())]
 	state := ""
 	prURL := ""
+	taskType := ""
+	planDraft := ""
+	planApproved := false
+	planRevising := false
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		state = annotations[annoTaskState]
+		taskType = annotations[annoLastTaskType]
+		planDraft = annotations[annoPlanDraft]
+		planApproved = annotations[annoPlanApproved] != ""
+		// Feedback newer than the stored plan means a refinement round is
+		// queued or running: agent motion, not the member's move.
+		if fb, err := time.Parse(time.RFC3339, annotations[annoPlanFeedbackAt]); err == nil {
+			planned, err := time.Parse(time.RFC3339, annotations[annoPlannedAt])
+			planRevising = err != nil || fb.After(planned)
+		}
 		if u := annotations["htmlURL"]; strings.Contains(u, "/pull/") {
 			prURL = u
 		}
@@ -575,13 +600,25 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 
 	stage, attention := "open", ""
 	switch {
+	case state == "Running" && taskType == "plan":
+		stage, attention = "planning", attentionWorking
 	case state == "Running":
 		stage, attention = "fixing", attentionWorking
+	case state == "Failed" && taskType == "plan":
+		stage, attention = "plan-failed", attentionNeedsYou
 	case state == "Failed":
 		stage, attention = "fix-failed", attentionNeedsYou
 	case state == "Completed" && prURL != "":
 		stage, attention = "pr-open", attentionNeedsYou
-	case state == "Completed":
+	case taskType == "plan" && planRevising:
+		// Refinement queued: the relaunch window before Running stamps.
+		stage, attention = "planning", attentionWorking
+	case taskType == "plan" && planDraft != "" && !planApproved:
+		stage, attention = "plan-ready", attentionNeedsYou
+	case taskType == "plan" && planApproved:
+		// Approved: the fix mailbox request is in flight.
+		stage, attention = "fix-starting", attentionWorking
+	case state == "Completed" && taskType != "plan":
 		stage, attention = "fix-done", attentionNeedsYou
 	case triageDraft != "" && triagePublished:
 		stage = "triaged"
@@ -617,6 +654,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		PRURL:     prURL,
 		Labels:    labels,
 		Draft:     triageDraft,
+		Plan:      planDraft,
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
@@ -805,6 +843,12 @@ func (s *Server) kickoffReview(c *gin.Context) {
 
 // kickoffTriage handles the Triage click: mailbox only — triage is
 // draft-only, so there is no GitHub-side claim to make.
+// kickoffPlan handles the Plan click: mailbox only — planning is
+// draft-only (nothing written to GitHub) and claims happen at fix time.
+func (s *Server) kickoffPlan(c *gin.Context) {
+	s.kickoff(c, "plan")
+}
+
 func (s *Server) kickoffTriage(c *gin.Context) {
 	s.kickoff(c, "triage")
 }
@@ -836,7 +880,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	// The trigger label is deliberately NOT written: a click is a one-time
 	// consent, while a label is a standing trigger that would relaunch the
 	// item forever after cleanup.
-	if token, err := s.memberToken(ctx, namespace); err == nil && kind != "triage" {
+	if token, err := s.memberToken(ctx, namespace); err == nil && kind != "triage" && kind != "plan" {
 		gh := githubClientForToken(ctx, token)
 		if kind == "issue" {
 			if _, _, err := gh.Issues.AddAssignees(ctx, owner, repo, number, []string{member}); err != nil {
@@ -877,6 +921,8 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		reqKey = fmt.Sprintf("review-%d", number)
 	case "triage":
 		reqKey = fmt.Sprintf("triage-%d", number)
+	case "plan":
+		reqKey = fmt.Sprintf("plan-%d", number)
 	}
 	annotations := board.GetAnnotations()
 	if annotations == nil {
@@ -1295,6 +1341,100 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save board settings", "details": err.Error()})
 		return
 	}
+	c.Status(http.StatusOK)
+}
+
+// findPlanSandbox locates the issue's fix sandbox carrying a plan draft,
+// checking the viewer's namespace then the board's.
+func (s *Server) findPlanSandbox(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
+	ctx := c.Request.Context()
+	name := fmt.Sprintf("fix-%s-%d", repo, number)
+	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		if sb, found := sandboxes[name]; found && sb.GetAnnotations()[annoPlanDraft] != "" {
+			return sb, ns
+		}
+	}
+	return nil, ""
+}
+
+// planBoardFeedback records the member's refinement feedback on the plan
+// sandbox; the controller re-runs the planner against the previous plan.
+func (s *Server) planBoardFeedback(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Feedback string `json:"feedback"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Feedback) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "feedback text is required"})
+		return
+	}
+	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to refine"})
+		return
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanFeedback, strings.TrimSpace(req.Feedback)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record feedback", "details": err.Error()})
+		return
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanFeedbackAt, nowRFC3339()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record feedback", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// planBoardApprove approves the plan and launches the fix: the fix runs
+// --with-plan, so the approved plan ships in the PR description (its
+// durable record). Approval is the consent for both.
+func (s *Server) planBoardApprove(c *gin.Context) {
+	_, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to approve"})
+		return
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(c.Request.Context(), ns, sb.GetName(), annoPlanApproved, nowRFC3339()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve plan", "details": err.Error()})
+		return
+	}
+	// The fix kickoff does the rest: GitHub claim (assignment) + mailbox.
+	s.kickoff(c, "issue")
+}
+
+// planBoardReject discards the draft: plan annotations are cleared and the
+// reject stamp stops the controller from resurrecting the old result.
+func (s *Server) planBoardReject(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to reject"})
+		return
+	}
+	for _, key := range []string{annoPlanDraft, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt, annoPlanApproved} {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, ""); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear plan", "details": err.Error()})
+			return
+		}
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanRejected, nowRFC3339()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject plan", "details": err.Error()})
+		return
+	}
+	_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
 	c.Status(http.StatusOK)
 }
 
