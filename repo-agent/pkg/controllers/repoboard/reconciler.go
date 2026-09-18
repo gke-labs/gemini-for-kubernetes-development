@@ -1162,11 +1162,34 @@ func (r *Reconciler) activeCount(work *workState) int {
 	active := 0
 	for _, sb := range work.sandboxes {
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
-		if err == nil && found && replicas > 0 {
+		if err == nil && found && replicas > 0 && !sandboxSettled(sb.GetAnnotations()) {
 			active++
 		}
 	}
 	return active
+}
+
+// sandboxSettled reports a sandbox whose last task finished and which
+// nothing newer is waking: done working, idling toward the pause. Settled
+// sandboxes hold no claim on the launch budget — the limit caps concurrent
+// agent work, and an idle pod waiting out its pause window is not work.
+// Anything newer than the completion (a wake stamp, a rerun marker, plan
+// feedback) means the sandbox is coming back to life and counts again.
+func sandboxSettled(annotations map[string]string) bool {
+	state := annotations[factorycli.AnnotationTaskState]
+	if state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
+		return false
+	}
+	completed, err := time.Parse(time.RFC3339, annotations[factorycli.AnnotationCompletionTime])
+	if err != nil {
+		return false
+	}
+	for _, key := range []string{AnnotationUnpausedAt, AnnotationRereviewRequested, AnnotationRefixRequested, AnnotationPlanFeedbackAt} {
+		if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(completed) {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {

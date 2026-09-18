@@ -440,7 +440,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			// (which includes the finished-but-idle hour today).
 			running := 0
 			for _, sb := range sandboxes {
-				if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
+				if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 && !sandboxSettledView(sb.GetAnnotations()) {
 					running++
 				}
 			}
@@ -495,6 +495,31 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return work[i].UpdatedAt > work[j].UpdatedAt
 	})
 	c.JSON(http.StatusOK, work)
+}
+
+// sandboxSettledView mirrors the controller's sandboxSettled: a finished
+// sandbox idling toward its pause holds no launch slot, so it must not
+// make fresh clicks render queued.
+func sandboxSettledView(annotations map[string]string) bool {
+	state := annotations[annoTaskState]
+	if state != "Completed" && state != "Failed" {
+		return false
+	}
+	completed, err := time.Parse(time.RFC3339, annotations[annoCompletionTime])
+	if err != nil {
+		return false
+	}
+	for _, key := range []string{
+		"sandbox.gemini.google.com/unpaused-at",
+		annoRereviewRequest,
+		"review.gemini.google.com/refix-requested-at",
+		annoPlanFeedbackAt,
+	} {
+		if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(completed) {
+			return false
+		}
+	}
+	return true
 }
 
 // boardLimit mirrors the controller's absent-parent defaulting: zero or

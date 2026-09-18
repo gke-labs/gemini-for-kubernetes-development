@@ -1012,3 +1012,77 @@ func TestPlanResultStale(t *testing.T) {
 		AnnotationPlanFeedbackAt: now.Add(-time.Hour).UTC().Format(time.RFC3339),
 	}, now)).To(gomega.BeFalse())
 }
+
+// A finished sandbox idling toward its pause holds no launch slot: with
+// maxActive 1 and a completed review sandbox still running, a fresh click
+// launches; a genuinely Running sandbox still blocks.
+func TestSettledSandboxFreesLaunchSlot(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	occupant := func(state string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "factory-pr-repo-90",
+				"namespace": "alice",
+				"labels": map[string]interface{}{
+					"factory.gemini.google.com/managed": "true",
+					"factory.gemini.google.com/pr":      "90",
+				},
+				"annotations": map[string]interface{}{
+					"htmlURL": "https://github.com/test/repo/pull/90",
+					"sandbox.gemini.google.com/last-task-state": state,
+					"sandbox.gemini.google.com/completion-time": time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339),
+					"reviewState": "pending",
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	for _, tc := range []struct {
+		state      string
+		wantLaunch bool
+	}{
+		{"Completed", true},
+		{"Running", false},
+	} {
+		fake := newFakeLauncher()
+		board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
+		board.Spec.Limits.MaxActive = 1
+		r := newTestReconciler(fake, ghClient, board, githubSecret(), occupant(tc.state))
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		if tc.wantLaunch {
+			g.Expect(fake.launches()).To(gomega.HaveLen(1), "state=%s", tc.state)
+		} else {
+			g.Expect(fake.launches()).To(gomega.BeEmpty(), "state=%s", tc.state)
+		}
+	}
+}
+
+func TestSandboxSettled(t *testing.T) {
+	g := gomega.NewWithT(t)
+	base := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	newer := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+
+	g.Expect(sandboxSettled(map[string]string{
+		"sandbox.gemini.google.com/last-task-state": "Completed",
+		"sandbox.gemini.google.com/completion-time": base,
+	})).To(gomega.BeTrue())
+	g.Expect(sandboxSettled(map[string]string{
+		"sandbox.gemini.google.com/last-task-state": "Running",
+	})).To(gomega.BeFalse())
+	// A rerun marker newer than completion means it is waking: active.
+	g.Expect(sandboxSettled(map[string]string{
+		"sandbox.gemini.google.com/last-task-state": "Failed",
+		"sandbox.gemini.google.com/completion-time": base,
+		AnnotationRereviewRequested:                 newer,
+	})).To(gomega.BeFalse())
+	// No completion stamp at all: provisioning, counts as active.
+	g.Expect(sandboxSettled(map[string]string{
+		"sandbox.gemini.google.com/last-task-state": "Completed",
+	})).To(gomega.BeFalse())
+}
