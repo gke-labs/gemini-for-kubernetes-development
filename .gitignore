@@ -7,6 +7,9 @@ bin/
 .jetskicli
 cli/cli
 
+# IntelliJ files
+.idea/
+
 # Factory token status cache
 .factory_suspended_keys.json
 .factory_quota_exceeded_keys.json
