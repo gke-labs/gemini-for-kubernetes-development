@@ -444,11 +444,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 					running++
 				}
 			}
-			limit := boardLimit(board, "maxActivePerUser", 2)
-			if ma := boardLimit(board, "maxActive", 5); ma < limit {
-				limit = ma
-			}
-			atCapacity := int64(running) >= limit
+			atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
 			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
 			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
 			mark := func(item *models.WorkItem, startingStage string) {
@@ -1299,16 +1295,15 @@ var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error
 // gear panel. Access/prepIdentity/sandbox stay kubectl-only (owner-level
 // governance and operator concerns).
 type boardSpecView struct {
-	Editable         bool     `json:"editable"`
-	TriggerLabel     string   `json:"triggerLabel"`
-	TriageIssues     bool     `json:"triageIssues"`
-	DraftReviews     bool     `json:"draftReviews"`
-	ExcludeLabels    []string `json:"excludeLabels"`
-	MaxActive        int64    `json:"maxActive"`
-	MaxActivePerUser int64    `json:"maxActivePerUser"`
-	AutoIterate      bool     `json:"autoIterate"`
-	DraftPR          bool     `json:"draftPR"`
-	Disclose         bool     `json:"disclose"`
+	Editable      bool     `json:"editable"`
+	TriggerLabel  string   `json:"triggerLabel"`
+	TriageIssues  bool     `json:"triageIssues"`
+	DraftReviews  bool     `json:"draftReviews"`
+	ExcludeLabels []string `json:"excludeLabels"`
+	MaxActive     int64    `json:"maxActive"`
+	AutoIterate   bool     `json:"autoIterate"`
+	DraftPR       bool     `json:"draftPR"`
+	Disclose      bool     `json:"disclose"`
 }
 
 func (s *Server) getBoardSpec(c *gin.Context) {
@@ -1327,7 +1322,6 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 	view.DraftReviews, _, _ = unstructured.NestedBool(board.Object, "spec", "intake", "draftReviews")
 	view.ExcludeLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "intake", "filters", "excludeLabels")
 	view.MaxActive, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActive")
-	view.MaxActivePerUser, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActivePerUser")
 	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
 	view.DraftPR, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "draftPR")
 	view.Disclose, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "disclose")
@@ -1369,7 +1363,6 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		set(payload.DraftReviews, "spec", "intake", "draftReviews") &&
 		set(labels, "spec", "intake", "filters", "excludeLabels") &&
 		set(payload.MaxActive, "spec", "limits", "maxActive") &&
-		set(payload.MaxActivePerUser, "spec", "limits", "maxActivePerUser") &&
 		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
 		set(payload.DraftPR, "spec", "policy", "draftPR") &&
 		set(payload.Disclose, "spec", "policy", "disclose")

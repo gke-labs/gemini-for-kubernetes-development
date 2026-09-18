@@ -113,13 +113,12 @@ type PolicySpec struct {
 	Disclose bool `json:"disclose,omitempty"`
 }
 
-// LimitsSpec caps concurrent factory work for the board.
+// LimitsSpec caps concurrent factory work for the board. One knob:
+// boards are personal (executor == owner), so a per-user limit would
+// always cap the same population as the board limit.
 type LimitsSpec struct {
 	// +kubebuilder:default=5
 	MaxActive int `json:"maxActive,omitempty"`
-
-	// +kubebuilder:default=2
-	MaxActivePerUser int `json:"maxActivePerUser,omitempty"`
 }
 
 // SandboxSpec is passed through to factory invocations.

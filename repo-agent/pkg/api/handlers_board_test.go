@@ -1049,6 +1049,8 @@ func TestMailboxQueuedAtCapacity(t *testing.T) {
 	}
 	board := boardCR()
 	board.SetAnnotations(map[string]string{"board.gemini.google.com/requests": `{"review-92": "alice"}`})
+	// Single limit knob: capacity for this test is the board's maxActive.
+	_ = unstructured.SetNestedField(board.Object, int64(2), "spec", "limits", "maxActive")
 
 	_, r, _ := boardTestServer(t, ghResponses, board, running("factory-pr-repo-90", "90"), running("factory-pr-repo-91", "91"))
 

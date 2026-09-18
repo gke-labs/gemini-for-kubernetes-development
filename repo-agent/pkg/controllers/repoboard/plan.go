@@ -89,11 +89,6 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		logger.Info("plan deferred: board at maxActive", "issue", req.issue, "limit", maxActive(work.board))
 		return
 	}
-	if r.activeForExecutor(work, req.member) >= maxActivePerUser(work.board) && sb == nil {
-		logger.Info("plan deferred: executor at maxActivePerUser", "issue", req.issue, "executor", req.member, "limit", maxActivePerUser(work.board))
-		return
-	}
-
 	token, err := r.executorToken(ctx, req.member)
 	if err != nil {
 		logger.Error(err, "plan executor has no token", "executor", req.member, "issue", req.issue)

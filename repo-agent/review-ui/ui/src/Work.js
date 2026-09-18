@@ -818,11 +818,6 @@ function Work({ onBack, namespace }) {
                   <input type="number" min="1" value={spec.maxActive || 5} style={{ width: '80px' }}
                     onChange={e => setSpec({ ...spec, maxActive: parseInt(e.target.value, 10) || 5 })} />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  Max per member
-                  <input type="number" min="1" value={spec.maxActivePerUser || 2} style={{ width: '80px' }}
-                    onChange={e => setSpec({ ...spec, maxActivePerUser: parseInt(e.target.value, 10) || 2 })} />
-                </label>
               </div>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />

@@ -138,22 +138,15 @@ type fixPlan struct {
 	auto bool
 }
 
-// maxActive/maxActivePerUser mirror the CRD defaults for specs that omit
-// the limits block entirely (API-server defaulting only fires when the
-// parent object exists, so a UI-created board carries no limits at all —
-// zero must mean "default", not "block every launch").
+// maxActive mirrors the CRD default for specs that omit the limits block
+// entirely (API-server defaulting only fires when the parent object
+// exists, so a UI-created board carries no limits at all — zero must mean
+// "default", not "block every launch").
 func maxActive(board *boardv1alpha1.RepoBoard) int {
 	if board.Spec.Limits.MaxActive <= 0 {
 		return 5
 	}
 	return board.Spec.Limits.MaxActive
-}
-
-func maxActivePerUser(board *boardv1alpha1.RepoBoard) int {
-	if board.Spec.Limits.MaxActivePerUser <= 0 {
-		return 2
-	}
-	return board.Spec.Limits.MaxActivePerUser
 }
 
 // reviewPlan is one review to ensure. Reviews are always attributed: the
@@ -718,11 +711,6 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		log.FromContext(ctx).Info("fix deferred: board at maxActive", "issue", plan.issue, "limit", maxActive(work.board))
 		return
 	}
-	if r.activeForExecutor(work, plan.executor) >= maxActivePerUser(work.board) && sb == nil {
-		log.FromContext(ctx).Info("fix deferred: executor at maxActivePerUser", "issue", plan.issue, "executor", plan.executor, "limit", maxActivePerUser(work.board))
-		return
-	}
-
 	token, err := r.executorToken(ctx, plan.executor)
 	if err != nil {
 		logger.Error(err, "executor token unavailable", "executor", plan.executor)
@@ -835,10 +823,6 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		logger.Info("review deferred: board at maxActive", "pr", plan.pr, "limit", maxActive(work.board))
-		return
-	}
-	if r.activeForExecutor(work, plan.executor) >= maxActivePerUser(work.board) && sb == nil {
-		logger.Info("review deferred: executor at maxActivePerUser", "pr", plan.pr, "executor", plan.executor, "limit", maxActivePerUser(work.board))
 		return
 	}
 	// GitHub is the only storage for pending reviews and allows one per
@@ -1177,20 +1161,6 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 func (r *Reconciler) activeCount(work *workState) int {
 	active := 0
 	for _, sb := range work.sandboxes {
-		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
-		if err == nil && found && replicas > 0 {
-			active++
-		}
-	}
-	return active
-}
-
-func (r *Reconciler) activeForExecutor(work *workState, namespace string) int {
-	active := 0
-	for _, sb := range work.sandboxes {
-		if sb.GetNamespace() != namespace {
-			continue
-		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
 		if err == nil && found && replicas > 0 {
 			active++
