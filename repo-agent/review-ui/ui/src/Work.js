@@ -38,13 +38,16 @@ const AGENT_STAGE = {
   'planning': 'planning',
 };
 
-// Action-first grouping (tabs). UP NEXT pins needs-you rows across groups.
+// Action-first grouping (tabs). Up Next is the default tab: every
+// needs-you row across groups, uncapped — the inbox. Group tabs are the
+// complete per-group views.
+const UP_NEXT = 'up-next';
 const GROUPS = [
+  { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
   { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
   { key: 'issues', label: 'Issues', hint: 'All open issues — yours, unclaimed, and filed by you; actions follow each row' },
   { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
 ];
-const UP_NEXT_CAP = 5;
 
 function groupOf(item) {
   return item.group || (item.type === 'issue' ? 'issues' : 'review');
@@ -679,11 +682,10 @@ function Work({ onBack, namespace }) {
         const byGroup = {};
         GROUPS.forEach(g => { byGroup[g.key] = []; });
         work.forEach(item => { (byGroup[groupOf(item)] = byGroup[groupOf(item)] || []).push(item); });
-        const upNext = work.filter(i => i.attention === 'needs-you');
-        const shown = activeGroup
-          || (GROUPS.find(g => byGroup[g.key].some(i => i.attention === 'needs-you')) || {}).key
-          || (GROUPS.find(g => byGroup[g.key].length) || {}).key
-          || 'review';
+        byGroup[UP_NEXT] = work.filter(i => i.attention === 'needs-you');
+        // Always land on Up Next: consistent muscle memory, and its empty
+        // state ("nothing needs you") is the good news, not a dead end.
+        const shown = activeGroup || UP_NEXT;
         const rows = byGroup[shown] || [];
         const groupLabel = { review: 'REVIEW', issues: 'ISSUE', 'mine-pr': 'MY PR' };
         const header = (
@@ -700,31 +702,6 @@ function Work({ onBack, namespace }) {
         );
         return (
           <div>
-            {upNext.length > 0 ? (
-              <div className="up-next-card">
-                <div className="up-next-title">
-                  UP NEXT — needs you ({upNext.length})
-                </div>
-                <table className="work-table">
-                  <tbody>
-                    {upNext.slice(0, UP_NEXT_CAP).map(item => (
-                      <WorkRow key={`up-${item.type}-${item.number}`} item={item} boardName={activeBoard}
-                        onAction={handleAction} onRefresh={fetchWork} namespace={namespace} groupTag={groupLabel[groupOf(item)]} readOnly={readOnly} />
-                    ))}
-                  </tbody>
-                </table>
-                {upNext.length > UP_NEXT_CAP && (
-                  <div style={{ fontSize: 'small', color: 'var(--text-secondary)', padding: '4px 8px' }}>
-                    +{upNext.length - UP_NEXT_CAP} more need you — see the tab badges below.
-                  </div>
-                )}
-              </div>
-            ) : work.length > 0 && (
-              <div style={{ fontSize: 'small', color: 'var(--status-green)', margin: '0 0 12px 2px' }}>
-                ✓ Nothing needs you right now
-              </div>
-            )}
-
             <nav className="group-tabs">
               {GROUPS.map(g => {
                 const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
@@ -736,7 +713,7 @@ function Work({ onBack, namespace }) {
                     onClick={() => setActiveGroup(g.key)}
                   >
                     {g.label}
-                    {byGroup[g.key].length > 0 && (
+                    {g.key !== UP_NEXT && byGroup[g.key].length > 0 && (
                       <span style={{
                         marginLeft: '6px', backgroundColor: 'var(--bg-secondary)',
                         borderRadius: '9px', padding: '0 7px', fontSize: 'x-small',
@@ -759,12 +736,20 @@ function Work({ onBack, namespace }) {
                 {header}
                 <tbody>
                   {rows.map(item => (
-                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard} onAction={handleAction} onRefresh={fetchWork} namespace={namespace} readOnly={readOnly} />
+                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
+                      onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
+                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly} />
                   ))}
                   {!rows.length && (
-                    <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
-                      Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
-                    </td></tr>
+                    shown === UP_NEXT ? (
+                      <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
+                        ✓ Nothing needs you right now.
+                      </td></tr>
+                    ) : (
+                      <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                        Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
+                      </td></tr>
+                    )
                   )}
                 </tbody>
               </table>
