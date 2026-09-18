@@ -103,6 +103,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if needRefine {
 		feedback = annotations[AnnotationPlanFeedback]
 	}
+	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartPlan(key, factorycli.PlanOptions{
 		Namespace:         req.member,
 		IssueURL:          fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, req.issue),

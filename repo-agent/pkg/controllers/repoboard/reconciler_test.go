@@ -1065,3 +1065,41 @@ func TestAutoReviewDefersToSubmitted(t *testing.T) {
 	g.Expect(fake2.launches()).To(gomega.HaveLen(1))
 	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
 }
+
+// Relaunching into a paused sandbox stamps unpaused-at so pauseFinished
+// cannot kill the pod mid-boot (the #1423 race, generalized to marker-less
+// wakes like triage clicks).
+func TestWakeStampsUnpaused(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	paused := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "triage-repo-30",
+			"namespace": "alice",
+			"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/30",
+				"sandbox.gemini.google.com/last-task-state":  "Completed",
+				"sandbox.gemini.google.com/completion-time":  time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
+				"board.gemini.google.com/triage-rejected-at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(0)},
+	}}
+
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{AnnotationRequests: `{"triage-30": "alice"}`})
+	board.Spec.Auto.Fix = "off"
+	r := newTestReconciler(fake, ghClient, board, githubSecret(), paused)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.HaveLen(1))
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationUnpausedAt]).NotTo(gomega.BeEmpty())
+}
