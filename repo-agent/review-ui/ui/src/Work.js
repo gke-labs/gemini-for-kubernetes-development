@@ -199,8 +199,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, re
     }
     if (readOnly) {
       // No fix pipeline without push: the agent's PR could not land.
-    } else if (['open', 'untriaged', 'triage-ready', 'triaged'].includes(item.stage)) {
+    } else if (['open', 'untriaged', 'triaged'].includes(item.stage)) {
       // Stage is the guard (a resting sandbox chip must not hide verbs).
+      // Triage-ready deliberately isn't here: a pending draft demands its
+      // verdict (Publish | Reject) before other verbs return — otherwise
+      // a Plan/Fix started on top buries the draft unpublished.
       // Plan first (agent drafts, you refine and approve — the approved
       // plan launches the fix), or Fix directly.
       actions.push({ label: 'Plan', path: `issues/${item.number}/plan`, title: 'Agent drafts an implementation plan for you to refine and approve — nothing is written to GitHub until you approve' });
