@@ -827,9 +827,10 @@ function Work({ onBack, namespace }) {
         // demands first, actions inline (each row posts to its own
         // board). Just Up Next — a cross-repo triage queue would mix
         // hats, but an inbox of things waiting on YOU is one hat.
+        const stageDeferred = i => (i.stage === 'review-requested' ? 1 : 0);
         const upNextAll = work
           .filter(i => i.attention === 'needs-you')
-          .sort((x, y) => (x.updatedAt < y.updatedAt ? -1 : 1));
+          .sort((x, y) => (stageDeferred(x) - stageDeferred(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
         return (
           <div>
             <div style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: '#d73a49', margin: '0 0 8px 2px', textAlign: 'left' }}>
