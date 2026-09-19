@@ -146,6 +146,20 @@ func (s *Scanner) lastInvestigationFailed(filename string) bool {
 	return last != nil && last.Status == api.StatusFailed
 }
 
+// lastCommentsTaskFailed reports whether the previous comments task ended
+// in failure, which makes the same revision worth retrying.
+func (s *Scanner) lastCommentsTaskFailed(filename string, headSHA string) bool {
+	data, err := os.ReadFile(filepath.Join(s.cfg.ProcessedDir, filename))
+	if err != nil {
+		return false
+	}
+	var t api.QueueTask
+	if err := yaml.Unmarshal(data, &t); err != nil {
+		return false
+	}
+	return t.Status == api.StatusFailed && t.CommitSHA == headSHA
+}
+
 // handlePRInvestigate queues an investigation of the pull request's CI
 // failures, or gives up and pauses the pull request once the retry limit has
 // been reached.
@@ -240,6 +254,18 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+
+	if commentAnalysis.lastCommentsTaskFailed && commentAnalysis.commentsAttemptCount >= maxCommentAttempts {
+		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+		if !s.cfg.DryRun {
+			s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated processing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentAttempts, stopLabel, stopLabel))
+			if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+				klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+			}
+		}
+		klog.Infof("Skipping PR #%d address-comments because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxCommentAttempts, stopLabel)
+		return
+	}
 
 	if s.queue.TaskExists(filename) {
 		return
