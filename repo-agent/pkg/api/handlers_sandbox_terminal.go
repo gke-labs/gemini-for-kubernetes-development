@@ -57,16 +57,26 @@ func (w *wsWriter) Write(p []byte) (int, error) {
 }
 
 type terminalFrame struct {
-	T    string `json:"t"` // "i" stdin | "r" resize
-	Data string `json:"d,omitempty"`
-	Cols uint16 `json:"c,omitempty"`
-	Rows uint16 `json:"r,omitempty"`
+	Type string `json:"type"` // "input" | "resize"
+	Data string `json:"data,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
 }
 
+// sandboxTerminal serves the sandbox card (session namespace only).
 func (s *Server) sandboxTerminal(c *gin.Context) {
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	name := c.Param("name")
-	if !safeTaskName.MatchString(name) {
+	s.streamSandboxTerminal(c, s.Auth.GetNamespaceFromContext(c), c.Param("name"))
+}
+
+// overseerTerminal serves the Overseer tab's existing route, which names
+// the namespace explicitly (admin view across sandbox namespaces) — same
+// authz as the route always had, new transport underneath.
+func (s *Server) overseerTerminal(c *gin.Context) {
+	s.streamSandboxTerminal(c, c.Param("namespace"), c.Param("name"))
+}
+
+func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
+	if !safeTaskName.MatchString(name) || !safeTaskName.MatchString(namespace) {
 		c.JSON(400, gin.H{"error": "invalid sandbox name"})
 		return
 	}
@@ -137,12 +147,12 @@ func (s *Server) sandboxTerminal(c *gin.Context) {
 			if err := json.Unmarshal(data, &frame); err != nil {
 				continue
 			}
-			switch frame.T {
-			case "i":
+			switch frame.Type {
+			case "input":
 				if _, err := stdinW.Write([]byte(frame.Data)); err != nil {
 					return
 				}
-			case "r":
+			case "resize":
 				select {
 				case sizeQueue.ch <- remotecommand.TerminalSize{Width: frame.Cols, Height: frame.Rows}:
 				default:
