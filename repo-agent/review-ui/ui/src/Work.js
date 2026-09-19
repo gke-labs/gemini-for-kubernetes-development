@@ -725,7 +725,9 @@ function Work({ onBack, namespace }) {
       .then(res => res.json())
       .then(data => {
         if (!Array.isArray(data)) return;
-        setBoards(data);
+        // Identity-stable: replacing boards with an equal array re-arms
+        // the poll effect and double-fetches every tick.
+        setBoards(prev => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
         setActiveBoard(prev => prev || (data.length ? ALL_BOARDS : ''));
       })
       .catch(err => console.error('Failed to fetch boards', err));
@@ -795,7 +797,17 @@ function Work({ onBack, namespace }) {
     const interval = setInterval(() => {
       if (!document.hidden) { fetchWork(); fetchBoards(); }
     }, 20000);
-    return () => clearInterval(interval);
+    // Polling skips hidden tabs (quota) and browsers throttle background
+    // timers — so returning to the tab must refresh NOW, not at the next
+    // tick: the wait reads as a frozen board.
+    const onReturn = () => { if (!document.hidden) { fetchWork(); fetchBoards(); } };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
   }, [fetchWork, fetchBoards]);
 
   const handleAction = (path, label, boardName) => {
