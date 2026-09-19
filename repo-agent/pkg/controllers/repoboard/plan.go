@@ -106,6 +106,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartPlan(key, factorycli.PlanOptions{
 		Namespace:         req.member,
+		SandboxName:       name,
 		IssueURL:          fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, req.issue),
 		Feedback:          feedback,
 		Image:             work.board.Spec.Sandbox.Image,

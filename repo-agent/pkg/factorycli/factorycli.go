@@ -72,6 +72,9 @@ func DraftWasPosted(output string) bool {
 
 // ReviewOptions are the inputs for a `factory pr review` invocation.
 type ReviewOptions struct {
+	// SandboxName enables the in-flight preflight (factory-pr-<repo>-<n>).
+	SandboxName string
+
 	Namespace string
 	PRURL     string
 	// Instructions are passed as repeated --instruction flags (review
@@ -102,6 +105,9 @@ type PRWatchOptions struct {
 
 // FixOptions are the inputs for a `factory fix` invocation.
 type FixOptions struct {
+	// SandboxName enables the in-flight preflight (fix-<repo>-<n>).
+	SandboxName string
+
 	// Namespace the task (and its sandbox) runs in; factory resolves the
 	// task identity from the factory-user Secret in this namespace.
 	Namespace string
@@ -129,6 +135,9 @@ type FixOptions struct {
 // ISSUE PLAN banners (see ExtractPlan) and left in the sandbox for a later
 // `factory fix --with-plan`. Nothing is written to GitHub.
 type PlanOptions struct {
+	// SandboxName enables the in-flight preflight (the issue fix sandbox).
+	SandboxName string
+
 	Namespace string
 	IssueURL  string
 	// Feedback revises the previous plan in the sandbox against maintainer
@@ -176,11 +185,59 @@ type Launcher interface {
 // Runner is the real Launcher: it execs the factory binary bundled in the
 // controller image, one single-flight child process per key.
 type Runner struct {
+	Prober TaskProber
+
 	Binary string
 
 	mu      sync.Mutex
 	running map[string]struct{}
 	results map[string]Result
+}
+
+// TaskProber is the dispatchTask discipline from factory's watch
+// dispatcher, applied to the runner: before spawning an invocation, probe
+// the target sandbox. A busy sandbox is SKIPPED (the reconcile loop is
+// the requeue); an orphaned finished task — the annotation still claims
+// Running because the invocation that launched it died with the old
+// controller — is ADOPTED (its output becomes the result; nothing
+// re-executes) or, for task types with host-side completion steps,
+// corrected and released for a normal launch. Nil disables preflight.
+type TaskProber interface {
+	// Probe inspects the newest <prefix>-* task in the sandbox against
+	// the sandbox's recorded task state, correcting stale annotations as
+	// a side effect (the watch IsTaskRunning discipline).
+	Probe(ctx context.Context, namespace, sandboxName, prefix, outputFile string) (TaskProbe, error)
+}
+
+// TaskProbe is a probe verdict.
+type TaskProbe struct {
+	// State is one of "none" (nothing in flight — launch), "running"
+	// (skip; the next reconcile retries), "orphan-completed" (a finished
+	// run nobody harvested: annotation claimed Running, exit code
+	// present).
+	State    string
+	ExitCode string
+	// Output is the collected output file content (orphan-completed with
+	// a requested outputFile only).
+	Output string
+}
+
+const (
+	ProbeNone            = "none"
+	ProbeRunning         = "running"
+	ProbeOrphanCompleted = "orphan-completed"
+)
+
+// preflight describes the probe for one invocation. When outputFile is
+// set the task type is adoptable (its harvest contract is a file: plan,
+// triage); review and fix finish host-side, so their orphans are
+// corrected and relaunched normally.
+type preflight struct {
+	namespace  string
+	sandbox    string
+	prefix     string
+	outputFile string
+	banner     string
 }
 
 func NewRunner() *Runner {
@@ -221,7 +278,9 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
-	return r.start(key, args, opts.GithubToken, timeout)
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "fix",
+	})
 }
 
 func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
@@ -252,7 +311,9 @@ func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
-	return r.start(key, args, opts.GithubToken, timeout)
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "review",
+	})
 }
 
 func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
@@ -290,7 +351,10 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 	}
-	return r.start(key, args, opts.GithubToken, timeout)
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "triage",
+		outputFile: "triage-output.txt", banner: triageBanner,
+	})
 }
 
 func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
@@ -314,10 +378,58 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
-	return r.start(key, args, opts.GithubToken, timeout)
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "plan",
+		outputFile: "plan-output.txt", banner: planBanner,
+	})
 }
 
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
+	return r.startWithPreflight(key, args, githubToken, timeout, nil)
+}
+
+func (r *Runner) startWithPreflight(key string, args []string, githubToken string, timeout time.Duration, pre *preflight) bool {
+	r.mu.Lock()
+	if _, ok := r.running[key]; ok {
+		r.mu.Unlock()
+		return false
+	}
+	r.mu.Unlock()
+
+	// dispatchTask discipline, before taking the slot: busy sandbox →
+	// skip (the next reconcile is the requeue); orphaned finished task →
+	// adopt its output as the result instead of re-executing.
+	if pre != nil && r.Prober != nil && pre.sandbox != "" {
+		probeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix, pre.outputFile)
+		cancel()
+		if err == nil {
+			switch probe.State {
+			case ProbeRunning:
+				klog.Infof("factorycli: sandbox %s/%s busy with an in-flight %s task; skipping launch (key %s)", pre.namespace, pre.sandbox, pre.prefix, key)
+				return false
+			case ProbeOrphanCompleted:
+				if pre.outputFile != "" {
+					klog.Infof("factorycli: adopting orphaned %s result in %s/%s (key %s)", pre.prefix, pre.namespace, pre.sandbox, key)
+					res := Result{FinishedAt: time.Now()}
+					if probe.ExitCode == "0" {
+						res.Output = pre.banner + "\n" + probe.Output + "\n================================================\n"
+					} else {
+						res.Err = fmt.Errorf("adopted %s task exited %s", pre.prefix, probe.ExitCode)
+						res.Output = probe.Output
+					}
+					r.mu.Lock()
+					r.results[key] = res
+					r.mu.Unlock()
+					return true
+				}
+				// Host-side task types: the annotation correction already
+				// happened in Probe; fall through to a normal launch
+				// against the settled sandbox.
+			}
+		}
+	}
+
 	r.mu.Lock()
 	if _, ok := r.running[key]; ok {
 		r.mu.Unlock()
@@ -380,6 +492,9 @@ func tail(s string, n int) string {
 // TriageOptions are the inputs for a `factory triage` invocation
 // (draft-only issue triage; --publish no writes nothing to GitHub).
 type TriageOptions struct {
+	// SandboxName enables the in-flight preflight (triage-<repo>-<n>).
+	SandboxName string
+
 	Namespace   string
 	IssueURL    string
 	GithubToken string

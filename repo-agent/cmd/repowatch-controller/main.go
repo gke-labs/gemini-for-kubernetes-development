@@ -21,6 +21,7 @@ package main
 
 import (
 	"flag"
+	"k8s.io/klog/v2"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -50,6 +51,19 @@ func init() {
 
 	utilruntime.Must(boardv1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
+}
+
+// newRunnerWithProber wires the in-flight task preflight (adopt, don't
+// duplicate — the watch dispatcher's recovery discipline) when a cluster
+// client is available; without one the runner works as before.
+func newRunnerWithProber() *factorycli.Runner {
+	runner := factorycli.NewRunner()
+	if prober, err := factorycli.NewPodTaskProber(); err == nil {
+		runner.Prober = prober
+	} else {
+		klog.Warningf("task preflight disabled (no cluster client): %v", err)
+	}
+	return runner
 }
 
 func main() {
@@ -85,7 +99,7 @@ func main() {
 	if err = (&repoboard.Reconciler{
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
-		Factory: factorycli.NewRunner(),
+		Factory: newRunnerWithProber(),
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoBoard")
 		os.Exit(1)

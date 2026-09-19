@@ -667,6 +667,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	r.stampUnpaused(ctx, sb)
 	if r.Factory.StartFix(key, factorycli.FixOptions{
 		Namespace:         plan.executor,
+		SandboxName:       name,
 		IssueURL:          issueURL,
 		Instruction:       instruction,
 		Image:             work.board.Spec.Sandbox.Image,
@@ -772,8 +773,13 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		}
 	}
 	r.stampUnpaused(ctx, sb)
+	reviewSandbox := ""
+	if sb != nil {
+		reviewSandbox = sb.GetName()
+	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
 		Namespace:         plan.executor,
+		SandboxName:       reviewSandbox,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
