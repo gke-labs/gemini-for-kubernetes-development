@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
 
@@ -96,6 +98,22 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	if err != nil || podID == nil {
 		writeText("\r\nsandbox pod is not running (paused?) — wake it from the card first\r\n")
 		return
+	}
+
+	// A pod mid-boot (ContainerCreating, image pull) accepts no exec:
+	// say so instead of a bare "connection ended" loop — the frontend's
+	// backoff reconnect converges the moment the container is ready.
+	if pod, perr := s.K8sManager.Clientset.CoreV1().Pods(podID.Namespace).Get(c.Request.Context(), podID.Name, v1.GetOptions{}); perr == nil {
+		ready := false
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == "Ready" && cond.Status == "True" {
+				ready = true
+			}
+		}
+		if !ready {
+			writeText(fmt.Sprintf("\r\nsandbox pod is starting (%s) — reconnecting until it's ready…\r\n", pod.Status.Phase))
+			return
+		}
 	}
 
 	// Detached from the HTTP request: the exec stream lives as long as
