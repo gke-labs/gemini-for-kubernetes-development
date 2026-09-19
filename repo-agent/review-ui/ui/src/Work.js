@@ -135,7 +135,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   };
 
   const [showPlan, setShowPlan] = useState(false);
-  const [feedbackText, setFeedbackText] = useState('');
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
@@ -147,7 +146,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     }).then(async res => {
       if (res.ok) {
         setPlanErr('');
-        if (path === 'plan-feedback') setFeedbackText('');
         if (onRefresh) onRefresh();
       } else {
         const t = await res.text();
@@ -513,29 +511,20 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               }}>{item.plan}</pre>
               {item.stage === 'plan-ready' && (
                 <div style={{ marginTop: '6px' }}>
-                  <textarea
-                    value={feedbackText}
-                    onChange={e => setFeedbackText(e.target.value)}
-                    placeholder="Feedback for the agent — what should change in this plan?"
-                    spellCheck={false}
-                    style={{
-                      width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
-                      fontSize: 'small', padding: '8px', backgroundColor: 'var(--bg-secondary)',
-                      color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
-                      borderRadius: '6px', minHeight: '60px', textAlign: 'left',
-                    }}
-                  />
                   {planErr && (
                     <div style={{
-                      fontSize: 'small', marginTop: '4px', padding: '6px 10px', borderRadius: '6px',
+                      fontSize: 'small', marginBottom: '4px', padding: '6px 10px', borderRadius: '6px',
                       backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
                       textAlign: 'left', whiteSpace: 'pre-wrap',
                     }}>{planErr}</div>
                   )}
-                  <div style={{ marginTop: '6px', textAlign: 'right' }}>
-                    <button className="btn btn-sm" disabled={!feedbackText.trim()}
-                      title="Send feedback — the agent revises the plan"
-                      onClick={() => planPost('plan-feedback', { feedback: feedbackText }, 'Refine')}>Refine</button>
+                  <div style={{ textAlign: 'right' }}>
+                    {item.sandbox && (
+                      <a className="btn btn-sm" href={`#/terminal/${namespace}/${item.sandbox.name}?chat=plan`}
+                        target="_blank" rel="noopener noreferrer"
+                        title="Continue the planning conversation — opens a terminal tab resuming the same agent session; changes to the plan file ride into Approve & Fix"
+                      >Continue session ↗</a>
+                    )}
                     <button className="btn btn-sm" style={{ marginLeft: '4px' }}
                       title="Edit the plan text directly"
                       onClick={() => { setPlanText(item.plan); setEditingPlan(true); setPlanErr(''); }}>Edit</button>

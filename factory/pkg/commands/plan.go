@@ -185,6 +185,7 @@ func runPlan(ctx context.Context, flags PlanFlags, ephemeralStorage string, secr
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",

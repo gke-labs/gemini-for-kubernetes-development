@@ -277,6 +277,7 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",

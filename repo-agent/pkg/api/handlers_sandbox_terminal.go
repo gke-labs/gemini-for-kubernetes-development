@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,41 @@ const (
 	terminalReadTimeout  = 70 * time.Second
 	terminalSession      = "board"
 )
+
+// Chat mode (`?chat=<taskType>`): instead of a shell, the terminal drops
+// straight into `gemini --resume latest` — continuing the conversation a
+// prior factory task left behind. Sessions are keyed by HOME + cwd; every
+// factory task type now runs under the workspace PVC's home, so resumed
+// conversations survive pod restarts and pauses. The map is the chat
+// whitelist, and the wire contract with the factory task scripts — if a
+// task's HOME moves there, it moves here. First use case: continue a plan.
+var chatHomeByTask = map[string]string{
+	"plan":   "/workspaces/.home",
+	"triage": "/workspaces/.home",
+	"review": "/workspaces/.home",
+	"fix":    "/workspaces/.home",
+	"agent":  "/workspaces/.home",
+}
+
+// shellSingleQuote makes s safe inside single quotes for sh.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// chatCommand builds the tmux attach for a resumed agent conversation.
+// Each task type gets its own tmux session (chat-plan, …) so it coexists
+// with the "board" shell; -A means a second tab joins the same chat. The
+// repo checkout is found in the pod (the one /workspaces/*/.git), not
+// trusted from the client.
+func chatCommand(taskType, home, apiKey string) string {
+	inner := fmt.Sprintf(
+		"export HOME=%s; export GEMINI_API_KEY=%s; "+
+			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
+			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
+			"exec gemini --resume latest",
+		home, shellSingleQuote(apiKey))
+	return "TERM=xterm-256color exec tmux new-session -A -s chat-" + taskType + " " + shellSingleQuote(inner)
+}
 
 // wsSizeQueue feeds xterm resize frames to the exec stream.
 type wsSizeQueue struct {
@@ -81,6 +117,13 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	if !safeTaskName.MatchString(name) || !safeTaskName.MatchString(namespace) {
 		c.JSON(400, gin.H{"error": "invalid sandbox name"})
 		return
+	}
+	chatTask := c.Query("chat")
+	if chatTask != "" {
+		if _, ok := chatHomeByTask[chatTask]; !ok {
+			c.JSON(400, gin.H{"error": "unknown chat task type"})
+			return
+		}
 	}
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -179,10 +222,24 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 		}
 	}()
 
+	command := "TERM=xterm-256color exec tmux new-session -A -s " + terminalSession
+	if chatTask != "" {
+		// The gemini key rides in from the factory-user secret (the same
+		// identity the task ran under) — the pod itself never stores it.
+		apiKey := ""
+		if secret, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); serr == nil {
+			apiKey = string(secret.Data["GEMINI_API_KEY"])
+		}
+		if apiKey == "" {
+			writeText("\r\n(no GEMINI_API_KEY in this namespace's factory-user secret — gemini will ask you to authenticate)\r\n")
+		}
+		command = chatCommand(chatTask, chatHomeByTask[chatTask], apiKey)
+	}
+
 	// The session lives in tmux: this exec merely attaches, so a dropped
 	// connection loses nothing and the next one resumes where you were.
 	execErr := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
-		Command:     []string{"sh", "-c", "TERM=xterm-256color exec tmux new-session -A -s " + terminalSession},
+		Command:     []string{"sh", "-c", command},
 		TTY:         true,
 		StdinReader: stdinR,
 		Stdout:      out,
