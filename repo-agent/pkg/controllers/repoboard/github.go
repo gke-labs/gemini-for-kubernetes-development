@@ -19,11 +19,13 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 
 	"github.com/google/go-github/v39/github"
+	"github.com/gregjones/httpcache"
 	"golang.org/x/oauth2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,8 +82,7 @@ func (r *Reconciler) memberGithubClient(ctx context.Context, namespace string) (
 	if token == "" {
 		return nil, "", fmt.Errorf("no github token in secret %s/%s", namespace, githubSecretName)
 	}
-	tc := oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
-	return clients.NewGitHubClientFromHTTP(tc), token, nil
+	return githubClientFromToken(ctx, token), token, nil
 }
 
 // executorToken resolves a member's GitHub token from their namespace
@@ -114,9 +115,25 @@ func (r *Reconciler) identityFromSecret(ctx context.Context, namespace string) (
 	return login, string(secret.Data["email"]), true
 }
 
-func githubClientFromToken(ctx context.Context, token string) *github.Client {
-	tc := oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
-	return clients.NewGitHubClientFromHTTP(tc)
+// ghConditionalCache backs conditional requests (ETags) for every
+// controller-side GitHub read: the reconcile loop polls each board about
+// once a minute, and GitHub answers unchanged resources with 304 — which
+// costs ZERO rate-limit quota. Steady-state reconciles of a quiet repo
+// become nearly free. Responses carry Vary: Authorization, so entries key
+// per token and never leak across members.
+var ghConditionalCache = httpcache.NewMemoryCache()
+
+func githubClientFromToken(_ context.Context, token string) *github.Client {
+	// Transport order matters: oauth2 OUTSIDE, cache INSIDE, so the cache
+	// layer sees the Authorization header — that is what makes GitHub's
+	// Vary: Authorization actually partition entries per token. The
+	// inverted order silently shares cached bodies across members.
+	cached := httpcache.NewTransport(ghConditionalCache)
+	auth := &oauth2.Transport{
+		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+		Base:   cached,
+	}
+	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: auth})
 }
 
 // ensureFactoryUserSecret materializes a member's identity as the
