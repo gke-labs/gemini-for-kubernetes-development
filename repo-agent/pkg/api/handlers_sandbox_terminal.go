@@ -81,7 +81,11 @@ func chatOrientation(taskType, sandboxName string) string {
 // repo checkout is found in the pod (the one /workspaces/*/.git), not
 // trusted from the client.
 func chatCommand(taskType, home, apiKey, orientation string) string {
-	resume := "exec gemini --resume latest"
+	// Trust like the task runs do (no interactive prompt), and widen the
+	// workspace to /workspaces: artifact files (plan-issue-N.md) live one
+	// level above the repo checkout, deliberately outside git clean's
+	// reach — without the extra root, write_file could not touch them.
+	resume := "exec gemini --skip-trust --include-directories /workspaces --resume latest"
 	if orientation != "" {
 		resume += " -i " + shellSingleQuote(orientation)
 	}
@@ -91,7 +95,7 @@ func chatCommand(taskType, home, apiKey, orientation string) string {
 	// resume still finds the conversation; -p keeps mtimes so a stale
 	// /root session never masquerades as "latest".
 	inner := fmt.Sprintf(
-		"export HOME=%s; export GEMINI_API_KEY=%s; "+
+		"export HOME=%s; export GEMINI_API_KEY=%s; export GEMINI_CLI_TRUST_WORKSPACE=true; "+
 			`if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; `+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+

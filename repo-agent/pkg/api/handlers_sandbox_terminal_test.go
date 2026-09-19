@@ -15,8 +15,9 @@ func TestChatCommand(t *testing.T) {
 	for _, want := range []string{
 		"tmux new-session -A -s chat-plan",
 		"export HOME=/workspaces/.home",
+		"export GEMINI_CLI_TRUST_WORKSPACE=true",
 		"cp -Rnp /root/.gemini/tmp/.",
-		"gemini --resume latest",
+		"gemini --skip-trust --include-directories /workspaces --resume latest",
 		`GEMINI_API_KEY='\''sk-test'\''`,
 	} {
 		if !strings.Contains(cmd, want) {
