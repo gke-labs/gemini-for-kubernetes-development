@@ -102,9 +102,16 @@ var ghConditionalCache = httpcache.NewMemoryCache()
 // inside the cache transport so the Authorization header is set before
 // the conditional-request layer sees it.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
+	// oauth2 OUTSIDE, cache INSIDE: the cache layer must see the
+	// Authorization header for Vary: Authorization to partition entries
+	// per member — critical here, where ListReviews responses carry
+	// viewer-private pending reviews.
 	cached := httpcache.NewTransport(ghConditionalCache)
-	cached.Transport = &oauth2.Transport{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})}
-	return github.NewClient(&http.Client{Transport: cached})
+	auth := &oauth2.Transport{
+		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+		Base:   cached,
+	}
+	return github.NewClient(&http.Client{Transport: auth})
 }
 
 // memberToken resolves the session member's GitHub token (manual_pat >

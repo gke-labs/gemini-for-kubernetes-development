@@ -124,9 +124,16 @@ func (r *Reconciler) identityFromSecret(ctx context.Context, namespace string) (
 var ghConditionalCache = httpcache.NewMemoryCache()
 
 func githubClientFromToken(_ context.Context, token string) *github.Client {
+	// Transport order matters: oauth2 OUTSIDE, cache INSIDE, so the cache
+	// layer sees the Authorization header — that is what makes GitHub's
+	// Vary: Authorization actually partition entries per token. The
+	// inverted order silently shares cached bodies across members.
 	cached := httpcache.NewTransport(ghConditionalCache)
-	cached.Transport = &oauth2.Transport{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})}
-	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: cached})
+	auth := &oauth2.Transport{
+		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+		Base:   cached,
+	}
+	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: auth})
 }
 
 // ensureFactoryUserSecret materializes a member's identity as the
