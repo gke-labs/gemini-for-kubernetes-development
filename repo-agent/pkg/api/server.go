@@ -109,7 +109,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	terminal := router.Group("/api/terminal")
 	terminal.Use(s.Auth.Middleware())
 	{
-		terminal.GET("/:namespace/:name", s.terminal)
+		terminal.GET("/:namespace/:name", s.overseerTerminal)
 	}
 
 	// Protected sandbox proxy routes

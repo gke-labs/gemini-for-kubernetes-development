@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Terminal as XTerm } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 
 // Work: the RepoBoard work queue (docs/design/repoboard.md §8).
 // One high-density table per board: rows are issues/PRs merged with agent
@@ -585,11 +588,11 @@ function SandboxCard({ name, onClose }) {
   // just reconnect into the same session (with backoff) until the pane
   // is closed.
   useEffect(() => {
-    if (!showTerminal || !termHostRef.current || !window.Terminal) return undefined;
+    if (!showTerminal || !termHostRef.current) return undefined;
     const state = { closed: false, retry: 0, ws: null };
     termRef.current = state;
-    const term = new window.Terminal({ fontSize: 12, cursorBlink: true, theme: { background: '#0d1117' } });
-    const fit = new window.FitAddon.FitAddon();
+    const term = new XTerm({ fontSize: 12, cursorBlink: true, theme: { background: '#0d1117' } });
+    const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(termHostRef.current);
     fit.fit();
@@ -597,7 +600,7 @@ function SandboxCard({ name, onClose }) {
 
     const sendResize = () => {
       if (state.ws && state.ws.readyState === 1) {
-        state.ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows }));
+        state.ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     };
     const onWindowResize = () => { try { fit.fit(); sendResize(); } catch (e) { /* detached */ } };
@@ -623,7 +626,7 @@ function SandboxCard({ name, onClose }) {
       };
     };
     term.onData((data) => {
-      if (state.ws && state.ws.readyState === 1) state.ws.send(JSON.stringify({ t: 'i', d: data }));
+      if (state.ws && state.ws.readyState === 1) state.ws.send(JSON.stringify({ type: 'input', data }));
     });
     connect();
 
