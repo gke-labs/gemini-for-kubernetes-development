@@ -7,7 +7,10 @@ import 'xterm/css/xterm.css';
 // card uses: the session lives in tmux inside the pod, so a dropped
 // socket loses nothing — this component reconnects with backoff into the
 // same session instead of dying with a "connection closed" epitaph.
-const SandboxTerminal = ({ namespace, sandboxName, fill }) => {
+// chat: a factory task type ("plan", …) — instead of a shell, the server
+// drops the terminal into `gemini --resume latest` under that task's HOME,
+// continuing the conversation the task left behind in the sandbox.
+const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
 
@@ -34,13 +37,16 @@ const SandboxTerminal = ({ namespace, sandboxName, fill }) => {
             if (state.closed) return;
             setStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(`${protocol}//${window.location.host}/api/terminal/${namespace}/${sandboxName}`);
+            const chatQuery = chat ? `?chat=${encodeURIComponent(chat)}` : '';
+            const socket = new WebSocket(`${protocol}//${window.location.host}/api/terminal/${namespace}/${sandboxName}${chatQuery}`);
             socket.binaryType = 'arraybuffer';
             state.ws = socket;
 
             socket.onopen = () => {
                 state.retry = 0;
-                setStatus('connected — session lives in tmux and survives disconnects');
+                setStatus(chat
+                    ? `connected — continuing the ${chat} conversation (tmux-backed, survives disconnects)`
+                    : 'connected — session lives in tmux and survives disconnects');
                 fitAddon.fit();
                 sendResize();
             };
@@ -78,7 +84,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill }) => {
             window.removeEventListener('resize', handleResize);
             resizeObserver.disconnect();
         };
-    }, [namespace, sandboxName]);
+    }, [namespace, sandboxName, chat]);
 
     return (
         <div style={fill
