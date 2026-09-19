@@ -154,7 +154,7 @@ func TestRecover_AdoptedTaskSurvivesFailedCompletionProbe(t *testing.T) {
 
 func TestRecover_AlreadyCompletedTaskMovesToProcessed(t *testing.T) {
 	tempDir := t.TempDir()
-	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
+	d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, nil)
 	sandboxes.completed["sandbox"] = true
 
 	writeProcessingTask(t, tempDir, "task-issue-101.yaml", 101)
@@ -165,6 +165,10 @@ func TestRecover_AlreadyCompletedTaskMovesToProcessed(t *testing.T) {
 	waitForCounts(t, queue, 0, 0, 1)
 	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-101.yaml")); err != nil {
 		t.Errorf("expected the task file in processed: %v", err)
+	}
+	// Nothing reported this task while the watcher was down, so recovery has to.
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single successful completion notification, got %v", outcomes)
 	}
 	if d.sandboxLocks.IsBusy("sandbox") {
 		t.Error("expected no sandbox lease to be held for an already completed task")

@@ -84,6 +84,10 @@ func (d *Dispatcher) recoverTask(ctx context.Context, filename string, task *api
 		if err := d.queue.CompleteTask(filename, task); err != nil {
 			klog.Errorf("Failed to complete recovered task %s: %v", filename, err)
 		}
+		// The task finished while this process was away, so nothing has reported its
+		// outcome yet. Without this the acknowledgements it collected when it was
+		// queued are never resolved, and the work looks unfinished on GitHub forever.
+		d.coordinator.NotifyTaskFinished(ctx, task, nil)
 
 	case sandboxStateGone:
 		// The sandbox is gone or never ran the task: requeue it for a fresh attempt.

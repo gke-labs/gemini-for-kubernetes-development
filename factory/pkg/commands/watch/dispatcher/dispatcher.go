@@ -408,6 +408,9 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 	if err != nil {
 		klog.Errorf("Failed to select user for task %s: %v", taskFilename, err)
 		_ = d.queue.FailTask(taskFilename, task, err.Error())
+		// Failing before the workload starts is still a finished task: the work was
+		// acknowledged when it was queued, so the outcome has to be reported.
+		d.coordinator.NotifyTaskFinished(ctx, task, err)
 		return
 	}
 

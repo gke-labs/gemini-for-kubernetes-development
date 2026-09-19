@@ -475,6 +475,9 @@ func TestDispatchOnce_UserSelectionFailureFailsTask(t *testing.T) {
 		t.Errorf("expected no execution when user selection fails")
 	}
 	waitForCounts(t, queue, 0, 0, 1)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] == nil {
+		t.Errorf("expected a failure notification for a task that never got to run, got %v", outcomes)
+	}
 }
 
 func TestRun_DispatchesTaskEnqueuedAfterStartup(t *testing.T) {
