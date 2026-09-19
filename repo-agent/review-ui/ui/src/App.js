@@ -4,10 +4,36 @@ import Settings from './Settings';
 import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
+import SandboxTerminal from './Terminal';
 
 // Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
 // The legacy RepoWatch dashboard (Review/Issues/Dev tabs) retired with
 // design Phase 5; Overseer, Usage, and Settings remain as header views.
+
+// Hash route #/terminal/<ns>/<name>: a full-window terminal page for real
+// window management (pop out of the sandbox card, multi-monitor, share the
+// link). Hash-based so any static hosting serves it; tmux means every
+// window attached to the same sandbox shares one live session.
+function terminalRoute() {
+  const m = window.location.hash.match(/^#\/terminal\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/);
+  return m ? { namespace: m[1], name: m[2] } : null;
+}
+
+function TerminalPage({ route }) {
+  useEffect(() => {
+    document.title = `${route.name} — terminal`;
+  }, [route]);
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#1e1e1e' }}>
+      <div style={{ padding: '6px 10px', color: '#8b949e', fontSize: 'small', textAlign: 'left', fontFamily: 'monospace' }}>
+        {route.namespace}/{route.name}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <SandboxTerminal namespace={route.namespace} sandboxName={route.name} fill />
+      </div>
+    </div>
+  );
+}
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -15,6 +41,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
+  const [termRoute] = useState(terminalRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [providersError, setProvidersError] = useState(false);
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
@@ -188,6 +215,10 @@ function App() {
     .catch(err => alert("Failed to submit feedback: " + err))
     .finally(() => setIsSubmittingFeedback(false));
   };
+
+  // The standalone terminal window bypasses the shell chrome entirely
+  // (auth still applies: the websocket endpoint sits behind the session).
+  if (termRoute && isAuthenticated) return <TerminalPage route={termRoute} />;
 
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
 

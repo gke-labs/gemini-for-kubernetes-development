@@ -571,7 +571,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
 // SandboxCard: the half-screen overlay behind every sandbox chip — task
 // history (newest first) with expandable log tails and Follow, plus
 // wake/pause. Terminal and richer lifecycle land here later.
-function SandboxCard({ name, onClose }) {
+function SandboxCard({ name, namespace, onClose }) {
   const [card, setCard] = useState(null);
   const [err, setErr] = useState('');
   const [openTask, setOpenTask] = useState('');
@@ -579,6 +579,7 @@ function SandboxCard({ name, onClose }) {
   const [follow, setFollow] = useState(false);
   const logRef = useRef(null);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [termStatus, setTermStatus] = useState('');
   const termHostRef = useRef(null);
   const termRef = useRef(null); // { term, fit, ws, closed }
@@ -597,6 +598,11 @@ function SandboxCard({ name, onClose }) {
     term.open(termHostRef.current);
     fit.fit();
     state.term = term;
+
+    // Refit when the card itself resizes (expand toggle, drag) — width
+    // changes must reach tmux, not just window resizes.
+    const hostObserver = new ResizeObserver(() => { try { fit.fit(); sendResize(); } catch (e) { /* detached */ } });
+    hostObserver.observe(termHostRef.current);
 
     const sendResize = () => {
       if (state.ws && state.ws.readyState === 1) {
@@ -632,6 +638,7 @@ function SandboxCard({ name, onClose }) {
 
     return () => {
       state.closed = true;
+      hostObserver.disconnect();
       window.removeEventListener('resize', onWindowResize);
       if (state.ws) try { state.ws.close(); } catch (e) { /* gone */ }
       term.dispose();
@@ -682,7 +689,7 @@ function SandboxCard({ name, onClose }) {
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 900 }} />
       <div style={{
-        position: 'fixed', top: 0, right: 0, height: '100%', width: 'min(640px, 55%)',
+        position: 'fixed', top: 0, right: 0, height: '100%', width: expanded ? '80%' : 'min(640px, 55%)',
         backgroundColor: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)',
         boxShadow: '-6px 0 24px rgba(0,0,0,0.25)', zIndex: 901, overflowY: 'auto',
         padding: '14px 16px', textAlign: 'left',
@@ -701,7 +708,7 @@ function SandboxCard({ name, onClose }) {
               <button className="btn btn-sm" onClick={() => lifecycle('wake')} title="Scale the sandbox back up to inspect tasks and logs">Wake</button>
             )}
             {card && !card.paused && !card.starting && (
-              <button className="btn btn-sm" onClick={() => setShowTerminal(v => !v)}
+              <button className="btn btn-sm" onClick={() => setShowTerminal(v => { const next = !v; if (next) setExpanded(true); return next; })}
                 title="Shell into the sandbox — the session lives in tmux and survives disconnects">
                 {showTerminal ? 'Hide terminal' : 'Terminal'}
               </button>
@@ -709,8 +716,12 @@ function SandboxCard({ name, onClose }) {
             {card && !card.paused && !card.starting && (
               <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
             )}
+            <button className="btn btn-sm" onClick={() => setExpanded(v => !v)} title={expanded ? 'Shrink the card' : 'Expand the card to 80%'}>{expanded ? '⇥' : '⛶'}</button>
             <button className="btn btn-sm" onClick={load} title="Refresh">↻</button>
-            <button className="btn btn-sm" onClick={onClose} title="Close (Esc)">✕</button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <button className="btn btn-sm" onClick={onClose} title="Close (Esc)">✕</button>
+              <kbd style={{ fontSize: 'x-small', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '3px', padding: '0 4px' }}>esc</kbd>
+            </span>
           </span>
         </div>
         {err && <div style={{ color: 'var(--danger, #d33)', fontSize: 'small', marginTop: '8px' }}>{err}</div>}
@@ -730,6 +741,9 @@ function SandboxCard({ name, onClose }) {
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
               <span style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-secondary)' }}>TERMINAL</span>
               <span style={{ marginLeft: '8px', fontSize: 'x-small', color: 'var(--text-secondary)' }}>{termStatus}</span>
+              <a href={`#/terminal/${namespace}/${name}`} target="_blank" rel="noopener noreferrer"
+                className="btn btn-sm" style={{ marginLeft: 'auto', textDecoration: 'none' }}
+                title="Pop out into its own window — same tmux session, real window management">↗ pop out</a>
             </div>
             <div ref={termHostRef} style={{ height: '45vh', backgroundColor: '#0d1117', borderRadius: '6px', padding: '4px' }} />
           </div>
@@ -1233,7 +1247,7 @@ function Work({ onBack, namespace }) {
       })()}
 
       {cardSandbox && (
-        <SandboxCard name={cardSandbox} onClose={() => setCardSandbox(null)} />
+        <SandboxCard name={cardSandbox} namespace={namespace} onClose={() => setCardSandbox(null)} />
       )}
 
       {specOpen && spec && (
