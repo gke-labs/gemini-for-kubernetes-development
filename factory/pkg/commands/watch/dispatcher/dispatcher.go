@@ -83,6 +83,9 @@ type Config struct {
 	// AdoptionPollInterval is how often an adopted task's sandbox is polled during
 	// startup recovery. Defaults to DefaultAdoptionPollInterval.
 	AdoptionPollInterval time.Duration
+	// SandboxProbeRetryDelay is how long recovery waits before retrying a sandbox
+	// probe that failed. Defaults to DefaultSandboxProbeRetryDelay.
+	SandboxProbeRetryDelay time.Duration
 	// MaxActions caps the number of tasks dispatched within a single cycle.
 	MaxActions int
 	// MaxPending caps the number of concurrently active sandbox tasks.

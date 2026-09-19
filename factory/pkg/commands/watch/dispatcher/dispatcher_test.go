@@ -17,11 +17,16 @@ import (
 type fakeSandboxService struct {
 	mu sync.Mutex
 
-	resolve      func(taskType api.TaskType, number int) string
+	resolve func(taskType api.TaskType, number int) string
+	// runningFn, when set, answers IsTaskRunning instead of the running map, so a
+	// test can vary the answer per call (e.g. a probe that fails then succeeds).
+	// It is called while f.mu is held, so it must not touch the fake itself.
+	runningFn    func(sandboxName string) (bool, error)
 	running      map[string]bool
 	completed    map[string]bool
 	runningCount int
 	runningErr   error
+	completedErr error
 	countErr     error
 	deleted      []string
 }
@@ -43,13 +48,16 @@ func (f *fakeSandboxService) ResolveName(_ context.Context, taskType api.TaskTyp
 func (f *fakeSandboxService) IsTaskRunning(_ context.Context, sandboxName string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.runningFn != nil {
+		return f.runningFn(sandboxName)
+	}
 	return f.running[sandboxName], f.runningErr
 }
 
 func (f *fakeSandboxService) IsTaskCompleted(_ context.Context, sandboxName string, _ api.TaskType) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.completed[sandboxName], nil
+	return f.completed[sandboxName], f.completedErr
 }
 
 func (f *fakeSandboxService) CountRunningTasks(context.Context) (int, error) {

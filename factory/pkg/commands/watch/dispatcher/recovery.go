@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -13,19 +14,47 @@ import (
 // no interval is configured.
 const DefaultAdoptionPollInterval = 5 * time.Second
 
+// DefaultSandboxProbeRetryDelay is how long recovery waits between attempts to probe
+// a sandbox when none is configured.
+const DefaultSandboxProbeRetryDelay = 2 * time.Second
+
+// sandboxProbeAttempts bounds how many times recovery probes a single sandbox before
+// giving up and declaring its state unknown.
+const sandboxProbeAttempts = 3
+
+// sandboxState is what recovery found in the sandbox of a task left in processing.
+type sandboxState int
+
+const (
+	// sandboxStateUnknown means the cluster would not say what the sandbox is doing.
+	sandboxStateUnknown sandboxState = iota
+	// sandboxStateRunning means the task is still executing in its sandbox.
+	sandboxStateRunning
+	// sandboxStateCompleted means the sandbox finished the task successfully.
+	sandboxStateCompleted
+	// sandboxStateGone means the sandbox is missing, or is there but never finished the task.
+	sandboxStateGone
+)
+
 // Recover reconciles tasks that were left in the processing queue by a previous run.
 //
 // Because task execution inside a cluster sandbox is detached, a task may still be
 // running even though the process that started it is gone. Each stuck task resolves
-// to exactly one of three states:
+// to exactly one of four states:
 //
 //  1. Still running: the sandbox lease is re-acquired and an adoption monitor
 //     supervises the task until it finishes.
 //  2. Already finished: the task is moved straight to processed.
 //  3. Gone (failed, evicted or missing): the task is requeued for a fresh attempt.
+//  4. Unknown: the sandbox could not be probed, so the task is left in processing
+//     for the next run to triage.
 //
 // Recover returns once every task has been triaged; adopted tasks continue to be
 // supervised in the background and are covered by Wait.
+//
+// This is the only place a stuck task's sandbox is inspected: the dispatch loop does
+// not re-check it, because the sandbox only records the state of the last task of a
+// given type and so cannot answer for a specific task after the fact.
 func (d *Dispatcher) Recover(ctx context.Context) {
 	if err := d.queue.SyncProcessingFromDisk(); err != nil {
 		klog.Errorf("Failed to sync processing tasks from disk during recovery: %v", err)
@@ -46,35 +75,81 @@ func (d *Dispatcher) Recover(ctx context.Context) {
 func (d *Dispatcher) recoverTask(ctx context.Context, filename string, task *api.QueueTask) {
 	sandboxName := d.sandboxes.ResolveName(ctx, task.Type, task.Number)
 
-	if sandboxName != "" {
-		running, err := d.sandboxes.IsTaskRunning(ctx, sandboxName)
-		if err != nil {
-			klog.Errorf("Failed to check if sandbox %s is running during recovery: %v", sandboxName, err)
-		} else if running {
-			d.adoptTask(ctx, filename, task, sandboxName)
-			return
+	switch d.triageSandbox(ctx, sandboxName, task.Type) {
+	case sandboxStateRunning:
+		d.adoptTask(ctx, filename, task, sandboxName)
+
+	case sandboxStateCompleted:
+		klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", filename, sandboxName)
+		if err := d.queue.CompleteTask(filename, task); err != nil {
+			klog.Errorf("Failed to complete recovered task %s: %v", filename, err)
 		}
 
-		completed, err := d.sandboxes.IsTaskCompleted(ctx, sandboxName, task.Type)
-		if err != nil {
-			klog.Errorf("Failed to check if sandbox %s completed its task during recovery: %v", sandboxName, err)
-		} else if completed {
-			klog.Infof("Task %s already completed in sandbox %s. Moving from processing to processed.", filename, sandboxName)
-			if err := d.queue.CompleteTask(filename, task); err != nil {
-				klog.Errorf("Failed to complete recovered task %s: %v", filename, err)
-			}
+	case sandboxStateGone:
+		// The sandbox is gone or never ran the task: requeue it for a fresh attempt.
+		task.Status = api.StatusPending
+		task.Recovered = true
+		if err := d.queue.Enqueue(filename, task); err != nil {
+			klog.Errorf("Failed to requeue stuck task %s: %v", filename, err)
 			return
 		}
+		klog.Infof("Recovered stuck task %s from processing to incoming", filename)
+
+	case sandboxStateUnknown:
+		// Recovery is the only thing that inspects the sandbox of a stuck task, so a
+		// guess here decides the task's fate: reading an unanswered probe as "gone"
+		// re-runs work that may well have finished. Leave the task where it is and
+		// let the next run triage it once the cluster is answering again.
+		klog.Errorf("Could not determine the state of sandbox %s for task %s. Leaving it in processing to be recovered by a later run.", sandboxName, filename)
+	}
+}
+
+// triageSandbox classifies the sandbox of a task left behind in processing, retrying
+// while the cluster fails to answer and reporting sandboxStateUnknown once the
+// attempts are spent.
+func (d *Dispatcher) triageSandbox(ctx context.Context, sandboxName string, taskType api.TaskType) sandboxState {
+	if sandboxName == "" {
+		return sandboxStateGone
 	}
 
-	// The sandbox is gone or never ran the task: requeue it for a fresh attempt.
-	task.Status = api.StatusPending
-	task.Recovered = true
-	if err := d.queue.Enqueue(filename, task); err != nil {
-		klog.Errorf("Failed to requeue stuck task %s: %v", filename, err)
-		return
+	for attempt := 1; ; attempt++ {
+		state, err := d.probeSandbox(ctx, sandboxName, taskType)
+		if err == nil {
+			return state
+		}
+		if attempt >= sandboxProbeAttempts {
+			klog.Errorf("Gave up probing sandbox %s after %d attempts: %v", sandboxName, attempt, err)
+			return sandboxStateUnknown
+		}
+		klog.Warningf("Failed to probe sandbox %s during recovery (attempt %d of %d): %v", sandboxName, attempt, sandboxProbeAttempts, err)
+
+		select {
+		case <-ctx.Done():
+			return sandboxStateUnknown
+		case <-time.After(d.sandboxProbeRetryDelay()):
+		}
 	}
-	klog.Infof("Recovered stuck task %s from processing to incoming", filename)
+}
+
+// probeSandbox asks the cluster once what became of a task's sandbox.
+func (d *Dispatcher) probeSandbox(ctx context.Context, sandboxName string, taskType api.TaskType) (sandboxState, error) {
+	running, err := d.sandboxes.IsTaskRunning(ctx, sandboxName)
+	if err != nil {
+		return sandboxStateUnknown, fmt.Errorf("checking whether sandbox %s is running: %w", sandboxName, err)
+	}
+	if running {
+		return sandboxStateRunning, nil
+	}
+
+	completed, err := d.sandboxes.IsTaskCompleted(ctx, sandboxName, taskType)
+	if err != nil {
+		return sandboxStateUnknown, fmt.Errorf("checking whether sandbox %s completed its task: %w", sandboxName, err)
+	}
+	if completed {
+		return sandboxStateCompleted, nil
+	}
+
+	return sandboxStateGone, nil
 }
 
 // adoptTask takes ownership of a task that is still executing in its sandbox by
@@ -117,22 +192,19 @@ func (d *Dispatcher) monitorAdoptedTask(ctx context.Context, taskFilename string
 			}
 			return
 		case <-ticker.C:
-			running, err := d.sandboxes.IsTaskRunning(monitorCtx, sandboxName)
+			// A failed probe says nothing about the task, so it is not an answer:
+			// keep polling and let the timeout be the only thing that gives up.
+			state, err := d.probeSandbox(monitorCtx, sandboxName, task.Type)
 			if err != nil {
-				klog.Warningf("Failed to check status of adopted sandbox %s: %v", sandboxName, err)
+				klog.Warningf("Failed to probe adopted sandbox %s: %v. Retrying on the next poll.", sandboxName, err)
 				continue
 			}
-			if running {
+			if state == sandboxStateRunning {
 				continue
 			}
 
-			// Task has finished! Check whether it completed or failed
-			completed, err := d.sandboxes.IsTaskCompleted(monitorCtx, sandboxName, task.Type)
-			if err != nil {
-				klog.Warningf("Failed to check completion state of adopted sandbox %s: %v", sandboxName, err)
-			}
-
-			if completed {
+			// The task has finished, one way or the other.
+			if state == sandboxStateCompleted {
 				klog.Infof("Adopted task %s in sandbox %s completed successfully.", taskFilename, sandboxName)
 				_ = d.queue.CompleteTask(taskFilename, task)
 				d.coordinator.NotifyTaskFinished(monitorCtx, task, nil)
@@ -185,4 +257,13 @@ func (d *Dispatcher) adoptionPollInterval() time.Duration {
 		return d.cfg.AdoptionPollInterval
 	}
 	return DefaultAdoptionPollInterval
+}
+
+// sandboxProbeRetryDelay returns the configured delay between sandbox probe
+// attempts during recovery, or the default.
+func (d *Dispatcher) sandboxProbeRetryDelay() time.Duration {
+	if d.cfg.SandboxProbeRetryDelay > 0 {
+		return d.cfg.SandboxProbeRetryDelay
+	}
+	return DefaultSandboxProbeRetryDelay
 }
