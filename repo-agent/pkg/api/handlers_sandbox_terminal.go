@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -51,23 +52,54 @@ func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+var trailingIssueRE = regexp.MustCompile(`-(\d+)$`)
+
+// chatOrientation is the first message of a freshly created chat session
+// (tmux -A: reattaches and second tabs skip it). It closes the
+// informational gap in a resumed conversation: the agent never wrote the
+// artifact file — the task script extracted its output there — so without
+// being told, it cannot know where the plan lives or that editing it is
+// how changes reach the board and the eventual fix.
+func chatOrientation(taskType, sandboxName string) string {
+	if taskType != "plan" {
+		return ""
+	}
+	m := trailingIssueRE.FindStringSubmatch(sandboxName)
+	if m == nil {
+		return ""
+	}
+	return fmt.Sprintf("This chat continues the planning conversation for issue #%s. "+
+		"The current plan lives at /workspaces/plan-issue-%s.md. When asked to change the plan, "+
+		"edit that file directly so it always holds the complete, current plan — the board displays "+
+		"that file, and an approved plan is executed from it. Start by reading the file, then briefly "+
+		"confirm you are ready to refine it.", m[1], m[1])
+}
+
 // chatCommand builds the tmux attach for a resumed agent conversation.
 // Each task type gets its own tmux session (chat-plan, …) so it coexists
 // with the "board" shell; -A means a second tab joins the same chat. The
 // repo checkout is found in the pod (the one /workspaces/*/.git), not
 // trusted from the client.
-func chatCommand(taskType, home, apiKey string) string {
+func chatCommand(taskType, home, apiKey, orientation string) string {
+	// Trust like the task runs do (no interactive prompt), and widen the
+	// workspace to /workspaces: artifact files (plan-issue-N.md) live one
+	// level above the repo checkout, deliberately outside git clean's
+	// reach — without the extra root, write_file could not touch them.
+	resume := "exec gemini --skip-trust --include-directories /workspaces --resume latest"
+	if orientation != "" {
+		resume += " -i " + shellSingleQuote(orientation)
+	}
 	// Transition shim: tasks that ran before every task type moved to the
 	// workspace home left their sessions under /root. If this pod hasn't
 	// restarted since (a restart wipes /root), rescue them onto the PVC so
 	// resume still finds the conversation; -p keeps mtimes so a stale
 	// /root session never masquerades as "latest".
 	inner := fmt.Sprintf(
-		"export HOME=%s; export GEMINI_API_KEY=%s; "+
+		"export HOME=%s; export GEMINI_API_KEY=%s; export GEMINI_CLI_TRUST_WORKSPACE=true; "+
 			`if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; `+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
-			"exec gemini --resume latest",
+			resume,
 		home, shellSingleQuote(apiKey))
 	return "TERM=xterm-256color exec tmux new-session -A -s chat-" + taskType + " " + shellSingleQuote(inner)
 }
@@ -239,7 +271,7 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 		if apiKey == "" {
 			writeText("\r\n(no GEMINI_API_KEY in this namespace's factory-user secret — gemini will ask you to authenticate)\r\n")
 		}
-		command = chatCommand(chatTask, chatHomeByTask[chatTask], apiKey)
+		command = chatCommand(chatTask, chatHomeByTask[chatTask], apiKey, chatOrientation(chatTask, name))
 	}
 
 	// The session lives in tmux: this exec merely attaches, so a dropped

@@ -11,12 +11,13 @@ import (
 // pod restarts), the tmux session is per-task-type so it coexists with
 // the "board" shell, and the API key must survive shell quoting.
 func TestChatCommand(t *testing.T) {
-	cmd := chatCommand("plan", chatHomeByTask["plan"], "sk-test")
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "sk-test", "")
 	for _, want := range []string{
 		"tmux new-session -A -s chat-plan",
 		"export HOME=/workspaces/.home",
+		"export GEMINI_CLI_TRUST_WORKSPACE=true",
 		"cp -Rnp /root/.gemini/tmp/.",
-		"gemini --resume latest",
+		"gemini --skip-trust --include-directories /workspaces --resume latest",
 		`GEMINI_API_KEY='\''sk-test'\''`,
 	} {
 		if !strings.Contains(cmd, want) {
@@ -34,5 +35,28 @@ func TestChatCommand(t *testing.T) {
 		if home != "/workspaces/.home" {
 			t.Errorf("chat home for %s = %s, want /workspaces/.home", task, home)
 		}
+	}
+}
+
+// The orientation closes the resumed agent's informational gap: the task
+// script, not the agent, wrote the plan file, so the agent must be told
+// where the plan lives and that editing it is the tieback to the board.
+// Injected via `-i` only on session creation (tmux -A skips it on attach).
+func TestChatOrientation(t *testing.T) {
+	o := chatOrientation("plan", "fix-substrate-1746")
+	for _, want := range []string{"issue #1746", "/workspaces/plan-issue-1746.md"} {
+		if !strings.Contains(o, want) {
+			t.Errorf("plan orientation missing %q in: %s", want, o)
+		}
+	}
+	if got := chatOrientation("fix", "fix-substrate-1746"); got != "" {
+		t.Errorf("fix chat has no orientation yet, got %q", got)
+	}
+	if got := chatOrientation("plan", "no-issue-suffix"); got != "" {
+		t.Errorf("unparseable sandbox name must skip orientation, got %q", got)
+	}
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "k", chatOrientation("plan", "fix-substrate-1746"))
+	if !strings.Contains(cmd, "--resume latest -i ") {
+		t.Errorf("orientation not wired into the resume command:\n%s", cmd)
 	}
 }
