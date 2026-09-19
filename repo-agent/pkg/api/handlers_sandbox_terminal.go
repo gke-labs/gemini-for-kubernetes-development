@@ -33,14 +33,15 @@ const (
 
 // Chat mode (`?chat=<taskType>`): instead of a shell, the terminal drops
 // straight into `gemini --resume latest` — continuing the conversation a
-// prior factory task left behind. Sessions are keyed by HOME + cwd, and
-// HOME differs by task type (fix/agent run under the workspace PVC's
-// home, plan/triage/review under the container's /root), so the task type
-// names which conversation to resume. First use case: continue a plan.
+// prior factory task left behind. Sessions are keyed by HOME + cwd; every
+// factory task type now runs under the workspace PVC's home, so resumed
+// conversations survive pod restarts and pauses. The map is the chat
+// whitelist, and the wire contract with the factory task scripts — if a
+// task's HOME moves there, it moves here. First use case: continue a plan.
 var chatHomeByTask = map[string]string{
-	"plan":   "/root",
-	"triage": "/root",
-	"review": "/root",
+	"plan":   "/workspaces/.home",
+	"triage": "/workspaces/.home",
+	"review": "/workspaces/.home",
 	"fix":    "/workspaces/.home",
 	"agent":  "/workspaces/.home",
 }

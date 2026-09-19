@@ -170,6 +170,7 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",

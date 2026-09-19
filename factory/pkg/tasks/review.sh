@@ -2,6 +2,9 @@
 set -e
 set -o pipefail
 
+USER_HOME="${HOME:-/root}"
+mkdir -p "${USER_HOME}"
+
 # It expects the following environment variables to be set:
 # - GEMINI_API_KEY
 # - GITHUB_USER_TOKEN
@@ -28,8 +31,8 @@ fi
 
 function setupGit {
     echo "Running setupGit..."
-    echo "creating /root/.config/gh directory"
-    mkdir -p /root/.config/gh
+    echo "creating ${USER_HOME}/.config/gh directory"
+    mkdir -p "${USER_HOME}/.config/gh"
 
     local GH_USER="${GITHUB_USER_ID}"
     if [ -n "${GITHUB_BOT_LOGIN}" ]; then
@@ -37,7 +40,7 @@ function setupGit {
     fi
 
     echo "writing gh config"
-    cat <<EOF > /root/.config/gh/hosts.yml
+    cat <<EOF > "${USER_HOME}/.config/gh/hosts.yml"
 github.com:
     users:
         ${GH_USER}:
@@ -67,8 +70,8 @@ EOF
     git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
 
     echo "Configuring global git ignore"
-    git config --global core.excludesfile /root/.gitignore_global
-    cat <<EOF > /root/.gitignore_global
+    git config --global core.excludesfile "${USER_HOME}/.gitignore_global"
+    cat <<EOF > "${USER_HOME}/.gitignore_global"
 manager
 bin/
 EOF
@@ -113,11 +116,11 @@ function checkoutPRBranch {
 
 function configureGemini {
     echo "Running configureGemini..."
-    echo "creating /root/.gemini directory"
-    mkdir -p /root/.gemini
+    echo "creating ${USER_HOME}/.gemini directory"
+    mkdir -p "${USER_HOME}/.gemini"
 
     echo "writing gemini config"
-    cat <<EOF > /root/.gemini/settings.json
+    cat <<EOF > "${USER_HOME}/.gemini/settings.json"
 {
   "general": {
     "enableAutoUpdate": false,
