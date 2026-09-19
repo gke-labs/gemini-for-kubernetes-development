@@ -219,10 +219,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (item.stage === 'plan-failed') {
       actions.push({ label: 'Retry plan', path: `issues/${item.number}/plan`, title: 'Relaunch the planner' });
-    } else if (item.stage === 'fix-failed') {
-      // Nothing shipped, so relaunching in the same sandbox is a clean
-      // retry. Successful fixes have no re-run: candidate PRs would need
-      // per-run sandboxes, which the shared fix sandbox can't provide.
+    } else if (item.stage === 'fix-failed' || item.stage === 'fix-done') {
+      // Nothing shipped (failed, or completed without producing a PR —
+      // push/PR-create hiccup or a no-change conclusion), so relaunching
+      // in the same sandbox is a clean retry. The chip's sandbox card
+      // shows why; resolving or closing the issue stays a GitHub act.
       actions.push({ label: 'Retry', path: `issues/${item.number}/rerun` });
     } else if (item.stage === 'pr-open') {
       // Merging happens on GitHub — the row links to the PR.
@@ -375,7 +376,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" />
             </span>
           ) : (
-            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title="launching" />
+            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)"
+              title="Launching — the sandbox isn't created yet; this chip opens the sandbox card once it exists" />
           )
         ) : item.sandbox && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
@@ -1227,6 +1229,12 @@ function Work({ onBack, namespace }) {
                   Max active sandboxes
                   <input type="number" min="1" value={spec.maxActive || 5} style={{ width: '80px' }}
                     onChange={e => setSpec({ ...spec, maxActive: parseInt(e.target.value, 10) || 5 })} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
+                  title="Finished sandboxes hold their slot until paused after this idle window — it doubles as the churn throttle on automation. Lower it for faster turnover, raise it to keep checkouts warm.">
+                  Idle minutes before pause
+                  <input type="number" min="1" value={spec.idleMinutes || 60} style={{ width: '80px' }}
+                    onChange={e => setSpec({ ...spec, idleMinutes: parseInt(e.target.value, 10) || 60 })} />
                 </label>
               </div>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">

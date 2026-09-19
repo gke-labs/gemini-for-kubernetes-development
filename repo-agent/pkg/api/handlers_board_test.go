@@ -331,7 +331,7 @@ func TestBoardSpecAuto(t *testing.T) {
 	r.PUT("/board/:board/spec", server.putBoardSpec)
 
 	body := `{"autoTriage": "unclaimed", "autoFix": "assigned", "autoReview": "requested",
-		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5}`
+		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5, "idleMinutes": 15}`
 	req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -342,6 +342,10 @@ func TestBoardSpecAuto(t *testing.T) {
 	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get board: %v", err)
+	}
+	idle, _, _ := unstructured.NestedInt64(board.Object, "spec", "sandbox", "idleMinutes")
+	if idle != 15 {
+		t.Errorf("idleMinutes not stored: %d", idle)
 	}
 	triage, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage")
 	review, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review")
@@ -1288,4 +1292,34 @@ func TestSandboxCardPaused(t *testing.T) {
 	if !card.Paused || card.TaskState != "Completed" {
 		t.Errorf("expected paused Completed card, got %s", w.Body.String())
 	}
+}
+
+// A submitted review is rediscovered from GitHub itself: with no sandbox
+// breadcrumb (clean slate), the row still reads Reviewed ✓ instead of a
+// blank resting state.
+func TestGetBoardWorkRediscoversSubmittedReview(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 43, "title": "already reviewed", "html_url": "https://github.com/test/repo/pull/43", "updated_at": "2026-09-16T12:00:00Z",
+			 "user": {"login": "carol"}}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls/43/reviews?per_page=100": `[
+			{"id": 8, "state": "APPROVED", "user": {"login": "alice"}}
+		]`,
+	}
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	for _, item := range work {
+		if item.Number == 43 {
+			if item.Stage != "review-submitted" {
+				t.Errorf("expected rediscovered review-submitted, got %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("pr-43 missing: %s", w.Body.String())
 }
