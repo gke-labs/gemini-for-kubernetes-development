@@ -376,7 +376,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" />
             </span>
           ) : (
-            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title="launching" />
+            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)"
+              title="Launching — the sandbox isn't created yet; this chip opens the sandbox card once it exists" />
           )
         ) : item.sandbox && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
