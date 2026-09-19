@@ -17,6 +17,7 @@ func TestChatCommand(t *testing.T) {
 		"export HOME=/workspaces/.home",
 		"export GEMINI_CLI_TRUST_WORKSPACE=true",
 		"cp -Rnp /root/.gemini/tmp/.",
+		"trustedFolders.json",
 		"gemini --skip-trust --include-directories /workspaces --resume latest",
 		`GEMINI_API_KEY='\''sk-test'\''`,
 	} {
@@ -44,7 +45,15 @@ func TestChatCommand(t *testing.T) {
 // Injected via `-i` only on session creation (tmux -A skips it on attach).
 func TestChatOrientation(t *testing.T) {
 	o := chatOrientation("plan", "fix-substrate-1746")
-	for _, want := range []string{"issue #1746", "/workspaces/plan-issue-1746.md"} {
+	// The orientation must read as information, not a task: a resumed
+	// agent given a bare pointer to the plan started implementing it.
+	for _, want := range []string{
+		"issue #1746",
+		"/workspaces/plan-issue-1746.md",
+		"informational only",
+		"Do not implement the plan",
+		"wait for the user",
+	} {
 		if !strings.Contains(o, want) {
 			t.Errorf("plan orientation missing %q in: %s", want, o)
 		}
