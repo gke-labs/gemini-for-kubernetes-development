@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,6 +104,51 @@ func TestRecover_AdoptedTaskFailureIsRecorded(t *testing.T) {
 	}
 	if d.sandboxLocks.IsBusy("sandbox") {
 		t.Error("expected the sandbox lease to be released after the adopted task failed")
+	}
+}
+
+// An unanswered probe is not a verdict: the monitor keeps polling rather than
+// recording a failure for a task whose sandbox simply could not be reached.
+func TestRecover_AdoptedTaskSurvivesFailedCompletionProbe(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.AdoptionPollInterval = 5 * time.Millisecond
+	})
+	sandboxes.running["sandbox"] = true
+	sandboxes.completed["sandbox"] = true
+	sandboxes.completedErr = errors.New("transient connection reset")
+
+	writeProcessingTask(t, tempDir, "task-issue-108.yaml", 108)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Recover(ctx)
+
+	// The sandbox stops while the completion probe is still failing.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = false
+	sandboxes.mu.Unlock()
+
+	// The monitor cannot resolve the task while the probe keeps failing, so it must
+	// still be in processing, neither completed nor failed.
+	time.Sleep(20 * time.Millisecond)
+	if _, proc, _ := queue.GetCounts(); proc != 1 {
+		t.Fatalf("expected the adopted task to stay in processing while the probe fails, got %d", proc)
+	}
+	if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
+		t.Fatalf("expected no outcome to be reported from a failed probe, got %v", outcomes)
+	}
+
+	// The cluster answers again, and the real outcome is recorded.
+	sandboxes.mu.Lock()
+	sandboxes.completedErr = nil
+	sandboxes.mu.Unlock()
+
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single successful completion notification, got %v", outcomes)
 	}
 }
 
@@ -218,5 +264,80 @@ func TestAdoptionPollInterval_Default(t *testing.T) {
 	d = New(Config{AdoptionPollInterval: time.Second}, Deps{})
 	if got := d.adoptionPollInterval(); got != time.Second {
 		t.Errorf("adoptionPollInterval = %s, want 1s", got)
+	}
+}
+
+func TestSandboxProbeRetryDelay_Default(t *testing.T) {
+	d := New(Config{}, Deps{})
+	if got := d.sandboxProbeRetryDelay(); got != DefaultSandboxProbeRetryDelay {
+		t.Errorf("sandboxProbeRetryDelay = %s, want %s", got, DefaultSandboxProbeRetryDelay)
+	}
+
+	d = New(Config{SandboxProbeRetryDelay: time.Second}, Deps{})
+	if got := d.sandboxProbeRetryDelay(); got != time.Second {
+		t.Errorf("sandboxProbeRetryDelay = %s, want 1s", got)
+	}
+}
+
+// Recovery is the only thing that inspects a stuck task's sandbox, so a probe that
+// never answers must not be read as "the sandbox is gone": requeueing on that basis
+// would re-run work that may already have finished. The task stays in processing.
+func TestRecover_UnknownSandboxStateLeavesTaskInProcessing(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.SandboxProbeRetryDelay = time.Millisecond
+	})
+	sandboxes.runningErr = errors.New("the API server is unavailable")
+
+	writeProcessingTask(t, tempDir, "task-issue-106.yaml", 106)
+
+	d.Recover(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 1, 0)
+	if _, err := os.Stat(filepath.Join(tempDir, "processing", "task-issue-106.yaml")); err != nil {
+		t.Errorf("expected the task file to stay in processing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "incoming", "task-issue-106.yaml")); !os.IsNotExist(err) {
+		t.Error("expected the task not to be requeued while its sandbox state is unknown")
+	}
+	if len(runner.invocations()) != 0 {
+		t.Error("expected no execution of a task whose sandbox state is unknown")
+	}
+	if d.sandboxLocks.IsBusy("sandbox") {
+		t.Error("expected no sandbox lease to be held for an untriaged task")
+	}
+}
+
+// A blip while probing must not decide the task's fate either: recovery retries, and
+// the answer it eventually gets is the one that counts.
+func TestRecover_RetriesTransientProbeFailures(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.SandboxProbeRetryDelay = time.Millisecond
+	})
+
+	// The first probe fails; the retry reports a sandbox that finished the task.
+	var probes int
+	sandboxes.runningFn = func(string) (bool, error) {
+		probes++
+		if probes == 1 {
+			return false, errors.New("transient connection reset")
+		}
+		return false, nil
+	}
+	sandboxes.completed["sandbox"] = true
+
+	writeProcessingTask(t, tempDir, "task-issue-107.yaml", 107)
+
+	d.Recover(context.Background())
+	d.Wait()
+
+	if probes < 2 {
+		t.Errorf("expected the failed probe to be retried, got %d probes", probes)
+	}
+	waitForCounts(t, queue, 0, 0, 1)
+	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-107.yaml")); err != nil {
+		t.Errorf("expected the task file in processed: %v", err)
 	}
 }
