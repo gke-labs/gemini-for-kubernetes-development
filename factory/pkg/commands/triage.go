@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
@@ -157,16 +156,20 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	}
 	defer client.Close()
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/triage-%s", time.Now().Format("20060102-150405"))
+	taskDir, reattached := client.ResolveTaskDir(ctx, "triage")
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
+	if reattached {
+		fmt.Printf("Reattaching to in-flight task %s...\n", taskDir)
+	} else {
+		fmt.Println("Writing prompt and script into sandbox...")
+		if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
+			return fmt.Errorf("writing prompt: %w", err)
+		}
+		if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
+			return fmt.Errorf("writing script: %w", err)
+		}
 	}
 
 	envMap := map[string]string{

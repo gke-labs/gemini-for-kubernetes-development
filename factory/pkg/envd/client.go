@@ -372,6 +372,25 @@ func (c *Client) RunTask(ctx context.Context, cmdStr string, envs map[string]str
 	return c.Exec(ctx, cmdStr, "/workspaces", envs, nil, os.Stdout, os.Stderr)
 }
 
+// ResolveTaskDir returns the task directory a new <prefix> invocation
+// should use. If the newest /workspaces/tasks/<prefix>-* task is still
+// running (pid alive, no exit_code yet), its directory is returned so
+// RunTaskResilient reattaches to the in-flight run instead of launching a
+// duplicate — the caller may be re-invoking after a controller restart or
+// Ctrl+C (watch semantics: every command tolerates reconnects). Otherwise
+// a fresh timestamped directory is returned.
+func (c *Client) ResolveTaskDir(ctx context.Context, prefix string) (string, bool) {
+	find := fmt.Sprintf(`for d in $(ls -dt /workspaces/tasks/%s-* 2>/dev/null); do if [ -d "$d" ] && [ ! -f "$d/exit_code" ] && [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null; then echo "$d"; break; fi; done`, prefix)
+	var buf bytes.Buffer
+	if err := c.Exec(ctx, find, "/workspaces", nil, nil, &buf, nil); err == nil {
+		if dir := strings.TrimSpace(buf.String()); dir != "" {
+			klog.Infof("Found in-flight %s task %s — reattaching instead of launching a duplicate", prefix, dir)
+			return dir, true
+		}
+	}
+	return fmt.Sprintf("/workspaces/tasks/%s-%s", prefix, time.Now().Format("20060102-150405")), false
+}
+
 func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[string]string, taskDir string, detached bool, abortOnCancel bool) error {
 	taskFiles := NewTaskFiles(taskDir)
 

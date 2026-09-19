@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
@@ -264,16 +263,20 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	}
 	defer client.Close()
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/review-%s", time.Now().Format("20060102-150405"))
+	taskDir, reattached := client.ResolveTaskDir(ctx, "review")
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
+	if reattached {
+		fmt.Printf("Reattaching to in-flight task %s...\n", taskDir)
+	} else {
+		fmt.Println("Writing prompt and script into sandbox...")
+		if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
+			return fmt.Errorf("writing prompt: %w", err)
+		}
+		if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
+			return fmt.Errorf("writing script: %w", err)
+		}
 	}
 
 	envMap := map[string]string{
