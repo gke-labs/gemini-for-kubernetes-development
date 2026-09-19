@@ -1230,6 +1230,12 @@ function Work({ onBack, namespace }) {
                   <input type="number" min="1" value={spec.maxActive || 5} style={{ width: '80px' }}
                     onChange={e => setSpec({ ...spec, maxActive: parseInt(e.target.value, 10) || 5 })} />
                 </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
+                  title="Finished sandboxes hold their slot until paused after this idle window — it doubles as the churn throttle on automation. Lower it for faster turnover, raise it to keep checkouts warm.">
+                  Idle minutes before pause
+                  <input type="number" min="1" value={spec.idleMinutes || 60} style={{ width: '80px' }}
+                    onChange={e => setSpec({ ...spec, idleMinutes: parseInt(e.target.value, 10) || 60 })} />
+                </label>
               </div>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />

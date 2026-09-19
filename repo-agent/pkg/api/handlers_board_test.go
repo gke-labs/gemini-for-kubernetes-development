@@ -331,7 +331,7 @@ func TestBoardSpecAuto(t *testing.T) {
 	r.PUT("/board/:board/spec", server.putBoardSpec)
 
 	body := `{"autoTriage": "unclaimed", "autoFix": "assigned", "autoReview": "requested",
-		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5}`
+		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5, "idleMinutes": 15}`
 	req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -342,6 +342,10 @@ func TestBoardSpecAuto(t *testing.T) {
 	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get board: %v", err)
+	}
+	idle, _, _ := unstructured.NestedInt64(board.Object, "spec", "sandbox", "idleMinutes")
+	if idle != 15 {
+		t.Errorf("idleMinutes not stored: %d", idle)
 	}
 	triage, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage")
 	review, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review")

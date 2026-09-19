@@ -1397,6 +1397,7 @@ type boardSpecView struct {
 	AutoExcludeLabels []string `json:"autoExcludeLabels"`
 	RecencyDays       int64    `json:"recencyDays"`
 	MaxActive         int64    `json:"maxActive"`
+	IdleMinutes       int64    `json:"idleMinutes"`
 	AutoIterate       bool     `json:"autoIterate"`
 	DraftPR           bool     `json:"draftPR"`
 	Disclose          bool     `json:"disclose"`
@@ -1429,6 +1430,10 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 		view.RecencyDays = v
 	}
 	view.MaxActive, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActive")
+	view.IdleMinutes, _, _ = unstructured.NestedInt64(board.Object, "spec", "sandbox", "idleMinutes")
+	if view.IdleMinutes <= 0 {
+		view.IdleMinutes = 60
+	}
 	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
 	view.DraftPR, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "draftPR")
 	view.Disclose, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "disclose")
@@ -1480,6 +1485,10 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 	if recency <= 0 {
 		recency = 7
 	}
+	idleMinutes := payload.IdleMinutes
+	if idleMinutes <= 0 {
+		idleMinutes = 60
+	}
 	ok := set(cleanLabels(payload.ViewLabels), "spec", "view", "labels") &&
 		set(enum(payload.AutoTriage, "off", "unclaimed", "all"), "spec", "auto", "triage") &&
 		set(enum(payload.AutoFix, "off", "assigned"), "spec", "auto", "fix") &&
@@ -1488,6 +1497,7 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		set(cleanLabels(payload.AutoExcludeLabels), "spec", "auto", "excludeLabels") &&
 		set(recency, "spec", "auto", "recencyDays") &&
 		set(payload.MaxActive, "spec", "limits", "maxActive") &&
+		set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
 		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
 		set(payload.DraftPR, "spec", "policy", "draftPR") &&
 		set(payload.Disclose, "spec", "policy", "disclose")
