@@ -156,37 +156,45 @@ var pendingReviewCache = struct {
 }{entries: map[string]pendingReviewEntry{}}
 
 type pendingReviewEntry struct {
-	pending bool
-	expires time.Time
+	pending  bool
+	reviewed bool
+	expires  time.Time
 }
 
-// viewerHasPendingReview runs under the viewer's own token — GitHub shows
-// pending reviews only to their author. Errors are not definitive: render
-// without the pending state rather than caching a wrong verdict.
-func (s *Server) viewerHasPendingReview(ctx context.Context, gh *github.Client, owner, repo string, pr int, member string) bool {
+// viewerReviewStates runs under the viewer's own token — GitHub shows
+// pending reviews only to their author. One ListReviews yields both
+// verdicts: a parked pending review ("Pending on GitHub" with no sandbox
+// breadcrumb) and a submitted one ("Reviewed ✓" that survives clean
+// slates). Errors are not definitive: render without the states rather
+// than caching a wrong verdict.
+func (s *Server) viewerReviewStates(ctx context.Context, gh *github.Client, owner, repo string, pr int, member string) (pending, reviewed bool) {
 	key := fmt.Sprintf("%s|%s/%s#%d", member, owner, repo, pr)
 	pendingReviewCache.Lock()
 	if e, ok := pendingReviewCache.entries[key]; ok && time.Now().Before(e.expires) {
 		pendingReviewCache.Unlock()
-		return e.pending
+		return e.pending, e.reviewed
 	}
 	pendingReviewCache.Unlock()
 
 	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
 	if err != nil {
-		return false
+		return false, false
 	}
-	pending := false
 	for _, rv := range reviews {
-		if strings.EqualFold(rv.GetUser().GetLogin(), member) && rv.GetState() == "PENDING" {
+		if !strings.EqualFold(rv.GetUser().GetLogin(), member) {
+			continue
+		}
+		switch strings.ToUpper(rv.GetState()) {
+		case "PENDING":
 			pending = true
-			break
+		case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
+			reviewed = true
 		}
 	}
 	pendingReviewCache.Lock()
-	pendingReviewCache.entries[key] = pendingReviewEntry{pending: pending, expires: time.Now().Add(time.Minute)}
+	pendingReviewCache.entries[key] = pendingReviewEntry{pending: pending, reviewed: reviewed, expires: time.Now().Add(time.Minute)}
 	pendingReviewCache.Unlock()
-	return pending
+	return pending, reviewed
 }
 
 func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, repoURL string) bool {
@@ -502,31 +510,35 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
 	}
 
-	// Pending-review rediscovery per requested PR, concurrently — each is
-	// a GitHub round-trip (cached 60s in viewerHasPendingReview).
-	pendingByPR := map[int]bool{}
+	// Review-state rediscovery per non-authored PR, concurrently — GitHub
+	// is the only durable record of the member's reviews, so both a
+	// parked pending review and a submitted one must survive lost sandbox
+	// breadcrumbs. (Requested-only gating could never see the submitted
+	// case: submitting clears the reviewer request.) Cached 60s per PR,
+	// ETag-backed underneath.
+	type reviewStates struct{ pending, reviewed bool }
+	statesByPR := map[int]reviewStates{}
 	{
 		var mu sync.Mutex
 		var pwg sync.WaitGroup
 		for _, pr := range prs {
-			for _, reviewer := range pr.RequestedReviewers {
-				if strings.EqualFold(reviewer.GetLogin(), member) {
-					pwg.Add(1)
-					go func(num int) {
-						defer pwg.Done()
-						pending := s.viewerHasPendingReview(ctx, gh, owner, repo, num, member)
-						mu.Lock()
-						pendingByPR[num] = pending
-						mu.Unlock()
-					}(pr.GetNumber())
-					break
-				}
+			if strings.EqualFold(pr.GetUser().GetLogin(), member) {
+				continue
 			}
+			pwg.Add(1)
+			go func(num int) {
+				defer pwg.Done()
+				pending, reviewed := s.viewerReviewStates(ctx, gh, owner, repo, num, member)
+				mu.Lock()
+				statesByPR[num] = reviewStates{pending: pending, reviewed: reviewed}
+				mu.Unlock()
+			}(pr.GetNumber())
 		}
 		pwg.Wait()
 	}
 	for _, pr := range prs {
-		s.mergePRRow(items, sandboxes, pr, member, pendingByPR[pr.GetNumber()], viewLabels)
+		st := statesByPR[pr.GetNumber()]
+		s.mergePRRow(items, sandboxes, pr, member, st.pending, st.reviewed, viewLabels)
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -538,7 +550,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, false, viewLabels)
+				s.mergePRRow(items, sandboxes, pr, member, false, false, viewLabels)
 				break
 			}
 		}
@@ -909,7 +921,7 @@ func friendlyReviewError(msg string) string {
 	}
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub bool, viewLabels []string) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub, reviewedOnGitHub bool, viewLabels []string) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -977,7 +989,9 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// The run died without posting anything — surface it instead of
 		// falling back to the pre-click stage.
 		stage, attention = "review-failed", attentionNeedsYou
-	case reviewState == "submitted" && !reviewRequested:
+	case (reviewState == "submitted" || reviewedOnGitHub) && !reviewRequested:
+		// The sandbox breadcrumb or GitHub itself: Reviewed ✓ survives
+		// clean slates because the submitted review IS the record.
 		stage = "review-submitted"
 	// A review request on an already-submitted row is GitHub's native
 	// "please review again" (submitting clears you from
