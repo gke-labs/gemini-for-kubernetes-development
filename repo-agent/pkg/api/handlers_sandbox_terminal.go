@@ -68,11 +68,14 @@ func chatOrientation(taskType, sandboxName string) string {
 	if m == nil {
 		return ""
 	}
-	return fmt.Sprintf("This chat continues the planning conversation for issue #%s. "+
-		"The current plan lives at /workspaces/plan-issue-%s.md. When asked to change the plan, "+
-		"edit that file directly so it always holds the complete, current plan — the board displays "+
-		"that file, and an approved plan is executed from it. Start by reading the file, then briefly "+
-		"confirm you are ready to refine it.", m[1], m[1])
+	return fmt.Sprintf("You are reconnected to the planning conversation for issue #%s. "+
+		"This message is informational only — it is not a task and asks for no work. "+
+		"The current plan lives at /workspaces/plan-issue-%s.md; the board displays that file and "+
+		"it is executed only after the user approves it on the board. If the user asks you to change "+
+		"the plan, edit that file directly so it always holds the complete, current plan. "+
+		"Do not implement the plan and do not modify any other files. "+
+		"Read the plan file to refresh your context, acknowledge in one sentence, and wait for the "+
+		"user to tell you what to do next.", m[1], m[1])
 }
 
 // chatCommand builds the tmux attach for a resumed agent conversation.
@@ -89,6 +92,12 @@ func chatCommand(taskType, home, apiKey, orientation string) string {
 	if orientation != "" {
 		resume += " -i " + shellSingleQuote(orientation)
 	}
+	// --skip-trust covers only the cwd workspace: the /workspaces root
+	// added via --include-directories still triggers the interactive trust
+	// prompt. Gemini's trust store is ~/.gemini/trustedFolders.json (task
+	// scripts never touch it, so seeding is durable) — merge both roots in
+	// before launching; on any failure the prompt appears, nothing breaks.
+	trustSeed := `python3 -c 'import json,os,sys; p=os.path.join(os.environ["HOME"],".gemini","trustedFolders.json"); os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {}; [d.setdefault(f,"TRUST_FOLDER") for f in sys.argv[1:]]; json.dump(d,open(p,"w"),indent=2)' /workspaces "$PWD" 2>/dev/null; `
 	// Transition shim: tasks that ran before every task type moved to the
 	// workspace home left their sessions under /root. If this pod hasn't
 	// restarted since (a restart wipes /root), rescue them onto the PVC so
@@ -99,6 +108,7 @@ func chatCommand(taskType, home, apiKey, orientation string) string {
 			`if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; `+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
+			trustSeed+
 			resume,
 		home, shellSingleQuote(apiKey))
 	return "TERM=xterm-256color exec tmux new-session -A -s chat-" + taskType + " " + shellSingleQuote(inner)
