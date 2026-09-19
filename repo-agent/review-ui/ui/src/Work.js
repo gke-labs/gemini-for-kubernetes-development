@@ -104,7 +104,7 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, readOnly }) {
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -277,10 +277,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
       case 'review-failed':
         if (item.error) return { onClick: () => setShowDraft(v => !v), title: 'Show why the review failed' };
-        return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
+        return item.sandbox ? { onClick: () => onOpenSandbox && onOpenSandbox(item.sandbox.name), noArrow: true, title: 'Open the sandbox card (tasks & logs)' } : null;
       case 'fix-failed':
       case 'fix-done':
-        return item.sandbox ? { href: `/sandbox/${namespace}/${item.sandbox.name}/`, title: 'Open the sandbox (logs)' } : null;
+        return item.sandbox ? { onClick: () => onOpenSandbox && onOpenSandbox(item.sandbox.name), noArrow: true, title: 'Open the sandbox card (tasks & logs)' } : null;
       default:
         return null;
     }
@@ -350,7 +350,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             </a>
           ) : (
             <span onClick={statusAction.onClick} style={{ cursor: 'pointer' }} title={statusAction.title}>
-              <Chip text={STAGE_LABEL[item.stage] + (showDraft ? ' ▴' : ' ▾')} color={statusStyle.color} bg={statusStyle.bg} />
+              <Chip text={STAGE_LABEL[item.stage] + (statusAction.noArrow ? '' : (showDraft ? ' ▴' : ' ▾'))} color={statusStyle.color} bg={statusStyle.bg} />
             </span>
           )
         ) : (
@@ -371,21 +371,20 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       <td style={{ padding: '6px 8px' }}>
         {AGENT_STAGE[item.stage] ? (
           item.sandbox ? (
-            <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
-              <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title={item.sandbox.name} />
-            </a>
+            <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
+              <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" />
+            </span>
           ) : (
             <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" title="launching" />
           )
         ) : item.sandbox && (
-          <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer">
+          <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
             <Chip
               text={item.sandbox.replicas === '0' ? 'paused' : (item.sandbox.taskState || 'active').toLowerCase()}
               color={item.sandbox.replicas === '0' ? '#6a737d' : '#22863a'}
               bg={item.sandbox.replicas === '0' ? 'rgba(106,115,125,0.12)' : 'rgba(34,134,58,0.12)'}
-              title={item.sandbox.name}
             />
-          </a>
+          </span>
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -553,14 +552,149 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           }}>
             {item.error}
             {item.sandbox && (
-              <a href={`/sandbox/${namespace}/${item.sandbox.name}/`} target="_blank" rel="noopener noreferrer"
-                style={{ marginLeft: '8px', fontSize: 'small' }}>agent logs ↗</a>
+              <button className="btn btn-sm" style={{ marginLeft: '8px' }}
+                onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)}>agent logs</button>
             )}
           </div>
         </td>
       </tr>
     )}
     </React.Fragment>
+  );
+}
+
+// SandboxCard: the half-screen overlay behind every sandbox chip — task
+// history (newest first) with expandable log tails and Follow, plus
+// wake/pause. Terminal and richer lifecycle land here later.
+function SandboxCard({ name, onClose }) {
+  const [card, setCard] = useState(null);
+  const [err, setErr] = useState('');
+  const [openTask, setOpenTask] = useState('');
+  const [logText, setLogText] = useState('');
+  const [follow, setFollow] = useState(false);
+  const logRef = useRef(null);
+
+  const load = useCallback(() => {
+    fetch(`/api/sandbox-card/${name}`)
+      .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
+      .then(setCard)
+      .catch(e => setErr(`load failed: ${e}`));
+  }, [name]);
+  useEffect(() => { setCard(null); setOpenTask(''); setLogText(''); setFollow(false); load(); }, [load]);
+
+  const loadLog = useCallback((task) => {
+    fetch(`/api/sandbox-card/${name}/log?task=${encodeURIComponent(task)}`)
+      .then(res => res.text())
+      .then(text => {
+        setLogText(text);
+        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+      })
+      .catch(e => setLogText(`log fetch failed: ${e}`));
+  }, [name]);
+
+  useEffect(() => {
+    if (!follow || !openTask) return undefined;
+    const t = setInterval(() => loadLog(openTask), 3000);
+    return () => clearInterval(t);
+  }, [follow, openTask, loadLog]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const lifecycle = (action) => {
+    fetch(`/api/sandbox-card/${name}/lifecycle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    }).then(res => { if (!res.ok) res.text().then(t => setErr(`${action} failed: ${t}`)); else setTimeout(load, 1500); });
+  };
+
+  const statusColor = { running: '#b08800', succeeded: '#22863a', failed: '#d73a49', aborted: '#6a737d' };
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 900 }} />
+      <div style={{
+        position: 'fixed', top: 0, right: 0, height: '100%', width: 'min(640px, 55%)',
+        backgroundColor: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)',
+        boxShadow: '-6px 0 24px rgba(0,0,0,0.25)', zIndex: 901, overflowY: 'auto',
+        padding: '14px 16px', textAlign: 'left',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <strong style={{ fontSize: 'small', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</strong>
+          {card && (
+            <Chip
+              text={card.paused ? 'paused' : card.starting ? 'starting' : (card.taskState || 'active').toLowerCase()}
+              color={card.paused ? '#6a737d' : '#22863a'}
+              bg={card.paused ? 'rgba(106,115,125,0.12)' : 'rgba(34,134,58,0.12)'}
+            />
+          )}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+            {card && card.paused && (
+              <button className="btn btn-sm" onClick={() => lifecycle('wake')} title="Scale the sandbox back up to inspect tasks and logs">Wake</button>
+            )}
+            {card && !card.paused && !card.starting && (
+              <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
+            )}
+            <button className="btn btn-sm" onClick={load} title="Refresh">↻</button>
+            <button className="btn btn-sm" onClick={onClose} title="Close (Esc)">✕</button>
+          </span>
+        </div>
+        {err && <div style={{ color: 'var(--danger, #d33)', fontSize: 'small', marginTop: '8px' }}>{err}</div>}
+        {!card && !err && <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '12px' }}>Loading…</div>}
+        {card && card.paused && (
+          <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginTop: '12px' }}>
+            Sandbox is paused — its task history lives on the workspace disk. Wake it to browse tasks and logs.
+          </div>
+        )}
+        {card && card.starting && (
+          <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginTop: '12px' }}>
+            Pod is starting — tasks will appear once it is ready.
+          </div>
+        )}
+        {card && !card.paused && !card.starting && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+              TASKS ({card.tasks.length})
+            </div>
+            {!card.tasks.length && <div style={{ color: 'var(--text-secondary)', fontSize: 'small' }}>No tasks have run in this sandbox yet.</div>}
+            {card.tasks.map(task => (
+              <div key={task.name} style={{ borderTop: '1px solid var(--border-color)', padding: '6px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+                  onClick={() => {
+                    const next = openTask === task.name ? '' : task.name;
+                    setOpenTask(next); setLogText(''); setFollow(false);
+                    if (next) loadLog(next);
+                  }}>
+                  <span style={{ fontSize: 'small' }}>{openTask === task.name ? '▾' : '▸'} <strong>{task.type}</strong></span>
+                  <span style={{ fontSize: 'x-small', color: 'var(--text-secondary)' }}>{task.startedAt}</span>
+                  <Chip text={task.status + (task.exitCode && task.exitCode !== '0' ? ` (${task.exitCode})` : '')}
+                    color={statusColor[task.status] || 'var(--text-secondary)'}
+                    bg={`color-mix(in srgb, ${statusColor[task.status] || 'var(--text-secondary)'} 12%, transparent)`} />
+                  <span style={{ marginLeft: 'auto', fontSize: 'x-small', color: 'var(--text-secondary)' }}>{Math.round(task.logBytes / 1024)}k log</span>
+                </div>
+                {openTask === task.name && (
+                  <div style={{ marginTop: '6px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                      <label style={{ fontSize: 'x-small', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={follow} onChange={e => setFollow(e.target.checked)} /> Follow
+                      </label>
+                      <button className="btn btn-sm" onClick={() => loadLog(task.name)}>↻</button>
+                    </div>
+                    <pre ref={logRef} style={{
+                      whiteSpace: 'pre-wrap', fontSize: 'x-small', margin: 0, padding: '8px',
+                      backgroundColor: 'var(--bg-secondary)', borderRadius: '6px',
+                      maxHeight: '45vh', overflowY: 'auto', textAlign: 'left',
+                    }}>{logText || '…'}</pre>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -582,6 +716,7 @@ function Work({ onBack, namespace }) {
   // touches the board spec, so flipping it can never change what runs.
   const defaultView = { issues: 'all', reviews: 'requested', labels: '' };
   const [view, setView] = useState(defaultView);
+  const [cardSandbox, setCardSandbox] = useState(null);
   const [specOpen, setSpecOpen] = useState(false);
   const [spec, setSpec] = useState(null);
 
@@ -855,6 +990,7 @@ function Work({ onBack, namespace }) {
                       onAction={(p, l) => handleAction(p, l, item.board)} onRefresh={fetchWork}
                       namespace={namespace} groupTag={item.board}
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
+                      onOpenSandbox={setCardSandbox}
                       readOnly={(boards.find(b => b.name === item.board) || {}).role === 'read-only'} />
                   ))}
                   {!loadingWork && !upNextAll.length && (
@@ -981,6 +1117,7 @@ function Work({ onBack, namespace }) {
                   )}
                   {!loadingWork && rows.map(item => (
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
+                      onOpenSandbox={setCardSandbox}
                       onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
                       groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly} />
                   ))}
@@ -1001,6 +1138,10 @@ function Work({ onBack, namespace }) {
           </div>
         );
       })()}
+
+      {cardSandbox && (
+        <SandboxCard name={cardSandbox} onClose={() => setCardSandbox(null)} />
+      )}
 
       {specOpen && spec && (
         <div className="modal-overlay" onClick={() => setSpecOpen(false)}>

@@ -1244,3 +1244,48 @@ func TestUpNextDefersBareReviewRequests(t *testing.T) {
 		t.Errorf("expected triage-ready before review-requested, got %d then %d", work[0].Number, work[1].Number)
 	}
 }
+
+func TestSplitTaskName(t *testing.T) {
+	for _, tc := range []struct{ name, wantType, wantTS string }{
+		{"review-20260918-192435", "review", "2026-09-18T19:24:35Z"},
+		{"plan-20260918-080208", "plan", "2026-09-18T08:02:08Z"},
+		{"agent-my-planner-20260918-010203", "agent-my-planner", "2026-09-18T01:02:03Z"},
+		{"weird", "weird", ""},
+	} {
+		gotType, gotTS := splitTaskName(tc.name)
+		if gotType != tc.wantType || gotTS != tc.wantTS {
+			t.Errorf("splitTaskName(%q) = %q,%q want %q,%q", tc.name, gotType, gotTS, tc.wantType, tc.wantTS)
+		}
+	}
+}
+
+// Paused sandboxes have no pod: the card says so and offers Wake instead
+// of erroring.
+func TestSandboxCardPaused(t *testing.T) {
+	paused := sandboxCR("fix-repo-9",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"sandbox.gemini.google.com/last-task-type":  "fix",
+			"htmlURL": "https://github.com/test/repo/issues/9",
+		}, 0)
+	server, r, _ := boardTestServer(t, map[string]string{}, boardCR(), paused)
+	r.GET("/sandbox-card/:name", server.getSandboxCard)
+
+	req, _ := http.NewRequest("GET", "/sandbox-card/fix-repo-9", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var card struct {
+		Paused    bool   `json:"paused"`
+		TaskState string `json:"taskState"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &card); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if !card.Paused || card.TaskState != "Completed" {
+		t.Errorf("expected paused Completed card, got %s", w.Body.String())
+	}
+}
