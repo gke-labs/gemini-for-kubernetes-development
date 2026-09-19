@@ -50,6 +50,9 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 
 		api.GET("/boards", s.getBoards)
 		api.GET("/repo-suggestions", s.getRepoSuggestions)
+		api.GET("/sandbox-card/:name", s.getSandboxCard)
+		api.GET("/sandbox-card/:name/log", s.getSandboxTaskLog)
+		api.POST("/sandbox-card/:name/lifecycle", s.sandboxLifecycle)
 		api.POST("/boards", s.createBoard)
 		api.DELETE("/board/:board", s.deleteBoard)
 		api.GET("/board/:board/spec", s.getBoardSpec)
