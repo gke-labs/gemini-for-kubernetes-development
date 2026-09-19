@@ -219,10 +219,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
     } else if (item.stage === 'plan-failed') {
       actions.push({ label: 'Retry plan', path: `issues/${item.number}/plan`, title: 'Relaunch the planner' });
-    } else if (item.stage === 'fix-failed') {
-      // Nothing shipped, so relaunching in the same sandbox is a clean
-      // retry. Successful fixes have no re-run: candidate PRs would need
-      // per-run sandboxes, which the shared fix sandbox can't provide.
+    } else if (item.stage === 'fix-failed' || item.stage === 'fix-done') {
+      // Nothing shipped (failed, or completed without producing a PR —
+      // push/PR-create hiccup or a no-change conclusion), so relaunching
+      // in the same sandbox is a clean retry. The chip's sandbox card
+      // shows why; resolving or closing the issue stays a GitHub act.
       actions.push({ label: 'Retry', path: `issues/${item.number}/rerun` });
     } else if (item.stage === 'pr-open') {
       // Merging happens on GitHub — the row links to the PR.
