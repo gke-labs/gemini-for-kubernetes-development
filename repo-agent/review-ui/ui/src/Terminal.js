@@ -7,7 +7,7 @@ import 'xterm/css/xterm.css';
 // card uses: the session lives in tmux inside the pod, so a dropped
 // socket loses nothing — this component reconnects with backoff into the
 // same session instead of dying with a "connection closed" epitaph.
-const SandboxTerminal = ({ namespace, sandboxName }) => {
+const SandboxTerminal = ({ namespace, sandboxName, fill }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
 
@@ -88,7 +88,7 @@ const SandboxTerminal = ({ namespace, sandboxName }) => {
                 style={{
                     textAlign: 'left',
                     width: '100%',
-                    height: '600px',
+                    height: fill ? 'calc(100% - 20px)' : '600px',
                     backgroundColor: '#1e1e1e',
                     padding: '10px',
                     resize: 'vertical',
