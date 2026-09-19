@@ -138,6 +138,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
+  // The plan file in the sandbox is the source of truth (a continued chat
+  // session edits it there); opening the panel re-reads it, so chat edits
+  // surface without any session-end event.
+  const [freshPlan, setFreshPlan] = useState(null);
+  useEffect(() => { setFreshPlan(null); }, [item.plan]);
+  useEffect(() => {
+    if (!showPlan || item.stage !== 'plan-ready' || !item.plan) return;
+    fetch(`/api/board/${boardName}/issues/${item.number}/plan-refresh`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }).then(res => (res.ok ? res.json() : null)).then(data => {
+      if (data && data.plan) setFreshPlan(data.plan);
+      if (data && data.changed && onRefresh) onRefresh();
+    }).catch(() => { /* the cached draft still shows */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPlan]);
+  const planShown = freshPlan || item.plan;
   const planPost = (path, body, label) => {
     fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
       method: 'POST',
@@ -508,7 +524,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 padding: '10px', backgroundColor: 'var(--bg-secondary)',
                 borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
                 textAlign: 'left',
-              }}>{item.plan}</pre>
+              }}>{planShown}</pre>
               {item.stage === 'plan-ready' && (
                 <div style={{ marginTop: '6px' }}>
                   {planErr && (
@@ -527,7 +543,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     )}
                     <button className="btn btn-sm" style={{ marginLeft: '4px' }}
                       title="Edit the plan text directly"
-                      onClick={() => { setPlanText(item.plan); setEditingPlan(true); setPlanErr(''); }}>Edit</button>
+                      onClick={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}>Edit</button>
                   </div>
                 </div>
               )}
