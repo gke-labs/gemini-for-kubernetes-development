@@ -575,6 +575,67 @@ function SandboxCard({ name, onClose }) {
   const [logText, setLogText] = useState('');
   const [follow, setFollow] = useState(false);
   const logRef = useRef(null);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [termStatus, setTermStatus] = useState('');
+  const termHostRef = useRef(null);
+  const termRef = useRef(null); // { term, fit, ws, closed }
+
+  // The terminal: xterm ↔ ws ↔ pods/exec attaching `tmux new -As board`.
+  // The session lives in tmux, so a dropped socket loses nothing — we
+  // just reconnect into the same session (with backoff) until the pane
+  // is closed.
+  useEffect(() => {
+    if (!showTerminal || !termHostRef.current || !window.Terminal) return undefined;
+    const state = { closed: false, retry: 0, ws: null };
+    termRef.current = state;
+    const term = new window.Terminal({ fontSize: 12, cursorBlink: true, theme: { background: '#0d1117' } });
+    const fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(termHostRef.current);
+    fit.fit();
+    state.term = term;
+
+    const sendResize = () => {
+      if (state.ws && state.ws.readyState === 1) {
+        state.ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows }));
+      }
+    };
+    const onWindowResize = () => { try { fit.fit(); sendResize(); } catch (e) { /* detached */ } };
+    window.addEventListener('resize', onWindowResize);
+
+    const connect = () => {
+      if (state.closed) return;
+      setTermStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${window.location.host}/api/sandbox-card/${name}/terminal`);
+      ws.binaryType = 'arraybuffer';
+      state.ws = ws;
+      ws.onopen = () => { state.retry = 0; setTermStatus('connected'); fit.fit(); sendResize(); };
+      ws.onmessage = (ev) => {
+        term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+      };
+      ws.onclose = () => {
+        if (state.closed) return;
+        state.retry += 1;
+        const delay = Math.min(1000 * Math.pow(1.6, state.retry), 10000);
+        setTermStatus(`disconnected — reconnecting in ${Math.round(delay / 1000)}s (session survives in tmux)`);
+        setTimeout(connect, delay);
+      };
+    };
+    term.onData((data) => {
+      if (state.ws && state.ws.readyState === 1) state.ws.send(JSON.stringify({ t: 'i', d: data }));
+    });
+    connect();
+
+    return () => {
+      state.closed = true;
+      window.removeEventListener('resize', onWindowResize);
+      if (state.ws) try { state.ws.close(); } catch (e) { /* gone */ }
+      term.dispose();
+      termRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTerminal, name]);
 
   const load = useCallback(() => {
     fetch(`/api/sandbox-card/${name}`)
@@ -637,6 +698,12 @@ function SandboxCard({ name, onClose }) {
               <button className="btn btn-sm" onClick={() => lifecycle('wake')} title="Scale the sandbox back up to inspect tasks and logs">Wake</button>
             )}
             {card && !card.paused && !card.starting && (
+              <button className="btn btn-sm" onClick={() => setShowTerminal(v => !v)}
+                title="Shell into the sandbox — the session lives in tmux and survives disconnects">
+                {showTerminal ? 'Hide terminal' : 'Terminal'}
+              </button>
+            )}
+            {card && !card.paused && !card.starting && (
               <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
             )}
             <button className="btn btn-sm" onClick={load} title="Refresh">↻</button>
@@ -653,6 +720,15 @@ function SandboxCard({ name, onClose }) {
         {card && card.starting && (
           <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginTop: '12px' }}>
             Pod is starting — tasks will appear once it is ready.
+          </div>
+        )}
+        {showTerminal && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-secondary)' }}>TERMINAL</span>
+              <span style={{ marginLeft: '8px', fontSize: 'x-small', color: 'var(--text-secondary)' }}>{termStatus}</span>
+            </div>
+            <div ref={termHostRef} style={{ height: '45vh', backgroundColor: '#0d1117', borderRadius: '6px', padding: '4px' }} />
           </div>
         )}
         {card && !card.paused && !card.starting && (
