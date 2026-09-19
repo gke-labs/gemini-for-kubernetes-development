@@ -57,8 +57,14 @@ func shellSingleQuote(s string) string {
 // repo checkout is found in the pod (the one /workspaces/*/.git), not
 // trusted from the client.
 func chatCommand(taskType, home, apiKey string) string {
+	// Transition shim: tasks that ran before every task type moved to the
+	// workspace home left their sessions under /root. If this pod hasn't
+	// restarted since (a restart wipes /root), rescue them onto the PVC so
+	// resume still finds the conversation; -p keeps mtimes so a stale
+	// /root session never masquerades as "latest".
 	inner := fmt.Sprintf(
 		"export HOME=%s; export GEMINI_API_KEY=%s; "+
+			`if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; `+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
 			"exec gemini --resume latest",

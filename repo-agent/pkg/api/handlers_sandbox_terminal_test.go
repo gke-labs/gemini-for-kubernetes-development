@@ -15,6 +15,7 @@ func TestChatCommand(t *testing.T) {
 	for _, want := range []string{
 		"tmux new-session -A -s chat-plan",
 		"export HOME=/workspaces/.home",
+		"cp -Rnp /root/.gemini/tmp/.",
 		"gemini --resume latest",
 		`GEMINI_API_KEY='\''sk-test'\''`,
 	} {
