@@ -40,6 +40,8 @@ type ExecOptions struct {
 	Stderr      io.Writer
 	Env         map[string]string
 	TTY         bool
+	// SizeQueue feeds terminal resizes to a TTY exec (nil = fixed size).
+	SizeQueue remotecommand.TerminalSizeQueue
 }
 
 // PodExecutor implements Executor for running commands in a Kubernetes pod.
@@ -225,9 +227,10 @@ func ExecInPod(ctx context.Context, kube *clients.KubernetesClient, podID types.
 	var stderr bytes.Buffer
 
 	streamOptions := remotecommand.StreamOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Tty:    opts.TTY,
+		Stdout:            &stdout,
+		Stderr:            &stderr,
+		Tty:               opts.TTY,
+		TerminalSizeQueue: opts.SizeQueue,
 	}
 	if opts.Stdin != nil {
 		streamOptions.Stdin = bytes.NewReader(opts.Stdin)
