@@ -745,7 +745,7 @@ function SandboxCard({ name, namespace, onClose }) {
                 className="btn btn-sm" style={{ marginLeft: 'auto', textDecoration: 'none' }}
                 title="Pop out into its own window — same tmux session, real window management">↗ pop out</a>
             </div>
-            <div ref={termHostRef} style={{ height: '45vh', backgroundColor: '#0d1117', borderRadius: '6px', padding: '4px' }} />
+            <div ref={termHostRef} style={{ height: 'calc(100vh - 300px)', minHeight: '260px', backgroundColor: '#0d1117', borderRadius: '6px', padding: '4px' }} />
           </div>
         )}
         {card && !card.paused && !card.starting && (

@@ -81,17 +81,20 @@ const SandboxTerminal = ({ namespace, sandboxName, fill }) => {
     }, [namespace, sandboxName]);
 
     return (
-        <div style={{ width: '100%' }}>
-            <div style={{ fontSize: 'x-small', color: '#8b949e', textAlign: 'left', padding: '2px 4px' }}>{status}</div>
+        <div style={fill
+            ? { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }
+            : { width: '100%' }}>
+            <div style={{ fontSize: 'x-small', color: '#8b949e', textAlign: 'left', padding: '2px 4px', flex: '0 0 auto' }}>{status}</div>
             <div
                 ref={terminalRef}
                 style={{
                     textAlign: 'left',
                     width: '100%',
-                    height: fill ? 'calc(100% - 20px)' : '600px',
+                    ...(fill
+                        ? { flex: '1 1 auto', minHeight: 0 }
+                        : { height: '600px', resize: 'vertical' }),
                     backgroundColor: '#1e1e1e',
                     padding: '10px',
-                    resize: 'vertical',
                     overflow: 'hidden',
                 }}
             />
