@@ -14,11 +14,11 @@ import 'xterm/css/xterm.css';
 // The engine that launched into the row's sandbox (stamped by the
 // controller) — brand icons so an A/B board pair reads at a glance.
 const ENGINE_ICON = { claude: claudeIcon, gemini: geminiIcon };
-function EngineIcon({ engine }) {
+function EngineIcon({ engine, title }) {
   const src = ENGINE_ICON[engine];
   if (!src) return null;
   return (
-    <img src={src} alt={engine} title={`engine: ${engine}`}
+    <img src={src} alt={engine} title={title || `engine: ${engine}`}
       style={{ width: '14px', height: '14px', verticalAlign: 'text-bottom', marginRight: '4px' }} />
   );
 }
@@ -346,7 +346,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           Agent (machine facts, incl. run outcomes), then the one-action
           rail — receipts, the stage button, or launch verbs. */}
       <td style={{ padding: '6px 8px' }}>
-        {item.sandbox && <EngineIcon engine={item.sandbox.engine} />}
+        {/* The icon is the sandbox's presence on the row: click for the
+            card (tasks, logs, lifecycle). Resting lifecycle (paused /
+            active) is deliberately NOT a board-level chip — pause/wake
+            is automatic, and every flow that needs a manual wake goes
+            through the card anyway. The state lives in the tooltip. */}
+        {item.sandbox && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }}>
+            <EngineIcon engine={item.sandbox.engine}
+              title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`} />
+          </span>
+        )}
         {AGENT_STAGE[item.stage] ? (
           // A failure chip opens the error first (the "why"); the sandbox
           // card with the full logs is one more click from there.
@@ -361,15 +371,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               color={(AGENT_STYLE[item.stage] || { color: '#b08800' }).color}
               bg={(AGENT_STYLE[item.stage] || { bg: 'rgba(176,136,0,0.12)' }).bg} />
           </span>
-        ) : item.sandbox && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
-            <Chip
-              text={item.sandbox.replicas === '0' ? 'paused' : (item.sandbox.taskState || 'active').toLowerCase()}
-              color={item.sandbox.replicas === '0' ? '#6a737d' : '#22863a'}
-              bg={item.sandbox.replicas === '0' ? 'rgba(106,115,125,0.12)' : 'rgba(34,134,58,0.12)'}
-            />
-          </span>
-        )}
+        ) : null}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {receipts.map(r => r.href ? (
