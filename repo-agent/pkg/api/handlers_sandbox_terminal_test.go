@@ -81,6 +81,7 @@ func TestChatCommandClaude(t *testing.T) {
 		// --resume by explicit id: interactive --continue refuses
 		// print-mode sessions (the task's), --resume <id> loads them.
 		".claude/projects/",
+		`printf %s "$PWD"`,
 		`claude --resume "$(basename "$sid" .jsonl)"`,
 		"else exec claude; fi",
 		`ANTHROPIC_API_KEY='\''sk-ant'\''`,
@@ -93,6 +94,9 @@ func TestChatCommandClaude(t *testing.T) {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("claude chatCommand missing %q in:\n%s", want, cmd)
 		}
+	}
+	if strings.Contains(cmd, "(MISSING)") || strings.Contains(cmd, "%!") {
+		t.Errorf("Sprintf verb collision leaked into the command:\n%s", cmd)
 	}
 	for _, reject := range []string{"gemini", "trustedFolders", "GEMINI_API_KEY"} {
 		if strings.Contains(cmd, reject) {

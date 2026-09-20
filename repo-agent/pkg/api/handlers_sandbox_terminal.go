@@ -156,13 +156,16 @@ json.dump(d,open(p,"w"),indent=2)' "$PWD" 2>/dev/null; `
 			resume += " -i " + shellSingleQuote(orientation)
 		}
 	}
+	// prep and resume are ARGUMENTS, never part of the format string: a
+	// literal %s inside them (the claude resolver's `printf %s`) would be
+	// eaten as a Sprintf verb and emit %!s(MISSING) — shell garbage that
+	// exits instantly ([exited] loop on every attach).
 	inner := fmt.Sprintf(
 		"export HOME=%s; %s; "+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
-			prep+
-			resume,
-		home, keyExport)
+			"%s%s",
+		home, keyExport, prep, resume)
 	return "TERM=xterm-256color exec tmux new-session -A -s chat-" + taskType + " " + shellSingleQuote(inner)
 }
 
