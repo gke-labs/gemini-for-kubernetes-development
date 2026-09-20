@@ -122,10 +122,21 @@ proj=d.setdefault("projects",{}).setdefault(sys.argv[1],{})
 proj["hasTrustDialogAccepted"]=True
 proj.setdefault("hasCompletedProjectOnboarding",True)
 json.dump(d,open(p,"w"),indent=2)' "$PWD" 2>/dev/null; `
-		resume = "exec claude --continue"
+		// Interactive `claude --continue` filters out print-mode sessions
+		// (observed on 2.1.278: -p --continue finds the task's session,
+		// interactive --continue says "No conversation found to continue")
+		// — but an explicit --resume <id> loads it fine. Resolve the
+		// newest session for this project dir (cwd escaped the way Claude
+		// Code does: non-alphanumerics → '-') and resume it by id; with
+		// no session at all, open a fresh chat without the "reconnected"
+		// orientation, which would be a lie.
+		orient := ""
 		if orientation != "" {
-			resume += " " + shellSingleQuote(orientation)
+			orient = " " + shellSingleQuote(orientation)
 		}
+		resume = `proj="$HOME/.claude/projects/$(printf %s "$PWD" | tr -c "a-zA-Z0-9" "-")"; ` +
+			`sid=$(ls -t "$proj"/*.jsonl 2>/dev/null | head -1); ` +
+			`if [ -n "$sid" ]; then exec claude --resume "$(basename "$sid" .jsonl)"` + orient + `; else exec claude; fi`
 	default:
 		// Trust like the task runs do (no interactive prompt), and widen
 		// the workspace to /workspaces: artifact files (plan-issue-N.md)
