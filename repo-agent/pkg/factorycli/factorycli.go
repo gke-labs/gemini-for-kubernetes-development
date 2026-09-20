@@ -157,6 +157,64 @@ type PlanOptions struct {
 	Timeout time.Duration
 }
 
+// PRTaskOptions are the inputs for the follow-up verbs on a factory PR:
+// `pr investigate` (CI failures), `pr address-comments` (review feedback),
+// `pr iterate` (free-form instruction / merge conflicts). All three run in
+// the PR's fix sandbox, push to the PR branch under the invoking identity,
+// and continue the fix conversation (--continue-session in the scripts).
+type PRTaskOptions struct {
+	// SandboxName enables the in-flight preflight (fix-<repo>-<n>).
+	SandboxName string
+
+	Namespace string
+	PRURL     string
+	// Instruction overrides factory's default prompt for the task; empty
+	// keeps the default ("Resolve merge conflicts and iterate", ...).
+	Instruction string
+	GithubToken string
+	Timeout     time.Duration
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine string
+}
+
+func (r *Runner) startPRTask(key, subcommand, prefix string, opts PRTaskOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 45 * time.Minute
+	}
+	args := []string{
+		"pr", subcommand,
+		"--pr-url", opts.PRURL,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	if opts.Instruction != "" {
+		args = append(args, "--prompt", opts.Instruction)
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: prefix,
+	})
+}
+
+// StartInvestigate launches `factory pr investigate` (CI check failures).
+func (r *Runner) StartInvestigate(key string, opts PRTaskOptions) bool {
+	return r.startPRTask(key, "investigate", "investigate", opts)
+}
+
+// StartAddressComments launches `factory pr address-comments`.
+func (r *Runner) StartAddressComments(key string, opts PRTaskOptions) bool {
+	return r.startPRTask(key, "address-comments", "address", opts)
+}
+
+// StartIterate launches `factory pr iterate`.
+func (r *Runner) StartIterate(key string, opts PRTaskOptions) bool {
+	return r.startPRTask(key, "iterate", "iterate", opts)
+}
+
 // Result records the outcome of a finished invocation.
 type Result struct {
 	Err        error
@@ -180,6 +238,11 @@ type Launcher interface {
 	// running; a controller pass harvests the finished invocation's output
 	// (see ExtractPlan) via LastResult.
 	StartPlan(key string, opts PlanOptions) bool
+	// StartInvestigate / StartAddressComments / StartIterate launch the
+	// PR follow-up verbs in the PR's fix sandbox.
+	StartInvestigate(key string, opts PRTaskOptions) bool
+	StartAddressComments(key string, opts PRTaskOptions) bool
+	StartIterate(key string, opts PRTaskOptions) bool
 	// StartTriage launches `factory triage --publish no` for key unless
 	// one is already running. The triage YAML is recovered from the
 	// invocation's output (see ExtractTriageYAML) via LastResult.

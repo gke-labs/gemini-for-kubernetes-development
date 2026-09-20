@@ -977,6 +977,22 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
 
+	// PR follow-up verbs (iterate / address-comments / investigate) run in
+	// the fix sandbox; while one runs (or after it fails) the row shows it
+	// as the machine's state, same as fixing/reviewing.
+	followUpStage := ""
+	if sb != nil {
+		followUpNames := map[string]string{"iterate": "iterating", "address-comments": "addressing", "investigate": "investigating"}
+		if name, ok := followUpNames[sb.GetAnnotations()["sandbox.gemini.google.com/last-task-type"]]; ok {
+			switch sb.GetAnnotations()[annoTaskState] {
+			case "Running":
+				followUpStage = name
+			case "Failed":
+				followUpStage = name + "-failed"
+			}
+		}
+	}
+
 	reviewState := ""
 	state := ""
 	reviewError := ""
@@ -1042,6 +1058,11 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// stay out of UP NEXT.
 		stage, attention = "review-requested", attentionWaiting
 		if time.Since(pr.GetUpdatedAt()) <= reviewRequestFreshWindow {
+			attention = attentionNeedsYou
+		}
+	case authored && followUpStage != "":
+		stage, attention = followUpStage, attentionWorking
+		if strings.HasSuffix(followUpStage, "-failed") {
 			attention = attentionNeedsYou
 		}
 	case authored:
@@ -1571,6 +1592,67 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+// findPRFixSandbox locates the fix sandbox that created this PR (the
+// factory pr label), checking the viewer's namespace then the board's.
+func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
+	ctx := c.Request.Context()
+	prStr := strconv.Itoa(number)
+	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		for _, sb := range sandboxes {
+			if strings.HasPrefix(sb.GetName(), "fix-") && sb.GetLabels()["factory.gemini.google.com/pr"] == prStr {
+				return sb, ns
+			}
+		}
+	}
+	return nil, ""
+}
+
+// kickoffPRTask stamps a follow-up request (Iterate / Address comments /
+// Fix CI) on the PR's fix sandbox. The annotation is the durable consent
+// the controller drives from — no mailbox claim to strand on a restart.
+func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Instruction string `json:"instruction"`
+	}
+	_ = c.ShouldBindJSON(&req) // body optional
+	sb, ns := s.findPRFixSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no agent sandbox for this PR — follow-up verbs run in the fix sandbox that created it"})
+		return
+	}
+	if instructionKey != "" {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), instructionKey, strings.TrimSpace(req.Instruction)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record instruction", "details": err.Error()})
+			return
+		}
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), reqKey, nowRFC3339()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record request", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+func (s *Server) iterateBoardPR(c *gin.Context) {
+	s.kickoffPRTask(c, "board.gemini.google.com/iterate-requested-at", "board.gemini.google.com/iterate-instruction")
+}
+
+func (s *Server) addressBoardPR(c *gin.Context) {
+	s.kickoffPRTask(c, "board.gemini.google.com/address-requested-at", "")
+}
+
+func (s *Server) investigateBoardPR(c *gin.Context) {
+	s.kickoffPRTask(c, "board.gemini.google.com/investigate-requested-at", "")
 }
 
 // engineOrDefault normalizes the gear's engine choice; anything but an

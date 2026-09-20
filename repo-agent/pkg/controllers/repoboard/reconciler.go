@@ -94,6 +94,15 @@ const (
 	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
 	AnnotationPlanApproved   = "board.gemini.google.com/plan-approved-at"
 	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
+	// PR follow-up verbs (Iterate / Address comments / Fix CI): the API
+	// stamps the request on the fix sandbox — durable consent the
+	// controller drives from. No mailbox claim to strand (the #1529
+	// lesson): rerunRequested keeps a request standing until a completion
+	// newer than it lands.
+	AnnotationIterateRequested     = "board.gemini.google.com/iterate-requested-at"
+	AnnotationIterateInstruction   = "board.gemini.google.com/iterate-instruction"
+	AnnotationAddressRequested     = "board.gemini.google.com/address-requested-at"
+	AnnotationInvestigateRequested = "board.gemini.google.com/investigate-requested-at"
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
@@ -311,6 +320,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.trimMailbox(ctx, work); err != nil {
 		logger.Error(err, "mailbox cleanup failed")
 	}
+
+	// Explicit PR follow-up clicks run regardless of the auto policy —
+	// a click IS the consent.
+	r.ensurePRTaskClicks(ctx, work)
 
 	// Follow up factory-created PRs (investigate failures, address
 	// comments) unless the board forbids unattended pushes.
@@ -1074,6 +1087,84 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 
 // followUpPRs keeps a factory pr watch running for every fix sandbox aliased
 // to an open PR, in the sandbox owner's namespace with their identity.
+// ensurePRTaskClicks drives the explicit PR follow-up verbs. Requests
+// live as sandbox annotations (durable consent, restart-proof); a
+// request is served once any completion newer than it lands — the same
+// global-completion semantics refix uses, which also means a click made
+// while another task runs is considered absorbed by that run's finish
+// (acceptable: the verbs are one click away). One launch per sandbox per
+// pass, and any in-flight follow-up defers the others — the tasks share
+// one workspace.
+func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
+	logger := log.FromContext(ctx)
+	kinds := []struct {
+		reqKey, kind string
+		start        func(string, factorycli.PRTaskOptions) bool
+	}{
+		{AnnotationIterateRequested, "iterate", r.Factory.StartIterate},
+		{AnnotationAddressRequested, "address", r.Factory.StartAddressComments},
+		{AnnotationInvestigateRequested, "investigate", r.Factory.StartInvestigate},
+	}
+	for _, sb := range work.sandboxes {
+		if !strings.HasPrefix(sb.GetName(), "fix-") {
+			continue
+		}
+		annotations := sb.GetAnnotations()
+		prNum := sb.GetLabels()[factorycli.LabelPR]
+		prURL := annotations["htmlURL"]
+		if prNum == "" || !strings.Contains(prURL, "/pull/") {
+			continue
+		}
+		namespace := sb.GetNamespace()
+		busy := false
+		for _, k := range kinds {
+			if r.Factory.IsRunning(fmt.Sprintf("%s/%s-%s", namespace, k.kind, prNum)) {
+				busy = true
+			}
+		}
+		// A fix or plan child may still be provisioning this sandbox (no
+		// task landed yet for the prober's sandbox-wide busy check to
+		// see): their runner keys derive from the sandbox name.
+		if r.Factory.IsRunning(namespace+"/"+sb.GetName()) ||
+			r.Factory.IsRunning(namespace+"/plan-"+strings.TrimPrefix(sb.GetName(), "fix-")) {
+			busy = true
+		}
+		if busy {
+			continue
+		}
+		for _, k := range kinds {
+			if !rerunRequested(sb, k.reqKey, factorycli.AnnotationCompletionTime) {
+				continue
+			}
+			key := fmt.Sprintf("%s/%s-%s", namespace, k.kind, prNum)
+			if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
+				continue
+			}
+			token, err := r.executorToken(ctx, namespace)
+			if err != nil {
+				continue
+			}
+			instruction := ""
+			if k.kind == "iterate" {
+				instruction = annotations[AnnotationIterateInstruction]
+			}
+			r.stampUnpaused(ctx, sb)
+			r.stampEngine(ctx, sb, boardEngine(work.board))
+			if k.start(key, factorycli.PRTaskOptions{
+				Namespace:   namespace,
+				SandboxName: sb.GetName(),
+				PRURL:       prURL,
+				Instruction: instruction,
+				GithubToken: token,
+				Engine:      boardEngine(work.board),
+			}) {
+				logger.Info("launched factory pr "+k.kind, "pr", prNum, "board", work.board.Name)
+			}
+			break // one launch per sandbox per pass — shared workspace
+		}
+	}
+}
+
 func (r *Reconciler) followUpPRs(ctx context.Context, work *workState) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {

@@ -64,7 +64,18 @@ func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefi
 
 	// One round-trip: newest <prefix>-* dir → running / finished verdict
 	// plus exit code and (when finished) the requested output file.
-	script := fmt.Sprintf(`d=$(ls -dt /workspaces/tasks/%s-* 2>/dev/null | head -1)
+	// The busy verdict is sandbox-WIDE: one task per sandbox is the
+	// invariant (tasks share a workspace), so ANY live task — regardless
+	// of type — makes every launcher skip; the next reconcile requeues.
+	// Orphan adoption below stays prefix-scoped: only our own task type's
+	// leftovers are ours to harvest.
+	script := fmt.Sprintf(`for p in /workspaces/tasks/*/pid; do
+  [ -f "$p" ] || continue
+  t=$(dirname "$p")
+  [ -f "$t/exit_code" ] && continue
+  if kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null; then echo "running|"; exit 0; fi
+done
+d=$(ls -dt /workspaces/tasks/%s-* 2>/dev/null | head -1)
 if [ -z "$d" ]; then echo "none|"; exit 0; fi
 if [ -f "$d/exit_code" ]; then
   echo "finished|$(cat "$d/exit_code")"

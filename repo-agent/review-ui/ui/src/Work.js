@@ -55,12 +55,21 @@ const AGENT_STAGE = {
   'triaging': 'triaging',
   'planning': 'planning',
   'queued': 'queued',
+  'iterating': 'iterating',
+  'addressing': 'addressing comments',
+  'investigating': 'investigating CI',
+  'iterating-failed': 'iterate failed !',
+  'addressing-failed': 'address failed !',
+  'investigating-failed': 'investigate failed !',
   'plan-failed': 'plan failed !',
   'fix-failed': 'fix failed !',
   'review-failed': 'review failed !',
   'fix-done': 'done — no PR',
 };
 const AGENT_STYLE = {
+  'iterating-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+  'addressing-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+  'investigating-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
   'plan-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
   'fix-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
   'review-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
@@ -151,6 +160,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
 
   const [showPlan, setShowPlan] = useState(false);
   const [showReview, setShowReview] = useState(false);
+  const [showIterate, setShowIterate] = useState(false);
+  const [iterateText, setIterateText] = useState('');
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
@@ -245,6 +256,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     if (item.draftPR) {
       // Promoting your own draft PR is an author right, not a repo write.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
+    }
+    // Follow-up verbs run in the fix sandbox that created the PR (so
+    // they need one) and are hidden while a follow-up is in flight; a
+    // failed follow-up re-offers them — the verb is the retry.
+    if (item.sandbox && !['iterating', 'addressing', 'investigating'].includes(item.stage)) {
+      actions.push({ label: 'Address comments', path: `prs/${item.number}/address-comments`, title: 'Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation' });
+      actions.push({ label: 'Fix CI', path: `prs/${item.number}/investigate`, title: 'Agent investigates failing checks and pushes a fix' });
+      actions.push({ label: showIterate ? 'Iterate ▴' : 'Iterate ▾', onClick: () => setShowIterate(v => !v), title: 'Tell the agent what to change on this PR — empty runs conflict-resolution and iteration' });
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.
@@ -401,7 +420,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             onClick={() => setShowDraft(v => !v)}
           >{showDraft ? 'Hide suggestions' : 'Suggestions'}</button>
         )}
-        {actions.map(a => a.href ? (
+        {actions.map(a => a.onClick ? (
+          <button key={a.label} className="btn btn-sm" style={{ marginLeft: '4px' }} title={a.title} onClick={a.onClick}>{a.label}</button>
+        ) : a.href ? (
           <a
             key={a.label}
             className="btn btn-sm"
@@ -590,7 +611,40 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-    {showDraft && item.error && (
+    {showIterate && group === 'mine-pr' && (
+      <tr>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
+          <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
+            <textarea
+              value={iterateText}
+              onChange={e => setIterateText(e.target.value)}
+              placeholder="What should the agent change on this PR? Leave empty to resolve conflicts and iterate."
+              spellCheck={false}
+              style={{
+                width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
+                padding: '8px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)',
+                border: '1px solid var(--border-color, #444)', borderRadius: '6px', minHeight: '56px', textAlign: 'left',
+              }}
+            />
+            <div style={{ marginTop: '6px', textAlign: 'right' }}>
+              <button className="btn btn-sm"
+                title="Run factory pr iterate in the fix sandbox — pushes to the PR branch"
+                onClick={() => {
+                  fetch(`/api/board/${boardName}/prs/${item.number}/iterate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instruction: iterateText }),
+                  }).then(res => {
+                    if (res.ok) { setShowIterate(false); setIterateText(''); if (onRefresh) onRefresh(); }
+                  }).catch(() => {});
+                }}>Run</button>
+              <button className="btn btn-sm" style={{ marginLeft: '4px' }} onClick={() => setShowIterate(false)}>Cancel</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+    )}
+        {showDraft && item.error && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{
