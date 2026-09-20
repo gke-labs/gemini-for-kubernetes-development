@@ -275,6 +275,20 @@ func (s *Server) getBoards(c *gin.Context) {
 		repoURL, _, _ := unstructured.NestedString(item.Object, "spec", "repoURL")
 		needsHuman, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "needsHuman")
 		active, _, _ := unstructured.NestedInt64(item.Object, "status", "counts", "active")
+		// The badge must agree with Up Next: when the feed cache holds
+		// this board, count the same attention the tab opens onto. The
+		// controller's status count is a sandbox-only heuristic from an
+		// older era — it serves only as the cold-start fallback until the
+		// first feed build lands.
+		if items, ok := workFeedPeek(item.GetNamespace() + "/" + item.GetName()); ok {
+			n := int64(0)
+			for i := range items {
+				if items[i].Attention == "needs-you" {
+					n++
+				}
+			}
+			needsHuman = n
+		}
 		role := "read-only"
 		if s.hasPushPermission(c.Request.Context(), namespace, sessionUser, repoURL) {
 			role = "maintainer"
@@ -334,6 +348,18 @@ func workFeedGet(key string) (items []models.WorkItem, ok, needsRefresh bool) {
 		return e.items, true, refresh
 	}
 	return nil, false, false
+}
+
+// workFeedPeek returns cached items when present and unexpired, without
+// claiming a refresh — badge counting must never trigger feed rebuilds.
+func workFeedPeek(key string) ([]models.WorkItem, bool) {
+	workFeedCache.Lock()
+	defer workFeedCache.Unlock()
+	e, found := workFeedCache.entries[key]
+	if !found || time.Since(e.at) > workFeedServeStaleFor {
+		return nil, false
+	}
+	return e.items, true
 }
 
 func workFeedPut(key string, items []models.WorkItem) {
