@@ -173,8 +173,10 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 // task failed so that a restart does not mistake pre-existing comments for new
 // ones while still picking up comments posted while the task was running;
 // retries of a failed address-comments task are driven explicitly by inspecting
-// the processed task status. For other phases, a failed task is folded in as
-// nothing at all so that recording it does not suppress a retry.
+// the processed task status. For iterate (rebase) tasks, the SHA is recorded
+// even when the task failed to prevent infinite rescheduling on the same commit SHA.
+// For other phases, a failed task is folded in as nothing at all so that recording
+// it does not suppress a retry.
 func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	// The queue dates every finished task, falling back to the task file's own
 	// timestamp for one that recorded no completion time. A zero survivor is
@@ -197,7 +199,9 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	}
 
 	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-		return state
+		if !strings.HasSuffix(name, "-iterate") {
+			return state
+		}
 	}
 
 	switch {
