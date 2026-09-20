@@ -721,10 +721,15 @@ func workSandbox(sb *unstructured.Unstructured) *models.WorkSandbox {
 		return nil
 	}
 	replicas, _, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+	engine := sb.GetAnnotations()["board.gemini.google.com/engine"]
+	if engine == "" {
+		engine = "gemini" // pre-stamp sandboxes only ever ran gemini
+	}
 	return &models.WorkSandbox{
 		Name:      sb.GetName(),
 		Replicas:  fmt.Sprintf("%d", replicas),
 		TaskState: sb.GetAnnotations()[annoTaskState],
+		Engine:    engine,
 	}
 }
 

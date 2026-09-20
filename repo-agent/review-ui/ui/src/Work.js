@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import claudeIcon from './claude-icon.svg';
+import geminiIcon from './gemini-icon.svg';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -8,6 +10,18 @@ import 'xterm/css/xterm.css';
 // state, sorted by attention; one action button per row. The feed is
 // live-computed by the backend — this component is a renderer plus thin
 // click handlers.
+
+// The engine that launched into the row's sandbox (stamped by the
+// controller) — brand icons so an A/B board pair reads at a glance.
+const ENGINE_ICON = { claude: claudeIcon, gemini: geminiIcon };
+function EngineIcon({ engine }) {
+  const src = ENGINE_ICON[engine];
+  if (!src) return null;
+  return (
+    <img src={src} alt={engine} title={`engine: ${engine}`}
+      style={{ width: '14px', height: '14px', verticalAlign: 'text-bottom', marginRight: '4px' }} />
+  );
+}
 
 const ATTENTION_STYLE = {
   'needs-you': { label: 'Needs you', color: '#d73a49', bg: 'rgba(215,58,73,0.12)' },
@@ -332,6 +346,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           Agent (machine facts, incl. run outcomes), then the one-action
           rail — receipts, the stage button, or launch verbs. */}
       <td style={{ padding: '6px 8px' }}>
+        {item.sandbox && <EngineIcon engine={item.sandbox.engine} />}
         {AGENT_STAGE[item.stage] ? (
           // A failure chip opens the error first (the "why"); the sandbox
           // card with the full logs is one more click from there.

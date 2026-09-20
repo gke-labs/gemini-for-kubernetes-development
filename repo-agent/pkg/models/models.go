@@ -72,6 +72,7 @@ type WorkSandbox struct {
 	Name      string `json:"name"`
 	Replicas  string `json:"replicas"`
 	TaskState string `json:"taskState,omitempty"`
+	Engine    string `json:"engine,omitempty"` // stamped at launch; pre-stamp sandboxes ran gemini
 }
 
 // WorkItem is one row of the board work feed: an issue or PR merged with
