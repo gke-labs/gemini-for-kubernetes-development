@@ -78,7 +78,11 @@ func TestChatCommandClaude(t *testing.T) {
 	for _, want := range []string{
 		"tmux new-session -A -s chat-plan",
 		"export HOME=/workspaces/.home",
-		"claude --continue",
+		// --resume by explicit id: interactive --continue refuses
+		// print-mode sessions (the task's), --resume <id> loads them.
+		".claude/projects/",
+		`claude --resume "$(basename "$sid" .jsonl)"`,
+		"else exec claude; fi",
 		`ANTHROPIC_API_KEY='\''sk-ant'\''`,
 		// The onboarding seed: without it every fresh sandbox greets the
 		// user with Claude Code's first-run wizard instead of the chat.
