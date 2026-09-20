@@ -364,9 +364,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           </span>
         ))}
         {stageBtn && (
-          <span onClick={toggleStagePanel} style={{ cursor: 'pointer', marginLeft: '4px' }} title={stageBtn.title}>
-            <Chip text={stageBtn.label + (stagePanelOpen ? ' ▴' : ' ▾')} color={stageBtn.color} bg={stageBtn.bg} />
-          </span>
+          // A real button, not a chip: the stage verdict is THE action on
+          // the row, so it must look pressable — chips are for facts. The
+          // tint keeps the urgency grammar (amber = your verdict blocks,
+          // purple = finalize your review).
+          <button className="btn btn-sm" onClick={toggleStagePanel} title={stageBtn.title}
+            style={{ marginLeft: '4px', color: stageBtn.color, backgroundColor: stageBtn.bg, borderColor: stageBtn.color, fontWeight: 600 }}>
+            {stageBtn.label + (stagePanelOpen ? ' ▴' : ' ▾')}
+          </button>
         )}
         {item.draft && !item.triagePublished && !['triage-ready', 'triaged'].includes(item.stage) && (
           <button
