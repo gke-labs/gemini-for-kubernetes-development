@@ -42,3 +42,16 @@ func TestGetScriptWithDefaults(t *testing.T) {
 		t.Error("Expected run_agent script to contain runPrecondition function")
 	}
 }
+
+// ModelsForEngine: claude gets the static strongest-first list (no
+// key-tier probing in v1); gemini keeps the quota-filtered behavior.
+func TestModelsForEngine(t *testing.T) {
+	claude := ModelsForEngine("claude", "")
+	if claude != "opus sonnet" {
+		t.Errorf("claude models = %q, want opus sonnet", claude)
+	}
+	gemini := ModelsForEngine("gemini", "no-such-key")
+	if gemini == "" || gemini == claude {
+		t.Errorf("gemini models = %q, want the gemini default list", gemini)
+	}
+}

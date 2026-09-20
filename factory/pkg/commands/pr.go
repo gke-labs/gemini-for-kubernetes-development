@@ -265,7 +265,6 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -276,8 +275,10 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"FAILED_RUNS":                strings.Join(failedRunIDs, " "),
 		"FAILED_PROW_RUNS":           strings.Join(failedProwRuns, " "),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running investigate task via envd...")
@@ -538,7 +539,6 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -547,8 +547,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running address-comments task via envd...")
@@ -950,7 +952,6 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
@@ -961,8 +962,10 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
 		"BRANCH_NAME":                pr.GetHead().GetRef(),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"GEMINI_CONTINUE_SESSION":    strconv.FormatBool(continueSession),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running iterate task via envd...")
@@ -1246,7 +1249,6 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 
 	envMap := map[string]string{
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
@@ -1259,7 +1261,9 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 		"PR_URL":                     prURL,
 		"ADOPT_FLAG":                 adoptAction,
 		"STRATEGY":                   strategy,
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running adopt task via envd...")

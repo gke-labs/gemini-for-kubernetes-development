@@ -14,7 +14,21 @@ var taskScripts = []string{
 
 // Functions that live only in lib.sh — every rendered script must define
 // them exactly once (a duplicate means a script kept a stale copy).
-var libOnly = []string{"setupGit", "configureGemini", "record_gemini_usage"}
+var libOnly = []string{"setupGit", "configureGemini", "record_gemini_usage", "runEngine"}
+
+// The engine seam: every task that drives the model does it through
+// runEngine with its task-specific knobs; no script carries a private
+// engine loop anymore (run_agent's runAgent is the documented exception
+// until the agent flow's engine follow-up).
+var engineCalls = map[string]string{
+	"plan_issue.sh":           "runEngine plan-output.txt",
+	"triage_issue.sh":         "runEngine triage-output.txt",
+	"review.sh":               "runEngine review-output.txt",
+	"fix_issue.sh":            "\nrunEngine\n",
+	"iterate.sh":              "SKIP_EMPTY_PROMPT=true runEngine",
+	"address_feedback.sh":     "\nrunEngine\n",
+	"investigate_failures.sh": "\nrunEngine\n",
+}
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).
@@ -51,6 +65,12 @@ func TestRenderedScripts(t *testing.T) {
 		}
 		if n := defCount(script, "setupGitRepos"); n != want {
 			t.Errorf("%s: setupGitRepos defined %d times, want %d", name, n, want)
+		}
+		if n := defCount(script, "runGemini"); n != 0 {
+			t.Errorf("%s: stale runGemini definition survives (%d)", name, n)
+		}
+		if call, ok := engineCalls[name]; ok && !strings.Contains(script, call) {
+			t.Errorf("%s: expected engine call %q in rendered script", name, strings.TrimSpace(call))
 		}
 		if !strings.HasPrefix(script, "#!/bin/bash") {
 			t.Errorf("%s: rendered script must start with the lib shebang", name)

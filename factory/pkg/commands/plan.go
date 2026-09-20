@@ -187,7 +187,6 @@ func runPlan(ctx context.Context, flags PlanFlags, ephemeralStorage string, secr
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -196,7 +195,9 @@ func runPlan(ctx context.Context, flags PlanFlags, ephemeralStorage string, secr
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"ISSUE_NUMBER":               strconv.Itoa(issueNum),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running plan task via envd...")

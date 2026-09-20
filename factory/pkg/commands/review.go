@@ -279,7 +279,6 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
@@ -288,7 +287,9 @@ func runReview(ctx context.Context, prURL string, publishPolicy string, instruct
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 
 	fmt.Println("Running review task via envd...")

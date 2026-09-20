@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -31,6 +32,7 @@ coding tasks without local side effects or host dependencies.`,
 	}
 
 	cmd.PersistentFlags().StringVarP(&rootFlags.Namespace, "namespace", "n", os.Getenv("NAMESPACE"), "Kubernetes namespace (defaults to $NAMESPACE, gh user, or default)")
+	cmd.PersistentFlags().StringVar(&rootFlags.Engine, "engine", "", "Agent engine: gemini or claude (default gemini; config file key 'engine')")
 	cmd.PersistentFlags().StringVar(&rootFlags.Image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVarP(&rootFlags.User, "user", "u", "", "Run tasks under a specific bot user identity (looks up secret user-<user>)")
@@ -140,6 +142,34 @@ func getGeminiAPIKey(secret *corev1.Secret) string {
 	return geminitokens.GetGeminiAPIKey(secret)
 }
 
+// applyEngineEnv threads the selected engine into a task's env: ENGINE,
+// the engine's API key, and the MODELS fallback list. Claude fails fast
+// when its key is missing from the user secret — otherwise the task would
+// only discover the gap in-sandbox and park with an opaque error. The
+// gemini path stays permissive (an empty key fails in-sandbox exactly as
+// it always has, and alternative auth setups keep working).
+func applyEngineEnv(envMap map[string]string, secret *corev1.Secret) error {
+	engine := rootFlags.Engine
+	if engine == "" {
+		engine = "gemini"
+	}
+	envMap["ENGINE"] = engine
+	switch engine {
+	case "claude":
+		key := string(secret.Data[constants.KeyAnthropicAPIKey])
+		if key == "" {
+			return fmt.Errorf("engine claude selected but %s is missing from secret %s (add the key or switch back to --engine gemini)", constants.KeyAnthropicAPIKey, rootFlags.SecretName)
+		}
+		envMap["ANTHROPIC_API_KEY"] = key
+		envMap["MODELS"] = tasks.ModelsForEngine(engine, "")
+	default:
+		key := getGeminiAPIKey(secret)
+		envMap["GEMINI_API_KEY"] = key
+		envMap["MODELS"] = tasks.ModelsForEngine(engine, key)
+	}
+	return nil
+}
+
 func checkAndRunInBackground(sessionName string) (bool, error) {
 	if !rootFlags.Background {
 		return false, nil
@@ -197,6 +227,15 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return nil, err
+	}
+	if !cmd.Flags().Changed("engine") && cfg.Engine != "" {
+		rootFlags.Engine = cfg.Engine
+	}
+	if rootFlags.Engine == "" {
+		rootFlags.Engine = "gemini"
+	}
+	if rootFlags.Engine != "gemini" && rootFlags.Engine != "claude" {
+		return nil, fmt.Errorf("unknown engine %q (supported: gemini, claude)", rootFlags.Engine)
 	}
 	if !cmd.Flags().Changed("image") && cfg.Image != "" {
 		rootFlags.Image = cfg.Image

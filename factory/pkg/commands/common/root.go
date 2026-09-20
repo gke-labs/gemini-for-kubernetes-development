@@ -8,6 +8,7 @@ import (
 
 type RootFlags struct {
 	Namespace        string
+	Engine           string
 	Image            string
 	DiskSize         string
 	SecretName       string

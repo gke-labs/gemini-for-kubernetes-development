@@ -28,6 +28,7 @@ type RoleConfig struct {
 }
 
 type FactoryConfig struct {
+	Engine               string                `yaml:"engine"`
 	MaxActiveReviews     int                   `yaml:"maxActiveReviews"`
 	MaxActiveIssues      int                   `yaml:"maxActiveIssues"`
 	Chores               ChoresConfig          `yaml:"chores"`
