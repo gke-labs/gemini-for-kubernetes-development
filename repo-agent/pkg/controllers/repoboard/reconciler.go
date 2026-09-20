@@ -1122,6 +1122,13 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
 				busy = true
 			}
 		}
+		// A fix or plan child may still be provisioning this sandbox (no
+		// task landed yet for the prober's sandbox-wide busy check to
+		// see): their runner keys derive from the sandbox name.
+		if r.Factory.IsRunning(namespace+"/"+sb.GetName()) ||
+			r.Factory.IsRunning(namespace+"/plan-"+strings.TrimPrefix(sb.GetName(), "fix-")) {
+			busy = true
+		}
 		if busy {
 			continue
 		}

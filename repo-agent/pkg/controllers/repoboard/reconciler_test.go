@@ -1231,3 +1231,37 @@ func TestPRTaskClicks(t *testing.T) {
 		g.Expect(l.PRTaskOpts).To(gomega.BeNil())
 	}
 }
+
+// One task per sandbox: a fix or plan child still provisioning the
+// sandbox defers a follow-up click (the prober cannot see a task that
+// has not landed in the pod yet).
+func TestPRTaskClickDefersToRunningFix(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+	fake := newFakeLauncher()
+	fake.running["alice/fix-repo-9"] = true
+
+	sb := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "fix-repo-9",
+			"namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "42",
+			},
+			"annotations": map[string]interface{}{
+				"htmlURL":                  "https://github.com/test/repo/pull/42",
+				AnnotationIterateRequested: time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake.launches() {
+		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "follow-up must defer to the running fix")
+	}
+}
