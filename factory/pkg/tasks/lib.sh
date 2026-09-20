@@ -353,6 +353,70 @@ try:
         json.dump(existing, f, indent=2)
 except Exception:
     pass
+
+# Tool telemetry from the Claude Code transcript: assistant tool_use
+# entries pair with user tool_result entries by id; the output shape is
+# identical to the gemini miner so downstream readers need nothing.
+try:
+    import glob as gb
+    from datetime import datetime
+    def parse_iso(ts):
+        if not ts: return None
+        try: return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception: return None
+    session_files = gb.glob(os.path.join(os.environ.get("HOME", "/workspaces/.home"), ".claude", "projects", "*", "*.jsonl"))
+    if session_files:
+        latest = max(session_files, key=os.path.getmtime)
+        tool_metrics = {"total_tool_calls": 0, "total_tool_duration_sec": 0, "tools": {}, "shell_calls": []}
+        pending = {}
+        all_shell_calls = []
+        with open(latest, "r", errors="ignore") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                    ts = parse_iso(d.get("timestamp"))
+                    if not ts: continue
+                    content = (d.get("message") or {}).get("content")
+                    if not isinstance(content, list): continue
+                    if d.get("type") == "assistant":
+                        for c in content:
+                            if isinstance(c, dict) and c.get("type") == "tool_use":
+                                inp = c.get("input", {}) or {}
+                                cmd = inp.get("command", "") or inp.get("file_path", "") or inp.get("pattern", "") or str(inp)
+                                pending[c.get("id")] = {"name": c.get("name", "unknown"), "start": ts, "ts_str": d.get("timestamp", ""), "cmd": str(cmd)}
+                    elif d.get("type") == "user":
+                        for c in content:
+                            if isinstance(c, dict) and c.get("type") == "tool_result":
+                                cid = c.get("tool_use_id")
+                                if cid in pending:
+                                    sinfo = pending.pop(cid)
+                                    dur = round((ts - sinfo["start"]).total_seconds(), 3)
+                                    tname = sinfo["name"]
+                                    full_cmd = sinfo.get("cmd", "")
+                                    trunc_cmd = full_cmd[:300] + ("..." if len(full_cmd) > 300 else "")
+                                    tstat = tool_metrics["tools"].setdefault(tname, {"count": 0, "total_sec": 0, "max_sec": 0, "slowest_cmd": ""})
+                                    tstat["count"] += 1
+                                    tstat["total_sec"] = round(tstat["total_sec"] + dur, 3)
+                                    if dur >= tstat["max_sec"]:
+                                        tstat["max_sec"] = dur
+                                        tstat["slowest_cmd"] = trunc_cmd[:120] + ("..." if len(trunc_cmd) > 120 else "")
+                                    tool_metrics["total_tool_calls"] += 1
+                                    tool_metrics["total_tool_duration_sec"] = round(tool_metrics["total_tool_duration_sec"] + dur, 3)
+                                    if tname in ("Bash", "BashOutput") or "bash" in tname.lower():
+                                        all_shell_calls.append({
+                                            "tool": tname,
+                                            "cmd": trunc_cmd,
+                                            "duration_sec": dur,
+                                            "timestamp": sinfo.get("ts_str", ts.isoformat())
+                                        })
+                except Exception:
+                    pass
+        all_shell_calls.sort(key=lambda x: x["duration_sec"], reverse=True)
+        tool_metrics["shell_calls"] = all_shell_calls[:50]
+        with open(os.path.join(task_dir, "tool-telemetry.json"), "w") as tf:
+            json.dump(tool_metrics, tf, indent=2)
+except Exception:
+    pass
 ' "$output_file" "$task_dir" || echo "record_claude_usage failed (non-fatal)"
     fi
 }

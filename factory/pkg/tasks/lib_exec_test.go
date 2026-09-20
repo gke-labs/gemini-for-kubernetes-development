@@ -64,6 +64,23 @@ echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"ou
 			if err := os.WriteFile(libPath, lib, 0644); err != nil {
 				t.Fatal(err)
 			}
+			if tc.engine == "claude" {
+				// A transcript in the shape observed on a live claude run
+				// (fix-substrate-1763): tool_use pairs with tool_result by
+				// id, 2.5s apart → the telemetry miner's input.
+				proj := filepath.Join(home, ".claude", "projects", "-workspaces-repo-under-test")
+				if err := os.MkdirAll(proj, 0755); err != nil {
+					t.Fatal(err)
+				}
+				transcript := `{"type":"assistant","timestamp":"2026-09-20T06:53:01.500Z","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"go test ./...","description":"run tests"}}]}}
+{"type":"user","timestamp":"2026-09-20T06:53:04.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1"}]}}
+{"type":"assistant","timestamp":"2026-09-20T06:53:05.000Z","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Read","input":{"file_path":"/workspaces/x.go"}}]}}
+{"type":"user","timestamp":"2026-09-20T06:53:05.400Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2"}]}}
+`
+				if err := os.WriteFile(filepath.Join(proj, "session.jsonl"), []byte(transcript), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			promptPath := filepath.Join(taskDir, "agent-prompt.txt")
 			if err := os.WriteFile(promptPath, []byte("prompt"), 0644); err != nil {
 				t.Fatal(err)
@@ -146,6 +163,32 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 			m, ok := parsed.Models[tc.wantModel]
 			if !ok || m.Tokens["input"] != 20 || m.Tokens["output"] != 10 {
 				t.Errorf("usage for %s = %+v (present=%v), want accumulated input=20 output=10\n%s", tc.wantModel, m, ok, usage)
+			}
+
+			if tc.engine == "claude" {
+				tel, err := os.ReadFile(filepath.Join(taskDir, "tool-telemetry.json"))
+				if err != nil {
+					t.Fatalf("tool-telemetry.json missing for claude: %v", err)
+				}
+				var tm struct {
+					TotalToolCalls int `json:"total_tool_calls"`
+					Tools          map[string]struct {
+						Count    int     `json:"count"`
+						TotalSec float64 `json:"total_sec"`
+					} `json:"tools"`
+					ShellCalls []struct {
+						Cmd string `json:"cmd"`
+					} `json:"shell_calls"`
+				}
+				if err := json.Unmarshal(tel, &tm); err != nil {
+					t.Fatalf("tool-telemetry.json unparseable: %v\n%s", err, tel)
+				}
+				if tm.TotalToolCalls != 2 || tm.Tools["Bash"].Count != 1 || tm.Tools["Bash"].TotalSec != 2.5 || tm.Tools["Read"].Count != 1 {
+					t.Errorf("telemetry = %+v, want 2 calls (Bash 2.5s, Read)\n%s", tm, tel)
+				}
+				if len(tm.ShellCalls) != 1 || tm.ShellCalls[0].Cmd != "go test ./..." {
+					t.Errorf("shell_calls = %+v, want the Bash command", tm.ShellCalls)
+				}
 			}
 		})
 	}
