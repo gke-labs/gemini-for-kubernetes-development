@@ -50,6 +50,8 @@ type fakeLaunch struct {
 	PRWatchOpts *factorycli.PRWatchOptions
 	TriageOpts  *factorycli.TriageOptions
 	PlanOpts    *factorycli.PlanOptions
+	PRTaskOpts  *factorycli.PRTaskOptions
+	PRTaskKind  string
 }
 
 type fakeLauncher struct {
@@ -101,6 +103,27 @@ func (f *fakeLauncher) StartPlan(key string, opts factorycli.PlanOptions) bool {
 		return false
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, PlanOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartInvestigate(key string, opts factorycli.PRTaskOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "investigate"})
+	return true
+}
+
+func (f *fakeLauncher) StartAddressComments(key string, opts factorycli.PRTaskOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "address"})
+	return true
+}
+
+func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "iterate"})
 	return true
 }
 
@@ -1148,4 +1171,63 @@ func TestWakeStampsUnpaused(t *testing.T) {
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationUnpausedAt]).NotTo(gomega.BeEmpty())
+}
+
+// The PR follow-up verbs (Iterate / Address / Investigate) are driven by
+// sandbox annotations — durable consent, no mailbox claim to strand. A
+// request newer than the last completion launches (with instruction and
+// engine); a completion newer than the request means it was served.
+func TestPRTaskClicks(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	sb := func(requestedAt time.Time) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "fix-repo-9",
+				"namespace": "alice",
+				"labels": map[string]interface{}{
+					"factory.gemini.google.com/managed": "true",
+					"factory.gemini.google.com/pr":      "42",
+				},
+				"annotations": map[string]interface{}{
+					"htmlURL":                                   "https://github.com/test/repo/pull/42",
+					AnnotationIterateRequested:                  requestedAt.UTC().Format(time.RFC3339),
+					AnnotationIterateInstruction:                "tighten the error handling",
+					factorycli.AnnotationTaskType:               "fix-issue",
+					factorycli.AnnotationTaskState:              factorycli.TaskStateCompleted,
+					"sandbox.gemini.google.com/completion-time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	// Request newer than completion: launches with instruction.
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb(time.Now()))
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	var prTasks []fakeLaunch
+	for _, l := range fake.launches() {
+		if l.PRTaskOpts != nil {
+			prTasks = append(prTasks, l)
+		}
+	}
+	g.Expect(prTasks).To(gomega.HaveLen(1))
+	g.Expect(prTasks[0].PRTaskKind).To(gomega.Equal("iterate"))
+	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the error handling"))
+	g.Expect(prTasks[0].PRTaskOpts.Engine).To(gomega.Equal("gemini"))
+	g.Expect(prTasks[0].PRTaskOpts.PRURL).To(gomega.ContainSubstring("/pull/42"))
+
+	// Request older than completion: served, no launch.
+	fake2 := newFakeLauncher()
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), sb(time.Now().Add(-2*time.Hour)))
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake2.launches() {
+		g.Expect(l.PRTaskOpts).To(gomega.BeNil())
+	}
 }
