@@ -1232,6 +1232,34 @@ func TestPRTaskClicks(t *testing.T) {
 	}
 }
 
+// The per-PR annotation overrides the board's autoIterate in either
+// direction; absent inherits.
+func TestAutoIterateOverride(t *testing.T) {
+	sb := func(override string) *unstructured.Unstructured {
+		annotations := map[string]interface{}{}
+		if override != "" {
+			annotations[AnnotationAutoIterate] = override
+		}
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"metadata": map[string]interface{}{"annotations": annotations},
+		}}
+	}
+	cases := []struct {
+		override     string
+		boardDefault bool
+		want         bool
+	}{
+		{"", true, true}, {"", false, false},
+		{"off", true, false}, {"on", false, true},
+		{"on", true, true}, {"off", false, false},
+	}
+	for _, tc := range cases {
+		if got := autoIterateEnabled(sb(tc.override), tc.boardDefault); got != tc.want {
+			t.Errorf("override=%q default=%v: got %v want %v", tc.override, tc.boardDefault, got, tc.want)
+		}
+	}
+}
+
 // One task per sandbox: a fix or plan child still provisioning the
 // sandbox defers a follow-up click (the prober cannot see a task that
 // has not landed in the pod yet).

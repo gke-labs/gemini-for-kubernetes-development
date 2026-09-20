@@ -393,7 +393,25 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         ) : null}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {receipts.map(r => r.href ? (
+        {group === 'mine-pr' && item.sandbox && item.sandbox.autoIterate && (
+          // Per-PR override of the board's auto follow-up (watch CI +
+          // comments). A toggle chip: fact first, control on click.
+          <span
+            onClick={() => {
+              fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
+              }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
+            }}
+            style={{ cursor: 'pointer', marginLeft: '4px' }}
+            title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
+            <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
+              color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
+              bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
+          </span>
+        )}
+                {receipts.map(r => r.href ? (
           <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
             <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
           </a>

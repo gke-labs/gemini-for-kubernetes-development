@@ -103,6 +103,11 @@ const (
 	AnnotationIterateInstruction   = "board.gemini.google.com/iterate-instruction"
 	AnnotationAddressRequested     = "board.gemini.google.com/address-requested-at"
 	AnnotationInvestigateRequested = "board.gemini.google.com/investigate-requested-at"
+	// AnnotationAutoIterate overrides the board's autoIterate policy for
+	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
+	// open string so future per-PR auto modes extend it without
+	// re-plumbing.
+	AnnotationAutoIterate = "board.gemini.google.com/auto-iterate"
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
@@ -326,10 +331,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.ensurePRTaskClicks(ctx, work)
 
 	// Follow up factory-created PRs (investigate failures, address
-	// comments) unless the board forbids unattended pushes.
-	if board.Spec.Policy.AutoIterate == nil || *board.Spec.Policy.AutoIterate {
-		r.followUpPRs(ctx, work)
-	}
+	// comments): board policy is the default, each PR's fix sandbox may
+	// override it either way.
+	r.followUpPRs(ctx, work, board.Spec.Policy.AutoIterate == nil || *board.Spec.Policy.AutoIterate)
 
 	// Pause finished sandboxes after the idle period.
 	idle := time.Duration(board.Spec.Sandbox.IdleMinutes) * time.Minute
@@ -1165,10 +1169,13 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
 	}
 }
 
-func (r *Reconciler) followUpPRs(ctx context.Context, work *workState) {
+func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefault bool) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {
 		if !strings.HasPrefix(sb.GetName(), "fix-") {
+			continue
+		}
+		if !autoIterateEnabled(sb, boardDefault) {
 			continue
 		}
 		prNum := sb.GetLabels()[factorycli.LabelPR]
@@ -1340,6 +1347,18 @@ func (r *Reconciler) stampUnpaused(ctx context.Context, sb *unstructured.Unstruc
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to stamp wake on paused sandbox", "sandbox", sb.GetName())
 	}
+}
+
+// autoIterateEnabled resolves a sandbox's effective auto-follow-up:
+// the per-PR annotation overrides the board policy in either direction.
+func autoIterateEnabled(sb *unstructured.Unstructured, boardDefault bool) bool {
+	switch sb.GetAnnotations()[AnnotationAutoIterate] {
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	return boardDefault
 }
 
 // boardEngine resolves the board's engine choice (default gemini).
