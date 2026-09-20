@@ -1360,3 +1360,25 @@ func TestOwnDraftPRNeedsYou(t *testing.T) {
 		t.Fatalf("PRs missing from feed: %v\n%s", want, w.Body.String())
 	}
 }
+
+// The tab badge must agree with Up Next: when the feed cache holds the
+// board, needsHuman is the feed's needs-you count, not the controller's
+// older sandbox-only status heuristic.
+func TestBoardBadgeCountsFeedAttention(t *testing.T) {
+	_, r, _ := boardTestServer(t, map[string]string{}, boardCR())
+	workFeedPut("alice/myboard", []models.WorkItem{
+		{Number: 1, Attention: "needs-you"},
+		{Number: 2, Attention: "needs-you"},
+		{Number: 3, Attention: "waiting"},
+	})
+	defer invalidateWorkFeed("alice", "myboard")
+
+	req, _ := http.NewRequest("GET", "/boards", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var boards []models.Board
+	_ = json.Unmarshal(w.Body.Bytes(), &boards)
+	if len(boards) != 1 || boards[0].NeedsHuman != 2 {
+		t.Fatalf("badge = %+v, want needsHuman=2 from the cached feed", boards)
+	}
+}
