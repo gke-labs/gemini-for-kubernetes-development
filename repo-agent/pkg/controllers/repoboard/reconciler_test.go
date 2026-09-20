@@ -1008,6 +1008,52 @@ func TestFixWithApprovedPlan(t *testing.T) {
 	}
 }
 
+// The live #1529 regression, both halves. (1) Type-blind terminal: the
+// plan's Completed stamp on the shared fix sandbox must not read as "the
+// fix already ran" — that bailed every Approve & Fix after a plan. (2)
+// resumeFixes: the mailbox claim is consumed at kickoff, so with no
+// request standing, an approved-but-never-fixed sandbox must still
+// launch (controller restarts between consumption and task start).
+func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	sb := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "fix-repo-7",
+				"namespace": "alice",
+				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+				"annotations": map[string]interface{}{
+					"htmlURL":              "https://github.com/test/repo/issues/7",
+					AnnotationExecutor:     "alice",
+					AnnotationPlanDraft:    "## Summary\nplanned",
+					AnnotationPlannedAt:    time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+					AnnotationPlanApproved: time.Now().UTC().Format(time.RFC3339),
+					// the PLAN's completion stamps — not the fix's
+					factorycli.AnnotationTaskType:  "plan",
+					factorycli.AnnotationTaskState: factorycli.TaskStateCompleted,
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+
+	// (1) with the mailbox claim standing, (2) with it already consumed.
+	for _, requests := range []map[string]string{{AnnotationRequests: `{"fix-7": "alice"}`}, {}} {
+		fake := newFakeLauncher()
+		r := newTestReconciler(fake, ghClient, testBoard(requests), githubSecret(), sb())
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		launches := fake.launches()
+		g.Expect(launches).To(gomega.HaveLen(1), "requests=%v", requests)
+		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil(), "requests=%v", requests)
+		g.Expect(launches[0].FixOpts.WithPlan).To(gomega.BeTrue())
+	}
+}
+
 // A rejected plan's stale invocation result must not resurrect the draft.
 func TestPlanResultStale(t *testing.T) {
 	g := gomega.NewWithT(t)
