@@ -410,7 +410,10 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 CLAUDE_ARGS+=("--continue")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            # Claude Code refuses --dangerously-skip-permissions as root
+            # unless IS_SANDBOX=1 declares the disposable-container
+            # context — which this pod is (same trust model as --yolo).
+            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
                 SUCCESS=true
             fi
             ;;

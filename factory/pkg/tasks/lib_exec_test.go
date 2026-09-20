@@ -56,7 +56,7 @@ echo "$*" >> "$(dirname "$0")/gemini.args"
 case "$*" in *badmodel*) exit 1 ;; esac
 echo '{"response":"GEMINI RESPONSE","stats":{"models":{"gemini-test":{"api":{"totalRequests":1},"tokens":{"input":10,"output":5,"total":15}}}}}'`)
 			writeStub(bin, "claude", `cat > /dev/null
-echo "$*" >> "$(dirname "$0")/claude.args"
+echo "sandbox=${IS_SANDBOX:-} $*" >> "$(dirname "$0")/claude.args"
 case "$*" in *badmodel*) exit 1 ;; esac
 echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"output_tokens":5},"modelUsage":{"claude-test":{"inputTokens":10,"outputTokens":5,"cacheReadInputTokens":2,"costUSD":0.01}},"num_turns":3,"duration_ms":1000,"session_id":"s"}'`)
 
@@ -112,9 +112,11 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 					"--yolo --model goodmodel --output-format json",
 					"--yolo --model goodmodel --output-format json --resume latest",
 				},
+				// IS_SANDBOX=1 is required: Claude Code refuses
+				// --dangerously-skip-permissions as root without it.
 				"claude": {
-					"-p --dangerously-skip-permissions --model goodmodel --output-format json",
-					"-p --dangerously-skip-permissions --model goodmodel --output-format json --continue",
+					"sandbox=1 -p --dangerously-skip-permissions --model goodmodel --output-format json",
+					"sandbox=1 -p --dangerously-skip-permissions --model goodmodel --output-format json --continue",
 				},
 			}[tc.engine]
 			var succeeded []string
