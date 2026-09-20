@@ -18,22 +18,21 @@ const ATTENTION_STYLE = {
 // Status is the human inbox: it shows text only when a person's move (or
 // wait) matters. Machine motion lives in the Agent column; resting rows
 // are blank.
-const STAGE_LABEL = {
-  'fix-done': 'Fix done',
-  'fix-failed': 'Fix failed',
-  'pr-open': 'PR open',
-  'review-requested': 'Review requested',
-  'review-failed': 'Review failed',
-  'review-pending': 'Pending on GitHub',
-  'review-submitted': 'Reviewed ✓',
-  'triage-ready': 'Triage ready',
-  'triaged': 'Triaged ✓',
-  'plan-ready': 'Plan ready',
-  'plan-failed': 'Plan failed',
+// One action per row: when a draft awaits the member's verdict, the whole
+// row collapses to a single color-coded stage button — clicking opens the
+// panel, and the verdict verbs (publish/approve/reject/…) live there,
+// under the content they judge. Amber = your verdict is the bottleneck;
+// purple = your saved review awaits finalize.
+const STAGE_BUTTON = {
+  'triage-ready': { label: 'Triage ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'Triage suggestions await your verdict — open to edit, publish, or reject' },
+  'plan-ready': { label: 'Plan ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' },
+  'review-pending': { label: 'Pending review', color: '#8250df', bg: 'rgba(130,80,223,0.14)', title: 'Your draft review is saved on GitHub — open to finalize or abandon' },
 };
 
-// Agent-column wording for stages where the machine has the row (covers
-// the mailbox window before any sandbox exists).
+// Agent-column wording for stages the machine owns (covers the mailbox
+// window before any sandbox exists) — plus run outcomes: a failure is a
+// fact about the run, not a work-state, so it lives here in red while the
+// launch verbs return on the right (running the verb again IS the retry).
 const AGENT_STAGE = {
   'fix-starting': 'starting',
   'review-starting': 'starting',
@@ -42,20 +41,22 @@ const AGENT_STAGE = {
   'triaging': 'triaging',
   'planning': 'planning',
   'queued': 'queued',
+  'plan-failed': 'plan failed !',
+  'fix-failed': 'fix failed !',
+  'review-failed': 'review failed !',
+  'fix-done': 'done — no PR',
+};
+const AGENT_STYLE = {
+  'plan-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+  'fix-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+  'review-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+  'fix-done': { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
 };
 
-// Action-first grouping (tabs). Up Next is the default tab: every
-// needs-you row across groups, uncapped — the inbox. Group tabs are the
-// complete per-group views.
-// Stage-specific status colors: states that read similar must not look
-// identical. Requested = red (someone waits on you, via attention);
-// pending = purple (your saved draft awaits your finalize); reviewed =
-// green (settled, done).
-const STAGE_STYLE = {
-  'review-pending': { color: '#8250df', bg: 'rgba(130,80,223,0.14)' },
-  'review-submitted': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
-  'triaged': { color: '#22863a', bg: 'rgba(34,134,58,0.14)' },
-};
+// Done verbs turn into green receipts: the pipeline's history stays on
+// the rail (Triage ✓ → Plan ✓ → Fix ✓), and clicking a receipt shows the
+// artifact it produced.
+const RECEIPT_STYLE = { color: '#22863a', bg: 'rgba(34,134,58,0.14)' };
 
 // The cross-board inbox: a synthetic board whose only view is Up Next —
 // "what do I owe right now" is a question about you, not a repo.
@@ -135,6 +136,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   };
 
   const [showPlan, setShowPlan] = useState(false);
+  const [showReview, setShowReview] = useState(false);
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
@@ -193,119 +195,78 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const attention = ATTENTION_STYLE[item.attention];
   const group = groupOf(item);
 
-  // Row actions: kickoffs, re-runs, and the human-gated writes
-  // (publish/promote/merge run under the clicker's own token — GitHub
-  // enforces permissions and branch protection).
+  // One-action rail (chip + verbs share the last column). A verdict stage
+  // collapses the row to its single stage button — the verdict verbs live
+  // in the panel it opens, under the content they judge. A failed run is
+  // an Agent-column fact, and the launch verb returns: the verb IS the
+  // retry. Green receipts carry the pipeline history (Triage ✓ → Plan ✓ →
+  // Fix ✓); clicking one shows the artifact it produced.
   const prNumFromURL = (u) => {
     const m = (u || '').match(/\/pull\/(\d+)/);
     return m ? m[1] : null;
   };
-  // Fix and repo-write flows need push permission; on read-only boards the
-  // buttons are suppressed so failure is prevented, not discovered.
+  const stageBtn = STAGE_BUTTON[item.stage];
   const actions = [];
-  if (item.type === 'issue') {
-    if (['untriaged', 'open'].includes(item.stage) && !item.draft) {
+  if (!stageBtn && item.type === 'issue') {
+    if (['untriaged', 'open', 'triaged', 'plan-failed'].includes(item.stage)) {
       // Triage is draft-only (discovery identity) — available even on
-      // read-only boards and on issues assigned to you; runs only on this
-      // click or auto-triage.
-      actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
-    }
-    if (item.stage === 'triage-ready') {
-      // Publishing writes labels — the one verb that truly needs push
-      // rights. Rejecting is board-local: available to everyone.
-      if (!readOnly) {
-        actions.push({ label: 'Publish triage', path: `issues/${item.number}/publish-triage`, confirm: `Apply the suggested labels and post the triage comment on issue #${item.number} as you?`, title: 'Applies suggested labels and posts the assessment comment under your identity' });
+      // read-only boards; not re-offered once done (the receipt stands).
+      if (!item.draft && !item.triagePublished && ['untriaged', 'open'].includes(item.stage)) {
+        actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
       }
-      actions.push({ label: 'Reject triage', path: `issues/${item.number}/triage-reject`, confirm: `Discard the triage suggestions for issue #${item.number}?`, title: 'Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will' });
-    }
-    if (item.stage === 'plan-ready') {
-      actions.push({ label: 'Approve & Fix', path: `issues/${item.number}/plan-approve`, confirm: `Approve this plan and launch the fix for issue #${item.number} as you?`, title: 'Approves the plan and launches the fix — the plan ships in the PR description' });
-      actions.push({ label: 'Reject plan', path: `issues/${item.number}/plan-reject`, confirm: `Discard the plan for issue #${item.number}?`, title: 'Discards this plan draft' });
-    }
-    if (['open', 'untriaged', 'triaged'].includes(item.stage)) {
-      // Fixing is fork-based (factory forks, pushes to the member's fork,
-      // opens the PR against upstream) — the normal external-contributor
-      // path, no push rights needed. Plan writes nothing to GitHub.
-      // Stage is the guard (a resting sandbox chip must not hide verbs).
-      // Triage-ready deliberately isn't here: a pending draft demands its
-      // verdict (Publish | Reject) before other verbs return — otherwise
-      // a Plan/Fix started on top buries the draft unpublished.
-      // Plan first (agent drafts, you refine and approve — the approved
-      // plan launches the fix), or Fix directly.
+      // Fixing is fork-based (no push rights needed); Plan writes nothing
+      // to GitHub until approved. On plan-failed these ARE the retry.
       actions.push({ label: 'Plan', path: `issues/${item.number}/plan`, title: 'Agent drafts an implementation plan for you to refine and approve — nothing is written to GitHub until you approve' });
       actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
-    } else if (item.stage === 'plan-failed') {
-      actions.push({ label: 'Retry plan', path: `issues/${item.number}/plan`, title: 'Relaunch the planner' });
     } else if (item.stage === 'fix-failed' || item.stage === 'fix-done') {
-      // Nothing shipped (failed, or completed without producing a PR —
-      // push/PR-create hiccup or a no-change conclusion), so relaunching
-      // in the same sandbox is a clean retry. The chip's sandbox card
-      // shows why; resolving or closing the issue stays a GitHub act.
-      actions.push({ label: 'Retry', path: `issues/${item.number}/rerun` });
+      // Nothing shipped (failed, or completed without a PR): Fix relaunches
+      // in the same sandbox. The Agent chip explains why it stopped.
+      actions.push({ label: 'Fix', path: `issues/${item.number}/rerun`, title: 'Run the fix again in the same sandbox' });
     } else if (item.stage === 'pr-open') {
-      // Merging happens on GitHub — the row links to the PR.
       const prNum = prNumFromURL(item.prURL);
       if (prNum) {
         actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
       }
     }
-  } else if (group === 'mine-pr') {
-    // Your own PR: promote drafts, merge, or send the agent back to iterate
-    // on the folded issue.
+  } else if (!stageBtn && group === 'mine-pr') {
     if (item.draftPR) {
       // Promoting your own draft PR is an author right, not a repo write.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
     }
-  } else {
-    // These stages only occur when no run is active or pending, so the
-    // stage itself is the guard — a leftover paused sandbox (e.g. after
-    // Abandon) must not hide the Review action.
-    if (['open', 'review-queued', 'review-requested', 'needs-reviewer'].includes(item.stage)) {
+  } else if (!stageBtn) {
+    // Stage is the guard — a leftover paused sandbox must not hide Review.
+    if (['open', 'review-requested', 'review-failed'].includes(item.stage)) {
       actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
-    } else if (item.stage === 'review-pending') {
-      // GitHub allows one pending review per user: finalize it there, or
-      // abandon it to start over.
-      // Finalize lives on the status chip (Pending on GitHub ↗).
-      actions.push({ label: 'Abandon review', path: `prs/${item.number}/abandon`, confirm: `Delete your pending review on PR #${item.number}?` });
     } else if (item.stage === 'review-submitted') {
-      // Submitting freed your pending-review slot; a voluntary re-run is
-      // always available (re-requested reviews surface as needs-you).
       actions.push({ label: 'Review again', path: `prs/${item.number}/review`, title: 'Run a fresh review as you — posts a new pending review on GitHub' });
-    } else if (item.stage === 'review-failed') {
-      actions.push({ label: 'Retry', path: `prs/${item.number}/review`, title: 'Relaunch the review' });
     }
   }
 
-  // Clicking the status shows the thing it names.
-  const statusAction = (() => {
-    switch (item.stage) {
-      case 'triage-ready':
-        return { onClick: () => setShowDraft(v => !v), title: 'Show the triage suggestions' };
-      case 'triaged':
-        return { onClick: () => setShowDraft(v => !v), title: 'Triage published — show the suggestions' };
-      case 'plan-ready':
-        return { onClick: () => setShowPlan(v => !v), title: 'Show the plan — refine, approve, or reject' };
-      case 'review-pending':
-        return { href: `${item.htmlURL}/files`, title: 'Open your pending review on GitHub' };
-      case 'review-requested':
-        return { href: item.htmlURL, title: 'Open the PR on GitHub' };
-      case 'review-submitted':
-        return { href: item.htmlURL, title: 'Open the PR — your review is submitted' };
-      case 'pr-open':
-        return item.prURL ? { href: item.prURL, title: 'Open the PR on GitHub' } : null;
-      case 'review-failed':
-        if (item.error) return { onClick: () => setShowDraft(v => !v), title: 'Show why the review failed' };
-        return item.sandbox ? { onClick: () => onOpenSandbox && onOpenSandbox(item.sandbox.name), noArrow: true, title: 'Open the sandbox card (tasks & logs)' } : null;
-      case 'fix-failed':
-      case 'fix-done':
-        return item.sandbox ? { onClick: () => onOpenSandbox && onOpenSandbox(item.sandbox.name), noArrow: true, title: 'Open the sandbox card (tasks & logs)' } : null;
-      default:
-        return null;
+  // Receipts: done verbs turned green. Click = view the artifact.
+  const receipts = [];
+  if (item.type === 'issue') {
+    if (item.triagePublished || item.stage === 'triaged') {
+      receipts.push({ label: 'Triage ✓', onClick: item.draft ? () => setShowDraft(v => !v) : undefined, title: 'Triage published — view the suggestions' });
     }
-  })();
+    if (item.planApproved && item.plan) {
+      receipts.push({ label: 'Plan ✓', onClick: () => setShowPlan(v => !v), title: 'Approved plan — view it' });
+    }
+    if (item.stage === 'pr-open' && item.prURL) {
+      receipts.push({ label: 'Fix ✓', href: item.prURL, title: 'Fix shipped — open the PR' });
+    }
+  } else if (item.stage === 'review-submitted') {
+    receipts.push({ label: 'Review ✓', href: item.htmlURL, title: 'Your review is submitted — open the PR' });
+  }
 
-  const statusStyle = STAGE_STYLE[item.stage] ||
-    (attention ? { color: attention.color, bg: attention.bg } : { color: 'var(--text-secondary)', bg: 'var(--bg-secondary)' });
+  // The stage button toggles its verdict panel.
+  const stagePanelOpen = item.stage === 'triage-ready' ? showDraft
+    : item.stage === 'plan-ready' ? showPlan
+      : item.stage === 'review-pending' ? showReview : false;
+  const toggleStagePanel = () => {
+    if (item.stage === 'triage-ready') setShowDraft(v => !v);
+    else if (item.stage === 'plan-ready') setShowPlan(v => !v);
+    else if (item.stage === 'review-pending') setShowReview(v => !v);
+  };
 
   return (
     <React.Fragment>
@@ -359,43 +320,24 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
         )}
       </td>
-      {/* GitHub facts on the left …, repo-agent state on the right. */}
-      <td style={{ padding: '6px 8px' }}>
-        {STAGE_LABEL[item.stage] && (statusAction ? (
-          statusAction.href ? (
-            <a href={statusAction.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} title={statusAction.title}>
-              <Chip text={STAGE_LABEL[item.stage] + ' ↗'} color={statusStyle.color} bg={statusStyle.bg} />
-            </a>
-          ) : (
-            <span onClick={statusAction.onClick} style={{ cursor: 'pointer' }} title={statusAction.title}>
-              <Chip text={STAGE_LABEL[item.stage] + (statusAction.noArrow ? '' : (showDraft ? ' ▴' : ' ▾'))} color={statusStyle.color} bg={statusStyle.bg} />
-            </span>
-          )
-        ) : (
-          <Chip
-            text={STAGE_LABEL[item.stage]}
-            color={statusStyle.color}
-            bg={statusStyle.bg}
-            title={attention ? attention.label : ''}
-          />
-        ))}
-        {item.triagePublished && item.stage !== 'triaged' && (
-          <span onClick={() => setShowDraft(v => !v)} style={{ cursor: 'pointer', marginLeft: '6px' }}
-            title="Triage published — show the suggestions">
-            <Chip text="Triaged ✓" color="#22863a" bg="rgba(34,134,58,0.14)" />
-          </span>
-        )}
-      </td>
+      {/* GitHub facts on the left …, repo-agent state on the right:
+          Agent (machine facts, incl. run outcomes), then the one-action
+          rail — receipts, the stage button, or launch verbs. */}
       <td style={{ padding: '6px 8px' }}>
         {AGENT_STAGE[item.stage] ? (
-          item.sandbox ? (
-            <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
-              <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)" />
-            </span>
-          ) : (
-            <Chip text={AGENT_STAGE[item.stage]} color="#b08800" bg="rgba(176,136,0,0.12)"
-              title="Launching — the sandbox isn't created yet; this chip opens the sandbox card once it exists" />
-          )
+          // A failure chip opens the error first (the "why"); the sandbox
+          // card with the full logs is one more click from there.
+          <span
+            onClick={() => {
+              if (item.error) setShowDraft(v => !v);
+              else if (item.sandbox && onOpenSandbox) onOpenSandbox(item.sandbox.name);
+            }}
+            style={{ cursor: (item.error || item.sandbox) ? 'pointer' : 'default' }}
+            title={item.error ? 'Show why the run stopped' : (item.sandbox ? `${item.sandbox.name} — tasks & logs` : 'Launching — the sandbox is not created yet')}>
+            <Chip text={AGENT_STAGE[item.stage]}
+              color={(AGENT_STYLE[item.stage] || { color: '#b08800' }).color}
+              bg={(AGENT_STYLE[item.stage] || { bg: 'rgba(176,136,0,0.12)' }).bg} />
+          </span>
         ) : item.sandbox && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }} title={`${item.sandbox.name} — tasks & logs`}>
             <Chip
@@ -407,6 +349,25 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {item.stage === 'review-requested' && (
+          <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginRight: '4px' }} title="Your review was requested — open the PR">
+            <Chip text="review requested ↗" color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
+          </a>
+        )}
+        {receipts.map(r => r.href ? (
+          <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
+            <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
+          </a>
+        ) : (
+          <span key={r.label} onClick={r.onClick} style={{ cursor: r.onClick ? 'pointer' : 'default', marginLeft: '4px' }} title={r.title}>
+            <Chip text={r.label} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
+          </span>
+        ))}
+        {stageBtn && (
+          <span onClick={toggleStagePanel} style={{ cursor: 'pointer', marginLeft: '4px' }} title={stageBtn.title}>
+            <Chip text={stageBtn.label + (stagePanelOpen ? ' ▴' : ' ▾')} color={stageBtn.color} bg={stageBtn.bg} />
+          </span>
+        )}
         {item.draft && !item.triagePublished && !['triage-ready', 'triaged'].includes(item.stage) && (
           <button
             className="btn btn-sm"
@@ -441,7 +402,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     </tr>
     {showDraft && item.draft && (
       <tr>
-        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           {editingDraft ? (
             <div>
               <textarea
@@ -480,6 +441,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 <div style={{ marginTop: '4px', textAlign: 'right' }}>
                   <button className="btn btn-sm" title="Edit the suggestion before publishing"
                     onClick={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}>Edit</button>
+                  {item.stage === 'triage-ready' && !readOnly && (
+                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                      title="Applies suggested labels and posts the assessment comment under your identity"
+                      onClick={() => {
+                        if (!window.confirm(`Apply the suggested labels and post the triage comment on issue #${item.number} as you?`)) return;
+                        onAction(`issues/${item.number}/publish-triage`, 'Publish triage');
+                      }}>Publish</button>
+                  )}
+                  {item.stage === 'triage-ready' && (
+                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                      title="Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will"
+                      onClick={() => {
+                        if (!window.confirm(`Discard the triage suggestions for issue #${item.number}?`)) return;
+                        onAction(`issues/${item.number}/triage-reject`, 'Reject triage');
+                      }}>Reject</button>
+                  )}
                 </div>
               )}
             </div>
@@ -489,7 +466,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     )}
     {showPlan && item.plan && (
       <tr>
-        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           {editingPlan ? (
             <div>
               <textarea
@@ -544,6 +521,18 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     <button className="btn btn-sm" style={{ marginLeft: '4px' }}
                       title="Edit the plan text directly"
                       onClick={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}>Edit</button>
+                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                      title="Approves the plan and launches the fix — the plan ships in the PR description"
+                      onClick={() => {
+                        if (!window.confirm(`Approve this plan and launch the fix for issue #${item.number} as you?`)) return;
+                        onAction(`issues/${item.number}/plan-approve`, 'Approve & Fix');
+                      }}>Approve & Fix</button>
+                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                      title="Discards this plan draft"
+                      onClick={() => {
+                        if (!window.confirm(`Discard the plan for issue #${item.number}?`)) return;
+                        onAction(`issues/${item.number}/plan-reject`, 'Reject plan');
+                      }}>Reject</button>
                   </div>
                 </div>
               )}
@@ -552,9 +541,31 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
+    {showReview && item.stage === 'review-pending' && (
+      <tr>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
+          <div style={{
+            fontSize: 'small', padding: '10px', borderRadius: '6px',
+            backgroundColor: 'var(--bg-secondary)', textAlign: 'left',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <span>Your draft review is saved on GitHub (visible only to you) — finalize it there, or abandon it to start over.</span>
+            <span style={{ whiteSpace: 'nowrap' }}>
+              <a className="btn btn-sm" href={`${item.htmlURL}/files`} target="_blank" rel="noopener noreferrer"
+                style={{ textDecoration: 'none' }} title="Open your pending review on GitHub">Finalize ↗</a>
+              <button className="btn btn-sm" style={{ marginLeft: '4px' }}
+                onClick={() => {
+                  if (!window.confirm(`Delete your pending review on PR #${item.number}?`)) return;
+                  onAction(`prs/${item.number}/abandon`, 'Abandon review');
+                }}>Abandon</button>
+            </span>
+          </div>
+        </td>
+      </tr>
+    )}
     {showDraft && item.error && (
       <tr>
-        <td colSpan="6" style={{ padding: '0 8px 10px 8px' }}>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{
             fontSize: 'small', padding: '10px', borderRadius: '6px',
             backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
@@ -1093,7 +1104,7 @@ function Work({ onBack, namespace }) {
               <table className="work-table">
                 <tbody>
                   {loadingWork && (
-                    <tr><td colSpan="6" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    <tr><td colSpan="5" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                       Gathering your boards…
                     </td></tr>
                   )}
@@ -1106,7 +1117,7 @@ function Work({ onBack, namespace }) {
                       readOnly={(boards.find(b => b.name === item.board) || {}).role === 'read-only'} />
                   ))}
                   {!loadingWork && !upNextAll.length && (
-                    <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
+                    <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
                       ✓ Nothing needs you anywhere.
                     </td></tr>
                   )}
@@ -1148,7 +1159,6 @@ function Work({ onBack, namespace }) {
               <th style={{ padding: '6px 4px 6px 8px', width: '1%' }}>#</th>
               <th style={{ padding: '6px 6px 6px 4px', width: '1%' }}>Age</th>
               <th style={{ padding: '6px 8px' }}>Title</th>
-              <th style={{ padding: '6px 8px' }}>Status</th>
               <th style={{ padding: '6px 8px' }}>Agent</th>
               <th style={{ padding: '6px 8px' }}></th>
             </tr>
@@ -1223,7 +1233,7 @@ function Work({ onBack, namespace }) {
                 {header}
                 <tbody>
                   {loadingWork && (
-                    <tr><td colSpan="6" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    <tr><td colSpan="5" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                       Loading {activeBoard}…
                     </td></tr>
                   )}
@@ -1235,11 +1245,11 @@ function Work({ onBack, namespace }) {
                   ))}
                   {!loadingWork && !rows.length && (
                     shown === UP_NEXT ? (
-                      <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
+                      <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
                         ✓ Nothing needs you right now.
                       </td></tr>
                     ) : (
-                      <tr><td colSpan="6" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
+                      <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
                         Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
                       </td></tr>
                     )

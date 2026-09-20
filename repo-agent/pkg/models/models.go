@@ -93,6 +93,7 @@ type WorkItem struct {
 	TriagePublished bool         `json:"triagePublished,omitempty"` // published triage rides the row as a done-state chip
 	Error           string       `json:"error,omitempty"`           // why the last agent run failed, human-readable
 	Plan            string       `json:"plan,omitempty"`            // implementation-plan draft awaiting refine/approve
+	PlanApproved    bool         `json:"planApproved,omitempty"`    // approved plan rides the row as a done-state receipt
 	DraftPR         bool         `json:"draftPR,omitempty"`         // PR is a GitHub draft (promotable)
 	Fixes           []int        `json:"fixes,omitempty"`           // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`

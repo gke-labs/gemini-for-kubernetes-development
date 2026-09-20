@@ -865,6 +865,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Draft:           triageDraft,
 		TriagePublished: triagePublished,
 		Plan:            planDraft,
+		PlanApproved:    planApproved,
 		Sandbox:         workSandbox(sb),
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
