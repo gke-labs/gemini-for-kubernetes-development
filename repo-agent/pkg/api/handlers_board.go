@@ -1020,6 +1020,14 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	case authored:
 		stage, attention = "open", attentionWaiting
+		// Your own draft PR awaits your promote — under the draft-PR
+		// policy the agent opens drafts precisely so a human promotes
+		// them, which makes promotion a pending human act (Up Next).
+		// Same freshness decay as review requests: a deliberately parked
+		// WIP draft fossilizes out of the inbox instead of nagging.
+		if pr.GetDraft() && time.Since(pr.GetUpdatedAt()) <= reviewRequestFreshWindow {
+			attention = attentionNeedsYou
+		}
 	}
 
 	group := "review"
