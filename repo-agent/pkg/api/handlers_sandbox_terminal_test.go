@@ -11,7 +11,7 @@ import (
 // pod restarts), the tmux session is per-task-type so it coexists with
 // the "board" shell, and the API key must survive shell quoting.
 func TestChatCommand(t *testing.T) {
-	cmd := chatCommand("plan", chatHomeByTask["plan"], "sk-test", "")
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "gemini", "sk-test", "")
 	for _, want := range []string{
 		"tmux new-session -A -s chat-plan",
 		"export HOME=/workspaces/.home",
@@ -64,8 +64,30 @@ func TestChatOrientation(t *testing.T) {
 	if got := chatOrientation("plan", "no-issue-suffix"); got != "" {
 		t.Errorf("unparseable sandbox name must skip orientation, got %q", got)
 	}
-	cmd := chatCommand("plan", chatHomeByTask["plan"], "k", chatOrientation("plan", "fix-substrate-1746"))
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "gemini", "k", chatOrientation("plan", "fix-substrate-1746"))
 	if !strings.Contains(cmd, "--resume latest -i ") {
 		t.Errorf("orientation not wired into the resume command:\n%s", cmd)
+	}
+}
+
+// Sessions are engine-private: a claude board's chat must resume with
+// claude (--continue), carry ANTHROPIC_API_KEY, and skip the gemini-only
+// trust seeding and /root rescue shims.
+func TestChatCommandClaude(t *testing.T) {
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "claude", "sk-ant", chatOrientation("plan", "fix-substrate-1746"))
+	for _, want := range []string{
+		"tmux new-session -A -s chat-plan",
+		"export HOME=/workspaces/.home",
+		"claude --continue",
+		`ANTHROPIC_API_KEY='\''sk-ant'\''`,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("claude chatCommand missing %q in:\n%s", want, cmd)
+		}
+	}
+	for _, reject := range []string{"gemini", "trustedFolders", "GEMINI_API_KEY"} {
+		if strings.Contains(cmd, reject) {
+			t.Errorf("claude chatCommand must not contain %q:\n%s", reject, cmd)
+		}
 	}
 }

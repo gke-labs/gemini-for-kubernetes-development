@@ -83,7 +83,9 @@ type ReviewOptions struct {
 	Image             string
 	WorkspaceDiskSize string
 	GithubToken       string
-	Timeout           time.Duration
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine  string
+	Timeout time.Duration
 	// Publish is factory's --publish policy. "no" (default) prints the
 	// review between CODE REVIEW banners for draft harvesting; "draft"
 	// posts a pending review on GitHub under the invoking identity (only
@@ -100,7 +102,9 @@ type PRWatchOptions struct {
 	Namespace   string
 	PRURL       string
 	GithubToken string
-	Timeout     time.Duration
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine  string
+	Timeout time.Duration
 }
 
 // FixOptions are the inputs for a `factory fix` invocation.
@@ -124,6 +128,8 @@ type FixOptions struct {
 	WorkspaceDiskSize string
 	// GithubToken authenticates factory's host-side GitHub reads.
 	GithubToken string
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine string
 	// Timeout bounds the child process; the in-sandbox task itself is not
 	// killed on timeout (--abort-on-cancel=false) and is reattached to by
 	// the next invocation.
@@ -146,7 +152,9 @@ type PlanOptions struct {
 	Image             string
 	WorkspaceDiskSize string
 	GithubToken       string
-	Timeout           time.Duration
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine  string
+	Timeout time.Duration
 }
 
 // Result records the outcome of a finished invocation.
@@ -278,6 +286,9 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "fix",
 	})
@@ -311,6 +322,9 @@ func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
 	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "review",
 	})
@@ -335,6 +349,9 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 		"--continue-session",
 		"--abort-on-cancel=false",
 	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
@@ -350,6 +367,9 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "triage",
@@ -377,6 +397,9 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	}
 	if opts.WorkspaceDiskSize != "" {
 		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "plan",
@@ -498,7 +521,9 @@ type TriageOptions struct {
 	Namespace   string
 	IssueURL    string
 	GithubToken string
-	Timeout     time.Duration
+	// Engine selects the agent engine (factory --engine); empty = gemini.
+	Engine  string
+	Timeout time.Duration
 }
 
 // triageBanner opens the triage YAML on `factory triage --publish no`

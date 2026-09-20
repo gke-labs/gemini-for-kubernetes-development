@@ -1415,6 +1415,7 @@ type boardSpecView struct {
 	RecencyDays       int64    `json:"recencyDays"`
 	MaxActive         int64    `json:"maxActive"`
 	IdleMinutes       int64    `json:"idleMinutes"`
+	Engine            string   `json:"engine"`
 	AutoIterate       bool     `json:"autoIterate"`
 	DraftPR           bool     `json:"draftPR"`
 	Disclose          bool     `json:"disclose"`
@@ -1448,6 +1449,10 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 	}
 	view.MaxActive, _, _ = unstructured.NestedInt64(board.Object, "spec", "limits", "maxActive")
 	view.IdleMinutes, _, _ = unstructured.NestedInt64(board.Object, "spec", "sandbox", "idleMinutes")
+	view.Engine, _, _ = unstructured.NestedString(board.Object, "spec", "sandbox", "engine")
+	if view.Engine == "" {
+		view.Engine = "gemini"
+	}
 	if view.IdleMinutes <= 0 {
 		view.IdleMinutes = 60
 	}
@@ -1515,6 +1520,7 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		set(recency, "spec", "auto", "recencyDays") &&
 		set(payload.MaxActive, "spec", "limits", "maxActive") &&
 		set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
+		set(engineOrDefault(payload.Engine), "spec", "sandbox", "engine") &&
 		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
 		set(payload.DraftPR, "spec", "policy", "draftPR") &&
 		set(payload.Disclose, "spec", "policy", "disclose")
@@ -1526,6 +1532,15 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+// engineOrDefault normalizes the gear's engine choice; anything but an
+// explicit "claude" is gemini (the CRD enum rejects other values anyway).
+func engineOrDefault(engine string) string {
+	if engine == "claude" {
+		return "claude"
+	}
+	return "gemini"
 }
 
 // findPlanSandbox locates the issue's fix sandbox carrying a plan draft,

@@ -108,6 +108,12 @@ spec:
                   diskSize:
                     default: 10Gi
                     type: string
+                  engine:
+                    default: gemini
+                    enum:
+                    - gemini
+                    - claude
+                    type: string
                   idleMinutes:
                     default: 60
                     type: integer

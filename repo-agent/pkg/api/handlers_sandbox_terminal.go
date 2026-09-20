@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
@@ -83,34 +84,47 @@ func chatOrientation(taskType, sandboxName string) string {
 // with the "board" shell; -A means a second tab joins the same chat. The
 // repo checkout is found in the pod (the one /workspaces/*/.git), not
 // trusted from the client.
-func chatCommand(taskType, home, apiKey, orientation string) string {
-	// Trust like the task runs do (no interactive prompt), and widen the
-	// workspace to /workspaces: artifact files (plan-issue-N.md) live one
-	// level above the repo checkout, deliberately outside git clean's
-	// reach — without the extra root, write_file could not touch them.
-	resume := "exec gemini --skip-trust --include-directories /workspaces --resume latest"
-	if orientation != "" {
-		resume += " -i " + shellSingleQuote(orientation)
+func chatCommand(taskType, home, engine, apiKey, orientation string) string {
+	prep := ""
+	var resume, keyExport string
+	switch engine {
+	case "claude":
+		// Sessions are engine-private: a claude task's conversation can
+		// only be resumed by claude. --continue = latest session for the
+		// cwd; the orientation rides as the positional initial prompt.
+		// Claude's trust answer persists in ~/.claude.json on the PVC, so
+		// the user answers its folder prompt at most once.
+		keyExport = "export ANTHROPIC_API_KEY=" + shellSingleQuote(apiKey)
+		resume = "exec claude --continue"
+		if orientation != "" {
+			resume += " " + shellSingleQuote(orientation)
+		}
+	default:
+		// Trust like the task runs do (no interactive prompt), and widen
+		// the workspace to /workspaces: artifact files (plan-issue-N.md)
+		// live one level above the repo checkout, deliberately outside
+		// git clean's reach — without the extra root, write_file could
+		// not touch them. --skip-trust covers only the cwd workspace, so
+		// the /workspaces root is seeded into gemini's trust store
+		// (~/.gemini/trustedFolders.json — task scripts never touch it);
+		// on any failure the prompt appears, nothing breaks. The /root
+		// rescue is the pre-HOME-unification transition shim (-p keeps
+		// mtimes so a stale /root session never masquerades as latest).
+		keyExport = "export GEMINI_API_KEY=" + shellSingleQuote(apiKey) + "; export GEMINI_CLI_TRUST_WORKSPACE=true"
+		prep = `if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; ` +
+			`python3 -c 'import json,os,sys; p=os.path.join(os.environ["HOME"],".gemini","trustedFolders.json"); os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {}; [d.setdefault(f,"TRUST_FOLDER") for f in sys.argv[1:]]; json.dump(d,open(p,"w"),indent=2)' /workspaces "$PWD" 2>/dev/null; `
+		resume = "exec gemini --skip-trust --include-directories /workspaces --resume latest"
+		if orientation != "" {
+			resume += " -i " + shellSingleQuote(orientation)
+		}
 	}
-	// --skip-trust covers only the cwd workspace: the /workspaces root
-	// added via --include-directories still triggers the interactive trust
-	// prompt. Gemini's trust store is ~/.gemini/trustedFolders.json (task
-	// scripts never touch it, so seeding is durable) — merge both roots in
-	// before launching; on any failure the prompt appears, nothing breaks.
-	trustSeed := `python3 -c 'import json,os,sys; p=os.path.join(os.environ["HOME"],".gemini","trustedFolders.json"); os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {}; [d.setdefault(f,"TRUST_FOLDER") for f in sys.argv[1:]]; json.dump(d,open(p,"w"),indent=2)' /workspaces "$PWD" 2>/dev/null; `
-	// Transition shim: tasks that ran before every task type moved to the
-	// workspace home left their sessions under /root. If this pod hasn't
-	// restarted since (a restart wipes /root), rescue them onto the PVC so
-	// resume still finds the conversation; -p keeps mtimes so a stale
-	// /root session never masquerades as "latest".
 	inner := fmt.Sprintf(
-		"export HOME=%s; export GEMINI_API_KEY=%s; export GEMINI_CLI_TRUST_WORKSPACE=true; "+
-			`if [ -d /root/.gemini/tmp ] && [ "$HOME" != /root ]; then mkdir -p "$HOME/.gemini/tmp" && cp -Rnp /root/.gemini/tmp/. "$HOME/.gemini/tmp/" 2>/dev/null; fi; `+
+		"export HOME=%s; %s; "+
 			"d=$(ls -d /workspaces/*/.git 2>/dev/null | head -1); "+
 			`cd "${d%%/.git}" 2>/dev/null || cd /workspaces; `+
-			trustSeed+
+			prep+
 			resume,
-		home, shellSingleQuote(apiKey))
+		home, keyExport)
 	return "TERM=xterm-256color exec tmux new-session -A -s chat-" + taskType + " " + shellSingleQuote(inner)
 }
 
@@ -272,16 +286,29 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 
 	command := "TERM=xterm-256color exec tmux new-session -A -s " + terminalSession
 	if chatTask != "" {
-		// The gemini key rides in from the factory-user secret (the same
-		// identity the task ran under) — the pod itself never stores it.
+		// Sessions are engine-private, so the chat must attach with the
+		// engine that launched into this sandbox (stamped by the
+		// controller at launch); pre-stamp sandboxes default to gemini.
+		engine := "gemini"
+		if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{}); serr == nil {
+			if e := sb.GetAnnotations()["board.gemini.google.com/engine"]; e != "" {
+				engine = e
+			}
+		}
+		// The engine's key rides in from the factory-user secret (the
+		// same identity the task ran under) — never stored on the pod.
+		keyName := "GEMINI_API_KEY"
+		if engine == "claude" {
+			keyName = "ANTHROPIC_API_KEY"
+		}
 		apiKey := ""
 		if secret, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); serr == nil {
-			apiKey = string(secret.Data["GEMINI_API_KEY"])
+			apiKey = string(secret.Data[keyName])
 		}
 		if apiKey == "" {
-			writeText("\r\n(no GEMINI_API_KEY in this namespace's factory-user secret — gemini will ask you to authenticate)\r\n")
+			writeText(fmt.Sprintf("\r\n(no %s in this namespace's factory-user secret — the agent will ask you to authenticate)\r\n", keyName))
 		}
-		command = chatCommand(chatTask, chatHomeByTask[chatTask], apiKey, chatOrientation(chatTask, name))
+		command = chatCommand(chatTask, chatHomeByTask[chatTask], engine, apiKey, chatOrientation(chatTask, name))
 	}
 
 	// The session lives in tmux: this exec merely attaches, so a dropped

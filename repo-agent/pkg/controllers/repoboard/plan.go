@@ -104,6 +104,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		feedback = annotations[AnnotationPlanFeedback]
 	}
 	r.stampUnpaused(ctx, sb)
+	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartPlan(key, factorycli.PlanOptions{
 		Namespace:         req.member,
 		SandboxName:       name,
@@ -112,6 +113,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
+		Engine:            boardEngine(work.board),
 	}) {
 		logger.Info("launched factory plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)
 	}
