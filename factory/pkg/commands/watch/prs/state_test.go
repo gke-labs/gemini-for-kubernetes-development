@@ -70,6 +70,22 @@ func TestFoldProcessedPRTask(t *testing.T) {
 	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
 		t.Errorf("expected lastCommentAddressedTime to remain unchanged when task is Failed, got %v", state.lastCommentAddressedTime)
 	}
+
+	// For iterate (rebase) tasks, even if it failed, we want to update the lastIteratedSHA
+	// and lastIteratedTime so we can skip rescheduling it on the same commit SHA.
+	failedIterateAt, _ := time.Parse(time.RFC3339, "2026-07-23T21:00:00Z")
+	state = foldProcessedPRTask(&api.QueueTask{
+		Type:        api.TypePRIterate,
+		Status:      api.StatusFailed,
+		CommitSHA:   "failed-sha-123",
+		CompletedAt: failedIterateAt,
+	}, "task-pr-123-iterate", state)
+	if !state.lastIteratedTime.Equal(failedIterateAt) {
+		t.Errorf("expected lastIteratedTime to be updated to %v on failed iterate task, got %v", failedIterateAt, state.lastIteratedTime)
+	}
+	if state.lastIteratedSHA != "failed-sha-123" {
+		t.Errorf("expected lastIteratedSHA to be 'failed-sha-123' on failed iterate task, got '%s'", state.lastIteratedSHA)
+	}
 }
 
 func TestProcessedPRStates(t *testing.T) {
