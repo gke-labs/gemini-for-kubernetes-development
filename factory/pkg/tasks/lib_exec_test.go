@@ -139,9 +139,11 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 			if err := json.Unmarshal(usage, &parsed); err != nil {
 				t.Fatalf("llm-usage.json unparseable: %v\n%s", err, usage)
 			}
+			// The harness runs runEngine twice (plain + resume), and usage
+			// accumulates across runs of a task — 2 × (10 in / 5 out).
 			m, ok := parsed.Models[tc.wantModel]
-			if !ok || m.Tokens["input"] != 10 || m.Tokens["output"] != 5 {
-				t.Errorf("usage for %s = %+v (present=%v), want input=10 output=5\n%s", tc.wantModel, m, ok, usage)
+			if !ok || m.Tokens["input"] != 20 || m.Tokens["output"] != 10 {
+				t.Errorf("usage for %s = %+v (present=%v), want accumulated input=20 output=10\n%s", tc.wantModel, m, ok, usage)
 			}
 		})
 	}
