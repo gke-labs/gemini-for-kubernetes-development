@@ -26,7 +26,7 @@ const ATTENTION_STYLE = {
 const STAGE_BUTTON = {
   'triage-ready': { label: 'Triage ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'Triage suggestions await your verdict — open to edit, publish, or reject' },
   'plan-ready': { label: 'Plan ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' },
-  'review-pending': { label: 'Pending review', color: '#8250df', bg: 'rgba(130,80,223,0.14)', title: 'Your draft review is saved on GitHub — open to finalize or abandon' },
+  'review-pending': { label: 'Review ready', color: '#8250df', bg: 'rgba(130,80,223,0.14)', title: 'Your draft review is saved on GitHub — open to finalize or abandon' },
 };
 
 // Agent-column wording for stages the machine owns (covers the mailbox
