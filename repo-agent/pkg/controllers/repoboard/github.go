@@ -167,7 +167,7 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 	// factory fails fast with a clear error if a claude board lacks it.
 	anthropicSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: anthropicSecretName, Namespace: namespace}, anthropicSecret); err == nil {
-		for _, key := range []string{"anthropic", factoryKeyAnthropicAPIKey} {
+		for _, key := range []string{"anthropic", "claude", factoryKeyAnthropicAPIKey} {
 			if v, ok := anthropicSecret.Data[key]; ok && len(v) > 0 {
 				data[factoryKeyAnthropicAPIKey] = v
 				break
