@@ -24,14 +24,21 @@ func GetAvailableModelsForKey(key string) string {
 	return strings.Join(activeModels, " ")
 }
 
-// getScriptWithDefaults reads the specified script from scriptsFS and replaces
-// the __DEFAULT_MODELS__ placeholder with the space-separated list of default models.
+// getScriptWithDefaults renders a task script: the shared lib.sh prelude
+// (setupGit, configureGemini, record_gemini_usage, …) is prepended, the
+// task script follows — bash keeps the last definition, so a script that
+// needs different behavior simply redefines the function — and the
+// __DEFAULT_MODELS__ placeholder is replaced with the default model list.
 func getScriptWithDefaults(name string) ([]byte, error) {
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		return nil, err
+	}
 	data, err := scriptsFS.ReadFile(name)
 	if err != nil {
 		return nil, err
 	}
-	content := string(data)
+	content := string(lib) + "\n" + string(data)
 	content = strings.ReplaceAll(content, "__DEFAULT_MODELS__", DefaultModelsString())
 	return []byte(content), nil
 }
