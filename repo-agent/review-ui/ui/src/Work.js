@@ -192,7 +192,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     }).catch(err => setPlanErr(`${label} failed: ${err}`));
   };
 
-  const attention = ATTENTION_STYLE[item.attention];
   const group = groupOf(item);
 
   // One-action rail (chip + verbs share the last column). A verdict stage
@@ -235,8 +234,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.
+    // A requested review is the same verb wearing the urgency: someone is
+    // waiting on you, so the button tints red instead of adding a chip.
     if (['open', 'review-requested', 'review-failed'].includes(item.stage)) {
-      actions.push({ label: 'Review', path: `prs/${item.number}/review`, title: 'Agent reviews as you and leaves a pending review on GitHub for you to finalize' });
+      const requested = item.stage === 'review-requested';
+      actions.push({
+        label: 'Review', path: `prs/${item.number}/review`,
+        tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
+        title: requested
+          ? 'Your review was requested — agent reviews as you and leaves a pending review on GitHub for you to finalize'
+          : 'Agent reviews as you and leaves a pending review on GitHub for you to finalize',
+      });
     } else if (item.stage === 'review-submitted') {
       actions.push({ label: 'Review again', path: `prs/${item.number}/review`, title: 'Run a fresh review as you — posts a new pending review on GitHub' });
     }
@@ -349,11 +357,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {item.stage === 'review-requested' && (
-          <a href={item.htmlURL} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginRight: '4px' }} title="Your review was requested — open the PR">
-            <Chip text="review requested ↗" color={attention ? attention.color : 'var(--text-secondary)'} bg={attention ? attention.bg : 'var(--bg-secondary)'} />
-          </a>
-        )}
         {receipts.map(r => r.href ? (
           <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
             <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
@@ -395,7 +398,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           <button
             key={a.label}
             className="btn btn-sm"
-            style={{ marginLeft: '4px' }}
+            style={a.tint
+              ? { marginLeft: '4px', color: a.tint.color, backgroundColor: a.tint.bg, borderColor: a.tint.color, fontWeight: 600 }
+              : { marginLeft: '4px' }}
             title={a.title}
             onClick={() => {
               if (a.confirm && !window.confirm(a.confirm)) return;
