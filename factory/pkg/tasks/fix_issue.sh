@@ -121,42 +121,6 @@ function checkoutNewBranch {
     (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git checkout -B "$branch_name")
 }
 
-function runGemini {
-    echo "running gemini in yolo mode"
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    set +x
-    export GEMINI_API_KEY="${GEMINI_API_KEY}"
-
-    if [ -n "$GITHUB_BOT_NAME" ]; then
-        echo "Using bot identity for commits"
-        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
-        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
-        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
-        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
-    fi
-
-    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
-    SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        if gemini --yolo --model "$MODEL" --output-format json < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"; then
-            echo "Gemini execution successful with model: $MODEL"
-            record_gemini_usage "$(dirname "${PROMPT_FILE}")/gemini-output.json"
-            SUCCESS=true
-            break
-        else
-            echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
-
-    if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
-        exit 1
-    fi
-    set -x
-    popd > /dev/null
-}
-
 function injectConfigDirData {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     if [ -d "/configdir" ] && [ "$(ls -A /configdir)" ]; then
@@ -241,5 +205,5 @@ configureGemini
 installExtensions
 injectConfigDirData
 appendApprovedPlan
-runGemini
+runEngine
 recordPRLink

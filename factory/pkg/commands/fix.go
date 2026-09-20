@@ -309,7 +309,6 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		"HOME":                       "/workspaces/.home",
 		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
@@ -320,8 +319,10 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
 		"NO_PR":                      strconv.FormatBool(noPR),
+	}
+	if err := applyEngineEnv(envMap, secret); err != nil {
+		return err
 	}
 	if withPlan {
 		// The approved plan lives inside the sandbox (written by a prior

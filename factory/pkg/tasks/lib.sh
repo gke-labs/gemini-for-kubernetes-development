@@ -269,3 +269,193 @@ except Exception:
 ' "$output_file" "$task_dir"
     fi
 }
+
+# record_claude_usage: map Claude Code's -p JSON (modelUsage / usage /
+# total_cost_usd) into the same llm-usage.json / token-usage.json shape
+# record_gemini_usage writes, so the token daemon and TokenUsage UI flow
+# through unchanged. Transcript-derived tool telemetry is gemini-only for
+# now (multi-engine design, phase 4).
+function record_claude_usage {
+    local output_file="$1"
+    local task_dir="$(dirname "${PROMPT_FILE}")"
+    if [ -f "$output_file" ]; then
+        python3 -c '
+import json, os, sys
+
+output_file = sys.argv[1]
+task_dir = sys.argv[2]
+
+try:
+    with open(output_file, "r") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+
+models = {}
+for name, mu in data.get("modelUsage", {}).items():
+    models[name] = {
+        "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
+        "tokens": {"input": mu.get("inputTokens", 0), "output": mu.get("outputTokens", 0), "total": mu.get("inputTokens", 0) + mu.get("outputTokens", 0), "cached": mu.get("cacheReadInputTokens", 0), "thoughts": 0},
+    }
+if not models and "usage" in data:
+    u = data.get("usage", {})
+    models = {"claude": {
+        "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
+        "tokens": {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0), "total": u.get("input_tokens", 0) + u.get("output_tokens", 0), "cached": u.get("cache_read_input_tokens", 0), "thoughts": 0},
+    }}
+
+if not models:
+    sys.exit(0)
+
+usage_path = os.path.join(task_dir, "llm-usage.json")
+token_path = os.path.join(task_dir, "token-usage.json")
+
+existing = {"models": {}}
+if os.path.exists(usage_path):
+    try:
+        with open(usage_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+elif os.path.exists(token_path):
+    try:
+        with open(token_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+
+for model_name, model_data in models.items():
+    api = model_data.get("api", {})
+    tokens = model_data.get("tokens", {})
+
+    cur_model = existing.get("models", {}).get(model_name, {
+        "api": {"totalRequests": 0, "totalErrors": 0, "totalLatencyMs": 0},
+        "tokens": {"input": 0, "output": 0, "total": 0, "cached": 0, "thoughts": 0}
+    })
+
+    cur_model["api"]["totalRequests"] += api.get("totalRequests", 1)
+    cur_model["api"]["totalErrors"] += api.get("totalErrors", 0)
+    cur_model["api"]["totalLatencyMs"] += api.get("totalLatencyMs", 0)
+
+    cur_model["tokens"]["input"] += tokens.get("input", 0)
+    cur_model["tokens"]["output"] += tokens.get("output", 0)
+    cur_model["tokens"]["total"] += tokens.get("total", 0)
+    cur_model["tokens"]["cached"] += tokens.get("cached", 0)
+
+    if "models" not in existing:
+        existing["models"] = {}
+    existing["models"][model_name] = cur_model
+
+try:
+    with open(usage_path, "w") as f:
+        json.dump(existing, f, indent=2)
+    with open(token_path, "w") as f:
+        json.dump(existing, f, indent=2)
+except Exception:
+    pass
+' "$output_file" "$task_dir" || echo "record_claude_usage failed (non-fatal)"
+    fi
+}
+
+# record_engine_usage: the per-engine dispatch — each engine keeps its own
+# recorder, this is the only place that knows which is which.
+function record_engine_usage {
+    case "${ENGINE:-gemini}" in
+      claude) record_claude_usage "$1" ;;
+      *) record_gemini_usage "$1" ;;
+    esac
+}
+
+# runEngine: the model-fallback loop for the selected agent engine — the
+# one place engine invocation lives (design/multi-engine.md).
+#   $1 (optional): output basename (e.g. plan-output.txt); when set, the
+#      engine's final response is extracted next to the prompt file.
+# Env: ENGINE (gemini|claude, default gemini); GEMINI_CONTINUE_SESSION
+#   ("true" resumes the engine's latest session); SKIP_EMPTY_PROMPT
+#   ("true": no-op when the prompt file is empty — iterate's contract).
+function runEngine {
+    local extract_to="${1:-}"
+    local task_dir
+    task_dir="$(dirname "${PROMPT_FILE}")"
+    if [ "${SKIP_EMPTY_PROMPT:-false}" = "true" ] && [ ! -s "${PROMPT_FILE}" ]; then
+        echo "No prompt provided, skipping engine execution."
+        return 0
+    fi
+    echo "Running runEngine (${ENGINE:-gemini})..."
+
+    if [ -n "$GITHUB_BOT_NAME" ]; then
+        echo "Using bot identity for commits"
+        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
+        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
+        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
+        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
+    fi
+
+    # API keys must not leak into a trace (fix_issue.sh runs under set -x).
+    local trace=0
+    case "$-" in *x*) trace=1 ;; esac
+    set +x
+
+    local resume="${GEMINI_CONTINUE_SESSION:-false}"
+    local out_json="" response_field=""
+    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
+    SUCCESS=false
+    for MODEL in $MODELS_LIST; do
+        echo "Trying model: $MODEL"
+        case "${ENGINE:-gemini}" in
+          claude)
+            out_json="${task_dir}/claude-output.json"
+            response_field="result"
+            CLAUDE_ARGS=("-p" "--dangerously-skip-permissions" "--model" "$MODEL" "--output-format" "json")
+            if [ "$resume" = "true" ]; then
+                CLAUDE_ARGS+=("--continue")
+            fi
+            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+                SUCCESS=true
+            fi
+            ;;
+          *)
+            out_json="${task_dir}/gemini-output.json"
+            response_field="response"
+            GEMINI_ARGS=("--yolo" "--model" "$MODEL" "--output-format" "json")
+            if [ "$resume" = "true" ]; then
+                GEMINI_ARGS+=("--resume" "latest")
+            fi
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+                SUCCESS=true
+            fi
+            ;;
+        esac
+        if [ "$SUCCESS" = true ]; then
+            echo "Engine execution successful with model: $MODEL"
+            record_engine_usage "$out_json"
+            if [ -n "$extract_to" ]; then
+                python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+        resp = data.get(sys.argv[2], "")
+        if resp:
+            print(resp)
+        else:
+            print(data)
+except Exception:
+    with open(sys.argv[1]) as f:
+        print(f.read())
+' "$out_json" "$response_field" > "${task_dir}/${extract_to}"
+            fi
+            break
+        else
+            echo "Engine execution failed with model: $MODEL. Retrying with next model..."
+        fi
+    done
+
+    if [ "$trace" = 1 ]; then
+        set -x
+    fi
+    if [ "$SUCCESS" = false ]; then
+        echo "All models failed."
+        exit 1
+    fi
+}

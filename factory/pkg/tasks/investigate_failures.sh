@@ -52,42 +52,6 @@ function fetchLogs {
     fi
 }
 
-function runGemini {
-    echo "Running runGemini..."
-    echo "running gemini in yolo mode"
-
-    if [ -n "$GITHUB_BOT_NAME" ]; then
-        echo "Using bot identity for commits"
-        export GIT_AUTHOR_NAME="$GITHUB_BOT_NAME"
-        export GIT_AUTHOR_EMAIL="$GITHUB_BOT_EMAIL"
-        export GIT_COMMITTER_NAME="$GITHUB_BOT_NAME"
-        export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
-    fi
-
-    MODELS_LIST="${MODELS:-__DEFAULT_MODELS__}"
-    SUCCESS=false
-    for MODEL in $MODELS_LIST; do
-        echo "Trying model: $MODEL"
-        GEMINI_ARGS=("--yolo" "--model" "$MODEL" "--output-format" "json")
-        if [ "$GEMINI_CONTINUE_SESSION" = "true" ]; then
-            GEMINI_ARGS+=("--resume" "latest")
-        fi
-        if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$(dirname "${PROMPT_FILE}")/gemini-output.json"); then
-             echo "Gemini execution successful with model: $MODEL"
-             record_gemini_usage "$(dirname "${PROMPT_FILE}")/gemini-output.json"
-             SUCCESS=true
-             break
-        else
-             echo "Gemini execution failed with model: $MODEL. Retrying with next model..."
-        fi
-    done
-    
-    if [ "$SUCCESS" = false ]; then
-        echo "All models failed."
-        exit 1
-    fi
-}
-
 function commitAndPush {
     echo "Running commitAndPush..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
@@ -125,6 +89,6 @@ checkoutPRBranch
 fetchLogs
 configureGemini
 installExtensions
-runGemini
+runEngine
 commitAndPush
 

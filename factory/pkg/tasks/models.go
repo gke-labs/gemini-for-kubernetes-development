@@ -24,6 +24,22 @@ func GetAvailableModelsForKey(key string) string {
 	return strings.Join(activeModels, " ")
 }
 
+// DefaultClaudeModels is the Claude fallback list, strongest first —
+// engine A/B comparisons should measure each engine at its best. Aliases
+// (not pinned ids) track the latest model in each class. Overridable via
+// the MODELS env passthrough; no key-tier probing in v1.
+var DefaultClaudeModels = []string{"opus", "sonnet"}
+
+// ModelsForEngine returns the space-separated model fallback list for the
+// selected engine. The gemini list is filtered by the key's quota state
+// (existing behavior); claude uses the static default list.
+func ModelsForEngine(engine, geminiKey string) string {
+	if engine == "claude" {
+		return strings.Join(DefaultClaudeModels, " ")
+	}
+	return GetAvailableModelsForKey(geminiKey)
+}
+
 // getScriptWithDefaults renders a task script: the shared lib.sh prelude
 // (setupGit, configureGemini, record_gemini_usage, …) is prepended, the
 // task script follows — bash keeps the last definition, so a script that
