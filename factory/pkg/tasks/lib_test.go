@@ -14,7 +14,7 @@ var taskScripts = []string{
 
 // Functions that live only in lib.sh — every rendered script must define
 // them exactly once (a duplicate means a script kept a stale copy).
-var libOnly = []string{"setupGit", "configureGemini", "record_gemini_usage", "runEngine"}
+var libOnly = []string{"setupGit", "configureGemini", "record_gemini_usage", "record_claude_usage", "record_engine_usage", "runEngine"}
 
 // The engine seam: every task that drives the model does it through
 // runEngine with its task-specific knobs; no script carries a private

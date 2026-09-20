@@ -154,20 +154,6 @@ if not models and ("total_tokens" in stats or "total" in stats or "totalRequests
         "tokens": {"input": stats.get("input", stats.get("input_tokens", 0)), "output": stats.get("candidates", stats.get("output", stats.get("output_tokens", 0))), "total": stats.get("total", stats.get("total_tokens", 0)), "cached": stats.get("cached", 0), "thoughts": stats.get("thoughts", 0)}
     }}
 
-if not models and "modelUsage" in data:
-    models = {}
-    for name, mu in data.get("modelUsage", {}).items():
-        models[name] = {
-            "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
-            "tokens": {"input": mu.get("inputTokens", 0), "output": mu.get("outputTokens", 0), "total": mu.get("inputTokens", 0) + mu.get("outputTokens", 0), "cached": mu.get("cacheReadInputTokens", 0), "thoughts": 0},
-        }
-if not models and "usage" in data and "result" in data:
-    u = data.get("usage", {})
-    models = {"claude": {
-        "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
-        "tokens": {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0), "total": u.get("input_tokens", 0) + u.get("output_tokens", 0), "cached": u.get("cache_read_input_tokens", 0), "thoughts": 0},
-    }}
-
 if not models:
     sys.exit(0)
 
@@ -284,6 +270,102 @@ except Exception:
     fi
 }
 
+# record_claude_usage: map Claude Code's -p JSON (modelUsage / usage /
+# total_cost_usd) into the same llm-usage.json / token-usage.json shape
+# record_gemini_usage writes, so the token daemon and TokenUsage UI flow
+# through unchanged. Transcript-derived tool telemetry is gemini-only for
+# now (multi-engine design, phase 4).
+function record_claude_usage {
+    local output_file="$1"
+    local task_dir="$(dirname "${PROMPT_FILE}")"
+    if [ -f "$output_file" ]; then
+        python3 -c '
+import json, os, sys
+
+output_file = sys.argv[1]
+task_dir = sys.argv[2]
+
+try:
+    with open(output_file, "r") as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+
+models = {}
+for name, mu in data.get("modelUsage", {}).items():
+    models[name] = {
+        "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
+        "tokens": {"input": mu.get("inputTokens", 0), "output": mu.get("outputTokens", 0), "total": mu.get("inputTokens", 0) + mu.get("outputTokens", 0), "cached": mu.get("cacheReadInputTokens", 0), "thoughts": 0},
+    }
+if not models and "usage" in data:
+    u = data.get("usage", {})
+    models = {"claude": {
+        "api": {"totalRequests": data.get("num_turns", 1), "totalErrors": 1 if data.get("is_error") else 0, "totalLatencyMs": data.get("duration_api_ms", data.get("duration_ms", 0))},
+        "tokens": {"input": u.get("input_tokens", 0), "output": u.get("output_tokens", 0), "total": u.get("input_tokens", 0) + u.get("output_tokens", 0), "cached": u.get("cache_read_input_tokens", 0), "thoughts": 0},
+    }}
+
+if not models:
+    sys.exit(0)
+
+usage_path = os.path.join(task_dir, "llm-usage.json")
+token_path = os.path.join(task_dir, "token-usage.json")
+
+existing = {"models": {}}
+if os.path.exists(usage_path):
+    try:
+        with open(usage_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+elif os.path.exists(token_path):
+    try:
+        with open(token_path, "r") as f:
+            existing = json.load(f)
+    except Exception:
+        pass
+
+for model_name, model_data in models.items():
+    api = model_data.get("api", {})
+    tokens = model_data.get("tokens", {})
+
+    cur_model = existing.get("models", {}).get(model_name, {
+        "api": {"totalRequests": 0, "totalErrors": 0, "totalLatencyMs": 0},
+        "tokens": {"input": 0, "output": 0, "total": 0, "cached": 0, "thoughts": 0}
+    })
+
+    cur_model["api"]["totalRequests"] += api.get("totalRequests", 1)
+    cur_model["api"]["totalErrors"] += api.get("totalErrors", 0)
+    cur_model["api"]["totalLatencyMs"] += api.get("totalLatencyMs", 0)
+
+    cur_model["tokens"]["input"] += tokens.get("input", 0)
+    cur_model["tokens"]["output"] += tokens.get("output", 0)
+    cur_model["tokens"]["total"] += tokens.get("total", 0)
+    cur_model["tokens"]["cached"] += tokens.get("cached", 0)
+
+    if "models" not in existing:
+        existing["models"] = {}
+    existing["models"][model_name] = cur_model
+
+try:
+    with open(usage_path, "w") as f:
+        json.dump(existing, f, indent=2)
+    with open(token_path, "w") as f:
+        json.dump(existing, f, indent=2)
+except Exception:
+    pass
+' "$output_file" "$task_dir" || echo "record_claude_usage failed (non-fatal)"
+    fi
+}
+
+# record_engine_usage: the per-engine dispatch — each engine keeps its own
+# recorder, this is the only place that knows which is which.
+function record_engine_usage {
+    case "${ENGINE:-gemini}" in
+      claude) record_claude_usage "$1" ;;
+      *) record_gemini_usage "$1" ;;
+    esac
+}
+
 # runEngine: the model-fallback loop for the selected agent engine — the
 # one place engine invocation lives (design/multi-engine.md).
 #   $1 (optional): output basename (e.g. plan-output.txt); when set, the
@@ -346,7 +428,7 @@ function runEngine {
         esac
         if [ "$SUCCESS" = true ]; then
             echo "Engine execution successful with model: $MODEL"
-            record_gemini_usage "$out_json"
+            record_engine_usage "$out_json"
             if [ -n "$extract_to" ]; then
                 python3 -c '
 import json, sys
