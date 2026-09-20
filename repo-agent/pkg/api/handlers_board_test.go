@@ -1323,3 +1323,40 @@ func TestGetBoardWorkRediscoversSubmittedReview(t *testing.T) {
 	}
 	t.Fatalf("pr-43 missing: %s", w.Body.String())
 }
+
+// Your own fresh draft PR awaits your promote — a pending human act, so
+// it lands in Up Next (needs-you). A fossil draft (deliberately parked
+// WIP) decays to waiting; a non-draft own PR was never needs-you.
+func TestOwnDraftPRNeedsYou(t *testing.T) {
+	fresh := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	stale := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	prsJSON := `[
+		{"number": 400, "title": "fresh draft", "html_url": "https://github.com/test/repo/pull/400", "updated_at": "` + fresh + `",
+		 "user": {"login": "alice"}, "draft": true},
+		{"number": 401, "title": "fossil draft", "html_url": "https://github.com/test/repo/pull/401", "updated_at": "` + stale + `",
+		 "user": {"login": "alice"}, "draft": true},
+		{"number": 402, "title": "ready PR", "html_url": "https://github.com/test/repo/pull/402", "updated_at": "` + fresh + `",
+		 "user": {"login": "alice"}}
+	]`
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": prsJSON,
+	}
+	_, r, _ := boardTestServer(t, ghResponses, boardCR())
+	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var work []models.WorkItem
+	_ = json.Unmarshal(w.Body.Bytes(), &work)
+	want := map[int]string{400: "needs-you", 401: "waiting", 402: "waiting"}
+	for _, item := range work {
+		if expected, ok := want[item.Number]; ok {
+			if item.Attention != expected {
+				t.Errorf("PR #%d attention = %q, want %q", item.Number, item.Attention, expected)
+			}
+			delete(want, item.Number)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("PRs missing from feed: %v\n%s", want, w.Body.String())
+	}
+}
