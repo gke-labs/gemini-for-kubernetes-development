@@ -49,12 +49,14 @@ func TestRunEngineContract(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// Both stubs fail on the first model ("badmodel") to prove the
-			// fallback loop, succeed on the second.
+			// Both stubs record their argv (the invocation-line contract)
+			// and fail on the first model ("badmodel") to prove fallback.
 			writeStub(bin, "gemini", `cat > /dev/null
+echo "$*" >> "$(dirname "$0")/gemini.args"
 case "$*" in *badmodel*) exit 1 ;; esac
 echo '{"response":"GEMINI RESPONSE","stats":{"models":{"gemini-test":{"api":{"totalRequests":1},"tokens":{"input":10,"output":5,"total":15}}}}}'`)
 			writeStub(bin, "claude", `cat > /dev/null
+echo "$*" >> "$(dirname "$0")/claude.args"
 case "$*" in *badmodel*) exit 1 ;; esac
 echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"output_tokens":5},"modelUsage":{"claude-test":{"inputTokens":10,"outputTokens":5,"cacheReadInputTokens":2,"costUSD":0.01}},"num_turns":3,"duration_ms":1000,"session_id":"s"}'`)
 
@@ -70,7 +72,8 @@ echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"ou
 			harness := `set -e
 source "$LIB"
 cd() { :; } # the repo checkout does not exist in the test sandbox
-runEngine plan-output.txt`
+runEngine plan-output.txt
+GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 			cmd := exec.Command(bash, "-c", harness)
 			cmd.Env = append(os.Environ(),
 				"PATH="+bin+":"+os.Getenv("PATH"),
@@ -98,6 +101,32 @@ runEngine plan-output.txt`
 			if _, err := os.Stat(filepath.Join(taskDir, tc.wantJSON)); err != nil {
 				t.Errorf("engine json missing: %v", err)
 			}
+			// The invocation line IS the compatibility contract: gemini must
+			// be called exactly as it was before the engine seam existed.
+			args, err := os.ReadFile(filepath.Join(bin, tc.engine+".args"))
+			if err != nil {
+				t.Fatalf("engine argv not recorded: %v", err)
+			}
+			wantArgs := map[string][]string{
+				"gemini": {
+					"--yolo --model goodmodel --output-format json",
+					"--yolo --model goodmodel --output-format json --resume latest",
+				},
+				"claude": {
+					"-p --dangerously-skip-permissions --model goodmodel --output-format json",
+					"-p --dangerously-skip-permissions --model goodmodel --output-format json --continue",
+				},
+			}[tc.engine]
+			var succeeded []string
+			for _, l := range strings.Split(strings.TrimSpace(string(args)), "\n") {
+				if !strings.Contains(l, "badmodel") {
+					succeeded = append(succeeded, l)
+				}
+			}
+			if len(succeeded) != 2 || succeeded[0] != wantArgs[0] || succeeded[1] != wantArgs[1] {
+				t.Errorf("%s argv = %q, want %q", tc.engine, succeeded, wantArgs)
+			}
+
 			usage, err := os.ReadFile(filepath.Join(taskDir, "llm-usage.json"))
 			if err != nil {
 				t.Fatalf("llm-usage.json missing: %v", err)
