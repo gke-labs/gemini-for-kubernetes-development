@@ -88,12 +88,16 @@ const (
 	// plan` runs there so the approved plan sits next to the code the fix
 	// will touch). The draft is board-only until the member approves;
 	// approval publishes it via the fix PR's description.
-	AnnotationPlanDraft         = "board.gemini.google.com/plan"
-	AnnotationPlannedAt         = "board.gemini.google.com/planned-at"
-	AnnotationPlanFeedback      = "board.gemini.google.com/plan-feedback"
-	AnnotationPlanFeedbackAt    = "board.gemini.google.com/plan-feedback-at"
-	AnnotationPlanApproved      = "board.gemini.google.com/plan-approved-at"
-	AnnotationPlanRejected      = "board.gemini.google.com/plan-rejected-at"
+	AnnotationPlanDraft      = "board.gemini.google.com/plan"
+	AnnotationPlannedAt      = "board.gemini.google.com/planned-at"
+	AnnotationPlanFeedback   = "board.gemini.google.com/plan-feedback"
+	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
+	AnnotationPlanApproved   = "board.gemini.google.com/plan-approved-at"
+	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
+	// AnnotationEngine records which agent engine launched into this
+	// sandbox — sessions are engine-private, so the chat terminal must
+	// resume with the same CLI that ran the task.
+	AnnotationEngine            = "board.gemini.google.com/engine"
 	reviewStatePending          = "pending"
 	defaultRequeue              = time.Minute
 	launchRetryBackoff          = 30 * time.Minute
@@ -665,6 +669,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		withPlan = annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
 	}
 	r.stampUnpaused(ctx, sb)
+	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartFix(key, factorycli.FixOptions{
 		Namespace:         plan.executor,
 		SandboxName:       name,
@@ -674,6 +679,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
 		WithPlan:          withPlan,
+		Engine:            boardEngine(work.board),
 	}) {
 		logger.Info("launched factory fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name)
 	}
@@ -773,6 +779,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		}
 	}
 	r.stampUnpaused(ctx, sb)
+	r.stampEngine(ctx, sb, boardEngine(work.board))
 	reviewSandbox := ""
 	if sb != nil {
 		reviewSandbox = sb.GetName()
@@ -785,6 +792,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
 		Publish:           "draft",
+		Engine:            boardEngine(work.board),
 	}) {
 		logger.Info("launched factory review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
 	}
@@ -1045,6 +1053,7 @@ func (r *Reconciler) followUpPRs(ctx context.Context, work *workState) {
 			Namespace:   namespace,
 			PRURL:       prURL,
 			GithubToken: token,
+			Engine:      boardEngine(work.board),
 		}) {
 			logger.Info("launched factory pr watch", "pr", prNum, "namespace", namespace, "board", work.board.Name)
 		}
@@ -1191,6 +1200,35 @@ func (r *Reconciler) stampUnpaused(ctx context.Context, sb *unstructured.Unstruc
 	sb.SetAnnotations(annotations)
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to stamp wake on paused sandbox", "sandbox", sb.GetName())
+	}
+}
+
+// boardEngine resolves the board's engine choice (default gemini).
+func boardEngine(board *boardv1alpha1.RepoBoard) string {
+	if board.Spec.Sandbox.Engine != "" {
+		return board.Spec.Sandbox.Engine
+	}
+	return "gemini"
+}
+
+// stampEngine records the launching engine on the sandbox so the chat
+// terminal resumes the conversation with the same CLI. Stamped at launch:
+// an engine flip on the board affects the next launch only.
+func (r *Reconciler) stampEngine(ctx context.Context, sb *unstructured.Unstructured, engine string) {
+	if sb == nil {
+		return
+	}
+	annotations := sb.GetAnnotations()
+	if annotations[AnnotationEngine] == engine {
+		return
+	}
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[AnnotationEngine] = engine
+	sb.SetAnnotations(annotations)
+	if err := r.Update(ctx, sb); err != nil {
+		log.FromContext(ctx).Error(err, "unable to stamp engine on sandbox", "sandbox", sb.GetName())
 	}
 }
 

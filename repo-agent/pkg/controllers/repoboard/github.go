@@ -38,14 +38,16 @@ import (
 // Wire contract with the factory CLI (identity secret keys) and the
 // existing tenant secrets.
 const (
-	githubSecretName = "github-pat"
-	geminiSecretName = "gemini-vscode-tokens"
+	githubSecretName    = "github-pat"
+	geminiSecretName    = "gemini-vscode-tokens"
+	anthropicSecretName = "anthropic-api-key"
 
-	factoryUserSecretName  = "factory-user"
-	factoryKeyGithubToken  = "GITHUB_TOKEN"
-	factoryKeyGithubLogin  = "GITHUB_LOGIN"
-	factoryKeyGithubEmail  = "GITHUB_EMAIL"
-	factoryKeyGeminiAPIKey = "GEMINI_API_KEY"
+	factoryUserSecretName     = "factory-user"
+	factoryKeyGithubToken     = "GITHUB_TOKEN"
+	factoryKeyGithubLogin     = "GITHUB_LOGIN"
+	factoryKeyGithubEmail     = "GITHUB_EMAIL"
+	factoryKeyGeminiAPIKey    = "GEMINI_API_KEY"
+	factoryKeyAnthropicAPIKey = "ANTHROPIC_API_KEY"
 )
 
 func parseRepoURL(repoURL string) (string, string, error) {
@@ -157,6 +159,17 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 		for _, key := range []string{"gemini", factoryKeyGeminiAPIKey} {
 			if v, ok := geminiSecret.Data[key]; ok && len(v) > 0 {
 				data[factoryKeyGeminiAPIKey] = v
+				break
+			}
+		}
+	}
+	// The claude engine's key rides the same way when the member has one;
+	// factory fails fast with a clear error if a claude board lacks it.
+	anthropicSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: anthropicSecretName, Namespace: namespace}, anthropicSecret); err == nil {
+		for _, key := range []string{"anthropic", factoryKeyAnthropicAPIKey} {
+			if v, ok := anthropicSecret.Data[key]; ok && len(v) > 0 {
+				data[factoryKeyAnthropicAPIKey] = v
 				break
 			}
 		}

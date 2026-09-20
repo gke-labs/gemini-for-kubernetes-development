@@ -127,11 +127,13 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		return
 	}
 	r.stampUnpaused(ctx, sb)
+	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{
 		Namespace:   work.board.Namespace,
 		SandboxName: name,
 		IssueURL:    issue.GetHTMLURL(),
 		GithubToken: work.discToken,
+		Engine:      boardEngine(work.board),
 	}) {
 		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}

@@ -127,6 +127,13 @@ type SandboxSpec struct {
 	// +kubebuilder:validation:Optional
 	Image string `json:"image,omitempty"`
 
+	// Engine selects the agent engine for this board's factory tasks.
+	// Per-invocation: flipping it affects the next launch, in-flight
+	// tasks finish on the engine they started with.
+	// +kubebuilder:validation:Enum=gemini;claude
+	// +kubebuilder:default=gemini
+	Engine string `json:"engine,omitempty"`
+
 	// +kubebuilder:default="10Gi"
 	DiskSize string `json:"diskSize,omitempty"`
 

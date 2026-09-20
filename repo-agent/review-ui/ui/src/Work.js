@@ -1354,6 +1354,14 @@ function Work({ onBack, namespace }) {
                   <input type="number" min="1" value={spec.idleMinutes || 60} style={{ width: '80px' }}
                     onChange={e => setSpec({ ...spec, idleMinutes: parseInt(e.target.value, 10) || 60 })} />
                 </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
+                  title="Agent engine for this board's tasks. Per-launch: flipping it affects the next task; in-flight runs finish on the engine they started with. Claude needs an anthropic-api-key secret in your namespace.">
+                  Engine
+                  <select value={spec.engine || 'gemini'} onChange={e => setSpec({ ...spec, engine: e.target.value })}>
+                    <option value="gemini">gemini</option>
+                    <option value="claude">claude</option>
+                  </select>
+                </label>
               </div>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />
