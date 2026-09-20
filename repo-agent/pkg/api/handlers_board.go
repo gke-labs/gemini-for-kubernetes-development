@@ -476,7 +476,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
+			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 		}
 	}
 	var assigned, created, allIssues []*github.Issue
@@ -535,7 +535,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		if len(issue.Assignees) > 0 {
 			continue
 		}
-		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels)
+		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 	}
 
 	// Review-state rediscovery per non-authored PR, concurrently — GitHub
@@ -566,7 +566,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	}
 	for _, pr := range prs {
 		st := statesByPR[pr.GetNumber()]
-		s.mergePRRow(items, sandboxes, pr, member, st.pending, st.reviewed, viewLabels)
+		s.mergePRRow(items, sandboxes, pr, member, st.pending, st.reviewed, viewLabels, autoIterateDefault(board))
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -578,7 +578,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, false, false, viewLabels)
+				s.mergePRRow(items, sandboxes, pr, member, false, false, viewLabels, autoIterateDefault(board))
 				break
 			}
 		}
@@ -742,7 +742,7 @@ func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo stri
 	return byName, nil
 }
 
-func workSandbox(sb *unstructured.Unstructured) *models.WorkSandbox {
+func workSandbox(sb *unstructured.Unstructured, autoIterateDefault bool) *models.WorkSandbox {
 	if sb == nil {
 		return nil
 	}
@@ -751,11 +751,27 @@ func workSandbox(sb *unstructured.Unstructured) *models.WorkSandbox {
 	if engine == "" {
 		engine = "gemini" // pre-stamp sandboxes only ever ran gemini
 	}
+	// Effective auto-follow-up: the per-PR annotation overrides the
+	// board policy in either direction (mirrors autoIterateEnabled).
+	override := sb.GetAnnotations()["board.gemini.google.com/auto-iterate"]
+	effective := autoIterateDefault
+	switch override {
+	case "on":
+		effective = true
+	case "off":
+		effective = false
+	}
+	auto := "off"
+	if effective {
+		auto = "on"
+	}
 	return &models.WorkSandbox{
-		Name:      sb.GetName(),
-		Replicas:  fmt.Sprintf("%d", replicas),
-		TaskState: sb.GetAnnotations()[annoTaskState],
-		Engine:    engine,
+		Name:                  sb.GetName(),
+		Replicas:              fmt.Sprintf("%d", replicas),
+		TaskState:             sb.GetAnnotations()[annoTaskState],
+		Engine:                engine,
+		AutoIterate:           auto,
+		AutoIterateOverridden: override == "on" || override == "off",
 	}
 }
 
@@ -777,7 +793,7 @@ func hasAnyLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string, autoDefault bool) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
@@ -897,7 +913,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		TriagePublished: triagePublished,
 		Plan:            planDraft,
 		PlanApproved:    planApproved,
-		Sandbox:         workSandbox(sb),
+		Sandbox:         workSandbox(sb, autoDefault),
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 }
@@ -955,7 +971,7 @@ func friendlyReviewError(msg string) string {
 	}
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub, reviewedOnGitHub bool, viewLabels []string) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub, reviewedOnGitHub bool, viewLabels []string, autoDefault bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
@@ -1107,7 +1123,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		PRURL:           pr.GetHTMLURL(),
 		DraftPR:         pr.GetDraft(),
 		Fixes:           closingRefs(pr.GetBody()),
-		Sandbox:         workSandbox(sb),
+		Sandbox:         workSandbox(sb, autoDefault),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 }
@@ -1589,6 +1605,43 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 	}
 	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save board settings", "details": err.Error()})
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// autoIterateDefault mirrors the controller's policy defaulting: absent
+// means enabled.
+func autoIterateDefault(board *unstructured.Unstructured) bool {
+	v, found, _ := unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
+	return !found || v
+}
+
+// autoIterateBoardPR sets or clears the per-PR auto-follow-up override on
+// the PR's fix sandbox: {"mode": "on" | "off" | "inherit"}.
+func (s *Server) autoIterateBoardPR(c *gin.Context) {
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Mode != "on" && req.Mode != "off" && req.Mode != "inherit") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be on, off, or inherit"})
+		return
+	}
+	sb, ns := s.findPRFixSandbox(c, board, owner, repo, number)
+	if sb == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no agent sandbox for this PR"})
+		return
+	}
+	value := req.Mode
+	if value == "inherit" {
+		value = ""
+	}
+	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "board.gemini.google.com/auto-iterate", value); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set auto-iterate", "details": err.Error()})
 		return
 	}
 	c.Status(http.StatusOK)

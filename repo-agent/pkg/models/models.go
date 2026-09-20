@@ -69,10 +69,12 @@ type Board struct {
 
 // WorkSandbox is the sandbox chip on a work-item row.
 type WorkSandbox struct {
-	Name      string `json:"name"`
-	Replicas  string `json:"replicas"`
-	TaskState string `json:"taskState,omitempty"`
-	Engine    string `json:"engine,omitempty"` // stamped at launch; pre-stamp sandboxes ran gemini
+	Name                  string `json:"name"`
+	Replicas              string `json:"replicas"`
+	TaskState             string `json:"taskState,omitempty"`
+	Engine                string `json:"engine,omitempty"`                // stamped at launch; pre-stamp sandboxes ran gemini
+	AutoIterate           string `json:"autoIterate,omitempty"`           // effective: "on" | "off"
+	AutoIterateOverridden bool   `json:"autoIterateOverridden,omitempty"` // per-PR override set (vs board default)
 }
 
 // WorkItem is one row of the board work feed: an issue or PR merged with
