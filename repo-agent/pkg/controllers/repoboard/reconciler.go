@@ -282,7 +282,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	for _, plan := range fixes {
+	seenFix := map[string]bool{}
+	for _, plan := range append(fixes, r.resumeFixes(work)...) {
+		k := fmt.Sprintf("%s/%d", plan.executor, plan.issue)
+		if seenFix[k] {
+			continue
+		}
+		seenFix[k] = true
 		r.ensureFix(ctx, work, plan)
 	}
 	for _, plan := range dedupeReviews(reviews) {
@@ -605,6 +611,39 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 	return nil
 }
 
+// resumeFixes re-drives approved plans whose fix never started. The
+// mailbox claim is consumed at kickoff, so a controller restart between
+// consumption and the task landing in the sandbox — or a launch that
+// bailed — would otherwise strand the row at "starting" forever. The
+// approval annotation is the durable consent, and the runner's
+// preflight/single-flight make relaunching idempotent (duplicates from
+// the mailbox in the same pass are skipped by IsRunning).
+func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
+	var out []fixPlan
+	prefix := "fix-" + work.repo + "-"
+	for _, sb := range work.sandboxes {
+		n, err := strconv.Atoi(strings.TrimPrefix(sb.GetName(), prefix))
+		if err != nil || !strings.HasPrefix(sb.GetName(), prefix) {
+			continue
+		}
+		annotations := sb.GetAnnotations()
+		if annotations[AnnotationPlanApproved] == "" || annotations[AnnotationPlanDraft] == "" {
+			continue
+		}
+		// Once a fix has run (or is stamped running), the normal
+		// paths own the sandbox — resume only pre-fix strandings.
+		if strings.HasPrefix(annotations[factorycli.AnnotationTaskType], "fix") {
+			continue
+		}
+		executor := annotations[AnnotationExecutor]
+		if executor == "" {
+			executor = sb.GetNamespace()
+		}
+		out = append(out, fixPlan{issue: n, issueURL: annotations["htmlURL"], executor: executor})
+	}
+	return out
+}
+
 // ensureFix launches (or reattaches) a factory fix as the plan's executor,
 // in the executor's namespace with the executor's identity.
 func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
@@ -618,11 +657,20 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	if r.Factory.IsRunning(key) {
 		return
 	}
-	state := ""
+	state, taskType := "", ""
 	if sb != nil {
-		state = sb.GetAnnotations()[factorycli.AnnotationTaskState]
+		annotations := sb.GetAnnotations()
+		state = annotations[factorycli.AnnotationTaskState]
+		taskType = annotations[factorycli.AnnotationTaskType]
 	}
-	terminal := state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed
+	// Terminal means THE FIX ran to an end state. The task-state stamps
+	// are per-sandbox, not per-type: a completed plan in the same sandbox
+	// (plans run in the fix sandbox by design) must not masquerade as a
+	// finished fix — that bailed every Approve & Fix after a plan. An
+	// absent type keeps the old semantics (pre-type-stamping sandboxes
+	// only ever carried fix results).
+	fixLike := taskType == "" || strings.HasPrefix(taskType, "fix")
+	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) && fixLike
 	if terminal && refixRequested(sb) {
 		terminal = false
 	}
