@@ -92,9 +92,36 @@ func chatCommand(taskType, home, engine, apiKey, orientation string) string {
 		// Sessions are engine-private: a claude task's conversation can
 		// only be resumed by claude. --continue = latest session for the
 		// cwd; the orientation rides as the positional initial prompt.
-		// Claude's trust answer persists in ~/.claude.json on the PVC, so
-		// the user answers its folder prompt at most once.
+		// Task runs use -p (print mode), which skips Claude Code's
+		// first-run wizard — so an interactive chat is the first launch
+		// that would trigger it: theme, API-key confirmation, security
+		// notes, folder trust. All four answers live in ~/.claude.json
+		// (on the PVC); seed them so the user lands in the conversation,
+		// not the wizard. Merge-with-setdefault keeps any answers the
+		// user already gave; on failure the wizard appears, nothing
+		// breaks. The key approval is recorded as its last 20 chars —
+		// Claude Code's own convention for customApiKeyResponses.
 		keyExport = "export ANTHROPIC_API_KEY=" + shellSingleQuote(apiKey)
+		prep = `python3 -c 'import json,os,sys
+p=os.path.join(os.environ["HOME"],".claude.json")
+d={}
+try:
+    d=json.load(open(p))
+except Exception:
+    pass
+d.setdefault("theme","dark")
+d["hasCompletedOnboarding"]=True
+key=os.environ.get("ANTHROPIC_API_KEY","")
+if key:
+    r=d.setdefault("customApiKeyResponses",{})
+    a=r.setdefault("approved",[])
+    if key[-20:] not in a:
+        a.append(key[-20:])
+    r.setdefault("rejected",[])
+proj=d.setdefault("projects",{}).setdefault(sys.argv[1],{})
+proj["hasTrustDialogAccepted"]=True
+proj.setdefault("hasCompletedProjectOnboarding",True)
+json.dump(d,open(p,"w"),indent=2)' "$PWD" 2>/dev/null; `
 		resume = "exec claude --continue"
 		if orientation != "" {
 			resume += " " + shellSingleQuote(orientation)

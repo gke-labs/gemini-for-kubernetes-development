@@ -80,6 +80,11 @@ func TestChatCommandClaude(t *testing.T) {
 		"export HOME=/workspaces/.home",
 		"claude --continue",
 		`ANTHROPIC_API_KEY='\''sk-ant'\''`,
+		// The onboarding seed: without it every fresh sandbox greets the
+		// user with Claude Code's first-run wizard instead of the chat.
+		".claude.json",
+		"hasTrustDialogAccepted",
+		"customApiKeyResponses",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("claude chatCommand missing %q in:\n%s", want, cmd)
