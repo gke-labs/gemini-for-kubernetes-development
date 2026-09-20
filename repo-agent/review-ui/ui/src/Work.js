@@ -19,7 +19,7 @@ function EngineIcon({ engine, title }) {
   if (!src) return null;
   return (
     <img src={src} alt={engine} title={title || `engine: ${engine}`}
-      style={{ width: '14px', height: '14px', verticalAlign: 'text-bottom', marginRight: '4px' }} />
+      style={{ width: '20px', height: '20px', verticalAlign: 'middle', marginRight: '6px' }} />
   );
 }
 
