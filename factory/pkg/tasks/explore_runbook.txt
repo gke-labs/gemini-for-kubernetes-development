@@ -1,0 +1,28 @@
+You are writing an executable runbook for the repository {{.RepoName}}
+({{.HTMLURL}}). The exploration contract is defined in
+docs-exploration/SKILL.md in this checkout — follow its runbook rules.
+
+Scenario: {{.Scenario}}
+
+1. Derive the scenario's real path from the repository's own tooling:
+   the Makefile, scripts/, CI workflows (.github/workflows is the
+   ground truth for what actually builds and tests), helm charts,
+   kustomize bases, container files. Do not invent commands — every
+   step must trace to something the repo ships.
+2. Classify what the scenario needs before writing steps: does it run
+   as a plain process, need a container build, need a Kubernetes API
+   (would envtest or a throwaway cluster do?), or need real cloud
+   resources? Say which, and what credentials or permissions each
+   step assumes.
+3. Write docs-exploration/runbooks/{{.Scenario}}.md with the skill's
+   fixed sections: What this needs, Preconditions, Steps, Verify,
+   Teardown. Where the repo offers a choice (e.g. kind vs. an existing
+   cluster), pick the least-privileged path and note the alternative
+   in one line.
+4. Update docs-exploration/README.md, and add anything the code left
+   ambiguous to docs-exploration/questions.md.
+
+Write the files directly into the checkout. Do not commit or push — the
+task harness commits and pushes your changes when you finish. Finish
+with a short summary of what the scenario needs and where the runbook
+cuts corners.

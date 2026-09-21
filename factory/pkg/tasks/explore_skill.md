@@ -31,6 +31,15 @@ current, and short enough to read.
 - `sessions/<date>-<topic>.md` — distilled notes from interactive
   question-and-answer sessions. Write the answer that would have saved
   the questioner an hour, not a transcript.
+- `runbooks/<scenario>.md` — an executable path through a scenario:
+  `deploy.md`, `upgrade.md`, and kin. Every step is a command derived
+  from the repo's own tooling (Makefile, scripts, CI workflows), never
+  invented. Fixed sections, in order: **What this needs** (binary /
+  container build / Kubernetes API / cloud APIs — and what permissions
+  or credentials each step assumes), **Preconditions**, **Steps**,
+  **Verify** (how you know it worked: endpoints to probe, commands
+  whose output proves health), **Teardown**. A runbook a reader cannot
+  execute top-to-bottom is a bug.
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
@@ -51,3 +60,7 @@ current, and short enough to read.
 7. After substantial interactive answers, distill into
    `sessions/<date>-<topic>.md` and fold durable insights into the main
    documents.
+8. **Runbooks state their requirements before their steps.** The "What
+   this needs" section is what a user reads to decide whether to run
+   it — keep it honest and specific, including what it costs to tear
+   down.
