@@ -61,10 +61,16 @@ Every runbook opens its **What this needs** section with a tier call:
 
 Make the call carefully and say why: a controller that merely *ships*
 a DaemonSet may still be tier 1 to exercise its reconcile logic, while
-actually mounting a volume through it is tier 2. When a scenario
-splits, say so — "tier 1 for the control plane, tier 2 to exercise the
-data path" — and structure Steps around the lowest tier that proves
-something.
+actually mounting a volume through it is tier 2.
+
+When more than one tier genuinely proves something, write a path for
+each viable tier — the Tier line lists them ("**Tier**: 1 (control
+plane) / 2 (data path)") and Steps carries one subsection per path
+("### Path — Tier 1: …"), lowest tier first. Only tiers that prove
+something real get a path; never pad a tier with invented steps. If
+one path outgrows the file (rule 6), split it into
+`runbooks/<scenario>-tier<N>.md` and link it from the main runbook's
+Tier line.
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
