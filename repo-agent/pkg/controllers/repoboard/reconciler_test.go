@@ -52,6 +52,7 @@ type fakeLaunch struct {
 	PlanOpts    *factorycli.PlanOptions
 	PRTaskOpts  *factorycli.PRTaskOptions
 	PRTaskKind  string
+	ExploreOpts *factorycli.ExploreOptions
 }
 
 type fakeLauncher struct {
@@ -124,6 +125,13 @@ func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) b
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "iterate"})
+	return true
+}
+
+func (f *fakeLauncher) StartExplore(key string, opts factorycli.ExploreOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, ExploreOpts: &opts})
 	return true
 }
 
@@ -1393,4 +1401,81 @@ func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
 	for _, l := range fake.launches() {
 		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "follow-up-owned sandbox must not resume a review")
 	}
+}
+
+// Exploration claims: no sandbox → factory launches directly (it ensures
+// explore-<repo> itself); sandbox present → the claim converts to the
+// durable request annotations and the mailbox trim can drop it.
+func TestExploreClaims(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{
+		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationExploreTopic: "compare with gVisor",
+	})
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	var explores []fakeLaunch
+	for _, l := range fake.launches() {
+		if l.ExploreOpts != nil {
+			explores = append(explores, l)
+		}
+	}
+	g.Expect(explores).To(gomega.HaveLen(1))
+	g.Expect(explores[0].ExploreOpts.Kind).To(gomega.Equal("topic"))
+	g.Expect(explores[0].ExploreOpts.Topic).To(gomega.Equal("compare with gVisor"))
+	g.Expect(explores[0].ExploreOpts.SandboxName).To(gomega.Equal("explore-repo"))
+	g.Expect(explores[0].ExploreOpts.RepoURL).To(gomega.Equal("https://github.com/test/repo"))
+
+	// Quiet sandbox: the claim converts to annotations AND the request
+	// pass launches in the same reconcile (idle + fresh request = run).
+	quiet := func(state string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "explore-repo",
+				"namespace": "alice",
+				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+				"annotations": map[string]interface{}{
+					factorycli.AnnotationTaskType:               "explore",
+					factorycli.AnnotationTaskState:              state,
+					"sandbox.gemini.google.com/completion-time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+				},
+			},
+			"spec": map[string]interface{}{"replicas": int64(1)},
+		}}
+	}
+	fake2 := newFakeLauncher()
+	board2 := testBoard(map[string]string{
+		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationExploreTopic: "compare with gVisor",
+	})
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), quiet("Completed"))
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "explore-repo"}, got)).To(gomega.Succeed())
+	g.Expect(got.GetAnnotations()[AnnotationExploreRequested]).NotTo(gomega.BeEmpty())
+	g.Expect(got.GetAnnotations()[AnnotationExploreKind]).To(gomega.Equal("topic"))
+	g.Expect(got.GetAnnotations()[AnnotationExploreTopic]).To(gomega.Equal("compare with gVisor"))
+
+	// A RUNNING sandbox defers conversion — the claim must survive so a
+	// finishing task of another kind cannot mask the new request.
+	fake3 := newFakeLauncher()
+	board3 := testBoard(map[string]string{
+		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationExploreTopic: "compare with gVisor",
+	})
+	r3 := newTestReconciler(fake3, ghClient, board3, githubSecret(), quiet("Running"))
+	_, err = r3.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	got3 := &unstructured.Unstructured{}
+	got3.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r3.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "explore-repo"}, got3)).To(gomega.Succeed())
+	g.Expect(got3.GetAnnotations()[AnnotationExploreRequested]).To(gomega.BeEmpty(), "claim must not convert mid-run")
 }

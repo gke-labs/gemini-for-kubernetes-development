@@ -931,6 +931,96 @@ function SandboxCard({ name, namespace, onClose }) {
   );
 }
 
+// ExplorePanel: the board's understanding surface — docs from the
+// member's fork branch (git is the record; renders with the sandbox
+// paused or gone), kickoff buttons for the three exploration kinds, and
+// the deep-dive chat door.
+function ExplorePanel({ boardName, onOpenSandbox }) {
+  const [exp, setExp] = useState(null);
+  const [topic, setTopic] = useState('');
+  const [since, setSince] = useState('2 weeks');
+  const [busy, setBusy] = useState('');
+
+  const load = useCallback(() => {
+    fetch(`/api/board/${boardName}/exploration`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => setExp(data))
+      .catch(() => {});
+  }, [boardName]);
+  useEffect(() => { load(); }, [load]);
+
+  const kickoff = (kind, extra) => {
+    setBusy(kind);
+    fetch(`/api/board/${boardName}/explore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, ...extra }),
+    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); })
+      .catch(() => setBusy(''));
+  };
+
+  const sb = exp && exp.sandbox;
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <button className="btn btn-sm" disabled={busy === 'onboard'}
+          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
+          onClick={() => kickoff('onboard')}>Explore repo</button>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <button className="btn btn-sm" disabled={busy === 'activity'}
+            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
+            onClick={() => kickoff('activity', { since })}>What happened</button>
+          <select value={since} onChange={e => setSince(e.target.value)} style={{ padding: '3px' }}>
+            <option value="2 weeks">2 weeks</option>
+            <option value="1 month">1 month</option>
+            <option value="3 months">3 months</option>
+          </select>
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flex: '1 1 260px' }}>
+          <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
+            placeholder="deep dive: a question, subsystem, or 'compare with …'"
+            style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }} />
+          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
+            onClick={() => { kickoff('topic', { topic }); setTopic(''); }}>Dive</button>
+        </span>
+        {sb && (
+          <a className="btn btn-sm" href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
+            target="_blank" rel="noopener noreferrer"
+            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">Deep dive ↗</a>
+        )}
+      </div>
+      <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {exp && (
+          <a href={exp.branchURL} target="_blank" rel="noopener noreferrer"
+            title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
+        )}
+        {sb && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}
+            title={`${sb.name} — tasks & logs`}>
+            <Chip text={`${sb.kind || 'explore'}: ${(sb.taskState || 'idle').toLowerCase()}`}
+              color={sb.taskState === 'Running' ? '#b08800' : sb.taskState === 'Failed' ? 'var(--danger, #d33)' : '#6a737d'}
+              bg="var(--bg-secondary)" />
+          </span>
+        )}
+      </div>
+      <div style={{ marginTop: '12px' }}>
+        {(!exp || (exp.docs || []).length === 0) ? (
+          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No exploration notes yet — Explore repo writes the first ones to your fork.
+          </div>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: '18px' }}>
+            {exp.docs.map(d => (
+              <li key={d.path} style={{ padding: '2px 0' }}>
+                <a href={d.htmlURL} target="_blank" rel="noopener noreferrer">{d.name}</a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Work({ onBack, namespace }) {
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState('');
@@ -1323,6 +1413,11 @@ function Work({ onBack, namespace }) {
                   </button>
                 );
               })}
+              <button
+                className={`group-tab ${shown === 'explore' ? 'active' : ''}`}
+                title="Understanding docs for this repo — onboarding, architecture, recent activity, deep dives"
+                onClick={() => setActiveGroup('explore')}
+              >Explore</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
                 {shown === 'issues' && (
                   <span title="View scope — display only, never changes what runs">
@@ -1358,6 +1453,9 @@ function Work({ onBack, namespace }) {
               </span>
             </nav>
 
+            {shown === 'explore' ? (
+              <ExplorePanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
+            ) : (
             <div className="work-card">
               <table className="work-table">
                 {header}
@@ -1387,6 +1485,7 @@ function Work({ onBack, namespace }) {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         );
       })()}

@@ -103,6 +103,13 @@ const (
 	AnnotationIterateInstruction   = "board.gemini.google.com/iterate-instruction"
 	AnnotationAddressRequested     = "board.gemini.google.com/address-requested-at"
 	AnnotationInvestigateRequested = "board.gemini.google.com/investigate-requested-at"
+	// Exploration requests: kind-scoped, stamped on the explore sandbox
+	// once it exists (the mailbox bridges creation, exactly like the PR
+	// follow-up claims). Params ride alongside.
+	AnnotationExploreRequested = "board.gemini.google.com/explore-requested-at"
+	AnnotationExploreKind      = "board.gemini.google.com/explore-kind"
+	AnnotationExploreTopic     = "board.gemini.google.com/explore-topic"
+	AnnotationExploreSince     = "board.gemini.google.com/explore-since"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -251,7 +258,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks := r.mailboxPlans(work)
+	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks, mailExplores := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
@@ -320,6 +327,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// from reading a follow-up's fresh factory-pr sandbox as an
 	// interrupted review.
 	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
+	r.ensureExploreClaims(ctx, work, mailExplores)
+	r.ensureExploreRequests(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
@@ -534,20 +543,21 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim, []exploreClaim) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	requests := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	var fixes []fixPlan
 	var reviews []reviewPlan
 	var triages []int
 	var plans []planRequest
 	var prTasks []prTaskClaim
+	var explores []exploreClaim
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -566,6 +576,11 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-")); err == nil {
 				plans = append(plans, planRequest{issue: n, member: member})
 			}
+		case strings.HasPrefix(key, "explore-"):
+			kind := strings.TrimPrefix(key, "explore-")
+			if kind == "onboard" || kind == "activity" || kind == "topic" {
+				explores = append(explores, exploreClaim{kind: kind, member: member})
+			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
 			kind, numStr, _ := strings.Cut(key, "-")
 			if n, err := strconv.Atoi(numStr); err == nil {
@@ -573,7 +588,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			}
 		}
 	}
-	return fixes, reviews, triages, plans, prTasks
+	return fixes, reviews, triages, plans, prTasks, explores
 }
 
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
@@ -1096,6 +1111,13 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if sb := work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 				continue
 			}
+		case strings.HasPrefix(key, "explore-"):
+			kind := strings.TrimPrefix(key, "explore-")
+			if sb := work.findSandbox(member, factorycli.ExploreSandboxName(work.repo)); sb != nil &&
+				sb.GetAnnotations()[AnnotationExploreKind] == kind &&
+				sb.GetAnnotations()[AnnotationExploreRequested] != "" {
+				continue
+			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
 			kind, numStr, _ := strings.Cut(key, "-")
 			n, err := strconv.Atoi(numStr)
@@ -1144,6 +1166,120 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 
 // followUpPRs keeps a factory pr watch running for every fix sandbox aliased
 // to an open PR, in the sandbox owner's namespace with their identity.
+// exploreClaim is an exploration click from the board's Explore tab.
+type exploreClaim struct {
+	kind   string // onboard | activity | topic
+	member string
+}
+
+// ensureExploreClaims drives exploration clicks: once the explore
+// sandbox exists it carries the request annotations (durable consent,
+// rerunRequested semantics); until then factory is launched directly —
+// `factory explore` ensures the sandbox itself. Same two-phase bridge
+// as the PR follow-up claims.
+func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, claims []exploreClaim) {
+	logger := log.FromContext(ctx)
+	for _, claim := range claims {
+		boardAnnotations := work.board.GetAnnotations()
+		topic := boardAnnotations[AnnotationExploreTopic]
+		since := boardAnnotations[AnnotationExploreSince]
+		name := factorycli.ExploreSandboxName(work.repo)
+		key := fmt.Sprintf("%s/explore-%s", claim.member, work.repo)
+		if r.Factory.IsRunning(key) {
+			continue
+		}
+		if sb := work.findSandbox(claim.member, name); sb != nil {
+			annotations := sb.GetAnnotations()
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			if annotations[AnnotationExploreKind] == claim.kind && annotations[AnnotationExploreRequested] != "" {
+				continue // converted; trim drops the claim
+			}
+			// Convert only when the sandbox is quiet: completion-time is
+			// global, so a request stamped mid-run would be masked by the
+			// RUNNING task's completion. The claim stands until then.
+			if annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning {
+				continue
+			}
+			annotations[AnnotationExploreRequested] = time.Now().UTC().Format(time.RFC3339)
+			annotations[AnnotationExploreKind] = claim.kind
+			annotations[AnnotationExploreTopic] = topic
+			annotations[AnnotationExploreSince] = since
+			annotations[AnnotationExecutor] = claim.member
+			sb.SetAnnotations(annotations)
+			if err := r.Update(ctx, sb); err != nil {
+				logger.Error(err, "unable to convert explore claim", "kind", claim.kind)
+			}
+			continue
+		}
+		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
+			continue
+		}
+		token, err := r.executorToken(ctx, claim.member)
+		if err != nil {
+			continue
+		}
+		if r.Factory.StartExplore(key, factorycli.ExploreOptions{
+			Namespace:   claim.member,
+			SandboxName: name,
+			Kind:        claim.kind,
+			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
+			Topic:       topic,
+			Since:       since,
+			GithubToken: token,
+			Engine:      boardEngine(work.board),
+		}) {
+			logger.Info("launched factory explore", "kind", claim.kind, "board", work.board.Name)
+		}
+	}
+}
+
+// ensureExploreRequests re-drives converted exploration requests on the
+// sandbox itself: a request newer than the last completion launches.
+func (r *Reconciler) ensureExploreRequests(ctx context.Context, work *workState) {
+	logger := log.FromContext(ctx)
+	for _, sb := range work.sandboxes {
+		if !strings.HasPrefix(sb.GetName(), "explore-") {
+			continue
+		}
+		if !rerunRequested(sb, AnnotationExploreRequested, factorycli.AnnotationCompletionTime) {
+			continue
+		}
+		annotations := sb.GetAnnotations()
+		kind := annotations[AnnotationExploreKind]
+		if kind == "" {
+			continue
+		}
+		namespace := sb.GetNamespace()
+		key := fmt.Sprintf("%s/explore-%s", namespace, work.repo)
+		if r.Factory.IsRunning(key) {
+			continue
+		}
+		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
+			continue
+		}
+		token, err := r.executorToken(ctx, namespace)
+		if err != nil {
+			continue
+		}
+		r.stampUnpaused(ctx, sb)
+		r.stampEngine(ctx, sb, boardEngine(work.board))
+		if r.Factory.StartExplore(key, factorycli.ExploreOptions{
+			Namespace:   namespace,
+			SandboxName: sb.GetName(),
+			Kind:        kind,
+			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
+			Topic:       annotations[AnnotationExploreTopic],
+			Since:       annotations[AnnotationExploreSince],
+			GithubToken: token,
+			Engine:      boardEngine(work.board),
+		}) {
+			logger.Info("launched factory explore (request)", "kind", kind, "board", work.board.Name)
+		}
+	}
+}
+
 // ensurePRTaskClaims handles follow-up clicks on PRs with no sandbox:
 // once any sandbox carries the PR label (factory created or aliased it),
 // the claim converts to the durable request annotation the click pass
