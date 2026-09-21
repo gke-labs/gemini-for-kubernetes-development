@@ -9,7 +9,6 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 )
 
@@ -21,18 +20,8 @@ import (
 // what makes 'overseer/stop' on an issue actually stop work on its pull
 // request, which is why the caller re-checks the stop label immediately after
 // calling this.
-func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
-	var refIssues []*githubv39.Issue
-	for refIssueNum := range common.GetReferencedIssues(pr) {
-		refIssue, err := s.gh.GetIssue(ctx, refIssueNum)
-		if err != nil {
-			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", refIssueNum, pr.GetNumber(), err)
-			continue
-		}
-		refIssues = append(refIssues, refIssue)
-	}
-
-	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refIssues)
+func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refs *refIssues) {
+	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refs.all(ctx))
 
 	if len(allMissingLabels) > 0 {
 		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
@@ -127,13 +116,17 @@ func hasReviewLabel(labels []*githubv39.Label, triggerLabel string) bool {
 //
 // Review is opt-in rather than universal because it costs an agent run per
 // commit; the label is how a repository says a change is worth that.
-func (s *Scanner) shouldAutoReviewPR(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue) bool {
+//
+// This is asked twice per evaluation - once to decide whether to queue a
+// review, and again to decide whether a missing review is what is keeping the
+// pull request from being ready for a human - so it reads the parent issues
+// through the shared resolver rather than fetching them itself.
+func (s *Scanner) shouldAutoReviewPR(ctx context.Context, prIssue *githubv39.Issue, refs *refIssues) bool {
 	if hasReviewLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		return true
 	}
-	for refIssueNum := range common.GetReferencedIssues(pr) {
-		refIssue, err := s.gh.GetIssue(ctx, refIssueNum)
-		if err == nil && hasReviewLabel(refIssue.Labels, s.cfg.TriggerLabel) {
+	for _, refIssue := range refs.all(ctx) {
+		if hasReviewLabel(refIssue.Labels, s.cfg.TriggerLabel) {
 			return true
 		}
 	}
