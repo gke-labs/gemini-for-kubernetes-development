@@ -617,13 +617,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
             <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Iterate with an instruction:</span>
+              <span style={{ marginLeft: 'auto' }} />
               <button className="btn btn-sm"
                 title="Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation"
                 onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/address-comments`, 'Address comments'); }}>Address review comments</button>
               <button className="btn btn-sm"
                 title="Agent investigates failing checks and pushes a fix"
                 onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/investigate`, 'Fix CI'); }}>Fix failing CI</button>
-              <span style={{ color: 'var(--text-secondary)' }}>or iterate with an instruction:</span>
               {item.sandbox && item.sandbox.autoIterate && (
                 <span
                   onClick={() => {
@@ -633,7 +634,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                       body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
                     }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
                   }}
-                  style={{ cursor: 'pointer', marginLeft: 'auto' }}
+                  style={{ cursor: 'pointer' }}
                   title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
                   <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
                     color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
@@ -654,7 +655,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             />
             <div style={{ marginTop: '6px', textAlign: 'right' }}>
               <button className="btn btn-sm"
-                title="Run factory pr iterate in the fix sandbox — pushes to the PR branch"
+                title="Run factory pr iterate in the PR's sandbox — pushes to the PR branch; empty instruction resolves conflicts and iterates"
                 onClick={() => {
                   fetch(`/api/board/${boardName}/prs/${item.number}/iterate`, {
                     method: 'POST',
@@ -663,8 +664,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                   }).then(res => {
                     if (res.ok) { setShowIterate(false); setIterateText(''); if (onRefresh) onRefresh(); }
                   }).catch(() => {});
-                }}>Run</button>
-              <button className="btn btn-sm" style={{ marginLeft: '4px' }} onClick={() => setShowIterate(false)}>Cancel</button>
+                }}>Iterate</button>
             </div>
           </div>
         </td>
