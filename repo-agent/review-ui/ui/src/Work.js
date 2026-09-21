@@ -841,6 +841,11 @@ function SandboxCard({ name, namespace, onClose }) {
             )}
             {card && !card.paused && !card.starting && (
               <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
+            )}
+            {/* Delete is the wedge-recovery path, so it must stay
+                available in exactly the states a wedge presents as:
+                paused, starting-forever, or running. */}
+            {card && (
               <button className="btn btn-sm"
                 style={{ marginLeft: '8px', color: 'var(--danger, #d33)', borderColor: 'var(--danger, #d33)' }}
                 title="Recover from a wedged sandbox by deleting it — destroys the checkout, plan drafts and approvals, review breadcrumbs, and chat sessions. The next agent action recreates it fresh."
