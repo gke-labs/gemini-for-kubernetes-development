@@ -43,6 +43,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
+  const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [providersError, setProvidersError] = useState(false);
@@ -260,28 +261,59 @@ function App() {
 
   return (
     <div className="App">
-      <header className="App-header">
-        <h1><a href="/" onClick={(e) => { e.preventDefault(); setView('work'); }}>Repo Agent</a></h1>
-        <div className="header-right">
-          {user && <span className="user-greeting">Hi, {user}</span>}
-
-          <button className="btn" onClick={() => setView('work')} style={{marginRight: '10px', backgroundColor: '#1a7f37', color: 'white'}}>
-              Work
-          </button>
-          {isAdmin && (
-            <button className="btn" onClick={() => setView('overseer')} style={{marginRight: '10px', backgroundColor: '#6f42c1', color: 'white'}}>
-                Overseer
-            </button>
+      <header className="App-header" style={{ position: 'relative', justifyContent: 'flex-end' }}>
+        {/* Compact bar: centered brand, everything else behind ☰. */}
+        <h1 style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', margin: 0 }}>
+          <a href="/" onClick={(e) => { e.preventDefault(); setView('work'); }}>Repo Agent</a>
+        </h1>
+        <div style={{ position: 'relative' }}>
+          <button className="btn" onClick={() => setMenuOpen(v => !v)} title="Menu"
+            style={{ fontSize: '18px', padding: '2px 12px', lineHeight: '1.4' }}>☰</button>
+          {menuOpen && (
+            <>
+              <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 950 }} />
+              <div style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 951, minWidth: '220px',
+                backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.25)', padding: '6px', textAlign: 'left',
+              }}>
+                {user && (
+                  <div style={{ padding: '8px 10px', fontSize: 'small', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)', marginBottom: '4px' }}>
+                    Hi, {user}
+                  </div>
+                )}
+                {[
+                  { label: 'Work', run: () => setView('work') },
+                  ...(isAdmin ? [{ label: 'Overseer', run: () => setView('overseer') }] : []),
+                  { label: 'Usage', run: () => setView('usage') },
+                  { label: 'Feedback', run: handleFeedbackClick },
+                  { label: 'Settings', run: () => setView('settings') },
+                ].map(mi => (
+                  <button key={mi.label}
+                    onClick={() => { setMenuOpen(false); mi.run(); }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px',
+                      background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px',
+                      color: 'var(--text-primary)', fontSize: '14px',
+                    }}>{mi.label}</button>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderTop: '1px solid var(--border-color)', marginTop: '4px' }}>
+                  <span style={{ fontSize: '14px' }}>Dark mode</span>
+                  <label className="theme-switch" htmlFor="checkbox">
+                    <input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} />
+                    <div className="slider round"></div>
+                  </label>
+                </div>
+                <button
+                  onClick={() => { setMenuOpen(false); handleLogout(); }}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px',
+                    background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px',
+                    color: 'var(--danger, #d33)', fontSize: '14px',
+                  }}>Logout</button>
+              </div>
+            </>
           )}
-          <button className="btn" onClick={() => setView('usage')} style={{marginRight: '10px', backgroundColor: '#0d6efd', color: 'white'}}>
-              Usage
-          </button>
-          <button className="btn" onClick={handleFeedbackClick} style={{marginRight: '10px', backgroundColor: '#28a745'}}>Feedback</button>
-          <button className="btn" onClick={() => setView('settings')} style={{marginRight: '10px'}}>Settings</button>
-          <button className="btn btn-delete" onClick={handleLogout} style={{marginRight: '20px'}}>Logout</button>
-          <div className="theme-switch-wrapper">
-            <label className="theme-switch" htmlFor="checkbox"><input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} /><div className="slider round"></div></label>
-          </div>
         </div>
       </header>
 
