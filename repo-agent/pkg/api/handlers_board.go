@@ -566,7 +566,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	}
 	for _, pr := range prs {
 		st := statesByPR[pr.GetNumber()]
-		s.mergePRRow(items, sandboxes, pr, member, st.pending, st.reviewed, viewLabels, autoIterateDefault(board))
+		s.mergePRRow(items, sandboxes, pr, repo, member, st.pending, st.reviewed, viewLabels, autoIterateDefault(board))
 	}
 
 	// A PR that addresses an issue on this board is board work even when
@@ -578,7 +578,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for _, n := range closingRefs(pr.GetBody()) {
 			if _, ok := items[fmt.Sprintf("issue-%d", n)]; ok {
-				s.mergePRRow(items, sandboxes, pr, member, false, false, viewLabels, autoIterateDefault(board))
+				s.mergePRRow(items, sandboxes, pr, repo, member, false, false, viewLabels, autoIterateDefault(board))
 				break
 			}
 		}
@@ -971,13 +971,24 @@ func friendlyReviewError(msg string) string {
 	}
 }
 
-func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, member string, pendingOnGitHub, reviewedOnGitHub bool, viewLabels []string, autoDefault bool) {
+func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, pr *github.PullRequest, repo, member string, pendingOnGitHub, reviewedOnGitHub bool, viewLabels []string, autoDefault bool) {
 	var sb *unstructured.Unstructured
 	prStr := strconv.Itoa(pr.GetNumber())
 	for _, candidate := range sandboxes {
 		if candidate.GetLabels()["factory.gemini.google.com/pr"] == prStr {
 			sb = candidate
 			break
+		}
+	}
+	// The PR label is stamped by the fix child's post-step; if that child
+	// died (controller rollout) the alias is lost. Fall back to the PR's
+	// closing refs — "fixes #N" names the fix sandbox directly.
+	if sb == nil {
+		for _, n := range closingRefs(pr.GetBody()) {
+			if candidate, found := sandboxes[fmt.Sprintf("fix-%s-%d", repo, n)]; found {
+				sb = candidate
+				break
+			}
 		}
 	}
 
@@ -1660,6 +1671,28 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 		for _, sb := range sandboxes {
 			if strings.HasPrefix(sb.GetName(), "fix-") && sb.GetLabels()["factory.gemini.google.com/pr"] == prStr {
 				return sb, ns
+			}
+		}
+		// Alias lost (fix child died before stamping): resolve through the
+		// cached feed's closing refs and heal the alias so the watch and
+		// the label path recover too — exactly what AliasSandboxToPR would
+		// have stamped.
+		if items, ok := workFeedPeek(board.GetNamespace() + "/" + board.GetName()); ok {
+			for i := range items {
+				if items[i].Type != "pr" || items[i].Number != number {
+					continue
+				}
+				for _, ref := range items[i].Fixes {
+					name := fmt.Sprintf("fix-%s-%d", repo, ref)
+					sb, found := sandboxes[name]
+					if !found {
+						continue
+					}
+					_ = s.K8sManager.UpdateSandboxLabel(ctx, ns, name, "factory.gemini.google.com/pr", prStr)
+					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "pr", prStr)
+					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "htmlURL", items[i].HTMLURL)
+					return sb, ns
+				}
 			}
 		}
 	}
