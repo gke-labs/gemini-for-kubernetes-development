@@ -1047,8 +1047,20 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	switch {
 	case state == "Running":
 		// An active run always wins — stale reviewState from a previous
-		// cycle must not mask a re-review in flight.
+		// cycle must not mask a re-review in flight. The stage is named by
+		// the TASK TYPE: an aliased fix sandbox can be running a fix or a
+		// follow-up, and calling those "reviewing" misled owners.
 		stage, attention = "reviewing", attentionWorking
+		switch sb.GetAnnotations()["sandbox.gemini.google.com/last-task-type"] {
+		case "fix-issue":
+			stage = "fixing"
+		case "iterate":
+			stage = "iterating"
+		case "address-comments":
+			stage = "addressing"
+		case "investigate":
+			stage = "investigating"
+		}
 	case restarting:
 		stage, attention = "review-starting", attentionWorking
 	case reviewError != "" && reviewState == "":
