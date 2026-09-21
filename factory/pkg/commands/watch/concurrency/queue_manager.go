@@ -346,6 +346,11 @@ func (m *TaskQueueManager) StartTask(filename string, task *api.QueueTask) error
 	}
 
 	t.Status = api.StatusRunning
+	// Recovered says "this task is on its way back from processing", so it belongs to
+	// that move and not to the task itself. Starting the task ends the move: leaving
+	// the flag set would let a later Enqueue treat a live processing entry as one to
+	// be pulled back to incoming.
+	t.Recovered = false
 	if t.StartedAt.IsZero() {
 		t.StartedAt = time.Now()
 	}

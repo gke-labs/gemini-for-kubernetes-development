@@ -350,22 +350,11 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 		return false, false
 	}
 
-	// Check if recovered task is already completed in sandbox
-	if task.Type != api.TypeAgentChore && task.Recovered {
-		completed, err := d.sandboxes.IsTaskCompleted(ctx, sandboxName, task.Type)
-		if err != nil {
-			klog.Errorf("Failed to check if sandbox %s completed task: %v", sandboxName, err)
-			return false, true
-		}
-		if completed {
-			klog.Infof("Recovered task %s is already completed in sandbox %s. Marking as completed.", filename, sandboxName)
-			if d.cfg.DryRun {
-				return false, true
-			}
-			_ = d.queue.CompleteTask(filename, task)
-			return false, false
-		}
-	}
+	// Note: whether a task already finished in its sandbox is settled by Recover
+	// before the dispatch loop starts, not here. Re-probing at dispatch time reads
+	// a sandbox annotation that only records the last task of a given type, so a
+	// task that lingers in the queue could be marked completed on the strength of
+	// some other task's outcome.
 
 	if !d.sandboxLocks.TryAcquire(sandboxName, filename) {
 		klog.Infof("Skipping task %s because lease for sandbox %s could not be acquired.", filename, sandboxName)

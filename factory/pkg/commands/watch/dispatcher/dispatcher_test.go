@@ -354,7 +354,11 @@ func TestDispatchOnce_RemovesCancelledTask(t *testing.T) {
 	waitForCounts(t, queue, 0, 0, 0)
 }
 
-func TestDispatchOnce_CompletesRecoveredTaskAlreadyDoneInSandbox(t *testing.T) {
+// A sandbox only records the state of the last task of a given type, so a queued
+// task must not be resolved from that annotation: by the time it is dispatched the
+// annotation may describe some other task that ran in the same sandbox. Triage of
+// a stuck task belongs to Recover, which runs before the dispatch loop.
+func TestDispatchOnce_RunsRecoveredTaskDespiteCompletedSandboxAnnotation(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
 	sandboxes.completed["sandbox"] = true
@@ -372,8 +376,8 @@ func TestDispatchOnce_CompletesRecoveredTaskAlreadyDoneInSandbox(t *testing.T) {
 	d.DispatchOnce(context.Background())
 	d.Wait()
 
-	if len(runner.invocations()) != 0 {
-		t.Errorf("expected no re-execution of a task that already completed in its sandbox")
+	if got := len(runner.invocations()); got != 1 {
+		t.Errorf("expected the recovered task to be executed, got %d invocations", got)
 	}
 	waitForCounts(t, queue, 0, 0, 1)
 }

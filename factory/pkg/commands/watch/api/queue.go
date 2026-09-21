@@ -108,7 +108,10 @@ type QueueTask struct {
 	SessionID    string     `yaml:"sessionId,omitempty"` // For workflow sessions
 	CommitSHA    string     `yaml:"commitSHA,omitempty"`
 	Instructions []string   `yaml:"instructions,omitempty"`
-	Recovered    bool       `yaml:"recovered,omitempty"`
+	// Recovered marks a task that startup recovery is moving back from processing to
+	// incoming, which is what allows Enqueue to overwrite a processing entry rather
+	// than treating it as a duplicate. It is cleared once the task starts again.
+	Recovered bool `yaml:"recovered,omitempty"`
 }
 
 // Duration returns the elapsed execution duration between StartedAt and CompletedAt,
