@@ -131,6 +131,25 @@ func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandbo
 	return nil
 }
 
+// UpdateSandboxLabel mirrors UpdateSandboxAnnotation for labels (e.g.
+// healing the factory PR alias when a fix child died before stamping it).
+func (m *Manager) UpdateSandboxLabel(ctx context.Context, namespace, sandboxName, key, value string) error {
+	sandbox, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get sandbox %s: %w", sandboxName, err)
+	}
+	labels := sandbox.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[key] = value
+	sandbox.SetLabels(labels)
+	if _, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Update(ctx, sandbox, v1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("failed to update sandbox label: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) ScaledownSandboxByName(ctx context.Context, namespace, name string) error {
 	log := klog.FromContext(ctx)
 	log.Info("Scaling down sandbox by name", "name", name)
