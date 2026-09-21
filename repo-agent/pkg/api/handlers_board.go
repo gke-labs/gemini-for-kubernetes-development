@@ -1939,8 +1939,19 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 				if entry.GetType() == "file" && strings.HasSuffix(entry.GetName(), ".md") {
 					docs = append(docs, gin.H{"name": entry.GetName(), "path": entry.GetPath(), "htmlURL": entry.GetHTMLURL(), "size": entry.GetSize()})
 				}
+				// One level of subdirectories: activity/, comparisons/,
+				// sessions/ — that's where digests and deep-dives land.
 				if entry.GetType() == "dir" {
-					docs = append(docs, gin.H{"name": entry.GetName() + "/", "path": entry.GetPath(), "htmlURL": entry.GetHTMLURL()})
+					_, sub, _, suberr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(),
+						&github.RepositoryContentGetOptions{Ref: "exploration/notes"})
+					if suberr != nil {
+						continue
+					}
+					for _, f := range sub {
+						if f.GetType() == "file" && strings.HasSuffix(f.GetName(), ".md") {
+							docs = append(docs, gin.H{"name": entry.GetName() + "/" + f.GetName(), "path": f.GetPath(), "htmlURL": f.GetHTMLURL(), "size": f.GetSize()})
+						}
+					}
 				}
 			}
 			out["docs"] = docs
@@ -1951,6 +1962,49 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 
 // engineOrDefault normalizes the gear's engine choice; anything but an
 // explicit "claude" is gemini (the CRD enum rejects other values anyway).
+// getBoardExplorationDoc returns one exploration doc's raw markdown from
+// the member's fork branch; rendering happens in the browser. The path
+// is constrained to the docs-exploration tree.
+func (s *Server) getBoardExplorationDoc(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, member, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	_, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
+		return
+	}
+	path := c.Query("path")
+	if !strings.HasPrefix(path, "docs-exploration/") || strings.Contains(path, "..") || !strings.HasSuffix(path, ".md") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path must be a markdown file under docs-exploration/"})
+		return
+	}
+	token, terr := s.memberToken(ctx, namespace)
+	if terr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No member token"})
+		return
+	}
+	gh := githubClientForToken(ctx, token)
+	file, _, _, gerr := gh.Repositories.GetContents(ctx, member, repo, path,
+		&github.RepositoryContentGetOptions{Ref: "exploration/notes"})
+	if gerr != nil || file == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "doc not found on exploration/notes"})
+		return
+	}
+	content, cerr := file.GetContent()
+	if cerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode doc"})
+		return
+	}
+	c.String(http.StatusOK, content)
+}
+
 func engineOrDefault(engine string) string {
 	if engine == "claude" {
 		return "claude"

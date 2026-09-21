@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
 import { Terminal as XTerm } from 'xterm';
@@ -931,6 +932,100 @@ function SandboxCard({ name, namespace, onClose }) {
   );
 }
 
+// MermaidBlock renders a ```mermaid fence into an SVG in the browser
+// (the same client-side model GitHub uses). The dep is heavy, so it
+// loads lazily — only a doc containing a diagram pays for it. A diagram
+// that fails to parse falls back to its source, never a blank doc.
+let mermaidSeq = 0;
+function MermaidBlock({ code }) {
+  const [svg, setSvg] = useState('');
+  const [failed, setFailed] = useState(false);
+  const idRef = useRef(`explore-mmd-${++mermaidSeq}`);
+  const isDark = document.body.className.indexOf('dark-mode') !== -1;
+  useEffect(() => {
+    let alive = true;
+    import('mermaid').then(mod => {
+      const mermaid = mod.default;
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict',
+        theme: isDark ? 'dark' : 'default' });
+      return mermaid.render(idRef.current, code);
+    }).then(res => { if (alive) setSvg(res.svg); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [code, isDark]);
+  if (failed) {
+    return <pre style={{ overflow: 'auto', background: 'var(--bg-secondary)', padding: '8px', borderRadius: '6px' }}>{code}</pre>;
+  }
+  if (!svg) {
+    return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '8px' }}>rendering diagram…</div>;
+  }
+  return <div style={{ overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+// ExploreDocViewer: files on the left, rendered markdown on the right.
+// Content comes raw from the fork branch; rendering happens here.
+function ExploreDocViewer({ boardName, docs }) {
+  const [selected, setSelected] = useState('');
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // README is the index — open it first; fall back to the first doc.
+  useEffect(() => {
+    if (selected && docs.some(d => d.path === selected)) return;
+    const readme = docs.find(d => d.name === 'README.md');
+    setSelected(readme ? readme.path : (docs[0] ? docs[0].path : ''));
+  }, [docs, selected]);
+
+  useEffect(() => {
+    if (!selected) return;
+    let alive = true;
+    setLoading(true);
+    fetch(`/api/board/${boardName}/exploration/doc?path=${encodeURIComponent(selected)}`)
+      .then(res => (res.ok ? res.text() : Promise.reject(res.status)))
+      .then(text => { if (alive) { setContent(text); setLoading(false); } })
+      .catch(() => { if (alive) { setContent('_could not load this doc_'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [boardName, selected]);
+
+  const doc = docs.find(d => d.path === selected);
+  return (
+    <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
+      <div style={{ flex: '0 0 180px', borderRight: '1px solid var(--border-color)',
+        paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
+        {docs.map(d => (
+          <div key={d.path} onClick={() => setSelected(d.path)}
+            title={d.name}
+            style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
+              fontWeight: d.path === selected ? 600 : 400 }}>
+            {d.name}
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
+        {doc && (
+          <a href={doc.htmlURL} target="_blank" rel="noopener noreferrer"
+            style={{ position: 'absolute', top: 0, right: '8px', fontSize: 'smaller' }}
+            title="Canonical view on GitHub">GitHub ↗</a>
+        )}
+        {loading ? (
+          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>loading…</div>
+        ) : (
+          <ReactMarkdown components={{
+            code({ className, children, ...props }) {
+              if (/language-mermaid/.test(className || '')) {
+                return <MermaidBlock code={String(children)} />;
+              }
+              return <code className={className} {...props}>{children}</code>;
+            },
+          }}>{content}</ReactMarkdown>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ExplorePanel: the board's understanding surface — docs from the
 // member's fork branch (git is the record; renders with the sandbox
 // paused or gone), kickoff buttons for the three exploration kinds, and
@@ -1052,13 +1147,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
             No exploration notes yet — Generate Overview writes the first ones to your fork.
           </div>
         ) : (
-          <ul style={{ margin: 0, paddingLeft: '18px' }}>
-            {exp.docs.map(d => (
-              <li key={d.path} style={{ padding: '2px 0' }}>
-                <a href={d.htmlURL} target="_blank" rel="noopener noreferrer">{d.name}</a>
-              </li>
-            ))}
-          </ul>
+          <ExploreDocViewer boardName={boardName} docs={exp.docs} />
         )}
       </div>
     </div>
