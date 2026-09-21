@@ -32,6 +32,7 @@ type ExploreParams struct {
 	Topic    string // topic kind only
 	Since    string // activity kind only, e.g. "2 weeks"
 	Scenario string // runbook kind only, e.g. "deploy", "upgrade"
+	Guidance string // runbook kind only: owner's free-text targets/constraints
 }
 
 // RenderExplorePrompt renders the prompt for an exploration kind:

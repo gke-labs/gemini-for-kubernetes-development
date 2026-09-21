@@ -35,7 +35,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 		Short: "Build and maintain understanding docs for a repository in your fork",
 	}
 
-	var repoURL, topic, since, scenario string
+	var repoURL, topic, since, scenario, guidance string
 
 	run := func(kind string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -59,7 +59,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runExplore(ctx, kind, repoURL, topic, since, scenario)
+			return runExplore(ctx, kind, repoURL, topic, since, scenario, guidance)
 		}
 	}
 
@@ -91,6 +91,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 	activity.Flags().StringVar(&since, "since", "2 weeks", "Window to digest (e.g. \"2 weeks\", \"1 month\")")
 	topicCmd.Flags().StringVar(&topic, "topic", "", "The question or comparison to investigate")
 	runbook.Flags().StringVar(&scenario, "scenario", "", "The scenario to write (e.g. deploy, upgrade)")
+	runbook.Flags().StringVar(&guidance, "guidance", "", "Owner guidance: targets and constraints (e.g. \"deploy to GKE, project my-proj\")")
 
 	return cmd
 }
@@ -111,7 +112,7 @@ func slugifyScenario(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario string) error {
+func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario, guidance string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repository URL: %w", err)
@@ -148,6 +149,7 @@ func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario strin
 		Topic:    topic,
 		Since:    since,
 		Scenario: scenario,
+		Guidance: guidance,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering exploration prompt: %w", err)

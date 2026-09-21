@@ -63,14 +63,16 @@ Make the call carefully and say why: a controller that merely *ships*
 a DaemonSet may still be tier 1 to exercise its reconcile logic, while
 actually mounting a volume through it is tier 2.
 
-When more than one tier genuinely proves something, write a path for
-each viable tier — the Tier line lists them ("**Tier**: 1 (control
-plane) / 2 (data path)") and Steps carries one subsection per path
-("### Path — Tier 1: …"), lowest tier first. Only tiers that prove
-something real get a path; never pad a tier with invented steps. If
-one path outgrows the file (rule 6), split it into
-`runbooks/<scenario>-tier<N>.md` and link it from the main runbook's
-Tier line.
+When more than one deployment target genuinely proves something,
+write a path per target, named by the target — the thing a user
+actually deploys to — with its tier as a badge: Steps carries one
+subsection per path ("### Path — vcluster (tier 1): …",
+"### Path — GKE (tier 2): …"), lowest tier first, and the Tier line
+lists them ("**Tier**: 1 (vcluster) / 2 (GKE)"). Only targets that
+prove something real get a path; never pad one with invented steps.
+If a path outgrows the file (rule 6), split it into
+`runbooks/<scenario>-<target>.md` (`deploy-gke.md`, `deploy-kind.md`,
+`deploy-kops.md`) and link it from the main runbook's Tier line.
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
