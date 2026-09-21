@@ -1,0 +1,27 @@
+You are summarizing recent activity in the repository {{.RepoName}}
+({{.HTMLURL}}) for a contributor catching up. The exploration contract
+is defined in .claude/skills/exploration/SKILL.md in this checkout.
+Follow it.
+
+Window: {{.Since}} (interpret as a duration before today).
+
+1. Gather the window's activity from the repository itself and GitHub:
+   - git log against the upstream default branch for the window
+     (themes and churn by directory, not commit lists)
+   - merged and notable open pull requests (`gh pr list`)
+   - new and hot issues (`gh issue list`), releases and tags
+2. Identify where maintainers are asking for help: issues labeled
+   help-wanted / good-first-issue and their kin, stalled pull requests
+   waiting on review, discussions calling for contributors.
+3. Write docs-exploration/activity/<today's date>.md covering:
+   - the window's themes in a few paragraphs
+   - notable merges and why they matter
+   - where the churn is concentrated (directories, subsystems)
+   - maintainer asks: concrete items a new contributor could pick up
+   - what someone returning after this window must know
+4. Update docs-exploration/README.md, and fold anything that changes
+   the architecture or code-map documents into them.
+
+Write the files directly into the checkout. Do not commit or push — the
+task harness commits and pushes your changes when you finish. Finish
+with a short summary.

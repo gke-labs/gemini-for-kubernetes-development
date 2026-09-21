@@ -8,8 +8,9 @@ import (
 )
 
 var taskScripts = []string{
-	"address_feedback.sh", "adopt.sh", "fix_issue.sh", "investigate_failures.sh",
-	"iterate.sh", "plan_issue.sh", "review.sh", "run_agent.sh", "triage_issue.sh",
+	"address_feedback.sh", "adopt.sh", "explore.sh", "fix_issue.sh",
+	"investigate_failures.sh", "iterate.sh", "plan_issue.sh", "review.sh",
+	"run_agent.sh", "triage_issue.sh",
 }
 
 // Functions that live only in lib.sh — every rendered script must define
@@ -28,6 +29,7 @@ var engineCalls = map[string]string{
 	"iterate.sh":              "SKIP_EMPTY_PROMPT=true runEngine",
 	"address_feedback.sh":     "\nrunEngine\n",
 	"investigate_failures.sh": "\nrunEngine\n",
+	"explore.sh":              "\nrunEngine\n",
 }
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
