@@ -41,11 +41,12 @@ const (
 // whitelist, and the wire contract with the factory task scripts — if a
 // task's HOME moves there, it moves here. First use case: continue a plan.
 var chatHomeByTask = map[string]string{
-	"plan":   "/workspaces/.home",
-	"triage": "/workspaces/.home",
-	"review": "/workspaces/.home",
-	"fix":    "/workspaces/.home",
-	"agent":  "/workspaces/.home",
+	"plan":    "/workspaces/.home",
+	"triage":  "/workspaces/.home",
+	"review":  "/workspaces/.home",
+	"fix":     "/workspaces/.home",
+	"agent":   "/workspaces/.home",
+	"explore": "/workspaces/.home",
 }
 
 // shellSingleQuote makes s safe inside single quotes for sh.
@@ -62,6 +63,15 @@ var trailingIssueRE = regexp.MustCompile(`-(\d+)$`)
 // being told, it cannot know where the plan lives or that editing it is
 // how changes reach the board and the eventual fix.
 func chatOrientation(taskType, sandboxName string) string {
+	if taskType == "explore" {
+		return "You are reconnected to the exploration session for this repository. " +
+			"This message is informational only — it is not a task and asks for no work. " +
+			"Your understanding docs live under docs-exploration/ and the contract is " +
+			"docs-exploration/SKILL.md — follow it. As questions get answered, distill the " +
+			"answers into the relevant docs. Do not modify any code outside docs-exploration/. " +
+			"When the user asks you to save, commit docs-exploration and push to origin " +
+			"exploration/notes. Acknowledge in one sentence and wait for the user."
+	}
 	if taskType != "plan" {
 		return ""
 	}

@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -1792,6 +1793,121 @@ func (s *Server) addressBoardPR(c *gin.Context) {
 
 func (s *Server) investigateBoardPR(c *gin.Context) {
 	s.kickoffPRTask(c, "board.gemini.google.com/investigate-requested-at", "")
+}
+
+// kickoffExplore records an exploration click: a mailbox claim (member
+// namespace as the value — never a token) plus the run parameters as
+// board annotations; the controller bridges sandbox creation and
+// converts the claim to durable sandbox annotations.
+func (s *Server) kickoffExplore(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	var req struct {
+		Kind  string `json:"kind"`
+		Topic string `json:"topic"`
+		Since string `json:"since"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || (req.Kind != "onboard" && req.Kind != "activity" && req.Kind != "topic") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be onboard, activity, or topic"})
+		return
+	}
+	if req.Kind == "topic" && strings.TrimSpace(req.Topic) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "topic is required for kind=topic"})
+		return
+	}
+	annotations := board.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	if req.Kind == "topic" {
+		annotations["board.gemini.google.com/explore-topic"] = strings.TrimSpace(req.Topic)
+	}
+	if req.Kind == "activity" {
+		since := strings.TrimSpace(req.Since)
+		if since == "" {
+			since = "2 weeks"
+		}
+		annotations["board.gemini.google.com/explore-since"] = since
+	}
+	requests := map[string]string{}
+	if raw := annotations[annoBoardRequests]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &requests)
+	}
+	requests["explore-"+req.Kind] = namespace
+	b, _ := json.Marshal(requests)
+	annotations[annoBoardRequests] = string(b)
+	board.SetAnnotations(annotations)
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record exploration request", "details": err.Error()})
+		return
+	}
+	invalidateWorkFeed(board.GetNamespace(), board.GetName())
+	c.Status(http.StatusOK)
+}
+
+// getBoardExploration reads the exploration state: the docs on the
+// member's fork branch (git is the record — renders even with the
+// sandbox paused or deleted) plus the explore sandbox's task state.
+func (s *Server) getBoardExploration(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, member, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	_, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
+		return
+	}
+
+	out := gin.H{
+		"branch":    "exploration/notes",
+		"forkOwner": member,
+		"branchURL": fmt.Sprintf("https://github.com/%s/%s/tree/exploration/notes/docs-exploration", member, repo),
+		"docs":      []gin.H{},
+	}
+
+	sbName := "explore-" + strings.ToLower(repo)
+	if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sbName, v1.GetOptions{}); serr == nil {
+		annotations := sb.GetAnnotations()
+		out["sandbox"] = gin.H{
+			"name":      sbName,
+			"taskState": annotations[annoTaskState],
+			"taskType":  annotations["sandbox.gemini.google.com/last-task-type"],
+			"kind":      annotations["board.gemini.google.com/explore-kind"],
+			"engine":    annotations["board.gemini.google.com/engine"],
+		}
+	}
+
+	token, terr := s.memberToken(ctx, namespace)
+	if terr == nil {
+		gh := githubClientForToken(ctx, token)
+		_, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, "docs-exploration",
+			&github.RepositoryContentGetOptions{Ref: "exploration/notes"})
+		if derr == nil {
+			docs := []gin.H{}
+			for _, entry := range dir {
+				if entry.GetType() == "file" && strings.HasSuffix(entry.GetName(), ".md") {
+					docs = append(docs, gin.H{"name": entry.GetName(), "path": entry.GetPath(), "htmlURL": entry.GetHTMLURL(), "size": entry.GetSize()})
+				}
+				if entry.GetType() == "dir" {
+					docs = append(docs, gin.H{"name": entry.GetName() + "/", "path": entry.GetPath(), "htmlURL": entry.GetHTMLURL()})
+				}
+			}
+			out["docs"] = docs
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // engineOrDefault normalizes the gear's engine choice; anything but an
