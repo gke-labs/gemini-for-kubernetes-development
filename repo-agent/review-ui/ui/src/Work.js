@@ -803,7 +803,11 @@ function SandboxCard({ name, namespace, onClose }) {
     fetch(`/api/sandbox-card/${name}/lifecycle`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
-    }).then(res => { if (!res.ok) res.text().then(t => setErr(`${action} failed: ${t}`)); else setTimeout(load, 1500); });
+    }).then(res => {
+      if (!res.ok) { res.text().then(t => setErr(`${action} failed: ${t}`)); return; }
+      if (action === 'delete') { onClose(); return; } // the card's subject is gone
+      setTimeout(load, 1500);
+    });
   };
 
   const statusColor = { running: '#b08800', succeeded: '#22863a', failed: '#d73a49', aborted: '#6a737d' };
@@ -837,6 +841,13 @@ function SandboxCard({ name, namespace, onClose }) {
             )}
             {card && !card.paused && !card.starting && (
               <button className="btn btn-sm" onClick={() => lifecycle('pause')} title="Scale the sandbox to zero (state stays on its disk)">Pause</button>
+              <button className="btn btn-sm"
+                style={{ marginLeft: '8px', color: 'var(--danger, #d33)', borderColor: 'var(--danger, #d33)' }}
+                title="Recover from a wedged sandbox by deleting it — destroys the checkout, plan drafts and approvals, review breadcrumbs, and chat sessions. The next agent action recreates it fresh."
+                onClick={() => {
+                  if (!window.confirm(`Delete sandbox ${name}?\n\nThis destroys its checkout, plan drafts/approvals, review breadcrumbs, and chat sessions. The next agent action recreates it fresh.`)) return;
+                  lifecycle('delete');
+                }}>Delete</button>
             )}
             <button className="btn btn-sm" onClick={() => setExpanded(v => !v)} title={expanded ? 'Shrink the card' : 'Expand the card to 80%'}>{expanded ? '⇥' : '⛶'}</button>
             <button className="btn btn-sm" onClick={load} title="Refresh">↻</button>
