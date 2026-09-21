@@ -938,7 +938,7 @@ function SandboxCard({ name, namespace, onClose }) {
 function ExplorePanel({ boardName, onOpenSandbox }) {
   const [exp, setExp] = useState(null);
   const [topic, setTopic] = useState('');
-  const [since, setSince] = useState('2 weeks');
+  const [sinceOpen, setSinceOpen] = useState(false);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -977,7 +977,55 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   };
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* The hero: one search-page box — ask anything, verbs underneath. */}
+      {/* Verb row: Generate Overview is the intended first click; the
+          engine icon (card door) and chat chip live on the right. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <button className="btn" disabled={busy === 'onboard'}
+          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
+          onClick={() => kickoff('onboard')}>Generate Overview</button>
+        <span style={{ position: 'relative' }}>
+          <button className="btn" disabled={busy === 'activity'}
+            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
+            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
+          {sinceOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
+              {['2 weeks', '1 month', '3 months'].map(win => (
+                <div key={win}
+                  onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
+                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                  last {win}
+                </div>
+              ))}
+            </div>
+          )}
+        </span>
+        <span style={{ flex: 1 }} />
+        {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
+          <Chip text={`${exp.pending} requested — preparing the sandbox…`}
+            color="#b08800" bg="rgba(176,136,0,0.12)" />
+        )}
+        {sb && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
+            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+            title={`${sb.name} — tasks & logs`}>
+            <EngineIcon engine={sb.engine} />
+          </span>
+        )}
+        {sb && (
+          <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
+            target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
+            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
+            <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
+              color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
+              bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
+          </a>
+        )}
+      </div>
+      {/* The question box: just the ask and its Explore button. */}
       <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
         background: 'var(--bg-secondary)', padding: '10px 12px' }}>
         <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
@@ -986,41 +1034,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
           style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)',
             font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" disabled={busy === 'onboard'}
-            title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
-            onClick={() => kickoff('onboard')}>Generate Overview</button>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <button className="btn btn-sm" disabled={busy === 'activity'}
-              title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
-              onClick={() => kickoff('activity', { since })}>What happened</button>
-            <select value={since} onChange={e => setSince(e.target.value)} style={{ padding: '3px' }}>
-              <option value="2 weeks">2 weeks</option>
-              <option value="1 month">1 month</option>
-              <option value="3 months">3 months</option>
-            </select>
-          </span>
-          <span style={{ flex: 1 }} />
-          {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
-            <Chip text={`${exp.pending} requested — preparing the sandbox…`}
-              color="#b08800" bg="rgba(176,136,0,0.12)" />
-          )}
-          {sb && (
-            <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
-              target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-              title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
-              <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
-                color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
-                bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
-            </a>
-          )}
-          {sb && (
-            <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
-              style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-              title={`${sb.name} — tasks & logs`}>
-              <EngineIcon engine={sb.engine} />
-            </span>
-          )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
           <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
             onClick={dive}>Explore</button>
         </div>
