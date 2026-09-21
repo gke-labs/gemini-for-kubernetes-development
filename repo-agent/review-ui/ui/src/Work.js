@@ -261,8 +261,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // single owed action (Promote) plus one door. Hidden while a
     // follow-up runs; a failed one re-opens the door — the verb is the
     // retry.
-    if (item.sandbox && !['iterating', 'addressing', 'investigating'].includes(item.stage)) {
-      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent back to this PR — address review comments, fix CI, or iterate with an instruction' });
+    // No sandbox needed: on a hand-made PR the first verb creates one
+    // (factory ensures it and checks the PR branch out).
+    if (!['iterating', 'addressing', 'investigating'].includes(item.stage)) {
+      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent to this PR — address review comments, fix CI, or iterate with an instruction. First use on a hand-made PR creates its sandbox.' });
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.

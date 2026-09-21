@@ -1293,3 +1293,71 @@ func TestPRTaskClickDefersToRunningFix(t *testing.T) {
 		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "follow-up must defer to the running fix")
 	}
 }
+
+// Hand-made PR attach: a mailbox claim with no sandbox launches factory
+// directly (it creates the factory-pr sandbox and checks out the
+// branch); once a sandbox carries the PR label, the claim converts to
+// the durable request annotation instead.
+func TestPRTaskClaims(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	// No sandbox: direct launch with constructed PR URL and PRSandboxName.
+	fake := newFakeLauncher()
+	board := testBoard(map[string]string{
+		AnnotationRequests: `{"iterate-77": "alice"}`,
+		"board.gemini.google.com/iterate-instruction-77": "tighten the docs",
+	})
+	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	var prTasks []fakeLaunch
+	for _, l := range fake.launches() {
+		if l.PRTaskOpts != nil {
+			prTasks = append(prTasks, l)
+		}
+	}
+	g.Expect(prTasks).To(gomega.HaveLen(1))
+	g.Expect(prTasks[0].PRTaskKind).To(gomega.Equal("iterate"))
+	g.Expect(prTasks[0].PRTaskOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/77"))
+	g.Expect(prTasks[0].PRTaskOpts.SandboxName).To(gomega.Equal("factory-pr-repo-77"))
+	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the docs"))
+
+	// Sandbox exists (factory created it): the claim converts to the
+	// annotation, no duplicate direct launch.
+	prSB := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "factory-pr-repo-77",
+			"namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "77",
+			},
+			"annotations": map[string]interface{}{
+				"htmlURL":                      "https://github.com/test/repo/pull/77",
+				factorycli.AnnotationTaskType:  "iterate",
+				factorycli.AnnotationTaskState: "Running",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	fake2 := newFakeLauncher()
+	board2 := testBoard(map[string]string{
+		AnnotationRequests: `{"iterate-77": "alice"}`,
+		"board.gemini.google.com/iterate-instruction-77": "tighten the docs",
+	})
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), prSB)
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake2.launches() {
+		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "claim must convert, not double-launch")
+	}
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "factory-pr-repo-77"}, got)).To(gomega.Succeed())
+	g.Expect(got.GetAnnotations()[AnnotationIterateRequested]).NotTo(gomega.BeEmpty())
+	g.Expect(got.GetAnnotations()[AnnotationIterateInstruction]).To(gomega.Equal("tighten the docs"))
+	g.Expect(got.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
+}

@@ -54,6 +54,27 @@ func FixSandboxName(repo string, issueNumber int) string {
 	return fmt.Sprintf("fix-%s-%d", repo, issueNumber)
 }
 
+// PRSandboxName mirrors factory's ReviewSandboxName (factory-pr-<slug>-<n>,
+// slug lowercased/dashed, budgeted for the -lb Service's DNS label cap) —
+// the sandbox `factory pr <verb>` creates when a PR has none.
+func PRSandboxName(repo string, prNum int) string {
+	slug := strings.ToLower(repo)
+	var b strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	slug = strings.Trim(b.String(), "-")
+	suffix := fmt.Sprintf("-%d", prNum)
+	if budget := 60 - len("factory-pr-") - len(suffix); len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "factory-pr-" + slug + suffix
+}
+
 // LabelPR is the label factory puts on any sandbox working on a PR
 // (EnsureReviewSandbox looks sandboxes up by it, so a review may land on a
 // fix sandbox aliased to the same PR instead of the default factory-pr-<n>).

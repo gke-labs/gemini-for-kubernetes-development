@@ -653,6 +653,13 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 						item.Stage, item.Attention = "triaging", attentionWorking
 					}
 				}
+				for prefix, stageName := range map[string]string{"iterate-": "iterating", "address-": "addressing", "investigate-": "investigating"} {
+					if n, ok := strings.CutPrefix(key, prefix); ok {
+						if item, found := items["pr-"+n]; found {
+							item.Stage, item.Attention = stageName, attentionWorking
+						}
+					}
+				}
 				if n, ok := strings.CutPrefix(key, "plan-"); ok {
 					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
 						mark(item, "planning")
@@ -1681,7 +1688,8 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 			continue
 		}
 		for _, sb := range sandboxes {
-			if strings.HasPrefix(sb.GetName(), "fix-") && sb.GetLabels()["factory.gemini.google.com/pr"] == prStr {
+			if (strings.HasPrefix(sb.GetName(), "fix-") || strings.HasPrefix(sb.GetName(), "factory-pr-")) &&
+				sb.GetLabels()["factory.gemini.google.com/pr"] == prStr {
 				return sb, ns
 			}
 		}
@@ -1715,7 +1723,7 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 // Fix CI) on the PR's fix sandbox. The annotation is the durable consent
 // the controller drives from — no mailbox claim to strand on a restart.
 func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
+	ctx, board, owner, repo, member, number, ok := s.boardWriteContext(c)
 	if !ok {
 		return
 	}
@@ -1725,7 +1733,36 @@ func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
 	_ = c.ShouldBindJSON(&req) // body optional
 	sb, ns := s.findPRFixSandbox(c, board, owner, repo, number)
 	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no agent sandbox for this PR — follow-up verbs run in the fix sandbox that created it"})
+		// Hand-made PR: no sandbox yet. Bridge via the mailbox — the
+		// controller launches the factory verb, factory ensures the
+		// factory-pr sandbox itself (gh pr checkout attaches the branch),
+		// and the claim converts to the durable sandbox annotation once
+		// the sandbox exists.
+		kind := map[string]string{
+			"board.gemini.google.com/iterate-requested-at":     "iterate",
+			"board.gemini.google.com/address-requested-at":     "address",
+			"board.gemini.google.com/investigate-requested-at": "investigate",
+		}[reqKey]
+		annotations := board.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		if kind == "iterate" && strings.TrimSpace(req.Instruction) != "" {
+			annotations[fmt.Sprintf("board.gemini.google.com/iterate-instruction-%d", number)] = strings.TrimSpace(req.Instruction)
+		}
+		requests := map[string]string{}
+		if raw := annotations[annoBoardRequests]; raw != "" {
+			_ = json.Unmarshal([]byte(raw), &requests)
+		}
+		requests[fmt.Sprintf("%s-%d", kind, number)] = member
+		b, _ := json.Marshal(requests)
+		annotations[annoBoardRequests] = string(b)
+		board.SetAnnotations(annotations)
+		if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record request", "details": err.Error()})
+			return
+		}
+		c.Status(http.StatusOK)
 		return
 	}
 	if instructionKey != "" {
