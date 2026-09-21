@@ -12,7 +12,14 @@ import (
 // Assignment is how a task is claimed, so this is what tells the scanners that
 // an entity is already somebody's - and which account's.
 func AssignedBotUser(issue *githubv39.Issue, botUsers []string) string {
-	for _, u := range issue.Assignees {
+	return AssignedBotUserFrom(issue.Assignees, botUsers)
+}
+
+// AssignedBotUserFrom is AssignedBotUser over a bare assignee list, for callers
+// holding a pull request rather than its issue view. The two carry the same
+// assignees, and answering from one shape or the other must not differ.
+func AssignedBotUserFrom(assignees []*githubv39.User, botUsers []string) string {
+	for _, u := range assignees {
 		for _, bot := range botUsers {
 			if strings.EqualFold(u.GetLogin(), bot) {
 				return u.GetLogin()

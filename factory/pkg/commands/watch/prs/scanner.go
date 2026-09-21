@@ -253,12 +253,17 @@ func (s *Scanner) sweep(ctx context.Context) {
 		klog.Errorf("Failed to list open PRs: %v", err)
 	} else {
 		s.entities.UpdateOpenPRs(prs)
+
+		// Repair the pull requests the listing below cannot see before it
+		// runs, so one adopted here is evaluated in this cycle, not the next.
+		s.adoptOrphanedBotPRs(ctx, prs)
 	}
 
 	candidates, err := s.scanCandidates(ctx)
 	if err != nil {
 		klog.Errorf("Failed to scan PR issues: %v", err)
 	}
+
 	s.evaluateAll(ctx, candidates)
 }
 

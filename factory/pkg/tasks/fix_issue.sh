@@ -105,10 +105,38 @@ function checkForExistingPR {
 
         echo "We are not generating anything because there is an existing PR." > "$output_file"
         echo "${pr_url}" >> "$output_file"
+        # The earlier run may have been killed before anything labelled this PR.
+        applyPRLabels "$pr_url"
         exit 0
     fi
 
     popd > /dev/null
+}
+
+# applyPRLabels puts the labels resolved by the factory CLI - the trigger label,
+# the repository's additional labels, and the labels of the issue being fixed -
+# onto the pull request.
+#
+# This runs here, inside the sandbox, rather than only in the factory process
+# that started the task, because that process does not always survive to see the
+# PR: a watch cycle that recycles mid-task kills it, while this workload keeps
+# running detached and opens the PR anyway. A pull request that comes out of
+# that carries no labels, and the watcher only ever scans labelled or assigned
+# pull requests - so it is never looked at again.
+#
+# Failing to label must not fail the task. The pull request exists either way,
+# and a label that is missing from the repository is a repository configuration
+# problem, not a reason to report the fix as unsuccessful.
+function applyPRLabels {
+    local pr_url="$1"
+    if [ -z "${PR_LABELS:-}" ] || [ -z "$pr_url" ] || [ "$pr_url" == "null" ]; then
+        return 0
+    fi
+    echo "Applying labels ${PR_LABELS} to ${pr_url}..."
+    # --add-label is idempotent: labels already on the PR are left as they are.
+    gh pr edit "$pr_url" --add-label "${PR_LABELS}" \
+        || echo "Warning: failed to add labels ${PR_LABELS} to ${pr_url}"
+    return 0
 }
 
 function checkoutNewBranch {
@@ -164,6 +192,7 @@ function recordPRLink {
     if [ -n "$pr_url" ] && [ "$pr_url" != "null" ]; then
         echo "Successfully found PR: ${pr_url}"
         echo "${pr_url}" > "$output_file"
+        applyPRLabels "$pr_url"
         popd > /dev/null
     else
         echo "Could not find PR link automatically." | tee "$output_file"

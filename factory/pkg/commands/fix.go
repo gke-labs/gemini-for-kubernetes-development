@@ -320,6 +320,13 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		"GITHUB_USER_NAME":           githubLogin,
 		"BRANCH_NAME":                branchName,
 		"NO_PR":                      strconv.FormatBool(noPR),
+		// The task script labels the pull request as soon as it has its URL.
+		// This process also labels it below, but the workload outlives us: a
+		// watch cycle that recycles while the task is running kills this
+		// process, and the pull request the agent then opens would otherwise
+		// carry no labels at all - leaving it invisible to the watcher, which
+		// only scans labelled or assigned pull requests.
+		"PR_LABELS": prLabel,
 	}
 	if err := applyEngineEnv(envMap, secret); err != nil {
 		return err
@@ -417,20 +424,41 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	return nil
 }
 
+// resolvePRLabels returns the comma-separated label set a pull request opened
+// for this task should carry: the trigger label, whatever the repository adds
+// to every factory change, and - for a task fixing an issue - the labels of the
+// issue itself, so the PR inherits how the repository has already classified
+// the work.
+//
+// The set is deduplicated case-insensitively. The parent issue almost always
+// carries the trigger label too, and the raw concatenation produced strings
+// like "overseer,overseer,overseer/review" that ended up quoted verbatim in
+// agent-written PR descriptions.
 func resolvePRLabels(cfg *config.FactoryConfig, issue *githubv39.Issue, isIssue bool) string {
 	triggerLabel := "factory"
 	if cfg != nil && cfg.TriggerLabel != "" {
 		triggerLabel = cfg.TriggerLabel
 	}
-	allLabels := []string{triggerLabel}
+
+	var allLabels []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		if name == "" || seen[strings.ToLower(name)] {
+			return
+		}
+		seen[strings.ToLower(name)] = true
+		allLabels = append(allLabels, name)
+	}
+
+	add(triggerLabel)
 	if cfg != nil {
-		allLabels = append(allLabels, cfg.AdditionalLabels...)
+		for _, label := range cfg.AdditionalLabels {
+			add(label)
+		}
 	}
 	if isIssue && issue != nil {
 		for _, label := range issue.Labels {
-			if label.GetName() != "" {
-				allLabels = append(allLabels, label.GetName())
-			}
+			add(label.GetName())
 		}
 	}
 	return strings.Join(allLabels, ",")

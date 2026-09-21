@@ -75,6 +75,38 @@ func TestResolvePRLabels(t *testing.T) {
 			isIssue:  true,
 			expected: "factory,valid-label",
 		},
+		{
+			// The parent issue nearly always carries the trigger label - it is
+			// how the issue was picked up in the first place - and the repeat
+			// was ending up quoted verbatim in agent-written PR descriptions.
+			name: "Deduplicates the trigger label the parent issue also carries",
+			cfg: &config.FactoryConfig{
+				TriggerLabel: "overseer",
+			},
+			issue: &githubv39.Issue{
+				Labels: []*githubv39.Label{
+					{Name: stringPtr("overseer")},
+					{Name: stringPtr("overseer/review")},
+				},
+			},
+			isIssue:  true,
+			expected: "overseer,overseer/review",
+		},
+		{
+			name: "Deduplicates case-insensitively, as GitHub label names are",
+			cfg: &config.FactoryConfig{
+				TriggerLabel:     "overseer",
+				AdditionalLabels: []string{"Overseer", "autogen"},
+			},
+			issue: &githubv39.Issue{
+				Labels: []*githubv39.Label{
+					{Name: stringPtr("AUTOGEN")},
+					{Name: stringPtr("kind/bug")},
+				},
+			},
+			isIssue:  true,
+			expected: "overseer,autogen,kind/bug",
+		},
 	}
 
 	for _, tc := range tests {
