@@ -251,7 +251,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews, mailTriages, mailPlans := r.mailboxPlans(work)
+	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
@@ -327,8 +327,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// Explicit PR follow-up clicks run regardless of the auto policy —
-	// a click IS the consent.
-	r.ensurePRTaskClicks(ctx, work)
+	// a click IS the consent. Mailbox claims (hand-made PRs without a
+	// sandbox) convert or launch first, then annotation-driven clicks.
+	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
+	r.ensurePRTaskClicks(ctx, work, converted)
 
 	// Follow up factory-created PRs (investigate failures, address
 	// comments): board policy is the default, each PR's fix sandbox may
@@ -527,19 +529,20 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	requests := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	var fixes []fixPlan
 	var reviews []reviewPlan
 	var triages []int
 	var plans []planRequest
+	var prTasks []prTaskClaim
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -558,9 +561,24 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-")); err == nil {
 				plans = append(plans, planRequest{issue: n, member: member})
 			}
+		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
+			kind, numStr, _ := strings.Cut(key, "-")
+			if n, err := strconv.Atoi(numStr); err == nil {
+				prTasks = append(prTasks, prTaskClaim{pr: n, member: member, kind: kind})
+			}
 		}
 	}
-	return fixes, reviews, triages, plans
+	return fixes, reviews, triages, plans, prTasks
+}
+
+// prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
+// (hand-made PRs): the mailbox bridges until factory creates the
+// factory-pr sandbox, then the claim converts to the durable sandbox
+// annotation the normal click pass drives.
+type prTaskClaim struct {
+	pr     int
+	member string
+	kind   string
 }
 
 // dedupeReviews keeps one plan per PR, preferring a member's click over a
@@ -1058,6 +1076,21 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if sb := work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 				continue
 			}
+		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
+			kind, numStr, _ := strings.Cut(key, "-")
+			n, err := strconv.Atoi(numStr)
+			if err != nil {
+				continue
+			}
+			reqKey := map[string]string{
+				"iterate":     AnnotationIterateRequested,
+				"address":     AnnotationAddressRequested,
+				"investigate": AnnotationInvestigateRequested,
+			}[kind]
+			// Consumed once the claim converted to the sandbox annotation.
+			if sb := work.findPRSandbox(n); sb != nil && sb.GetAnnotations()[reqKey] != "" {
+				continue
+			}
 		case strings.HasPrefix(key, "plan-"):
 			n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-"))
 			if err != nil {
@@ -1091,6 +1124,89 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 
 // followUpPRs keeps a factory pr watch running for every fix sandbox aliased
 // to an open PR, in the sandbox owner's namespace with their identity.
+// ensurePRTaskClaims handles follow-up clicks on PRs with no sandbox:
+// once any sandbox carries the PR label (factory created or aliased it),
+// the claim converts to the durable request annotation the click pass
+// drives — and the trim rule drops the claim. Until then the launch runs
+// factory directly: `pr <verb>` ensures the factory-pr sandbox itself
+// (gh pr checkout attaches the branch), so hand-made PRs work with the
+// same machinery as agent PRs.
+func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, claims []prTaskClaim) map[string]bool {
+	logger := log.FromContext(ctx)
+	converted := map[string]bool{}
+	reqKeys := map[string]string{
+		"iterate":     AnnotationIterateRequested,
+		"address":     AnnotationAddressRequested,
+		"investigate": AnnotationInvestigateRequested,
+	}
+	for _, claim := range claims {
+		reqKey := reqKeys[claim.kind]
+		if reqKey == "" {
+			continue
+		}
+		boardInstrKey := fmt.Sprintf("board.gemini.google.com/iterate-instruction-%d", claim.pr)
+		if sb := work.findPRSandbox(claim.pr); sb != nil {
+			// Convert: the annotation is the durable consent from here on.
+			annotations := sb.GetAnnotations()
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			if annotations[reqKey] != "" {
+				continue // already converted; trim drops the claim
+			}
+			annotations[reqKey] = time.Now().UTC().Format(time.RFC3339)
+			annotations[AnnotationExecutor] = claim.member
+			if claim.kind == "iterate" {
+				if instr := work.board.GetAnnotations()[boardInstrKey]; instr != "" {
+					annotations[AnnotationIterateInstruction] = instr
+				}
+			}
+			sb.SetAnnotations(annotations)
+			if err := r.Update(ctx, sb); err != nil {
+				logger.Error(err, "unable to convert pr-task claim", "pr", claim.pr, "kind", claim.kind)
+			} else {
+				// The click pass picks it up NEXT reconcile, when the
+				// preflight can see the sandbox's true task state.
+				converted[sb.GetName()] = true
+			}
+			continue
+		}
+		// No sandbox anywhere: launch factory directly; it ensures the
+		// factory-pr sandbox and checks the PR branch out.
+		key := fmt.Sprintf("%s/%s-%d", claim.member, claim.kind, claim.pr)
+		if r.Factory.IsRunning(key) {
+			continue
+		}
+		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
+			continue
+		}
+		token, err := r.executorToken(ctx, claim.member)
+		if err != nil {
+			continue
+		}
+		instruction := ""
+		if claim.kind == "iterate" {
+			instruction = work.board.GetAnnotations()[boardInstrKey]
+		}
+		starters := map[string]func(string, factorycli.PRTaskOptions) bool{
+			"iterate":     r.Factory.StartIterate,
+			"address":     r.Factory.StartAddressComments,
+			"investigate": r.Factory.StartInvestigate,
+		}
+		if starters[claim.kind](key, factorycli.PRTaskOptions{
+			Namespace:   claim.member,
+			SandboxName: factorycli.PRSandboxName(work.repo, claim.pr),
+			PRURL:       fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, claim.pr),
+			Instruction: instruction,
+			GithubToken: token,
+			Engine:      boardEngine(work.board),
+		}) {
+			logger.Info("launched factory pr "+claim.kind+" (manual PR attach)", "pr", claim.pr, "board", work.board.Name)
+		}
+	}
+	return converted
+}
+
 // ensurePRTaskClicks drives the explicit PR follow-up verbs. Requests
 // live as sandbox annotations (durable consent, restart-proof); a
 // request is served once any completion newer than it lands — the same
@@ -1099,7 +1215,7 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 // (acceptable: the verbs are one click away). One launch per sandbox per
 // pass, and any in-flight follow-up defers the others — the tasks share
 // one workspace.
-func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
+func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, skip map[string]bool) {
 	logger := log.FromContext(ctx)
 	kinds := []struct {
 		reqKey, kind string
@@ -1110,7 +1226,10 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
 		{AnnotationInvestigateRequested, "investigate", r.Factory.StartInvestigate},
 	}
 	for _, sb := range work.sandboxes {
-		if !strings.HasPrefix(sb.GetName(), "fix-") {
+		if skip[sb.GetName()] {
+			continue // converted this pass; next reconcile owns it
+		}
+		if !strings.HasPrefix(sb.GetName(), "fix-") && !strings.HasPrefix(sb.GetName(), "factory-pr-") {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -1125,6 +1244,10 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState) {
 			if r.Factory.IsRunning(fmt.Sprintf("%s/%s-%s", namespace, k.kind, prNum)) {
 				busy = true
 			}
+		}
+		// A review child may own a factory-pr sandbox.
+		if r.Factory.IsRunning(fmt.Sprintf("%s/review-%s-%s", namespace, work.repo, prNum)) {
+			busy = true
 		}
 		// A fix or plan child may still be provisioning this sandbox (no
 		// task landed yet for the prober's sandbox-wide busy check to

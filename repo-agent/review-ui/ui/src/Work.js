@@ -257,13 +257,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       // Promoting your own draft PR is an author right, not a repo write.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
     }
-    // Follow-up verbs run in the fix sandbox that created the PR (so
-    // they need one) and are hidden while a follow-up is in flight; a
-    // failed follow-up re-offers them — the verb is the retry.
-    if (item.sandbox && !['iterating', 'addressing', 'investigating'].includes(item.stage)) {
-      actions.push({ label: 'Address comments', path: `prs/${item.number}/address-comments`, title: 'Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation' });
-      actions.push({ label: 'Fix CI', path: `prs/${item.number}/investigate`, title: 'Agent investigates failing checks and pushes a fix' });
-      actions.push({ label: showIterate ? 'Iterate ▴' : 'Iterate ▾', onClick: () => setShowIterate(v => !v), title: 'Tell the agent what to change on this PR — empty runs conflict-resolution and iteration' });
+    // The agent's follow-up verbs fold into one drawer — the rail keeps a
+    // single owed action (Promote) plus one door. Hidden while a
+    // follow-up runs; a failed one re-opens the door — the verb is the
+    // retry.
+    // No sandbox needed: on a hand-made PR the first verb creates one
+    // (factory ensures it and checks the PR branch out).
+    if (!['iterating', 'addressing', 'investigating'].includes(item.stage)) {
+      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent to this PR — address review comments, fix CI, or iterate with an instruction. First use on a hand-made PR creates its sandbox.' });
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.
@@ -393,25 +394,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         ) : null}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {group === 'mine-pr' && item.sandbox && item.sandbox.autoIterate && (
-          // Per-PR override of the board's auto follow-up (watch CI +
-          // comments). A toggle chip: fact first, control on click.
-          <span
-            onClick={() => {
-              fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
-              }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
-            }}
-            style={{ cursor: 'pointer', marginLeft: '4px' }}
-            title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
-            <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
-              color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
-              bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
-          </span>
-        )}
-                {receipts.map(r => r.href ? (
+        {receipts.map(r => r.href ? (
           <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
             <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
           </a>
@@ -633,6 +616,31 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
+            <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <button className="btn btn-sm"
+                title="Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation"
+                onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/address-comments`, 'Address comments'); }}>Address review comments</button>
+              <button className="btn btn-sm"
+                title="Agent investigates failing checks and pushes a fix"
+                onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/investigate`, 'Fix CI'); }}>Fix failing CI</button>
+              <span style={{ color: 'var(--text-secondary)' }}>or iterate with an instruction:</span>
+              {item.sandbox && item.sandbox.autoIterate && (
+                <span
+                  onClick={() => {
+                    fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
+                    }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
+                  }}
+                  style={{ cursor: 'pointer', marginLeft: 'auto' }}
+                  title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
+                  <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
+                    color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
+                    bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
+                </span>
+              )}
+            </div>
             <textarea
               value={iterateText}
               onChange={e => setIterateText(e.target.value)}
