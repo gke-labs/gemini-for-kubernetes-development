@@ -254,9 +254,14 @@ func (s *Scanner) sweep(ctx context.Context) {
 	s.evaluateAll(ctx, candidates)
 }
 
-// fastPass evaluates the pull requests currently assigned to the bot pool,
-// which are the ones with work in flight and therefore the ones whose state
-// changes between sweeps.
+// fastPass evaluates the pull requests currently assigned to the bot pool whose
+// state could have moved since they were last looked at.
+//
+// The filter is what makes this pass cheap enough to run often. Listing the
+// candidates costs one request per bot account; *evaluating* one costs the
+// better part of a dozen, and on a repository whose assigned pull requests are
+// mostly sitting green waiting for a human, nearly all of that was being spent
+// to re-derive a verdict that had not changed.
 func (s *Scanner) fastPass(ctx context.Context) {
 	candidates, err := s.scanAssigned(ctx)
 	if err != nil {
@@ -265,8 +270,60 @@ func (s *Scanner) fastPass(ctx context.Context) {
 	if len(candidates) == 0 {
 		return
 	}
-	klog.Infof("Evaluating %d assigned PRs...", len(candidates))
-	s.evaluateAll(ctx, candidates)
+
+	changed := make([]*githubv39.Issue, 0, len(candidates))
+	for _, prIssue := range candidates {
+		if s.needsEvaluation(prIssue) {
+			changed = append(changed, prIssue)
+		}
+	}
+	if len(changed) == 0 {
+		klog.V(2).Infof("Skipping fast pass: none of the %d assigned PRs have moved since their last evaluation.", len(candidates))
+		return
+	}
+
+	klog.Infof("Evaluating %d of %d assigned PRs...", len(changed), len(candidates))
+	s.evaluateAll(ctx, changed)
+}
+
+// needsEvaluation reports whether a pull request has to be evaluated in full,
+// or whether the last evaluation's verdict still stands.
+//
+// Only the fast pass asks. The sweep evaluates everything unconditionally,
+// which is what bounds how long any of the blind spots below can last: a signal
+// this gate cannot see is acted on at the next sweep at the latest.
+//
+// The timestamp alone would not be safe to gate on, because two things the
+// scanner reacts to do not touch it:
+//
+//   - CI. A check run completing, or being re-run, leaves updated_at where it
+//     was. Hence the "was CI in flight last time?" clause, which keeps any pull
+//     request mid-CI on every cycle - the ones the fast pass exists for.
+//   - The queue. A task finishing is what makes a pull request ready for a
+//     human, and it may finish without pushing anything. Hence the clause
+//     comparing the queue's current answer with the one recorded last time.
+func (s *Scanner) needsEvaluation(prIssue *githubv39.Issue) bool {
+	num := prIssue.GetNumber()
+	state := s.state.get(num)
+
+	switch {
+	case state.lastEvaluatedUpdatedAt.IsZero():
+		// Never evaluated in this process. A restart therefore costs one full
+		// pass over the assigned pull requests, which is the price of not
+		// trusting a verdict reached before the daemon went down.
+		return true
+	case prIssue.GetUpdatedAt().After(state.lastEvaluatedUpdatedAt):
+		// A push, a comment, a review, a label: anything a person or an agent
+		// did to the pull request itself.
+		return true
+	case state.lastEvaluationActive:
+		// CI was pending or failing, and its progress is invisible here.
+		return true
+	case s.queue.HasActivePRTask(num) != state.lastEvaluationHadTask:
+		// Work started or finished since the last look.
+		return true
+	}
+	return false
 }
 
 // evaluateAll evaluates the candidates sequentially and returns once every one
@@ -292,6 +349,11 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	if s.cfg.MinNumber > 0 && num < s.cfg.MinNumber {
 		return
 	}
+	// Clear any previously recorded evaluation up front so that every early
+	// return below leaves the pull request unrecorded for the next fast pass,
+	// even when updated_at has not moved since a prior completed evaluation.
+	s.state.clearEvaluation(num)
+
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
@@ -348,6 +410,17 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	headSHA := pr.GetHead().GetSHA()
 
+	// If a task is already queued or running for this pull request, no second
+	// task can be queued and the pull request cannot be ready for a human.
+	// Recording the evaluation with lastEvaluationHadTask set lets the fast
+	// pass skip the pull request until the task finishes.
+	if s.queue.HasActivePRTask(num) {
+		klog.V(2).Infof("Skipping PR #%d evaluation because a task is already active in the queue", num)
+		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
+		s.recordEvaluation(prIssue, pr, prCheckAnalysis{})
+		return
+	}
+
 	history, err := s.fetchHistory(ctx, num)
 	if err != nil {
 		klog.Errorf("Failed to fetch history for PR #%d: %v", num, err)
@@ -369,7 +442,11 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA)
 
 	if !isConflicting {
-		checkAnalysis = s.evaluateChecks(ctx, headSHA)
+		checkAnalysis, err = s.evaluateChecks(ctx, headSHA)
+		if err != nil {
+			klog.Errorf("Failed to evaluate checks for PR #%d: %v", num, err)
+			return
+		}
 		isApproved := isPRApprovedOrLGTM(pr, prIssue, history.reviews)
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
@@ -407,22 +484,50 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	}
 
 	// Top level case statement for handling each type of PR task
+	completed := true
 	switch {
 	case commentAnalysis.hasNewComments:
-		s.handlePRComments(ctx, pc, commentAnalysis)
+		completed = s.handlePRComments(ctx, pc, commentAnalysis)
 
 	case isConflicting:
+		// Returns without recording the evaluation, so a conflicted pull
+		// request is re-evaluated every cycle: whether the conflict is gone is
+		// answered by GetPullRequest, and nothing about resolving it upstream
+		// necessarily moves this pull request's updated_at.
 		s.handlePRIterate(ctx, pc)
 		return
 
 	case canInvestigate:
-		s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments)
+		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments)
 
 	case canReview:
-		s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
+		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
 
 	s.reconcileReadiness(ctx, pc, checkAnalysis, commentAnalysis, history, isConflicting, assignedBot)
+	if !completed {
+		return
+	}
+
+	// Recorded last, and only here, so that the fast pass may skip this pull
+	// request next cycle. Every path that returns before this point left
+	// something unresolved and must be looked at again.
+	s.recordEvaluation(prIssue, pr, checkAnalysis)
+}
+
+// recordEvaluation notes what the evaluation that just finished saw, which is
+// what lets the next fast pass decide whether it can be skipped.
+//
+// The state is re-read rather than carried in, because the handlers that ran in
+// between record their own progress against the same pull request and must not
+// be overwritten by a stale copy.
+func (s *Scanner) recordEvaluation(prIssue *githubv39.Issue, pr *githubv39.PullRequest, checkAnalysis prCheckAnalysis) {
+	num := prIssue.GetNumber()
+	state := s.state.get(num)
+	state.lastEvaluatedUpdatedAt = prIssue.GetUpdatedAt()
+	state.lastEvaluationActive = checkAnalysis.hasPending || checkAnalysis.hasFailure || pr.Mergeable == nil
+	state.lastEvaluationHadTask = s.queue.HasActivePRTask(num)
+	s.state.set(num, state)
 }
 
 // reconcileReadiness decides whether a pull request is ready for a human and
@@ -449,6 +554,7 @@ func (s *Scanner) reconcileReadiness(
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
 	isReadyForHuman := !isConflicting &&
+		pc.pr.GetMergeable() &&
 		!checkAnalysis.hasFailure &&
 		!checkAnalysis.hasPending &&
 		!commentAnalysis.hasNewComments &&

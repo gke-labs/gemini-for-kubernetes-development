@@ -153,19 +153,21 @@ func (s *Scanner) lastInvestigationFailed(filename string) bool {
 
 // handlePRInvestigate queues an investigation of the pull request's CI
 // failures, or gives up and pauses the pull request once the retry limit has
-// been reached.
+// been reached. It reports whether the phase completed cleanly; a false return
+// means a sandbox probe or enqueue failed and the pull request must be looked
+// at again next cycle.
 func (s *Scanner) handlePRInvestigate(
 	ctx context.Context,
 	pc *prContext,
 	checkAnalysis prCheckAnalysis,
 	comments []*githubv39.IssueComment,
-) {
+) bool {
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-investigate.yaml", num)
 
 	if s.queue.TaskExists(filename) {
-		return
+		return true
 	}
 
 	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel)
@@ -178,24 +180,24 @@ func (s *Scanner) handlePRInvestigate(
 			}
 		}
 		klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxInvestigations, stopLabel)
-		return
+		return true
 	}
 
 	if state.lastInvestigatedSHA == pc.headSHA &&
 		!s.lastInvestigationFailed(filename) &&
 		!pc.isExplicitlyAssigned &&
 		time.Since(state.lastInvestigatedTime) <= investigationRetryAfter {
-		return
+		return true
 	}
 
 	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRInvestigate, num)
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-		return
+		return false
 	} else if running {
 		klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
-		return
+		return false
 	}
 
 	eventTime := checkAnalysis.earliestFailureTime
@@ -226,7 +228,7 @@ func (s *Scanner) handlePRInvestigate(
 
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would queue investigate task for PR #%d: %s\n", num, pc.prURL)
-		return
+		return true
 	}
 	fmt.Printf("Queueing investigate task for PR #%d...\n", num)
 	state.lastInvestigatedSHA = pc.headSHA
@@ -234,30 +236,35 @@ func (s *Scanner) handlePRInvestigate(
 	s.state.set(num, state)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
+		return false
 	}
+	return true
 }
 
 // handlePRComments queues a task to address the outstanding review feedback.
-func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) {
+// It reports whether the phase completed cleanly; a false return means a
+// sandbox probe or enqueue failed and the pull request must be looked at again
+// next cycle.
+func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) bool {
 	if os.Getenv("DRY_RUN") == "true" {
-		return
+		return true
 	}
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
 	if s.queue.TaskExists(filename) {
-		return
+		return true
 	}
 
 	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRComments, num)
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-		return
+		return false
 	} else if running {
 		klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
-		return
+		return false
 	}
 
 	commitInfo := ""
@@ -288,7 +295,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would queue address-comments task for PR #%d: %s\n", num, pc.prURL)
-		return
+		return true
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
 	// The acknowledgement reactions are what tell the next cycle these comments
@@ -304,34 +311,38 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	s.state.set(num, state)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
+		return false
 	}
+	return true
 }
 
 // handlePRReview queues an automated review of a green, unreviewed pull request.
 //
 // Review instructions are collected from the pull request body and from the
 // issues it closes, so that a repository can steer the review from wherever the
-// requirement was written down.
-func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns []*githubv39.CheckRun) {
+// requirement was written down. It reports whether the phase completed cleanly;
+// a false return means a sandbox probe or enqueue failed and the pull request
+// must be looked at again next cycle.
+func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns []*githubv39.CheckRun) bool {
 	if os.Getenv("DRY_RUN") == "true" {
-		return
+		return true
 	}
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
 	filename := fmt.Sprintf("task-pr-%d-review.yaml", num)
 
 	if s.queue.TaskExists(filename) {
-		return
+		return true
 	}
 
 	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRReview, num)
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
-		return
+		return false
 	} else if running {
 		klog.Infof("Skipping PR #%d review because there is an in-flight sandbox %s.", num, sandboxName)
-		return
+		return false
 	}
 
 	var bodies []string
@@ -377,12 +388,14 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would queue review task for PR #%d: %s\n", num, pc.prURL)
-		return
+		return true
 	}
 	fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
 	state.lastReviewedSHA = pc.headSHA
 	s.state.set(num, state)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
+		return false
 	}
+	return true
 }
