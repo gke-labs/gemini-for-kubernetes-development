@@ -32,6 +32,21 @@ function ensureNotesBranch {
     else
         git checkout -B "${NOTES_BRANCH}"
     fi
+    # Re-runs must derive from LATEST code: the notes branch is based at
+    # whatever the code was when the first exploration ran (and the
+    # fork's default branch drifts too), so merge the source repo's
+    # default branch in. -X ours keeps our side only where both sides
+    # touched a file (docs, GEMINI.md); code files have no our-side
+    # edits and take the source version cleanly.
+    SRC_REMOTE="upstream"
+    git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE="origin"
+    DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+    if [ -n "${DEFAULT_BRANCH}" ] && git fetch "${SRC_REMOTE}" "${DEFAULT_BRANCH}"; then
+        git merge --no-edit -X ours "${SRC_REMOTE}/${DEFAULT_BRANCH}" || {
+            git merge --abort 2>/dev/null || true
+            echo "WARN: could not refresh the code base; notes will derive from the branch as-is."
+        }
+    fi
     mkdir -p docs-exploration
     popd > /dev/null
 }
