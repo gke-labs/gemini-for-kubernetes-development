@@ -109,6 +109,7 @@ const (
 	AnnotationExploreTopic    = "board.gemini.google.com/explore-topic"
 	AnnotationExploreSince    = "board.gemini.google.com/explore-since"
 	AnnotationExploreScenario = "board.gemini.google.com/explore-scenario"
+	AnnotationExploreGuidance = "board.gemini.google.com/explore-guidance"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -1233,6 +1234,7 @@ func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, c
 			Topic:       boardAnnotations[AnnotationExploreTopic],
 			Since:       boardAnnotations[AnnotationExploreSince],
 			Scenario:    boardAnnotations[AnnotationExploreScenario],
+			Guidance:    boardAnnotations[AnnotationExploreGuidance],
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		}) {

@@ -1109,7 +1109,8 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
               borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
               {['deploy', 'upgrade'].map(sc => (
                 <div key={sc}
-                  onClick={() => { setRunbookOpen(false); kickoff('runbook', { scenario: sc }); }}
+                  title="Text in the box below rides along as guidance (targets, projects, constraints)"
+                  onClick={() => { setRunbookOpen(false); kickoff('runbook', { scenario: sc, guidance: topic.trim() }); setTopic(''); }}
                   style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
@@ -1145,7 +1146,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
         background: 'var(--bg-secondary)', padding: '10px 12px' }}>
         <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+          placeholder="Ask anything about this repo — a question, a subsystem, 'compare with …' — or type deployment guidance and pick a runbook ('deploy to GKE, project my-proj, you do the rest')"
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
           style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)',

@@ -1813,6 +1813,7 @@ func (s *Server) kickoffExplore(c *gin.Context) {
 		Topic    string `json:"topic"`
 		Since    string `json:"since"`
 		Scenario string `json:"scenario"`
+		Guidance string `json:"guidance"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || (req.Kind != "onboard" && req.Kind != "activity" && req.Kind != "topic" && req.Kind != "runbook") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be onboard, activity, topic, or runbook"})
@@ -1835,6 +1836,7 @@ func (s *Server) kickoffExplore(c *gin.Context) {
 	}
 	if req.Kind == "runbook" {
 		annotations["board.gemini.google.com/explore-scenario"] = strings.TrimSpace(req.Scenario)
+		annotations["board.gemini.google.com/explore-guidance"] = strings.TrimSpace(req.Guidance)
 	}
 	if req.Kind == "activity" {
 		since := strings.TrimSpace(req.Since)

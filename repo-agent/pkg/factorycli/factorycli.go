@@ -85,6 +85,7 @@ type ExploreOptions struct {
 	RepoURL string
 	// Topic parameterizes kind=topic; Since parameterizes kind=activity.
 	Scenario    string // runbook kind only, e.g. "deploy"
+	Guidance    string // runbook kind only: owner targets/constraints free-text
 	Topic       string
 	Since       string
 	GithubToken string
@@ -117,6 +118,9 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	}
 	if opts.Kind == "runbook" && opts.Scenario != "" {
 		args = append(args, "--scenario", opts.Scenario)
+	}
+	if opts.Kind == "runbook" && opts.Guidance != "" {
+		args = append(args, "--guidance", opts.Guidance)
 	}
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
