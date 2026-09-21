@@ -286,13 +286,13 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		return
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
-	// The 'eyes' reactions are what tell the next cycle these comments are
-	// already spoken for, and what tell the commenter they were seen.
+	// The acknowledgement reactions are what tell the next cycle these comments
+	// are already spoken for, and what tell the commenter they were seen.
 	for _, cid := range commentAnalysis.unackCommentIDs {
-		s.react(ctx, cid, "eyes")
+		s.react(ctx, cid, conventions.ReactionAcknowledged)
 	}
 	for _, cid := range commentAnalysis.unackPRCommentIDs {
-		s.reactToReviewComment(ctx, cid, "eyes")
+		s.reactToReviewComment(ctx, cid, conventions.ReactionAcknowledged)
 	}
 	state.lastCommentAddressedTime = time.Now()
 	state.lastCommentAddressedSHA = pc.headSHA

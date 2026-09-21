@@ -156,6 +156,11 @@ type Scanner struct {
 	sandboxes Sandboxes
 	paused    func() bool
 
+	// reactions reads the acknowledgement state the watcher records on
+	// comments. It is bound once to this scanner's identity and bot allowlist,
+	// so no call site has to restate whose marks count as the watcher's.
+	reactions *conventions.ReactionInterpreter
+
 	// state records what has already been done for each pull request. Unlike
 	// the other subcontrollers' bookkeeping it is mutex-guarded, because the
 	// worker pool evaluates several pull requests at once.
@@ -185,6 +190,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		entities:  deps.Entities,
 		sandboxes: deps.Sandboxes,
 		paused:    deps.Paused,
+		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
 	}
 }
@@ -507,15 +513,15 @@ func (s *Scanner) comment(ctx context.Context, num int, body string) {
 // react records a reaction on a conversation comment. Reactions are how the
 // watcher signals what it has picked up, so a failure is worth reporting but is
 // never a reason to abandon the work itself.
-func (s *Scanner) react(ctx context.Context, commentID int64, content string) {
-	if err := s.gh.AddIssueCommentReaction(ctx, commentID, content); err != nil {
+func (s *Scanner) react(ctx context.Context, commentID int64, content conventions.Reaction) {
+	if err := s.gh.AddIssueCommentReaction(ctx, commentID, string(content)); err != nil {
 		klog.Warningf("Failed to create reaction '%s' on comment %d: %v", content, commentID, err)
 	}
 }
 
 // reactToReviewComment records a reaction on an inline review comment.
-func (s *Scanner) reactToReviewComment(ctx context.Context, commentID int64, content string) {
-	if err := s.gh.AddPullRequestCommentReaction(ctx, commentID, content); err != nil {
+func (s *Scanner) reactToReviewComment(ctx context.Context, commentID int64, content conventions.Reaction) {
+	if err := s.gh.AddPullRequestCommentReaction(ctx, commentID, string(content)); err != nil {
 		klog.Warningf("Failed to create reaction '%s' on PR review comment %d: %v", content, commentID, err)
 	}
 }

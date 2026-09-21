@@ -297,9 +297,9 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 	if task.Type != api.TypePRComments || w.cfg == nil {
 		return
 	}
-	resolution := "+1"
+	resolution := conventions.ReactionResolved
 	if taskErr != nil {
-		resolution = "confused"
+		resolution = conventions.ReactionFailed
 	}
 	conventions.ResolveCommentReactions(ctx, w.repoClient, task.Number, resolution, w.cfg.AllowlistedBots, w.githubLogin)
 }
