@@ -617,7 +617,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
             <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Iterate with an instruction:</span>
               <span style={{ marginLeft: 'auto' }} />
               <button className="btn btn-sm"
                 title="Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation"
@@ -645,7 +644,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             <textarea
               value={iterateText}
               onChange={e => setIterateText(e.target.value)}
-              placeholder="What should the agent change on this PR? Leave empty to resolve conflicts and iterate."
+              placeholder="Iterate with an instruction — what should the agent change on this PR? Leave empty to resolve conflicts and iterate."
               spellCheck={false}
               style={{
                 width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
