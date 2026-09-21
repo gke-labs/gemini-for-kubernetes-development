@@ -1403,16 +1403,18 @@ func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
 	}
 }
 
-// Exploration claims: no sandbox → factory launches directly (it ensures
-// explore-<repo> itself); sandbox present → the claim converts to the
-// durable request annotations and the mailbox trim can drop it.
+// Exploration claims v2: the timestamped mailbox claim is the durable
+// request; the runner's per-kind result decides served-ness. No sandbox
+// annotations, no conversion — factory ensures the sandbox itself.
 func TestExploreClaims(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
+	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 
+	// Standing claim with no result yet → launch (sandbox or not).
 	fake := newFakeLauncher()
 	board := testBoard(map[string]string{
-		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationRequests:     `{"explore-topic": "alice|` + claimAt + `"}`,
 		AnnotationExploreTopic: "compare with gVisor",
 	})
 	r := newTestReconciler(fake, ghClient, board, githubSecret())
@@ -1425,57 +1427,76 @@ func TestExploreClaims(t *testing.T) {
 		}
 	}
 	g.Expect(explores).To(gomega.HaveLen(1))
+	g.Expect(explores[0].Key).To(gomega.Equal("alice/explore-repo-topic"))
 	g.Expect(explores[0].ExploreOpts.Kind).To(gomega.Equal("topic"))
 	g.Expect(explores[0].ExploreOpts.Topic).To(gomega.Equal("compare with gVisor"))
 	g.Expect(explores[0].ExploreOpts.SandboxName).To(gomega.Equal("explore-repo"))
 	g.Expect(explores[0].ExploreOpts.RepoURL).To(gomega.Equal("https://github.com/test/repo"))
 
-	// Quiet sandbox: the claim converts to annotations AND the request
-	// pass launches in the same reconcile (idle + fresh request = run).
-	quiet := func(state string) *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      "explore-repo",
-				"namespace": "alice",
-				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-				"annotations": map[string]interface{}{
-					factorycli.AnnotationTaskType:               "explore",
-					factorycli.AnnotationTaskState:              state,
-					"sandbox.gemini.google.com/completion-time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-				},
-			},
-			"spec": map[string]interface{}{"replicas": int64(1)},
-		}}
-	}
+	// A successful run newer than the click: served — no relaunch, and
+	// the trim pass drops the claim (this is the anti-loop property).
 	fake2 := newFakeLauncher()
+	fake2.results["alice/explore-repo-topic"] = factorycli.Result{FinishedAt: time.Now()}
 	board2 := testBoard(map[string]string{
-		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationRequests:     `{"explore-topic": "alice|` + claimAt + `"}`,
 		AnnotationExploreTopic: "compare with gVisor",
 	})
-	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), quiet("Completed"))
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret())
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "explore-repo"}, got)).To(gomega.Succeed())
-	g.Expect(got.GetAnnotations()[AnnotationExploreRequested]).NotTo(gomega.BeEmpty())
-	g.Expect(got.GetAnnotations()[AnnotationExploreKind]).To(gomega.Equal("topic"))
-	g.Expect(got.GetAnnotations()[AnnotationExploreTopic]).To(gomega.Equal("compare with gVisor"))
+	for _, l := range fake2.launches() {
+		g.Expect(l.ExploreOpts).To(gomega.BeNil(), "served claim must not relaunch")
+	}
+	gotBoard := &boardv1alpha1.RepoBoard{}
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "test-board"}, gotBoard)).To(gomega.Succeed())
+	g.Expect(gotBoard.GetAnnotations()[AnnotationRequests]).NotTo(gomega.ContainSubstring("explore-topic"), "served claim must be trimmed")
 
-	// A RUNNING sandbox defers conversion — the claim must survive so a
-	// finishing task of another kind cannot mask the new request.
+	// A result OLDER than the click is a re-click → launch again.
 	fake3 := newFakeLauncher()
+	fake3.results["alice/explore-repo-topic"] = factorycli.Result{FinishedAt: time.Now().Add(-time.Hour)}
 	board3 := testBoard(map[string]string{
-		AnnotationRequests:     `{"explore-topic": "alice"}`,
+		AnnotationRequests:     `{"explore-topic": "alice|` + claimAt + `"}`,
 		AnnotationExploreTopic: "compare with gVisor",
 	})
-	r3 := newTestReconciler(fake3, ghClient, board3, githubSecret(), quiet("Running"))
+	r3 := newTestReconciler(fake3, ghClient, board3, githubSecret())
 	_, err = r3.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	got3 := &unstructured.Unstructured{}
-	got3.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r3.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "explore-repo"}, got3)).To(gomega.Succeed())
-	g.Expect(got3.GetAnnotations()[AnnotationExploreRequested]).To(gomega.BeEmpty(), "claim must not convert mid-run")
+	found := false
+	for _, l := range fake3.launches() {
+		if l.ExploreOpts != nil {
+			found = true
+		}
+	}
+	g.Expect(found).To(gomega.BeTrue(), "re-click after an old run must relaunch")
+
+	// Mid-run: the claim waits and survives the trim.
+	fake4 := newFakeLauncher()
+	fake4.running["alice/explore-repo-topic"] = true
+	board4 := testBoard(map[string]string{
+		AnnotationRequests:     `{"explore-topic": "alice|` + claimAt + `"}`,
+		AnnotationExploreTopic: "compare with gVisor",
+	})
+	r4 := newTestReconciler(fake4, ghClient, board4, githubSecret())
+	_, err = r4.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake4.launches() {
+		g.Expect(l.ExploreOpts).To(gomega.BeNil())
+	}
+	gotBoard4 := &boardv1alpha1.RepoBoard{}
+	g.Expect(r4.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "test-board"}, gotBoard4)).To(gomega.Succeed())
+	g.Expect(gotBoard4.GetAnnotations()[AnnotationRequests]).To(gomega.ContainSubstring("explore-topic"), "claim must survive while the runner is busy")
+
+	// Legacy claim value without a timestamp still launches (zero time).
+	fake5 := newFakeLauncher()
+	board5 := testBoard(map[string]string{AnnotationRequests: `{"explore-onboard": "alice"}`})
+	r5 := newTestReconciler(fake5, ghClient, board5, githubSecret())
+	_, err = r5.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	legacy := false
+	for _, l := range fake5.launches() {
+		if l.ExploreOpts != nil && l.ExploreOpts.Kind == "onboard" {
+			legacy = true
+		}
+	}
+	g.Expect(legacy).To(gomega.BeTrue())
 }

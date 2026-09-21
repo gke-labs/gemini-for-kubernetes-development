@@ -1839,7 +1839,9 @@ func (s *Server) kickoffExplore(c *gin.Context) {
 	if raw := annotations[annoBoardRequests]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
-	requests["explore-"+req.Kind] = namespace
+	// The claim carries its click time: the controller judges served-ness
+	// against the runner's per-kind result (member|RFC3339).
+	requests["explore-"+req.Kind] = namespace + "|" + nowRFC3339()
 	b, _ := json.Marshal(requests)
 	annotations[annoBoardRequests] = string(b)
 	board.SetAnnotations(annotations)
@@ -1875,6 +1877,18 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 		"forkOwner": member,
 		"branchURL": fmt.Sprintf("https://github.com/%s/%s/tree/exploration/notes/docs-exploration", member, repo),
 		"docs":      []gin.H{},
+	}
+
+	// A standing mailbox claim means "requested, sandbox not ready yet" —
+	// the UI's queued state between the click and the first task landing.
+	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
+		requests := map[string]string{}
+		_ = json.Unmarshal([]byte(raw), &requests)
+		for key := range requests {
+			if kind, ok := strings.CutPrefix(key, "explore-"); ok {
+				out["pending"] = kind
+			}
+		}
 	}
 
 	sbName := "explore-" + strings.ToLower(repo)

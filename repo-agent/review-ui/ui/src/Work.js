@@ -947,65 +947,95 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       .then(data => setExp(data))
       .catch(() => {});
   }, [boardName]);
-  useEffect(() => { load(); }, [load]);
+  // Poll while the tab is open: exploration runs take minutes (cold
+  // boots clone the repo) and the docs should appear without a reload.
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const kickoff = (kind, extra) => {
     setBusy(kind);
     fetch(`/api/board/${boardName}/explore`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, ...extra }),
-    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); })
-      .catch(() => setBusy(''));
+    }).then(res => {
+      if (!res.ok) { setBusy(''); return; }
+      // Optimistic queued state until the server reports it.
+      setExp(prev => ({ ...(prev || {}), pending: kind }));
+      setTimeout(load, 2000);
+      setTimeout(() => setBusy(''), 2000);
+    }).catch(() => setBusy(''));
   };
 
   const sb = exp && exp.sandbox;
+  const dive = () => {
+    if (!topic.trim() || busy === 'topic') return;
+    kickoff('topic', { topic });
+    setTopic('');
+  };
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <button className="btn btn-sm" disabled={busy === 'onboard'}
-          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
-          onClick={() => kickoff('onboard')}>Explore repo</button>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-          <button className="btn btn-sm" disabled={busy === 'activity'}
-            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
-            onClick={() => kickoff('activity', { since })}>What happened</button>
-          <select value={since} onChange={e => setSince(e.target.value)} style={{ padding: '3px' }}>
-            <option value="2 weeks">2 weeks</option>
-            <option value="1 month">1 month</option>
-            <option value="3 months">3 months</option>
-          </select>
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flex: '1 1 260px' }}>
-          <input type="text" value={topic} onChange={e => setTopic(e.target.value)}
-            placeholder="deep dive: a question, subsystem, or 'compare with …'"
-            style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }} />
-          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
-            onClick={() => { kickoff('topic', { topic }); setTopic(''); }}>Dive</button>
-        </span>
-        {sb && (
-          <a className="btn btn-sm" href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
-            target="_blank" rel="noopener noreferrer"
-            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">Deep dive ↗</a>
-        )}
-      </div>
-      <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        {exp && (
-          <a href={exp.branchURL} target="_blank" rel="noopener noreferrer"
-            title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
-        )}
-        {sb && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}
-            title={`${sb.name} — tasks & logs`}>
-            <Chip text={`${sb.kind || 'explore'}: ${(sb.taskState || 'idle').toLowerCase()}`}
-              color={sb.taskState === 'Running' ? '#b08800' : sb.taskState === 'Failed' ? 'var(--danger, #d33)' : '#6a737d'}
-              bg="var(--bg-secondary)" />
+      {/* The hero: one search-page box — ask anything, verbs underneath. */}
+      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px' }}>
+        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
+          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
+          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)',
+            font: 'inherit', boxSizing: 'border-box' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm" disabled={busy === 'onboard'}
+            title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
+            onClick={() => kickoff('onboard')}>Generate Overview</button>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <button className="btn btn-sm" disabled={busy === 'activity'}
+              title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
+              onClick={() => kickoff('activity', { since })}>What happened</button>
+            <select value={since} onChange={e => setSince(e.target.value)} style={{ padding: '3px' }}>
+              <option value="2 weeks">2 weeks</option>
+              <option value="1 month">1 month</option>
+              <option value="3 months">3 months</option>
+            </select>
           </span>
-        )}
+          <span style={{ flex: 1 }} />
+          {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
+            <Chip text={`${exp.pending} requested — preparing the sandbox…`}
+              color="#b08800" bg="rgba(176,136,0,0.12)" />
+          )}
+          {sb && (
+            <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
+              target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
+              title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
+              <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
+                color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
+                bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
+            </a>
+          )}
+          {sb && (
+            <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
+              style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+              title={`${sb.name} — tasks & logs`}>
+              <EngineIcon engine={sb.engine} />
+            </span>
+          )}
+          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
+            onClick={dive}>Explore</button>
+        </div>
       </div>
-      <div style={{ marginTop: '12px' }}>
+      {/* Artifacts: git is the record — rendered apart from the controls. */}
+      <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
+        {exp && (
+          <div style={{ marginBottom: '6px' }}>
+            <a href={exp.branchURL} target="_blank" rel="noopener noreferrer"
+              title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
+          </div>
+        )}
         {(!exp || (exp.docs || []).length === 0) ? (
           <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No exploration notes yet — Explore repo writes the first ones to your fork.
+            No exploration notes yet — Generate Overview writes the first ones to your fork.
           </div>
         ) : (
           <ul style={{ margin: 0, paddingLeft: '18px' }}>
