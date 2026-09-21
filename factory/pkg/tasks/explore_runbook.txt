@@ -15,7 +15,10 @@ Scenario: {{.Scenario}}
    resources? Say which, and what credentials or permissions each
    step assumes.
 3. Write docs-exploration/runbooks/{{.Scenario}}.md with the skill's
-   fixed sections: What this needs, Preconditions, Steps, Verify,
+   fixed sections — and if it already exists, update it against the
+   current code instead of rewriting from scratch; note steps that
+   changed since the last revision in one line at the top. The
+   sections: What this needs, Preconditions, Steps, Verify,
    Teardown. Where the repo offers a choice (e.g. kind vs. an existing
    cluster), pick the least-privileged path and note the alternative
    in one line.
