@@ -34,12 +34,45 @@ current, and short enough to read.
 - `runbooks/<scenario>.md` — an executable path through a scenario:
   `deploy.md`, `upgrade.md`, and kin. Every step is a command derived
   from the repo's own tooling (Makefile, scripts, CI workflows), never
-  invented. Fixed sections, in order: **What this needs** (binary /
-  container build / Kubernetes API / cloud APIs — and what permissions
-  or credentials each step assumes), **Preconditions**, **Steps**,
-  **Verify** (how you know it worked: endpoints to probe, commands
-  whose output proves health), **Teardown**. A runbook a reader cannot
-  execute top-to-bottom is a bug.
+  invented. Fixed sections, in order: **What this needs** (opens with
+  the Tier line, then what permissions or credentials each step
+  assumes), **Preconditions**, **Steps**, **Verify** (how you know it
+  worked: endpoints to probe, commands whose output proves health),
+  **Teardown**. A runbook a reader cannot execute top-to-bottom is a
+  bug.
+
+## Runbook tiers
+
+Every runbook opens its **What this needs** section with a tier call:
+
+    **Tier**: <0|1|2> — <one line on why this tier and not a lower one>
+
+- **Tier 0** — runs inside a plain container: binaries, unit and
+  integration tests, envtest (etcd + kube-apiserver as processes). No
+  new permissions.
+- **Tier 1** — needs a real Kubernetes API, but a disposable,
+  namespace-contained one (vcluster) suffices: controllers, operators,
+  CRDs, webhooks — anything that talks only to the API server.
+- **Tier 2** — needs real infrastructure: node-level features (CSI
+  drivers, device plugins, kernel modules, privileged DaemonSets,
+  kubelet plugin sockets, host mounts), real cloud APIs, VMs, or a
+  full cluster (kind/GKE/kops). vcluster shares the host's nodes and
+  kubelet, so anything that touches the node itself cannot land there.
+
+Make the call carefully and say why: a controller that merely *ships*
+a DaemonSet may still be tier 1 to exercise its reconcile logic, while
+actually mounting a volume through it is tier 2.
+
+When more than one deployment target genuinely proves something,
+write a path per target, named by the target — the thing a user
+actually deploys to — with its tier as a badge: Steps carries one
+subsection per path ("### Path — vcluster (tier 1): …",
+"### Path — GKE (tier 2): …"), lowest tier first, and the Tier line
+lists them ("**Tier**: 1 (vcluster) / 2 (GKE)"). Only targets that
+prove something real get a path; never pad one with invented steps.
+If a path outgrows the file (rule 6), split it into
+`runbooks/<scenario>-<target>.md` (`deploy-gke.md`, `deploy-kind.md`,
+`deploy-kops.md`) and link it from the main runbook's Tier line.
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
@@ -64,3 +97,10 @@ current, and short enough to read.
    this needs" section is what a user reads to decide whether to run
    it — keep it honest and specific, including what it costs to tear
    down.
+9. **Human edits are decisions, not drift.** This branch belongs to
+   its owner and edits to it are the review channel. A Tier line
+   marked `(pinned)` — e.g. `**Tier**: 2 (pinned) — …` — is a
+   constraint: never change it back; rewrite the steps to fit it, and
+   if the code suggests otherwise, note your disagreement in one line
+   directly under the Tier line instead of reverting it. The same
+   respect applies to any section a person has clearly rewritten.
