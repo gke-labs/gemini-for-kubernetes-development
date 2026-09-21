@@ -1361,3 +1361,36 @@ func TestPRTaskClaims(t *testing.T) {
 	g.Expect(got.GetAnnotations()[AnnotationIterateInstruction]).To(gomega.Equal("tighten the docs"))
 	g.Expect(got.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 }
+
+// A factory-pr sandbox created by a follow-up verb (hand-made PR attach)
+// must not read as an interrupted review: the live race launched a
+// review into a mid-clone sandbox and both tasks died.
+func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+	fake := newFakeLauncher()
+	sb := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":      "factory-pr-repo-88",
+			"namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/pr":      "88",
+			},
+			"annotations": map[string]interface{}{
+				"htmlURL":                  "https://github.com/test/repo/pull/88",
+				AnnotationIterateRequested: time.Now().UTC().Format(time.RFC3339),
+				AnnotationExecutor:         "alice",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake.launches() {
+		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "follow-up-owned sandbox must not resume a review")
+	}
+}

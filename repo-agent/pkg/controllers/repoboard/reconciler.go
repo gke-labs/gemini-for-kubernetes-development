@@ -315,6 +315,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensurePlan(ctx, work, req)
 	}
 
+	// PR follow-up claims convert (or launch) BEFORE the resume passes:
+	// the ownership annotations they stamp are what stops resumeReviews
+	// from reading a follow-up's fresh factory-pr sandbox as an
+	// interrupted review.
+	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
+
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
@@ -327,9 +333,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// Explicit PR follow-up clicks run regardless of the auto policy —
-	// a click IS the consent. Mailbox claims (hand-made PRs without a
-	// sandbox) convert or launch first, then annotation-driven clicks.
-	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
+	// a click IS the consent (claims converted above, before the resume
+	// passes).
 	r.ensurePRTaskClicks(ctx, work, converted)
 
 	// Follow up factory-created PRs (investigate failures, address
@@ -808,6 +813,13 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	if r.Factory.IsRunning(key) {
 		return
 	}
+	// A follow-up verb (iterate/address/investigate) may be provisioning
+	// this PR's sandbox — its task is not visible to the prober yet.
+	for _, kind := range []string{"iterate", "address", "investigate"} {
+		if r.Factory.IsRunning(fmt.Sprintf("%s/%s-%d", plan.executor, kind, plan.pr)) {
+			return
+		}
+	}
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
 		if res.Err == nil && sb != nil && factorycli.DraftWasPosted(res.Output) {
@@ -892,8 +904,16 @@ func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 			continue
 		}
 		annotations := sb.GetAnnotations()
-		reviewish := annotations[factorycli.AnnotationTaskType] == "review" ||
-			strings.HasPrefix(sb.GetName(), "factory-pr-")
+		// A factory-pr name no longer implies review: the PR follow-up
+		// verbs create factory-pr sandboxes too (hand-made PR attach). The
+		// name reads as review only while nothing says otherwise — no
+		// non-review task ran and no follow-up request owns the sandbox.
+		taskType := annotations[factorycli.AnnotationTaskType]
+		prTaskOwned := annotations[AnnotationIterateRequested] != "" ||
+			annotations[AnnotationAddressRequested] != "" ||
+			annotations[AnnotationInvestigateRequested] != ""
+		reviewish := taskType == "review" ||
+			(strings.HasPrefix(sb.GetName(), "factory-pr-") && (taskType == "" || taskType == "review") && !prTaskOwned)
 		rerun := reviewRerunRequested(sb)
 		if !reviewish && !rerun {
 			continue
