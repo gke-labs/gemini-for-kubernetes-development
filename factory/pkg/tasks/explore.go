@@ -31,6 +31,7 @@ type ExploreParams struct {
 	HTMLURL  string
 	Topic    string // topic kind only
 	Since    string // activity kind only, e.g. "2 weeks"
+	Scenario string // runbook kind only, e.g. "deploy", "upgrade"
 }
 
 // RenderExplorePrompt renders the prompt for an exploration kind:
@@ -41,9 +42,10 @@ func RenderExplorePrompt(kind string, params ExploreParams) ([]byte, error) {
 		"onboard":  "explore_onboard.txt",
 		"activity": "explore_activity.txt",
 		"topic":    "explore_topic.txt",
+		"runbook":  "explore_runbook.txt",
 	}[kind]
 	if name == "" {
-		return nil, fmt.Errorf("unknown exploration kind %q (onboard|activity|topic)", kind)
+		return nil, fmt.Errorf("unknown exploration kind %q (onboard|activity|topic|runbook)", kind)
 	}
 	t, err := getPromptTemplate(name)
 	if err != nil {
