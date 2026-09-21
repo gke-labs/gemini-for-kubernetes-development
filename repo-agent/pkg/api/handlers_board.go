@@ -1723,10 +1723,14 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 // Fix CI) on the PR's fix sandbox. The annotation is the durable consent
 // the controller drives from — no mailbox claim to strand on a restart.
 func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
-	ctx, board, owner, repo, member, number, ok := s.boardWriteContext(c)
+	// boardWriteContext's fifth return is the member TOKEN, not the member
+	// — the mailbox records the executor namespace (a credential in a CR
+	// annotation was the failure mode this comment guards against).
+	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
 	if !ok {
 		return
 	}
+	member := s.Auth.GetNamespaceFromContext(c)
 	var req struct {
 		Instruction string `json:"instruction"`
 	}

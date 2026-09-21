@@ -121,6 +121,7 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
 	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
+	r.POST("/board/:board/prs/:id/iterate", server.iterateBoardPR)
 	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
 	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
 	r.POST("/board/:board/issues/:id/triage-reject", server.rejectBoardTriage)
@@ -1380,5 +1381,30 @@ func TestBoardBadgeCountsFeedAttention(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &boards)
 	if len(boards) != 1 || boards[0].NeedsHuman != 2 {
 		t.Fatalf("badge = %+v, want needsHuman=2 from the cached feed", boards)
+	}
+}
+
+// The mailbox records the executor NAMESPACE — boardWriteContext's fifth
+// return is the member token, and writing it into a CR annotation was a
+// live credential leak (iterate-1324 → ghp_…).
+func TestPRTaskKickoffMailboxValueIsMember(t *testing.T) {
+	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+	req, _ := http.NewRequest("POST", "/board/myboard/prs/1324/iterate", strings.NewReader(`{"instruction":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("kickoff = %d: %s", w.Code, w.Body.String())
+	}
+	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := board.GetAnnotations()["board.gemini.google.com/requests"]
+	var requests map[string]string
+	_ = json.Unmarshal([]byte(raw), &requests)
+	got := requests["iterate-1324"]
+	if got != "alice" || strings.HasPrefix(got, "gh") {
+		t.Fatalf("mailbox value = %q, want the member namespace 'alice'\nraw=%s", got, raw)
 	}
 }
