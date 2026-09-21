@@ -232,8 +232,17 @@ func (s *Server) sandboxLifecycle(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "pause failed", "details": err.Error()})
 			return
 		}
+	case "delete":
+		// Self-service recovery for wedged sandboxes (half-provisioned
+		// Services, corrupted workspaces): destroys the checkout, drafts,
+		// and sessions — the UI confirms exactly that. Session-namespace
+		// scoping above means members only ever delete their own.
+		if err := s.K8sManager.DeleteSandbox(ctx, namespace, name); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed", "details": err.Error()})
+			return
+		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|pause)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|pause|delete)"})
 		return
 	}
 	c.Status(http.StatusOK)
