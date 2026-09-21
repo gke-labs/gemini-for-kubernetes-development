@@ -106,10 +106,8 @@ const (
 	// Exploration requests: kind-scoped, stamped on the explore sandbox
 	// once it exists (the mailbox bridges creation, exactly like the PR
 	// follow-up claims). Params ride alongside.
-	AnnotationExploreRequested = "board.gemini.google.com/explore-requested-at"
-	AnnotationExploreKind      = "board.gemini.google.com/explore-kind"
-	AnnotationExploreTopic     = "board.gemini.google.com/explore-topic"
-	AnnotationExploreSince     = "board.gemini.google.com/explore-since"
+	AnnotationExploreTopic = "board.gemini.google.com/explore-topic"
+	AnnotationExploreSince = "board.gemini.google.com/explore-since"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -328,7 +326,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// interrupted review.
 	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
 	r.ensureExploreClaims(ctx, work, mailExplores)
-	r.ensureExploreRequests(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
@@ -579,7 +576,15 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
 			if kind == "onboard" || kind == "activity" || kind == "topic" {
-				explores = append(explores, exploreClaim{kind: kind, member: member})
+				// Explore claims carry their click time ("member|RFC3339"):
+				// served-ness is decided against the runner's result for
+				// the per-kind key, no sandbox annotations involved.
+				claimMember, at, _ := strings.Cut(member, "|")
+				claimedAt, err := time.Parse(time.RFC3339, at)
+				if err != nil {
+					claimedAt = time.Time{}
+				}
+				explores = append(explores, exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt})
 			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
 			kind, numStr, _ := strings.Cut(key, "-")
@@ -1113,9 +1118,12 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			}
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
-			if sb := work.findSandbox(member, factorycli.ExploreSandboxName(work.repo)); sb != nil &&
-				sb.GetAnnotations()[AnnotationExploreKind] == kind &&
-				sb.GetAnnotations()[AnnotationExploreRequested] != "" {
+			claimMember, at, _ := strings.Cut(member, "|")
+			claimedAt, terr := time.Parse(time.RFC3339, at)
+			if terr != nil {
+				claimedAt = time.Time{}
+			}
+			if r.exploreClaimServed(exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt}, work) {
 				continue
 			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
@@ -1168,50 +1176,40 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 // to an open PR, in the sandbox owner's namespace with their identity.
 // exploreClaim is an exploration click from the board's Explore tab.
 type exploreClaim struct {
-	kind   string // onboard | activity | topic
-	member string
+	kind      string // onboard | activity | topic
+	member    string
+	claimedAt time.Time
 }
 
-// ensureExploreClaims drives exploration clicks: once the explore
-// sandbox exists it carries the request annotations (durable consent,
-// rerunRequested semantics); until then factory is launched directly —
-// `factory explore` ensures the sandbox itself. Same two-phase bridge
-// as the PR follow-up claims.
+// exploreKey is per KIND: served-ness must never cross kinds (an
+// onboard finishing while a topic claim waits must not mask it).
+func exploreKey(member, repo, kind string) string {
+	return fmt.Sprintf("%s/explore-%s-%s", member, repo, kind)
+}
+
+// exploreClaimServed: the runner finished a successful run of this kind
+// AFTER the click. In-memory only — a controller restart forgets results
+// and re-runs a standing claim once, which is acceptable for an
+// idempotent docs refresh and self-terminates on the new result.
+func (r *Reconciler) exploreClaimServed(claim exploreClaim, work *workState) bool {
+	res, ok := r.Factory.LastResult(exploreKey(claim.member, work.repo, claim.kind))
+	return ok && res.Err == nil && res.FinishedAt.After(claim.claimedAt)
+}
+
+// ensureExploreClaims drives exploration clicks straight from the
+// mailbox: the claim IS the durable request (timestamped at click), the
+// runner's per-kind result decides served-ness, and factory ensures the
+// explore sandbox itself. Concurrent kinds serialize at the sandbox-wide
+// preflight (skip-busy keeps the claim standing for the next reconcile).
 func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, claims []exploreClaim) {
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
-		boardAnnotations := work.board.GetAnnotations()
-		topic := boardAnnotations[AnnotationExploreTopic]
-		since := boardAnnotations[AnnotationExploreSince]
-		name := factorycli.ExploreSandboxName(work.repo)
-		key := fmt.Sprintf("%s/explore-%s", claim.member, work.repo)
+		key := exploreKey(claim.member, work.repo, claim.kind)
 		if r.Factory.IsRunning(key) {
 			continue
 		}
-		if sb := work.findSandbox(claim.member, name); sb != nil {
-			annotations := sb.GetAnnotations()
-			if annotations == nil {
-				annotations = map[string]string{}
-			}
-			if annotations[AnnotationExploreKind] == claim.kind && annotations[AnnotationExploreRequested] != "" {
-				continue // converted; trim drops the claim
-			}
-			// Convert only when the sandbox is quiet: completion-time is
-			// global, so a request stamped mid-run would be masked by the
-			// RUNNING task's completion. The claim stands until then.
-			if annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning {
-				continue
-			}
-			annotations[AnnotationExploreRequested] = time.Now().UTC().Format(time.RFC3339)
-			annotations[AnnotationExploreKind] = claim.kind
-			annotations[AnnotationExploreTopic] = topic
-			annotations[AnnotationExploreSince] = since
-			annotations[AnnotationExecutor] = claim.member
-			sb.SetAnnotations(annotations)
-			if err := r.Update(ctx, sb); err != nil {
-				logger.Error(err, "unable to convert explore claim", "kind", claim.kind)
-			}
-			continue
+		if r.exploreClaimServed(claim, work) {
+			continue // the trim pass drops it
 		}
 		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
 			continue
@@ -1220,62 +1218,23 @@ func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, c
 		if err != nil {
 			continue
 		}
+		boardAnnotations := work.board.GetAnnotations()
+		name := factorycli.ExploreSandboxName(work.repo)
+		if sb := work.findSandbox(claim.member, name); sb != nil {
+			r.stampUnpaused(ctx, sb)
+			r.stampEngine(ctx, sb, boardEngine(work.board))
+		}
 		if r.Factory.StartExplore(key, factorycli.ExploreOptions{
 			Namespace:   claim.member,
 			SandboxName: name,
 			Kind:        claim.kind,
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
-			Topic:       topic,
-			Since:       since,
+			Topic:       boardAnnotations[AnnotationExploreTopic],
+			Since:       boardAnnotations[AnnotationExploreSince],
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		}) {
 			logger.Info("launched factory explore", "kind", claim.kind, "board", work.board.Name)
-		}
-	}
-}
-
-// ensureExploreRequests re-drives converted exploration requests on the
-// sandbox itself: a request newer than the last completion launches.
-func (r *Reconciler) ensureExploreRequests(ctx context.Context, work *workState) {
-	logger := log.FromContext(ctx)
-	for _, sb := range work.sandboxes {
-		if !strings.HasPrefix(sb.GetName(), "explore-") {
-			continue
-		}
-		if !rerunRequested(sb, AnnotationExploreRequested, factorycli.AnnotationCompletionTime) {
-			continue
-		}
-		annotations := sb.GetAnnotations()
-		kind := annotations[AnnotationExploreKind]
-		if kind == "" {
-			continue
-		}
-		namespace := sb.GetNamespace()
-		key := fmt.Sprintf("%s/explore-%s", namespace, work.repo)
-		if r.Factory.IsRunning(key) {
-			continue
-		}
-		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-			continue
-		}
-		token, err := r.executorToken(ctx, namespace)
-		if err != nil {
-			continue
-		}
-		r.stampUnpaused(ctx, sb)
-		r.stampEngine(ctx, sb, boardEngine(work.board))
-		if r.Factory.StartExplore(key, factorycli.ExploreOptions{
-			Namespace:   namespace,
-			SandboxName: sb.GetName(),
-			Kind:        kind,
-			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
-			Topic:       annotations[AnnotationExploreTopic],
-			Since:       annotations[AnnotationExploreSince],
-			GithubToken: token,
-			Engine:      boardEngine(work.board),
-		}) {
-			logger.Info("launched factory explore (request)", "kind", kind, "board", work.board.Name)
 		}
 	}
 }

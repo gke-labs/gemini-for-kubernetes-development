@@ -1839,7 +1839,9 @@ func (s *Server) kickoffExplore(c *gin.Context) {
 	if raw := annotations[annoBoardRequests]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
-	requests["explore-"+req.Kind] = namespace
+	// The claim carries its click time: the controller judges served-ness
+	// against the runner's per-kind result (member|RFC3339).
+	requests["explore-"+req.Kind] = namespace + "|" + nowRFC3339()
 	b, _ := json.Marshal(requests)
 	annotations[annoBoardRequests] = string(b)
 	board.SetAnnotations(annotations)
