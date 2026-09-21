@@ -274,7 +274,7 @@ function App() {
               <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 950 }} />
               <div style={{
                 position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 951, minWidth: '220px',
-                backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px',
+                backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px',
                 boxShadow: '0 8px 24px rgba(0,0,0,0.25)', padding: '6px', textAlign: 'left',
               }}>
                 {user && (

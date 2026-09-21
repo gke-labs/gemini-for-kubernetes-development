@@ -648,7 +648,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               spellCheck={false}
               style={{
                 width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
-                padding: '8px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)',
+                padding: '8px', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)',
                 border: '1px solid var(--border-color, #444)', borderRadius: '6px', minHeight: '56px', textAlign: 'left',
               }}
             />
