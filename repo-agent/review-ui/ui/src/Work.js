@@ -1005,11 +1005,13 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
             <Chip text={`${exp.pending} requested — preparing the sandbox…`}
               color="#b08800" bg="rgba(176,136,0,0.12)" />
           )}
-          {sb && sb.taskState === 'Running' && (
+          {sb && (
             <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
               target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-              title="Exploration in progress — open the live session">
-              <Chip text="explore: running" color="#b08800" bg="rgba(176,136,0,0.12)" />
+              title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
+              <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
+                color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
+                bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
             </a>
           )}
           {sb && (
