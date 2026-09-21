@@ -105,10 +105,13 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 	}
-	if opts.Topic != "" {
+	// Each subcommand only defines its own flag — a leftover board
+	// annotation for the other kind must not become an unknown-flag
+	// death (a topic click once died on the activity click's --since).
+	if opts.Kind == "topic" && opts.Topic != "" {
 		args = append(args, "--topic", opts.Topic)
 	}
-	if opts.Since != "" {
+	if opts.Kind == "activity" && opts.Since != "" {
 		args = append(args, "--since", opts.Since)
 	}
 	if opts.Engine != "" {

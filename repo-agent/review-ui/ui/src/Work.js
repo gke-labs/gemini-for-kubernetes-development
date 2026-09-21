@@ -1100,7 +1100,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         </span>
         <span style={{ flex: 1 }} />
         {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
-          <Chip text={`${exp.pending} requested — preparing the sandbox…`}
+          <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
             color="#b08800" bg="rgba(176,136,0,0.12)" />
         )}
         {sb && (
