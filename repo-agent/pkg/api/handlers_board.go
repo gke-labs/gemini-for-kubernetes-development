@@ -1036,6 +1036,16 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		reviewState = annotations["reviewState"]
 		state = annotations[annoTaskState]
 		reviewError = annotations[annoReviewError]
+		// A parked review error is history once a NEWER non-review task
+		// completed on this sandbox (a follow-up succeeding after a
+		// phantom or stale review failure must not keep the row red).
+		if reviewError != "" && state == "Completed" && annotations["sandbox.gemini.google.com/last-task-type"] != "review" {
+			errAt, err1 := time.Parse(time.RFC3339, annotations["review.gemini.google.com/error-at"])
+			doneAt, err2 := time.Parse(time.RFC3339, annotations[annoCompletionTime])
+			if err1 == nil && err2 == nil && doneAt.After(errAt) {
+				reviewError = ""
+			}
+		}
 		// A re-review marker newer than the last task activity means a
 		// relaunch is waking the sandbox: stale Failed/Completed stamps
 		// must render as starting, not as the old outcome.
