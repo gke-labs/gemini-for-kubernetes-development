@@ -31,6 +31,80 @@ func fillEnvResources(opts *DevSandboxOptions) {
 	}
 }
 
+// ExploreSandboxName returns the per-repo exploration sandbox name
+// (explore-<slug>), slug-budgeted for the companion -lb Service's DNS cap.
+func ExploreSandboxName(repo string) string {
+	slug := strings.ToLower(repo)
+	var b strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	slug = strings.Trim(b.String(), "-")
+	if budget := 60 - len("explore-"); len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "explore-" + slug
+}
+
+// EnsureExploreSandbox ensures the repo's exploration sandbox: one per
+// repo per namespace — the workshop where understanding docs are built
+// and interactive exploration sessions live. Reuses the fix sandbox
+// conventions (managed label, repo/cloneURL/htmlURL annotations).
+func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := ExploreSandboxName(repoName)
+
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
+		return name, nil
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		return "", fmt.Errorf("checking sandbox existence: %w", err)
+	}
+
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
+	opt := AgentSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/type":    "explore",
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/user":    user,
+			},
+			Annotations: map[string]string{
+				"repo":     repoName,
+				"cloneURL": cloneURL,
+				"htmlURL":  htmlURL,
+			},
+			Image:             image,
+			Replicas:          1,
+			WorkspaceDiskSize: diskSize,
+			EphemeralStorage:  ephemeralStorage,
+			Secrets:           secrets,
+			Env:               envs,
+		},
+	}
+
+	fillEnvResources(&opt.DevSandboxOptions)
+	sbObj, svc := NewAgentSandbox(opt)
+
+	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {
+		return "", fmt.Errorf("creating sandbox CR: %w", err)
+	}
+	if _, err := kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		return "", fmt.Errorf("creating sandbox service: %w", err)
+	}
+	return name, nil
+}
+
 func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
