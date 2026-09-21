@@ -1005,15 +1005,19 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
             <Chip text={`${exp.pending} requested — preparing the sandbox…`}
               color="#b08800" bg="rgba(176,136,0,0.12)" />
           )}
-          {sb && (
+          {sb && sb.taskState === 'Running' && (
             <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
               target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-              title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
-              <EngineIcon engine={sb.engine} />
-              <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
-                color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
-                bg="var(--bg-card)" />
+              title="Exploration in progress — open the live session">
+              <Chip text="explore: running" color="#b08800" bg="rgba(176,136,0,0.12)" />
             </a>
+          )}
+          {sb && (
+            <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
+              style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+              title={`${sb.name} — tasks & logs`}>
+              <EngineIcon engine={sb.engine} />
+            </span>
           )}
           <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
             onClick={dive}>Explore</button>
