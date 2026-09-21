@@ -34,12 +34,37 @@ current, and short enough to read.
 - `runbooks/<scenario>.md` — an executable path through a scenario:
   `deploy.md`, `upgrade.md`, and kin. Every step is a command derived
   from the repo's own tooling (Makefile, scripts, CI workflows), never
-  invented. Fixed sections, in order: **What this needs** (binary /
-  container build / Kubernetes API / cloud APIs — and what permissions
-  or credentials each step assumes), **Preconditions**, **Steps**,
-  **Verify** (how you know it worked: endpoints to probe, commands
-  whose output proves health), **Teardown**. A runbook a reader cannot
-  execute top-to-bottom is a bug.
+  invented. Fixed sections, in order: **What this needs** (opens with
+  the Tier line, then what permissions or credentials each step
+  assumes), **Preconditions**, **Steps**, **Verify** (how you know it
+  worked: endpoints to probe, commands whose output proves health),
+  **Teardown**. A runbook a reader cannot execute top-to-bottom is a
+  bug.
+
+## Runbook tiers
+
+Every runbook opens its **What this needs** section with a tier call:
+
+    **Tier**: <0|1|2> — <one line on why this tier and not a lower one>
+
+- **Tier 0** — runs inside a plain container: binaries, unit and
+  integration tests, envtest (etcd + kube-apiserver as processes). No
+  new permissions.
+- **Tier 1** — needs a real Kubernetes API, but a disposable,
+  namespace-contained one (vcluster) suffices: controllers, operators,
+  CRDs, webhooks — anything that talks only to the API server.
+- **Tier 2** — needs real infrastructure: node-level features (CSI
+  drivers, device plugins, kernel modules, privileged DaemonSets,
+  kubelet plugin sockets, host mounts), real cloud APIs, VMs, or a
+  full cluster (kind/GKE/kops). vcluster shares the host's nodes and
+  kubelet, so anything that touches the node itself cannot land there.
+
+Make the call carefully and say why: a controller that merely *ships*
+a DaemonSet may still be tier 1 to exercise its reconcile logic, while
+actually mounting a volume through it is tier 2. When a scenario
+splits, say so — "tier 1 for the control plane, tier 2 to exercise the
+data path" — and structure Steps around the lowest tier that proves
+something.
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
@@ -64,3 +89,10 @@ current, and short enough to read.
    this needs" section is what a user reads to decide whether to run
    it — keep it honest and specific, including what it costs to tear
    down.
+9. **Human edits are decisions, not drift.** This branch belongs to
+   its owner and edits to it are the review channel. A Tier line
+   marked `(pinned)` — e.g. `**Tier**: 2 (pinned) — …` — is a
+   constraint: never change it back; rewrite the steps to fit it, and
+   if the code suggests otherwise, note your disagreement in one line
+   directly under the Tier line instead of reverting it. The same
+   respect applies to any section a person has clearly rewritten.

@@ -9,11 +9,15 @@ Scenario: {{.Scenario}}
    ground truth for what actually builds and tests), helm charts,
    kustomize bases, container files. Do not invent commands — every
    step must trace to something the repo ships.
-2. Classify what the scenario needs before writing steps: does it run
-   as a plain process, need a container build, need a Kubernetes API
-   (would envtest or a throwaway cluster do?), or need real cloud
-   resources? Say which, and what credentials or permissions each
-   step assumes.
+2. Make the tier call (the skill defines tiers 0/1/2) before writing
+   steps, and open What this needs with the Tier line and its one-line
+   justification. Pay attention to node-level reality: CSI drivers,
+   device plugins, privileged DaemonSets, kubelet sockets and host
+   mounts cannot land in a vcluster — that is tier 2, and you should
+   say exactly which component forces it. If the existing runbook's
+   Tier line is marked (pinned), it is the owner's decision: keep it,
+   adapt every step to it, and note any disagreement in one line under
+   it. Also state what credentials or permissions each step assumes.
 3. Write docs-exploration/runbooks/{{.Scenario}}.md with the skill's
    fixed sections — and if it already exists, update it against the
    current code instead of rewriting from scratch; note steps that
