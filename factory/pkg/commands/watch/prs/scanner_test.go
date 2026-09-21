@@ -103,6 +103,8 @@ func TestEvaluate_ReadyForHuman_GatedByActiveTask(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(commits)
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			reviews := []*githubv39.PullRequestReview{
 				{
@@ -237,6 +239,8 @@ func TestEvaluate_UnassignOnReadyForHuman(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(commits)
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			reviews := []*githubv39.PullRequestReview{
 				{
@@ -340,6 +344,8 @@ func TestEvaluate_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(commits)
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
@@ -460,6 +466,8 @@ func TestEvaluate_ReadyForHuman_GatedByPendingCommitStatus(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(commits)
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
@@ -563,6 +571,8 @@ func TestEvaluate_Review_GatedByPendingCheckRuns(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(commits)
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
@@ -682,6 +692,8 @@ func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 				},
 			}
 			_ = json.NewEncoder(w).Encode(comments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
@@ -813,6 +825,8 @@ func TestEvaluate_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 				},
 			}
 			_ = json.NewEncoder(w).Encode(comments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/reactions"):

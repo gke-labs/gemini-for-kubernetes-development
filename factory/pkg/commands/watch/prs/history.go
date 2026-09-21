@@ -36,9 +36,17 @@ type prHistory struct {
 //
 // A failure to list commits is tolerated - a zero lastCommitTime simply makes
 // every comment look new, which errs towards doing the work again rather than
-// towards silently skipping it. A failure to list comments or reviews is not:
-// without them the scanner cannot tell whether feedback is outstanding, and
-// acting on that blank picture would queue the wrong task.
+// towards silently skipping it. A failure to list comments, reviews or the
+// inline comments of those reviews is not: without them the scanner cannot tell
+// whether feedback is outstanding, and acting on that blank picture would queue
+// the wrong task - or, worse, none at all, since a pull request whose only
+// outstanding feedback is inline would look clean and be handed back to a human.
+//
+// The inline comments are read for the whole pull request in one call and
+// grouped by review here, rather than fetched per review. Both spellings
+// return the same thing, but the per-review one costs a request each, so its
+// price rose with every review a pull request had ever received - which on a
+// long-lived change was the single largest term in the cost of evaluating it.
 func (s *Scanner) fetchHistory(ctx context.Context, num int) (*prHistory, error) {
 	h := &prHistory{revCommentsMap: make(map[int64][]*githubv39.PullRequestComment)}
 
@@ -61,9 +69,16 @@ func (s *Scanner) fetchHistory(ctx context.Context, num int) (*prHistory, error)
 		return nil, fmt.Errorf("listing reviews: %w", err)
 	}
 
-	for _, r := range h.reviews {
-		if rc, err := s.gh.ListReviewComments(ctx, num, r.GetID()); err == nil {
-			h.revCommentsMap[r.GetID()] = rc
+	revComments, err := s.gh.ListAllReviewComments(ctx, num)
+	if err != nil {
+		return nil, fmt.Errorf("listing review comments: %w", err)
+	}
+	for _, rc := range revComments {
+		// A comment with no review behind it is not addressable as review
+		// feedback - every consumer of this map looks a review up by ID - so it
+		// is dropped rather than collected under the zero key.
+		if id := rc.GetPullRequestReviewID(); id != 0 {
+			h.revCommentsMap[id] = append(h.revCommentsMap[id], rc)
 		}
 	}
 
