@@ -35,9 +35,9 @@ type prCommentAnalysis struct {
 // reply (which already answered it in the thread). Any one of those being newer
 // means the feedback has been dealt with.
 //
-// Reactions are the second gate, and they encode who said what: the watcher's
-// own '+1', 'eyes' or 'confused' mean it has already picked the comment up,
-// while a human's 'rocket' overrides them to ask for another pass.
+// Reactions are the second gate. What the emoji on a comment mean, and which
+// of them outrank the others, is conventions.CommentState's business; this
+// function only asks whether the comment still needs attention.
 //
 // Human feedback always wins. Bot review feedback is held back when an
 // address-comments task already ran against this exact commit, because the
@@ -97,16 +97,7 @@ func (s *Scanner) evaluateComments(
 			continue
 		}
 		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
-			if conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "+1", true, bots, s.cfg.GitHubLogin) {
-				continue
-			}
-			// A human's 'rocket' is an explicit request to look again, and
-			// overrides the watcher's own acknowledgements.
-			humanRocket := conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "rocket", false, bots, s.cfg.GitHubLogin)
-			if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "eyes", true, bots, s.cfg.GitHubLogin) {
-				continue
-			}
-			if !humanRocket && conventions.HasIssueCommentReaction(ctx, s.gh, c.GetID(), "confused", true, bots, s.cfg.GitHubLogin) {
+			if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
 				continue
 			}
 			if isReviewer {
