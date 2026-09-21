@@ -1034,6 +1034,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   const [exp, setExp] = useState(null);
   const [topic, setTopic] = useState('');
   const [sinceOpen, setSinceOpen] = useState(false);
+  const [runbookOpen, setRunbookOpen] = useState(false);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -1093,6 +1094,26 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                   last {win}
+                </div>
+              ))}
+            </div>
+          )}
+        </span>
+        <span style={{ position: 'relative' }}>
+          <button className="btn" disabled={busy === 'runbook'}
+            title="Agent derives an executable runbook for a scenario from the repo's own tooling — what it needs, steps, verify, teardown — into runbooks/ on your fork"
+            onClick={() => setRunbookOpen(o => !o)}>Runbooks ▾</button>
+          {runbookOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
+              {['deploy', 'upgrade'].map(sc => (
+                <div key={sc}
+                  onClick={() => { setRunbookOpen(false); kickoff('runbook', { scenario: sc }); }}
+                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                  {sc}
                 </div>
               ))}
             </div>
