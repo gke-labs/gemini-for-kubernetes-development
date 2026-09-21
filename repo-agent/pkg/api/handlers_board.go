@@ -1877,6 +1877,18 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 		"docs":      []gin.H{},
 	}
 
+	// A standing mailbox claim means "requested, sandbox not ready yet" —
+	// the UI's queued state between the click and the first task landing.
+	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
+		requests := map[string]string{}
+		_ = json.Unmarshal([]byte(raw), &requests)
+		for key := range requests {
+			if kind, ok := strings.CutPrefix(key, "explore-"); ok {
+				out["pending"] = kind
+			}
+		}
+	}
+
 	sbName := "explore-" + strings.ToLower(repo)
 	if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sbName, v1.GetOptions{}); serr == nil {
 		annotations := sb.GetAnnotations()

@@ -947,15 +947,26 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       .then(data => setExp(data))
       .catch(() => {});
   }, [boardName]);
-  useEffect(() => { load(); }, [load]);
+  // Poll while the tab is open: exploration runs take minutes (cold
+  // boots clone the repo) and the docs should appear without a reload.
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const kickoff = (kind, extra) => {
     setBusy(kind);
     fetch(`/api/board/${boardName}/explore`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, ...extra }),
-    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); })
-      .catch(() => setBusy(''));
+    }).then(res => {
+      if (!res.ok) { setBusy(''); return; }
+      // Optimistic queued state until the server reports it.
+      setExp(prev => ({ ...(prev || {}), pending: kind }));
+      setTimeout(load, 2000);
+      setTimeout(() => setBusy(''), 2000);
+    }).catch(() => setBusy(''));
   };
 
   const sb = exp && exp.sandbox;
@@ -992,6 +1003,10 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         {exp && (
           <a href={exp.branchURL} target="_blank" rel="noopener noreferrer"
             title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
+        )}
+        {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
+          <Chip text={`${exp.pending} requested — preparing the sandbox (first run clones the repo, takes a few minutes)…`}
+            color="#b08800" bg="rgba(176,136,0,0.12)" />
         )}
         {sb && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}
