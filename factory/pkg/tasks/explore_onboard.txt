@@ -1,7 +1,7 @@
 You are building onboarding notes for the repository {{.RepoName}}
 ({{.HTMLURL}}). The exploration contract — the docs-exploration/ tree,
 its files, and the writing rules — is defined in
-.claude/skills/exploration/SKILL.md in this checkout. Follow it.
+docs-exploration/SKILL.md in this checkout. Follow it.
 
 Task: establish or refresh the foundation documents.
 

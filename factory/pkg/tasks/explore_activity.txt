@@ -1,6 +1,6 @@
 You are summarizing recent activity in the repository {{.RepoName}}
 ({{.HTMLURL}}) for a contributor catching up. The exploration contract
-is defined in .claude/skills/exploration/SKILL.md in this checkout.
+is defined in docs-exploration/SKILL.md in this checkout.
 Follow it.
 
 Window: {{.Since}} (interpret as a duration before today).

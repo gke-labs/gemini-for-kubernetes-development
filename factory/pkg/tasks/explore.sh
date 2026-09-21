@@ -39,11 +39,16 @@ function ensureNotesBranch {
 function materializeSkills {
     echo "Materializing the exploration skill into the checkout..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    mkdir -p .claude/skills/exploration
-    cp "$(dirname "${PROMPT_FILE}")/SKILL.md" .claude/skills/exploration/SKILL.md
-    # Gemini reads GEMINI.md; the @import keeps one source of truth.
-    if ! grep -q "skills/exploration/SKILL.md" GEMINI.md 2>/dev/null; then
-        printf '\n@./.claude/skills/exploration/SKILL.md\n' >> GEMINI.md
+    # One canonical, engine-neutral definition, living with the docs it
+    # governs; the engine-specific discovery mechanisms point at it —
+    # claude needs the .claude/skills/ layout (a copy), gemini imports
+    # the canonical path from GEMINI.md, and the prompts reference the
+    # canonical path directly (no per-engine templating).
+    mkdir -p docs-exploration .claude/skills/exploration
+    cp "$(dirname "${PROMPT_FILE}")/SKILL.md" docs-exploration/SKILL.md
+    cp docs-exploration/SKILL.md .claude/skills/exploration/SKILL.md
+    if ! grep -q "docs-exploration/SKILL.md" GEMINI.md 2>/dev/null; then
+        printf '\n@./docs-exploration/SKILL.md\n' >> GEMINI.md
     fi
     popd > /dev/null
 }

@@ -1,6 +1,6 @@
 You are deep-diving into a topic in the repository {{.RepoName}}
 ({{.HTMLURL}}). The exploration contract is defined in
-.claude/skills/exploration/SKILL.md in this checkout. Follow it.
+docs-exploration/SKILL.md in this checkout. Follow it.
 
 Topic: {{.Topic}}
 
