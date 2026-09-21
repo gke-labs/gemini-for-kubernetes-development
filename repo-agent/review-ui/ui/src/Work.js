@@ -1161,7 +1161,15 @@ function Work({ onBack, namespace }) {
 
       {board && (
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-          <a href={board.repoURL} target="_blank" rel="noopener noreferrer">{board.repoURL}</a>
+          {/* Compact repo links instead of the raw URL: the repo itself,
+              its architecture diagram, and the code wiki. */}
+          <a href={board.repoURL} target="_blank" rel="noopener noreferrer" title={board.repoURL}>GitHub</a>
+          <span style={{ margin: '0 6px' }}>·</span>
+          <a href={`https://gitdiagram.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
+            target="_blank" rel="noopener noreferrer" title="Architecture diagram (gitdiagram.com)">GitDiagram</a>
+          <span style={{ margin: '0 6px' }}>·</span>
+          <a href={`https://codewiki.google/github.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
+            target="_blank" rel="noopener noreferrer" title="Code wiki (codewiki.google)">CodeWiki</a>
           {board.role && (
             <span style={{ marginLeft: '8px' }}>
               <Chip
