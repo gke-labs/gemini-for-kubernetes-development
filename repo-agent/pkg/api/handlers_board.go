@@ -1879,27 +1879,52 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 		"docs":      []gin.H{},
 	}
 
-	// A standing mailbox claim means "requested, sandbox not ready yet" —
-	// the UI's queued state between the click and the first task landing.
-	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
-		requests := map[string]string{}
-		_ = json.Unmarshal([]byte(raw), &requests)
-		for key := range requests {
-			if kind, ok := strings.CutPrefix(key, "explore-"); ok {
-				out["pending"] = kind
-			}
-		}
-	}
-
 	sbName := "explore-" + strings.ToLower(repo)
+	var completedAt time.Time
 	if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sbName, v1.GetOptions{}); serr == nil {
 		annotations := sb.GetAnnotations()
+		// The engine annotation is only stamped on relaunches into an
+		// existing sandbox; a first run's icon comes from the board.
+		engine := annotations["board.gemini.google.com/engine"]
+		if engine == "" {
+			boardEngine, _, _ := unstructured.NestedString(board.Object, "spec", "sandbox", "engine")
+			engine = engineOrDefault(boardEngine)
+		}
 		out["sandbox"] = gin.H{
 			"name":      sbName,
 			"taskState": annotations[annoTaskState],
 			"taskType":  annotations["sandbox.gemini.google.com/last-task-type"],
-			"kind":      annotations["board.gemini.google.com/explore-kind"],
-			"engine":    annotations["board.gemini.google.com/engine"],
+			"engine":    engine,
+		}
+		completedAt, _ = time.Parse(time.RFC3339, annotations["sandbox.gemini.google.com/completion-time"])
+	}
+
+	// A standing mailbox claim means "requested, not yet served" — the
+	// UI's queued state. Claims carry their click time (member|RFC3339);
+	// one already served (a completion newer than the click, awaiting the
+	// controller's trim) must not re-show as queued. Sorted so two
+	// standing claims pick the same one every poll instead of flickering
+	// with map order.
+	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
+		requests := map[string]string{}
+		_ = json.Unmarshal([]byte(raw), &requests)
+		keys := make([]string, 0, len(requests))
+		for key := range requests {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			kind, ok := strings.CutPrefix(key, "explore-")
+			if !ok {
+				continue
+			}
+			if _, at, hasTS := strings.Cut(requests[key], "|"); hasTS {
+				if clickedAt, terr := time.Parse(time.RFC3339, at); terr == nil && !completedAt.IsZero() && completedAt.After(clickedAt) {
+					continue
+				}
+			}
+			out["pending"] = kind
+			break
 		}
 	}
 
