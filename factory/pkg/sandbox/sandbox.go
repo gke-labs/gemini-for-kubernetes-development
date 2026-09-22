@@ -10,8 +10,8 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
@@ -57,10 +57,10 @@ func ExploreSandboxName(repo string) string {
 // conventions (managed label, repo/cloneURL/htmlURL annotations).
 // DeployerServiceAccount is the per-namespace KSA explore sandboxes run
 // as. Direct Workload Identity federation makes it a GCP principal
-// (principal://…/subject/ns/<ns>/sa/deployer) the member grants roles to
+// (principal://…/subject/ns/<ns>/sa/factory-deployer) the member grants roles to
 // in their own project — no keys stored anywhere. It carries no
 // Kubernetes RBAC; only the explore/deploy surface uses it.
-const DeployerServiceAccount = "deployer"
+const DeployerServiceAccount = "factory-deployer"
 
 // ensureDeployerServiceAccount creates the deployer KSA if missing.
 func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) error {
