@@ -233,15 +233,31 @@ func (s *Scanner) handlePRInvestigate(
 }
 
 // handlePRComments queues a task to address the outstanding review feedback.
-func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) {
+//
+// A failed attempt is retried up to api.MaxPRCommentAttempts times against the
+// same head, because the agent failing partway through says nothing about the
+// feedback itself: the work was never done, and dropping it would leave a
+// reviewer waiting on a reply that is never coming. Each attempt is queued from
+// the same evaluation rules, so it works from the same set of comments - minus
+// anything a new commit has since answered, which is the point at which the
+// sequence starts over anyway.
+func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis, retry commentRetry) {
 	if os.Getenv("DRY_RUN") == "true" {
 		return
 	}
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
-	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+	filename := commentTaskFilename(num)
 
 	if s.queue.TaskExists(filename) {
+		return
+	}
+
+	// The cooldown is checked before the sandbox probe so that waiting costs
+	// nothing: a pull request in its cooldown window is evaluated every minute
+	// by the fast pass.
+	if retry.active && time.Now().Before(retry.dueAt) {
+		klog.V(2).Infof("Holding PR #%d address-comments attempt %d of %d until %s.", num, retry.attempt(), api.MaxPRCommentAttempts, retry.dueAt.Format(time.RFC3339))
 		return
 	}
 
@@ -268,6 +284,9 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		cType = "comment"
 	}
 	notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
+	if retry.active {
+		notes = fmt.Sprintf("%s; attempt %d of %d after %d failed attempt(s) against the same commit", notes, retry.attempt(), api.MaxPRCommentAttempts, retry.attempts)
+	}
 
 	task := s.newTask(taskOptions{
 		Type:             api.TypePRComments,
@@ -279,6 +298,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		TriggerEventTime: commentAnalysis.oldestCommentTime,
 		TriggerReason:    api.TriggerReasonPRCommentsAdded,
 		TriggerNotes:     notes,
+		Attempt:          retry.attempt(),
 	})
 
 	if s.cfg.DryRun {

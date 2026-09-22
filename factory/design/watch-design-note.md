@@ -104,6 +104,10 @@ When processing a PR, the scan evaluates conditions and queues tasks in three ph
   * System bots (matching `prow`, `-bot`, `-robot`, or `[bot]`) are ignored by default.
   * Allowlisted review bots (e.g. `reviewbot-robot` in `allowlistedBots`) are NOT ignored.
 * **Assignment**: The bot user stays assigned to the PR on GitHub while addressing comments.
+* **Retry on Failure**: A failed `pr-comments` task is retried up to 3 times against the same head commit, **10 minutes apart**. Each attempt is queued from the same rules and therefore works from the same set of comments — the comments made since the last commit — so a sandbox that died partway through does not cost the reviewer their feedback. The count is recorded on the task (`attempt:` in the task YAML), so it survives a watcher restart.
+  * **Resetting the count**: a successful attempt, a new commit, or any human comment posted since the last failure starts the count over.
+  * **Giving up**: the third consecutive failure marks the comments with `confused` and posts a comment saying automated feedback handling is paused for that commit. Unlike the CI circuit breaker below, **no `overseer/stop` label is applied**: rebases, CI investigation and review keep running. To ask for another attempt, push a commit, leave a comment, or react 🚀 on the comment to revisit.
+  * Between attempts the comments keep only their `eyes` mark. `confused` means the watcher has given up, and GitHub reactions cannot be removed, so it is written only by the final failure.
 
 ### Phase 3: CI Check Failures (`pr-investigate`)
 * **Trigger**: Check runs or status checks for the head commit have failed.

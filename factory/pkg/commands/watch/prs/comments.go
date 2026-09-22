@@ -43,6 +43,17 @@ type prCommentAnalysis struct {
 // address-comments task already ran against this exact commit, because the
 // agent looking at the same review and producing no commit means it judged
 // there was nothing to change - running it again would loop forever.
+//
+// A retry suspends the address-comments stamp and the reactions. They record
+// that the watcher took the feedback on, not that it answered it, and the
+// attempt they were written for failed: leaving them in force would drop the
+// feedback on the first failure, which is precisely what the retry exists to
+// prevent. The set that comes back is therefore the set the failed attempt was
+// working from, minus anything a new commit has since answered.
+//
+// The bot-reply gate is not suspended, because it is not a claim the watcher
+// makes about itself - a reply is a reply whoever queued it. What a retry needs
+// from it is only that announcements do not count, which holds at all times.
 func (s *Scanner) evaluateComments(
 	ctx context.Context,
 	num int,
@@ -50,8 +61,14 @@ func (s *Scanner) evaluateComments(
 	history *prHistory,
 	lastCommitTime, lastCommentAddressedTime time.Time,
 	lastCommentAddressedSHA, headSHA string,
+	retry commentRetry,
 ) prCommentAnalysis {
 	var analysis prCommentAnalysis
+
+	if retry.active {
+		lastCommentAddressedTime = time.Time{}
+		lastCommentAddressedSHA = ""
+	}
 
 	comments := history.comments
 	reviews := history.reviews
@@ -60,8 +77,17 @@ func (s *Scanner) evaluateComments(
 
 	// Find the latest timestamp of any reply made by an allowlisted bot user
 	// (excluding reviewer bots, whose reviews are feedback rather than replies).
+	//
+	// The watcher's own announcements are not replies. It posts one for every
+	// task it dispatches, so counting them would mean any task - a rebase, a
+	// review, or the address-comments task that is about to fail - silently
+	// buries the feedback that was sitting above it. Reviews carry no
+	// announcements; they are only ever posted as conversation comments.
 	var latestBotReplyTime time.Time
 	for _, c := range comments {
+		if conventions.IsAnnouncement(c.GetBody()) {
+			continue
+		}
 		if !conventions.IsReviewerBot(c.GetUser(), s.cfg.ReviewerLogins) && conventions.IsBotReply(c.GetUser(), s.cfg.GitHubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
 			latestBotReplyTime = c.GetCreatedAt()
 		}
@@ -97,7 +123,7 @@ func (s *Scanner) evaluateComments(
 			continue
 		}
 		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
-			if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
+			if !s.commentNeedsAttention(ctx, c.GetID(), retry) {
 				continue
 			}
 			if isReviewer {
@@ -188,6 +214,26 @@ func (s *Scanner) evaluateComments(
 	}
 
 	return analysis
+}
+
+// commentNeedsAttention reports whether a comment is still waiting on the
+// watcher, reading its reactions in the light of whether this is a retry.
+//
+// Outside a retry the reactions are taken at face value. Inside one, only the
+// resolved mark still counts: 'acknowledged' and 'failed' were both written by
+// the attempt being retried, and neither means the comment was answered -
+// 'failed' says the opposite. Resolved is left standing because it can only
+// have come from an earlier attempt that succeeded on this same head, and that
+// fix is already in the branch.
+//
+// GitHub has no remove-reaction call here, so this is the only place the marks
+// of a failed attempt can be set aside.
+func (s *Scanner) commentNeedsAttention(ctx context.Context, commentID int64, retry commentRetry) bool {
+	state := s.reactions.CommentState(ctx, commentID)
+	if retry.active {
+		return !state.Resolved
+	}
+	return state.NeedsAttention()
 }
 
 // hasBotReviewAfterLastCommit reports whether the current head has already been

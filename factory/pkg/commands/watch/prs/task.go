@@ -23,6 +23,9 @@ type taskOptions struct {
 	TriggerReason    api.TriggerReason
 	TriggerNotes     string
 	Instructions     []string
+	// Attempt is the 1-based number of this try, for the task types that are
+	// retried. Left zero by the phases that are gated on a commit SHA instead.
+	Attempt int
 }
 
 // newTask constructs the queue task for a pull request with consistent defaults.
@@ -55,5 +58,6 @@ func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
 		Status:           api.StatusPending,
 		CommitSHA:        opts.CommitSHA,
 		Instructions:     opts.Instructions,
+		Attempt:          opts.Attempt,
 	}
 }

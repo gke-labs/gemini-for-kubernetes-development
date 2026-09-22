@@ -178,13 +178,14 @@ Implemented as `watch/prs.Scanner` (`New(Config, Deps)` / `Run(ctx)` / `ScanOnce
   * Pauses a pull request no human has engaged with for `PRInactivityTimeout`, applying the stop label and posting the explanation once.
   * Uses `Sandboxes.IsTaskRunning` and `TaskQueueManager.TaskExists` / `HasActivePRTask` as the authoritative in-memory checks, rather than racy disk directory scans during task renames.
   * Evaluates PR state across four **ordered** phases. The order is the design, not an implementation detail: unaddressed feedback wins over everything, because a human asking for a change makes the conflict or CI failure the agent would otherwise chase irrelevant.
-    1. **Review Feedback & Comments**: unaddressed human comments and bot reviews (`pr-comments`), acknowledged with `eyes` reactions.
+    1. **Review Feedback & Comments**: unaddressed human comments and bot reviews (`pr-comments`), acknowledged with `eyes` reactions. A failed attempt is retried up to three times against the same head, **10 minutes apart** — the agent dying partway through says nothing about the feedback, and without the retry a single sandbox failure dropped it. A retry suspends the two gates that would otherwise hide it (the `eyes`/`confused` marks and the addressed-at stamp, both written by the attempt being retried), which is also what makes each attempt work from the same set of comments. The run ends on a success, a new commit, or a human comment since the last failure; the third failure is the one that marks the comments `confused` and says so on the pull request. No stop label goes with it, unlike the investigation breaker below: the feedback is parked, the pull request is not.
     2. **Conflicts / Rebase**: gated on mergeability (`pr-iterate`) — nothing can be verified until the branch merges.
     3. **CI Gating & Investigation**: check runs and commit statuses (`pr-investigate`), with a three-attempt circuit breaker that resets on a new commit or a human comment.
     4. **Automated Code Review**: opt-in by label (`pr-review`), strictly gated on `!hasPending && !hasFailure`.
   * **Deterministic Ready-for-Human Reconciler**: gated on clean CI, addressed comments, completed reviews and no active task (`!HasActivePRTask`, read from memory so the label does not flap while a task file is renamed between directories). Runs in both directions — removing the label matters as much as adding it — and unassigns the bot on qualification.
   * Enqueues tasks directly into `TaskQueueManager`.
 * **State ownership**: the `lastReviewedSHA` / `lastCommentAddressedSHA` / `lastInvestigatedSHA` / `lastIteratedSHA` gating record lives in a mutex-guarded `stateStore` **inside the package**, not on `EntityStateCache` as §5C originally proposed. Nothing outside this scanner reads it, and the shared cache is for state that crosses subcontroller boundaries; putting single-owner bookkeeping there would make it look shared when it is not. The mutex is what the worker pool requires, and it is cheaper than a shared primitive. The store recovers itself on first use by folding `Queue.ListProcessedTasks()`, and the "did the last investigation fail, so is this revision worth another attempt?" check reads `Queue.GetProcessedTask(filename)`; neither opens a task file.
+  * The **address-feedback attempt count is the exception**: it is persisted on the task itself (`QueueTask.Attempt`) and read back through `Queue.GetProcessedTask`, not held in the store. The store deliberately folds a failed task in as nothing — recording it would suppress the very retry it is evidence for — so a counter kept there would reset on every restart, which is exactly when a pull request stuck in a failing loop is most likely to be handed a budget it has not earned.
 * **Decoupling Guarantee**: Does **not** scan issues or chores. Issue-typed items returned by its queries are dropped.
 
 ### 3. `ChoreScheduler`
@@ -403,7 +404,7 @@ sequenceDiagram
 * **Status Polling**: Every `Config.AdoptionPollInterval` (default 5s), probes the sandbox via `SandboxService`.
 * **Post-Completion Execution**:
   * On success: calls `TaskQueueManager.CompleteTask()` and `TaskCoordinator.NotifyTaskFinished(ctx, task, nil)`, which resolves `pr-comments` reactions with `+1`.
-  * On failure: calls `TaskQueueManager.FailTask()` and notifies with an error, resolving reactions with `confused`.
+  * On failure: calls `TaskQueueManager.FailTask()` and notifies with an error. For `pr-comments` the reactions are resolved with `confused` only once the attempt budget is spent — reactions can be added but never removed, so a mark written between attempts would permanently claim the watcher gave up on feedback it is about to retry.
   * On timeout: force deletes the sandbox, then fails the task.
   * Atomically renames YAML and `.log` files to `processed/` and appends a structured entry to `journal.jsonl`.
   * Releases the sandbox lease when the goroutine exits.
