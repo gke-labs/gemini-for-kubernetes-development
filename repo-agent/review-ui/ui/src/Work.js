@@ -1003,15 +1003,21 @@ function ExploreDocViewer({ boardName, docs }) {
               {d.name}
             </div>
           );
-          const isRunbook = d => d.name.startsWith('runbook');
-          const isActivity = d => d.name.startsWith('activity/');
-          const notes = docs.filter(d => !isRunbook(d) && !isActivity(d));
-          const activity = docs.filter(isActivity);
-          const recipes = docs.filter(isRunbook);
+          // Generic grouping: root files first, then one group per
+          // top-level folder, hairlines between groups.
+          const folderOf = d => (d.name.includes('/') ? d.name.split('/')[0] : '');
+          const order = [];
+          const byFolder = {};
+          for (const d of docs) {
+            const f = folderOf(d);
+            if (!(f in byFolder)) { byFolder[f] = []; order.push(f); }
+            byFolder[f].push(d);
+          }
+          order.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
           const divider = key => (
             <div key={key} style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
           );
-          const groups = [notes, activity, recipes].filter(g => g.length > 0);
+          const groups = order.map(f => byFolder[f]);
           return (
             <>
               {groups.map((g, i) => (
