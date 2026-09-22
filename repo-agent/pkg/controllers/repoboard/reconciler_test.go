@@ -53,6 +53,7 @@ type fakeLaunch struct {
 	PRTaskOpts  *factorycli.PRTaskOptions
 	PRTaskKind  string
 	ExploreOpts *factorycli.ExploreOptions
+	TryOpts     *factorycli.TryOptions
 }
 
 type fakeLauncher struct {
@@ -125,6 +126,13 @@ func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) b
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "iterate"})
+	return true
+}
+
+func (f *fakeLauncher) StartTry(key string, opts factorycli.TryOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, TryOpts: &opts})
 	return true
 }
 

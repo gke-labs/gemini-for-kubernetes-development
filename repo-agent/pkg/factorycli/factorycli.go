@@ -130,6 +130,75 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	})
 }
 
+// TrySandboxName mirrors factory's run-environment naming:
+// try-<repo>-<scenario>[-<path>], budgeted for the -lb DNS cap.
+func TrySandboxName(repo, scenario, path string) string {
+	slugify := func(s string) string {
+		s = strings.ToLower(s)
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('-')
+			}
+		}
+		return strings.Trim(b.String(), "-")
+	}
+	suffix := slugify(scenario)
+	if path != "" {
+		suffix += "-" + slugify(path)
+	}
+	slug := slugify(repo)
+	if budget := 60 - len("try-") - len(suffix) - 1; len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "try-" + slug + "-" + suffix
+}
+
+// TryOptions parameterize `factory try <mode>` — executing a runbook
+// scenario (or its teardown) in the dedicated run sandbox.
+type TryOptions struct {
+	SandboxName string
+	Namespace   string
+	Mode        string // run | teardown
+	Scenario    string
+	Path        string
+	Guidance    string // run mode only
+	RepoURL     string
+	GithubToken string
+	Timeout     time.Duration
+	Engine      string
+}
+
+// StartTry launches `factory try <mode>`.
+func (r *Runner) StartTry(key string, opts TryOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Minute
+	}
+	args := []string{
+		"try", opts.Mode,
+		"--url", opts.RepoURL,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+		"--scenario", opts.Scenario,
+	}
+	if opts.Path != "" {
+		args = append(args, "--path", opts.Path)
+	}
+	if opts.Mode == "run" && opts.Guidance != "" {
+		args = append(args, "--guidance", opts.Guidance)
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "try",
+	})
+}
+
 // PRSandboxName mirrors factory's ReviewSandboxName (factory-pr-<slug>-<n>,
 // slug lowercased/dashed, budgeted for the -lb Service's DNS label cap) —
 // the sandbox `factory pr <verb>` creates when a PR has none.
@@ -338,6 +407,9 @@ type Launcher interface {
 	// StartExplore launches `factory explore <kind>` (understanding docs
 	// in the member's fork).
 	StartExplore(key string, opts ExploreOptions) bool
+	// StartTry launches `factory try <mode>` (runbook execution in the
+	// dedicated run sandbox) for key unless one is already running.
+	StartTry(key string, opts TryOptions) bool
 	// StartInvestigate / StartAddressComments / StartIterate launch the
 	// PR follow-up verbs in the PR's fix sandbox.
 	StartInvestigate(key string, opts PRTaskOptions) bool

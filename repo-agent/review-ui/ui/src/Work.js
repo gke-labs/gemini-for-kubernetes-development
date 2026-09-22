@@ -1026,6 +1026,144 @@ function ExploreDocViewer({ boardName, docs }) {
   );
 }
 
+// TryPanel: the execution surface — run a runbook scenario, watch its
+// receipts, tear it down. One run sandbox per (scenario, path); the
+// runbook/script/receipt artifacts live on the fork branch and render
+// through the exploration doc endpoint.
+function TryPanel({ boardName, onOpenSandbox }) {
+  const [state, setState] = useState(null);
+  const [guidance, setGuidance] = useState('');
+  const [busy, setBusy] = useState('');
+  const [viewDoc, setViewDoc] = useState(null); // {name, path}
+
+  const load = useCallback(() => {
+    fetch(`/api/board/${boardName}/try`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => setState(data))
+      .catch(() => {});
+  }, [boardName]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const kickoff = (mode, scenario, path) => {
+    const id = `${mode}:${scenario}:${path || ''}`;
+    setBusy(id);
+    fetch(`/api/board/${boardName}/try`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, scenario, path: path || '', guidance: guidance.trim() }),
+    }).then(res => {
+      if (res.ok) {
+        setGuidance('');
+        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, path: path || '' }] } : prev);
+      }
+      setTimeout(load, 2000);
+      setTimeout(() => setBusy(''), 2000);
+    }).catch(() => setBusy(''));
+  };
+
+  const runbooks = (state && state.runbooks) || [];
+  const sandboxes = (state && state.sandboxes) || [];
+  const pending = (state && state.pending) || [];
+  const receipts = (state && state.receipts) || [];
+  const findSb = (scenario, path) => sandboxes.find(s => s.scenario === scenario && (s.path || '') === (path || ''));
+  const findPending = (scenario, path) => pending.find(p => p.scenario === scenario && (p.path || '') === (path || ''));
+  const latestReceipt = (scenario, path) => {
+    const prefix = path ? `${scenario}-${path}-` : `${scenario}-`;
+    return receipts.find(r => r.name.startsWith(prefix) && (path || !runbookPathNames.some(pn => r.name.startsWith(`${scenario}-${pn}-`))));
+  };
+  const runbookPathNames = runbooks.flatMap(rb => (rb.paths || []).map(p => slugTarget(p.target)));
+
+  function slugTarget(target) {
+    return String(target || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  const pathRow = (rb, target, tier) => {
+    const path = target ? slugTarget(target) : '';
+    const sb = findSb(rb.scenario, path);
+    const pend = findPending(rb.scenario, path);
+    const receipt = latestReceipt(rb.scenario, path);
+    const running = sb && sb.taskState === 'Running';
+    return (
+      <div key={path || 'default'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
+        <span style={{ minWidth: '160px' }}>
+          ▸ {target || 'default path'}{tier !== undefined && tier !== '' && <span style={{ color: 'var(--text-secondary)' }}> (tier {tier})</span>}
+        </span>
+        <button className="btn btn-sm" disabled={running || !!pend || busy === `run:${rb.scenario}:${path}`}
+          title="Agent executes this path — first run derives the script, later runs reuse it when nothing drifted"
+          onClick={() => kickoff('run', rb.scenario, path)}>▶ Run</button>
+        {(sb || receipt) && (
+          <button className="btn btn-sm" disabled={running || !!pend}
+            title="Runs the teardown script, verifies resources are gone, writes a teardown receipt"
+            onClick={() => kickoff('teardown', rb.scenario, path)}>Tear down</button>
+        )}
+        {pend && !running && (
+          <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
+        )}
+        {sb && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+            title={`${sb.name} — tasks & logs`}>
+            <EngineIcon engine={sb.engine} />
+            <Chip text={running ? 'running' : 'env ready'}
+              color={running ? '#b08800' : '#28a745'}
+              bg={running ? 'rgba(176,136,0,0.12)' : 'rgba(40,167,69,0.10)'} />
+          </span>
+        )}
+        {receipt && (
+          <a href="#receipt" onClick={e => { e.preventDefault(); setViewDoc(viewDoc && viewDoc.path === receipt.path ? null : receipt); }}
+            title="Latest receipt — verdict, verify evidence, what is left running">{receipt.name}</a>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {runbooks.length === 0 ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No runbooks yet — draft them on the Explore tab first (Draft Runbooks).
+        </div>
+      ) : runbooks.map(rb => (
+        <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          padding: '10px 12px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+            <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
+            {rb.tier && <span style={{ color: 'var(--text-secondary)' }}>Tier: {rb.tier}</span>}
+            <span style={{ flex: 1 }} />
+            <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
+          </div>
+          <div style={{ marginTop: '6px' }}>
+            {(rb.paths && rb.paths.length > 0)
+              ? rb.paths.map(p => pathRow(rb, p.target, p.tier))
+              : pathRow(rb, '', rb.tier ? '' : undefined)}
+          </div>
+        </div>
+      ))}
+      {viewDoc && (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '10px 12px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex' }}>
+            <strong>{viewDoc.name}</strong>
+            <span style={{ flex: 1 }} />
+            <a href="#close" onClick={e => { e.preventDefault(); setViewDoc(null); }}>close</a>
+          </div>
+          <ExploreDocViewer boardName={boardName} docs={[{ name: viewDoc.name, path: viewDoc.path, htmlURL: viewDoc.htmlURL }]} />
+        </div>
+      )}
+      {runbooks.length > 0 && (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          background: 'var(--bg-secondary)', padding: '8px 12px' }}>
+          <textarea rows={2} value={guidance} onChange={e => setGuidance(e.target.value)}
+            placeholder="Anything the next run should know? (region override, flags, 'skip step 4'…) — rides the next ▶ Run"
+            style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
+              background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ExplorePanel: the board's understanding surface — docs from the
 // member's fork branch (git is the record; renders with the sandbox
 // paused or gone), kickoff buttons for the three exploration kinds, and
@@ -1557,6 +1695,11 @@ function Work({ onBack, namespace }) {
                 title="Understanding docs for this repo — onboarding, architecture, recent activity, deep dives"
                 onClick={() => setActiveGroup('explore')}
               >Explore</button>
+              <button
+                className={`group-tab ${shown === 'try' ? 'active' : ''}`}
+                title="Run the repo from its runbooks — deploy, verify, tear down"
+                onClick={() => setActiveGroup('try')}
+              >Try</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
                 {shown === 'issues' && (
                   <span title="View scope — display only, never changes what runs">
@@ -1594,6 +1737,8 @@ function Work({ onBack, namespace }) {
 
             {shown === 'explore' ? (
               <ExplorePanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
+            ) : shown === 'try' ? (
+              <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
             ) : (
             <div className="work-card">
               <table className="work-table">
