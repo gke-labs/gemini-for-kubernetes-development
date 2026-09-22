@@ -1032,8 +1032,9 @@ function ExploreDocViewer({ boardName, docs }) {
 // through the exploration doc endpoint.
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
+  const [selRunbook, setSelRunbook] = useState('');
+  const [instName, setInstName] = useState('');
   const [guidance, setGuidance] = useState('');
-  const [names, setNames] = useState({}); // per-runbook instance-name inputs
   const [busy, setBusy] = useState('');
   const [newRunbook, setNewRunbook] = useState({ name: '', charter: '' });
   const [drafting, setDrafting] = useState(false);
@@ -1050,6 +1051,44 @@ function TryPanel({ boardName, onOpenSandbox }) {
     return () => clearInterval(t);
   }, [load]);
 
+  const runbooks = (state && state.runbooks) || [];
+  const sandboxes = (state && state.sandboxes) || [];
+  const pending = (state && state.pending) || [];
+  const instances = (state && state.instances) || [];
+  const findSb = (inst) => sandboxes.find(s => (s.instance || s.scenario) === inst);
+  const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
+  const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+
+  // Which recipe a deployment came from: the sandbox annotation when
+  // one exists, else the longest runbook name that prefixes the
+  // instance name.
+  const runbookFor = (inst) => {
+    const sb = findSb(inst.name);
+    if (sb && sb.scenario) return runbooks.find(r => r.scenario === sb.scenario) || null;
+    let best = null;
+    for (const r of runbooks) {
+      if ((inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) &&
+          (!best || r.scenario.length > best.scenario.length)) best = r;
+    }
+    return best;
+  };
+
+  // Default instance names auto-increment per runbook: deploy-gcp-1,
+  // -2, … — unique across runbooks (the namespace is flat) and never
+  // colliding with the recipe's own name.
+  const nextRunName = (runbook) => {
+    const taken = new Set([
+      ...instances.map(i => i.name),
+      ...pending.map(p => p.instance || p.scenario),
+      ...sandboxes.map(s => s.instance || s.scenario),
+    ]);
+    for (let n = 1; n < 100; n++) {
+      const candidate = `${runbook}-${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${runbook}-${Date.now() % 1000}`;
+  };
+
   const kickoff = (mode, scenario, instance) => {
     setBusy(`${mode}:${scenario}:${instance || ''}`);
     fetch(`/api/board/${boardName}/runbook`, {
@@ -1058,22 +1097,13 @@ function TryPanel({ boardName, onOpenSandbox }) {
     }).then(res => {
       if (res.ok) {
         setGuidance('');
-        setNames(prev => ({ ...prev, [scenario]: '' }));
+        setInstName('');
         setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, instance: instance || '' }] } : prev);
       }
       setTimeout(load, 2000);
       setTimeout(() => setBusy(''), 2000);
     }).catch(() => setBusy(''));
   };
-
-  const runbooks = (state && state.runbooks) || [];
-  const sandboxes = (state && state.sandboxes) || [];
-  const pending = (state && state.pending) || [];
-  const instances = (state && state.instances) || [];
-  const findSb = (inst) => sandboxes.find(s => (s.instance || s.scenario) === inst);
-  const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
-
-  const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
   // Runbooks are born on the Explore pipeline: the name is the slug,
   // the charter text is the guidance the drafter treats as pinned
@@ -1097,7 +1127,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   // The receipt's first line, compressed to a badge.
   const verdictBadge = (receipt) => {
-    if (!receipt || !receipt.verdict) return null;
+    if (!receipt || !receipt.verdict) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
     const v = receipt.verdict.toUpperCase();
     const date = (receipt.name.match(/(\d{8})/) || [])[1];
     const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
@@ -1107,89 +1137,15 @@ function TryPanel({ boardName, onOpenSandbox }) {
     return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
   };
 
-  const instanceRow = (inst, runbook) => {
-    const sb = findSb(inst.name);
-    const pend = findPending(inst.name);
-    const running = sb && sb.taskState === 'Running';
-    const receipt = inst.latestReceipt;
-    return (
-      <div key={inst.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
-        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
-          style={{ minWidth: '150px', fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
-          title="The instance's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
-        {verdictBadge(receipt)}
-        {pend && !running && (
-          <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
-        )}
-        {running && sb && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-            title={`${sb.name} — tasks & logs`}>
-            <EngineIcon engine={sb.engine} />
-            <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />
-          </span>
-        )}
-        {!running && sb && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}
-            title={`${sb.name} — tasks & logs`}>
-            <EngineIcon engine={sb.engine} />
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        {receipt && (
-          <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
-            title="Latest receipt — verdict, verify evidence, what is left running">receipt ↗</a>
-        )}
-        <button className="btn btn-sm" disabled={running || !!pend}
-          title="Deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
-          onClick={() => kickoff('run', runbook, inst.name)}>▶ Re-deploy</button>
-        <button className="btn btn-sm" disabled={running || !!pend}
-          title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
-          onClick={() => kickoff('teardown', runbook, inst.name)}>Tear down</button>
-      </div>
-    );
-  };
+  const activeRunbook = selRunbook || (runbooks[0] && runbooks[0].scenario) || '';
+  const defaultName = activeRunbook ? nextRunName(activeRunbook) : '';
+  const composerInst = instName.trim() ? slugName(instName) : defaultName;
+  const composerPend = composerInst ? findPending(composerInst) : null;
+  const cell = { padding: '5px 8px', verticalAlign: 'middle' };
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {runbooks.length === 0 && (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '10px' }}>
-          No runbooks yet — Draft standard set below writes them, or create a custom one from a description.
-        </div>
-      )}
-      {runbooks.map(rb => {
-        const own = instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-'));
-        const newName = names[rb.scenario] || '';
-        const newInst = newName.trim() ? slugName(newName) : rb.scenario;
-        const newPend = findPending(newInst);
-        return (
-          <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-            padding: '10px 12px', marginBottom: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
-              <span style={{ flex: 1 }} />
-              <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
-            </div>
-            {own.length > 0 && (
-              <div style={{ marginTop: '6px' }}>
-                {own.map(i => instanceRow(i, rb.scenario))}
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px',
-              paddingTop: '8px', borderTop: own.length > 0 ? '1px dashed var(--border-color)' : 'none' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>new:</span>
-              <input type="text" value={newName} onChange={e => setNames(prev => ({ ...prev, [rb.scenario]: e.target.value }))}
-                placeholder={`instance name (default: ${rb.scenario})`}
-                style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
-                  border: '1px solid var(--border-color)', background: 'transparent',
-                  color: 'var(--text-primary)', font: 'inherit' }} />
-              <button className="btn btn-sm" disabled={!!newPend || busy.startsWith(`run:${rb.scenario}:`)}
-                title="Deploy a new instance of this runbook — prepare pushes the scripts to the branch, then execution runs them"
-                onClick={() => kickoff('run', rb.scenario, newName.trim() ? slugName(newName) : '')}>▶ Run</button>
-              {newPend && <Chip text={`run queued as ${newInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
-            </div>
-          </div>
-        );
-      })}
+      {/* Creation: standard set, custom, update. */}
       <div style={{ border: '1px dashed var(--border-color)', borderRadius: '10px',
         padding: '10px 12px', marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1200,7 +1156,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
           <input type="text" value={newRunbook.name}
             onChange={e => setNewRunbook(prev => ({ ...prev, name: e.target.value }))}
             placeholder="name (new: deploy-kops-gce · existing name = update it)"
-            style={{ flex: '0 1 240px', padding: '3px 8px', borderRadius: '4px',
+            style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
               border: '1px solid var(--border-color)', background: 'transparent',
               color: 'var(--text-primary)', font: 'inherit' }} />
           <button className="btn btn-sm" disabled={!newRunbook.name.trim() || drafting || !!(state && state.draftPending)}
@@ -1215,14 +1171,114 @@ function TryPanel({ boardName, onOpenSandbox }) {
           placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
           style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+        {runbooks.length > 0 && (
+          <div style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>
+            recipes:{' '}
+            {runbooks.map((r, i) => (
+              <span key={r.scenario}>{i > 0 && ' · '}
+                <a href={r.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">{r.scenario} ↗</a>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-      {runbooks.length > 0 && (
+
+      {/* One table: every deployment across every runbook. */}
+      {instances.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '8px 12px' }}>
-          <textarea rows={2} value={guidance} onChange={e => setGuidance(e.target.value)}
-            placeholder="Guidance for the next run — region overrides, flags, 'skip step 4'… (rides the next ▶ Run or ▶ Re-deploy)"
-            style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
-              background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+          padding: '6px 8px', marginBottom: '10px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+                <th style={cell}>deployment</th>
+                <th style={cell}>agent</th>
+                <th style={cell}>runbook</th>
+                <th style={cell}>last run</th>
+                <th style={cell}></th>
+                <th style={{ ...cell, textAlign: 'right' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {instances.map(inst => {
+                const sb = findSb(inst.name);
+                const pend = findPending(inst.name);
+                const running = sb && sb.taskState === 'Running';
+                const rb = runbookFor(inst);
+                const receipt = inst.latestReceipt;
+                const scenario = (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '');
+                return (
+                  <tr key={inst.name} style={{ borderTop: '1px solid var(--border-color)' }}>
+                    <td style={cell}>
+                      <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                        style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+                        title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+                    </td>
+                    <td style={cell}>
+                      {sb ? (
+                        <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                          title={`${sb.name} — tasks & logs`}>
+                          <EngineIcon engine={sb.engine} />
+                          {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                          {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                        </span>
+                      ) : (pend ? <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                    </td>
+                    <td style={cell}>
+                      {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The recipe this deployment came from">{rb.scenario} ↗</a>
+                        : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
+                    </td>
+                    <td style={cell}>{verdictBadge(receipt)}</td>
+                    <td style={cell}>
+                      {receipt && (
+                        <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
+                          title="Latest receipt — verdict, verify evidence, what is left running">receipt ↗</a>
+                      )}
+                    </td>
+                    <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-sm" disabled={running || !!pend}
+                        title="Deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
+                        onClick={() => kickoff('run', scenario, inst.name)}>▶ Re-deploy</button>
+                      <button className="btn btn-sm" disabled={running || !!pend} style={{ marginLeft: '6px' }}
+                        title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
+                        onClick={() => kickoff('teardown', scenario, inst.name)}>Tear down</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* One composer: pick the recipe, name the deployment, steer it. */}
+      {runbooks.length > 0 ? (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          background: 'var(--bg-secondary)', padding: '10px 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>new:</span>
+            <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
+              {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
+            </select>
+            <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
+              placeholder={`instance name (default: ${defaultName})`}
+              style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
+                border: '1px solid var(--border-color)', background: 'transparent',
+                color: 'var(--text-primary)', font: 'inherit' }} />
+            {composerPend && <Chip text={`run queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
+            <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
+              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
+              style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`run:${activeRunbook}:`)}
+              title="Deploy a new instance of the selected runbook — prepare pushes the scripts to the branch, then execution runs them"
+              onClick={() => kickoff('run', activeRunbook, composerInst)}>▶ Run</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No runbooks yet — Draft standard set above writes them, or create a custom one from a description.
         </div>
       )}
     </div>
