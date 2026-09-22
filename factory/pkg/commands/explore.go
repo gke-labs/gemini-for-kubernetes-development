@@ -194,6 +194,15 @@ func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario, guid
 		"GITHUB_USER_NAME":           githubLogin,
 		"EXPLORE_KIND":               kind,
 	}
+	// BYO GCP project: Workload Identity supplies credentials via the
+	// pod's KSA; the secret only carries where to deploy.
+	if p := string(secret.Data[constants.KeyGcpProject]); p != "" {
+		envMap["GOOGLE_CLOUD_PROJECT"] = p
+		envMap["CLOUDSDK_CORE_PROJECT"] = p
+	}
+	if r := string(secret.Data[constants.KeyGcpRegion]); r != "" {
+		envMap["CLOUDSDK_COMPUTE_REGION"] = r
+	}
 	if err := applyEngineEnv(envMap, secret); err != nil {
 		return err
 	}
