@@ -174,6 +174,17 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		out["sandboxes"] = sandboxes
 	}
 
+	// A standing explore-runbook claim means a draft is being written
+	// (the Explore pipeline generates runbooks); the Try tab shows it
+	// so a custom runbook's birth is visible where it was requested.
+	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
+		requests := map[string]string{}
+		_ = json.Unmarshal([]byte(raw), &requests)
+		if _, ok := requests["explore-runbook"]; ok {
+			out["draftPending"] = board.GetAnnotations()["board.gemini.google.com/explore-scenario"]
+		}
+	}
+
 	// Standing runbook claims are the queued/running states; ones already
 	// served (a completion newer than the click) are the trim's business.
 	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
