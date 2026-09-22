@@ -16,6 +16,7 @@ type RunbookParams struct {
 	HTMLURL  string
 	Scenario string // runbook scenario: deploy, upgrade, …
 	Path     string // target path within the runbook (gke, local, …); may be empty
+	Instance string // deployment instance name (one runbook, many parameterized deployments)
 	Guidance string // owner's free-text constraints for this run
 }
 
@@ -23,11 +24,12 @@ type RunbookParams struct {
 // scenario, reusing a fresh script when nothing drifted) or teardown.
 func RenderRunbookPrompt(mode string, params RunbookParams) ([]byte, error) {
 	name := map[string]string{
-		"run":      "runbook_run.txt",
+		"prepare":  "runbook_prepare.txt",
+		"execute":  "runbook_execute.txt",
 		"teardown": "runbook_teardown.txt",
 	}[mode]
 	if name == "" {
-		return nil, fmt.Errorf("unknown runbook mode %q (run|teardown)", mode)
+		return nil, fmt.Errorf("unknown runbook mode %q (prepare|execute|teardown)", mode)
 	}
 	t, err := getPromptTemplate(name)
 	if err != nil {

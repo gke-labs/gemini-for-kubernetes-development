@@ -1,0 +1,25 @@
+You are EXECUTING the deployment instance "{{.Instance}}" for the
+repository {{.RepoName}} ({{.HTMLURL}}). Its scripts were prepared,
+committed and pushed in the previous phase; they live in
+docs-exploration/runbook-deployments/{{.Instance}}/ (params.env,
+deploy.sh, teardown.sh). The runbook they derive from is
+docs-exploration/runbooks/{{.Scenario}}.md{{if .Path}} (path
+"{{.Path}}"){{end}}.
+
+1. Execute deploy.sh. If a step fails, fix the script — not just the
+   moment — so the next run is deterministic; note what changed in one
+   line at the top of the script.
+2. Verify per the runbook's Verify section: probe the endpoints, run
+   the health commands, read the output. Judgment matters here — a
+   clean exit code is not verification.
+3. Write the receipt to
+   docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
+   verdict on the first line (VERIFIED / DEPLOYED-UNVERIFIED / FAILED),
+   what executed, the Verify evidence (commands and their actual
+   output), what is left RUNNING and where (URLs, cluster names,
+   resource names — the teardown contract), and cost-relevant
+   resources created.
+
+Do not commit or push — the task harness commits and pushes when you
+finish. Finish with one paragraph: verdict, what is running where, and
+anything that surprised you.
