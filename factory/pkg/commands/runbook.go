@@ -173,7 +173,11 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance str
 	}
 
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
+	// Stamp Running at dispatch so the board reads the truth mid-run;
+	// the prober corrects a stale Running if this invocation dies.
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "runbook", "Running")
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "runbook", "Failed")
 		return fmt.Errorf("running runbook task: %w", err)
 	}
 	if rootFlags.Detached {
