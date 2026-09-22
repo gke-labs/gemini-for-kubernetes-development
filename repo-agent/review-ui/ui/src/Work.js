@@ -1032,7 +1032,7 @@ function ExploreDocViewer({ boardName, docs }) {
 // through the exploration doc endpoint.
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
-  const [guidance, setGuidance] = useState('');
+  const [guidances, setGuidances] = useState({}); // per-runbook run guidance
   const [names, setNames] = useState({}); // per-runbook instance-name inputs
   const [busy, setBusy] = useState('');
   const [newRunbook, setNewRunbook] = useState({ name: '', charter: '' });
@@ -1054,10 +1054,10 @@ function TryPanel({ boardName, onOpenSandbox }) {
     setBusy(`${mode}:${scenario}:${instance || ''}`);
     fetch(`/api/board/${boardName}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, scenario, instance: instance || '', guidance: guidance.trim() }),
+      body: JSON.stringify({ mode, scenario, instance: instance || '', guidance: (guidances[scenario] || '').trim() }),
     }).then(res => {
       if (res.ok) {
-        setGuidance('');
+        setGuidances(prev => ({ ...prev, [scenario]: '' }));
         setNames(prev => ({ ...prev, [scenario]: '' }));
         setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, instance: instance || '' }] } : prev);
       }
@@ -1230,18 +1230,16 @@ function TryPanel({ boardName, onOpenSandbox }) {
                 onClick={() => kickoff('run', rb.scenario, newInst)}>▶ Run</button>
               {newPend && <Chip text={`run queued as ${newInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
             </div>
+            <textarea rows={1} value={guidances[rb.scenario] || ''}
+              onChange={e => setGuidances(prev => ({ ...prev, [rb.scenario]: e.target.value }))}
+              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this card's next ▶ Run or ▶ Re-deploy)"
+              style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit',
+                boxSizing: 'border-box', borderTop: '1px dashed var(--border-color)', paddingTop: '6px' }} />
           </div>
         );
       })}
-      {runbooks.length > 0 && (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '8px 12px' }}>
-          <textarea rows={2} value={guidance} onChange={e => setGuidance(e.target.value)}
-            placeholder="Guidance for the next run — region overrides, flags, 'skip step 4'… (rides the next ▶ Run or ▶ Re-deploy)"
-            style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
-              background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-        </div>
-      )}
+
     </div>
   );
 }
