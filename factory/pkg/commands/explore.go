@@ -80,7 +80,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 	}
 	runbook := &cobra.Command{
 		Use:   "runbook",
-		Short: "Write an executable runbook for a scenario (deploy, upgrade, …) into runbooks/",
+		Short: "Write executable runbooks into runbooks/ (--scenario deploy|upgrade|…, or all)",
 		RunE:  run("runbook"),
 	}
 
@@ -90,7 +90,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 	}
 	activity.Flags().StringVar(&since, "since", "2 weeks", "Window to digest (e.g. \"2 weeks\", \"1 month\")")
 	topicCmd.Flags().StringVar(&topic, "topic", "", "The question or comparison to investigate")
-	runbook.Flags().StringVar(&scenario, "scenario", "", "The scenario to write (e.g. deploy, upgrade)")
+	runbook.Flags().StringVar(&scenario, "scenario", "all", "The scenario to write (deploy, upgrade, …) or \"all\" for the standard set")
 	runbook.Flags().StringVar(&guidance, "guidance", "", "Owner guidance: targets and constraints (e.g. \"deploy to GKE, project my-proj\")")
 
 	return cmd

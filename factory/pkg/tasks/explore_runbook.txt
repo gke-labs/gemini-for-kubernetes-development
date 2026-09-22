@@ -1,44 +1,50 @@
-You are writing an executable runbook for the repository {{.RepoName}}
-({{.HTMLURL}}). The exploration contract is defined in
-docs-exploration/SKILL.md in this checkout — follow its runbook rules.
+You are writing executable runbooks for the repository {{.RepoName}}
+({{.HTMLURL}}). The exploration contract — including the runbook
+sections and the tier definitions — is docs-exploration/SKILL.md in
+this checkout. Follow it.
 
-Scenario: {{.Scenario}}
-{{if .Guidance}}
-The owner's guidance for this runbook: {{.Guidance}}
-
-Treat the guidance as pinned decisions — the targets, accounts, or
-constraints it names are what the runbook is for. Write the paths for
-the targets the owner named; put concrete values it mentions (project
-ids, cluster names, regions) into Preconditions as variables the
-reader sets. Where the guidance leaves a choice open, make the call
-and record the assumption under the Tier line.
+{{if eq .Scenario "all"}}Scenarios: the standard set — deploy, upgrade. Write or update
+docs-exploration/runbooks/<scenario>.md for each scenario that
+genuinely applies to this repository. Where one does not (a library
+with no deploy story, a tool with no upgrade path), skip it and record
+why in docs-exploration/questions.md instead of padding a file.
+{{else}}Scenario: {{.Scenario}} — write or update
+docs-exploration/runbooks/{{.Scenario}}.md.
 {{end}}
-1. Derive the scenario's real path from the repository's own tooling:
+{{if .Guidance}}The owner's guidance: {{.Guidance}}
+
+Treat the guidance as pinned decisions and apply it to the runbook(s)
+it concerns — guidance naming a deployment target belongs in the
+deploy runbook, not all of them. Write the paths for the targets the
+owner named; lift concrete values (project ids, cluster names,
+regions) into Preconditions as variables the reader sets. Where the
+guidance leaves a choice open, make the call and record the assumption
+under the Tier line.
+{{end}}
+1. Derive each scenario's real path from the repository's own tooling:
    the Makefile, scripts/, CI workflows (.github/workflows is the
    ground truth for what actually builds and tests), helm charts,
    kustomize bases, container files. Do not invent commands — every
    step must trace to something the repo ships.
-2. Make the tier call (the skill defines tiers 0/1/2) before writing
+2. Make the tier call per the skill's tier definitions before writing
    steps, and open What this needs with the Tier line and its one-line
    justification. Pay attention to node-level reality: CSI drivers,
    device plugins, privileged DaemonSets, kubelet sockets and host
    mounts cannot land in a vcluster — that is tier 2, and you should
-   say exactly which component forces it. If the existing runbook's
+   say exactly which component forces it. If an existing runbook's
    Tier line is marked (pinned), it is the owner's decision: keep it,
    adapt every step to it, and note any disagreement in one line under
    it. Also state what credentials or permissions each step assumes.
-3. Write docs-exploration/runbooks/{{.Scenario}}.md with the skill's
-   fixed sections — and if it already exists, update it against the
-   current code instead of rewriting from scratch; note steps that
-   changed since the last revision in one line at the top. The
-   sections: What this needs, Preconditions, Steps, Verify,
-   Teardown. Where the repo offers a choice (e.g. kind vs. an existing
-   cluster), pick the least-privileged path and note the alternative
-   in one line.
+3. Use the skill's fixed sections — What this needs, Preconditions,
+   Steps, Verify, Teardown — with one path per viable target, named by
+   the target with its tier as a badge. If a runbook already exists,
+   update it against the current code instead of rewriting from
+   scratch; note steps that changed since the last revision in one
+   line at the top.
 4. Update docs-exploration/README.md, and add anything the code left
    ambiguous to docs-exploration/questions.md.
 
 Write the files directly into the checkout. Do not commit or push — the
 task harness commits and pushes your changes when you finish. Finish
-with a short summary of what the scenario needs and where the runbook
-cuts corners.
+with a short summary of what each scenario needs and where the
+runbooks cut corners.
