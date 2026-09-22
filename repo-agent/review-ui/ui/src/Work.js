@@ -1340,16 +1340,23 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       </div>
       {/* Runbook authoring: custom recipes and updates — exploration
           work (explore sandbox, notes branch); running them is the
-          Runs tab's business. */}
-      <div style={{ border: '1px dashed var(--border-color)', borderRadius: '10px',
-        padding: '10px 12px', marginTop: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text-secondary)' }}>custom / update runbook:</span>
-          <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
-            placeholder="name (new: deploy-kops-gce · existing name = update it)"
-            style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
-              border: '1px solid var(--border-color)', background: 'transparent',
-              color: 'var(--text-primary)', font: 'inherit' }} />
+          Runs tab's business. Same grammar as the ask box: the text
+          is the surface, the verb sits bottom-right. */}
+      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px', marginTop: '10px' }}>
+        <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
+          placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
+          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
+            color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
+            borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '6px' }} />
+        <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
+          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
+          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+          {exp && exp.pending === 'runbook' && (
+            <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
+          )}
           <button className="btn btn-sm"
             disabled={!runbookName.trim() || busy === 'runbook' || (exp && exp.pending === 'runbook')}
             title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
@@ -1360,14 +1367,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
               setRunbookName('');
               setRunbookCharter('');
             }}>Draft / Update Runbook</button>
-          {exp && exp.pending === 'runbook' && (
-            <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
-          )}
         </div>
-        <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
-          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
-          style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
       </div>
       {/* Artifacts: git is the record — rendered apart from the controls. */}
       <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
