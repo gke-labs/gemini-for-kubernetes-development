@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -27,10 +26,9 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Mode     string `json:"mode"` // run (default) | teardown
-		Scenario string `json:"scenario"`
-		Path     string `json:"path"`
-		Instance string `json:"instance"` // default <scenario>[-<path>]
+		Mode     string `json:"mode"`     // run (default) | teardown
+		Scenario string `json:"scenario"` // the runbook name: deploy-gcp, …
+		Instance string `json:"instance"` // default: the runbook name
 		Guidance string `json:"guidance"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Scenario) == "" {
@@ -57,11 +55,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
 	key := "runbook-" + req.Mode + "-" + strings.TrimSpace(req.Scenario)
-	p, inst := strings.TrimSpace(req.Path), strings.TrimSpace(req.Instance)
-	if p != "" || inst != "" {
-		key += ":" + p
-	}
-	if inst != "" {
+	if inst := strings.TrimSpace(req.Instance); inst != "" {
 		key += ":" + inst
 	}
 	requests[key] = namespace + "|" + nowRFC3339()
@@ -74,10 +68,6 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "requested", "key": key})
 }
-
-// Path headings name real targets; a legacy "(tier N)" suffix is
-// tolerated and stripped.
-var runbookPathHeading = regexp.MustCompile(`(?m)^###\s+Path\s+—\s+(.+?)\s*(?:\(tier\s+\d\))?\s*$`)
 
 // getBoardRunbooks reads the Try tab's world: the runbooks on the fork
 // branch (tier line and target paths parsed from each, degrading to a
@@ -113,17 +103,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 					continue
 				}
 				scenario := strings.TrimSuffix(entry.GetName(), ".md")
-				rb := gin.H{"scenario": scenario, "htmlURL": entry.GetHTMLURL(), "path": entry.GetPath(), "paths": []gin.H{}}
-				if file, _, _, ferr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref); ferr == nil && file != nil {
-					if content, cerr := file.GetContent(); cerr == nil {
-						paths := []gin.H{}
-						for _, m := range runbookPathHeading.FindAllStringSubmatch(content, -1) {
-							paths = append(paths, gin.H{"target": strings.TrimSpace(m[1])})
-						}
-						rb["paths"] = paths
-					}
-				}
-				runbooks = append(runbooks, rb)
+				runbooks = append(runbooks, gin.H{"scenario": scenario, "htmlURL": entry.GetHTMLURL(), "path": entry.GetPath()})
 			}
 		}
 		out["runbooks"] = runbooks
@@ -155,6 +135,15 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 					}
 					inst["files"] = files
 					if newestReceipt != nil {
+						// Verdict is the receipt's first line — the one
+						// glance that turns the tab into a status board.
+						if rf, _, _, rerr := gh.Repositories.GetContents(ctx, member, repo, newestReceipt["path"].(string), ref); rerr == nil && rf != nil {
+							if content, cerr := rf.GetContent(); cerr == nil {
+								if line, _, _ := strings.Cut(strings.TrimSpace(content), "\n"); line != "" {
+									newestReceipt["verdict"] = strings.TrimSpace(line)
+								}
+							}
+						}
 						inst["latestReceipt"] = newestReceipt
 					}
 				}
@@ -177,7 +166,6 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			sandboxes = append(sandboxes, gin.H{
 				"name":      sb.GetName(),
 				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
-				"path":      annotations["sandbox.gemini.google.com/runbook-path"],
 				"instance":  annotations["sandbox.gemini.google.com/runbook-instance"],
 				"taskState": annotations[annoTaskState],
 				"engine":    annotations["board.gemini.google.com/engine"],
@@ -206,15 +194,8 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if !modeOK {
 				continue
 			}
-			segs := strings.SplitN(spec, ":", 3)
-			p := gin.H{"mode": mode, "scenario": segs[0], "path": "", "instance": ""}
-			if len(segs) > 1 {
-				p["path"] = segs[1]
-			}
-			if len(segs) > 2 {
-				p["instance"] = segs[2]
-			}
-			pending = append(pending, p)
+			scenario, inst, _ := strings.Cut(spec, ":")
+			pending = append(pending, gin.H{"mode": mode, "scenario": scenario, "instance": inst})
 		}
 		out["pending"] = pending
 	}
