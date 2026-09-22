@@ -4,6 +4,8 @@ function Settings({ onBack }) {
     const [githubPat, setGithubPat] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
     const [anthropicKey, setAnthropicKey] = useState('');
+    const [gcpProject, setGcpProject] = useState('');
+    const [gcpRegion, setGcpRegion] = useState('');
     const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false, anthropic_api_key_set: false });
     const [isLoading, setIsLoading] = useState(true);
     const [message, setMessage] = useState({ text: '', type: '' }); // type: 'success' or 'error'
@@ -16,6 +18,8 @@ function Settings({ onBack }) {
             .then(res => res.json())
             .then(data => {
                 setStatus(data);
+                setGcpProject(data.gcp_project || '');
+                setGcpRegion(data.gcp_region || '');
                 setIsLoading(false);
             })
             .catch(err => {
@@ -52,6 +56,8 @@ function Settings({ onBack }) {
             }
             payload.anthropic_api_key = trimmedAnthropicKey;
         }
+        if (gcpProject.trim() !== (status.gcp_project || '')) payload.gcp_project = gcpProject.trim();
+        if (gcpRegion.trim() !== (status.gcp_region || '')) payload.gcp_region = gcpRegion.trim();
 
         if (Object.keys(payload).length === 0) {
              setMessage({ text: 'Nothing to update.', type: 'info' });
@@ -251,6 +257,47 @@ function Settings({ onBack }) {
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for Claude-powered features. 
                     </p>
+                </div>
+
+                <div className="form-group">
+                    <label htmlFor="gcpProject">GCP Deployment (bring your own project):</label>
+                    <div className="input-status-wrapper">
+                        <input
+                            type="text"
+                            id="gcpProject"
+                            value={gcpProject}
+                            onChange={(e) => setGcpProject(e.target.value)}
+                            placeholder="Project ID (e.g. my-project)"
+                        />
+                        <input
+                            type="text"
+                            id="gcpRegion"
+                            value={gcpRegion}
+                            onChange={(e) => setGcpRegion(e.target.value)}
+                            placeholder="Region (e.g. us-central1)"
+                            style={{ marginLeft: '10px' }}
+                        />
+                        <span className={`status-badge ${status.gcp_project ? 'set' : 'missing'}`}>
+                            {status.gcp_project ? '✅ Configured' : '⚠️ Not Set'}
+                        </span>
+                    </div>
+                    <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
+                        Where runbook deployments land. No credentials are stored — sandbox agents authenticate
+                        via Workload Identity, and you grant the principal below access in <em>your</em> project.{' '}
+                        <a href="https://github.com/gke-labs/gemini-for-kubernetes-development/blob/main/repo-agent/docs/design/gcp-workload-identity.md"
+                            target="_blank" rel="noopener noreferrer">How this works ↗</a>
+                    </p>
+                    {status.gcp_wi_principal && (
+                        <div style={{ marginTop: '8px' }}>
+                            <p style={{ fontSize: '0.9rem', margin: '0 0 4px' }}>
+                                Grant access by running this in your project (revoke any time by removing the binding):
+                            </p>
+                            <pre style={{ fontSize: '0.8rem', background: 'var(--bg-secondary)', padding: '8px',
+                                borderRadius: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', userSelect: 'all' }}>
+                                {status.gcp_grant_command}
+                            </pre>
+                        </div>
+                    )}
                 </div>
 
                 <div className="form-actions">

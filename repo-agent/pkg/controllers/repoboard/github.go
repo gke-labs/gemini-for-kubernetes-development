@@ -41,6 +41,7 @@ const (
 	githubSecretName    = "github-pat"
 	geminiSecretName    = "gemini-vscode-tokens"
 	anthropicSecretName = "anthropic-api-key"
+	gcpSecretName       = "gcp-config"
 
 	factoryUserSecretName     = "factory-user"
 	factoryKeyGithubToken     = "GITHUB_TOKEN"
@@ -48,6 +49,8 @@ const (
 	factoryKeyGithubEmail     = "GITHUB_EMAIL"
 	factoryKeyGeminiAPIKey    = "GEMINI_API_KEY"
 	factoryKeyAnthropicAPIKey = "ANTHROPIC_API_KEY"
+	factoryKeyGcpProject      = "GCP_PROJECT"
+	factoryKeyGcpRegion       = "GCP_REGION"
 )
 
 func parseRepoURL(repoURL string) (string, string, error) {
@@ -172,6 +175,18 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 				data[factoryKeyAnthropicAPIKey] = v
 				break
 			}
+		}
+	}
+
+	// BYO GCP project: not credentials — Workload Identity carries
+	// those — just where deploys land.
+	gcpSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: gcpSecretName, Namespace: namespace}, gcpSecret); err == nil {
+		if v, ok := gcpSecret.Data["project"]; ok && len(v) > 0 {
+			data[factoryKeyGcpProject] = v
+		}
+		if v, ok := gcpSecret.Data["region"]; ok && len(v) > 0 {
+			data[factoryKeyGcpRegion] = v
 		}
 	}
 
