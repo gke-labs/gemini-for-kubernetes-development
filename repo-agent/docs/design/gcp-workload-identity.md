@@ -93,3 +93,40 @@ short-lived token expires.
   interference, ambiguous cleanup. Not offered.
 - **`gcloud auth login` in the web terminal** — technically possible,
   but parks a human's broad credentials on a PVC that agents use. Don't.
+
+## Importing secrets from GCP Secret Manager
+
+The GitHub PAT and engine API keys can be **referenced** instead of
+pasted: enter a Secret Manager resource name
+(`projects/YOUR_PROJECT/secrets/NAME/versions/latest`) in Settings
+under the corresponding field. The pasted mechanism is unchanged and
+still works; a reference wins when both are set.
+
+**How it works.** The board controller — the only component that ever
+talks to Secret Manager — resolves references with its own Workload
+Identity and materializes the values exactly where pasted values land
+today (the `factory-user` working secret). Nothing else changes
+downstream.
+
+**Setup.** Grant the controller's sync principal (shown in Settings)
+access to each secret you reference:
+
+```sh
+gcloud secrets add-iam-policy-binding SECRET_NAME --project YOUR_PROJECT \
+  --member "principal://…/ns/repo-agent-system/sa/repowatch-controller" \
+  --role roles/secretmanager.secretAccessor
+```
+
+**What this buys.**
+
+- **No pasting**: the raw secret never transits your browser or
+  clipboard, and only a resource name is stored here.
+- **Rotation is a new version**: point at `versions/latest`, add a
+  version in your project, the sync picks it up within ~10 minutes.
+- **Revocation is one IAM binding**, on your side, audited in your
+  project's logs.
+
+**Boundaries.** The controller caches resolved values for ~10 minutes.
+The working copies still materialize as Kubernetes Secrets in your
+namespace (that is what tasks consume); reference mode removes the
+paste-and-forget copy as the *source of truth*, not the working set.

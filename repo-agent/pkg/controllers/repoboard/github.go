@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Wire contract with the factory CLI (identity secret keys) and the
@@ -100,6 +101,16 @@ func (r *Reconciler) executorToken(ctx context.Context, namespace string) (strin
 	}
 	token := githubTokenFromSecret(secret)
 	if token == "" {
+		// No pasted token — a Secret Manager reference is the
+		// alternative: the member granted the controller's principal
+		// secretAccessor on their secret.
+		if ref := string(secret.Data[RefKeyPAT]); ref != "" {
+			resolved, rerr := resolveSecretRef(ctx, ref)
+			if rerr != nil {
+				return "", fmt.Errorf("resolving %s from Secret Manager: %w", RefKeyPAT, rerr)
+			}
+			return resolved, nil
+		}
 		return "", fmt.Errorf("no github token in secret %s/%s", namespace, githubSecretName)
 	}
 	return token, nil
@@ -159,10 +170,22 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 	}
 	geminiSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: geminiSecretName, Namespace: namespace}, geminiSecret); err == nil {
-		for _, key := range []string{"gemini", factoryKeyGeminiAPIKey} {
-			if v, ok := geminiSecret.Data[key]; ok && len(v) > 0 {
-				data[factoryKeyGeminiAPIKey] = v
-				break
+		// A Secret Manager reference wins over a pasted value: the key
+		// then lives in GSM (rotate by adding a version), and the
+		// cluster copy here is just the materialized working set.
+		if ref := string(geminiSecret.Data[RefKeyGemini]); ref != "" {
+			if v, rerr := resolveSecretRef(ctx, ref); rerr == nil {
+				data[factoryKeyGeminiAPIKey] = []byte(v)
+			} else {
+				log.FromContext(ctx).Error(rerr, "unable to resolve gemini key from Secret Manager", "namespace", namespace)
+			}
+		}
+		if _, done := data[factoryKeyGeminiAPIKey]; !done {
+			for _, key := range []string{"gemini", factoryKeyGeminiAPIKey} {
+				if v, ok := geminiSecret.Data[key]; ok && len(v) > 0 {
+					data[factoryKeyGeminiAPIKey] = v
+					break
+				}
 			}
 		}
 	}
@@ -170,10 +193,19 @@ func (r *Reconciler) ensureFactoryUserSecret(ctx context.Context, namespace, log
 	// factory fails fast with a clear error if a claude board lacks it.
 	anthropicSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: anthropicSecretName, Namespace: namespace}, anthropicSecret); err == nil {
-		for _, key := range []string{"anthropic", "claude", factoryKeyAnthropicAPIKey} {
-			if v, ok := anthropicSecret.Data[key]; ok && len(v) > 0 {
-				data[factoryKeyAnthropicAPIKey] = v
-				break
+		if ref := string(anthropicSecret.Data[RefKeyAnthropic]); ref != "" {
+			if v, rerr := resolveSecretRef(ctx, ref); rerr == nil {
+				data[factoryKeyAnthropicAPIKey] = []byte(v)
+			} else {
+				log.FromContext(ctx).Error(rerr, "unable to resolve anthropic key from Secret Manager", "namespace", namespace)
+			}
+		}
+		if _, done := data[factoryKeyAnthropicAPIKey]; !done {
+			for _, key := range []string{"anthropic", "claude", factoryKeyAnthropicAPIKey} {
+				if v, ok := anthropicSecret.Data[key]; ok && len(v) > 0 {
+					data[factoryKeyAnthropicAPIKey] = v
+					break
+				}
 			}
 		}
 	}

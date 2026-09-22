@@ -129,6 +129,14 @@ func (s *Server) memberToken(ctx context.Context, namespace string) (string, err
 			return string(v), nil
 		}
 	}
+	// Secret Manager reference mode: the controller (the only component
+	// with GSM access) resolves the reference and materializes the token
+	// into factory-user — read it from there.
+	if fu, ferr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); ferr == nil {
+		if v, ok := fu.Data["GITHUB_TOKEN"]; ok && len(v) > 0 {
+			return string(v), nil
+		}
+	}
 	return "", fmt.Errorf("no github token in secret %s/github-pat", namespace)
 }
 

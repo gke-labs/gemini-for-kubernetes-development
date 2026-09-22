@@ -43,9 +43,10 @@ func metadataValue(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// workloadIdentityPrincipal is the direct-WI principal for the member's
-// deployer KSA — the identity they grant roles to in their own project.
-func workloadIdentityPrincipal(namespace string) string {
+// workloadIdentityPrincipalFor is the direct-WI principal of any KSA in
+// this cluster — the identity a member grants roles to in their own
+// project (deployer for deploys, the controller for secret sync).
+func workloadIdentityPrincipalFor(namespace, ksa string) string {
 	clusterWI.once.Do(func() {
 		clusterWI.projectID = metadataValue("project/project-id")
 		clusterWI.projectNo = metadataValue("project/numeric-project-id")
@@ -53,8 +54,12 @@ func workloadIdentityPrincipal(namespace string) string {
 	if clusterWI.projectID == "" || clusterWI.projectNo == "" {
 		return ""
 	}
-	return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/factory-deployer",
-		clusterWI.projectNo, clusterWI.projectID, namespace)
+	return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/%s",
+		clusterWI.projectNo, clusterWI.projectID, namespace, ksa)
+}
+
+func workloadIdentityPrincipal(namespace string) string {
+	return workloadIdentityPrincipalFor(namespace, "factory-deployer")
 }
 
 func (s *Server) getSettings(c *gin.Context) {
@@ -102,6 +107,24 @@ func (s *Server) getSettings(c *gin.Context) {
 		settings["gcp_project"] = string(sec.Data["project"])
 		settings["gcp_region"] = string(sec.Data["region"])
 	}
+	// Secret Manager reference mode: references are echoed (they are
+	// resource names, not secrets) alongside the controller principal
+	// the member grants secretAccessor to.
+	refFor := func(secretName, key string) string {
+		if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), secretName, v1.GetOptions{}); err == nil {
+			return string(sec.Data[key])
+		}
+		return ""
+	}
+	settings["github_pat_ref"] = refFor(k8s.GithubSecretName, "pat-ref")
+	settings["gemini_api_key_ref"] = refFor(k8s.GeminiSecretName, "gemini-ref")
+	settings["anthropic_api_key_ref"] = refFor(k8s.ClaudeSecretName, "claude-ref")
+	if syncPrincipal := workloadIdentityPrincipalFor("repo-agent-system", "repowatch-controller"); syncPrincipal != "" {
+		settings["gsm_sync_principal"] = syncPrincipal
+		settings["gsm_grant_example"] = fmt.Sprintf(
+			"gcloud secrets add-iam-policy-binding SECRET_NAME --project YOUR_PROJECT \\\n  --member %q \\\n  --role roles/secretmanager.secretAccessor",
+			syncPrincipal)
+	}
 	if principal := workloadIdentityPrincipal(namespace); principal != "" {
 		settings["gcp_wi_principal"] = principal
 		project := "YOUR_PROJECT_ID"
@@ -123,6 +146,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 		AnthropicAPIKey *string `json:"anthropic_api_key"` // Use pointer to distinguish between empty string and missing field
 		GcpProject      *string `json:"gcp_project"`
 		GcpRegion       *string `json:"gcp_region"`
+		GithubPATRef    *string `json:"github_pat_ref"`
+		GeminiKeyRef    *string `json:"gemini_api_key_ref"`
+		AnthropicKeyRef *string `json:"anthropic_api_key_ref"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -188,6 +214,28 @@ func (s *Server) updateSettings(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Anthropic API Key"})
 			return
 		}
+	}
+
+	setRef := func(secretName, key string, val *string) bool {
+		if val == nil {
+			return true
+		}
+		v := strings.TrimSpace(*val)
+		data := map[string][]byte{key: []byte(v)}
+		if v == "" {
+			data[key] = nil
+		}
+		if err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, secretName, data, nil); err != nil {
+			klog.Errorf("Failed to update %s/%s reference: %v", secretName, key, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update secret reference"})
+			return false
+		}
+		return true
+	}
+	if !setRef(k8s.GithubSecretName, "pat-ref", payload.GithubPATRef) ||
+		!setRef(k8s.GeminiSecretName, "gemini-ref", payload.GeminiKeyRef) ||
+		!setRef(k8s.ClaudeSecretName, "claude-ref", payload.AnthropicKeyRef) {
+		return
 	}
 
 	if payload.GcpProject != nil || payload.GcpRegion != nil {

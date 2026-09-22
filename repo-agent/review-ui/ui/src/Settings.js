@@ -5,6 +5,9 @@ function Settings({ onBack }) {
     const [geminiKey, setGeminiKey] = useState('');
     const [anthropicKey, setAnthropicKey] = useState('');
     const [gcpProject, setGcpProject] = useState('');
+    const [patRef, setPatRef] = useState('');
+    const [geminiRef, setGeminiRef] = useState('');
+    const [anthropicRef, setAnthropicRef] = useState('');
     const [gcpRegion, setGcpRegion] = useState('');
     const [status, setStatus] = useState({ github_pat_set: false, gemini_api_key_set: false, anthropic_api_key_set: false });
     const [isLoading, setIsLoading] = useState(true);
@@ -20,6 +23,9 @@ function Settings({ onBack }) {
                 setStatus(data);
                 setGcpProject(data.gcp_project || '');
                 setGcpRegion(data.gcp_region || '');
+                setPatRef(data.github_pat_ref || '');
+                setGeminiRef(data.gemini_api_key_ref || '');
+                setAnthropicRef(data.anthropic_api_key_ref || '');
                 setIsLoading(false);
             })
             .catch(err => {
@@ -58,6 +64,9 @@ function Settings({ onBack }) {
         }
         if (gcpProject.trim() !== (status.gcp_project || '')) payload.gcp_project = gcpProject.trim();
         if (gcpRegion.trim() !== (status.gcp_region || '')) payload.gcp_region = gcpRegion.trim();
+        if (patRef.trim() !== (status.github_pat_ref || '')) payload.github_pat_ref = patRef.trim();
+        if (geminiRef.trim() !== (status.gemini_api_key_ref || '')) payload.gemini_api_key_ref = geminiRef.trim();
+        if (anthropicRef.trim() !== (status.anthropic_api_key_ref || '')) payload.anthropic_api_key_ref = anthropicRef.trim();
 
         if (Object.keys(payload).length === 0) {
              setMessage({ text: 'Nothing to update.', type: 'info' });
@@ -207,6 +216,14 @@ function Settings({ onBack }) {
                             <button type="button" className="btn btn-delete btn-sm" onClick={handleClearPat} style={{marginLeft: '10px'}}>Clear Manual PAT</button>
                         )}
                     </div>
+                    <input
+                        type="text"
+                        id="patRef"
+                        value={patRef}
+                        onChange={(e) => setPatRef(e.target.value)}
+                        placeholder="or import from GCP Secret Manager: projects/…/secrets/…/versions/latest"
+                        style={{ marginTop: '4px', width: '100%', fontSize: '0.85rem' }}
+                    />
                     <small>
                         Manual PAT takes precedence over OAuth login. 
                         You can generate a <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">GitHub Classic PAT</a> with 'repo' (read/write) permissions.
@@ -233,6 +250,16 @@ function Settings({ onBack }) {
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for AI-powered reviews and triage. 
+                    </p>
+                    <input
+                        type="text"
+                        id="geminiRef"
+                        value={geminiRef}
+                        onChange={(e) => setGeminiRef(e.target.value)}
+                        placeholder="or import from GCP Secret Manager: projects/…/secrets/…/versions/latest"
+                        style={{ marginTop: '4px', width: '100%', fontSize: '0.85rem' }}
+                    />
+                    <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Check your <a href="https://ai.dev/rate-limit" target="_blank" rel="noopener noreferrer">token usage</a>.
                     </p>
                 </div>
@@ -254,10 +281,35 @@ function Settings({ onBack }) {
                             <button type="button" className="btn btn-delete btn-sm" onClick={handleClearAnthropicKey} style={{marginLeft: '10px'}}>Clear</button>
                         )}
                     </div>
+                    <input
+                        type="text"
+                        id="anthropicRef"
+                        value={anthropicRef}
+                        onChange={(e) => setAnthropicRef(e.target.value)}
+                        placeholder="or import from GCP Secret Manager: projects/…/secrets/…/versions/latest"
+                        style={{ marginTop: '4px', width: '100%', fontSize: '0.85rem' }}
+                    />
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
                         Required for Claude-powered features. 
                     </p>
                 </div>
+
+                {status.gsm_sync_principal && (
+                    <div className="form-group">
+                        <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
+                            <strong>Importing from GCP Secret Manager:</strong> paste a secret <em>reference</em> above
+                            instead of a value — nothing secret is stored here, rotation is a new version in your
+                            project, revocation is removing one IAM binding. Grant our sync principal access to each
+                            secret you reference:{' '}
+                            <a href="https://github.com/gke-labs/gemini-for-kubernetes-development/blob/main/repo-agent/docs/design/gcp-workload-identity.md"
+                                target="_blank" rel="noopener noreferrer">How this works ↗</a>
+                        </p>
+                        <pre style={{ fontSize: '0.8rem', background: 'var(--bg-secondary)', padding: '8px',
+                            borderRadius: '6px', overflowX: 'auto', whiteSpace: 'pre-wrap', userSelect: 'all' }}>
+                            {status.gsm_grant_example}
+                        </pre>
+                    </div>
+                )}
 
                 <div className="form-group">
                     <label htmlFor="gcpProject">GCP Deployment (bring your own project):</label>
