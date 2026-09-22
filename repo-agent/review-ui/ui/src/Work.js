@@ -1075,6 +1075,22 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
+  // Default instance names auto-increment per runbook: deploy-gcp-run1,
+  // -run2, … — unique across runbooks (the namespace is flat) and never
+  // colliding with the recipe's own name.
+  const nextRunName = (runbook) => {
+    const taken = new Set([
+      ...instances.map(i => i.name),
+      ...pending.map(p => p.instance || p.scenario),
+      ...sandboxes.map(s => s.instance || s.scenario),
+    ]);
+    for (let n = 1; n < 100; n++) {
+      const candidate = `${runbook}-run${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${runbook}-run${Date.now() % 1000}`;
+  };
+
   // Runbooks are born on the Explore pipeline: the name is the slug,
   // the charter text is the guidance the drafter treats as pinned
   // decisions; scenario "all" drafts/refreshes the standard set.
@@ -1159,7 +1175,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
       {runbooks.map(rb => {
         const own = instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-'));
         const newName = names[rb.scenario] || '';
-        const newInst = newName.trim() ? slugName(newName) : rb.scenario;
+        const newInst = newName.trim() ? slugName(newName) : nextRunName(rb.scenario);
         const newPend = findPending(newInst);
         return (
           <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
@@ -1179,13 +1195,13 @@ function TryPanel({ boardName, onOpenSandbox }) {
               paddingTop: '8px', borderTop: own.length > 0 ? '1px dashed var(--border-color)' : 'none' }}>
               <span style={{ color: 'var(--text-secondary)' }}>new:</span>
               <input type="text" value={newName} onChange={e => setNames(prev => ({ ...prev, [rb.scenario]: e.target.value }))}
-                placeholder={`instance name (default: ${rb.scenario})`}
+                placeholder={`instance name (default: ${nextRunName(rb.scenario)})`}
                 style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
                   border: '1px solid var(--border-color)', background: 'transparent',
                   color: 'var(--text-primary)', font: 'inherit' }} />
               <button className="btn btn-sm" disabled={!!newPend || busy.startsWith(`run:${rb.scenario}:`)}
                 title="Deploy a new instance of this runbook — prepare pushes the scripts to the branch, then execution runs them"
-                onClick={() => kickoff('run', rb.scenario, newName.trim() ? slugName(newName) : '')}>▶ Run</button>
+                onClick={() => kickoff('run', rb.scenario, newInst)}>▶ Run</button>
               {newPend && <Chip text={`run queued as ${newInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
             </div>
           </div>
