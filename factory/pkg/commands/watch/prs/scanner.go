@@ -371,11 +371,18 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
+	// Fetch referenced parent issues recursively
+	refIssues := s.fetchReferencedIssuesHierarchy(ctx, pr)
+
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
-	s.syncReferencedIssueLabels(ctx, pr, prIssue)
+	s.syncReferencedIssueLabels(ctx, pr, prIssue, refIssues)
+
+	// Sync human assignees from referenced parent issues to the PR
+	s.syncReferencedIssueAssignees(ctx, pr, prIssue, refIssues)
+
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
-		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
+		klog.Infof("Skipping PR #%d after label/assignee sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return

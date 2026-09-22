@@ -13,6 +13,46 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 )
 
+// fetchReferencedIssuesHierarchy fetches referenced issues and their parent/workflow issues recursively.
+func (s *Scanner) fetchReferencedIssuesHierarchy(ctx context.Context, pr *githubv39.PullRequest) []*githubv39.Issue {
+	if s.gh == nil || pr == nil {
+		return nil
+	}
+
+	var result []*githubv39.Issue
+	visited := make(map[int]bool)
+	var queue []int
+
+	for refNum := range common.GetReferencedIssues(pr) {
+		if !visited[refNum] {
+			visited[refNum] = true
+			queue = append(queue, refNum)
+		}
+	}
+
+	maxIssues := 10
+	for len(queue) > 0 && len(result) < maxIssues {
+		issueNum := queue[0]
+		queue = queue[1:]
+
+		issue, err := s.gh.GetIssue(ctx, issueNum)
+		if err != nil {
+			klog.Warningf("Failed to fetch referenced issue #%d for PR #%d: %v", issueNum, pr.GetNumber(), err)
+			continue
+		}
+		result = append(result, issue)
+
+		for parentNum := range common.GetParentIssuesFromIssue(issue) {
+			if !visited[parentNum] {
+				visited[parentNum] = true
+				queue = append(queue, parentNum)
+			}
+		}
+	}
+
+	return result
+}
+
 // syncReferencedIssueLabels copies the labels of the issues a pull request
 // closes onto the pull request itself.
 //
@@ -21,15 +61,9 @@ import (
 // what makes 'overseer/stop' on an issue actually stop work on its pull
 // request, which is why the caller re-checks the stop label immediately after
 // calling this.
-func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue) {
-	var refIssues []*githubv39.Issue
-	for refIssueNum := range common.GetReferencedIssues(pr) {
-		refIssue, err := s.gh.GetIssue(ctx, refIssueNum)
-		if err != nil {
-			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", refIssueNum, pr.GetNumber(), err)
-			continue
-		}
-		refIssues = append(refIssues, refIssue)
+func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refIssues []*githubv39.Issue) {
+	if s.gh == nil || pr == nil || prIssue == nil || len(refIssues) == 0 {
+		return
 	}
 
 	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refIssues)
@@ -38,8 +72,97 @@ func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.P
 		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
 		if err := s.gh.AddLabels(ctx, pr.GetNumber(), allMissingLabels); err != nil {
 			klog.Errorf("Failed to add labels %v to PR #%d: %v", allMissingLabels, pr.GetNumber(), err)
+		} else {
+			for _, labelName := range allMissingLabels {
+				l := labelName
+				prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: &l})
+			}
 		}
 	}
+}
+
+// syncReferencedIssueAssignees copies the human assignees from the referenced hierarchy to the PR.
+func (s *Scanner) syncReferencedIssueAssignees(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refIssues []*githubv39.Issue) {
+	if s.gh == nil || pr == nil || prIssue == nil || len(refIssues) == 0 {
+		return
+	}
+
+	missingAssignees := getMissingHumanAssigneesForPR(prIssue.Assignees, refIssues, s.cfg.BotUsers, s.cfg.GitHubLogin)
+	if len(missingAssignees) == 0 {
+		return
+	}
+
+	if s.cfg.DryRun {
+		fmt.Printf("[DRYRUN] Would add human assignees %v to PR #%d\n", missingAssignees, pr.GetNumber())
+		for _, name := range missingAssignees {
+			login := name
+			prIssue.Assignees = append(prIssue.Assignees, &githubv39.User{Login: &login})
+		}
+		return
+	}
+
+	klog.Infof("Adding inherited human assignees %v to PR #%d", missingAssignees, pr.GetNumber())
+	if err := s.gh.AddAssignees(ctx, pr.GetNumber(), missingAssignees); err != nil {
+		klog.Errorf("Failed to add human assignees %v to PR #%d: %v", missingAssignees, pr.GetNumber(), err)
+	} else {
+		for _, name := range missingAssignees {
+			login := name
+			prIssue.Assignees = append(prIssue.Assignees, &githubv39.User{Login: &login})
+		}
+	}
+}
+
+func isHumanUser(user *githubv39.User, botUsers []string, githubLogin string) bool {
+	if user == nil || user.GetLogin() == "" {
+		return false
+	}
+	if strings.EqualFold(user.GetType(), "Bot") {
+		return false
+	}
+	loginLower := strings.ToLower(user.GetLogin())
+	if strings.HasSuffix(loginLower, "[bot]") {
+		return false
+	}
+	if githubLogin != "" && strings.EqualFold(user.GetLogin(), githubLogin) {
+		return false
+	}
+	for _, bot := range botUsers {
+		if strings.EqualFold(user.GetLogin(), bot) {
+			return false
+		}
+	}
+	return true
+}
+
+func getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, refIssues []*githubv39.Issue, botUsers []string, githubLogin string) []string {
+	prAssigneesSet := make(map[string]bool)
+	for _, user := range prAssignees {
+		if user.GetLogin() != "" {
+			prAssigneesSet[strings.ToLower(user.GetLogin())] = true
+		}
+	}
+
+	var missingAssignees []string
+	seen := make(map[string]bool)
+
+	for _, refIssue := range refIssues {
+		if refIssue == nil {
+			continue
+		}
+		for _, user := range refIssue.Assignees {
+			if !isHumanUser(user, botUsers, githubLogin) {
+				continue
+			}
+			login := user.GetLogin()
+			loginLower := strings.ToLower(login)
+			if !prAssigneesSet[loginLower] && !seen[loginLower] {
+				seen[loginLower] = true
+				missingAssignees = append(missingAssignees, login)
+			}
+		}
+	}
+
+	return missingAssignees
 }
 
 // getMissingLabelsForPR returns the labels present on the referenced issues but

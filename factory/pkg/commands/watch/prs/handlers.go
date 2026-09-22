@@ -333,9 +333,9 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	if pc.pr.GetBody() != "" {
 		bodies = append(bodies, pc.pr.GetBody())
 	}
-	for refIssueNum := range common.GetReferencedIssues(pc.pr) {
-		refIssue, err := s.gh.GetIssue(ctx, refIssueNum)
-		if err == nil && refIssue.GetBody() != "" {
+	refIssues := s.fetchReferencedIssuesHierarchy(ctx, pc.pr)
+	for _, refIssue := range refIssues {
+		if refIssue != nil && refIssue.GetBody() != "" {
 			bodies = append(bodies, refIssue.GetBody())
 		}
 	}
