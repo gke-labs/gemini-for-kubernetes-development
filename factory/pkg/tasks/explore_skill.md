@@ -60,14 +60,16 @@ infrastructure?**
 When the answer is "both prove something" — tests in the pod, the
 real thing on a cluster — say so and write a path for each.
 
-When more than one deployment target genuinely proves something,
-write a path per target, named by the target — the thing a user
-actually deploys to: Steps carries one subsection per path
-("### Path — in-pod: …", "### Path — GKE: …"), in-pod first when it exists, and What this needs says what each path demands.
-Only targets that prove something real get a path; never pad one with
-invented steps. If a path outgrows the file (rule 6), split it into
-`runbooks/<scenario>-<target>.md` (`deploy-gke.md`, `deploy-kind.md`,
-`deploy-kops.md`) and link it from the main runbook.
+In practice most runbooks have two paths: **in-pod** and **gcp** —
+Steps carries one subsection per path ("### Path — in-pod: …",
+"### Path — gcp: …"), in-pod first when it exists. The gcp path's
+What this needs states which services it actually uses (a GKE
+cluster, GCE VMs, Cloud Run, …) — the path name says where the
+credentials point, not which product. Finer-grained target names
+(gke, gce, kind, kops) are for repos that genuinely offer
+alternatives worth separate paths; never pad a path with invented
+steps. If a path outgrows the file (rule 6), split it into
+`runbooks/<scenario>-<target>.md` and link it from the main runbook.
 
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.

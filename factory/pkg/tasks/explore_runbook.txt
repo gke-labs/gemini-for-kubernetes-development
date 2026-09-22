@@ -37,7 +37,8 @@ under the Tier line.
    what credentials or permissions each step assumes.
 3. Use the skill's fixed sections — What this needs, Preconditions,
    Steps, Verify, Teardown — with one path per viable target, named by
-   the target ("### Path — GKE"). If a runbook already exists,
+   the target — usually just "### Path — in-pod" and
+   "### Path — gcp". If a runbook already exists,
    update it against the current code instead of rewriting from
    scratch; note steps that changed since the last revision in one
    line at the top.
