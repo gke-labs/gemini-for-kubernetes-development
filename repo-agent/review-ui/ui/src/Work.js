@@ -1110,8 +1110,8 @@ function TryPanel({ boardName, onOpenSandbox }) {
           style={{ minWidth: '160px', fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
           title="The instance's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
         <button className="btn btn-sm" disabled={running || !!pend}
-          title="Re-run this instance — reuses its pushed script when nothing drifted"
-          onClick={() => kickoff('run', scenario, '', inst.name)}>▶ Run</button>
+          title="Deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
+          onClick={() => kickoff('run', scenario, '', inst.name)}>▶ Re-deploy</button>
         <button className="btn btn-sm" disabled={running || !!pend}
           title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
           onClick={() => kickoff('teardown', scenario, '', inst.name)}>Tear down</button>
