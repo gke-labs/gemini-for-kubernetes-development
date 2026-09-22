@@ -42,15 +42,31 @@ under the Tier line.
    DaemonSets, kubelet sockets, host mounts. Say exactly which
    component forces it. If an existing runbook carries (pinned)
    decisions, they are the owner's: keep them, adapt every step to
-   them, and note any disagreement in one line under them. Also state
-   what credentials or permissions each step assumes.
-3. Use the skill's fixed sections — What this needs, Preconditions,
+   them, and note any disagreement in one line under them.
+3. VERIFY FEASIBILITY — you are running under the SAME identity and in
+   the same kind of environment the runbook will execute in, so check,
+   don't assume:
+   - Permissions: enumerate the IAM permissions each step needs (what
+     does the tool CREATE and BIND? kops on GCE, for example, creates
+     service accounts, attaches them to instances — iam.serviceAccounts.actAs
+     — and binds project roles — resourcemanager.projects.setIamPolicy).
+     Probe with read-only calls: projects.testIamPermissions, a
+     get-iam-policy, a dry-run where the tool offers one.
+   - Tools: verify the binaries the steps call actually exist here
+     (a missing docker daemon means Cloud Build, not a doomed step).
+   Then write the results into What this needs as a checklist:
+   ✓ granted/present, ✗ MISSING — each missing item with the exact
+   command that grants or installs it. A runbook whose requirements
+   are not met must say so at the top: it is a pre-run checklist for
+   the owner, not a discovery the deployer makes at VM prices. Never
+   write steps around a missing permission; name it instead.
+4. Use the skill's fixed sections — What this needs, Preconditions,
    Steps, Verify, Teardown. Each runbook is one environment,
    executable top-to-bottom on its own. If a runbook already exists,
    update it against the current code instead of rewriting from
    scratch; note steps that changed since the last revision in one
    line at the top.
-4. Update docs-exploration/README.md, and add anything the code left
+5. Update docs-exploration/README.md, and add anything the code left
    ambiguous to docs-exploration/questions.md.
 
 Write the files directly into the checkout. Do not commit or push — the
