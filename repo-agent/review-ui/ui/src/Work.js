@@ -1145,14 +1145,20 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* Creation: standard set, custom, update. */}
+      {/* Verb row: Draft Runbooks leads, like Explore's Generate Overview. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <button className="btn" disabled={drafting || !!(state && state.draftPending)}
+          title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp"
+          onClick={() => draftRunbook('all')}>Draft Runbooks</button>
+        {state && state.draftPending && (
+          <Chip text={`drafting ${state.draftPending}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
+        )}
+      </div>
+      {/* Creation card: custom / update. */}
       <div style={{ border: '1px dashed var(--border-color)', borderRadius: '10px',
         padding: '10px 12px', marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" disabled={drafting || !!(state && state.draftPending)}
-            title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp"
-            onClick={() => draftRunbook('all')}>Draft Runbooks</button>
-          <span style={{ color: 'var(--text-secondary)' }}>— or custom / update:</span>
+          <span style={{ color: 'var(--text-secondary)' }}>custom / update runbook:</span>
           <input type="text" value={newRunbook.name}
             onChange={e => setNewRunbook(prev => ({ ...prev, name: e.target.value }))}
             placeholder="name (new: deploy-kops-gce · existing name = update it)"
@@ -1162,9 +1168,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
           <button className="btn btn-sm" disabled={!newRunbook.name.trim() || drafting || !!(state && state.draftPending)}
             title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
             onClick={() => draftRunbook()}>Draft runbook</button>
-          {state && state.draftPending && (
-            <Chip text={`drafting ${state.draftPending}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
-          )}
         </div>
         <textarea rows={2} value={newRunbook.charter}
           onChange={e => setNewRunbook(prev => ({ ...prev, charter: e.target.value }))}
