@@ -992,16 +992,43 @@ function ExploreDocViewer({ boardName, docs }) {
     <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
       <div style={{ flex: '0 0 180px', borderRight: '1px solid var(--border-color)',
         paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
-        {docs.map(d => (
-          <div key={d.path} onClick={() => setSelected(d.path)}
-            title={d.name}
-            style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
-              fontWeight: d.path === selected ? 600 : 400 }}>
-            {d.name}
-          </div>
-        ))}
+        {(() => {
+          const entry = d => (
+            <div key={d.path} onClick={() => setSelected(d.path)}
+              title={d.name}
+              style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
+                fontWeight: d.path === selected ? 600 : 400 }}>
+              {d.name}
+            </div>
+          );
+          // Generic grouping: root files first, then one group per
+          // top-level folder, hairlines between groups.
+          const folderOf = d => (d.name.includes('/') ? d.name.split('/')[0] : '');
+          const order = [];
+          const byFolder = {};
+          for (const d of docs) {
+            const f = folderOf(d);
+            if (!(f in byFolder)) { byFolder[f] = []; order.push(f); }
+            byFolder[f].push(d);
+          }
+          order.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
+          const divider = key => (
+            <div key={key} style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
+          );
+          const groups = order.map(f => byFolder[f]);
+          return (
+            <>
+              {groups.map((g, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && divider(`div-${i}`)}
+                  {g.map(entry)}
+                </React.Fragment>
+              ))}
+            </>
+          );
+        })()}
       </div>
       <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
         {doc && (
