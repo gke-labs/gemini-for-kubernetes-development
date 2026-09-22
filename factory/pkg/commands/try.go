@@ -20,8 +20,8 @@ import (
 
 // NewTryCommand executes a runbook scenario in a dedicated run sandbox.
 //
-//	factory try run      --url <repo> --scenario deploy [--path gke] [--guidance …]
-//	factory try teardown --url <repo> --scenario deploy [--path gke]
+//	factory runbook run      --url <repo> --scenario deploy [--path gke] [--guidance …]
+//	factory runbook teardown --url <repo> --scenario deploy [--path gke]
 //
 // The runbook is the source, the emitted script is the build artifact,
 // the receipt is the test result — all on the fork's exploration/notes
@@ -29,8 +29,9 @@ import (
 // deployment's living state, so the sandbox is the deployment handle.
 func NewTryCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "try",
-		Short: "Execute a runbook scenario in a dedicated run sandbox",
+		Use:     "runbook",
+		Aliases: []string{"try"},
+		Short:   "Execute a runbook scenario in a dedicated run sandbox",
 	}
 
 	var repoURL, scenario, path, guidance string
