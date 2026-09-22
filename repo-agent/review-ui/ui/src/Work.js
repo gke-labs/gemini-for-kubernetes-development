@@ -1171,16 +1171,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
           placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
           style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-        {runbooks.length > 0 && (
-          <div style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>
-            recipes:{' '}
-            {runbooks.map((r, i) => (
-              <span key={r.scenario}>{i > 0 && ' · '}
-                <a href={r.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">{r.scenario} ↗</a>
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* One table: every deployment across every runbook. */}
