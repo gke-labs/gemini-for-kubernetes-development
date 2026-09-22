@@ -156,7 +156,7 @@ func TrySandboxName(repo, scenario, path string) string {
 	return "try-" + slug + "-" + suffix
 }
 
-// TryOptions parameterize `factory try <mode>` — executing a runbook
+// TryOptions parameterize `factory runbook <mode>` — executing a runbook
 // scenario (or its teardown) in the dedicated run sandbox.
 type TryOptions struct {
 	SandboxName string
@@ -171,14 +171,14 @@ type TryOptions struct {
 	Engine      string
 }
 
-// StartTry launches `factory try <mode>`.
+// StartTry launches `factory runbook <mode>`.
 func (r *Runner) StartTry(key string, opts TryOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
 	}
 	args := []string{
-		"try", opts.Mode,
+		"runbook", opts.Mode,
 		"--url", opts.RepoURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
@@ -407,8 +407,8 @@ type Launcher interface {
 	// StartExplore launches `factory explore <kind>` (understanding docs
 	// in the member's fork).
 	StartExplore(key string, opts ExploreOptions) bool
-	// StartTry launches `factory try <mode>` (runbook execution in the
-	// dedicated run sandbox) for key unless one is already running.
+	// StartTry launches `factory runbook <mode>` (runbook execution in
+	// the dedicated run sandbox) for key unless one is already running.
 	StartTry(key string, opts TryOptions) bool
 	// StartInvestigate / StartAddressComments / StartIterate launch the
 	// PR follow-up verbs in the PR's fix sandbox.
