@@ -8,16 +8,39 @@ docs-exploration/runbooks/{{.Scenario}}.md.
 1. Execute deploy.sh. If a step fails, fix the script — not just the
    moment — so the next run is deterministic; note what changed in one
    line at the top of the script.
-2. Verify per the runbook's Verify section: probe the endpoints, run
-   the health commands, read the output. Judgment matters here — a
-   clean exit code is not verification.
-3. Write the receipt to
-   docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
-   verdict on the first line (VERIFIED / DEPLOYED-UNVERIFIED / FAILED),
-   what executed, the Verify evidence (commands and their actual
-   output), what is left RUNNING and where (URLs, cluster names,
-   resource names — the teardown contract), and cost-relevant
-   resources created.
+
+   THE ATTEMPT BUDGET IS 3. Cloud attempts cost real money — every
+   create/delete cycle spins up and destroys real resources. Rules:
+   - Before re-running, diagnose with READ-ONLY commands (describe,
+     get-iam-policy, list) until you can name the failure's cause.
+     Never re-run the script just to see the error again.
+   - If the same failure signature appears twice, STOP — it will not
+     fix itself on the third try.
+   - A permission, quota, or billing failure is BLOCKED, not a bug you
+     can fix: confirm it read-only (e.g. testIamPermissions, a denied
+     describe), then STOP immediately. Do not keep creating and
+     deleting resources around a wall only the owner can remove.
+2. When you stop for any reason, leave the world accounted for: tear
+   down partial resources THIS run created (or, if they are the
+   deployment, leave them and say so) — never leave unrecorded
+   half-built infrastructure.
+3. Document what you learned where the next actor needs it:
+   - Update the runbook's What this needs / Preconditions with every
+     requirement this run discovered (exact IAM roles, APIs to enable,
+     quotas) — errors must make the runbook smarter, not just longer.
+   - Write the receipt to
+     docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
+     verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
+     FAILED / BLOCKED — then an attempt log (attempt N: what failed,
+     the evidence, what you changed), the Verify evidence when it
+     succeeded, what is left RUNNING and where (the teardown
+     contract), and cost-relevant resources created. A BLOCKED receipt
+     must carry a "Needs from owner" section with the EXACT commands
+     that unblock it (gcloud grant / enable-api / quota request).
+4. Only when execution succeeded: verify per the runbook's Verify
+   section — probe the endpoints, run the health commands, read the
+   output. Judgment matters here; a clean exit code is not
+   verification.
 
 Do not commit or push — the task harness commits and pushes when you
 finish. Finish with one paragraph: verdict, what is running where, and

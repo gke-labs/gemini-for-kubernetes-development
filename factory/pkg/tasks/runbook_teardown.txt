@@ -15,7 +15,7 @@ The owner's guidance for this teardown: {{.Guidance}}
    assumptions), and hunt for stragglers named or labeled for this
    instance.
 3. Write receipt-<UTC yyyymmdd-hhmm>-teardown.md in the instance
-   directory: verdict on the first line (TORN-DOWN / PARTIAL), what was
+   directory: verdict on the first line (TORN-DOWN / PARTIAL / BLOCKED), what was
    removed with the verifying evidence, and anything that remains (and
    why).
 
