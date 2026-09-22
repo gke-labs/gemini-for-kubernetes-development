@@ -1037,7 +1037,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const [viewDoc, setViewDoc] = useState(null); // {name, path}
 
   const load = useCallback(() => {
-    fetch(`/api/board/${boardName}/try`)
+    fetch(`/api/board/${boardName}/runbook`)
       .then(res => (res.ok ? res.json() : null))
       .then(data => setState(data))
       .catch(() => {});
@@ -1051,7 +1051,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const kickoff = (mode, scenario, path) => {
     const id = `${mode}:${scenario}:${path || ''}`;
     setBusy(id);
-    fetch(`/api/board/${boardName}/try`, {
+    fetch(`/api/board/${boardName}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode, scenario, path: path || '', guidance: guidance.trim() }),
     }).then(res => {

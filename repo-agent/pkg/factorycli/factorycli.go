@@ -130,9 +130,9 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	})
 }
 
-// TrySandboxName mirrors factory's run-environment naming:
-// try-<repo>-<scenario>[-<path>], budgeted for the -lb DNS cap.
-func TrySandboxName(repo, scenario, path string) string {
+// RunbookSandboxName mirrors factory's run-environment naming:
+// runbook-<repo>-<scenario>[-<path>], budgeted for the -lb DNS cap.
+func RunbookSandboxName(repo, scenario, path string) string {
 	slugify := func(s string) string {
 		s = strings.ToLower(s)
 		var b strings.Builder
@@ -150,15 +150,15 @@ func TrySandboxName(repo, scenario, path string) string {
 		suffix += "-" + slugify(path)
 	}
 	slug := slugify(repo)
-	if budget := 60 - len("try-") - len(suffix) - 1; len(slug) > budget {
+	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "try-" + slug + "-" + suffix
+	return "runbook-" + slug + "-" + suffix
 }
 
-// TryOptions parameterize `factory runbook <mode>` — executing a runbook
+// RunbookOptions parameterize `factory runbook <mode>` — executing a runbook
 // scenario (or its teardown) in the dedicated run sandbox.
-type TryOptions struct {
+type RunbookOptions struct {
 	SandboxName string
 	Namespace   string
 	Mode        string // run | teardown
@@ -171,8 +171,8 @@ type TryOptions struct {
 	Engine      string
 }
 
-// StartTry launches `factory runbook <mode>`.
-func (r *Runner) StartTry(key string, opts TryOptions) bool {
+// StartRunbook launches `factory runbook <mode>`.
+func (r *Runner) StartRunbook(key string, opts RunbookOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
@@ -195,7 +195,7 @@ func (r *Runner) StartTry(key string, opts TryOptions) bool {
 		args = append(args, "--engine", opts.Engine)
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "try",
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "runbook",
 	})
 }
 
@@ -407,9 +407,9 @@ type Launcher interface {
 	// StartExplore launches `factory explore <kind>` (understanding docs
 	// in the member's fork).
 	StartExplore(key string, opts ExploreOptions) bool
-	// StartTry launches `factory runbook <mode>` (runbook execution in
+	// StartRunbook launches `factory runbook <mode>` (runbook execution in
 	// the dedicated run sandbox) for key unless one is already running.
-	StartTry(key string, opts TryOptions) bool
+	StartRunbook(key string, opts RunbookOptions) bool
 	// StartInvestigate / StartAddressComments / StartIterate launch the
 	// PR follow-up verbs in the PR's fix sandbox.
 	StartInvestigate(key string, opts PRTaskOptions) bool

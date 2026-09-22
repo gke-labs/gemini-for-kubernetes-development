@@ -14,10 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// kickoffTry plants a timestamped try claim: run or tear down one
-// runbook scenario path. The controller launches `factory try` and the
+// kickoffRunbook plants a timestamped runbook claim: run or tear down one
+// runbook scenario path. The controller launches `factory runbook` and the
 // claim trims when the runner result outdates the click (claims v2).
-func (s *Server) kickoffTry(c *gin.Context) {
+func (s *Server) kickoffRunbook(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
@@ -49,13 +49,13 @@ func (s *Server) kickoffTry(c *gin.Context) {
 		annotations = map[string]string{}
 	}
 	if req.Mode == "run" {
-		annotations["board.gemini.google.com/try-guidance"] = strings.TrimSpace(req.Guidance)
+		annotations["board.gemini.google.com/runbook-guidance"] = strings.TrimSpace(req.Guidance)
 	}
 	requests := map[string]string{}
 	if raw := annotations[annoBoardRequests]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
-	key := "try-" + req.Mode + "-" + strings.TrimSpace(req.Scenario)
+	key := "runbook-" + req.Mode + "-" + strings.TrimSpace(req.Scenario)
 	if p := strings.TrimSpace(req.Path); p != "" {
 		key += ":" + p
 	}
@@ -64,20 +64,20 @@ func (s *Server) kickoffTry(c *gin.Context) {
 	annotations[annoBoardRequests] = string(buf)
 	board.SetAnnotations(annotations)
 	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record try request", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record runbook request", "details": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "requested", "key": key})
 }
 
-var tryPathHeading = regexp.MustCompile(`(?m)^###\s+Path\s+—\s+(.+?)\s+\(tier\s+(\d)\)`)
-var tryTierLine = regexp.MustCompile(`(?m)^\*\*Tier\*\*:\s*(.+)$`)
+var runbookPathHeading = regexp.MustCompile(`(?m)^###\s+Path\s+—\s+(.+?)\s+\(tier\s+(\d)\)`)
+var runbookTierLine = regexp.MustCompile(`(?m)^\*\*Tier\*\*:\s*(.+)$`)
 
-// getBoardTry reads the Try tab's world: the runbooks on the fork
+// getBoardRunbooks reads the Try tab's world: the runbooks on the fork
 // branch (tier line and target paths parsed from each, degrading to a
 // single unnamed path when parsing finds none), the newest receipts and
 // scripts, the run sandboxes, and standing claims as pending states.
-func (s *Server) getBoardTry(c *gin.Context) {
+func (s *Server) getBoardRunbooks(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
 	sessionUser := s.Auth.GetUserFromContext(c)
@@ -110,11 +110,11 @@ func (s *Server) getBoardTry(c *gin.Context) {
 				rb := gin.H{"scenario": scenario, "htmlURL": entry.GetHTMLURL(), "path": entry.GetPath(), "paths": []gin.H{}}
 				if file, _, _, ferr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref); ferr == nil && file != nil {
 					if content, cerr := file.GetContent(); cerr == nil {
-						if m := tryTierLine.FindStringSubmatch(content); m != nil {
+						if m := runbookTierLine.FindStringSubmatch(content); m != nil {
 							rb["tier"] = strings.TrimSpace(m[1])
 						}
 						paths := []gin.H{}
-						for _, m := range tryPathHeading.FindAllStringSubmatch(content, -1) {
+						for _, m := range runbookPathHeading.FindAllStringSubmatch(content, -1) {
 							paths = append(paths, gin.H{"target": strings.TrimSpace(m[1]), "tier": m[2]})
 						}
 						rb["paths"] = paths
@@ -142,7 +142,7 @@ func (s *Server) getBoardTry(c *gin.Context) {
 	}
 
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "sandbox.gemini.google.com/type=try",
+		LabelSelector: "sandbox.gemini.google.com/type=runbook",
 	}); lerr == nil {
 		sandboxes := []gin.H{}
 		for _, sb := range list.Items {
@@ -152,8 +152,8 @@ func (s *Server) getBoardTry(c *gin.Context) {
 			}
 			sandboxes = append(sandboxes, gin.H{
 				"name":      sb.GetName(),
-				"scenario":  annotations["sandbox.gemini.google.com/try-scenario"],
-				"path":      annotations["sandbox.gemini.google.com/try-path"],
+				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
+				"path":      annotations["sandbox.gemini.google.com/runbook-path"],
 				"taskState": annotations[annoTaskState],
 				"engine":    annotations["board.gemini.google.com/engine"],
 			})
@@ -161,7 +161,7 @@ func (s *Server) getBoardTry(c *gin.Context) {
 		out["sandboxes"] = sandboxes
 	}
 
-	// Standing try claims are the queued/running states; ones already
+	// Standing runbook claims are the queued/running states; ones already
 	// served (a completion newer than the click) are the trim's business.
 	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
 		requests := map[string]string{}
@@ -173,7 +173,7 @@ func (s *Server) getBoardTry(c *gin.Context) {
 		sort.Strings(keys)
 		pending := []gin.H{}
 		for _, key := range keys {
-			rest, ok := strings.CutPrefix(key, "try-")
+			rest, ok := strings.CutPrefix(key, "runbook-")
 			if !ok {
 				continue
 			}
@@ -181,8 +181,8 @@ func (s *Server) getBoardTry(c *gin.Context) {
 			if !modeOK {
 				continue
 			}
-			scenario, tryPath, _ := strings.Cut(spec, ":")
-			pending = append(pending, gin.H{"mode": mode, "scenario": scenario, "path": tryPath})
+			scenario, runbookPath, _ := strings.Cut(spec, ":")
+			pending = append(pending, gin.H{"mode": mode, "scenario": scenario, "path": runbookPath})
 		}
 		out["pending"] = pending
 	}

@@ -110,7 +110,7 @@ const (
 	AnnotationExploreSince    = "board.gemini.google.com/explore-since"
 	AnnotationExploreScenario = "board.gemini.google.com/explore-scenario"
 	AnnotationExploreGuidance = "board.gemini.google.com/explore-guidance"
-	AnnotationTryGuidance     = "board.gemini.google.com/try-guidance"
+	AnnotationRunbookGuidance = "board.gemini.google.com/runbook-guidance"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -259,7 +259,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks, mailExplores, mailTries := r.mailboxPlans(work)
+	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks, mailExplores, mailRunbooks := r.mailboxPlans(work)
 	fixes = append(fixes, mailFixes...)
 	reviews = append(reviews, mailReviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
@@ -329,7 +329,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// interrupted review.
 	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
 	r.ensureExploreClaims(ctx, work, mailExplores)
-	r.ensureTryClaims(ctx, work, mailTries)
+	r.ensureRunbookClaims(ctx, work, mailRunbooks)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
@@ -544,7 +544,7 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim, []exploreClaim, []tryClaim) {
+func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim, []exploreClaim, []runbookClaim) {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
 		return nil, nil, nil, nil, nil, nil, nil
@@ -559,7 +559,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 	var plans []planRequest
 	var prTasks []prTaskClaim
 	var explores []exploreClaim
-	var tries []tryClaim
+	var runbookClaims []runbookClaim
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -578,9 +578,9 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-")); err == nil {
 				plans = append(plans, planRequest{issue: n, member: member})
 			}
-		case strings.HasPrefix(key, "try-"):
-			// try-run-<scenario>[:<path>] / try-teardown-<scenario>[:<path>]
-			rest := strings.TrimPrefix(key, "try-")
+		case strings.HasPrefix(key, "runbook-"):
+			// runbook-run-<scenario>[:<path>] / runbook-teardown-<scenario>[:<path>]
+			rest := strings.TrimPrefix(key, "runbook-")
 			mode, spec, modeOK := strings.Cut(rest, "-")
 			if !modeOK || (mode != "run" && mode != "teardown") {
 				continue
@@ -590,11 +590,11 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 				continue
 			}
 			tryMember, tryAt, _ := strings.Cut(member, "|")
-			tryClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
+			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
-				tryClaimedAt = time.Time{}
+				runbookClaimedAt = time.Time{}
 			}
-			tries = append(tries, tryClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: tryClaimedAt})
+			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: runbookClaimedAt})
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
 			if kind == "onboard" || kind == "activity" || kind == "topic" || kind == "runbook" {
@@ -615,7 +615,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			}
 		}
 	}
-	return fixes, reviews, triages, plans, prTasks, explores, tries
+	return fixes, reviews, triages, plans, prTasks, explores, runbookClaims
 }
 
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
@@ -1138,19 +1138,19 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if sb := work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 				continue
 			}
-		case strings.HasPrefix(key, "try-"):
-			rest := strings.TrimPrefix(key, "try-")
+		case strings.HasPrefix(key, "runbook-"):
+			rest := strings.TrimPrefix(key, "runbook-")
 			mode, spec, modeOK := strings.Cut(rest, "-")
 			if !modeOK {
 				continue
 			}
 			scenario, tryPath, _ := strings.Cut(spec, ":")
 			tryMember, tryAt, _ := strings.Cut(member, "|")
-			tryClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
+			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
-				tryClaimedAt = time.Time{}
+				runbookClaimedAt = time.Time{}
 			}
-			if r.tryClaimServed(tryClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: tryClaimedAt}, work) {
+			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: runbookClaimedAt}, work) {
 				continue
 			}
 		case strings.HasPrefix(key, "explore-"):
@@ -1278,8 +1278,8 @@ func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, c
 	}
 }
 
-// tryClaim is a runbook execution click from the Try tab.
-type tryClaim struct {
+// runbookClaim is a runbook execution click from the Try tab.
+type runbookClaim struct {
 	mode      string // run | teardown
 	scenario  string
 	path      string
@@ -1287,27 +1287,27 @@ type tryClaim struct {
 	claimedAt time.Time
 }
 
-func tryKey(member, repo string, c tryClaim) string {
-	return fmt.Sprintf("%s/%s-%s", member, factorycli.TrySandboxName(repo, c.scenario, c.path), c.mode)
+func runbookKey(member, repo string, c runbookClaim) string {
+	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, c.scenario, c.path), c.mode)
 }
 
-func (r *Reconciler) tryClaimServed(claim tryClaim, work *workState) bool {
-	res, ok := r.Factory.LastResult(tryKey(claim.member, work.repo, claim))
+func (r *Reconciler) runbookClaimServed(claim runbookClaim, work *workState) bool {
+	res, ok := r.Factory.LastResult(runbookKey(claim.member, work.repo, claim))
 	return ok && res.Err == nil && res.FinishedAt.After(claim.claimedAt)
 }
 
-// ensureTryClaims mirrors the explore claims v2 pattern: the timestamped
+// ensureRunbookClaims mirrors the explore claims v2 pattern: the timestamped
 // mailbox claim is the request, the runner result is the receipt, and
 // factory ensures the run sandbox itself. run and teardown for the same
 // path share a sandbox, so the sandbox-wide preflight serializes them.
-func (r *Reconciler) ensureTryClaims(ctx context.Context, work *workState, claims []tryClaim) {
+func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, claims []runbookClaim) {
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
-		key := tryKey(claim.member, work.repo, claim)
+		key := runbookKey(claim.member, work.repo, claim)
 		if r.Factory.IsRunning(key) {
 			continue
 		}
-		if r.tryClaimServed(claim, work) {
+		if r.runbookClaimServed(claim, work) {
 			continue // the trim pass drops it
 		}
 		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
@@ -1318,23 +1318,23 @@ func (r *Reconciler) ensureTryClaims(ctx context.Context, work *workState, claim
 			continue
 		}
 		boardAnnotations := work.board.GetAnnotations()
-		name := factorycli.TrySandboxName(work.repo, claim.scenario, claim.path)
+		name := factorycli.RunbookSandboxName(work.repo, claim.scenario, claim.path)
 		if sb := work.findSandbox(claim.member, name); sb != nil {
 			r.stampUnpaused(ctx, sb)
 			r.stampEngine(ctx, sb, boardEngine(work.board))
 		}
-		if r.Factory.StartTry(key, factorycli.TryOptions{
+		if r.Factory.StartRunbook(key, factorycli.RunbookOptions{
 			Namespace:   claim.member,
 			SandboxName: name,
 			Mode:        claim.mode,
 			Scenario:    claim.scenario,
 			Path:        claim.path,
-			Guidance:    boardAnnotations[AnnotationTryGuidance],
+			Guidance:    boardAnnotations[AnnotationRunbookGuidance],
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		}) {
-			logger.Info("launched factory try", "mode", claim.mode, "scenario", claim.scenario, "path", claim.path, "board", work.board.Name)
+			logger.Info("launched factory runbook", "mode", claim.mode, "scenario", claim.scenario, "path", claim.path, "board", work.board.Name)
 		}
 	}
 }
@@ -1547,10 +1547,10 @@ func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefa
 func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after time.Duration) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {
-		// Run environments (type=try) may be SERVING something — idle
+		// Run environments (type=runbook) may be SERVING something — idle
 		// pause would kill the deployment. Excluded for now; lifecycle
 		// is the Tear down button.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "try" {
+		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "runbook" {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -1600,9 +1600,9 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 func (r *Reconciler) activeCount(work *workState) int {
 	active := 0
 	for _, sb := range work.sandboxes {
-		// Run environments (type=try) host living deployments — they
+		// Run environments (type=runbook) host living deployments — they
 		// are not task slots and never count against maxActive.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "try" {
+		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "runbook" {
 			continue
 		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")
