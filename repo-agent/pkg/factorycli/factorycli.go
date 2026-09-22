@@ -130,6 +130,75 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	})
 }
 
+// RunbookSandboxName mirrors factory's run-environment naming:
+// runbook-<repo>-<scenario>[-<path>], budgeted for the -lb DNS cap.
+func RunbookSandboxName(repo, scenario, path string) string {
+	slugify := func(s string) string {
+		s = strings.ToLower(s)
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('-')
+			}
+		}
+		return strings.Trim(b.String(), "-")
+	}
+	suffix := slugify(scenario)
+	if path != "" {
+		suffix += "-" + slugify(path)
+	}
+	slug := slugify(repo)
+	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "runbook-" + slug + "-" + suffix
+}
+
+// RunbookOptions parameterize `factory runbook <mode>` — executing a runbook
+// scenario (or its teardown) in the dedicated run sandbox.
+type RunbookOptions struct {
+	SandboxName string
+	Namespace   string
+	Mode        string // run | teardown
+	Scenario    string
+	Path        string
+	Guidance    string // run mode only
+	RepoURL     string
+	GithubToken string
+	Timeout     time.Duration
+	Engine      string
+}
+
+// StartRunbook launches `factory runbook <mode>`.
+func (r *Runner) StartRunbook(key string, opts RunbookOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Minute
+	}
+	args := []string{
+		"runbook", opts.Mode,
+		"--url", opts.RepoURL,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+		"--scenario", opts.Scenario,
+	}
+	if opts.Path != "" {
+		args = append(args, "--path", opts.Path)
+	}
+	if opts.Mode == "run" && opts.Guidance != "" {
+		args = append(args, "--guidance", opts.Guidance)
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
+	}
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "runbook",
+	})
+}
+
 // PRSandboxName mirrors factory's ReviewSandboxName (factory-pr-<slug>-<n>,
 // slug lowercased/dashed, budgeted for the -lb Service's DNS label cap) —
 // the sandbox `factory pr <verb>` creates when a PR has none.
@@ -338,6 +407,9 @@ type Launcher interface {
 	// StartExplore launches `factory explore <kind>` (understanding docs
 	// in the member's fork).
 	StartExplore(key string, opts ExploreOptions) bool
+	// StartRunbook launches `factory runbook <mode>` (runbook execution in
+	// the dedicated run sandbox) for key unless one is already running.
+	StartRunbook(key string, opts RunbookOptions) bool
 	// StartInvestigate / StartAddressComments / StartIterate launch the
 	// PR follow-up verbs in the PR's fix sandbox.
 	StartInvestigate(key string, opts PRTaskOptions) bool
