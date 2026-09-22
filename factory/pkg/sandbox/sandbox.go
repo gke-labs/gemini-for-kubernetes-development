@@ -51,10 +51,35 @@ func ExploreSandboxName(repo string) string {
 	return "explore-" + slug
 }
 
-// EnsureExploreSandbox ensures the repo's exploration sandbox: one per
-// repo per namespace — the workshop where understanding docs are built
-// and interactive exploration sessions live. Reuses the fix sandbox
-// conventions (managed label, repo/cloneURL/htmlURL annotations).
+// TrySandboxName is the run environment for one runbook path:
+// try-<repo>-<scenario>[-<path>]. One sandbox per (repo, scenario,
+// path); re-runs reuse it — the PVC holds the deployment's state
+// (kubeconfig, built artifacts, the serving process), so the sandbox
+// IS the handle to the deployment.
+func TrySandboxName(repo, scenario, path string) string {
+	slugify := func(s string) string {
+		s = strings.ToLower(s)
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('-')
+			}
+		}
+		return strings.Trim(b.String(), "-")
+	}
+	suffix := slugify(scenario)
+	if path != "" {
+		suffix += "-" + slugify(path)
+	}
+	slug := slugify(repo)
+	if budget := 60 - len("try-") - len(suffix) - 1; len(slug) > budget {
+		slug = strings.Trim(slug[:budget], "-")
+	}
+	return "try-" + slug + "-" + suffix
+}
+
 // DeployerServiceAccount is the per-namespace KSA explore sandboxes run
 // as. Direct Workload Identity federation makes it a GCP principal
 // (principal://…/subject/ns/<ns>/sa/factory-deployer) the member grants roles to
@@ -79,6 +104,10 @@ func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.Kuber
 	return nil
 }
 
+// EnsureExploreSandbox ensures the repo's exploration sandbox: one per
+// repo per namespace — the workshop where understanding docs are built
+// and interactive exploration sessions live. Reuses the fix sandbox
+// conventions (managed label, repo/cloneURL/htmlURL annotations).
 func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := ExploreSandboxName(repoName)
 	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
@@ -111,6 +140,67 @@ func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 				"repo":     repoName,
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
+			},
+			Image:              image,
+			Replicas:           1,
+			WorkspaceDiskSize:  diskSize,
+			EphemeralStorage:   ephemeralStorage,
+			Secrets:            secrets,
+			Env:                envs,
+			ServiceAccountName: DeployerServiceAccount,
+		},
+	}
+
+	fillEnvResources(&opt.DevSandboxOptions)
+	sbObj, svc := NewAgentSandbox(opt)
+
+	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {
+		return "", fmt.Errorf("creating sandbox CR: %w", err)
+	}
+	if _, err := kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		return "", fmt.Errorf("creating sandbox service: %w", err)
+	}
+	return name, nil
+}
+
+// EnsureTrySandbox creates (or finds) the run environment for one
+// runbook path. Type label "try": the board controller excludes these
+// from slot counting and idle-pause — a run environment hosts living
+// deployments, it is not a task slot.
+func EnsureTrySandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, path, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := TrySandboxName(repoName, scenario, path)
+
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err == nil {
+		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
+		return name, nil
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		return "", fmt.Errorf("checking sandbox existence: %w", err)
+	}
+	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
+		return "", err
+	}
+
+	if diskSize == "" {
+		diskSize = "10Gi"
+	}
+
+	opt := AgentSandboxOptions{
+		DevSandboxOptions: DevSandboxOptions{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"sandbox.gemini.google.com/type":    "try",
+				"factory.gemini.google.com/managed": "true",
+				"factory.gemini.google.com/user":    user,
+			},
+			Annotations: map[string]string{
+				"repo":                                   repoName,
+				"cloneURL":                               cloneURL,
+				"htmlURL":                                htmlURL,
+				"sandbox.gemini.google.com/try-scenario": scenario,
+				"sandbox.gemini.google.com/try-path":     path,
 			},
 			Image:              image,
 			Replicas:           1,

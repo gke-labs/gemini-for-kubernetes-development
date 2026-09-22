@@ -1,0 +1,26 @@
+You are tearing down a runbook deployment for the repository
+{{.RepoName}} ({{.HTMLURL}}). The scenario is {{.Scenario}}{{if .Path}}
+(path "{{.Path}}"){{end}}; the runbook is
+docs-exploration/runbooks/{{.Scenario}}.md in this checkout.
+{{if .Guidance}}
+The owner's guidance for this teardown: {{.Guidance}}
+{{end}}
+1. Prefer the deterministic path: if
+   docs-exploration/runbooks/scripts/{{.Scenario}}{{if .Path}}-{{.Path}}{{end}}-teardown.sh
+   exists, execute it. If it fails or does not exist, follow the
+   runbook's Teardown section, and write/repair the teardown script so
+   the next teardown is deterministic.
+2. Read the newest receipt in docs-exploration/runbooks/receipts/ for
+   this scenario/path — its "left RUNNING" section is the checklist of
+   what must come down. Verify each item is actually gone (gcloud and
+   kubectl queries, not assumptions). Hunt for stragglers the receipt
+   may have missed: resources labeled or named for this deployment.
+3. Write a teardown receipt to
+   docs-exploration/runbooks/receipts/{{.Scenario}}{{if .Path}}-{{.Path}}{{end}}-<today's date>-teardown.md:
+   verdict on the first line (TORN-DOWN / PARTIAL), what was removed
+   with the verifying evidence, and anything that remains (and why —
+   e.g. a shared resource the runbook did not create).
+
+Do not commit or push — the task harness commits and pushes your
+changes when you finish. Finish with a one-paragraph summary: verdict
+and anything that remains.

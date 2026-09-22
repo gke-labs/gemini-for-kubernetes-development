@@ -104,8 +104,10 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.AddCommand(prCmd)
 
 	exploreCmd := NewExploreCommand(ctx)
+	tryCmd := NewTryCommand(ctx)
 	exploreCmd.GroupID = "workflows"
 	cmd.AddCommand(exploreCmd)
+	cmd.AddCommand(tryCmd)
 
 	watchCmd := NewWatchCommand(ctx)
 	watchCmd.GroupID = "workflows"
