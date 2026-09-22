@@ -1181,8 +1181,20 @@ function TryPanel({ boardName, onOpenSandbox }) {
           No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
         </div>
       )}
-      {/* One table: every deployment across every runbook. */}
-      {instances.length > 0 && (
+      {/* One table: every deployment across every runbook. A run that
+          was just clicked appears immediately as a provisional row —
+          its directory lands on the branch only after the prepare
+          phase pushes (a cold boot takes minutes). */}
+      {(() => {
+        const rows = [...instances];
+        for (const p of pending) {
+          if (p.mode !== 'run') continue;
+          const name = p.instance || p.scenario;
+          if (!rows.some(i => i.name === name)) {
+            rows.push({ name, provisional: true, scenario: p.scenario });
+          }
+        }
+        return rows.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
           padding: '6px 8px', marginBottom: '10px' }}>
           <div style={{ fontWeight: 700, padding: '4px 8px 2px' }}>Deployments</div>
@@ -1198,19 +1210,26 @@ function TryPanel({ boardName, onOpenSandbox }) {
               </tr>
             </thead>
             <tbody>
-              {instances.map(inst => {
+              {rows.map(inst => {
                 const sb = findSb(inst.name);
                 const pend = findPending(inst.name);
                 const running = sb && sb.taskState === 'Running';
-                const rb = runbookFor(inst);
+                const rb = inst.provisional
+                  ? runbooks.find(r => r.scenario === inst.scenario) || null
+                  : runbookFor(inst);
                 const receipt = inst.latestReceipt;
-                const scenario = (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '');
+                const scenario = inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '');
                 return (
                   <tr key={inst.name} style={{ borderTop: '1px solid var(--border-color)' }}>
                     <td style={cell}>
-                      <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
-                        style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
-                        title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+                      {inst.provisional ? (
+                        <span style={{ fontWeight: 500 }}
+                          title="Provisioning — the deployment's directory appears on the branch after the prepare phase pushes (first run boots and clones, a few minutes)">⛭ {inst.name}</span>
+                      ) : (
+                        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                          style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+                          title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+                      )}
                     </td>
                     <td style={cell}>
                       {sb ? (
@@ -1220,7 +1239,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                           {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
                           {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
                         </span>
-                      ) : (pend ? <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                      ) : (pend ? <Chip text={inst.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
                     </td>
                     <td style={cell}>
                       {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The recipe this deployment came from">{rb.scenario} ↗</a>
@@ -1247,7 +1266,8 @@ function TryPanel({ boardName, onOpenSandbox }) {
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
 
     </div>
   );
