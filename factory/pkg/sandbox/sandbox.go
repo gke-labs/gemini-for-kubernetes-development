@@ -51,12 +51,12 @@ func ExploreSandboxName(repo string) string {
 	return "explore-" + slug
 }
 
-// TrySandboxName is the run environment for one runbook path:
-// try-<repo>-<scenario>[-<path>]. One sandbox per (repo, scenario,
+// RunbookSandboxName is the run environment for one runbook path:
+// runbook-<repo>-<scenario>[-<path>]. One sandbox per (repo, scenario,
 // path); re-runs reuse it — the PVC holds the deployment's state
 // (kubeconfig, built artifacts, the serving process), so the sandbox
 // IS the handle to the deployment.
-func TrySandboxName(repo, scenario, path string) string {
+func RunbookSandboxName(repo, scenario, path string) string {
 	slugify := func(s string) string {
 		s = strings.ToLower(s)
 		var b strings.Builder
@@ -74,10 +74,10 @@ func TrySandboxName(repo, scenario, path string) string {
 		suffix += "-" + slugify(path)
 	}
 	slug := slugify(repo)
-	if budget := 60 - len("try-") - len(suffix) - 1; len(slug) > budget {
+	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "try-" + slug + "-" + suffix
+	return "runbook-" + slug + "-" + suffix
 }
 
 // DeployerServiceAccount is the per-namespace KSA explore sandboxes run
@@ -163,12 +163,12 @@ func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	return name, nil
 }
 
-// EnsureTrySandbox creates (or finds) the run environment for one
-// runbook path. Type label "try": the board controller excludes these
+// EnsureRunbookSandbox creates (or finds) the run environment for one
+// runbook path. Type label "runbook": the board controller excludes these
 // from slot counting and idle-pause — a run environment hosts living
 // deployments, it is not a task slot.
-func EnsureTrySandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, path, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := TrySandboxName(repoName, scenario, path)
+func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, path, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := RunbookSandboxName(repoName, scenario, path)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -191,16 +191,16 @@ func EnsureTrySandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "try",
+				"sandbox.gemini.google.com/type":    "runbook",
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
 			},
 			Annotations: map[string]string{
-				"repo":                                   repoName,
-				"cloneURL":                               cloneURL,
-				"htmlURL":                                htmlURL,
-				"sandbox.gemini.google.com/try-scenario": scenario,
-				"sandbox.gemini.google.com/try-path":     path,
+				"repo":     repoName,
+				"cloneURL": cloneURL,
+				"htmlURL":  htmlURL,
+				"sandbox.gemini.google.com/runbook-scenario": scenario,
+				"sandbox.gemini.google.com/runbook-path":     path,
 			},
 			Image:              image,
 			Replicas:           1,

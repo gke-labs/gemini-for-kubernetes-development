@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewTryCommand executes a runbook scenario in a dedicated run sandbox.
+// NewRunbookCommand executes a runbook scenario in a dedicated run sandbox.
 //
 //	factory runbook run      --url <repo> --scenario deploy [--path gke] [--guidance …]
 //	factory runbook teardown --url <repo> --scenario deploy [--path gke]
@@ -27,7 +27,7 @@ import (
 // the receipt is the test result — all on the fork's exploration/notes
 // branch. One sandbox per (repo, scenario, path): the PVC holds the
 // deployment's living state, so the sandbox is the deployment handle.
-func NewTryCommand(ctx context.Context) *cobra.Command {
+func NewRunbookCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "runbook",
 		Aliases: []string{"try"},
@@ -54,7 +54,7 @@ func NewTryCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runTry(ctx, mode, repoURL, scenario, path, guidance)
+			return runRunbook(ctx, mode, repoURL, scenario, path, guidance)
 		}
 	}
 
@@ -80,7 +80,7 @@ func NewTryCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string) error {
+func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repository URL: %w", err)
@@ -99,7 +99,7 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 	}
 
 	fmt.Printf("Ensuring run sandbox for %s/%s (%s%s)...\n", owner, repo, scenario, suffixOrEmpty(path))
-	sandboxName, err := factorysandbox.EnsureTrySandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, path, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, path, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring run sandbox: %w", err)
 	}
@@ -111,7 +111,7 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
-	promptBytes, err := tasks.RenderTryPrompt(mode, tasks.TryParams{
+	promptBytes, err := tasks.RenderRunbookPrompt(mode, tasks.RunbookParams{
 		RepoName: repo,
 		HTMLURL:  htmlURL,
 		Scenario: scenario,
@@ -119,11 +119,11 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 		Guidance: guidance,
 	})
 	if err != nil {
-		return fmt.Errorf("rendering try prompt: %w", err)
+		return fmt.Errorf("rendering runbook prompt: %w", err)
 	}
-	scriptBytes, err := tasks.GetTryScript()
+	scriptBytes, err := tasks.GetRunbookScript()
 	if err != nil {
-		return fmt.Errorf("getting try script: %w", err)
+		return fmt.Errorf("getting runbook script: %w", err)
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
@@ -133,7 +133,7 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 	}
 	defer client.Close()
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/try-%s", time.Now().Format("20060102-150405"))
+	taskDir := fmt.Sprintf("/workspaces/tasks/runbook-%s", time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
 
@@ -155,9 +155,9 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 		"GITHUB_USER_ID":             githubLogin,
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
-		"TRY_SCENARIO":               scenario,
-		"TRY_PATH":                   path,
-		"TRY_MODE":                   mode,
+		"RUNBOOK_SCENARIO":           scenario,
+		"RUNBOOK_PATH":               path,
+		"RUNBOOK_MODE":               mode,
 	}
 	// BYO GCP project: Workload Identity supplies credentials via the
 	// pod's KSA; the secret only carries where to deploy.
@@ -174,7 +174,7 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
-		return fmt.Errorf("running try task: %w", err)
+		return fmt.Errorf("running runbook task: %w", err)
 	}
 	if rootFlags.Detached {
 		return nil
@@ -182,11 +182,11 @@ func runTry(ctx context.Context, mode, repoURL, scenario, path, guidance string)
 
 	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
 		Repo:     owner + "/" + repo,
-		TaskType: "try",
+		TaskType: "runbook",
 		Sandbox:  sandboxName,
 	})
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "try", "Completed")
-	fmt.Printf("Try %s finished for %s/%s (%s%s); receipt pushed to the exploration/notes branch.\n", mode, owner, repo, scenario, suffixOrEmpty(path))
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "runbook", "Completed")
+	fmt.Printf("Runbook %s finished for %s/%s (%s%s); receipt pushed to the exploration/notes branch.\n", mode, owner, repo, scenario, suffixOrEmpty(path))
 	return nil
 }
 

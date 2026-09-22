@@ -2,7 +2,7 @@
 set -e
 set -o pipefail
 
-# Try task: execute a runbook scenario (or its teardown) in a dedicated
+# Runbook task: execute a runbook scenario (or its teardown) in a dedicated
 # run sandbox. The runbook is the source, the emitted script is the
 # build artifact, the receipt is the test result — all three live on
 # the exploration/notes branch of the member's fork. The script owns
@@ -14,9 +14,9 @@ set -o pipefail
 # - GITHUB_TOKEN
 # - REPO_NAME / CLONE_URL / PROMPT_FILE
 # - GITHUB_USER_ID / GITHUB_USER_EMAIL / GITHUB_USER_NAME
-# - TRY_SCENARIO (deploy | upgrade | …)
-# - TRY_PATH (target path within the runbook, may be empty)
-# - TRY_MODE (run | teardown)
+# - RUNBOOK_SCENARIO (deploy | upgrade | …)
+# - RUNBOOK_PATH (target path within the runbook, may be empty)
+# - RUNBOOK_MODE (run | teardown)
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
@@ -50,7 +50,7 @@ function commitAndPushArtifacts {
     echo "Committing and pushing run artifacts..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     git add docs-exploration 2>/dev/null || true
-    if git commit -m "try(${TRY_SCENARIO}${TRY_PATH:+/${TRY_PATH}}): ${TRY_MODE} receipt"; then
+    if git commit -m "runbook(${RUNBOOK_SCENARIO}${RUNBOOK_PATH:+/${RUNBOOK_PATH}}): ${RUNBOOK_MODE} receipt"; then
         git push origin "${NOTES_BRANCH}"
         echo "Artifacts pushed to origin/${NOTES_BRANCH}"
     else
