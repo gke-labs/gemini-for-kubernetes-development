@@ -1075,8 +1075,8 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
-  // Default instance names auto-increment per runbook: deploy-gcp-run1,
-  // -run2, … — unique across runbooks (the namespace is flat) and never
+  // Default instance names auto-increment per runbook: deploy-gcp-1,
+  // -2, … — unique across runbooks (the namespace is flat) and never
   // colliding with the recipe's own name.
   const nextRunName = (runbook) => {
     const taken = new Set([
@@ -1085,10 +1085,10 @@ function TryPanel({ boardName, onOpenSandbox }) {
       ...sandboxes.map(s => s.instance || s.scenario),
     ]);
     for (let n = 1; n < 100; n++) {
-      const candidate = `${runbook}-run${n}`;
+      const candidate = `${runbook}-${n}`;
       if (!taken.has(candidate)) return candidate;
     }
-    return `${runbook}-run${Date.now() % 1000}`;
+    return `${runbook}-${Date.now() % 1000}`;
   };
 
   // Runbooks are born on the Explore pipeline: the name is the slug,
