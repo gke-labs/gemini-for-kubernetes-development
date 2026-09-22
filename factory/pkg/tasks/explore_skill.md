@@ -57,7 +57,11 @@ The environment is in the filename, and the decision is binary:
   where the credentials point, not which product — What this needs
   states the services actually used (a GKE cluster, GCE VMs, Cloud
   Run, …), exactly which component forces real infrastructure, and
-  what teardown costs.
+  what teardown costs. It also carries a VERIFIED feasibility
+  checklist: permissions and tools probed read-only under the
+  executing identity at drafting time, each item ✓ or ✗ MISSING with
+  the exact command that fixes it. A runbook whose checklist has an
+  ✗ is a request to the owner, not a candidate for a Run.
 
 Write only the runbooks that prove something: a library with no
 in-pod story gets no `-in-pod` file; never pad one with invented
