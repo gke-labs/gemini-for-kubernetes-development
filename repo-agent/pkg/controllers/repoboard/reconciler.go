@@ -147,6 +147,9 @@ type Reconciler struct {
 // The factory CLI runs under this ServiceAccount: it creates each sandbox's
 // -lb Service, waits on the pod, and execs the task inside it.
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create
+// serviceaccounts: factory ensures the per-namespace factory-deployer KSA
+// (the Workload Identity principal) when creating explore sandboxes.
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 //+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
