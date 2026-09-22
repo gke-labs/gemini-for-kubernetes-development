@@ -3,8 +3,7 @@ repository {{.RepoName}} ({{.HTMLURL}}). Its scripts were prepared,
 committed and pushed in the previous phase; they live in
 docs-exploration/runbook-deployments/{{.Instance}}/ (params.env,
 deploy.sh, teardown.sh). The runbook they derive from is
-docs-exploration/runbooks/{{.Scenario}}.md{{if .Path}} (path
-"{{.Path}}"){{end}}.
+docs-exploration/runbooks/{{.Scenario}}.md.
 
 1. Execute deploy.sh. If a step fails, fix the script — not just the
    moment — so the next run is deterministic; note what changed in one

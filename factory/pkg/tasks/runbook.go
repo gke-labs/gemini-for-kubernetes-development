@@ -14,8 +14,7 @@ func GetRunbookScript() ([]byte, error) {
 type RunbookParams struct {
 	RepoName string
 	HTMLURL  string
-	Scenario string // runbook scenario: deploy, upgrade, …
-	Path     string // target path within the runbook (gke, local, …); may be empty
+	Scenario string // the runbook name: deploy-gcp, upgrade-gcp, …
 	Instance string // deployment instance name (one runbook, many parameterized deployments)
 	Guidance string // owner's free-text constraints for this run
 }

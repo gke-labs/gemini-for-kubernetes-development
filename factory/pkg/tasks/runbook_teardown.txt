@@ -2,8 +2,7 @@ You are tearing down the deployment instance "{{.Instance}}" for the
 repository {{.RepoName}} ({{.HTMLURL}}). Its directory is
 docs-exploration/runbook-deployments/{{.Instance}}/ (params.env,
 deploy.sh, teardown.sh, receipts); the runbook is
-docs-exploration/runbooks/{{.Scenario}}.md{{if .Path}} (path
-"{{.Path}}"){{end}}.
+docs-exploration/runbooks/{{.Scenario}}.md.
 {{if .Guidance}}
 The owner's guidance for this teardown: {{.Guidance}}
 {{end}}
