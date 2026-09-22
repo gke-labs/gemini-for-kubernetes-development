@@ -42,6 +42,10 @@ type DevSandboxOptions struct {
 	MemoryLimit       string
 	Secrets           []SecretMount
 	Env               []EnvVar
+	// ServiceAccountName runs the sandbox pod as a specific KSA — the
+	// Workload Identity hook: the KSA is the GCP principal the member
+	// grants roles to in their own project.
+	ServiceAccountName string
 }
 
 // AgentSandboxOptions holds options for creating an AgentSandbox.
@@ -199,6 +203,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 	if len(volumesList) > 0 {
 		podSpecMap["volumes"] = volumesList
+	}
+	if opt.ServiceAccountName != "" {
+		podSpecMap["serviceAccountName"] = opt.ServiceAccountName
 	}
 
 	sandbox := &unstructured.Unstructured{
@@ -361,6 +368,9 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	}
 	if len(volumesList) > 0 {
 		podSpecMap["volumes"] = volumesList
+	}
+	if opt.ServiceAccountName != "" {
+		podSpecMap["serviceAccountName"] = opt.ServiceAccountName
 	}
 
 	sandbox := &unstructured.Unstructured{

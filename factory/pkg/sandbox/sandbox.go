@@ -10,6 +10,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -54,8 +55,35 @@ func ExploreSandboxName(repo string) string {
 // repo per namespace — the workshop where understanding docs are built
 // and interactive exploration sessions live. Reuses the fix sandbox
 // conventions (managed label, repo/cloneURL/htmlURL annotations).
+// DeployerServiceAccount is the per-namespace KSA explore sandboxes run
+// as. Direct Workload Identity federation makes it a GCP principal
+// (principal://…/subject/ns/<ns>/sa/factory-deployer) the member grants roles to
+// in their own project — no keys stored anywhere. It carries no
+// Kubernetes RBAC; only the explore/deploy surface uses it.
+const DeployerServiceAccount = "factory-deployer"
+
+// ensureDeployerServiceAccount creates the deployer KSA if missing.
+func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string) error {
+	_, err := kubeClient.Clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, DeployerServiceAccount, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+		Name:      DeployerServiceAccount,
+		Namespace: namespace,
+		Labels:    map[string]string{"factory.gemini.google.com/managed": "true"},
+	}}
+	if _, cerr := kubeClient.Clientset.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{}); cerr != nil && !strings.Contains(cerr.Error(), "already exists") {
+		return fmt.Errorf("creating %s service account: %w", DeployerServiceAccount, cerr)
+	}
+	return nil
+}
+
 func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := ExploreSandboxName(repoName)
+	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
+		return "", err
+	}
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -84,12 +112,13 @@ func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:              image,
+			Replicas:           1,
+			WorkspaceDiskSize:  diskSize,
+			EphemeralStorage:   ephemeralStorage,
+			Secrets:            secrets,
+			Env:                envs,
+			ServiceAccountName: DeployerServiceAccount,
 		},
 	}
 
