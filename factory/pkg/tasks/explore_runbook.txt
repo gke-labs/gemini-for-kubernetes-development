@@ -1,6 +1,6 @@
 You are writing executable runbooks for the repository {{.RepoName}}
 ({{.HTMLURL}}). The exploration contract — including the runbook
-sections and the tier definitions — is docs-exploration/SKILL.md in
+sections and the requirements rules — is docs-exploration/SKILL.md in
 this checkout. Follow it.
 
 {{if eq .Scenario "all"}}Scenarios: the standard set — deploy, upgrade. Write or update
@@ -26,18 +26,18 @@ under the Tier line.
    ground truth for what actually builds and tests), helm charts,
    kustomize bases, container files. Do not invent commands — every
    step must trace to something the repo ships.
-2. Make the tier call per the skill's tier definitions before writing
-   steps, and open What this needs with the Tier line and its one-line
-   justification. Pay attention to node-level reality: CSI drivers,
-   device plugins, privileged DaemonSets, kubelet sockets and host
-   mounts cannot land in a vcluster — that is tier 2, and you should
-   say exactly which component forces it. If an existing runbook's
-   Tier line is marked (pinned), it is the owner's decision: keep it,
-   adapt every step to it, and note any disagreement in one line under
-   it. Also state what credentials or permissions each step assumes.
+2. Open What this needs with a plain statement of what running the
+   scenario requires — and why nothing lighter suffices. Pay attention
+   to node-level reality: CSI drivers, device plugins, privileged
+   DaemonSets, kubelet sockets and host mounts cannot land in a
+   vcluster — they need real infrastructure, and you should say
+   exactly which component forces it. If an existing runbook carries
+   (pinned) decisions, they are the owner's: keep them, adapt every
+   step to them, and note any disagreement in one line under them.
+   Also state what credentials or permissions each step assumes.
 3. Use the skill's fixed sections — What this needs, Preconditions,
    Steps, Verify, Teardown — with one path per viable target, named by
-   the target with its tier as a badge. If a runbook already exists,
+   the target ("### Path — GKE"). If a runbook already exists,
    update it against the current code instead of rewriting from
    scratch; note steps that changed since the last revision in one
    line at the top.

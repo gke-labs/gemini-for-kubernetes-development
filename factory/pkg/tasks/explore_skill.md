@@ -34,45 +34,39 @@ current, and short enough to read.
 - `runbooks/<scenario>.md` — an executable path through a scenario:
   `deploy.md`, `upgrade.md`, and kin. Every step is a command derived
   from the repo's own tooling (Makefile, scripts, CI workflows), never
-  invented. Fixed sections, in order: **What this needs** (opens with
-  the Tier line, then what permissions or credentials each step
+  invented. Fixed sections, in order: **What this needs** (what
+  running it requires and what permissions or credentials each step
   assumes), **Preconditions**, **Steps**, **Verify** (how you know it
   worked: endpoints to probe, commands whose output proves health),
   **Teardown**. A runbook a reader cannot execute top-to-bottom is a
   bug.
 
-## Runbook tiers
+## Runbook requirements and targets
 
-Every runbook opens its **What this needs** section with a tier call:
-
-    **Tier**: <0|1|2> — <one line on why this tier and not a lower one>
-
-- **Tier 0** — runs inside a plain container: binaries, unit and
-  integration tests, envtest (etcd + kube-apiserver as processes). No
-  new permissions.
-- **Tier 1** — needs a real Kubernetes API, but a disposable,
-  namespace-contained one (vcluster) suffices: controllers, operators,
-  CRDs, webhooks — anything that talks only to the API server.
-- **Tier 2** — needs real infrastructure: node-level features (CSI
-  drivers, device plugins, kernel modules, privileged DaemonSets,
-  kubelet plugin sockets, host mounts), real cloud APIs, VMs, or a
-  full cluster (kind/GKE/kops). vcluster shares the host's nodes and
-  kubelet, so anything that touches the node itself cannot land there.
-
-Make the call carefully and say why: a controller that merely *ships*
-a DaemonSet may still be tier 1 to exercise its reconcile logic, while
-actually mounting a volume through it is tier 2.
+Every runbook opens its **What this needs** section with a plain
+statement of what running it requires — and why nothing lighter
+suffices. Be concrete about the boundary that matters: a plain
+container runs binaries, tests and envtest (etcd + kube-apiserver as
+processes); a disposable namespace-contained API (vcluster) hosts
+controllers, operators, CRDs and webhooks — anything that talks only
+to the API server; and node-level features (CSI drivers, device
+plugins, kernel modules, privileged DaemonSets, kubelet plugin
+sockets, host mounts), real cloud APIs, VMs, and full clusters need
+real infrastructure — vcluster shares the host's nodes and kubelet,
+so anything touching the node itself cannot land there. A controller
+that merely *ships* a DaemonSet may still be exercisable on the light
+end; actually mounting a volume through it is not.
 
 When more than one deployment target genuinely proves something,
 write a path per target, named by the target — the thing a user
-actually deploys to — with its tier as a badge: Steps carries one
-subsection per path ("### Path — vcluster (tier 1): …",
-"### Path — GKE (tier 2): …"), lowest tier first, and the Tier line
-lists them ("**Tier**: 1 (vcluster) / 2 (GKE)"). Only targets that
-prove something real get a path; never pad one with invented steps.
-If a path outgrows the file (rule 6), split it into
+actually deploys to: Steps carries one subsection per path
+("### Path — vcluster: …", "### Path — GKE: …"), lightest
+requirements first, and What this needs says what each path demands.
+Only targets that prove something real get a path; never pad one with
+invented steps. If a path outgrows the file (rule 6), split it into
 `runbooks/<scenario>-<target>.md` (`deploy-gke.md`, `deploy-kind.md`,
-`deploy-kops.md`) and link it from the main runbook's Tier line.
+`deploy-kops.md`) and link it from the main runbook.
+
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 
@@ -98,9 +92,9 @@ If a path outgrows the file (rule 6), split it into
    it — keep it honest and specific, including what it costs to tear
    down.
 9. **Human edits are decisions, not drift.** This branch belongs to
-   its owner and edits to it are the review channel. A Tier line
-   marked `(pinned)` — e.g. `**Tier**: 2 (pinned) — …` — is a
+   its owner and edits to it are the review channel. Any line marked
+   `(pinned)` — a target choice, a parameter, a requirement — is a
    constraint: never change it back; rewrite the steps to fit it, and
    if the code suggests otherwise, note your disagreement in one line
-   directly under the Tier line instead of reverting it. The same
-   respect applies to any section a person has clearly rewritten.
+   directly under it instead of reverting. The same respect applies
+   to any section a person has clearly rewritten.
