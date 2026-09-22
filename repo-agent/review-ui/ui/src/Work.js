@@ -1035,7 +1035,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const [guidance, setGuidance] = useState('');
   const [instanceName, setInstanceName] = useState('');
   const [busy, setBusy] = useState('');
-  const [viewDoc, setViewDoc] = useState(null); // {name, path}
 
   const load = useCallback(() => {
     fetch(`/api/board/${boardName}/runbook`)
@@ -1107,7 +1106,9 @@ function TryPanel({ boardName, onOpenSandbox }) {
     const scenario = (sb && sb.scenario) || inst.name.split('-')[0];
     return (
       <div key={inst.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: '160px', fontWeight: 500 }}>⛭ {inst.name}</span>
+        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+          style={{ minWidth: '160px', fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+          title="The instance's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
         <button className="btn btn-sm" disabled={running || !!pend}
           title="Re-run this instance — reuses its pushed script when nothing drifted"
           onClick={() => kickoff('run', scenario, '', inst.name)}>▶ Run</button>
@@ -1126,13 +1127,9 @@ function TryPanel({ boardName, onOpenSandbox }) {
               bg={running ? 'rgba(176,136,0,0.12)' : 'rgba(40,167,69,0.10)'} />
           </span>
         )}
-        {(inst.files || []).filter(f => f.name === 'deploy.sh' || f.name === 'params.env').map(f => (
-          <a key={f.path} href="#doc" onClick={e => { e.preventDefault(); setViewDoc(viewDoc && viewDoc.path === f.path ? null : f); }}
-            title="Pushed before execution — this is exactly what runs">{f.name}</a>
-        ))}
         {receipt && (
-          <a href="#receipt" onClick={e => { e.preventDefault(); setViewDoc(viewDoc && viewDoc.path === receipt.path ? null : receipt); }}
-            title="Latest receipt — verdict, verify evidence, what is left running">{receipt.name}</a>
+          <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
+            title="Latest receipt — verdict, verify evidence, what is left running">{receipt.name} ↗</a>
         )}
       </div>
     );
@@ -1165,16 +1162,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
           )}
         </div>
       ))}
-      {viewDoc && (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '10px 12px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex' }}>
-            <strong>{viewDoc.name}</strong>
-            <span style={{ flex: 1 }} />
-            <a href="#close" onClick={e => { e.preventDefault(); setViewDoc(null); }}>close</a>
-          </div>
-          <ExploreDocViewer boardName={boardName} docs={[{ name: viewDoc.name, path: viewDoc.path, htmlURL: viewDoc.htmlURL }]} />
-        </div>
-      )}
       {runbooks.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '8px 12px' }}>
