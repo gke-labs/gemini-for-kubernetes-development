@@ -371,9 +371,15 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
+	// The issues this pull request closes are wanted by the label sync, the
+	// review opt-in check and the review prompt. Resolving them through one
+	// shared fetcher is what stops the same issue being fetched three times in
+	// the course of a single evaluation.
+	refs := newRefIssues(s.gh, pr)
+
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
-	s.syncReferencedIssueLabels(ctx, pr, prIssue)
+	s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
@@ -409,7 +415,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
-		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, pr, prIssue) {
+		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
 			canReview = !hasBotReviewAfterLastCommit(history.reviews, history.lastCommitTime, headSHA, s.cfg.GitHubLogin, s.cfg.AllowlistedBots)
 		}
 	}
@@ -438,6 +444,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		taskAssignee:         taskAssignee,
 		isExplicitlyAssigned: isExplicitlyAssigned,
 		prURL:                fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.gh.Owner(), s.gh.Repo(), num),
+		refIssues:            refs,
 	}
 
 	// Top level case statement for handling each type of PR task
@@ -478,7 +485,7 @@ func (s *Scanner) reconcileReadiness(
 ) {
 	num := pc.prIssue.GetNumber()
 
-	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.pr, pc.prIssue)
+	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
 	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 

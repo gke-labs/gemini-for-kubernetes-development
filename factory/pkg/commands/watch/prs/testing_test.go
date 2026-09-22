@@ -57,9 +57,8 @@ type testOpts struct {
 // newTestScanner builds a Scanner over a real queue manager rooted at tempDir,
 // and returns both so that a test can assert on the queue as well as on GitHub.
 //
-// The worker pool is pinned to one so that a cycle evaluates its candidates in
-// the order they were given: several tests assert on the sequence of calls the
-// httptest server saw, which a concurrent pool would interleave.
+// The intervals are left at their defaults: nothing here drives the Run loop,
+// and the tests that do set them explicitly.
 func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *concurrency.TaskQueueManager) {
 	t.Helper()
 

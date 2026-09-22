@@ -42,6 +42,11 @@ type prContext struct {
 	taskAssignee         string
 	isExplicitlyAssigned bool
 	prURL                string
+	// refIssues resolves the issues this pull request closes. It is shared
+	// with the evaluation that built this context, so a handler reading it
+	// spends nothing: by the time a handler runs, the issues have already been
+	// fetched for the label sync.
+	refIssues *refIssues
 }
 
 // handlePRIterate queues a rebase for a pull request that conflicts with its
@@ -333,9 +338,8 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	if pc.pr.GetBody() != "" {
 		bodies = append(bodies, pc.pr.GetBody())
 	}
-	for refIssueNum := range common.GetReferencedIssues(pc.pr) {
-		refIssue, err := s.gh.GetIssue(ctx, refIssueNum)
-		if err == nil && refIssue.GetBody() != "" {
+	for _, refIssue := range pc.refIssues.all(ctx) {
+		if refIssue.GetBody() != "" {
 			bodies = append(bodies, refIssue.GetBody())
 		}
 	}
