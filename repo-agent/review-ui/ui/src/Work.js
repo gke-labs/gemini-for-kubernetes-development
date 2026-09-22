@@ -1116,7 +1116,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
       <div key={inst.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
         <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
           style={{ minWidth: '150px', fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
-          title="The instance's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+          title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts (the runbook is the recipe; this is a deployment of it)">⛭ {inst.name} ↗</a>
         {verdictBadge(receipt)}
         {pend && !running && (
           <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
@@ -1165,9 +1165,10 @@ function TryPanel({ boardName, onOpenSandbox }) {
           <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
             padding: '10px 12px', marginBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
+              <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 'medium', fontWeight: 700, textDecoration: 'none', color: 'var(--text-primary)' }}
+                title="The runbook (the recipe) on GitHub">{rb.scenario} ↗</a>
               <span style={{ flex: 1 }} />
-              <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
             </div>
             {own.length > 0 && (
               <div style={{ marginTop: '6px' }}>
