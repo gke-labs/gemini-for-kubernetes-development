@@ -157,18 +157,26 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
 		LabelSelector: "sandbox.gemini.google.com/type=runbook",
 	}); lerr == nil {
+		boardEngine, _, _ := unstructured.NestedString(board.Object, "spec", "sandbox", "engine")
 		sandboxes := []gin.H{}
 		for _, sb := range list.Items {
 			annotations := sb.GetAnnotations()
 			if annotations["repo"] != repo {
 				continue
 			}
+			// First-run sandboxes carry no engine annotation (it is only
+			// stamped on relaunches into an existing sandbox) — fall back
+			// to the board's engine so the icon renders.
+			engine := annotations["board.gemini.google.com/engine"]
+			if engine == "" {
+				engine = engineOrDefault(boardEngine)
+			}
 			sandboxes = append(sandboxes, gin.H{
 				"name":      sb.GetName(),
 				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
 				"instance":  annotations["sandbox.gemini.google.com/runbook-instance"],
 				"taskState": annotations[annoTaskState],
-				"engine":    annotations["board.gemini.google.com/engine"],
+				"engine":    engine,
 			})
 		}
 		out["sandboxes"] = sandboxes

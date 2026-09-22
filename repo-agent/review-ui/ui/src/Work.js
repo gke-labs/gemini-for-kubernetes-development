@@ -1138,6 +1138,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
     const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
     if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
     if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
+    if (v.startsWith('BLOCKED')) return <Chip text={`🔒 blocked${when} — see receipt: Needs from owner`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
     if (v.startsWith('FAILED') || v.startsWith('PARTIAL')) return <Chip text={`❌ ${v.split(' ')[0].toLowerCase()}${when}`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
     return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
   };
@@ -1235,7 +1236,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                       {sb ? (
                         <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
                           title={`${sb.name} — tasks & logs`}>
-                          <EngineIcon engine={sb.engine} />
+                          {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
                           {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
                           {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
                         </span>
