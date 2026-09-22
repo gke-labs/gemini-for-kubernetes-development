@@ -1036,8 +1036,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const [instName, setInstName] = useState('');
   const [guidance, setGuidance] = useState('');
   const [busy, setBusy] = useState('');
-  const [newRunbook, setNewRunbook] = useState({ name: '', charter: '' });
-  const [drafting, setDrafting] = useState(false);
 
   const load = useCallback(() => {
     fetch(`/api/board/${boardName}/runbook`)
@@ -1105,26 +1103,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
     }).catch(() => setBusy(''));
   };
 
-  // Runbooks are born on the Explore pipeline: the name is the slug,
-  // the charter text is the guidance the drafter treats as pinned
-  // decisions; scenario "all" drafts/refreshes the standard set.
-  const draftRunbook = (scenarioOverride) => {
-    const name = scenarioOverride || slugName(newRunbook.name);
-    if (!name) return;
-    setDrafting(true);
-    fetch(`/api/board/${boardName}/explore`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'runbook', scenario: name, guidance: scenarioOverride ? '' : newRunbook.charter.trim() }),
-    }).then(res => {
-      if (res.ok) {
-        setNewRunbook({ name: '', charter: '' });
-        setState(prev => prev ? { ...prev, draftPending: name === 'all' ? 'standard set' : name } : prev);
-      }
-      setTimeout(load, 2000);
-      setTimeout(() => setDrafting(false), 2000);
-    }).catch(() => setDrafting(false));
-  };
-
   // The receipt's first line, compressed to a badge.
   const verdictBadge = (receipt) => {
     if (!receipt || !receipt.verdict) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
@@ -1145,34 +1123,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* Creation: standard set, custom, update. */}
-      <div style={{ border: '1px dashed var(--border-color)', borderRadius: '10px',
-        padding: '10px 12px', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" disabled={drafting || !!(state && state.draftPending)}
-            title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp"
-            onClick={() => draftRunbook('all')}>Draft standard set</button>
-          <span style={{ color: 'var(--text-secondary)' }}>— or custom / update:</span>
-          <input type="text" value={newRunbook.name}
-            onChange={e => setNewRunbook(prev => ({ ...prev, name: e.target.value }))}
-            placeholder="name (new: deploy-kops-gce · existing name = update it)"
-            style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
-              border: '1px solid var(--border-color)', background: 'transparent',
-              color: 'var(--text-primary)', font: 'inherit' }} />
-          <button className="btn btn-sm" disabled={!newRunbook.name.trim() || drafting || !!(state && state.draftPending)}
-            title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
-            onClick={() => draftRunbook()}>Draft runbook</button>
-          {state && state.draftPending && (
-            <Chip text={`drafting ${state.draftPending}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
-          )}
-        </div>
-        <textarea rows={2} value={newRunbook.charter}
-          onChange={e => setNewRunbook(prev => ({ ...prev, charter: e.target.value }))}
-          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
-          style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-      </div>
-
       {/* One table: every deployment across every runbook. */}
       {instances.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
@@ -1268,7 +1218,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
         </div>
       ) : (
         <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No runbooks yet — Draft standard set above writes them, or create a custom one from a description.
+          No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
         </div>
       )}
     </div>
@@ -1283,6 +1233,8 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   const [exp, setExp] = useState(null);
   const [topic, setTopic] = useState('');
   const [sinceOpen, setSinceOpen] = useState(false);
+  const [runbookName, setRunbookName] = useState('');
+  const [runbookCharter, setRunbookCharter] = useState('');
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -1327,6 +1279,9 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         <button className="btn" disabled={busy === 'onboard'}
           title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
           onClick={() => kickoff('onboard')}>Generate Overview</button>
+        <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
+          title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
+          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
         <span style={{ position: 'relative' }}>
           <button className="btn" disabled={busy === 'activity'}
             title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
@@ -1381,6 +1336,37 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
           <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
             onClick={dive}>Explore</button>
+        </div>
+      </div>
+      {/* Runbook authoring: custom recipes and updates — exploration
+          work (explore sandbox, notes branch); running them is the
+          Runs tab's business. Same grammar as the ask box: the text
+          is the surface, the verb sits bottom-right. */}
+      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px', marginTop: '10px' }}>
+        <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
+          placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
+          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
+            color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
+            borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '6px' }} />
+        <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
+          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
+          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+          {exp && exp.pending === 'runbook' && (
+            <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
+          )}
+          <button className="btn btn-sm"
+            disabled={!runbookName.trim() || busy === 'runbook' || (exp && exp.pending === 'runbook')}
+            title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
+            onClick={() => {
+              const slug = runbookName.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+              if (!slug) return;
+              kickoff('runbook', { scenario: slug, guidance: runbookCharter.trim() });
+              setRunbookName('');
+              setRunbookCharter('');
+            }}>Draft / Update Runbook</button>
         </div>
       </div>
       {/* Artifacts: git is the record — rendered apart from the controls. */}
@@ -1804,7 +1790,7 @@ function Work({ onBack, namespace }) {
                 className={`group-tab ${shown === 'try' ? 'active' : ''}`}
                 title="Run the repo from its runbooks — deploy, verify, tear down"
                 onClick={() => setActiveGroup('try')}
-              >Try</button>
+              >Runs</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
                 {shown === 'issues' && (
                   <span title="View scope — display only, never changes what runs">
