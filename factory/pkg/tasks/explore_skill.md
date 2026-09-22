@@ -43,25 +43,27 @@ current, and short enough to read.
 
 ## Runbook requirements and targets
 
-Every runbook opens its **What this needs** section with a plain
-statement of what running it requires — and why nothing lighter
-suffices. Be concrete about the boundary that matters: a plain
-container runs binaries, tests and envtest (etcd + kube-apiserver as
-processes); a disposable namespace-contained API (vcluster) hosts
-controllers, operators, CRDs and webhooks — anything that talks only
-to the API server; and node-level features (CSI drivers, device
-plugins, kernel modules, privileged DaemonSets, kubelet plugin
-sockets, host mounts), real cloud APIs, VMs, and full clusters need
-real infrastructure — vcluster shares the host's nodes and kubelet,
-so anything touching the node itself cannot land there. A controller
-that merely *ships* a DaemonSet may still be exercisable on the light
-end; actually mounting a volume through it is not.
+Every runbook opens its **What this needs** section by answering one
+question plainly: **can this run in the pod, or does it need real
+infrastructure?**
+
+- **In the pod** — binaries, unit and integration tests, envtest
+  (etcd + kube-apiserver as plain processes), single-process servers
+  exposed on a port. No new permissions, nothing to clean up beyond
+  the sandbox.
+- **Real infrastructure** — a cluster or cloud: anything needing real
+  nodes (CSI drivers, device plugins, kernel modules, privileged
+  DaemonSets, kubelet plugin sockets, host mounts), real cloud APIs,
+  VMs. Say exactly which component forces it, what credentials each
+  step assumes, and what it costs to tear down.
+
+When the answer is "both prove something" — tests in the pod, the
+real thing on a cluster — say so and write a path for each.
 
 When more than one deployment target genuinely proves something,
 write a path per target, named by the target — the thing a user
 actually deploys to: Steps carries one subsection per path
-("### Path — vcluster: …", "### Path — GKE: …"), lightest
-requirements first, and What this needs says what each path demands.
+("### Path — in-pod: …", "### Path — GKE: …"), in-pod first when it exists, and What this needs says what each path demands.
 Only targets that prove something real get a path; never pad one with
 invented steps. If a path outgrows the file (rule 6), split it into
 `runbooks/<scenario>-<target>.md` (`deploy-gke.md`, `deploy-kind.md`,

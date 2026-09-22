@@ -26,15 +26,15 @@ under the Tier line.
    ground truth for what actually builds and tests), helm charts,
    kustomize bases, container files. Do not invent commands — every
    step must trace to something the repo ships.
-2. Open What this needs with a plain statement of what running the
-   scenario requires — and why nothing lighter suffices. Pay attention
-   to node-level reality: CSI drivers, device plugins, privileged
-   DaemonSets, kubelet sockets and host mounts cannot land in a
-   vcluster — they need real infrastructure, and you should say
-   exactly which component forces it. If an existing runbook carries
-   (pinned) decisions, they are the owner's: keep them, adapt every
-   step to them, and note any disagreement in one line under them.
-   Also state what credentials or permissions each step assumes.
+2. Open What this needs by answering one question plainly: can this
+   run in the pod (binaries, tests, envtest, a single-process server),
+   or does it need real infrastructure — a cluster or cloud? Node-level
+   reality forces the latter: CSI drivers, device plugins, privileged
+   DaemonSets, kubelet sockets, host mounts. Say exactly which
+   component forces it. If an existing runbook carries (pinned)
+   decisions, they are the owner's: keep them, adapt every step to
+   them, and note any disagreement in one line under them. Also state
+   what credentials or permissions each step assumes.
 3. Use the skill's fixed sections — What this needs, Preconditions,
    Steps, Verify, Teardown — with one path per viable target, named by
    the target ("### Path — GKE"). If a runbook already exists,
