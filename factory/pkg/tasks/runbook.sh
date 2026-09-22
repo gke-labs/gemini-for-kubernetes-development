@@ -16,7 +16,9 @@ set -o pipefail
 # - GITHUB_USER_ID / GITHUB_USER_EMAIL / GITHUB_USER_NAME
 # - RUNBOOK_SCENARIO (deploy | upgrade | …)
 # - RUNBOOK_PATH (target path within the runbook, may be empty)
+# - RUNBOOK_INSTANCE (deployment instance name)
 # - RUNBOOK_MODE (run | teardown)
+# - PREPARE_PROMPT_FILE / EXECUTE_PROMPT_FILE (run mode: the two phases)
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
@@ -42,19 +44,20 @@ function ensureNotesBranch {
             echo "WARN: could not refresh the code base; running from the branch as-is."
         }
     fi
-    mkdir -p docs-exploration/runbooks/scripts docs-exploration/runbooks/receipts
+    mkdir -p "docs-exploration/runbook-deployments/${RUNBOOK_INSTANCE}"
     popd > /dev/null
 }
 
 function commitAndPushArtifacts {
-    echo "Committing and pushing run artifacts..."
+    local what="$1"
+    echo "Committing and pushing ${what}..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     git add docs-exploration 2>/dev/null || true
-    if git commit -m "runbook(${RUNBOOK_SCENARIO}${RUNBOOK_PATH:+/${RUNBOOK_PATH}}): ${RUNBOOK_MODE} receipt"; then
+    if git commit -m "runbook(${RUNBOOK_INSTANCE}): ${what}"; then
         git push origin "${NOTES_BRANCH}"
-        echo "Artifacts pushed to origin/${NOTES_BRANCH}"
+        echo "Pushed ${what} to origin/${NOTES_BRANCH}"
     else
-        echo "No artifact changes to commit."
+        echo "No changes to commit for ${what}."
     fi
     popd > /dev/null
 }
@@ -67,5 +70,14 @@ sleep 5
 checkoutDefaultBranch
 ensureNotesBranch
 configureGemini
-runEngine
-commitAndPushArtifacts
+if [ "${RUNBOOK_MODE}" = "run" ]; then
+    # Two phases: the scripts land on the branch BEFORE anything
+    # executes — durable and reviewable even if execution dies.
+    PROMPT_FILE="${PREPARE_PROMPT_FILE}" runEngine
+    commitAndPushArtifacts "prepared scripts (pre-execution)"
+    PROMPT_FILE="${EXECUTE_PROMPT_FILE}" runEngine
+    commitAndPushArtifacts "execution receipt"
+else
+    runEngine
+    commitAndPushArtifacts "${RUNBOOK_MODE} receipt"
+fi

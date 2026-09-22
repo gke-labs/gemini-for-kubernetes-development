@@ -34,7 +34,7 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 		Short:   "Execute a runbook scenario in a dedicated run sandbox",
 	}
 
-	var repoURL, scenario, path, guidance string
+	var repoURL, scenario, path, instance, guidance string
 
 	run := func(mode string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -49,12 +49,19 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("--scenario must name one runbook scenario (deploy, upgrade, …)")
 			}
 			path = slugifyScenario(path)
+			instance = slugifyScenario(instance)
+			if instance == "" {
+				instance = scenario
+				if path != "" {
+					instance = scenario + "-" + path
+				}
+			}
 			if rootFlags.Timeout > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runRunbook(ctx, mode, repoURL, scenario, path, guidance)
+			return runRunbook(ctx, mode, repoURL, scenario, path, instance, guidance)
 		}
 	}
 
@@ -73,6 +80,7 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 		sub.Flags().StringVar(&repoURL, "url", "", "GitHub repository URL (e.g. https://github.com/owner/repo)")
 		sub.Flags().StringVar(&scenario, "scenario", "", "The runbook scenario (deploy, upgrade, …)")
 		sub.Flags().StringVar(&path, "path", "", "Target path within the runbook (gke, local, …)")
+		sub.Flags().StringVar(&instance, "instance", "", "Deployment instance name (default <scenario>[-<path>]); one runbook, many parameterized deployments")
 		cmd.AddCommand(sub)
 	}
 	runCmd.Flags().StringVar(&guidance, "guidance", "", "Owner constraints for this run (pinned decisions)")
@@ -80,7 +88,7 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance string) error {
+func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, guidance string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repository URL: %w", err)
@@ -98,8 +106,8 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance str
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
-	fmt.Printf("Ensuring run sandbox for %s/%s (%s%s)...\n", owner, repo, scenario, suffixOrEmpty(path))
-	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, path, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	fmt.Printf("Ensuring run sandbox for %s/%s (instance %s)...\n", owner, repo, instance)
+	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, path, instance, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring run sandbox: %w", err)
 	}
@@ -111,15 +119,27 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance str
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
-	promptBytes, err := tasks.RenderRunbookPrompt(mode, tasks.RunbookParams{
+	params := tasks.RunbookParams{
 		RepoName: repo,
 		HTMLURL:  htmlURL,
 		Scenario: scenario,
 		Path:     path,
+		Instance: instance,
 		Guidance: guidance,
-	})
-	if err != nil {
-		return fmt.Errorf("rendering runbook prompt: %w", err)
+	}
+	promptModes := []string{"teardown"}
+	if mode == "run" {
+		// Two phases: prepare writes the instance's scripts and the
+		// harness pushes them BEFORE execute runs anything.
+		promptModes = []string{"prepare", "execute"}
+	}
+	prompts := map[string][]byte{}
+	for _, pm := range promptModes {
+		b, perr := tasks.RenderRunbookPrompt(pm, params)
+		if perr != nil {
+			return fmt.Errorf("rendering runbook %s prompt: %w", pm, perr)
+		}
+		prompts[pm] = b
 	}
 	scriptBytes, err := tasks.GetRunbookScript()
 	if err != nil {
@@ -134,15 +154,23 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance str
 	defer client.Close()
 
 	taskDir := fmt.Sprintf("/workspaces/tasks/runbook-%s", time.Now().Format("20060102-150405"))
-	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
 	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
+	promptPaths := map[string]string{}
 
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
+	fmt.Println("Writing prompts and script into sandbox...")
+	for pm, b := range prompts {
+		p := fmt.Sprintf("%s/agent-prompt-%s.txt", taskDir, pm)
+		if err := client.WriteFile(ctx, p, b); err != nil {
+			return fmt.Errorf("writing %s prompt: %w", pm, err)
+		}
+		promptPaths[pm] = p
 	}
 	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
 		return fmt.Errorf("writing script: %w", err)
+	}
+	promptPath := promptPaths["teardown"]
+	if mode == "run" {
+		promptPath = promptPaths["prepare"]
 	}
 
 	envMap := map[string]string{
@@ -157,7 +185,12 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, guidance str
 		"GITHUB_USER_NAME":           githubLogin,
 		"RUNBOOK_SCENARIO":           scenario,
 		"RUNBOOK_PATH":               path,
+		"RUNBOOK_INSTANCE":           instance,
 		"RUNBOOK_MODE":               mode,
+	}
+	if mode == "run" {
+		envMap["PREPARE_PROMPT_FILE"] = promptPaths["prepare"]
+		envMap["EXECUTE_PROMPT_FILE"] = promptPaths["execute"]
 	}
 	// BYO GCP project: Workload Identity supplies credentials via the
 	// pod's KSA; the secret only carries where to deploy.

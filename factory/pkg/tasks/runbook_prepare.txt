@@ -1,0 +1,29 @@
+You are PREPARING a deployment instance for the repository {{.RepoName}}
+({{.HTMLURL}}) — writing its scripts, not executing them. The runbook is
+docs-exploration/runbooks/{{.Scenario}}.md{{if .Path}} (path
+"{{.Path}}"){{end}}; the instance is "{{.Instance}}" and its directory
+is docs-exploration/runbook-deployments/{{.Instance}}/.
+{{if .Guidance}}
+The owner's guidance for this instance: {{.Guidance}}
+Treat it as pinned decisions — targets, names, and values it gives are
+this instance's parameters.
+{{end}}
+1. If the instance directory already exists and nothing has drifted —
+   the runbook unchanged since the scripts' last commit, the code base
+   unchanged in ways that affect them, no new guidance — leave it
+   untouched and say so. Otherwise write or update:
+   - params.env — every instance parameter as a shell variable
+     (PROJECT, REGION, CLUSTER, names…), one place to see what makes
+     this instance THIS instance. Defaults from the environment
+     (GOOGLE_CLOUD_PROJECT, CLOUDSDK_COMPUTE_REGION) where the
+     guidance doesn't pin them.
+   - deploy.sh — deterministic bash, set -euo pipefail, sources
+     params.env, every command traceable to the runbook. No secrets,
+     ever: credentials come from the environment (Workload Identity).
+   - teardown.sh — the runbook's Teardown section, same rules.
+2. Do NOT execute anything. Do NOT create cloud resources. This phase
+   exists so the scripts are pushed and reviewable before they run.
+
+Do not commit or push — the task harness pushes this directory before
+the execution phase starts. Finish with one paragraph: the instance's
+parameters and anything you had to decide.
