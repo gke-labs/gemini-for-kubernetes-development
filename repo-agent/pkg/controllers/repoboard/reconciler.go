@@ -582,30 +582,22 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 				plans = append(plans, planRequest{issue: n, member: member})
 			}
 		case strings.HasPrefix(key, "runbook-"):
-			// runbook-run-<scenario>[:<path>] / runbook-teardown-<scenario>[:<path>]
+			// runbook-run-<runbook>[:<instance>] / runbook-teardown-<runbook>[:<instance>]
 			rest := strings.TrimPrefix(key, "runbook-")
 			mode, spec, modeOK := strings.Cut(rest, "-")
 			if !modeOK || (mode != "run" && mode != "teardown") {
 				continue
 			}
-			segs := strings.SplitN(spec, ":", 3)
-			scenario := segs[0]
+			scenario, rbInstance, _ := strings.Cut(spec, ":")
 			if scenario == "" {
 				continue
-			}
-			var rbPath, rbInstance string
-			if len(segs) > 1 {
-				rbPath = segs[1]
-			}
-			if len(segs) > 2 {
-				rbInstance = segs[2]
 			}
 			tryMember, tryAt, _ := strings.Cut(member, "|")
 			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, path: rbPath, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt})
+			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt})
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
 			if kind == "onboard" || kind == "activity" || kind == "topic" || kind == "runbook" {
@@ -1155,21 +1147,13 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if !modeOK {
 				continue
 			}
-			segs := strings.SplitN(spec, ":", 3)
-			scenario := segs[0]
-			var rbPath, rbInstance string
-			if len(segs) > 1 {
-				rbPath = segs[1]
-			}
-			if len(segs) > 2 {
-				rbInstance = segs[2]
-			}
+			scenario, rbInstance, _ := strings.Cut(spec, ":")
 			tryMember, tryAt, _ := strings.Cut(member, "|")
 			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, path: rbPath, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
+			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
 				continue
 			}
 		case strings.HasPrefix(key, "explore-"):
@@ -1300,15 +1284,14 @@ func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, c
 // runbookClaim is a runbook execution click from the Try tab.
 type runbookClaim struct {
 	mode      string // run | teardown
-	scenario  string
-	path      string
-	instance  string // default <scenario>[-<path>]
+	scenario  string // the runbook name: deploy-gcp, upgrade-gcp, …
+	instance  string // default: the runbook name
 	member    string
 	claimedAt time.Time
 }
 
 func runbookKey(member, repo string, c runbookClaim) string {
-	instance := factorycli.RunbookInstance(c.scenario, c.path, c.instance)
+	instance := factorycli.RunbookInstance(c.scenario, c.instance)
 	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, instance), c.mode)
 }
 
@@ -1339,7 +1322,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			continue
 		}
 		boardAnnotations := work.board.GetAnnotations()
-		instance := factorycli.RunbookInstance(claim.scenario, claim.path, claim.instance)
+		instance := factorycli.RunbookInstance(claim.scenario, claim.instance)
 		name := factorycli.RunbookSandboxName(work.repo, instance)
 		if sb := work.findSandbox(claim.member, name); sb != nil {
 			r.stampUnpaused(ctx, sb)
@@ -1350,7 +1333,6 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			SandboxName: name,
 			Mode:        claim.mode,
 			Scenario:    claim.scenario,
-			Path:        claim.path,
 			Instance:    instance,
 			Guidance:    boardAnnotations[AnnotationRunbookGuidance],
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),

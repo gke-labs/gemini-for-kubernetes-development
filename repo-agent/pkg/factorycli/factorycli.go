@@ -130,16 +130,13 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	})
 }
 
-// RunbookInstance is the default instance name for a scenario/path —
+// RunbookInstance is the default instance name for a runbook —
 // mirrors factory's default so claims and sandbox names agree.
-func RunbookInstance(scenario, path, instance string) string {
+func RunbookInstance(runbook, instance string) string {
 	if instance != "" {
 		return instance
 	}
-	if path != "" {
-		return scenario + "-" + path
-	}
-	return scenario
+	return runbook
 }
 
 // RunbookSandboxName mirrors factory's run-environment naming:
@@ -171,9 +168,8 @@ type RunbookOptions struct {
 	SandboxName string
 	Namespace   string
 	Mode        string // run | teardown
-	Scenario    string
-	Path        string
-	Instance    string // deployment instance (default <scenario>[-<path>])
+	Scenario    string // the runbook name: deploy-gcp, upgrade-gcp, …
+	Instance    string // deployment instance (default: the runbook name)
 	Guidance    string // run mode only
 	RepoURL     string
 	GithubToken string
@@ -194,9 +190,6 @@ func (r *Runner) StartRunbook(key string, opts RunbookOptions) bool {
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 		"--scenario", opts.Scenario,
-	}
-	if opts.Path != "" {
-		args = append(args, "--path", opts.Path)
 	}
 	if opts.Instance != "" {
 		args = append(args, "--instance", opts.Instance)

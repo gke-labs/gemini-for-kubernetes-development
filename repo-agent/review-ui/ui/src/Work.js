@@ -1033,9 +1033,8 @@ function ExploreDocViewer({ boardName, docs }) {
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
   const [guidance, setGuidance] = useState('');
-  const [instanceName, setInstanceName] = useState('');
+  const [names, setNames] = useState({}); // per-runbook instance-name inputs
   const [busy, setBusy] = useState('');
-  const [viewDoc, setViewDoc] = useState(null); // {name, path}
 
   const load = useCallback(() => {
     fetch(`/api/board/${boardName}/runbook`)
@@ -1049,17 +1048,16 @@ function TryPanel({ boardName, onOpenSandbox }) {
     return () => clearInterval(t);
   }, [load]);
 
-  const kickoff = (mode, scenario, path, instance) => {
-    const id = `${mode}:${scenario}:${path || ''}:${instance || ''}`;
-    setBusy(id);
+  const kickoff = (mode, scenario, instance) => {
+    setBusy(`${mode}:${scenario}:${instance || ''}`);
     fetch(`/api/board/${boardName}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, scenario, path: path || '', instance: instance || '', guidance: guidance.trim() }),
+      body: JSON.stringify({ mode, scenario, instance: instance || '', guidance: guidance.trim() }),
     }).then(res => {
       if (res.ok) {
         setGuidance('');
-        setInstanceName('');
-        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, path: path || '', instance: instance || '' }] } : prev);
+        setNames(prev => ({ ...prev, [scenario]: '' }));
+        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, instance: instance || '' }] } : prev);
       }
       setTimeout(load, 2000);
       setTimeout(() => setBusy(''), 2000);
@@ -1070,70 +1068,61 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const sandboxes = (state && state.sandboxes) || [];
   const pending = (state && state.pending) || [];
   const instances = (state && state.instances) || [];
-  const defaultInstance = (scenario, path) => (path ? `${scenario}-${path}` : scenario);
-  const findSbByInstance = (inst) => sandboxes.find(s => (s.instance || defaultInstance(s.scenario, s.path)) === inst);
-  const findPendingByInstance = (inst) => pending.find(p => (p.instance || defaultInstance(p.scenario, p.path)) === inst);
+  const findSb = (inst) => sandboxes.find(s => (s.instance || s.scenario) === inst);
+  const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
 
-  function slugTarget(target) {
-    return String(target || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  }
+  const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
-  // Path rows launch NEW deployments (instance = typed name or the
-  // default); instance rows below are the living deployments.
-  const pathRow = (rb, target, tier) => {
-    const path = target ? slugTarget(target) : '';
-    const inst = instanceName.trim() ? slugTarget(instanceName) : defaultInstance(rb.scenario, path);
-    const pend = findPendingByInstance(inst);
-    return (
-      <div key={path || 'default'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: '160px' }}>
-          ▸ {target || 'default path'}{tier !== undefined && tier !== '' && <span style={{ color: 'var(--text-secondary)' }}> (tier {tier})</span>}
-        </span>
-        <button className="btn btn-sm" disabled={!!pend || busy.startsWith(`run:${rb.scenario}:${path}`)}
-          title="Deploy an instance of this path — prepare pushes the scripts to the branch, then execution runs them"
-          onClick={() => kickoff('run', rb.scenario, path, instanceName.trim() ? slugTarget(instanceName) : '')}>▶ Run</button>
-        {pend && (
-          <Chip text={`${pend.mode} queued as ${inst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
-        )}
-      </div>
-    );
+  // The receipt's first line, compressed to a badge.
+  const verdictBadge = (receipt) => {
+    if (!receipt || !receipt.verdict) return null;
+    const v = receipt.verdict.toUpperCase();
+    const date = (receipt.name.match(/(\d{8})/) || [])[1];
+    const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
+    if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
+    if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
+    if (v.startsWith('FAILED') || v.startsWith('PARTIAL')) return <Chip text={`❌ ${v.split(' ')[0].toLowerCase()}${when}`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+    return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
   };
 
-  const instanceRow = (inst) => {
-    const sb = findSbByInstance(inst.name);
-    const pend = findPendingByInstance(inst.name);
+  const instanceRow = (inst, runbook) => {
+    const sb = findSb(inst.name);
+    const pend = findPending(inst.name);
     const running = sb && sb.taskState === 'Running';
     const receipt = inst.latestReceipt;
-    const scenario = (sb && sb.scenario) || inst.name.split('-')[0];
     return (
       <div key={inst.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: '160px', fontWeight: 500 }}>⛭ {inst.name}</span>
-        <button className="btn btn-sm" disabled={running || !!pend}
-          title="Re-run this instance — reuses its pushed script when nothing drifted"
-          onClick={() => kickoff('run', scenario, '', inst.name)}>▶ Run</button>
-        <button className="btn btn-sm" disabled={running || !!pend}
-          title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
-          onClick={() => kickoff('teardown', scenario, '', inst.name)}>Tear down</button>
+        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+          style={{ minWidth: '150px', fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+          title="The instance's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+        {verdictBadge(receipt)}
         {pend && !running && (
           <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
         )}
-        {sb && (
+        {running && sb && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
             title={`${sb.name} — tasks & logs`}>
             <EngineIcon engine={sb.engine} />
-            <Chip text={running ? 'running' : 'env ready'}
-              color={running ? '#b08800' : '#28a745'}
-              bg={running ? 'rgba(176,136,0,0.12)' : 'rgba(40,167,69,0.10)'} />
+            <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />
           </span>
         )}
-        {(inst.files || []).filter(f => f.name === 'deploy.sh' || f.name === 'params.env').map(f => (
-          <a key={f.path} href="#doc" onClick={e => { e.preventDefault(); setViewDoc(viewDoc && viewDoc.path === f.path ? null : f); }}
-            title="Pushed before execution — this is exactly what runs">{f.name}</a>
-        ))}
-        {receipt && (
-          <a href="#receipt" onClick={e => { e.preventDefault(); setViewDoc(viewDoc && viewDoc.path === receipt.path ? null : receipt); }}
-            title="Latest receipt — verdict, verify evidence, what is left running">{receipt.name}</a>
+        {!running && sb && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}
+            title={`${sb.name} — tasks & logs`}>
+            <EngineIcon engine={sb.engine} />
+          </span>
         )}
+        <span style={{ flex: 1 }} />
+        {receipt && (
+          <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
+            title="Latest receipt — verdict, verify evidence, what is left running">receipt ↗</a>
+        )}
+        <button className="btn btn-sm" disabled={running || !!pend}
+          title="Deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
+          onClick={() => kickoff('run', runbook, inst.name)}>▶ Re-deploy</button>
+        <button className="btn btn-sm" disabled={running || !!pend}
+          title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
+          onClick={() => kickoff('teardown', runbook, inst.name)}>Tear down</button>
       </div>
     );
   };
@@ -1144,48 +1133,45 @@ function TryPanel({ boardName, onOpenSandbox }) {
         <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
           No runbooks yet — draft them on the Explore tab first (Draft Runbooks).
         </div>
-      ) : runbooks.map(rb => (
-        <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          padding: '10px 12px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
-            {rb.tier && <span style={{ color: 'var(--text-secondary)' }}>Tier: {rb.tier}</span>}
-            <span style={{ flex: 1 }} />
-            <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
-          </div>
-          <div style={{ marginTop: '6px' }}>
-            {(rb.paths && rb.paths.length > 0)
-              ? rb.paths.map(p => pathRow(rb, p.target, p.tier))
-              : pathRow(rb, '', rb.tier ? '' : undefined)}
-          </div>
-          {instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-')).length > 0 && (
-            <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed var(--border-color)' }}>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 'smaller', marginBottom: '2px' }}>deployments</div>
-              {instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-')).map(instanceRow)}
+      ) : runbooks.map(rb => {
+        const own = instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-'));
+        const newName = names[rb.scenario] || '';
+        const newInst = newName.trim() ? slugName(newName) : rb.scenario;
+        const newPend = findPending(newInst);
+        return (
+          <div key={rb.scenario} style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+            padding: '10px 12px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
+              <span style={{ flex: 1 }} />
+              <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
             </div>
-          )}
-        </div>
-      ))}
-      {viewDoc && (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '10px 12px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex' }}>
-            <strong>{viewDoc.name}</strong>
-            <span style={{ flex: 1 }} />
-            <a href="#close" onClick={e => { e.preventDefault(); setViewDoc(null); }}>close</a>
+            {own.length > 0 && (
+              <div style={{ marginTop: '6px' }}>
+                {own.map(i => instanceRow(i, rb.scenario))}
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px',
+              paddingTop: '8px', borderTop: own.length > 0 ? '1px dashed var(--border-color)' : 'none' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>new:</span>
+              <input type="text" value={newName} onChange={e => setNames(prev => ({ ...prev, [rb.scenario]: e.target.value }))}
+                placeholder={`instance name (default: ${rb.scenario})`}
+                style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
+                  border: '1px solid var(--border-color)', background: 'transparent',
+                  color: 'var(--text-primary)', font: 'inherit' }} />
+              <button className="btn btn-sm" disabled={!!newPend || busy.startsWith(`run:${rb.scenario}:`)}
+                title="Deploy a new instance of this runbook — prepare pushes the scripts to the branch, then execution runs them"
+                onClick={() => kickoff('run', rb.scenario, newName.trim() ? slugName(newName) : '')}>▶ Run</button>
+              {newPend && <Chip text={`run queued as ${newInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+            </div>
           </div>
-          <ExploreDocViewer boardName={boardName} docs={[{ name: viewDoc.name, path: viewDoc.path, htmlURL: viewDoc.htmlURL }]} />
-        </div>
-      )}
+        );
+      })}
       {runbooks.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '8px 12px' }}>
-          <input type="text" value={instanceName} onChange={e => setInstanceName(e.target.value)}
-            placeholder="instance name (optional — default <scenario>-<path>; name it to deploy the same runbook again with different parameters)"
-            style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
-              color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
-              borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '4px' }} />
           <textarea rows={2} value={guidance} onChange={e => setGuidance(e.target.value)}
-            placeholder="Anything the next run should know? (region override, flags, 'skip step 4'…) — rides the next ▶ Run"
+            placeholder="Guidance for the next run — region overrides, flags, 'skip step 4'… (rides the next ▶ Run or ▶ Re-deploy)"
             style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
               background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
         </div>
