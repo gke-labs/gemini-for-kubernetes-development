@@ -1035,6 +1035,8 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const [guidance, setGuidance] = useState('');
   const [names, setNames] = useState({}); // per-runbook instance-name inputs
   const [busy, setBusy] = useState('');
+  const [newRunbook, setNewRunbook] = useState({ name: '', charter: '' });
+  const [drafting, setDrafting] = useState(false);
 
   const load = useCallback(() => {
     fetch(`/api/board/${boardName}/runbook`)
@@ -1072,6 +1074,26 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
 
   const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+
+  // Runbooks are born on the Explore pipeline: the name is the slug,
+  // the charter text is the guidance the drafter treats as pinned
+  // decisions; scenario "all" drafts/refreshes the standard set.
+  const draftRunbook = (scenarioOverride) => {
+    const name = scenarioOverride || slugName(newRunbook.name);
+    if (!name) return;
+    setDrafting(true);
+    fetch(`/api/board/${boardName}/explore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'runbook', scenario: name, guidance: scenarioOverride ? '' : newRunbook.charter.trim() }),
+    }).then(res => {
+      if (res.ok) {
+        setNewRunbook({ name: '', charter: '' });
+        setState(prev => prev ? { ...prev, draftPending: name === 'all' ? 'standard set' : name } : prev);
+      }
+      setTimeout(load, 2000);
+      setTimeout(() => setDrafting(false), 2000);
+    }).catch(() => setDrafting(false));
+  };
 
   // The receipt's first line, compressed to a badge.
   const verdictBadge = (receipt) => {
@@ -1129,11 +1151,12 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {runbooks.length === 0 ? (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No runbooks yet — draft them on the Explore tab first (Draft Runbooks).
+      {runbooks.length === 0 && (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '10px' }}>
+          No runbooks yet — Draft standard set below writes them, or create a custom one from a description.
         </div>
-      ) : runbooks.map(rb => {
+      )}
+      {runbooks.map(rb => {
         const own = instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-'));
         const newName = names[rb.scenario] || '';
         const newInst = newName.trim() ? slugName(newName) : rb.scenario;
@@ -1167,6 +1190,32 @@ function TryPanel({ boardName, onOpenSandbox }) {
           </div>
         );
       })}
+      <div style={{ border: '1px dashed var(--border-color)', borderRadius: '10px',
+        padding: '10px 12px', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm" disabled={drafting || !!(state && state.draftPending)}
+            title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp"
+            onClick={() => draftRunbook('all')}>Draft standard set</button>
+          <span style={{ color: 'var(--text-secondary)' }}>— or custom / update:</span>
+          <input type="text" value={newRunbook.name}
+            onChange={e => setNewRunbook(prev => ({ ...prev, name: e.target.value }))}
+            placeholder="name (new: deploy-kops-gce · existing name = update it)"
+            style={{ flex: '0 1 240px', padding: '3px 8px', borderRadius: '4px',
+              border: '1px solid var(--border-color)', background: 'transparent',
+              color: 'var(--text-primary)', font: 'inherit' }} />
+          <button className="btn btn-sm" disabled={!newRunbook.name.trim() || drafting || !!(state && state.draftPending)}
+            title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
+            onClick={() => draftRunbook()}>Draft runbook</button>
+          {state && state.draftPending && (
+            <Chip text={`drafting ${state.draftPending}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />
+          )}
+        </div>
+        <textarea rows={2} value={newRunbook.charter}
+          onChange={e => setNewRunbook(prev => ({ ...prev, charter: e.target.value }))}
+          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
+          style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+      </div>
       {runbooks.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '8px 12px' }}>
@@ -1232,9 +1281,6 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         <button className="btn" disabled={busy === 'onboard'}
           title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
           onClick={() => kickoff('onboard')}>Generate Overview</button>
-        <button className="btn" disabled={busy === 'runbook'}
-          title="Agent drafts executable runbooks for the standard scenarios (deploy, upgrade) from the repo's own tooling — a reviewable first version you edit and pin"
-          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
         <span style={{ position: 'relative' }}>
           <button className="btn" disabled={busy === 'activity'}
             title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
@@ -1281,15 +1327,12 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
         background: 'var(--bg-secondary)', padding: '10px 12px' }}>
         <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask a question ('compare with …') or give runbook guidance ('deploy to GKE, project my-proj, you do the rest') — the buttons below decide what happens"
+          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
           style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)',
             font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
-          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'runbook'}
-            title="Apply this text as guidance to the runbooks it concerns ('deploy to GKE, project my-proj, you do the rest')"
-            onClick={() => { if (!topic.trim()) return; kickoff('runbook', { scenario: 'all', guidance: topic.trim() }); setTopic(''); }}>Update Runbooks</button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
           <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
             onClick={dive}>Explore</button>
         </div>
@@ -1304,7 +1347,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         )}
         {(!exp || (exp.docs || []).length === 0) ? (
           <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No exploration notes yet — Generate Overview writes the first ones to your fork.
+            No exploration notes yet — Generate Overview writes the first ones to your fork. Runbooks live on the Try tab.
           </div>
         ) : (
           <ExploreDocViewer boardName={boardName} docs={exp.docs} />
