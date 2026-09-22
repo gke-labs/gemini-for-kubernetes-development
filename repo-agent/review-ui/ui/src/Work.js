@@ -1004,15 +1004,22 @@ function ExploreDocViewer({ boardName, docs }) {
             </div>
           );
           const isRunbook = d => d.name.startsWith('runbook');
-          const notes = docs.filter(d => !isRunbook(d));
+          const isActivity = d => d.name.startsWith('activity/');
+          const notes = docs.filter(d => !isRunbook(d) && !isActivity(d));
+          const activity = docs.filter(isActivity);
           const recipes = docs.filter(isRunbook);
+          const divider = key => (
+            <div key={key} style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
+          );
+          const groups = [notes, activity, recipes].filter(g => g.length > 0);
           return (
             <>
-              {notes.map(entry)}
-              {recipes.length > 0 && (
-                <div style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
-              )}
-              {recipes.map(entry)}
+              {groups.map((g, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && divider(`div-${i}`)}
+                  {g.map(entry)}
+                </React.Fragment>
+              ))}
             </>
           );
         })()}
