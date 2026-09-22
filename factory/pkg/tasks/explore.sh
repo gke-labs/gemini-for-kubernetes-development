@@ -73,7 +73,18 @@ function commitAndPushNotes {
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     git add docs-exploration .claude/skills/exploration GEMINI.md 2>/dev/null || true
     if git commit -m "exploration(${EXPLORE_KIND}): notes update"; then
-        git push origin "${NOTES_BRANCH}"
+        # A dropped connection after a successful server-side push makes
+        # the retry fail with 'cannot lock ref … is at <our sha>'. If the
+        # remote is already at our commit, the push succeeded.
+        if ! git push origin "${NOTES_BRANCH}"; then
+            git fetch origin "${NOTES_BRANCH}"
+            if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${NOTES_BRANCH}")" ]; then
+                echo "Remote already at our commit; push had succeeded."
+            else
+                echo "ERROR: push failed and remote differs." >&2
+                exit 1
+            fi
+        fi
         echo "Notes pushed to origin/${NOTES_BRANCH}"
     else
         echo "No note changes to commit."
