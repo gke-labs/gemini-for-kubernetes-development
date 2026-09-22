@@ -95,10 +95,10 @@ function checkForExistingPR {
         # rate-limit exhaustion, we paginate manually up to 20 pages with per_page=100.
         page=1
         api_failed=false
-        # Save any existing traps for INT, TERM, and EXIT to avoid overriding them globally.
-        saved_traps=$(trap -p INT TERM EXIT)
+        # Save any existing traps for EXIT to avoid overriding them globally.
+        saved_traps=$(trap -p EXIT)
         err_file=$(mktemp) || { echo "Error: Failed to create temporary file" >&2; exit 1; }
-        trap 'rm -f "$err_file"' INT TERM EXIT
+        trap 'rm -f "$err_file"' EXIT
         while [ "$page" -le 20 ]; do
             attempt=1
             max_attempts=3
@@ -143,7 +143,7 @@ function checkForExistingPR {
             echo "Warning: Issue #${ISSUE_NUMBER} has more than 20 pages of timeline events; results are truncated" >&2
         fi
         rm -f "$err_file"
-        trap - INT TERM EXIT
+        trap - EXIT
         if [ -n "$saved_traps" ]; then
             eval "$saved_traps"
         fi
