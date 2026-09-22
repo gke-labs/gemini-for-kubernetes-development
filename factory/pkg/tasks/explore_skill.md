@@ -64,6 +64,13 @@ in-pod story gets no `-in-pod` file; never pad one with invented
 steps. Finer-grained environment names (`-gke`, `-gce`, `-kind`) are
 for repos that genuinely offer alternatives worth separate runbooks.
 
+The drafted set is a starting convention, not a taxonomy: the owner
+creates custom runbooks by name from a free-form description
+(`deploy-kops-gce`, `deploy-gke-autopilot`, `perf-test-gce`), and
+they are first-class peers of the drafted ones — same fixed sections,
+same derive-from-tooling rule, same pins, same instances. The name is
+a slug; the content defines what it does.
+
 - `questions.md` — open questions. Add what you could not resolve;
   remove what later work answers.
 

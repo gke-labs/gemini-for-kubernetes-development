@@ -12,7 +12,10 @@ deploy-gcp.md when the repo needs real infrastructure. Where a
 combination does not apply, skip it and record why in
 docs-exploration/questions.md instead of padding a file.
 {{else}}Runbook: {{.Scenario}} — write or update
-docs-exploration/runbooks/{{.Scenario}}.md.
+docs-exploration/runbooks/{{.Scenario}}.md. If this is a new custom
+runbook, the guidance below is its charter: derive the steps that
+achieve it from the repository's own tooling, and where the guidance
+is silent, decide and record the assumption in What this needs.
 {{end}}
 {{if .Guidance}}The owner's guidance: {{.Guidance}}
 
