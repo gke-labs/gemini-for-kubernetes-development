@@ -1217,7 +1217,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                       {sb ? (
                         <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
                           title={`${sb.name} — tasks & logs`}>
-                          <EngineIcon engine={sb.engine} />
+                          {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
                           {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
                           {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
                         </span>
