@@ -1150,10 +1150,42 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {/* One composer: pick the recipe, name the deployment, steer it. */}
+      {runbooks.length > 0 ? (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          background: 'var(--bg-secondary)', padding: '10px 12px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>new:</span>
+            <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
+              {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
+            </select>
+            <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
+              placeholder={`instance name (default: ${defaultName})`}
+              style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
+                border: '1px solid var(--border-color)', background: 'transparent',
+                color: 'var(--text-primary)', font: 'inherit' }} />
+            {composerPend && <Chip text={`run queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
+            <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
+              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
+              style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`run:${activeRunbook}:`)}
+              title="Deploy a new instance of the selected runbook — prepare pushes the scripts to the branch, then execution runs them"
+              onClick={() => kickoff('run', activeRunbook, composerInst)}>▶ Run</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
+        </div>
+      )}
       {/* One table: every deployment across every runbook. */}
       {instances.length > 0 && (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
           padding: '6px 8px', marginBottom: '10px' }}>
+          <div style={{ fontWeight: 700, padding: '4px 8px 2px' }}>Deployments</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
@@ -1217,37 +1249,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
         </div>
       )}
 
-      {/* One composer: pick the recipe, name the deployment, steer it. */}
-      {runbooks.length > 0 ? (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '10px 12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>new:</span>
-            <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
-              {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
-            </select>
-            <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
-              placeholder={`instance name (default: ${defaultName})`}
-              style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
-                border: '1px solid var(--border-color)', background: 'transparent',
-                color: 'var(--text-primary)', font: 'inherit' }} />
-            {composerPend && <Chip text={`run queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
-            <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
-              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
-              style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`run:${activeRunbook}:`)}
-              title="Deploy a new instance of the selected runbook — prepare pushes the scripts to the branch, then execution runs them"
-              onClick={() => kickoff('run', activeRunbook, composerInst)}>▶ Run</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
-        </div>
-      )}
     </div>
   );
 }
