@@ -1034,7 +1034,6 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   const [exp, setExp] = useState(null);
   const [topic, setTopic] = useState('');
   const [sinceOpen, setSinceOpen] = useState(false);
-  const [runbookOpen, setRunbookOpen] = useState(false);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -1079,6 +1078,9 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         <button className="btn" disabled={busy === 'onboard'}
           title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
           onClick={() => kickoff('onboard')}>Generate Overview</button>
+        <button className="btn" disabled={busy === 'runbook'}
+          title="Agent drafts executable runbooks for the standard scenarios (deploy, upgrade) from the repo's own tooling — a reviewable first version you edit and pin"
+          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
         <span style={{ position: 'relative' }}>
           <button className="btn" disabled={busy === 'activity'}
             title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
@@ -1094,27 +1096,6 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                   last {win}
-                </div>
-              ))}
-            </div>
-          )}
-        </span>
-        <span style={{ position: 'relative' }}>
-          <button className="btn" disabled={busy === 'runbook'}
-            title="Agent derives an executable runbook for a scenario from the repo's own tooling — what it needs, steps, verify, teardown — into runbooks/ on your fork"
-            onClick={() => setRunbookOpen(o => !o)}>Runbooks ▾</button>
-          {runbookOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
-              {['deploy', 'upgrade'].map(sc => (
-                <div key={sc}
-                  title="Text in the box below rides along as guidance (targets, projects, constraints)"
-                  onClick={() => { setRunbookOpen(false); kickoff('runbook', { scenario: sc, guidance: topic.trim() }); setTopic(''); }}
-                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                  {sc}
                 </div>
               ))}
             </div>
@@ -1146,12 +1127,15 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
       <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
         background: 'var(--bg-secondary)', padding: '10px 12px' }}>
         <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask anything about this repo — a question, a subsystem, 'compare with …' — or type deployment guidance and pick a runbook ('deploy to GKE, project my-proj, you do the rest')"
+          placeholder="Ask a question ('compare with …') or give runbook guidance ('deploy to GKE, project my-proj, you do the rest') — the buttons below decide what happens"
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
           style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
             background: 'transparent', color: 'var(--text-primary)',
             font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' }}>
+          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'runbook'}
+            title="Apply this text as guidance to the runbooks it concerns ('deploy to GKE, project my-proj, you do the rest')"
+            onClick={() => { if (!topic.trim()) return; kickoff('runbook', { scenario: 'all', guidance: topic.trim() }); setTopic(''); }}>Update Runbooks</button>
           <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
             onClick={dive}>Explore</button>
         </div>
