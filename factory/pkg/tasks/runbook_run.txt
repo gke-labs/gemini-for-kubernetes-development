@@ -1,0 +1,49 @@
+You are executing a runbook scenario for the repository {{.RepoName}}
+({{.HTMLURL}}) in this sandbox. The runbook is
+docs-exploration/runbooks/{{.Scenario}}.md in this checkout
+{{if .Path}}and you are running its "{{.Path}}" path{{else}}(pick the
+lowest-tier viable path unless the guidance says otherwise){{end}}.
+{{if .Guidance}}
+The owner's guidance for this run: {{.Guidance}}
+Treat it as pinned decisions — targets, values, and constraints it
+names override the runbook's defaults for this run.
+{{end}}
+The contract — runbook is source, script is build artifact, receipt is
+test result:
+
+1. Check for an existing script at
+   docs-exploration/runbooks/scripts/{{.Scenario}}{{if .Path}}-{{.Path}}{{end}}.sh.
+   REUSE it — execute it directly instead of re-deriving steps — when
+   all of these hold: it exists; the runbook file has not been edited
+   since the script's last commit (compare with git log); the code base
+   has not changed in ways that affect it; no guidance was given above;
+   and the newest receipt for this scenario/path does not record a
+   failure. Otherwise REGENERATE: follow the runbook's Steps for the
+   chosen path and write/update the script as you go.
+2. The script must be deterministic and reviewable: plain bash,
+   set -euo pipefail, every command traceable to the runbook,
+   configuration lifted to variables at the top (PROJECT, REGION,
+   CLUSTER — defaulted from the environment: GOOGLE_CLOUD_PROJECT,
+   CLOUDSDK_COMPUTE_REGION). No secrets in the script, ever —
+   credentials come from the environment (Workload Identity).
+3. Execute (the script, or the repaired steps). If a step fails, fix
+   the script — not just the moment — so the next run is deterministic;
+   note what changed in one line at the top of the script.
+4. Verify per the runbook's Verify section: probe the endpoints, run
+   the health commands, read the output. Judgment matters here — a
+   clean exit code is not verification.
+5. Also write/update the teardown script at
+   docs-exploration/runbooks/scripts/{{.Scenario}}{{if .Path}}-{{.Path}}{{end}}-teardown.sh
+   from the runbook's Teardown section, so tearing down is always the
+   deterministic path. Do NOT run it.
+6. Write the receipt to
+   docs-exploration/runbooks/receipts/{{.Scenario}}{{if .Path}}-{{.Path}}{{end}}-<today's date>.md:
+   verdict on the first line (VERIFIED / DEPLOYED-UNVERIFIED / FAILED),
+   then what executed (script + its commit-worthy state), the Verify
+   evidence (commands and their actual output), what is left RUNNING
+   and where (URLs, cluster names, resource names — the teardown
+   contract), and cost-relevant resources created.
+
+Do not commit or push — the task harness commits and pushes your
+changes when you finish. Finish with a one-paragraph summary: verdict,
+what is running where, and anything that surprised you.
