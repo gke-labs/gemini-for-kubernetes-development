@@ -75,8 +75,9 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "requested", "key": key})
 }
 
-var runbookPathHeading = regexp.MustCompile(`(?m)^###\s+Path\s+—\s+(.+?)\s+\(tier\s+(\d)\)`)
-var runbookTierLine = regexp.MustCompile(`(?m)^\*\*Tier\*\*:\s*(.+)$`)
+// Path headings name real targets; a legacy "(tier N)" suffix is
+// tolerated and stripped.
+var runbookPathHeading = regexp.MustCompile(`(?m)^###\s+Path\s+—\s+(.+?)\s*(?:\(tier\s+\d\))?\s*$`)
 
 // getBoardRunbooks reads the Try tab's world: the runbooks on the fork
 // branch (tier line and target paths parsed from each, degrading to a
@@ -115,12 +116,9 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 				rb := gin.H{"scenario": scenario, "htmlURL": entry.GetHTMLURL(), "path": entry.GetPath(), "paths": []gin.H{}}
 				if file, _, _, ferr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref); ferr == nil && file != nil {
 					if content, cerr := file.GetContent(); cerr == nil {
-						if m := runbookTierLine.FindStringSubmatch(content); m != nil {
-							rb["tier"] = strings.TrimSpace(m[1])
-						}
 						paths := []gin.H{}
 						for _, m := range runbookPathHeading.FindAllStringSubmatch(content, -1) {
-							paths = append(paths, gin.H{"target": strings.TrimSpace(m[1]), "tier": m[2]})
+							paths = append(paths, gin.H{"target": strings.TrimSpace(m[1])})
 						}
 						rb["paths"] = paths
 					}

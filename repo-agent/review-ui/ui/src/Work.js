@@ -1080,14 +1080,14 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   // Path rows launch NEW deployments (instance = typed name or the
   // default); instance rows below are the living deployments.
-  const pathRow = (rb, target, tier) => {
+  const pathRow = (rb, target) => {
     const path = target ? slugTarget(target) : '';
     const inst = instanceName.trim() ? slugTarget(instanceName) : defaultInstance(rb.scenario, path);
     const pend = findPendingByInstance(inst);
     return (
       <div key={path || 'default'} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', flexWrap: 'wrap' }}>
         <span style={{ minWidth: '160px' }}>
-          ▸ {target || 'default path'}{tier !== undefined && tier !== '' && <span style={{ color: 'var(--text-secondary)' }}> (tier {tier})</span>}
+          ▸ {target || 'default path'}
         </span>
         <button className="btn btn-sm" disabled={!!pend || busy.startsWith(`run:${rb.scenario}:${path}`)}
           title="Deploy an instance of this path — prepare pushes the scripts to the branch, then execution runs them"
@@ -1149,14 +1149,13 @@ function TryPanel({ boardName, onOpenSandbox }) {
           padding: '10px 12px', marginBottom: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
             <strong style={{ fontSize: 'medium' }}>{rb.scenario}</strong>
-            {rb.tier && <span style={{ color: 'var(--text-secondary)' }}>Tier: {rb.tier}</span>}
             <span style={{ flex: 1 }} />
             <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The runbook on GitHub">runbook ↗</a>
           </div>
           <div style={{ marginTop: '6px' }}>
             {(rb.paths && rb.paths.length > 0)
-              ? rb.paths.map(p => pathRow(rb, p.target, p.tier))
-              : pathRow(rb, '', rb.tier ? '' : undefined)}
+              ? rb.paths.map(p => pathRow(rb, p.target))
+              : pathRow(rb, '')}
           </div>
           {instances.filter(i => i.name === rb.scenario || i.name.startsWith(rb.scenario + '-')).length > 0 && (
             <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px dashed var(--border-color)' }}>
