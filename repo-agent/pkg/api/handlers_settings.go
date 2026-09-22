@@ -1,14 +1,61 @@
 package api
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
+
+// GcpSecretName holds the member's BYO deploy target (project/region) —
+// deliberately not credentials; Workload Identity carries those.
+const GcpSecretName = "gcp-config"
+
+// clusterWorkloadIdentity resolves the cluster's WI pool facts from the
+// GKE metadata server, once. Off GKE (local dev) both come back empty
+// and the settings response simply omits the principal.
+var clusterWI struct {
+	once      sync.Once
+	projectID string
+	projectNo string
+}
+
+func metadataValue(path string) string {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/"+path, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return strings.TrimSpace(string(b))
+}
+
+// workloadIdentityPrincipal is the direct-WI principal for the member's
+// deployer KSA — the identity they grant roles to in their own project.
+func workloadIdentityPrincipal(namespace string) string {
+	clusterWI.once.Do(func() {
+		clusterWI.projectID = metadataValue("project/project-id")
+		clusterWI.projectNo = metadataValue("project/numeric-project-id")
+	})
+	if clusterWI.projectID == "" || clusterWI.projectNo == "" {
+		return ""
+	}
+	return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/factory-deployer",
+		clusterWI.projectNo, clusterWI.projectID, namespace)
+}
 
 func (s *Server) getSettings(c *gin.Context) {
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -48,6 +95,23 @@ func (s *Server) getSettings(c *gin.Context) {
 			settings["anthropic_api_key_set"] = true
 		}
 	}
+	// GCP deploy target is not sensitive — echo the values so the form
+	// shows what is set, and hand the UI the member's WI principal plus
+	// the grant command they run in their own project.
+	if sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(c.Request.Context(), GcpSecretName, v1.GetOptions{}); err == nil {
+		settings["gcp_project"] = string(sec.Data["project"])
+		settings["gcp_region"] = string(sec.Data["region"])
+	}
+	if principal := workloadIdentityPrincipal(namespace); principal != "" {
+		settings["gcp_wi_principal"] = principal
+		project := "YOUR_PROJECT_ID"
+		if p, ok := settings["gcp_project"].(string); ok && p != "" {
+			project = p
+		}
+		settings["gcp_grant_command"] = fmt.Sprintf(
+			"gcloud projects add-iam-policy-binding %s \\\n  --member %q \\\n  --role roles/editor --condition None",
+			project, principal)
+	}
 	c.JSON(http.StatusOK, settings)
 }
 
@@ -57,6 +121,8 @@ func (s *Server) updateSettings(c *gin.Context) {
 		GithubPAT       *string `json:"github_pat"`        // Use pointer to distinguish between empty string and missing field
 		GeminiAPIKey    *string `json:"gemini_api_key"`    // Use pointer to distinguish between empty string and missing field
 		AnthropicAPIKey *string `json:"anthropic_api_key"` // Use pointer to distinguish between empty string and missing field
+		GcpProject      *string `json:"gcp_project"`
+		GcpRegion       *string `json:"gcp_region"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -120,6 +186,29 @@ func (s *Server) updateSettings(c *gin.Context) {
 		if err != nil {
 			klog.Errorf("Failed to update Anthropic API Key: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Anthropic API Key"})
+			return
+		}
+	}
+
+	if payload.GcpProject != nil || payload.GcpRegion != nil {
+		data := map[string][]byte{}
+		if payload.GcpProject != nil {
+			if v := strings.TrimSpace(*payload.GcpProject); v == "" {
+				data["project"] = nil
+			} else {
+				data["project"] = []byte(v)
+			}
+		}
+		if payload.GcpRegion != nil {
+			if v := strings.TrimSpace(*payload.GcpRegion); v == "" {
+				data["region"] = nil
+			} else {
+				data["region"] = []byte(v)
+			}
+		}
+		if err := s.K8sManager.UpdateSecret(c.Request.Context(), namespace, GcpSecretName, data, nil); err != nil {
+			klog.Errorf("Failed to update GCP settings: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update GCP settings"})
 			return
 		}
 	}
