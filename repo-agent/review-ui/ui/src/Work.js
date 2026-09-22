@@ -992,16 +992,30 @@ function ExploreDocViewer({ boardName, docs }) {
     <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
       <div style={{ flex: '0 0 180px', borderRight: '1px solid var(--border-color)',
         paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
-        {docs.map(d => (
-          <div key={d.path} onClick={() => setSelected(d.path)}
-            title={d.name}
-            style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
-              fontWeight: d.path === selected ? 600 : 400 }}>
-            {d.name}
-          </div>
-        ))}
+        {(() => {
+          const entry = d => (
+            <div key={d.path} onClick={() => setSelected(d.path)}
+              title={d.name}
+              style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
+                fontWeight: d.path === selected ? 600 : 400 }}>
+              {d.name}
+            </div>
+          );
+          const isRunbook = d => d.name.startsWith('runbook');
+          const notes = docs.filter(d => !isRunbook(d));
+          const recipes = docs.filter(isRunbook);
+          return (
+            <>
+              {notes.map(entry)}
+              {recipes.length > 0 && (
+                <div style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
+              )}
+              {recipes.map(entry)}
+            </>
+          );
+        })()}
       </div>
       <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
         {doc && (
