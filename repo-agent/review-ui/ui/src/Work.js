@@ -1151,7 +1151,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button className="btn btn-sm" disabled={drafting || !!(state && state.draftPending)}
             title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp"
-            onClick={() => draftRunbook('all')}>Draft standard set</button>
+            onClick={() => draftRunbook('all')}>Draft Runbooks</button>
           <span style={{ color: 'var(--text-secondary)' }}>— or custom / update:</span>
           <input type="text" value={newRunbook.name}
             onChange={e => setNewRunbook(prev => ({ ...prev, name: e.target.value }))}
@@ -1804,7 +1804,7 @@ function Work({ onBack, namespace }) {
                 className={`group-tab ${shown === 'try' ? 'active' : ''}`}
                 title="Run the repo from its runbooks — deploy, verify, tear down"
                 onClick={() => setActiveGroup('try')}
-              >Try</button>
+              >Runs</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
                 {shown === 'issues' && (
                   <span title="View scope — display only, never changes what runs">
