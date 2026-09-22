@@ -165,7 +165,7 @@ func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 // runbook path. Type label "runbook": the board controller excludes these
 // from slot counting and idle-pause — a run environment hosts living
 // deployments, it is not a task slot.
-func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, path, instance, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, instance, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := RunbookSandboxName(repoName, instance)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -198,7 +198,6 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 				"sandbox.gemini.google.com/runbook-scenario": scenario,
-				"sandbox.gemini.google.com/runbook-path":     path,
 				"sandbox.gemini.google.com/runbook-instance": instance,
 			},
 			Image:              image,

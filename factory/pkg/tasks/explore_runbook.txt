@@ -3,12 +3,15 @@ You are writing executable runbooks for the repository {{.RepoName}}
 sections and the requirements rules — is docs-exploration/SKILL.md in
 this checkout. Follow it.
 
-{{if eq .Scenario "all"}}Scenarios: the standard set — deploy, upgrade. Write or update
-docs-exploration/runbooks/<scenario>.md for each scenario that
-genuinely applies to this repository. Where one does not (a library
-with no deploy story, a tool with no upgrade path), skip it and record
-why in docs-exploration/questions.md instead of padding a file.
-{{else}}Scenario: {{.Scenario}} — write or update
+{{if eq .Scenario "all"}}Write or update docs-exploration/runbooks/<scenario>-<environment>.md
+for every scenario × environment that genuinely applies: the standard
+scenarios are deploy and upgrade, the environments are in-pod and gcp
+(see the skill). One file per combination that proves something —
+deploy-in-pod.md only when an in-pod run demonstrates anything real,
+deploy-gcp.md when the repo needs real infrastructure. Where a
+combination does not apply, skip it and record why in
+docs-exploration/questions.md instead of padding a file.
+{{else}}Runbook: {{.Scenario}} — write or update
 docs-exploration/runbooks/{{.Scenario}}.md.
 {{end}}
 {{if .Guidance}}The owner's guidance: {{.Guidance}}
@@ -25,7 +28,10 @@ under the Tier line.
    the Makefile, scripts/, CI workflows (.github/workflows is the
    ground truth for what actually builds and tests), helm charts,
    kustomize bases, container files. Do not invent commands — every
-   step must trace to something the repo ships.
+   step must trace to something the repo ships. If a legacy combined
+   runbook exists (runbooks/<scenario>.md with "### Path — …"
+   sections), split it into the per-environment files and delete the
+   combined one.
 2. Open What this needs by answering one question plainly: can this
    run in the pod (binaries, tests, envtest, a single-process server),
    or does it need real infrastructure — a cluster or cloud? Node-level
@@ -36,9 +42,8 @@ under the Tier line.
    them, and note any disagreement in one line under them. Also state
    what credentials or permissions each step assumes.
 3. Use the skill's fixed sections — What this needs, Preconditions,
-   Steps, Verify, Teardown — with one path per viable target, named by
-   the target — usually just "### Path — in-pod" and
-   "### Path — gcp". If a runbook already exists,
+   Steps, Verify, Teardown. Each runbook is one environment,
+   executable top-to-bottom on its own. If a runbook already exists,
    update it against the current code instead of rewriting from
    scratch; note steps that changed since the last revision in one
    line at the top.

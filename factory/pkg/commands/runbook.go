@@ -20,12 +20,12 @@ import (
 
 // NewRunbookCommand executes a runbook scenario in a dedicated run sandbox.
 //
-//	factory runbook run      --url <repo> --scenario deploy [--path gke] [--guidance …]
-//	factory runbook teardown --url <repo> --scenario deploy [--path gke]
+//	factory runbook run      --url <repo> --scenario deploy-gcp [--instance …] [--guidance …]
+//	factory runbook teardown --url <repo> --scenario deploy-gcp [--instance …]
 //
 // The runbook is the source, the emitted script is the build artifact,
 // the receipt is the test result — all on the fork's exploration/notes
-// branch. One sandbox per (repo, scenario, path): the PVC holds the
+// branch. One sandbox per instance: the PVC holds the
 // deployment's living state, so the sandbox is the deployment handle.
 func NewRunbookCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
@@ -34,7 +34,7 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 		Short:   "Execute a runbook scenario in a dedicated run sandbox",
 	}
 
-	var repoURL, scenario, path, instance, guidance string
+	var repoURL, scenario, instance, guidance string
 
 	run := func(mode string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -48,20 +48,16 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 			if scenario == "" || scenario == "all" {
 				return fmt.Errorf("--scenario must name one runbook scenario (deploy, upgrade, …)")
 			}
-			path = slugifyScenario(path)
 			instance = slugifyScenario(instance)
 			if instance == "" {
 				instance = scenario
-				if path != "" {
-					instance = scenario + "-" + path
-				}
 			}
 			if rootFlags.Timeout > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runRunbook(ctx, mode, repoURL, scenario, path, instance, guidance)
+			return runRunbook(ctx, mode, repoURL, scenario, instance, guidance)
 		}
 	}
 
@@ -78,9 +74,8 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 
 	for _, sub := range []*cobra.Command{runCmd, teardown} {
 		sub.Flags().StringVar(&repoURL, "url", "", "GitHub repository URL (e.g. https://github.com/owner/repo)")
-		sub.Flags().StringVar(&scenario, "scenario", "", "The runbook scenario (deploy, upgrade, …)")
-		sub.Flags().StringVar(&path, "path", "", "Target path within the runbook (gke, local, …)")
-		sub.Flags().StringVar(&instance, "instance", "", "Deployment instance name (default <scenario>[-<path>]); one runbook, many parameterized deployments")
+		sub.Flags().StringVar(&scenario, "scenario", "", "The runbook name (deploy-gcp, upgrade-gcp, …)")
+		sub.Flags().StringVar(&instance, "instance", "", "Deployment instance name (default: the runbook name); one runbook, many parameterized deployments")
 		cmd.AddCommand(sub)
 	}
 	runCmd.Flags().StringVar(&guidance, "guidance", "", "Owner constraints for this run (pinned decisions)")
@@ -88,7 +83,7 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, guidance string) error {
+func runRunbook(ctx context.Context, mode, repoURL, scenario, instance, guidance string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repository URL: %w", err)
@@ -107,7 +102,7 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, gu
 	}
 
 	fmt.Printf("Ensuring run sandbox for %s/%s (instance %s)...\n", owner, repo, instance)
-	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, path, instance, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, scenario, instance, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring run sandbox: %w", err)
 	}
@@ -123,7 +118,6 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, gu
 		RepoName: repo,
 		HTMLURL:  htmlURL,
 		Scenario: scenario,
-		Path:     path,
 		Instance: instance,
 		Guidance: guidance,
 	}
@@ -184,7 +178,6 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, gu
 		"GITHUB_USER_EMAIL":          githubEmail,
 		"GITHUB_USER_NAME":           githubLogin,
 		"RUNBOOK_SCENARIO":           scenario,
-		"RUNBOOK_PATH":               path,
 		"RUNBOOK_INSTANCE":           instance,
 		"RUNBOOK_MODE":               mode,
 	}
@@ -223,13 +216,6 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, path, instance, gu
 		Sandbox:  sandboxName,
 	})
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "runbook", "Completed")
-	fmt.Printf("Runbook %s finished for %s/%s (%s%s); receipt pushed to the exploration/notes branch.\n", mode, owner, repo, scenario, suffixOrEmpty(path))
+	fmt.Printf("Runbook %s finished for %s/%s (instance %s); receipt pushed to the exploration/notes branch.\n", mode, owner, repo, instance)
 	return nil
-}
-
-func suffixOrEmpty(path string) string {
-	if path == "" {
-		return ""
-	}
-	return "/" + path
 }

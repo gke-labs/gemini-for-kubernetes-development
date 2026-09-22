@@ -1,8 +1,8 @@
 You are PREPARING a deployment instance for the repository {{.RepoName}}
 ({{.HTMLURL}}) — writing its scripts, not executing them. The runbook is
-docs-exploration/runbooks/{{.Scenario}}.md{{if .Path}} (path
-"{{.Path}}"){{end}}; the instance is "{{.Instance}}" and its directory
-is docs-exploration/runbook-deployments/{{.Instance}}/.
+docs-exploration/runbooks/{{.Scenario}}.md; the instance is
+"{{.Instance}}" and its directory is
+docs-exploration/runbook-deployments/{{.Instance}}/.
 {{if .Guidance}}
 The owner's guidance for this instance: {{.Guidance}}
 Treat it as pinned decisions — targets, names, and values it gives are
