@@ -30,6 +30,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		Mode     string `json:"mode"` // run (default) | teardown
 		Scenario string `json:"scenario"`
 		Path     string `json:"path"`
+		Instance string `json:"instance"` // default <scenario>[-<path>]
 		Guidance string `json:"guidance"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Scenario) == "" {
@@ -56,8 +57,12 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
 	key := "runbook-" + req.Mode + "-" + strings.TrimSpace(req.Scenario)
-	if p := strings.TrimSpace(req.Path); p != "" {
+	p, inst := strings.TrimSpace(req.Path), strings.TrimSpace(req.Instance)
+	if p != "" || inst != "" {
 		key += ":" + p
+	}
+	if inst != "" {
+		key += ":" + inst
 	}
 	requests[key] = namespace + "|" + nowRFC3339()
 	buf, _ := json.Marshal(requests)
@@ -125,20 +130,41 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		}
 		out["runbooks"] = runbooks
 
-		// Newest artifact per group; content renders through the
-		// existing exploration doc endpoint.
-		for dirName, key := range map[string]string{"receipts": "receipts", "scripts": "scripts"} {
-			entries := []gin.H{}
-			if _, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, "docs-exploration/runbooks/"+dirName, ref); derr == nil {
-				for _, entry := range dir {
-					if entry.GetType() == "file" {
-						entries = append(entries, gin.H{"name": entry.GetName(), "path": entry.GetPath(), "htmlURL": entry.GetHTMLURL()})
+		// Deployment instances: one directory per parameterized
+		// deployment (params.env, deploy.sh, teardown.sh, receipts).
+		// Content renders through the existing exploration doc endpoint.
+		instances := []gin.H{}
+		if _, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, "docs-exploration/runbook-deployments", ref); derr == nil {
+			for _, entry := range dir {
+				if entry.GetType() != "dir" {
+					continue
+				}
+				inst := gin.H{"name": entry.GetName(), "htmlURL": entry.GetHTMLURL(), "files": []gin.H{}}
+				if _, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref); serr == nil {
+					files := []gin.H{}
+					var newestReceipt gin.H
+					for _, f := range sub {
+						if f.GetType() != "file" {
+							continue
+						}
+						fh := gin.H{"name": f.GetName(), "path": f.GetPath(), "htmlURL": f.GetHTMLURL()}
+						files = append(files, fh)
+						if strings.HasPrefix(f.GetName(), "receipt-") {
+							if newestReceipt == nil || f.GetName() > newestReceipt["name"].(string) {
+								newestReceipt = fh
+							}
+						}
+					}
+					inst["files"] = files
+					if newestReceipt != nil {
+						inst["latestReceipt"] = newestReceipt
 					}
 				}
+				instances = append(instances, inst)
 			}
-			sort.Slice(entries, func(i, j int) bool { return entries[i]["name"].(string) > entries[j]["name"].(string) })
-			out[key] = entries
 		}
+		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
+		out["instances"] = instances
 	}
 
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
@@ -154,6 +180,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 				"name":      sb.GetName(),
 				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
 				"path":      annotations["sandbox.gemini.google.com/runbook-path"],
+				"instance":  annotations["sandbox.gemini.google.com/runbook-instance"],
 				"taskState": annotations[annoTaskState],
 				"engine":    annotations["board.gemini.google.com/engine"],
 			})
@@ -181,8 +208,15 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if !modeOK {
 				continue
 			}
-			scenario, runbookPath, _ := strings.Cut(spec, ":")
-			pending = append(pending, gin.H{"mode": mode, "scenario": scenario, "path": runbookPath})
+			segs := strings.SplitN(spec, ":", 3)
+			p := gin.H{"mode": mode, "scenario": segs[0], "path": "", "instance": ""}
+			if len(segs) > 1 {
+				p["path"] = segs[1]
+			}
+			if len(segs) > 2 {
+				p["instance"] = segs[2]
+			}
+			pending = append(pending, p)
 		}
 		out["pending"] = pending
 	}

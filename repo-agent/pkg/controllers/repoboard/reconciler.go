@@ -588,16 +588,24 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if !modeOK || (mode != "run" && mode != "teardown") {
 				continue
 			}
-			scenario, tryPath, _ := strings.Cut(spec, ":")
+			segs := strings.SplitN(spec, ":", 3)
+			scenario := segs[0]
 			if scenario == "" {
 				continue
+			}
+			var rbPath, rbInstance string
+			if len(segs) > 1 {
+				rbPath = segs[1]
+			}
+			if len(segs) > 2 {
+				rbInstance = segs[2]
 			}
 			tryMember, tryAt, _ := strings.Cut(member, "|")
 			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: runbookClaimedAt})
+			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, path: rbPath, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt})
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
 			if kind == "onboard" || kind == "activity" || kind == "topic" || kind == "runbook" {
@@ -1147,13 +1155,21 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if !modeOK {
 				continue
 			}
-			scenario, tryPath, _ := strings.Cut(spec, ":")
+			segs := strings.SplitN(spec, ":", 3)
+			scenario := segs[0]
+			var rbPath, rbInstance string
+			if len(segs) > 1 {
+				rbPath = segs[1]
+			}
+			if len(segs) > 2 {
+				rbInstance = segs[2]
+			}
 			tryMember, tryAt, _ := strings.Cut(member, "|")
 			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, path: tryPath, member: tryMember, claimedAt: runbookClaimedAt}, work) {
+			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, path: rbPath, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
 				continue
 			}
 		case strings.HasPrefix(key, "explore-"):
@@ -1286,12 +1302,14 @@ type runbookClaim struct {
 	mode      string // run | teardown
 	scenario  string
 	path      string
+	instance  string // default <scenario>[-<path>]
 	member    string
 	claimedAt time.Time
 }
 
 func runbookKey(member, repo string, c runbookClaim) string {
-	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, c.scenario, c.path), c.mode)
+	instance := factorycli.RunbookInstance(c.scenario, c.path, c.instance)
+	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, instance), c.mode)
 }
 
 func (r *Reconciler) runbookClaimServed(claim runbookClaim, work *workState) bool {
@@ -1321,7 +1339,8 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			continue
 		}
 		boardAnnotations := work.board.GetAnnotations()
-		name := factorycli.RunbookSandboxName(work.repo, claim.scenario, claim.path)
+		instance := factorycli.RunbookInstance(claim.scenario, claim.path, claim.instance)
+		name := factorycli.RunbookSandboxName(work.repo, instance)
 		if sb := work.findSandbox(claim.member, name); sb != nil {
 			r.stampUnpaused(ctx, sb)
 			r.stampEngine(ctx, sb, boardEngine(work.board))
@@ -1332,12 +1351,13 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			Mode:        claim.mode,
 			Scenario:    claim.scenario,
 			Path:        claim.path,
+			Instance:    instance,
 			Guidance:    boardAnnotations[AnnotationRunbookGuidance],
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		}) {
-			logger.Info("launched factory runbook", "mode", claim.mode, "scenario", claim.scenario, "path", claim.path, "board", work.board.Name)
+			logger.Info("launched factory runbook", "mode", claim.mode, "scenario", claim.scenario, "instance", instance, "board", work.board.Name)
 		}
 	}
 }

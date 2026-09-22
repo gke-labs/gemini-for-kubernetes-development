@@ -130,9 +130,21 @@ func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
 	})
 }
 
+// RunbookInstance is the default instance name for a scenario/path —
+// mirrors factory's default so claims and sandbox names agree.
+func RunbookInstance(scenario, path, instance string) string {
+	if instance != "" {
+		return instance
+	}
+	if path != "" {
+		return scenario + "-" + path
+	}
+	return scenario
+}
+
 // RunbookSandboxName mirrors factory's run-environment naming:
-// runbook-<repo>-<scenario>[-<path>], budgeted for the -lb DNS cap.
-func RunbookSandboxName(repo, scenario, path string) string {
+// runbook-<repo>-<instance>, budgeted for the -lb DNS cap.
+func RunbookSandboxName(repo, instance string) string {
 	slugify := func(s string) string {
 		s = strings.ToLower(s)
 		var b strings.Builder
@@ -145,10 +157,7 @@ func RunbookSandboxName(repo, scenario, path string) string {
 		}
 		return strings.Trim(b.String(), "-")
 	}
-	suffix := slugify(scenario)
-	if path != "" {
-		suffix += "-" + slugify(path)
-	}
+	suffix := slugify(instance)
 	slug := slugify(repo)
 	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
@@ -164,6 +173,7 @@ type RunbookOptions struct {
 	Mode        string // run | teardown
 	Scenario    string
 	Path        string
+	Instance    string // deployment instance (default <scenario>[-<path>])
 	Guidance    string // run mode only
 	RepoURL     string
 	GithubToken string
@@ -187,6 +197,9 @@ func (r *Runner) StartRunbook(key string, opts RunbookOptions) bool {
 	}
 	if opts.Path != "" {
 		args = append(args, "--path", opts.Path)
+	}
+	if opts.Instance != "" {
+		args = append(args, "--instance", opts.Instance)
 	}
 	if opts.Mode == "run" && opts.Guidance != "" {
 		args = append(args, "--guidance", opts.Guidance)
