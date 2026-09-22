@@ -1301,100 +1301,105 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   };
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* Verb row: Generate Overview is the intended first click; the
-          engine icon (card door) and chat chip live on the right. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-        <button className="btn" disabled={busy === 'onboard'}
-          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
-          onClick={() => kickoff('onboard')}>Generate Overview</button>
-        <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
-          title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
-          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
-        <span style={{ position: 'relative' }}>
-          <button className="btn" disabled={busy === 'activity'}
-            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
-            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
-          {sinceOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
-              {['2 weeks', '1 month', '3 months'].map(win => (
-                <div key={win}
-                  onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
-                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                  last {win}
+      {/* Two columns: understanding on the left, recipes on the right —
+          each verb group sits on the surface it acts on. */}
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'stretch' }}>
+        <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+            <button className="btn" disabled={busy === 'onboard'}
+              title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
+              onClick={() => kickoff('onboard')}>Generate Overview</button>
+            <span style={{ position: 'relative' }}>
+              <button className="btn" disabled={busy === 'activity'}
+                title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
+                onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
+              {sinceOpen && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+                  background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                  borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
+                  {['2 weeks', '1 month', '3 months'].map(win => (
+                    <div key={win}
+                      onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
+                      style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                      last {win}
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+            </span>
+          </div>
+          <div style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '10px',
+            background: 'var(--bg-secondary)', padding: '10px 12px',
+            display: 'flex', flexDirection: 'column' }}>
+            <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
+              placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
+              style={{ width: '100%', flex: 1, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)',
+                font: 'inherit', boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+              <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
+                onClick={dive}>Explore</button>
             </div>
-          )}
-        </span>
-        <span style={{ flex: 1 }} />
-        {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
-          <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
-            color="#b08800" bg="rgba(176,136,0,0.12)" />
-        )}
-        {sb && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
-            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-            title={`${sb.name} — tasks & logs`}>
-            <EngineIcon engine={sb.engine} />
-          </span>
-        )}
-        {sb && (
-          <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
-            target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
-            <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
-              color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
-              bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
-          </a>
-        )}
-      </div>
-      {/* The question box: just the ask and its Explore button. */}
-      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-        background: 'var(--bg-secondary)', padding: '10px 12px' }}>
-        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
-          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)',
-            font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
-            onClick={dive}>Explore</button>
+          </div>
         </div>
-      </div>
-      {/* Runbook authoring: custom recipes and updates — exploration
-          work (explore sandbox, notes branch); running them is the
-          Runs tab's business. Same grammar as the ask box: the text
-          is the surface, the verb sits bottom-right. */}
-      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-        background: 'var(--bg-secondary)', padding: '10px 12px', marginTop: '10px' }}>
-        <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
-          placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
-          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
-            color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
-            borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '6px' }} />
-        <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
-          placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
-          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-          {exp && exp.pending === 'runbook' && (
-            <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
-          )}
-          <button className="btn btn-sm"
-            disabled={!runbookName.trim() || busy === 'runbook' || (exp && exp.pending === 'runbook')}
-            title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
-            onClick={() => {
-              const slug = runbookName.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-              if (!slug) return;
-              kickoff('runbook', { scenario: slug, guidance: runbookCharter.trim() });
-              setRunbookName('');
-              setRunbookCharter('');
-            }}>Draft / Update Runbook</button>
+        <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+            <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
+              title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
+              onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
+            <span style={{ flex: 1 }} />
+            {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
+              <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
+                color="#b08800" bg="rgba(176,136,0,0.12)" />
+            )}
+            {sb && (
+              <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                title={`${sb.name} — tasks & logs`}>
+                <EngineIcon engine={sb.engine} />
+              </span>
+            )}
+            {sb && (
+              <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
+                target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
+                title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
+                <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
+                  color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
+                  bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
+              </a>
+            )}
+          </div>
+          <div style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '10px',
+            background: 'var(--bg-secondary)', padding: '10px 12px',
+            display: 'flex', flexDirection: 'column' }}>
+            <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
+              placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
+              style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
+                color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
+                borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '6px' }} />
+            <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
+              placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
+              style={{ width: '100%', flex: 1, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+              {exp && exp.pending === 'runbook' && (
+                <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
+              )}
+              <button className="btn btn-sm"
+                disabled={!runbookName.trim() || busy === 'runbook' || (exp && exp.pending === 'runbook')}
+                title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
+                onClick={() => {
+                  const slug = runbookName.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+                  if (!slug) return;
+                  kickoff('runbook', { scenario: slug, guidance: runbookCharter.trim() });
+                  setRunbookName('');
+                  setRunbookCharter('');
+                }}>Draft / Update Runbook</button>
+            </div>
+          </div>
         </div>
       </div>
       {/* Artifacts: git is the record — rendered apart from the controls. */}
