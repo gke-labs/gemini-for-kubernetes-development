@@ -11,13 +11,13 @@ one IAM binding on your side.
 
 ## How it works
 
-Explore sandboxes run as a Kubernetes ServiceAccount named `deployer` in
+Explore sandboxes run as a Kubernetes ServiceAccount named `factory-deployer` in
 your member namespace (created automatically, carrying **no** Kubernetes
 RBAC). On GKE, [direct Workload Identity federation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 makes that ServiceAccount a GCP principal:
 
 ```
-principal://iam.googleapis.com/projects/<CLUSTER_PROJECT_NUMBER>/locations/global/workloadIdentityPools/<CLUSTER_PROJECT_ID>.svc.id.goog/subject/ns/<YOUR_NAMESPACE>/sa/deployer
+principal://iam.googleapis.com/projects/<CLUSTER_PROJECT_NUMBER>/locations/global/workloadIdentityPools/<CLUSTER_PROJECT_ID>.svc.id.goog/subject/ns/<YOUR_NAMESPACE>/sa/factory-deployer
 ```
 
 When an agent in your sandbox runs `gcloud` or any Google client
@@ -40,7 +40,7 @@ ready-to-run grant command.
 
    ```sh
    gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-     --member "principal://…/subject/ns/YOUR_NAMESPACE/sa/deployer" \
+     --member "principal://…/subject/ns/YOUR_NAMESPACE/sa/factory-deployer" \
      --role roles/editor --condition None
    ```
 
@@ -53,7 +53,7 @@ ready-to-run grant command.
 
 ```sh
 gcloud projects remove-iam-policy-binding YOUR_PROJECT_ID \
-  --member "principal://…/subject/ns/YOUR_NAMESPACE/sa/deployer" \
+  --member "principal://…/subject/ns/YOUR_NAMESPACE/sa/factory-deployer" \
   --role roles/editor
 ```
 
@@ -72,7 +72,7 @@ short-lived token expires.
   sandbox can use the identity while the binding exists. Treat the
   grant as "my repo-agent may touch this project" — use a dedicated
   project, not a production one.
-- **Only explore sandboxes** run as `deployer`. Fix, review, plan and
+- **Only explore sandboxes** run as `factory-deployer`. Fix, review, plan and
   triage sandboxes keep the default pod identity and have no GCP reach.
 - **Cleanup is a runbook contract.** Every runbook's Teardown section
   is the cleanup path; resources a deploy creates should be labeled and

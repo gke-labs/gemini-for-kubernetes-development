@@ -53,7 +53,7 @@ func workloadIdentityPrincipal(namespace string) string {
 	if clusterWI.projectID == "" || clusterWI.projectNo == "" {
 		return ""
 	}
-	return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/deployer",
+	return fmt.Sprintf("principal://iam.googleapis.com/projects/%s/locations/global/workloadIdentityPools/%s.svc.id.goog/subject/ns/%s/sa/factory-deployer",
 		clusterWI.projectNo, clusterWI.projectID, namespace)
 }
 
