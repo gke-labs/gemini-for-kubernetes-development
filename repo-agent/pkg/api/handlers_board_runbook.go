@@ -126,6 +126,17 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be plan, deploy, run, or teardown"})
 		return
 	}
+	// Multi-tenant policy (factory itself only discloses): a member
+	// with no configured deploy project must not launch infrastructure
+	// runbooks — the pod's metadata default is the PLATFORM cluster's
+	// project, never a tenant's deploy target. In-pod runbooks need no
+	// project; teardown is allowed so cleanup is never locked out.
+	if req.Mode != "teardown" && !strings.HasSuffix(strings.TrimSpace(req.Scenario), "-in-pod") {
+		if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr != nil || len(sec.Data["project"]) == 0 {
+			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "no GCP project configured — set one in Settings, or name a project in the run guidance and use an -in-pod runbook otherwise"})
+			return
+		}
+	}
 
 	annotations := board.GetAnnotations()
 	if annotations == nil {
