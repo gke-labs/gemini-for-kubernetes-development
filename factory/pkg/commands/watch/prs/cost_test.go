@@ -34,8 +34,11 @@ type prFixture struct {
 	body string
 	// updated is the updated_at the listing reports for the pull request.
 	updated time.Time
-	// reviews are the submitted reviews.
+	// reviews are the submitted reviews, whose inline comments used to cost a
+	// request each.
 	reviews []*githubv39.PullRequestReview
+	// inline are the review comments the pull request-wide listing returns.
+	inline []*githubv39.PullRequestComment
 
 	calls []string
 }
@@ -102,6 +105,9 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 	case fmt.Sprintf("%s/pulls/%d/reviews", base, f.num):
 		_ = json.NewEncoder(w).Encode(f.reviews)
 
+	case fmt.Sprintf("%s/pulls/%d/comments", base, f.num):
+		_ = json.NewEncoder(w).Encode(f.inline)
+
 	case base + "/commits/" + f.headSHA + "/check-runs":
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
 
@@ -159,6 +165,58 @@ func newFixtureScanner(t *testing.T, f *prFixture) *Scanner {
 		TriggerLabel: "factory",
 	})
 	return s
+}
+
+// TestFetchHistory_ReadsInlineCommentsInOneRequest covers the change from the
+// per-review endpoint to the pull request-wide one: the cost of reading a
+// conversation must not grow with the number of reviews it contains.
+func TestFetchHistory_ReadsInlineCommentsInOneRequest(t *testing.T) {
+	f := &prFixture{
+		num:     10,
+		headSHA: "sha-1",
+		reviews: []*githubv39.PullRequestReview{
+			{ID: githubv39.Int64(1)},
+			{ID: githubv39.Int64(2)},
+			{ID: githubv39.Int64(3)},
+		},
+		inline: []*githubv39.PullRequestComment{
+			{ID: githubv39.Int64(11), PullRequestReviewID: githubv39.Int64(1), Body: githubv39.String("a")},
+			{ID: githubv39.Int64(12), PullRequestReviewID: githubv39.Int64(1), Body: githubv39.String("b")},
+			{ID: githubv39.Int64(13), PullRequestReviewID: githubv39.Int64(3), Body: githubv39.String("c")},
+			// An inline comment with no review behind it, which must not end
+			// up filed under review zero.
+			{ID: githubv39.Int64(14), Body: githubv39.String("orphan")},
+		},
+	}
+	s := newFixtureScanner(t, f)
+
+	history, err := s.fetchHistory(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("fetchHistory() error = %v", err)
+	}
+
+	if got := f.count("/pulls/10/comments"); got != 1 {
+		t.Errorf("inline comment requests = %d, want 1 for the whole pull request", got)
+	}
+	if got := f.count("/reviews/"); got != 0 {
+		t.Errorf("made %d per-review requests, want 0", got)
+	}
+
+	// The grouping the per-review fetch used to provide has to survive the
+	// change, or every consumer that looks a review up by ID silently sees
+	// nothing.
+	if got := len(history.revCommentsMap[1]); got != 2 {
+		t.Errorf("review 1 has %d inline comments, want 2", got)
+	}
+	if got := len(history.revCommentsMap[3]); got != 1 {
+		t.Errorf("review 3 has %d inline comments, want 1", got)
+	}
+	if _, ok := history.revCommentsMap[2]; ok {
+		t.Error("review 2 has no inline comments and must not appear in the map")
+	}
+	if _, ok := history.revCommentsMap[0]; ok {
+		t.Error("the review-less comment was filed under review 0, want it dropped")
+	}
 }
 
 // TestEvaluate_FetchesReferencedIssueOnce covers the memoisation: the label

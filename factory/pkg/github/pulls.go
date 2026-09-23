@@ -92,6 +92,10 @@ func (c *Client) ListReviews(ctx context.Context, number int) ([]*githubv39.Pull
 
 // ListReviewComments returns the inline comments belonging to one review of a
 // pull request, following pagination.
+//
+// Prefer ListAllReviewComments when the comments of every review are wanted:
+// this endpoint is per-review, so asking it for all of them costs one request
+// per review, and a long-lived pull request accumulates reviews without bound.
 func (c *Client) ListReviewComments(ctx context.Context, number int, reviewID int64) ([]*githubv39.PullRequestComment, error) {
 	if !c.Ready() {
 		return nil, errNoClient
@@ -101,6 +105,36 @@ func (c *Client) ListReviewComments(ctx context.Context, number int, reviewID in
 	opt := &githubv39.ListOptions{PerPage: 100}
 	for {
 		comments, resp, err := c.gh.PullRequests.ListReviewComments(ctx, c.owner, c.repo, number, reviewID, opt)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, comments...)
+		if resp == nil || resp.NextPage == 0 {
+			return all, nil
+		}
+		opt.Page = resp.NextPage
+	}
+}
+
+// ListAllReviewComments returns every inline review comment on a pull request,
+// following pagination.
+//
+// This is the whole-pull-request endpoint rather than the per-review one, which
+// is the point: it answers in a single paginated call what ListReviewComments
+// answers in one call per review. Each comment carries the review it belongs to
+// in PullRequestReviewID, so the per-review grouping the caller wants is
+// recovered locally instead of being bought a request at a time.
+func (c *Client) ListAllReviewComments(ctx context.Context, number int) ([]*githubv39.PullRequestComment, error) {
+	if !c.Ready() {
+		return nil, errNoClient
+	}
+
+	var all []*githubv39.PullRequestComment
+	opt := &githubv39.PullRequestListCommentsOptions{
+		ListOptions: githubv39.ListOptions{PerPage: 100},
+	}
+	for {
+		comments, resp, err := c.gh.PullRequests.ListComments(ctx, c.owner, c.repo, number, opt)
 		if err != nil {
 			return nil, err
 		}
