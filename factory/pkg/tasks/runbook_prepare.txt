@@ -14,15 +14,21 @@ this instance's parameters.
    untouched and say so. Otherwise write or update:
    - params.env — every instance parameter as a shell variable
      (PROJECT, REGION, CLUSTER, names…), one place to see what makes
-     this instance THIS instance. Defaults from the environment
-     (GOOGLE_CLOUD_PROJECT, CLOUDSDK_COMPUTE_REGION) where the
-     guidance doesn't pin them. It MUST define
-     RESOURCE_PREFIX="${RUNBOOK_RESOURCE_PREFIX}" (already unique
-     across every board sharing the project), and every cloud
-     resource this instance creates is named
+     this instance THIS instance. LITERAL VALUES ONLY: resolve the
+     environment NOW (guidance pins win, then GOOGLE_CLOUD_PROJECT,
+     CLOUDSDK_COMPUTE_REGION, RUNBOOK_RESOURCE_PREFIX) and write what
+     you resolved — PROJECT="my-proj"  # from Settings — never
+     ${VAR:-fallback} indirection. The owner reviews params.env at
+     the plan gate; a value that resolves at execution time defeats
+     the review, and a stale fallback misleads it. It MUST define
+     RESOURCE_PREFIX as the literal value of RUNBOOK_RESOURCE_PREFIX
+     (already unique across every board sharing the project), and
+     every cloud resource this instance creates is named
      ${RESOURCE_PREFIX}[-suffix] and labeled
      repo-agent-instance=${RESOURCE_PREFIX} where the service
-     supports labels.
+     supports labels. Project ids hardcoded in the RUNBOOK are stale
+     copies of some past instance's guidance — ignore them; the
+     project comes from guidance or the environment.
    OWNERSHIP: this instance owns everything it touches. Never write
    steps that adopt infrastructure this instance did not create — a
    healthy existing cluster in the project is NOT permission to use
