@@ -74,18 +74,129 @@ function checkForExistingPR {
         echo "No issue number specified; skipping check for existing PR."
         return
     fi
+
+    local pr_number pr_url pr_fields page api_failed page_data count slurped_json gh_host host_temp output_file attempt max_attempts fetch_success err_file saved_traps
+    local -a timeline_pages=()
+
     pushd "/workspaces/${REPO_NAME}" > /dev/null
 
     # Try to find a PR by the current user first, restricting search to title and body to be safer
-    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
-    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
+    pr_fields=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json number,url --jq '.[0] | if . then "\(.number) \(.url)" else empty end' --limit 1 2>/dev/null || true)
+    if [ -n "$pr_fields" ]; then
+        pr_number="${pr_fields%% *}"
+        pr_url="${pr_fields#* }"
+    fi
 
-    # If not found, look for any PR linked to the issue via the timeline API
+    # If not found, look for any PR linked to the issue via the timeline API.
+    # To avoid skipping issues merely referenced/mentioned, we only count open PRs
+    # that are connected and not since disconnected, matching TimelineHasOpenLinkedPR logic.
     if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
-        pr_number=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.number' 2>/dev/null | head -n 1)
-        pr_url=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.html_url' 2>/dev/null | head -n 1)
+        # To match the Go-based watcher's page limit (maxTimelinePages = 20) and protect against
+        # rate-limit exhaustion, we paginate manually up to 20 pages with per_page=100.
+        page=1
+        api_failed=false
+        # Save any existing traps for EXIT to avoid overriding them globally.
+        saved_traps=$(trap -p EXIT)
+        err_file=$(mktemp) || { echo "Error: Failed to create temporary file" >&2; exit 1; }
+        trap 'rm -f "$err_file"' EXIT
+        while [ "$page" -le 20 ]; do
+            attempt=1
+            max_attempts=3
+            fetch_success=false
+            while [ "$attempt" -le "$max_attempts" ]; do
+                if page_data=$(gh api --method GET "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" -F per_page=100 -F page=$page 2>"$err_file"); then
+                    fetch_success=true
+                    break
+                else
+                    # Check for permanent non-retryable API errors (e.g., 401 Unauthorized, 403 Forbidden, 404 Not Found)
+                    if grep -qE "HTTP (401|403|404)" "$err_file" 2>/dev/null; then
+                        echo "Warning: Permanent API error encountered while fetching timeline page $page:" >&2
+                        cat "$err_file" >&2
+                        break
+                    fi
+                    echo "Warning: Failed to fetch timeline page $page (attempt $attempt/$max_attempts). Retrying in 2 seconds..." >&2
+                    sleep 2
+                    attempt=$((attempt + 1))
+                fi
+            done
+            if [ "$fetch_success" = "false" ]; then
+                api_failed=true
+                break
+            fi
+            if [ "$page_data" = "[]" ] || [ -z "$page_data" ] || [ "$page_data" = "null" ]; then
+                break
+            fi
+            if ! printf '%s' "$page_data" | jq -e 'type == "array"' >/dev/null 2>&1; then
+                api_failed=true
+                break
+            fi
+            timeline_pages+=("$page_data")
+            # If the page contains fewer than 100 elements, we've reached the end.
+            count=$(printf '%s' "$page_data" | jq 'length' 2>/dev/null || echo "0")
+            if [[ ! "$count" =~ ^[0-9]+$ ]] || [ "$count" -lt 100 ]; then
+                break
+            fi
+            page=$((page + 1))
+        done
+
+        if [ "$page" -gt 20 ]; then
+            echo "Warning: Issue #${ISSUE_NUMBER} has more than 20 pages of timeline events; results are truncated" >&2
+        fi
+        rm -f "$err_file"
+        trap - EXIT
+        if [ -n "$saved_traps" ]; then
+            eval "$saved_traps"
+        fi
+
+        if [ "$api_failed" = "true" ]; then
+            pr_fields="null null"
+        elif [ ${#timeline_pages[@]} -gt 0 ]; then
+            # Join all page arrays into a single JSON array of arrays (mirroring --slurp format)
+            # and process with the state-building jq reduction pipeline.
+            if ! slurped_json=$(printf '%s\n' "${timeline_pages[@]}" | jq -s '.') || [ -z "$slurped_json" ]; then
+                pr_fields="null null"
+            else
+                pr_fields=$(printf '%s\n' "$slurped_json" | jq -r '
+                  reduce (.[] | .[] | select(type == "object")) as $event ({};
+                    if $event.source?.issue?.number != null then
+                      if $event.event == "connected" and $event.source.issue.pull_request != null and $event.source.issue.state == "open" then
+                        .[$event.source.issue.number | tostring] = $event.source.issue
+                      elif $event.event == "disconnected" then
+                        del(.[$event.source.issue.number | tostring])
+                      else
+                        .
+                      end
+                    else
+                      .
+                    end
+                  ) | to_entries | .[0].value | if . then "\(.number) \(.html_url)" else empty end
+                ' || echo "null null")
+            fi
+        else
+            pr_fields=""
+        fi
+
+        if [ "$pr_fields" = "null null" ]; then
+            echo "Error: GitHub Timeline API or parsing failed. Aborting task to prevent duplicate PRs (fail-closed)." >&2
+            exit 1
+        elif [ -n "$pr_fields" ]; then
+            pr_number="${pr_fields%% *}"
+            pr_url="${pr_fields#* }"
+            if [ "$pr_url" = "null" ] || [ -z "$pr_url" ]; then
+                # Dynamically determine the GitHub host from CLONE_URL, fallback to github.com
+                gh_host="github.com"
+                if [ -n "$CLONE_URL" ]; then
+                    host_temp="${CLONE_URL#*://}"
+                    host_temp="${host_temp#*@}"
+                    host_temp="${host_temp%%/*}"
+                    host_temp="${host_temp%%:*}"
+                    if [ -n "$host_temp" ]; then
+                        gh_host="$host_temp"
+                    fi
+                fi
+                pr_url="https://${gh_host}/${REPO_OWNER}/${REPO_NAME}/pull/${pr_number}"
+            fi
+        fi
     fi
 
     if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
@@ -101,7 +212,7 @@ function checkForExistingPR {
         git clean -fd
         /usr/bin/gh pr checkout "$pr_number" --force
 
-        local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
+        output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
 
         echo "We are not generating anything because there is an existing PR." > "$output_file"
         echo "${pr_url}" >> "$output_file"
