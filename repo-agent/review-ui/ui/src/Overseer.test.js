@@ -1,5 +1,14 @@
 import React from 'react';
-import { formatQueueTimestamp, sortTasksByTimestamp, formatInlineTimestamp, getTimestampDetails } from './Overseer';
+import {
+    formatQueueTimestamp,
+    sortTasksByTimestamp,
+    formatInlineTimestamp,
+    getTimestampDetails,
+    getSandboxPodInfo,
+    isSandboxRunning,
+    countRunningSandboxes,
+    countSuspendedSandboxes
+} from './Overseer';
 
 jest.mock('./Terminal', () => () => null);
 
@@ -175,5 +184,114 @@ describe('getTimestampDetails', () => {
         } finally {
             Date.now = originalDateNow;
         }
+    });
+});
+
+describe('getSandboxPodInfo and isSandboxRunning', () => {
+    test('returns Unknown status for null or undefined sandbox', () => {
+        expect(getSandboxPodInfo(null)).toEqual({
+            status: 'Unknown',
+            label: 'Unknown',
+            badgeLabel: 'Unknown',
+            color: 'var(--text-secondary)',
+            bgColor: 'var(--bg-secondary)',
+            isSuspended: false,
+            isEvicted: false,
+            isFailed: false,
+            evictionCount: 0
+        });
+        expect(isSandboxRunning(null)).toBe(false);
+    });
+
+    test('identifies running sandboxes with replicas = 1', () => {
+        const sb = {
+            metadata: { name: 'sb-running' },
+            spec: { replicas: 1 }
+        };
+        const info = getSandboxPodInfo(sb);
+        expect(info.status).toBe('running');
+        expect(info.isSuspended).toBe(false);
+        expect(info.isEvicted).toBe(false);
+        expect(info.isFailed).toBe(false);
+        expect(isSandboxRunning(sb)).toBe(true);
+    });
+
+    test('identifies scaled down sandboxes with replicas = 0 (numeric or string)', () => {
+        const sbNumeric = {
+            metadata: { name: 'sb-scaled-0' },
+            spec: { replicas: 0 }
+        };
+        const sbString = {
+            metadata: { name: 'sb-scaled-str-0' },
+            spec: { replicas: '0' }
+        };
+        expect(getSandboxPodInfo(sbNumeric).isSuspended).toBe(true);
+        expect(getSandboxPodInfo(sbNumeric).status).toBe('scaled down');
+        expect(isSandboxRunning(sbNumeric)).toBe(false);
+
+        expect(getSandboxPodInfo(sbString).isSuspended).toBe(true);
+        expect(getSandboxPodInfo(sbString).status).toBe('scaled down');
+        expect(isSandboxRunning(sbString)).toBe(false);
+    });
+
+    test('identifies scaled down sandboxes via conditions when replicas is 0 message present', () => {
+        const sb = {
+            metadata: { name: 'sb-scaled-cond' },
+            status: {
+                conditions: [{ message: 'Sandbox replicas is 0 and idle' }]
+            }
+        };
+        expect(getSandboxPodInfo(sb).isSuspended).toBe(true);
+        expect(getSandboxPodInfo(sb).status).toBe('scaled down');
+        expect(isSandboxRunning(sb)).toBe(false);
+    });
+
+    test('identifies evicted or failed sandboxes', () => {
+        const sbEvicted = {
+            metadata: { name: 'sb-evicted' },
+            spec: { replicas: 1 },
+            status: {
+                conditions: [{ reason: 'Evicted', message: 'The node was low on resource' }]
+            }
+        };
+        const sbFailed = {
+            metadata: { name: 'sb-failed' },
+            spec: { replicas: 1 },
+            status: {
+                conditions: [{ reason: 'PodFailed', message: 'Phase: Failed' }]
+            }
+        };
+
+        expect(getSandboxPodInfo(sbEvicted).isEvicted).toBe(true);
+        expect(isSandboxRunning(sbEvicted)).toBe(false);
+
+        expect(getSandboxPodInfo(sbFailed).isFailed).toBe(true);
+        expect(isSandboxRunning(sbFailed)).toBe(false);
+    });
+});
+
+describe('countRunningSandboxes and countSuspendedSandboxes', () => {
+    test('returns 0 for empty or invalid sandbox lists', () => {
+        expect(countRunningSandboxes(null)).toBe(0);
+        expect(countRunningSandboxes(undefined)).toBe(0);
+        expect(countRunningSandboxes([])).toBe(0);
+
+        expect(countSuspendedSandboxes(null)).toBe(0);
+        expect(countSuspendedSandboxes(undefined)).toBe(0);
+        expect(countSuspendedSandboxes([])).toBe(0);
+    });
+
+    test('correctly counts running sandboxes that are not scaled down', () => {
+        const sandboxes = [
+            { metadata: { name: 'running-1' }, spec: { replicas: 1 } },
+            { metadata: { name: 'running-2' }, spec: { replicas: 1 } },
+            { metadata: { name: 'scaled-down-1' }, spec: { replicas: 0 } },
+            { metadata: { name: 'scaled-down-2' }, spec: { replicas: '0' } },
+            { metadata: { name: 'scaled-down-3' }, status: { conditions: [{ message: 'replicas is 0' }] } },
+            { metadata: { name: 'evicted-1' }, spec: { replicas: 1 }, status: { conditions: [{ reason: 'Evicted' }] } }
+        ];
+
+        expect(countRunningSandboxes(sandboxes)).toBe(2);
+        expect(countSuspendedSandboxes(sandboxes)).toBe(3);
     });
 });
