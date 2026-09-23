@@ -13,6 +13,37 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// repoShortName mirrors factory's shortName: initials of hyphenated
+// repos (in-cluster-storage → ics), else the name truncated. It is the
+// first half of RUNBOOK_RESOURCE_PREFIX — shown in the UI beside the
+// instance-name input so users never hand-type the repo into a name.
+func repoShortName(repo string) string {
+	slug := strings.ToLower(repo)
+	clean := make([]rune, 0, len(slug))
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			clean = append(clean, r)
+		} else {
+			clean = append(clean, '-')
+		}
+	}
+	slug = strings.Trim(string(clean), "-")
+	words := strings.Split(slug, "-")
+	if len(words) >= 2 {
+		var b strings.Builder
+		for _, w := range words {
+			if w != "" {
+				b.WriteByte(w[0])
+			}
+		}
+		return b.String()
+	}
+	if len(slug) > 8 {
+		return slug[:8]
+	}
+	return slug
+}
+
 // kickoffRunbook plants a timestamped runbook claim: run or tear down one
 // runbook scenario path. The controller launches `factory runbook` and the
 // claim trims when the runner result outdates the click (claims v2).
@@ -89,7 +120,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		return
 	}
 
-	out := gin.H{"forkOwner": member, "runbooks": []gin.H{}, "sandboxes": []gin.H{}, "pending": []gin.H{}}
+	out := gin.H{"forkOwner": member, "runbooks": []gin.H{}, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
 
 	token, terr := s.memberToken(ctx, namespace)
 	if terr == nil {
