@@ -35,9 +35,15 @@ this instance's parameters.
      params.env, every command traceable to the runbook. No secrets,
      ever: credentials come from the environment (Workload Identity).
    - teardown.sh — the runbook's Teardown section, same rules.
-2. Do NOT execute anything. Do NOT create cloud resources. This phase
+2. If the runbook needs real infrastructure and GOOGLE_CLOUD_PROJECT
+   is empty, STOP: never fall back to gcloud's metadata-server default
+   project — that is the platform cluster's project, not a deploy
+   target. Write the receipt with BLOCKED on the first line and a
+   "Needs from owner" section saying: set a GCP project in Settings,
+   or name one in the run guidance.
+3. Do NOT execute anything. Do NOT create cloud resources. This phase
    exists so the scripts are pushed and reviewable before they run.
-{{if eq .Mode "plan"}}3. This is a standalone PLAN: nothing executes until the owner
+{{if eq .Mode "plan"}}4. This is a standalone PLAN: nothing executes until the owner
    explicitly deploys. Write the plan receipt to
    docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
    PLANNED on the first line, then what this instance will create

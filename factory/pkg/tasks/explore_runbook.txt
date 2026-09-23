@@ -51,7 +51,13 @@ under the Tier line.
      service accounts, attaches them to instances — iam.serviceAccounts.actAs
      — and binds project roles — resourcemanager.projects.setIamPolicy).
      Probe with read-only calls: projects.testIamPermissions, a
-     get-iam-policy, a dry-run where the tool offers one.
+     get-iam-policy, a dry-run where the tool offers one. Probes
+     target ONLY the project in GOOGLE_CLOUD_PROJECT. If it is empty,
+     do NOT fall back to gcloud's metadata-server default — that is
+     the platform cluster's project, not a deploy target; mark the
+     whole checklist UNVERIFIED and open What this needs with:
+     "⚠ no deploy project configured — set one in Settings (or name
+     it in guidance) and redraft to verify this checklist."
    - Tools: verify the binaries the steps call actually exist here
      (a missing docker daemon means Cloud Build, not a doomed step).
    Then write the results into What this needs as a checklist:
