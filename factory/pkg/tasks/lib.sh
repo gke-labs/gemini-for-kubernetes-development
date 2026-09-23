@@ -14,10 +14,17 @@ mkdir -p "${USER_HOME}"
 # layer: the golang base image sets GOPATH=/go, so a big module graph
 # (multi-GiB for cloud SDK monorepos) lands on ephemeral storage and
 # evicts the pod. Redirecting also makes the cache survive across task
-# runs — second builds are warm.
-export GOPATH="${USER_HOME}/go"
+# runs — second builds are warm. Pinned to /workspaces explicitly:
+# USER_HOME's /root fallback would silently put the caches back on
+# ephemeral if HOME ever went missing.
+GO_CACHE_HOME="${USER_HOME}"
+if [ -d "/workspaces" ]; then
+    GO_CACHE_HOME="/workspaces/.home"
+    mkdir -p "${GO_CACHE_HOME}"
+fi
+export GOPATH="${GO_CACHE_HOME}/go"
 export GOMODCACHE="${GOPATH}/pkg/mod"
-export GOCACHE="${USER_HOME}/.cache/go-build"
+export GOCACHE="${GO_CACHE_HOME}/.cache/go-build"
 
 function setupGit {
     echo "Running setupGit..."
