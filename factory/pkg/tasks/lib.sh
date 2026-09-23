@@ -10,6 +10,15 @@ set -o pipefail
 USER_HOME="${HOME:-/root}"
 mkdir -p "${USER_HOME}"
 
+# Go caches belong on the workspace PVC, not the container's ephemeral
+# layer: the golang base image sets GOPATH=/go, so a big module graph
+# (multi-GiB for cloud SDK monorepos) lands on ephemeral storage and
+# evicts the pod. Redirecting also makes the cache survive across task
+# runs — second builds are warm.
+export GOPATH="${USER_HOME}/go"
+export GOMODCACHE="${GOPATH}/pkg/mod"
+export GOCACHE="${USER_HOME}/.cache/go-build"
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating ${USER_HOME}/.config/gh directory"

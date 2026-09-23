@@ -19,6 +19,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// ephemeralStorageDefaulted: neither the flag nor config chose a value —
+// commands with different needs (runbook builds images) may raise it.
+var ephemeralStorageDefaulted bool
+
 var rootFlags common.RootFlags
 
 func NewRootCommand(ctx context.Context) *cobra.Command {
@@ -254,6 +258,7 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 	}
 	if rootFlags.EphemeralStorage == "" {
 		rootFlags.EphemeralStorage = "6Gi"
+		ephemeralStorageDefaulted = true
 	}
 	if !cmd.Flags().Changed("cpu-request") && cfg.SandboxCPURequest != "" {
 		rootFlags.CPURequest = cfg.SandboxCPURequest
