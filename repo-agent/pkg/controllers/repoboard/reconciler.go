@@ -585,7 +585,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			// runbook-run-<runbook>[:<instance>] / runbook-teardown-<runbook>[:<instance>]
 			rest := strings.TrimPrefix(key, "runbook-")
 			mode, spec, modeOK := strings.Cut(rest, "-")
-			if !modeOK || (mode != "run" && mode != "teardown") {
+			if !modeOK || (mode != "run" && mode != "teardown" && mode != "plan" && mode != "deploy") {
 				continue
 			}
 			scenario, rbInstance, _ := strings.Cut(spec, ":")

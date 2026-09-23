@@ -1136,6 +1136,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
     const v = receipt.verdict.toUpperCase();
     const date = (receipt.name.match(/(\d{8})/) || [])[1];
     const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
+    if (v.startsWith('PLANNED')) return <Chip text={`📋 planned${when} — review, then Deploy`} color="#0366d6" bg="rgba(3,102,214,0.08)" />;
     if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
     if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
     if (v.startsWith('BLOCKED')) return <Chip text={`🔒 blocked${when} — see receipt: Needs from owner`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
@@ -1169,16 +1170,16 @@ function TryPanel({ boardName, onOpenSandbox }) {
                 style={{ flex: 1, padding: '3px 8px 3px 2px', border: 'none', outline: 'none',
                   background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
             </span>
-            {composerPend && <Chip text={`run queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+            {composerPend && <Chip text={`${composerPend.mode} queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
             <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
               placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
               style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
                 background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`run:${activeRunbook}:`)}
-              title="Deploy a new instance of the selected runbook — prepare pushes the scripts to the branch, then execution runs them"
-              onClick={() => kickoff('run', activeRunbook, composerInst)}>▶ Run</button>
+            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`plan:${activeRunbook}:`)}
+              title="Plan a new instance: scripts, params.env and a PLANNED receipt are pushed for review — nothing executes until you click Deploy on its row"
+              onClick={() => kickoff('plan', activeRunbook, composerInst)}>▶ Plan</button>
           </div>
         </div>
       ) : (
@@ -1258,12 +1259,35 @@ function TryPanel({ boardName, onOpenSandbox }) {
                       )}
                     </td>
                     <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-sm" disabled={running || !!pend}
-                        title="Deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
-                        onClick={() => kickoff('run', scenario, inst.name)}>▶ Re-deploy</button>
-                      <button className="btn btn-sm" disabled={running || !!pend} style={{ marginLeft: '6px' }}
-                        title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
-                        onClick={() => kickoff('teardown', scenario, inst.name)}>Tear down</button>
+                      {(() => {
+                        const v = ((receipt && receipt.verdict) || '').toUpperCase();
+                        const planned = v.startsWith('PLANNED');
+                        const dead = v.startsWith('TORN-DOWN') || v.startsWith('FAILED') || v.startsWith('BLOCKED');
+                        return (
+                          <>
+                            {planned ? (
+                              <button className="btn btn-sm" disabled={running || !!pend}
+                                title="Execute the reviewed plan — runs the pushed deploy.sh"
+                                onClick={() => kickoff('deploy', scenario, inst.name)}>▶ Deploy</button>
+                            ) : (
+                              <button className="btn btn-sm" disabled={running || !!pend}
+                                title="Plan and deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
+                                onClick={() => kickoff('run', scenario, inst.name)}>▶ Re-deploy</button>
+                            )}
+                            <button className="btn btn-sm" disabled={running || !!pend} style={{ marginLeft: '6px' }}
+                              title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
+                              onClick={() => kickoff('teardown', scenario, inst.name)}>Tear down</button>
+                            {dead && !running && !pend && (
+                              <button className="btn btn-sm" style={{ marginLeft: '6px' }}
+                                title="Remove this retired instance's records from the branch (receipts included) — never touches cloud resources"
+                                onClick={() => {
+                                  fetch(`/api/board/${boardName}/runbook/instance/${inst.name}`, { method: 'DELETE' })
+                                    .then(() => setTimeout(load, 1500));
+                                }}>✕ Remove</button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                   </tr>
                 );

@@ -77,6 +77,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/exploration/doc", s.getBoardExplorationDoc)
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)
+		api.DELETE("/board/:board/runbook/instance/:instance", s.removeRunbookInstance)
 		api.POST("/board/:board/issues/:id/plan-approve", s.planBoardApprove)
 		api.POST("/board/:board/issues/:id/plan-reject", s.planBoardReject)
 		api.POST("/board/:board/prs/:id/review", s.kickoffReview)

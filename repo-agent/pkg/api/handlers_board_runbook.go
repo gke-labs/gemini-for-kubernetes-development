@@ -13,6 +13,59 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// removeRunbookInstance deletes a dead instance's records — its
+// directory on the fork branch. Receipts are the audit log, so this is
+// owner-initiated only, for instances whose story is over (torn down,
+// failed, superseded); it never touches cloud resources.
+func (s *Server) removeRunbookInstance(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, member, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	_, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
+		return
+	}
+	instance := c.Param("instance")
+	if instance == "" || strings.ContainsAny(instance, "/.") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid instance name"})
+		return
+	}
+	token, terr := s.memberToken(ctx, namespace)
+	if terr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No member token"})
+		return
+	}
+	gh := githubClientForToken(ctx, token)
+	ref := "exploration/notes"
+	dir := "docs-exploration/runbook-deployments/" + instance
+	_, entries, _, derr := gh.Repositories.GetContents(ctx, member, repo, dir, &github.RepositoryContentGetOptions{Ref: ref})
+	if derr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "instance records not found"})
+		return
+	}
+	msg := "remove records for retired instance " + instance
+	for _, e := range entries {
+		if e.GetType() != "file" {
+			continue
+		}
+		sha := e.GetSHA()
+		if _, _, ferr := gh.Repositories.DeleteFile(ctx, member, repo, e.GetPath(), &github.RepositoryContentFileOptions{
+			Message: &msg, SHA: &sha, Branch: &ref,
+		}); ferr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting " + e.GetName(), "details": ferr.Error()})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance})
+}
+
 // repoShortName mirrors factory's shortName: initials of hyphenated
 // repos (in-cluster-storage → ics), else the name truncated. It is the
 // first half of RUNBOOK_RESOURCE_PREFIX — shown in the UI beside the
@@ -69,8 +122,8 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	if req.Mode == "" {
 		req.Mode = "run"
 	}
-	if req.Mode != "run" && req.Mode != "teardown" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be run or teardown"})
+	if req.Mode != "run" && req.Mode != "teardown" && req.Mode != "plan" && req.Mode != "deploy" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be plan, deploy, run, or teardown"})
 		return
 	}
 
@@ -78,7 +131,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	if req.Mode == "run" {
+	if req.Mode == "run" || req.Mode == "plan" {
 		annotations["board.gemini.google.com/runbook-guidance"] = strings.TrimSpace(req.Guidance)
 	}
 	requests := map[string]string{}
