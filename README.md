@@ -26,3 +26,4 @@ The extension adds the following skills to Gemini CLI:
 ## Resources
 
 - [Gemini CLI extensions](https://github.com/google-gemini/gemini-cli/blob/main/docs/extension.md): Documentation about using extensions in Gemini CLI
+- [awesome-ai-plugins](https://github.com/hashgraph-online/awesome-ai-plugins): A directory of awesome AI assistant extensions where gemini-for-kubernetes-development is listed.
