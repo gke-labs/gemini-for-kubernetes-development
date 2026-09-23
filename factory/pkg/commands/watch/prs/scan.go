@@ -14,8 +14,7 @@ import (
 // listing rather than the fast pass's. The two sets overlap heavily - a pull
 // request opened for a labelled issue is usually both assigned and labelled -
 // so the result is deduplicated by number. That also guarantees each pull
-// request is handed to exactly one worker per cycle, which is what keeps two
-// workers off the same pull request's state.
+// request is evaluated at most once per cycle.
 //
 // Issue-typed items are dropped: GitHub's issue endpoints return issues and
 // pull requests together, and the issues belong to the issue scanner.

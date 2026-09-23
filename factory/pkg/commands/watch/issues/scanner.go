@@ -33,12 +33,12 @@ const (
 	// DefaultInterval is how often the issues assigned to the bot pool or
 	// created by the operator are scanned. It is what sets pickup latency for a
 	// new issue, and the queries behind it are bounded to a single page.
-	DefaultInterval = 30 * time.Second
+	DefaultInterval = 2 * time.Minute
 	// DefaultSweepInterval is how often the full trigger-labelled sweep runs.
 	// That sweep paginates over every labelled issue in the repository, so it
 	// stays on the slow cadence it has always had; the fast cycle above is what
 	// picks up the issues a person just filed or assigned.
-	DefaultSweepInterval = 5 * time.Minute
+	DefaultSweepInterval = 10 * time.Minute
 	// defaultScanLimit bounds the fast queries when no limit is configured.
 	defaultScanLimit = 30
 )

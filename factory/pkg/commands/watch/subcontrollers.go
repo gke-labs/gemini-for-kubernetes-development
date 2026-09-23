@@ -106,7 +106,6 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 	return prs.New(prs.Config{
 		Interval:          prs.DefaultInterval,
 		SweepInterval:     prs.DefaultSweepInterval,
-		Workers:           prs.DefaultWorkers,
 		TriggerLabel:      w.triggerLabel,
 		GitHubLogin:       w.githubLogin,
 		BotUsers:          w.allBotUsers,
