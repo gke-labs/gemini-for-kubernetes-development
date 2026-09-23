@@ -63,6 +63,12 @@ The environment is in the filename, and the decision is binary:
   the exact command that fixes it. A runbook whose checklist has an
   ✗ is a request to the owner, not a candidate for a Run.
 
+Deployment instances OWN what they create: runbook steps name every
+cloud resource `${RESOURCE_PREFIX}[-suffix]` (a project-unique prefix
+the harness provides) and never adopt infrastructure the instance
+did not create — an existing cluster belongs to another instance
+unless the owner explicitly names it in guidance.
+
 Write only the runbooks that prove something: a library with no
 in-pod story gets no `-in-pod` file; never pad one with invented
 steps. Finer-grained environment names (`-gke`, `-gce`, `-kind`) are

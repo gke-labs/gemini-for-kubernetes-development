@@ -16,6 +16,13 @@ docs-exploration/runbooks/{{.Scenario}}.md.
      Never re-run the script just to see the error again.
    - If the same failure signature appears twice, STOP — it will not
      fix itself on the third try.
+   - Repairs must respect ownership: never fix a failure by adopting
+     infrastructure this instance did not create (an existing cluster
+     belongs to another instance). Resources you create are named
+     ${RESOURCE_PREFIX}[-suffix], and labeled
+     repo-agent-instance=${RESOURCE_PREFIX} where the service
+     supports labels — the NAME is the ownership guarantee, the
+     label is a bonus for auditing.
    - A permission, quota, or billing failure is BLOCKED, not a bug you
      can fix: confirm it read-only (e.g. testIamPermissions, a denied
      describe), then STOP immediately. Do not keep creating and
