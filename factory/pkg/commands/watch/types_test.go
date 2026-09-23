@@ -2,8 +2,15 @@ package watch
 
 import (
 	"testing"
+	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
 func TestRepoFlag(t *testing.T) {
@@ -126,4 +133,62 @@ func TestWatchCommand_RepoFlag(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+}
+
+func TestWatcher_InitQueueManager_ConstructsDispatcher(t *testing.T) {
+	w := newTestWatcher(t, t.TempDir())
+	if w.dispatcher == nil {
+		t.Fatal("expected the watcher to construct a dispatcher")
+	}
+}
+
+// TestEntityCacheStartsUnpopulated documents the signal the issue scanner fails
+// closed on: a fresh watcher has never listed open PRs, and that must not be
+// read as "no issue has a linked PR".
+func TestEntityCacheStartsUnpopulated(t *testing.T) {
+	w := &Watcher{}
+	w.initComponents()
+
+	if w.entityCache.HasOpenPRs() {
+		t.Error("HasOpenPRs() = true for a watcher that has never scanned; want false")
+	}
+
+	// A successful scan that finds no open PRs is still authoritative: the
+	// cache must report itself populated, otherwise issue scanning would stall
+	// forever on a repository with no open pull requests.
+	w.entityCache.UpdateOpenPRs(nil)
+
+	if !w.entityCache.HasOpenPRs() {
+		t.Error("HasOpenPRs() = false after a successful scan returning no PRs; want true")
+	}
+}
+
+func newTestKubeClient() *clients.KubernetesClient {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	return &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+}
+
+func newTestWatcher(t *testing.T, queueDir string) *Watcher {
+	t.Helper()
+	w := &Watcher{
+		RootFlags: common.RootFlags{
+			Namespace: "test-namespace",
+			Image:     "custom-image:v1",
+		},
+		Flags: Flags{
+			Repo:        RepoFlag{Owner: "test-owner", Repo: "test-repo"},
+			QueueDir:    queueDir,
+			MaxActions:  10,
+			MaxPending:  10,
+			TaskTimeout: 30 * time.Minute,
+		},
+		kubeClient: newTestKubeClient(),
+	}
+	w.initComponents()
+	return w
 }

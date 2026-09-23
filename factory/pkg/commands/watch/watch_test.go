@@ -29,27 +29,6 @@ func TestIssuesEnabled(t *testing.T) {
 	}
 }
 
-// TestEntityCacheStartsUnpopulated documents the signal the issue scanner fails
-// closed on: a fresh watcher has never listed open PRs, and that must not be
-// read as "no issue has a linked PR".
-func TestEntityCacheStartsUnpopulated(t *testing.T) {
-	w := &Watcher{}
-	w.initComponents()
-
-	if w.entityCache.HasOpenPRs() {
-		t.Error("HasOpenPRs() = true for a watcher that has never scanned; want false")
-	}
-
-	// A successful scan that finds no open PRs is still authoritative: the
-	// cache must report itself populated, otherwise issue scanning would stall
-	// forever on a repository with no open pull requests.
-	w.entityCache.UpdateOpenPRs(nil)
-
-	if !w.entityCache.HasOpenPRs() {
-		t.Error("HasOpenPRs() = false after a successful scan returning no PRs; want true")
-	}
-}
-
 // TestPRsEnabled pins the modes the pull request scanner goroutine starts in.
 //
 // The disabled case used to be checked at the top of the scan itself; it is

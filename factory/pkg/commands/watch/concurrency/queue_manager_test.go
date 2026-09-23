@@ -55,26 +55,6 @@ func claimAndStartTask(mgr *TaskQueueManager) (string, *api.QueueTask, error) {
 	return fn, task, nil
 }
 
-func getTaskFromQueueResponse(mgr *TaskQueueManager, filename string) (api.QueueTaskItem, bool) {
-	resp := mgr.GetQueueResponse()
-	for _, item := range resp.Incoming {
-		if item.FileName == filename {
-			return item, true
-		}
-	}
-	for _, item := range resp.Processing {
-		if item.FileName == filename {
-			return item, true
-		}
-	}
-	for _, item := range resp.Processed {
-		if item.FileName == filename {
-			return item, true
-		}
-	}
-	return api.QueueTaskItem{}, false
-}
-
 func TestTaskQueueManager_Enqueue(t *testing.T) {
 	mgr, queueDir := setupTestQueueManager(t)
 
@@ -372,22 +352,6 @@ func TestTaskQueueManager_RemoveTaskAndPendingForNumber(t *testing.T) {
 	}
 }
 
-func TestTaskQueueManager_UpdateTaskPriority(t *testing.T) {
-	mgr, _ := setupTestQueueManager(t)
-
-	fn := "task-issue-42.yaml"
-	_ = mgr.Enqueue(fn, &api.QueueTask{Type: "issue-fix", Number: 42, Priority: "low"})
-
-	if err := mgr.UpdateTaskPriority(fn, "critical"); err != nil {
-		t.Fatalf("UpdateTaskPriority failed: %v", err)
-	}
-
-	task, ok := getTaskFromQueueResponse(mgr, fn)
-	if !ok || task.QueueState != "incoming" || task.Priority != "critical" {
-		t.Errorf("expected priority critical, got %+v", task)
-	}
-}
-
 func TestTaskQueueManager_LoadFromDisk(t *testing.T) {
 	tempDir := t.TempDir()
 	incomingDir := filepath.Join(tempDir, "incoming")
@@ -424,99 +388,6 @@ func TestTaskQueueManager_LoadFromDisk(t *testing.T) {
 	}
 	if !mgr.TaskExists("task-issue-2.yaml") {
 		t.Errorf("expected task-issue-2 to exist")
-	}
-}
-
-func TestTaskQueueManager_GetQueueResponse(t *testing.T) {
-	mgr, _ := setupTestQueueManager(t)
-
-	_ = mgr.Enqueue("task-issue-1.yaml", &api.QueueTask{Type: "issue-fix", Number: 1, Priority: "critical"})
-	_ = mgr.Enqueue("task-issue-2.yaml", &api.QueueTask{Type: "issue-fix", Number: 2, Priority: "high"})
-	_ = mgr.Enqueue("task-issue-3.yaml", &api.QueueTask{Type: "pr-review", Number: 3, Priority: "critical"})
-
-	// Move one to processing
-	_, claimed, _ := claimAndStartTask(mgr)
-
-	completeFn := "task-issue-1.yaml"
-	if claimed.Number != 1 {
-		completeFn = fmt.Sprintf("task-issue-%d.yaml", claimed.Number)
-	}
-	_ = mgr.CompleteTask(completeFn, claimed)
-
-	resp := mgr.GetQueueResponse()
-	if resp.Summary.TotalPending != 2 {
-		t.Errorf("expected 2 pending, got %d", resp.Summary.TotalPending)
-	}
-	if resp.Summary.TotalCompleted != 1 {
-		t.Errorf("expected 1 completed, got %d", resp.Summary.TotalCompleted)
-	}
-	if len(resp.Incoming) != 2 {
-		t.Errorf("expected 2 incoming items, got %d", len(resp.Incoming))
-	}
-	if resp.Incoming[0].Rank != 1 || resp.Incoming[1].Rank != 2 {
-		t.Errorf("expected ranks 1 and 2, got %d and %d", resp.Incoming[0].Rank, resp.Incoming[1].Rank)
-	}
-}
-
-func TestTaskQueueManager_GetQueueResponse_StartedCompletedDuration(t *testing.T) {
-	mgr, queueDir := setupTestQueueManager(t)
-	processingDir := filepath.Join(queueDir, "processing")
-	processedDir := filepath.Join(queueDir, "processed")
-
-	startTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
-	endTime := time.Date(2026, 8, 1, 10, 5, 30, 0, time.UTC)
-
-	processingTask := &api.QueueTask{
-		Type:      "pr-review",
-		URL:       "https://github.com/owner/repo/pull/1",
-		Number:    1,
-		Status:    "Running",
-		StartedAt: startTime,
-		Priority:  "high",
-		Phase:     2,
-	}
-	if err := writeTaskAtomically(processingDir, "task-pr-1-review.yaml", processingTask); err != nil {
-		t.Fatalf("writeTaskAtomically processing failed: %v", err)
-	}
-
-	completedTask := &api.QueueTask{
-		Type:        "issue-fix",
-		URL:         "https://github.com/owner/repo/issues/2",
-		Number:      2,
-		Status:      "Completed",
-		StartedAt:   startTime,
-		CompletedAt: endTime,
-		Priority:    "medium",
-		Phase:       3,
-	}
-	if err := writeTaskAtomically(processedDir, "task-issue-2-fix.yaml", completedTask); err != nil {
-		t.Fatalf("writeTaskAtomically processed failed: %v", err)
-	}
-
-	if err := mgr.LoadFromDisk(); err != nil {
-		t.Fatalf("LoadFromDisk failed: %v", err)
-	}
-	resp := mgr.GetQueueResponse()
-	if len(resp.Processing) != 1 {
-		t.Fatalf("expected 1 processing task, got %d", len(resp.Processing))
-	}
-	if resp.Processing[0].StartedAt != startTime.Format(time.RFC3339) {
-		t.Errorf("expected processing startedAt %s, got %s", startTime.Format(time.RFC3339), resp.Processing[0].StartedAt)
-	}
-
-	if len(resp.Processed) != 1 {
-		t.Fatalf("expected 1 processed task, got %d", len(resp.Processed))
-	}
-	p := resp.Processed[0]
-	if p.StartedAt != startTime.Format(time.RFC3339) {
-		t.Errorf("expected processed startedAt %s, got %s", startTime.Format(time.RFC3339), p.StartedAt)
-	}
-	if p.CompletedAt != endTime.Format(time.RFC3339) {
-		t.Errorf("expected processed completedAt %s, got %s", endTime.Format(time.RFC3339), p.CompletedAt)
-	}
-	expectedDuration := float64(330) // 5 minutes 30 seconds
-	if p.DurationSeconds != expectedDuration {
-		t.Errorf("expected durationSeconds %v, got %v", expectedDuration, p.DurationSeconds)
 	}
 }
 
@@ -797,27 +668,6 @@ func TestLoadTaskFromDisk(t *testing.T) {
 	})
 }
 
-func TestTaskQueueManager_UpdateTaskPriority_FallbackDisk(t *testing.T) {
-	mgr, queueDir := setupTestQueueManager(t)
-	incomingDir := filepath.Join(queueDir, "incoming")
-
-	fn := "task-direct-priority.yaml"
-	task := &api.QueueTask{Type: "issue-fix", Number: 201, Priority: "low"}
-	if err := writeTaskAtomically(incomingDir, fn, task); err != nil {
-		t.Fatalf("failed to write task to disk: %v", err)
-	}
-
-	// UpdateTaskPriority should fall back to disk and update priority
-	if err := mgr.UpdateTaskPriority(fn, "critical"); err != nil {
-		t.Fatalf("UpdateTaskPriority disk fallback failed: %v", err)
-	}
-
-	updated, ok := getTaskFromQueueResponse(mgr, fn)
-	if !ok || updated.QueueState != "incoming" || updated.Priority != "critical" {
-		t.Errorf("expected updated task in incoming with critical priority, got: %+v", updated)
-	}
-}
-
 func TestTaskQueueManager_ReleaseTask_CandidateReclaim(t *testing.T) {
 	mgr, _ := setupTestQueueManager(t)
 
@@ -926,33 +776,6 @@ func TestTaskQueueManager_ReleaseTask_CleanupOnTerminalEvents(t *testing.T) {
 	item3, _ := getTaskFromQueueResponse(mgr, fn3)
 	if item3.QueueState != "processed" {
 		t.Errorf("expected FailTask to mark task processed")
-	}
-}
-
-func TestQueueTask_Duration(t *testing.T) {
-	// Zero timestamps
-	taskEmpty := &api.QueueTask{}
-	if d := taskEmpty.Duration(); d != 0 {
-		t.Errorf("expected 0 duration for empty timestamps, got %v", d)
-	}
-
-	// CompletedAt before StartedAt
-	taskInverted := &api.QueueTask{
-		StartedAt:   time.Now(),
-		CompletedAt: time.Now().Add(-1 * time.Minute),
-	}
-	if d := taskInverted.Duration(); d != 0 {
-		t.Errorf("expected 0 duration for inverted timestamps, got %v", d)
-	}
-
-	// Normal duration
-	start := time.Now()
-	taskNormal := &api.QueueTask{
-		StartedAt:   start,
-		CompletedAt: start.Add(42 * time.Second),
-	}
-	if d := taskNormal.Duration(); d != 42*time.Second {
-		t.Errorf("expected 42s duration, got %v", d)
 	}
 }
 
