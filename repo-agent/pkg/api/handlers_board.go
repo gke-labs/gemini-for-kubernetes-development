@@ -1893,6 +1893,12 @@ func (s *Server) getBoardExploration(c *gin.Context) {
 	out := gin.H{
 		"branch":    "exploration/notes",
 		"forkOwner": member,
+		"gcpProject": func() string {
+			if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr == nil {
+				return string(sec.Data["project"])
+			}
+			return ""
+		}(),
 		"branchURL": fmt.Sprintf("https://github.com/%s/%s/tree/exploration/notes/docs-exploration", member, repo),
 		"docs":      []gin.H{},
 	}

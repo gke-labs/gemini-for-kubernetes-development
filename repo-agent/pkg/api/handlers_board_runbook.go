@@ -174,6 +174,13 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	}
 
 	out := gin.H{"forkOwner": member, "runbooks": []gin.H{}, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
+	// The banner signal: with no deploy project, generation cannot
+	// verify feasibility and -gcp plans are BLOCKED by contract.
+	if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr == nil {
+		out["gcpProject"] = string(sec.Data["project"])
+	} else {
+		out["gcpProject"] = ""
+	}
 
 	token, terr := s.memberToken(ctx, namespace)
 	if terr == nil {
