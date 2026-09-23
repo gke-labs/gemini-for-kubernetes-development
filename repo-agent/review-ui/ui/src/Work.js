@@ -1202,7 +1202,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
       {(() => {
         const rows = [...instances];
         for (const p of pending) {
-          if (p.mode !== 'run') continue;
+          if (p.mode === 'teardown') continue; // teardown acts on an existing row
           const name = p.instance || p.scenario;
           if (!rows.some(i => i.name === name)) {
             rows.push({ name, provisional: true, scenario: p.scenario });
