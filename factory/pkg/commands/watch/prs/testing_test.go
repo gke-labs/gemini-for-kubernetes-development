@@ -88,7 +88,6 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 	})
 
 	scanner := New(Config{
-		Workers:         1,
 		TriggerLabel:    opts.TriggerLabel,
 		GitHubLogin:     opts.GitHubLogin,
 		BotUsers:        opts.BotUsers,

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,9 +134,9 @@ func TestRun_StopsOnContextCancellation(t *testing.T) {
 	}
 }
 
-// TestScanCandidates_Dedupes covers the guarantee the worker pool depends on: a
-// pull request that is both assigned and labelled is handed out once, so no two
-// workers can touch the same pull request's state in a cycle.
+// TestScanCandidates_Dedupes covers the deduplication guarantee: a pull request
+// that is both assigned and labelled is handed out once, so it is evaluated at
+// most once in a cycle.
 func TestScanCandidates_Dedupes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -166,5 +167,79 @@ func TestScanCandidates_Dedupes(t *testing.T) {
 	}
 	if candidates[0].GetNumber() != 7 {
 		t.Errorf("candidate = #%d, want #7 (the pull request, not the issue)", candidates[0].GetNumber())
+	}
+}
+
+func TestEvaluateAll_Sequential(t *testing.T) {
+	var inFlight int32
+	var maxInFlight int32
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&inFlight, 1)
+		defer atomic.AddInt32(&inFlight, -1)
+
+		mu.Lock()
+		if current > maxInFlight {
+			maxInFlight = current
+		}
+		mu.Unlock()
+
+		// Sleep briefly to catch any concurrent evaluations
+		time.Sleep(10 * time.Millisecond)
+
+		w.Header().Set("Content-Type", "application/json")
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: gh,
+	})
+
+	candidates := []*githubv39.Issue{
+		{Number: githubv39.Int(1)},
+		{Number: githubv39.Int(2)},
+		{Number: githubv39.Int(3)},
+	}
+
+	s.evaluateAll(context.Background(), candidates)
+
+	if maxInFlight != 1 {
+		t.Errorf("max in-flight evaluations = %d, want 1 (sequential)", maxInFlight)
+	}
+}
+
+func TestEvaluateAll_ContextCancelled(t *testing.T) {
+	var evaluated int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		evaluated++
+		w.Header().Set("Content-Type", "application/json")
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: gh,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel upfront
+
+	candidates := []*githubv39.Issue{
+		{Number: githubv39.Int(1)},
+		{Number: githubv39.Int(2)},
+	}
+
+	s.evaluateAll(ctx, candidates)
+
+	if evaluated != 0 {
+		t.Errorf("evaluated = %d after context cancellation, want 0", evaluated)
 	}
 }
