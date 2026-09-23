@@ -1160,11 +1160,15 @@ function TryPanel({ boardName, onOpenSandbox }) {
             <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
               {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
             </select>
-            <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
-              placeholder={`instance name (default: ${defaultName})`}
-              style={{ flex: '0 1 260px', padding: '3px 8px', borderRadius: '4px',
-                border: '1px solid var(--border-color)', background: 'transparent',
-                color: 'var(--text-primary)', font: 'inherit' }} />
+            <span style={{ display: 'inline-flex', alignItems: 'center', flex: '0 1 300px',
+              border: '1px solid var(--border-color)', borderRadius: '4px', padding: '0 0 0 8px' }}
+              title="Cloud resources this run creates are named <prefix>-<instance>[-suffix] — the prefix is added for you, so don't repeat the repo in the name">
+              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{(state && state.repoShort) || ''}-</span>
+              <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
+                placeholder={`instance name (default: ${defaultName})`}
+                style={{ flex: 1, padding: '3px 8px 3px 2px', border: 'none', outline: 'none',
+                  background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
+            </span>
             {composerPend && <Chip text={`run queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
