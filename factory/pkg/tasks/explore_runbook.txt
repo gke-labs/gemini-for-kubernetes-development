@@ -52,12 +52,12 @@ under the Tier line.
      — and binds project roles — resourcemanager.projects.setIamPolicy).
      Probe with read-only calls: projects.testIamPermissions, a
      get-iam-policy, a dry-run where the tool offers one. Probes
-     target ONLY the project in GOOGLE_CLOUD_PROJECT. If it is empty,
-     do NOT fall back to gcloud's metadata-server default — that is
-     the platform cluster's project, not a deploy target; mark the
-     whole checklist UNVERIFIED and open What this needs with:
-     "⚠ no deploy project configured — set one in Settings (or name
-     it in guidance) and redraft to verify this checklist."
+     target the project in GOOGLE_CLOUD_PROJECT; if it is empty,
+     resolve the effective default (gcloud config get-value project)
+     and DISCLOSE it — open What this needs with the exact project
+     the checklist was verified against and the words "defaulted from
+     the environment, not chosen by the owner". The choice must be
+     visible, never silent.
    - Tools: verify the binaries the steps call actually exist here
      (a missing docker daemon means Cloud Build, not a doomed step).
    Then write the results into What this needs as a checklist:

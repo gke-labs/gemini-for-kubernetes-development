@@ -35,12 +35,12 @@ this instance's parameters.
      params.env, every command traceable to the runbook. No secrets,
      ever: credentials come from the environment (Workload Identity).
    - teardown.sh — the runbook's Teardown section, same rules.
-2. If the runbook needs real infrastructure and GOOGLE_CLOUD_PROJECT
-   is empty, STOP: never fall back to gcloud's metadata-server default
-   project — that is the platform cluster's project, not a deploy
-   target. Write the receipt with BLOCKED on the first line and a
-   "Needs from owner" section saying: set a GCP project in Settings,
-   or name one in the run guidance.
+2. If GOOGLE_CLOUD_PROJECT is empty, resolve the effective default
+   (gcloud config get-value project) and write it into params.env as
+   an explicit line: PROJECT="<value>"  # defaulted from the
+   environment, not chosen by the owner. The project a deployment
+   targets must always be readable in params.env — never an implicit
+   fallback discovered at execution time.
 3. Do NOT execute anything. Do NOT create cloud resources. This phase
    exists so the scripts are pushed and reviewable before they run.
 {{if eq .Mode "plan"}}4. This is a standalone PLAN: nothing executes until the owner
