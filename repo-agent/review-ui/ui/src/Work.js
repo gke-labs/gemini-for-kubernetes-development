@@ -1057,6 +1057,159 @@ function ExploreDocViewer({ boardName, docs }) {
 // receipts, tear it down. One run sandbox per (scenario, path); the
 // runbook/script/receipt artifacts live on the fork branch and render
 // through the exploration doc endpoint.
+// The receipt's first line, compressed to a badge — shared by the
+// per-board Runs tab and the All-boards runs view.
+function verdictBadge(receipt) {
+  if (!receipt || !receipt.verdict) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
+  const v = receipt.verdict.toUpperCase();
+  const date = (receipt.name.match(/(\d{8})/) || [])[1];
+  const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
+  if (v.startsWith('PLANNED')) return <Chip text={`📋 planned${when} — review, then Deploy`} color="#0366d6" bg="rgba(3,102,214,0.08)" />;
+  if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
+  if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
+  if (v.startsWith('BLOCKED')) return <Chip text={`🔒 blocked${when} — see receipt: Needs from owner`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  if (v.startsWith('FAILED') || v.startsWith('PARTIAL')) return <Chip text={`❌ ${v.split(' ')[0].toLowerCase()}${when}`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
+}
+
+// AllRunsPanel: the fleet dashboard — every deployment across every
+// board in one table. Read + act (each row posts to its own board);
+// creation stays on the per-board Runs tab. Polls at 30s: the runbook
+// GET fans out to GitHub, and deployments change on minute scales.
+function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
+  const [data, setData] = useState({});
+  const [busy, setBusy] = useState('');
+
+  const names = boards.map(b => b.name);
+  const key = names.join(',');
+  const load = useCallback(() => {
+    Promise.all(names.map(n =>
+      fetch(`/api/board/${n}/runbook`).then(r => (r.ok ? r.json() : null)).then(d => [n, d]).catch(() => [n, null])
+    )).then(entries => setData(Object.fromEntries(entries.filter(e => e[1]))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const kickoff = (board, mode, scenario, instance) => {
+    setBusy(`${board}:${instance}`);
+    fetch(`/api/board/${board}/runbook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, scenario, instance, guidance: '' }),
+    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); }).catch(() => setBusy(''));
+  };
+
+  const rows = [];
+  for (const [board, d] of Object.entries(data)) {
+    const instances = d.instances || [];
+    const pending = d.pending || [];
+    const sandboxes = d.sandboxes || [];
+    const runbooks = d.runbooks || [];
+    const merged = [...instances];
+    for (const p of pending) {
+      if (p.mode === 'teardown') continue;
+      const name = p.instance || p.scenario;
+      if (!merged.some(i => i.name === name)) merged.push({ name, provisional: true, scenario: p.scenario });
+    }
+    for (const inst of merged) {
+      const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
+      const pend = pending.find(p => (p.instance || p.scenario) === inst.name);
+      const rb = inst.provisional
+        ? runbooks.find(r => r.scenario === inst.scenario) || null
+        : (sb && runbooks.find(r => r.scenario === sb.scenario)) ||
+          runbooks.find(r => inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) || null;
+      rows.push({ board, inst, sb, pend, rb, scenario: inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '') });
+    }
+  }
+  const rank = r => {
+    const v = ((r.inst.latestReceipt || {}).verdict || '').toUpperCase();
+    if (r.sb && r.sb.taskState === 'Running') return 0;
+    if (r.pend) return 0;
+    if (v.startsWith('PLANNED')) return 1;
+    if (v.startsWith('BLOCKED') || v.startsWith('FAILED')) return 2;
+    if (v.startsWith('VERIFIED')) return 3;
+    return 4;
+  };
+  rows.sort((a, b) => rank(a) - rank(b) || a.board.localeCompare(b.board) || a.inst.name.localeCompare(b.inst.name));
+  const cell = { padding: '5px 8px', verticalAlign: 'middle' };
+
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {rows.length === 0 ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No deployments anywhere — plan one from a board's Runs tab.
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+              <th style={cell}>board</th>
+              <th style={cell}>deployment</th>
+              <th style={cell}>agent</th>
+              <th style={cell}>runbook</th>
+              <th style={cell}>last run</th>
+              <th style={{ ...cell, textAlign: 'right' }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ board, inst, sb, pend, rb, scenario }) => {
+              const running = sb && sb.taskState === 'Running';
+              const receipt = inst.latestReceipt;
+              const v = ((receipt || {}).verdict || '').toUpperCase();
+              return (
+                <tr key={`${board}/${inst.name}`} style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <td style={cell}>
+                    <a href="#board" onClick={e => { e.preventDefault(); onGoBoard(board); }}
+                      title="Open this board's Runs tab">{board}</a>
+                  </td>
+                  <td style={cell}>
+                    {inst.provisional ? <span style={{ fontWeight: 500 }}>⛭ {inst.name}</span> : (
+                      <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                        style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}>⛭ {inst.name} ↗</a>
+                    )}
+                  </td>
+                  <td style={cell}>
+                    {sb ? (
+                      <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name, board)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                        title={`${sb.name} — tasks & logs`}>
+                        {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
+                        {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                        {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                      </span>
+                    ) : (pend ? <Chip text={inst.provisional ? 'preparing…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                  </td>
+                  <td style={cell}>
+                    {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer">{rb.scenario} ↗</a>
+                      : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
+                  </td>
+                  <td style={cell}>
+                    {verdictBadge(receipt)}{' '}
+                    {receipt && <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {v.startsWith('PLANNED') ? (
+                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                        onClick={() => kickoff(board, 'deploy', scenario, inst.name)}>▶ Deploy</button>
+                    ) : (
+                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                        onClick={() => kickoff(board, 'run', scenario, inst.name)}>▶ Re-deploy</button>
+                    )}
+                    <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
+                      onClick={() => kickoff(board, 'teardown', scenario, inst.name)}>Tear down</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
   const [selRunbook, setSelRunbook] = useState('');
@@ -1128,20 +1281,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
       setTimeout(load, 2000);
       setTimeout(() => setBusy(''), 2000);
     }).catch(() => setBusy(''));
-  };
-
-  // The receipt's first line, compressed to a badge.
-  const verdictBadge = (receipt) => {
-    if (!receipt || !receipt.verdict) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
-    const v = receipt.verdict.toUpperCase();
-    const date = (receipt.name.match(/(\d{8})/) || [])[1];
-    const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
-    if (v.startsWith('PLANNED')) return <Chip text={`📋 planned${when} — review, then Deploy`} color="#0366d6" bg="rgba(3,102,214,0.08)" />;
-    if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
-    if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
-    if (v.startsWith('BLOCKED')) return <Chip text={`🔒 blocked${when} — see receipt: Needs from owner`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
-    if (v.startsWith('FAILED') || v.startsWith('PARTIAL')) return <Chip text={`❌ ${v.split(' ')[0].toLowerCase()}${when}`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
-    return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
   };
 
   const activeRunbook = selRunbook || (runbooks[0] && runbooks[0].scenario) || '';
@@ -1778,11 +1917,27 @@ function Work({ onBack, namespace }) {
         const upNextAll = work
           .filter(i => i.attention === 'needs-you')
           .sort((x, y) => (stageDeferred(x) - stageDeferred(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
+        const allTab = activeGroup === 'all-runs' ? 'all-runs' : 'up-next';
         return (
           <div>
-            <div style={{ fontSize: 'small', fontWeight: 700, letterSpacing: '0.04em', color: '#d73a49', margin: '0 0 8px 2px', textAlign: 'left' }}>
-              UP NEXT — across {boards.length} boards
-            </div>
+            <nav className="group-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+              <button className={`group-tab ${allTab === 'up-next' ? 'active' : ''}`}
+                onClick={() => setActiveGroup('')}
+                style={allTab === 'up-next' ? { color: '#d73a49' } : {}}
+              >Up Next</button>
+              <button className={`group-tab ${allTab === 'all-runs' ? 'active' : ''}`}
+                title="Every deployment across every board — the fleet dashboard"
+                onClick={() => setActiveGroup('all-runs')}
+              >Runs</button>
+              <span style={{ marginLeft: 'auto', fontSize: 'x-small', color: 'var(--text-secondary)', alignSelf: 'center' }}>
+                across {boards.length} boards
+              </span>
+            </nav>
+            {allTab === 'all-runs' ? (
+              <AllRunsPanel boards={boards}
+                onOpenSandbox={(name) => setCardSandbox(name)}
+                onGoBoard={(b) => { setActiveBoard(b); setWork([]); setActiveGroup('try'); }} />
+            ) : (
             <div className="work-card">
               <table className="work-table">
                 <tbody>
@@ -1807,6 +1962,7 @@ function Work({ onBack, namespace }) {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         );
       })() : (() => {
