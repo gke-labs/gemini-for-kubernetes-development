@@ -1153,7 +1153,7 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			if r.runbookClaimServed(runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
+			if r.runbookClaimConsumed(runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
 				continue
 			}
 		case strings.HasPrefix(key, "explore-"):
@@ -1295,9 +1295,15 @@ func runbookKey(member, repo string, c runbookClaim) string {
 	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, instance), c.mode)
 }
 
-func (r *Reconciler) runbookClaimServed(claim runbookClaim, work *workState) bool {
+// runbookClaimConsumed: runbook claims are ONE-SHOT — a click buys
+// exactly one launch attempt, whatever its outcome. Deploys have cloud
+// side effects, so a failure is terminal (the ❌/🔒 badge prompts the
+// owner to Re-deploy deliberately), and a watcher timeout must not
+// duplicate work the pod is still doing. Any result newer than the
+// click consumes the claim.
+func (r *Reconciler) runbookClaimConsumed(claim runbookClaim, work *workState) bool {
 	res, ok := r.Factory.LastResult(runbookKey(claim.member, work.repo, claim))
-	return ok && res.Err == nil && res.FinishedAt.After(claim.claimedAt)
+	return ok && res.FinishedAt.After(claim.claimedAt)
 }
 
 // ensureRunbookClaims mirrors the explore claims v2 pattern: the timestamped
@@ -1311,11 +1317,8 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 		if r.Factory.IsRunning(key) {
 			continue
 		}
-		if r.runbookClaimServed(claim, work) {
-			continue // the trim pass drops it
-		}
-		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-			continue
+		if r.runbookClaimConsumed(claim, work) {
+			continue // the trim pass drops it — no retry for runbook work
 		}
 		token, err := r.executorToken(ctx, claim.member)
 		if err != nil {
