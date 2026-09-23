@@ -19,9 +19,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// ephemeralStorageDefaulted: neither the flag nor config chose a value —
-// commands with different needs (runbook builds images) may raise it.
+// ephemeralStorageDefaulted / workspaceDiskDefaulted: neither the flag
+// nor config chose a value — commands with different needs (runbook
+// builds images and hoards Go caches) may raise them.
 var ephemeralStorageDefaulted bool
+var workspaceDiskDefaulted bool
 
 var rootFlags common.RootFlags
 
@@ -253,6 +255,7 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 	if !cmd.Flags().Changed("workspace-disk-size") && cfg.WorkspaceDiskSize != "" {
 		rootFlags.DiskSize = cfg.WorkspaceDiskSize
 	}
+	workspaceDiskDefaulted = !cmd.Flags().Changed("workspace-disk-size") && cfg.WorkspaceDiskSize == ""
 	if !cmd.Flags().Changed("ephemeral-storage") && cfg.EphemeralStorage != "" {
 		rootFlags.EphemeralStorage = cfg.EphemeralStorage
 	}
