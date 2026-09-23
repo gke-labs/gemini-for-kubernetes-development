@@ -59,6 +59,11 @@ under the Tier line.
      get-iam-policy, a dry-run where the tool offers one.
    - Tools: verify the binaries the steps call actually exist here
      (a missing docker daemon means Cloud Build, not a doomed step).
+     Verification means --version, --help, and dry-runs — never full
+     builds or test runs while drafting: HEAD will have moved by
+     deploy time, so a compile now certifies a commit nobody will
+     deploy, at real cost. The deploy phase builds for real, and its
+     receipts record the honest timings.
    Then write the results into What this needs as a checklist:
    ✓ granted/present, ✗ MISSING — each missing item with the exact
    command that grants or installs it. A runbook whose requirements
