@@ -3,6 +3,7 @@ package prs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +22,8 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
@@ -984,4 +989,471 @@ func TestEvaluate_InMergeQueue(t *testing.T) {
 			t.Errorf("unexpected REST API call made after merge queue check: %s", call)
 		}
 	}
+}
+
+// TestEvaluate_FetchesReferencedIssueOnce is about what an evaluation *costs*,
+// rather than what it decides. The cost is not visible in the behaviour: a
+// scanner that fetches the same parent issue three times and one that fetches
+// it once queue exactly the same work, and the difference only shows up as a
+// rate limit in production. The test therefore asserts on the requests the
+// scanner made, not on its conclusions.
+//
+// It covers the memoisation: the label sync, the review opt-in check and the
+// readiness check all want the issues the pull request closes, and they used to
+// fetch them one after another.
+func TestEvaluate_FetchesReferencedIssueOnce(t *testing.T) {
+	f := &prFixture{
+		num:     10,
+		headSHA: "sha-1",
+		body:    "Fixes #7",
+		updated: time.Now().Add(-time.Hour),
+	}
+	s := newFixtureScanner(t, f)
+
+	updated := time.Now()
+	s.evaluate(context.Background(), &githubv39.Issue{
+		Number:           githubv39.Int(10),
+		UpdatedAt:        &updated,
+		PullRequestLinks: &githubv39.PullRequestLinks{},
+		Labels:           []*githubv39.Label{{Name: githubv39.String("factory")}},
+	})
+
+	if got := f.count("/issues/7"); got != 1 {
+		t.Errorf("fetched referenced issue #7 %d times in one evaluation, want 1", got)
+	}
+}
+
+// TestScanOnce_SweepsThenFastPasses pins the two-cadence design: the first cycle
+// after startup is a full sweep, and the cycles until the sweep interval comes
+// round again are the cheap pass over assigned pull requests.
+//
+// The distinguishing evidence is the open pull request listing, which only the
+// sweep performs: it is the expensive query whose cost is the reason the
+// cadences were split in the first place.
+func TestScanOnce_SweepsThenFastPasses(t *testing.T) {
+	gh, calls := recordingServer(t)
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       gh,
+		BotUsers:     []string{"bot1"},
+		TriggerLabel: "factory",
+	})
+	// Long enough that the second cycle cannot be a sweep.
+	s.cfg.SweepInterval = time.Hour
+
+	s.ScanOnce(context.Background())
+
+	if got := countCalls(calls(), "/repos/test-owner/test-repo/pulls"); got != 1 {
+		t.Errorf("open PR listings during the first cycle = %d, want 1 (a sweep)", got)
+	}
+	if got := countCalls(calls(), "labels=factory"); got == 0 {
+		t.Error("the first cycle did not run the labelled listing; want a sweep")
+	}
+
+	before := len(calls())
+	s.ScanOnce(context.Background())
+	second := calls()[before:]
+
+	if got := countCalls(second, "/repos/test-owner/test-repo/pulls"); got != 0 {
+		t.Errorf("open PR listings during the second cycle = %d, want 0 (a fast pass)", got)
+	}
+	if got := countCalls(second, "labels=factory"); got != 0 {
+		t.Errorf("labelled listings during the second cycle = %d, want 0 (a fast pass)", got)
+	}
+	if got := countCalls(second, "assignee=bot1"); got == 0 {
+		t.Error("the second cycle did not list assigned pull requests; want a fast pass")
+	}
+}
+
+// TestScanOnce_PausedWhileDraining checks that a draining watcher stops the
+// scanner before it spends any GitHub requests, not just before it queues.
+func TestScanOnce_PausedWhileDraining(t *testing.T) {
+	gh, calls := recordingServer(t)
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{GitHub: gh, BotUsers: []string{"bot1"}})
+	s.paused = func() bool { return true }
+
+	s.ScanOnce(context.Background())
+
+	if got := len(calls()); got != 0 {
+		t.Errorf("made %d GitHub requests while draining, want 0: %v", got, calls())
+	}
+}
+
+// TestRun_StopsOnContextCancellation checks that cancellation stops the scanner
+// and is not reported as a failure: it is how the subcontroller is asked to stop.
+func TestRun_StopsOnContextCancellation(t *testing.T) {
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{})
+	s.cfg.Interval = time.Hour
+	s.paused = func() bool { return true }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run() = %v, want nil after cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not return within 5s of cancellation")
+	}
+}
+
+func TestEvaluateAll_Sequential(t *testing.T) {
+	var inFlight int32
+	var maxInFlight int32
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := atomic.AddInt32(&inFlight, 1)
+		defer atomic.AddInt32(&inFlight, -1)
+
+		mu.Lock()
+		if current > maxInFlight {
+			maxInFlight = current
+		}
+		mu.Unlock()
+
+		// Sleep briefly to catch any concurrent evaluations
+		time.Sleep(10 * time.Millisecond)
+
+		w.Header().Set("Content-Type", "application/json")
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: gh,
+	})
+
+	candidates := []*githubv39.Issue{
+		{Number: githubv39.Int(1)},
+		{Number: githubv39.Int(2)},
+		{Number: githubv39.Int(3)},
+	}
+
+	s.evaluateAll(context.Background(), candidates)
+
+	if maxInFlight != 1 {
+		t.Errorf("max in-flight evaluations = %d, want 1 (sequential)", maxInFlight)
+	}
+}
+
+func TestEvaluateAll_ContextCancelled(t *testing.T) {
+	var evaluated int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		evaluated++
+		w.Header().Set("Content-Type", "application/json")
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub: gh,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel upfront
+
+	candidates := []*githubv39.Issue{
+		{Number: githubv39.Int(1)},
+		{Number: githubv39.Int(2)},
+	}
+
+	s.evaluateAll(ctx, candidates)
+
+	if evaluated != 0 {
+		t.Errorf("evaluated = %d after context cancellation, want 0", evaluated)
+	}
+}
+
+// Helpers shared by the tests in this package.
+
+func stringPtr(s string) *string { return &s }
+
+func timePtr(t time.Time) *time.Time {
+	return &t
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
+}
+
+// newTestKubeClient returns a client backed by an empty fake cluster, which
+// makes every sandbox lookup report "not running" - the state in which the
+// scanner is free to queue work.
+func newTestKubeClient() *clients.KubernetesClient {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	return &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+}
+
+// testOpts are the parts of a Scanner's configuration a test cares about. The
+// rest are fixed by newTestScanner so that individual tests do not restate them.
+type testOpts struct {
+	// GitHub is the client, normally pointed at an httptest server.
+	GitHub *githubv39.Client
+	// Kube backs the sandbox service. A nil client makes every sandbox lookup
+	// report "not running", which is what most tests want.
+	Kube *clients.KubernetesClient
+	// BotUsers is the pool of accounts whose pull requests are evaluated.
+	BotUsers []string
+	// GitHubLogin is the watcher's own account.
+	GitHubLogin string
+	// TriggerLabel is the label prefix under test.
+	TriggerLabel string
+	// ReviewerLogins are the accounts whose reviews count as review feedback.
+	ReviewerLogins []string
+	// AllowlistedBots are the automated accounts whose comments are acted on.
+	AllowlistedBots []string
+	// MinNumber skips pull requests numbered below it.
+	MinNumber int
+}
+
+// newTestScanner builds a Scanner over a real queue manager rooted at tempDir,
+// and returns both so that a test can assert on the queue as well as on GitHub.
+//
+// The intervals are left at their defaults: nothing here drives the Run loop,
+// and the tests that do set them explicitly.
+func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *concurrency.TaskQueueManager) {
+	t.Helper()
+
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	for _, dir := range []string{incomingDir, processingDir, processedDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("creating %s: %v", dir, err)
+		}
+	}
+
+	queue := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{
+		QueueDir:      tempDir,
+		IncomingDir:   incomingDir,
+		ProcessingDir: processingDir,
+		ProcessedDir:  processedDir,
+	})
+
+	sandboxes := sandbox.NewService(sandbox.ServiceConfig{
+		Namespace: "test-ns",
+		Owner:     "test-owner",
+		Repo:      "test-repo",
+	}, sandbox.ServiceDeps{
+		Kube:   opts.Kube,
+		GitHub: opts.GitHub,
+	})
+
+	scanner := New(Config{
+		TriggerLabel:    opts.TriggerLabel,
+		GitHubLogin:     opts.GitHubLogin,
+		BotUsers:        opts.BotUsers,
+		ReviewerLogins:  opts.ReviewerLogins,
+		AllowlistedBots: opts.AllowlistedBots,
+		MinNumber:       opts.MinNumber,
+	}, Deps{
+		GitHub:    github.ForRepo(opts.GitHub, "test-owner", "test-repo"),
+		Queue:     queue,
+		Entities:  concurrency.NewEntityStateCache(),
+		Sandboxes: sandboxes,
+	})
+
+	return scanner, queue
+}
+
+// recordingServer serves empty listings and records the path and query of every
+// request, which is how these tests tell a sweep apart from a fast pass.
+func recordingServer(t *testing.T) (*githubv39.Client, func() []string) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var calls []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		call := r.URL.Path
+		if q := r.URL.RawQuery; q != "" {
+			call += "?" + q
+		}
+		calls = append(calls, call)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]interface{}{})
+	}))
+	t.Cleanup(server.Close)
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	return gh, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), calls...)
+	}
+}
+
+func countCalls(calls []string, substr string) int {
+	n := 0
+	for _, c := range calls {
+		if strings.Contains(c, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+// prFixture is a GitHub stand-in for one pull request that records every path
+// it is asked for.
+type prFixture struct {
+	mu sync.Mutex
+
+	num     int
+	headSHA string
+	// body is the pull request body, which is where a "Fixes #7" reference
+	// that pulls a parent issue into the evaluation comes from.
+	body string
+	// updated is the updated_at the listing reports for the pull request.
+	updated time.Time
+	// reviews are the submitted reviews, whose inline comments used to cost a
+	// request each.
+	reviews []*githubv39.PullRequestReview
+	// inline are the review comments the pull request-wide listing returns.
+	inline []*githubv39.PullRequestComment
+
+	calls []string
+}
+
+// start brings up the server and returns a client pointed at it.
+func (f *prFixture) start(t *testing.T) *githubv39.Client {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		call := r.URL.Path
+		if q := r.URL.RawQuery; q != "" {
+			call += "?" + q
+		}
+		f.calls = append(f.calls, call)
+		f.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		f.route(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+	return gh
+}
+
+func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	base := "/repos/test-owner/test-repo"
+	mergeable := true
+	now := time.Now()
+
+	switch r.URL.Path {
+	case base + "/issues":
+		// Both the fast pass's assignee query and the sweep's label query.
+		_ = json.NewEncoder(w).Encode([]*githubv39.Issue{f.listingIssueLocked()})
+
+	case base + "/pulls":
+		_ = json.NewEncoder(w).Encode([]*githubv39.PullRequest{})
+
+	case fmt.Sprintf("%s/pulls/%d", base, f.num):
+		_ = json.NewEncoder(w).Encode(&githubv39.PullRequest{
+			Number:    githubv39.Int(f.num),
+			Mergeable: &mergeable,
+			State:     githubv39.String("open"),
+			Body:      githubv39.String(f.body),
+			User:      &githubv39.User{Login: githubv39.String("bot1")},
+			Head:      &githubv39.PullRequestBranch{SHA: githubv39.String(f.headSHA)},
+			CreatedAt: &now,
+		})
+
+	case fmt.Sprintf("%s/pulls/%d/commits", base, f.num):
+		_ = json.NewEncoder(w).Encode([]*githubv39.RepositoryCommit{{
+			SHA:    githubv39.String(f.headSHA),
+			Commit: &githubv39.Commit{Committer: &githubv39.CommitAuthor{Date: &now}},
+		}})
+
+	case fmt.Sprintf("%s/issues/%d/comments", base, f.num):
+		_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+
+	case fmt.Sprintf("%s/pulls/%d/reviews", base, f.num):
+		_ = json.NewEncoder(w).Encode(f.reviews)
+
+	case fmt.Sprintf("%s/pulls/%d/comments", base, f.num):
+		_ = json.NewEncoder(w).Encode(f.inline)
+
+	case base + "/commits/" + f.headSHA + "/check-runs":
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
+
+	case base + "/commits/" + f.headSHA + "/statuses":
+		_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
+
+	case fmt.Sprintf("%s/issues/%d/labels", base, f.num):
+		// Label reads and writes both land here, and both answer with a list.
+		_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+
+	default:
+		// Referenced issue reads, assignee writes and anything else the
+		// evaluation happens to touch.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"number": 7,
+			"labels": []interface{}{},
+		})
+	}
+}
+
+// listingIssueLocked is the pull request as the issue listings report it. The
+// caller must hold f.mu.
+func (f *prFixture) listingIssueLocked() *githubv39.Issue {
+	updated := f.updated
+	return &githubv39.Issue{
+		Number:           githubv39.Int(f.num),
+		UpdatedAt:        &updated,
+		PullRequestLinks: &githubv39.PullRequestLinks{},
+		Assignees:        []*githubv39.User{{Login: githubv39.String("bot1")}},
+		Labels:           []*githubv39.Label{{Name: githubv39.String("factory")}},
+	}
+}
+
+// count returns how many recorded paths contain substr.
+func (f *prFixture) count(substr string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.Contains(c, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+// newFixtureScanner wires a scanner to the fixture with the settings the
+// request-counting tests share.
+func newFixtureScanner(t *testing.T, f *prFixture) *Scanner {
+	t.Helper()
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       f.start(t),
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+	return s
 }

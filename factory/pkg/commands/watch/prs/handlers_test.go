@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	githubv39 "github.com/google/go-github/v39/github"
 	"gopkg.in/yaml.v3"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
 
 func TestPRCommentsTriggerMetadata(t *testing.T) {

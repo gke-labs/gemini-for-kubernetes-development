@@ -439,3 +439,38 @@ func TestRecover_AlreadyCompletedChoreTaskSuspendsSandbox(t *testing.T) {
 		t.Errorf("expected sandbox to be suspended for already completed chore task, got %v", suspended)
 	}
 }
+
+func TestRecover_AdoptsTaskInterruptedByShutdown(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.AdoptionPollInterval = 5 * time.Millisecond
+	})
+
+	startInterruptedTask(t, d, queue, runner, "task-issue-10.yaml", 10)
+	waitForCounts(t, queue, 0, 1, 0)
+
+	// Next run: the workload is still executing in its sandbox.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = true
+	sandboxes.mu.Unlock()
+
+	d.Recover(context.Background())
+
+	if got := len(runner.invocations()); got != 1 {
+		t.Errorf("expected the adopted task not to be re-executed, got %d runner invocations", got)
+	}
+
+	// The sandbox finishes the work that outlived the previous watch cycle.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = false
+	sandboxes.completed["sandbox"] = true
+	sandboxes.mu.Unlock()
+
+	d.Wait()
+	waitForCounts(t, queue, 0, 0, 1)
+
+	outcomes := coordinator.outcomes()
+	if len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single success notification from adoption, got %v", outcomes)
+	}
+}
