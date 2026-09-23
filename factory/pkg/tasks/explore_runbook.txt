@@ -27,6 +27,11 @@ regions) into Preconditions as variables the reader sets. Where the
 guidance leaves a choice open, make the call and record the assumption
 under the Tier line.
 {{end}}
+0. Runbooks are account-agnostic: never hardcode project ids,
+   regions, or other owner-specific values in a runbook — those are
+   INSTANCE parameters, resolved into params.env at plan time from
+   Settings and guidance. A runbook that names a project only works
+   for one person until it silently misleads the next.
 1. Derive each scenario's real path from the repository's own tooling:
    the Makefile, scripts/, CI workflows (.github/workflows is the
    ground truth for what actually builds and tests), helm charts,
