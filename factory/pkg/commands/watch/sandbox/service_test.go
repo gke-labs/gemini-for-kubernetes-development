@@ -175,3 +175,28 @@ func TestServiceResolveNamePrefersWorkflowSandbox(t *testing.T) {
 		t.Errorf("expected the existing workflow sandbox to win, got %q", got)
 	}
 }
+
+func TestServiceSuspend(t *testing.T) {
+	ctx := context.Background()
+	kube := newFakeKubeClient(t, newSandbox("sb-to-suspend", nil))
+	svc := NewService(ServiceConfig{
+		Namespace: testNamespace,
+		Owner:     "test-owner",
+		Repo:      "test-repo",
+	}, ServiceDeps{
+		Kube: kube,
+	})
+
+	if err := svc.Suspend(ctx, "sb-to-suspend"); err != nil {
+		t.Fatalf("Suspend failed: %v", err)
+	}
+
+	updated, err := kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(testNamespace).Get(ctx, "sb-to-suspend", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get sandbox: %v", err)
+	}
+	rep, _, _ := unstructured.NestedInt64(updated.Object, "spec", "replicas")
+	if rep != 0 {
+		t.Errorf("Expected replicas=0 after suspend, got %d", rep)
+	}
+}

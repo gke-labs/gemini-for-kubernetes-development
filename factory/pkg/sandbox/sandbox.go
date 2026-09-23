@@ -768,6 +768,36 @@ func SuspendIdleSandboxes(ctx context.Context, kubeClient *clients.KubernetesCli
 	return suspendedCount, nil
 }
 
+// SuspendSandbox scales a single sandbox down to zero replicas.
+func SuspendSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) error {
+	if kubeClient == nil || name == "" {
+		return nil
+	}
+
+	current, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("reading sandbox %s before suspending it: %w", name, err)
+	}
+
+	replicas, found, _ := unstructured.NestedInt64(current.Object, "spec", "replicas")
+	if found && replicas == 0 {
+		return nil
+	}
+
+	if err := unstructured.SetNestedField(current.Object, int64(0), "spec", "replicas"); err != nil {
+		return fmt.Errorf("setting replicas=0 on sandbox %s: %w", name, err)
+	}
+	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating sandbox %s to replicas=0: %w", name, err)
+	}
+
+	fmt.Printf("Suspended sandbox '%s' (replicas=0)\n", name)
+	return nil
+}
+
 // SuspendSandboxIfIdle scales a single sandbox down to zero replicas if it has
 // gone without activity for longer than idleTimeout, reporting whether it was
 // suspended.

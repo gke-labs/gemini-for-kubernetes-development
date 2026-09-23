@@ -268,3 +268,57 @@ func TestSuspendIdleSandboxes_UnpausedAt(t *testing.T) {
 		t.Errorf("Expected 0 sandboxes suspended due to recent unpaused-at timestamp, got %d", count)
 	}
 }
+
+func TestSuspendSandbox(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	ctx := context.Background()
+	ns := "test-ns"
+
+	sb := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata": map[string]interface{}{
+				"name":      "active-sb",
+				"namespace": ns,
+			},
+			"spec": map[string]interface{}{
+				"replicas": int64(1),
+			},
+		},
+	}
+
+	if _, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, sb, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Failed to create sandbox: %v", err)
+	}
+
+	if err := sandbox.SuspendSandbox(ctx, kubeClient, ns, "active-sb"); err != nil {
+		t.Fatalf("SuspendSandbox failed: %v", err)
+	}
+
+	updated, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, "active-sb", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get sandbox: %v", err)
+	}
+	rep, _, _ := unstructured.NestedInt64(updated.Object, "spec", "replicas")
+	if rep != 0 {
+		t.Errorf("Expected replicas=0 after suspend, got %d", rep)
+	}
+
+	// Suspending again should be a no-op and succeed
+	if err := sandbox.SuspendSandbox(ctx, kubeClient, ns, "active-sb"); err != nil {
+		t.Fatalf("Second SuspendSandbox failed: %v", err)
+	}
+
+	// Suspending non-existent sandbox should succeed (no-op)
+	if err := sandbox.SuspendSandbox(ctx, kubeClient, ns, "non-existent"); err != nil {
+		t.Fatalf("SuspendSandbox on non-existent failed: %v", err)
+	}
+}

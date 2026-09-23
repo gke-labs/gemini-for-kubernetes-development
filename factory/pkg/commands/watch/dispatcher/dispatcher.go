@@ -58,6 +58,8 @@ type SandboxService interface {
 	CountRunningTasks(ctx context.Context) (int, error)
 	// Delete force deletes a sandbox, e.g. after a task times out.
 	Delete(ctx context.Context, sandboxName string) error
+	// Suspend scales a sandbox down to zero replicas.
+	Suspend(ctx context.Context, sandboxName string) error
 }
 
 // TaskCoordinator abstracts the GitHub-side interactions that surround the
@@ -430,6 +432,8 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 			if err := d.sandboxes.Delete(ctx, sandboxName); err != nil {
 				klog.Errorf("Failed to delete sandbox '%s' on timeout: %v", sandboxName, err)
 			}
+		} else if task.Type == api.TypeAgentChore && sandboxName != "" {
+			d.suspendChoreSandbox(ctx, taskFilename, sandboxName)
 		}
 		return
 	}
@@ -437,4 +441,18 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 	fmt.Printf("Task %s completed successfully.\n", taskFilename)
 	_ = d.queue.CompleteTask(taskFilename, task)
 	d.coordinator.NotifyTaskFinished(ctx, task, nil)
+
+	if task.Type == api.TypeAgentChore && sandboxName != "" {
+		d.suspendChoreSandbox(ctx, taskFilename, sandboxName)
+	}
+}
+
+func (d *Dispatcher) suspendChoreSandbox(ctx context.Context, taskFilename, sandboxName string) {
+	if d.sandboxes == nil {
+		return
+	}
+	klog.Infof("Suspending sandbox '%s' after agent chore task %s...", sandboxName, taskFilename)
+	if err := d.sandboxes.Suspend(ctx, sandboxName); err != nil {
+		klog.Warningf("Failed to suspend sandbox '%s' after agent chore task %s: %v", sandboxName, taskFilename, err)
+	}
 }
