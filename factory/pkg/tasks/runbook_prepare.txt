@@ -16,7 +16,21 @@ this instance's parameters.
      (PROJECT, REGION, CLUSTER, names…), one place to see what makes
      this instance THIS instance. Defaults from the environment
      (GOOGLE_CLOUD_PROJECT, CLOUDSDK_COMPUTE_REGION) where the
-     guidance doesn't pin them.
+     guidance doesn't pin them. It MUST define
+     RESOURCE_PREFIX="${RUNBOOK_RESOURCE_PREFIX}" (already unique
+     across every board sharing the project), and every cloud
+     resource this instance creates is named
+     ${RESOURCE_PREFIX}[-suffix] and labeled
+     repo-agent-instance=${RESOURCE_PREFIX} where the service
+     supports labels.
+   OWNERSHIP: this instance owns everything it touches. Never write
+   steps that adopt infrastructure this instance did not create — a
+   healthy existing cluster in the project is NOT permission to use
+   it; another instance owns it, and your deploy or teardown would
+   land on someone else's deployment. Using pre-existing
+   infrastructure requires the owner naming it explicitly in the
+   guidance above (then pin it in params.env). Empty guidance means
+   create your own, never borrow.
    - deploy.sh — deterministic bash, set -euo pipefail, sources
      params.env, every command traceable to the runbook. No secrets,
      ever: credentials come from the environment (Workload Identity).
