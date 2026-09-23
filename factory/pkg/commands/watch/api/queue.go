@@ -52,6 +52,15 @@ const (
 	StatusFailed    TaskStatus = "Failed"
 )
 
+// MaxPRCommentAttempts is how many consecutive times the watcher will try to
+// address the same review feedback before giving up on it.
+//
+// The limit lives here rather than in the PR scanner because both ends of the
+// retry need to agree on it: the scanner decides whether to queue another
+// attempt, and the task lifecycle decides whether a failure is the final one
+// and therefore the one worth marking on the comments themselves.
+const MaxPRCommentAttempts = 3
+
 // TriggerReason represents a machine-readable, PascalCase reason for why a queue task was triggered,
 // following Kubernetes API conventions.
 type TriggerReason string
@@ -108,6 +117,14 @@ type QueueTask struct {
 	SessionID    string     `yaml:"sessionId,omitempty"` // For workflow sessions
 	CommitSHA    string     `yaml:"commitSHA,omitempty"`
 	Instructions []string   `yaml:"instructions,omitempty"`
+	// Attempt is the 1-based number of this try at the same piece of work,
+	// counting only the consecutive failures that led to it.
+	//
+	// It is recorded on the task rather than in a scanner's memory because the
+	// processed task file is what survives a restart: without it, a daemon that
+	// restarted mid-sequence would hand a pull request a fresh budget and keep
+	// retrying work that has already failed its limit.
+	Attempt int `yaml:"attempt,omitempty"`
 	// Recovered marks a task that startup recovery is moving back from processing to
 	// incoming, which is what allows Enqueue to overwrite a processing entry rather
 	// than treating it as a duplicate. It is cleared once the task starts again.

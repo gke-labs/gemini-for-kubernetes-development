@@ -407,7 +407,11 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	var checkAnalysis prCheckAnalysis
 	var canReview bool
 
-	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA)
+	// The retry state is read before the feedback is evaluated because it
+	// decides how the evaluation reads: what a failed attempt left on the
+	// comments describes that attempt, not the one about to be queued.
+	feedbackRetry := s.commentRetryState(num, headSHA, pr, history)
+	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA, feedbackRetry)
 
 	if !isConflicting {
 		checkAnalysis = s.evaluateChecks(ctx, headSHA)
@@ -450,7 +454,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// Top level case statement for handling each type of PR task
 	switch {
 	case commentAnalysis.hasNewComments:
-		s.handlePRComments(ctx, pc, commentAnalysis)
+		s.handlePRComments(ctx, pc, commentAnalysis, feedbackRetry)
 
 	case isConflicting:
 		s.handlePRIterate(ctx, pc)
