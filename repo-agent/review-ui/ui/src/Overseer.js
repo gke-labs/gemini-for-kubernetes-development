@@ -97,12 +97,83 @@ export const formatTriggerReason = (reason) => {
     }
 };
 
+export const getSandboxPodInfo = (sb) => {
+    if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount: 0 };
+    const replicas = sb.spec?.replicas;
+    const conditions = sb.status?.conditions || [];
+    const evictionCountStr = sb.metadata?.annotations?.['sandbox.gemini.google.com/eviction-count'] || '0';
+    const evictionCount = parseInt(evictionCountStr, 10) || 0;
+    const evictionSuffix = evictionCount > 0 ? ` (Evictions: ${evictionCount})` : '';
+
+    let isSuspended = (replicas === 0 || replicas === '0');
+    if (!isSuspended) {
+        for (const c of conditions) {
+            if (c.message && c.message.toLowerCase().includes('replicas is 0')) {
+                isSuspended = true;
+                break;
+            }
+        }
+    }
+    if (isSuspended) {
+        return { status: 'scaled down', label: `Scaled Down (0)${evictionSuffix}`, badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false, evictionCount };
+    }
+
+    let isEvicted = false;
+    let isFailed = false;
+    let failReason = 'Failed';
+    for (const c of conditions) {
+        const msg = (c.message || '').toLowerCase();
+        const reason = (c.reason || '').toLowerCase();
+        if (msg.includes('evicted') || reason === 'evicted') {
+            isEvicted = true;
+            failReason = 'Evicted';
+            break;
+        }
+        if (msg.includes('phase: failed') || reason === 'podfailed') {
+            isFailed = true;
+        }
+    }
+    if (isEvicted || isFailed) {
+        return {
+            status: isEvicted ? 'evicted' : 'failed',
+            label: `${isEvicted ? 'Evicted (1)' : 'Failed (1)'}${evictionSuffix}`,
+            badgeLabel: failReason,
+            color: '#d93025',
+            bgColor: '#fce8e6',
+            isSuspended: false,
+            isEvicted: true,
+            isFailed: true,
+            evictionCount
+        };
+    }
+
+    return { status: 'running', label: `Running (1)${evictionSuffix}`, badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount };
+};
+
+export const isSandboxRunning = (sb) => {
+    if (!sb) return false;
+    const info = getSandboxPodInfo(sb);
+    return !info.isSuspended && !info.isEvicted && !info.isFailed && info.status === 'running';
+};
+
+export const countRunningSandboxes = (sandboxes) => {
+    if (!sandboxes || !Array.isArray(sandboxes)) return 0;
+    return sandboxes.filter(isSandboxRunning).length;
+};
+
+export const countSuspendedSandboxes = (sandboxes) => {
+    if (!sandboxes || !Array.isArray(sandboxes)) return 0;
+    return sandboxes.filter(sb => sb && getSandboxPodInfo(sb).isSuspended).length;
+};
+
 const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
     const [sandboxes, setSandboxes] = useState([]);
     const [activeSandbox, setActiveSandbox] = useState(null);
+    const runningSandboxesCount = useMemo(() => countRunningSandboxes(sandboxes), [sandboxes]);
+    const suspendedSandboxesCount = useMemo(() => countSuspendedSandboxes(sandboxes), [sandboxes]);
     const [tasks, setTasks] = useState([]);
     const sortedTasks = useMemo(() => sortTasksByTimestamp(tasks), [tasks]);
     const [searchFilter, setSearchFilter] = useState('');
@@ -504,59 +575,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return 'var(--status-grey)';
     };
 
-    const getSandboxPodInfo = (sb) => {
-        if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount: 0 };
-        const replicas = sb.spec?.replicas;
-        const conditions = sb.status?.conditions || [];
-        const evictionCountStr = sb.metadata?.annotations?.['sandbox.gemini.google.com/eviction-count'] || '0';
-        const evictionCount = parseInt(evictionCountStr, 10) || 0;
-        const evictionSuffix = evictionCount > 0 ? ` (Evictions: ${evictionCount})` : '';
-
-        let isSuspended = (replicas === 0 || replicas === '0');
-        if (!isSuspended) {
-            for (const c of conditions) {
-                if (c.message && c.message.toLowerCase().includes('replicas is 0')) {
-                    isSuspended = true;
-                    break;
-                }
-            }
-        }
-        if (isSuspended) {
-            return { status: 'scaled down', label: `Scaled Down (0)${evictionSuffix}`, badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false, evictionCount };
-        }
-
-        let isEvicted = false;
-        let isFailed = false;
-        let failReason = 'Failed';
-        for (const c of conditions) {
-            const msg = (c.message || '').toLowerCase();
-            const reason = (c.reason || '').toLowerCase();
-            if (msg.includes('evicted') || reason === 'evicted') {
-                isEvicted = true;
-                failReason = 'Evicted';
-                break;
-            }
-            if (msg.includes('phase: failed') || reason === 'podfailed') {
-                isFailed = true;
-            }
-        }
-        if (isEvicted || isFailed) {
-            return {
-                status: isEvicted ? 'evicted' : 'failed',
-                label: `${isEvicted ? 'Evicted (1)' : 'Failed (1)'}${evictionSuffix}`,
-                badgeLabel: failReason,
-                color: '#d93025',
-                bgColor: '#fce8e6',
-                isSuspended: false,
-                isEvicted: true,
-                isFailed: true,
-                evictionCount
-            };
-        }
-
-        return { status: 'running', label: `Running (1)${evictionSuffix}`, badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount };
-    };
-
     const isOverseerInUpgradeMode = (overseer) => {
         if (!overseer) return false;
         const annotations = overseer.metadata?.annotations || {};
@@ -725,7 +743,12 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                         onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setShowStatus(false); setActiveSandbox(null); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
-                        📦 Active Sandboxes ({sandboxes.length})
+                        📦 Active Sandboxes ({runningSandboxesCount})
+                        {suspendedSandboxesCount > 0 && (
+                            <span style={{ backgroundColor: '#856404', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', marginLeft: '4px' }}>
+                                {suspendedSandboxesCount} Scaled Down
+                            </span>
+                        )}
                     </button>
                     <button 
                         className={`btn ${showTaskQueue ? 'btn-primary' : 'btn-secondary'}`}
@@ -1610,6 +1633,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                 <div>
                                     <h3 style={{ margin: 0, fontSize: '1.3rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
                                         <span>📂 Sandboxes Table: <strong>{activeOverseer.metadata.name}</strong></span>
+                                        <span style={{ fontSize: '0.9rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
+                                            ({runningSandboxes.length} running{suspendedSandboxes.length > 0 ? `, ${suspendedSandboxes.length} scaled down` : ''})
+                                        </span>
                                     </h3>
                                     <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                         Click any row to drill down into the sandbox detail view, live terminal, and task logs.
@@ -1687,6 +1713,22 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                                                 Active
                                             </td>
                                         </tr>
+
+                                        {runningSandboxes.length > 0 && (
+                                            <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
+                                                <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--status-green)', textTransform: 'uppercase' }}>
+                                                    🟢 Running Sandboxes ({runningSandboxes.length})
+                                                </td>
+                                            </tr>
+                                        )}
+
+                                        {runningSandboxes.length === 0 && (suspendedSandboxes.length > 0 || evictedSandboxes.length > 0) && (
+                                            <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
+                                                <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                                                    🟢 Running Sandboxes (0)
+                                                </td>
+                                            </tr>
+                                        )}
 
                                         {runningSandboxes.map(sb => renderTableRow(sb))}
 
