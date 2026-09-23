@@ -41,8 +41,12 @@ this instance's parameters.
      params.env, every command traceable to the runbook. No secrets,
      ever: credentials come from the environment (Workload Identity).
    - teardown.sh — the runbook's Teardown section, same rules.
-2. Do NOT execute anything. Do NOT create cloud resources. This phase
-   exists so the scripts are pushed and reviewable before they run.
+2. Do NOT execute anything. Do NOT create cloud resources. Do NOT
+   build or run tests — not even push-disabled builds: HEAD moves, so
+   the deploy phase's build is the only one that certifies anything,
+   and the plan must stay fast enough to review while the owner is
+   still looking. This phase exists to produce the scripts and the
+   RESOLVED parameters, pushed and reviewable before anything runs.
 {{if eq .Mode "plan"}}3. This is a standalone PLAN: nothing executes until the owner
    explicitly deploys. Write the plan receipt to
    docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
