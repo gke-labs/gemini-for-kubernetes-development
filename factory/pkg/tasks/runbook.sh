@@ -81,14 +81,28 @@ sleep 5
 checkoutDefaultBranch
 ensureNotesBranch
 configureGemini
-if [ "${RUNBOOK_MODE}" = "run" ]; then
+case "${RUNBOOK_MODE}" in
+run)
     # Two phases: the scripts land on the branch BEFORE anything
     # executes — durable and reviewable even if execution dies.
     PROMPT_FILE="${PREPARE_PROMPT_FILE}" runEngine
     commitAndPushArtifacts "prepared scripts (pre-execution)"
     PROMPT_FILE="${EXECUTE_PROMPT_FILE}" runEngine
     commitAndPushArtifacts "execution receipt"
-else
+    ;;
+plan)
+    # The gate: prepare only — scripts + a PLANNED receipt land on the
+    # branch; nothing executes until the owner explicitly deploys.
+    PROMPT_FILE="${PREPARE_PROMPT_FILE}" runEngine
+    commitAndPushArtifacts "plan (scripts + PLANNED receipt, nothing executed)"
+    ;;
+deploy)
+    # The owner reviewed the plan and clicked Deploy: execute only.
+    PROMPT_FILE="${EXECUTE_PROMPT_FILE}" runEngine
+    commitAndPushArtifacts "execution receipt"
+    ;;
+*)
     runEngine
     commitAndPushArtifacts "${RUNBOOK_MODE} receipt"
-fi
+    ;;
+esac

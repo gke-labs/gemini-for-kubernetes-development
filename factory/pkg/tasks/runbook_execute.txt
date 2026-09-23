@@ -1,6 +1,6 @@
 You are EXECUTING the deployment instance "{{.Instance}}" for the
 repository {{.RepoName}} ({{.HTMLURL}}). Its scripts were prepared,
-committed and pushed in the previous phase; they live in
+pushed, and (in the plan/deploy flow) reviewed by the owner; they live in
 docs-exploration/runbook-deployments/{{.Instance}}/ (params.env,
 deploy.sh, teardown.sh). The runbook they derive from is
 docs-exploration/runbooks/{{.Scenario}}.md.

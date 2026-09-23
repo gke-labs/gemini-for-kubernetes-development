@@ -75,8 +75,18 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 
 	runCmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run the scenario (reuses the emitted script when nothing drifted)",
+		Short: "Plan and execute in one pass (automation; the UI uses plan then deploy)",
 		RunE:  run("run"),
+	}
+	planCmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Prepare only: scripts + a PLANNED receipt pushed for review, nothing executed",
+		RunE:  run("plan"),
+	}
+	deployCmd := &cobra.Command{
+		Use:   "deploy",
+		Short: "Execute a reviewed plan (runs the instance's pushed deploy.sh)",
+		RunE:  run("deploy"),
 	}
 	teardown := &cobra.Command{
 		Use:   "teardown",
@@ -84,13 +94,14 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 		RunE:  run("teardown"),
 	}
 
-	for _, sub := range []*cobra.Command{runCmd, teardown} {
+	for _, sub := range []*cobra.Command{runCmd, planCmd, deployCmd, teardown} {
 		sub.Flags().StringVar(&repoURL, "url", "", "GitHub repository URL (e.g. https://github.com/owner/repo)")
 		sub.Flags().StringVar(&scenario, "scenario", "", "The runbook name (deploy-gcp, upgrade-gcp, …)")
 		sub.Flags().StringVar(&instance, "instance", "", "Deployment instance name (default: the runbook name); one runbook, many parameterized deployments")
 		cmd.AddCommand(sub)
 	}
 	runCmd.Flags().StringVar(&guidance, "guidance", "", "Owner constraints for this run (pinned decisions)")
+	planCmd.Flags().StringVar(&guidance, "guidance", "", "Owner constraints for this plan (pinned decisions)")
 
 	return cmd
 }
@@ -159,22 +170,26 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, instance, guidance
 		RepoName: repo,
 		HTMLURL:  htmlURL,
 		Scenario: scenario,
+		Mode:     mode,
 		Instance: instance,
 		Guidance: guidance,
 	}
-	promptModes := []string{"teardown"}
-	if mode == "run" {
-		// Two phases: prepare writes the instance's scripts and the
-		// harness pushes them BEFORE execute runs anything.
-		promptModes = []string{"prepare", "execute"}
+	phases := map[string][]string{
+		"run":      {"prepare", "execute"},
+		"plan":     {"prepare"},
+		"deploy":   {"execute"},
+		"teardown": {"teardown"},
+	}[mode]
+	if phases == nil {
+		return fmt.Errorf("unknown runbook mode %q (plan|deploy|run|teardown)", mode)
 	}
 	prompts := map[string][]byte{}
-	for _, pm := range promptModes {
-		b, perr := tasks.RenderRunbookPrompt(pm, params)
+	for _, ph := range phases {
+		b, perr := tasks.RenderRunbookPrompt(ph, params)
 		if perr != nil {
-			return fmt.Errorf("rendering runbook %s prompt: %w", pm, perr)
+			return fmt.Errorf("rendering runbook %s prompt: %w", ph, perr)
 		}
-		prompts[pm] = b
+		prompts[ph] = b
 	}
 	scriptBytes, err := tasks.GetRunbookScript()
 	if err != nil {
@@ -203,10 +218,7 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, instance, guidance
 	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
 		return fmt.Errorf("writing script: %w", err)
 	}
-	promptPath := promptPaths["teardown"]
-	if mode == "run" {
-		promptPath = promptPaths["prepare"]
-	}
+	promptPath := promptPaths[phases[0]]
 
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
@@ -223,9 +235,11 @@ func runRunbook(ctx context.Context, mode, repoURL, scenario, instance, guidance
 		"RUNBOOK_MODE":               mode,
 		"RUNBOOK_RESOURCE_PREFIX":    resourcePrefix(repo, instance),
 	}
-	if mode == "run" {
-		envMap["PREPARE_PROMPT_FILE"] = promptPaths["prepare"]
-		envMap["EXECUTE_PROMPT_FILE"] = promptPaths["execute"]
+	if p, ok := promptPaths["prepare"]; ok {
+		envMap["PREPARE_PROMPT_FILE"] = p
+	}
+	if p, ok := promptPaths["execute"]; ok {
+		envMap["EXECUTE_PROMPT_FILE"] = p
 	}
 	// BYO GCP project: Workload Identity supplies credentials via the
 	// pod's KSA; the secret only carries where to deploy.

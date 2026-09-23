@@ -37,6 +37,15 @@ this instance's parameters.
    - teardown.sh — the runbook's Teardown section, same rules.
 2. Do NOT execute anything. Do NOT create cloud resources. This phase
    exists so the scripts are pushed and reviewable before they run.
+{{if eq .Mode "plan"}}3. This is a standalone PLAN: nothing executes until the owner
+   explicitly deploys. Write the plan receipt to
+   docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
+   PLANNED on the first line, then what this instance will create
+   (names, from params.env), what it will cost roughly, the
+   feasibility state (✓/✗ from the runbook's checklist as it applies
+   to this instance), and anything the owner should read in
+   deploy.sh before clicking Deploy.
+{{end}}
 
 Do not commit or push — the task harness pushes this directory before
 the execution phase starts. Finish with one paragraph: the instance's
