@@ -211,6 +211,16 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	}
 
 	fillEnvResources(&opt.DevSandboxOptions)
+	// Run environments build images and compile big module graphs; on
+	// Autopilot the pod is entitled by its REQUESTS, so the code-task
+	// defaults (500m/2Gi) make builds crawl. Raised only when neither
+	// flags, config, nor SANDBOX_* env chose values.
+	if opt.CPURequest == "" {
+		opt.CPURequest = "2"
+	}
+	if opt.MemoryRequest == "" {
+		opt.MemoryRequest = "4Gi"
+	}
 	sbObj, svc := NewAgentSandbox(opt)
 
 	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {

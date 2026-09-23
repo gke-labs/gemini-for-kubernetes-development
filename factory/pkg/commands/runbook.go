@@ -52,6 +52,18 @@ func NewRunbookCommand(ctx context.Context) *cobra.Command {
 			if instance == "" {
 				instance = scenario
 			}
+			// Runbook runs build images; the 6Gi ephemeral default is
+			// sized for code tasks. 10Gi is the GKE Autopilot per-pod
+			// ceiling — only when nothing chose a value explicitly.
+			if ephemeralStorageDefaulted {
+				rootFlags.EphemeralStorage = "10Gi"
+			}
+			// Go build+module caches for a big monorepo alone run
+			// ~7.5Gi on the PVC; 10Gi leaves no room for the repo,
+			// images and artifacts.
+			if workspaceDiskDefaulted {
+				rootFlags.DiskSize = "30Gi"
+			}
 			if rootFlags.Timeout > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
