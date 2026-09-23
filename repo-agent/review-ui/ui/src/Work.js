@@ -1072,6 +1072,26 @@ function verdictBadge(receipt) {
   return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
 }
 
+// elapsedSince renders a compact age ("1h43m") for running tasks.
+function elapsedSince(iso) {
+  if (!iso) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}m`;
+}
+
+// runningChipFor: the truth about a Running sandbox — alive (with
+// elapsed), finished-but-unstamped, or interrupted (pid gone, no exit).
+function runningChipFor(sb) {
+  if (sb.taskAlive === false) {
+    if (sb.taskExit !== '' && sb.taskExit !== undefined) {
+      return <Chip text="finishing…" color="#b08800" bg="rgba(176,136,0,0.12)" />;
+    }
+    return <Chip text="💥 interrupted — Re-deploy to retry" color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  }
+  const age = elapsedSince(sb.taskStartedAt);
+  return <Chip text={age ? `running · ${age}` : 'running'} color="#b08800" bg="rgba(176,136,0,0.12)" />;
+}
+
 // AllRunsPanel: the fleet dashboard — every deployment across every
 // board in one table. Read + act (each row posts to its own board);
 // creation stays on the per-board Runs tab. Polls at 30s: the runbook
@@ -1176,7 +1196,7 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                       <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name, board)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
                         title={`${sb.name} — tasks & logs`}>
                         {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
-                        {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                        {running && runningChipFor(sb)}
                         {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
                       </span>
                     ) : (pend ? <Chip text={inst.provisional ? 'preparing…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
@@ -1389,7 +1409,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                         <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
                           title={`${sb.name} — tasks & logs`}>
                           {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
-                          {running && <Chip text="running" color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                          {running && runningChipFor(sb)}
                           {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
                         </span>
                       ) : (pend ? <Chip text={inst.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}

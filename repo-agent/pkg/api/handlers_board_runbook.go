@@ -1,13 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -273,13 +278,38 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if engine == "" {
 				engine = engineOrDefault(boardEngine)
 			}
-			sandboxes = append(sandboxes, gin.H{
+			row := gin.H{
 				"name":      sb.GetName(),
 				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
 				"instance":  annotations["sandbox.gemini.google.com/runbook-instance"],
 				"taskState": annotations[annoTaskState],
 				"engine":    engine,
-			})
+			}
+			// Aliveness: the Running annotation goes stale when the
+			// watching CLI dies before the in-pod task does — ask the
+			// pod for the truth (newest task's pid + exit_code + start).
+			if annotations[annoTaskState] == factorycli.TaskStateRunning {
+				if podID, perr := sandbox.FindSandboxPodInNamespace(ctx, sb.GetName(), namespace); perr == nil && podID != nil {
+					var stdout bytes.Buffer
+					script := `d=$(ls -dt /workspaces/tasks/runbook-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
+						`pid=$(cat $d/pid 2>/dev/null); alive=no; [ -n "$pid" ] && kill -0 $pid 2>/dev/null && alive=yes; ` +
+						`echo "$alive|$(cat $d/exit_code 2>/dev/null)|$(stat -c %Y $d/pid 2>/dev/null)"`
+					if eerr := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
+						Command: []string{"sh", "-c", script},
+						Stdout:  &stdout,
+					}); eerr == nil {
+						parts := strings.SplitN(strings.TrimSpace(stdout.String()), "|", 3)
+						if len(parts) == 3 {
+							row["taskAlive"] = parts[0] == "yes"
+							row["taskExit"] = parts[1]
+							if secs, aerr := strconv.ParseInt(parts[2], 10, 64); aerr == nil {
+								row["taskStartedAt"] = time.Unix(secs, 0).UTC().Format(time.RFC3339)
+							}
+						}
+					}
+				}
+			}
+			sandboxes = append(sandboxes, row)
 		}
 		out["sandboxes"] = sandboxes
 	}
