@@ -1152,6 +1152,14 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {state && state.gcpProject === '' && (
+        <div style={{ border: '1px solid #b08800', borderRadius: '10px', padding: '8px 12px',
+          marginBottom: '10px', color: '#b08800', background: 'rgba(176,136,0,0.08)' }}>
+          ⚠ No GCP project configured — feasibility can't be verified and gcp plans will be
+          blocked. Set one in <a href="#/settings" style={{ color: 'inherit' }}>Settings</a>,
+          or name a project in the run guidance.
+        </div>
+      )}
       {/* One composer: pick the recipe, name the deployment, steer it. */}
       {runbooks.length > 0 ? (
         <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
@@ -1194,7 +1202,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
       {(() => {
         const rows = [...instances];
         for (const p of pending) {
-          if (p.mode !== 'run') continue;
+          if (p.mode === 'teardown') continue; // teardown acts on an existing row
           const name = p.instance || p.scenario;
           if (!rows.some(i => i.name === name)) {
             rows.push({ name, provisional: true, scenario: p.scenario });
@@ -1424,6 +1432,11 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
           <div style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '10px',
             background: 'var(--bg-secondary)', padding: '10px 12px',
             display: 'flex', flexDirection: 'column' }}>
+            {exp && exp.gcpProject === '' && (
+              <div style={{ color: '#b08800', fontSize: 'smaller', marginBottom: '4px' }}>
+                ⚠ no GCP project in Settings — drafted runbooks can't verify their feasibility checklist
+              </div>
+            )}
             <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
               placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
               style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
