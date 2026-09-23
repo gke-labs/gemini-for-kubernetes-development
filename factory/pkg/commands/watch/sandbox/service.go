@@ -165,6 +165,14 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 	return k8s.NewManager(s.kube).DeleteSandbox(ctx, s.namespace, name)
 }
 
+// Suspend scales a sandbox down to zero replicas.
+func (s *Service) Suspend(ctx context.Context, name string) error {
+	if s.kube == nil {
+		return nil
+	}
+	return factorysandbox.SuspendSandbox(ctx, s.kube, s.namespace, name)
+}
+
 // IsTaskRunning reports whether the named sandbox is currently executing a task.
 //
 // It is authoritative rather than advisory: when the recorded annotation still

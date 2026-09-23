@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,6 +30,7 @@ type fakeSandboxService struct {
 	completedErr error
 	countErr     error
 	deleted      []string
+	suspended    []string
 }
 
 func newFakeSandboxService() *fakeSandboxService {
@@ -77,6 +79,19 @@ func (f *fakeSandboxService) deletedSandboxes() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.deleted...)
+}
+
+func (f *fakeSandboxService) Suspend(_ context.Context, sandboxName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.suspended = append(f.suspended, sandboxName)
+	return nil
+}
+
+func (f *fakeSandboxService) suspendedSandboxes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.suspended...)
 }
 
 // fakeCoordinator is a TaskCoordinator that records the lifecycle callbacks it receives.
@@ -739,5 +754,82 @@ func TestRun_DrainCancelsTasksThatOutlastGracePeriod(t *testing.T) {
 	waitForCounts(t, queue, 0, 1, 0)
 	if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
 		t.Errorf("expected no finish notification for a task cut short by shutdown, got %v", outcomes)
+	}
+}
+
+func TestDispatchOnce_SuspendsSandboxForAgentChoreOnCompletion(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
+	sandboxes.resolve = func(_ api.TaskType, n int) string {
+		return fmt.Sprintf("wf-issue-%d", n)
+	}
+
+	task := &api.QueueTask{
+		Type:       api.TypeAgentChore,
+		Number:     42,
+		URL:        "https://github.com/test-owner/test-repo/issues/42",
+		EnqueuedAt: time.Now(),
+	}
+	if err := queue.Enqueue("task-chore-42.yaml", task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 1 || suspended[0] != "wf-issue-42" {
+		t.Errorf("expected sandbox 'wf-issue-42' to be suspended, got %v", suspended)
+	}
+}
+
+func TestDispatchOnce_SuspendsSandboxForAgentChoreOnFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
+	sandboxes.resolve = func(_ api.TaskType, n int) string {
+		return fmt.Sprintf("wf-issue-%d", n)
+	}
+
+	runner.run = func(_ context.Context, _ string, _ *api.QueueTask, _ string) error {
+		return errors.New("chore failed")
+	}
+
+	task := &api.QueueTask{
+		Type:       api.TypeAgentChore,
+		Number:     42,
+		URL:        "https://github.com/test-owner/test-repo/issues/42",
+		EnqueuedAt: time.Now(),
+	}
+	if err := queue.Enqueue("task-chore-42.yaml", task); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 1 || suspended[0] != "wf-issue-42" {
+		t.Errorf("expected sandbox 'wf-issue-42' to be suspended after failure, got %v", suspended)
+	}
+}
+
+func TestDispatchOnce_DoesNotSuspendSandboxForNonChoreTask(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
+
+	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
+
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 0 {
+		t.Errorf("expected no sandboxes suspended for non-chore task, got %v", suspended)
 	}
 }

@@ -345,3 +345,97 @@ func TestRecover_RetriesTransientProbeFailures(t *testing.T) {
 		t.Errorf("expected the task file in processed: %v", err)
 	}
 }
+
+func writeProcessingChoreTask(t *testing.T, queueDir, filename string, number int) {
+	t.Helper()
+	body := fmt.Sprintf("type: agent-chore\nnumber: %d\nstatus: Running\nurl: https://github.com/test-owner/test-repo/issues/%d\n", number, number)
+	if err := os.WriteFile(filepath.Join(queueDir, "processing", filename), []byte(body), 0644); err != nil {
+		t.Fatalf("failed to write processing chore task file: %v", err)
+	}
+}
+
+func TestRecover_AdoptsRunningChoreTaskAndSuspendsSandboxOnCompletion(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.AdoptionPollInterval = 5 * time.Millisecond
+	})
+	sandboxes.running["sandbox"] = true
+
+	writeProcessingChoreTask(t, tempDir, "task-chore-120.yaml", 120)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	d.Recover(ctx)
+
+	// Simulate the cluster chore task finishing successfully.
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = false
+	sandboxes.completed["sandbox"] = true
+	sandboxes.mu.Unlock()
+
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single successful completion notification, got %v", outcomes)
+	}
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 1 || suspended[0] != "sandbox" {
+		t.Errorf("expected sandbox to be suspended after adopted chore completion, got %v", suspended)
+	}
+}
+
+func TestRecover_AdoptsRunningChoreTaskAndSuspendsSandboxOnFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.AdoptionPollInterval = 5 * time.Millisecond
+	})
+	sandboxes.running["sandbox"] = true
+
+	writeProcessingChoreTask(t, tempDir, "task-chore-121.yaml", 121)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	d.Recover(ctx)
+
+	// The sandbox stops without reporting completion (failure).
+	sandboxes.mu.Lock()
+	sandboxes.running["sandbox"] = false
+	sandboxes.mu.Unlock()
+
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] == nil {
+		t.Errorf("expected a single failure notification, got %v", outcomes)
+	}
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 1 || suspended[0] != "sandbox" {
+		t.Errorf("expected sandbox to be suspended after adopted chore failure, got %v", suspended)
+	}
+}
+
+func TestRecover_AlreadyCompletedChoreTaskSuspendsSandbox(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, nil)
+	sandboxes.completed["sandbox"] = true
+
+	writeProcessingChoreTask(t, tempDir, "task-chore-122.yaml", 122)
+
+	d.Recover(context.Background())
+	d.Wait()
+
+	waitForCounts(t, queue, 0, 0, 1)
+	if outcomes := coordinator.outcomes(); len(outcomes) != 1 || outcomes[0] != nil {
+		t.Errorf("expected a single successful completion notification, got %v", outcomes)
+	}
+
+	suspended := sandboxes.suspendedSandboxes()
+	if len(suspended) != 1 || suspended[0] != "sandbox" {
+		t.Errorf("expected sandbox to be suspended for already completed chore task, got %v", suspended)
+	}
+}

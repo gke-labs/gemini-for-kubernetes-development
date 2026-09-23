@@ -88,6 +88,9 @@ func (d *Dispatcher) recoverTask(ctx context.Context, filename string, task *api
 		// outcome yet. Without this the acknowledgements it collected when it was
 		// queued are never resolved, and the work looks unfinished on GitHub forever.
 		d.coordinator.NotifyTaskFinished(ctx, task, nil)
+		if task.Type == api.TypeAgentChore && sandboxName != "" {
+			d.suspendChoreSandbox(ctx, filename, sandboxName)
+		}
 
 	case sandboxStateGone:
 		// The sandbox is gone or never ran the task: requeue it for a fresh attempt.
@@ -216,6 +219,9 @@ func (d *Dispatcher) monitorAdoptedTask(ctx context.Context, taskFilename string
 				klog.Warningf("Adopted task %s in sandbox %s failed or terminated.", taskFilename, sandboxName)
 				_ = d.queue.FailTask(taskFilename, task, "adopted task failed or terminated in sandbox")
 				d.coordinator.NotifyTaskFinished(monitorCtx, task, errAdoptedTaskFailed)
+			}
+			if task.Type == api.TypeAgentChore && sandboxName != "" {
+				d.suspendChoreSandbox(ctx, taskFilename, sandboxName)
 			}
 			return
 		}
