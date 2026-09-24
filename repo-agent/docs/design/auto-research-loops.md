@@ -188,6 +188,100 @@ marking its own homework.
   space; the repo's main branch is never a trial target — trials work
   on their own branch and the study's output is a PR.
 
+## Worked example: from a repo to a study
+
+The doc so far assumes a measurement exists. It usually does not, and
+building it is most of the work — so here is the on-ramp, using a
+real target (`agent-substrate/substrate`, which ships a locust/boomer
+load harness under `benchmarking/`).
+
+### 0. Understand — what is even measurable here?
+
+Generate Overview, then ask the repo directly: *"what benchmarks,
+load tests, and perf CI exist, how are they run, what do they
+output?"* No loop, no infrastructure — one exploration run whose
+answer lands in the docs.
+
+### 1. Benchmark inventory
+
+A document, not a loop: `docs-exploration/benchmarks.md`, one entry
+per benchmark —
+
+| field | why it matters |
+|---|---|
+| what it measures | latency, throughput, memory, build time |
+| how to run it | the exact command, traced to the repo's tooling |
+| what it prints | the raw artifact a parser will read |
+| how long it takes | decides trial cost and study wall-clock |
+| what environment it needs | in-pod, cluster, node shape |
+
+Same shape as a runbook's feasibility checklist, and the same rule:
+derived from the repo's own tooling, never invented.
+
+### 2. Make exactly one benchmark measurable
+
+This is the step everyone skips and the one that decides whether any
+later number means anything.
+
+- **A measurement recipe** (`bench-gcp`): deploy via the existing
+  runbook, run the scenario for a fixed duration, collect output.
+- **A deterministic extractor**: a small script, in the repo or the
+  instance directory, that turns the raw output into
+  `{"p99_ms": 391, "rps": 1240}`. Code that a human reviewed — never
+  a number the trial agent asserts about itself.
+- **A baseline with variance**: run it five times unchanged. The
+  spread *is* the result. If p99 wobbles ±8% run to run, a 5%
+  improvement is a coin flip, and a loop optimizing against it will
+  confidently chase noise for six hours.
+
+### 3. Calibration study — the first study anyone should run
+
+Three trials, **identical configuration**. If the loop reports them
+as meaningfully different, it is measuring the cluster's mood rather
+than the code, and no amount of clever search will fix that. Half an
+hour here saves a week of chasing ghosts, and it doubles as an
+end-to-end test of budget, teardown, and the ledger.
+
+### 4. The real study
+
+```yaml
+study: ateapi-p99
+objective: minimize p99_ms                    # extracted by code
+measurement: bench-gcp                        # pinned, read-only to trials
+environment: deploy-gcp
+isolation: namespace                          # app-level changes
+space:
+  code:   cmd/ateapi/internal/**
+  params: [GOGC, GOMAXPROCS, worker_count, batch_size, flush_interval]
+  off_limits: [benchmarking/**, the extractor, SLO definitions]
+budget: {trials: 12, usd: 60, hours: 6, parallelism: 3}
+repeats: 3                                    # median per trial, from §2's noise floor
+```
+
+Output: a PR carrying the winning diff, with the ledger as its
+justification — dead ends included, because they are the most
+reusable part of the whole exercise.
+
+### What this looks like before Study exists
+
+Steps 0–2 need no new machinery, and they are the durable part.
+Draft a `bench-gcp` runbook with the charter *"run the load scenario
+against a deployed instance and write p99 and throughput to
+metrics.json via a script in the instance directory; do not modify
+anything under benchmarking/"*, plan it, deploy it, then re-deploy it
+five times. Five receipts, five numbers, one noise floor. The loop
+that follows is repetition with bookkeeping — which is precisely the
+thin controller this document proposes, and precisely why it should
+be built *after* a trustworthy measurement exists rather than before.
+
+### The trap
+
+Never let the first study's space include the benchmark, the
+extractor, or the environment shape. Goodhart is abstract right up
+until an agent notices it can hit the target by shrinking the
+workload — at which point it looks like a 40% win and reads as
+diligence in the receipt.
+
 ## The second search space: optimizing the recipe itself
 
 A Study optimizes *the artifact under test* — code, config, a
