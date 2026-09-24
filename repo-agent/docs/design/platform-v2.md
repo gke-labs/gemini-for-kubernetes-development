@@ -214,6 +214,38 @@ payoff — the point at which repo-agent stops being *our workflows
 with a UI* and becomes *a platform for running agents against a
 codebase*.
 
+## Prior art, and what we borrow
+
+The core is deliberately unoriginal — the novelty should sit in the
+agent layer, not in reinvented plumbing:
+
+| Our concept | Already exists as |
+|---|---|
+| Recipe / Run | Tekton Task/TaskRun, Argo WorkflowTemplate/Workflow |
+| Inputs → generated form | GitHub Actions `workflow_dispatch`, Rundeck job options, AWX surveys |
+| Template → UI, entity catalog | Backstage Scaffolder + Software Catalog |
+| Plan/apply gate | Terraform, and Atlantis for the human-clicks-apply loop |
+| Curated + user jobs with run history | Rundeck |
+
+So: borrow **JSON Schema** for inputs (render with
+react-jsonschema-form, the Backstage-proven path) rather than
+inventing an input DSL; borrow GitHub Actions' input vocabulary so
+the mental model transfers; borrow Tekton's status conventions
+(phases, conditions, completion times) for `Run`.
+
+What none of them have, and what therefore justifies building rather
+than adopting: **the unit of work has judgement**. A Tekton step
+cannot deviate, explain why, repair its own script, or return
+`DEPLOYED-UNVERIFIED` instead of exit 0. The consequences — receipts
+as evidence in git, deviation reporting, propose/dispose governance,
+write scopes, and an attention inbox fusing upstream state with agent
+state — are the actual product. Everything else is borrowed
+scaffolding.
+
+Related: [auto-research-loops.md](auto-research-loops.md) adds
+`Study` (a loop over runs with an objective and a budget) as the
+fifth noun, composed of recipes rather than parallel to them.
+
 ## Open questions
 
 - **Recipe versioning across a fleet**: if a repo pins recipe v2 and
@@ -229,6 +261,10 @@ codebase*.
 - **Targets without upstream identity** (environments) need a home;
   the instance directory on the notes branch is the current answer
   and probably stays.
+- **If the org runs Backstage, is this a plugin rather than a
+  product?** The catalog, entity model, and template UI would come
+  free; we would contribute the agent-run layer. A shortcut or a
+  straitjacket depending on how much the inbox experience matters.
 - **Does `Run` belong in etcd or a database?** CRD gives free
   watch/RBAC/kubectl; volume (hundreds/day/member) is fine for CRDs,
   but receipts and logs must not live in the object.
