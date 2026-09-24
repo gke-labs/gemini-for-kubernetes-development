@@ -364,23 +364,21 @@ func (s *Service) CountRunningTasks(ctx context.Context) (int, error) {
 
 	count := 0
 	for _, item := range items {
-		if factorysandbox.IsCurrentSandbox(ctx, s.kube, &item, s.namespace) {
-			continue
-		}
 		if isSuspended(&item) {
 			continue
 		}
 
-		annotations := item.GetAnnotations()
-		if annotations == nil {
-			count++
-			continue
+		if annotations := item.GetAnnotations(); annotations != nil {
+			state := annotations[annotationLastTaskState]
+			if state != "" && !strings.EqualFold(state, taskStateRunning) {
+				continue
+			}
 		}
 
-		state := annotations[annotationLastTaskState]
-		if state == "" || strings.EqualFold(state, taskStateRunning) {
-			count++
+		if factorysandbox.IsCurrentSandbox(ctx, s.kube, &item, s.namespace) {
+			continue
 		}
+		count++
 	}
 	return count, nil
 }
