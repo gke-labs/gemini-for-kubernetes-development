@@ -92,6 +92,67 @@ the winner — they are what stops the next person re-running them.
   justification. That is the artifact a maintainer wants — a change
   and the evidence that it worked.
 
+## Parallel arms and isolation
+
+Three optimizations at once is the case that most clearly earns this
+noun — not because a session cannot fan out (it can), but because
+nine VMs and four hours need accounting, naming discipline, and a
+guarantee that everything dies when the study does.
+
+```yaml
+study: reduce-p99
+parallelism: 3                  # controller admits at most 3 concurrent trials
+isolation: cluster              # namespace | cluster | project
+budget:
+  trials: 12
+  usd: 60
+  hours: 6
+  concurrent_envs: 3            # admission control, not a suggestion
+```
+
+**`isolation` decides the bill**, and it is the study author's most
+consequential choice:
+
+| Level | When it is right | Cost shape |
+|---|---|---|
+| `namespace` | the change is app-level: code, config, replica counts | one cluster for the whole study — by far the cheapest |
+| `cluster` | the change is cluster-level: node type, GKE version, CSI driver, kernel flags | one cluster per concurrent arm |
+| `project` | quota or IAM isolation is the thing under test | rare, expensive, occasionally unavoidable |
+
+Mechanics that fall out of the existing design:
+
+- **Each arm is an ordinary chain of Runs** — `deploy → measure →
+  teardown` — in its own sandbox, so one-task-per-sandbox holds and a
+  failing arm does not take the others down. The study records the
+  failure and continues with the survivors.
+- **Names cannot collide.** Trials extend the ownership prefix
+  (`ax-study1-t1`, `-t2`, `-t3`), so three simultaneous deploys into
+  one project are separable by construction — the cross-wiring
+  failure mode this codebase has already lived through, made
+  impossible rather than forbidden.
+- **Comparability is enforced, not hoped for**: every arm uses the
+  same measurement recipe, pinned and read-only, on the same declared
+  node shape. Three improvising agents measuring three different ways
+  produce noise with a decimal point.
+- **Admission control**: the controller starts a trial only while
+  concurrent environments and remaining budget both allow it. Quota
+  errors are a study-level concern, not something a prompt can be
+  asked to respect.
+- **Teardown is per-arm, plus a sweep.** Each trial tears down its own
+  environment when it completes; at study end the controller sweeps
+  for anything labeled `repo-agent-instance=<study>-*` and reports
+  stragglers. That sweep is the cleanup this project has done by hand
+  more than once, made automatic.
+- **The ledger gains an arm column**, so the summary can say which
+  hypothesis won and what each one cost.
+
+Rough economics, for calibration: three arms of three
+`e2-standard-4` nodes run about $1.10/hour, plus roughly $0.10/hour
+per control plane; a six-hour study lands near $9. Cheap enough to be
+worth running, expensive enough that a forgotten arm is a real
+mistake — which is exactly the asymmetry the budget and the sweep
+exist to manage.
+
 ## The hard problem: Goodhart
 
 An agent optimizing a metric will eventually optimize the
@@ -192,9 +253,6 @@ that owns other runs.
 - **Who writes the objective extractor?** A tiny script in the repo
   (reviewable, versioned) is the honest answer; an agent-written
   extractor is a Goodhart hole.
-- **Parallel trials**: valuable for wall-clock, but shared-environment
-  reuse and parallelism conflict. Probably: parallel trials require
-  one environment each, and the budget accounts for it.
 - **Resumability across controller restarts**: the ledger is durable,
   the suggestion policy's state should be derivable from it — which
   argues for keeping the policy stateless over the ledger.
