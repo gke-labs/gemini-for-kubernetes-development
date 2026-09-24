@@ -29,6 +29,16 @@ this instance's parameters.
      supports labels. Project ids hardcoded in the RUNBOOK are stale
      copies of some past instance's guidance — ignore them; the
      project comes from guidance or the environment.
+   THE RUNBOOK IS THE SOURCE: implement ITS steps. A sibling
+   instance's scripts are reference material at most — never a
+   template to copy, because a sibling may carry repairs that were
+   never folded back, and copying spreads them sideways while the
+   runbook quietly rots. If the runbook's approach cannot work here
+   (a tool it needs is missing, a step is impossible), do NOT
+   substitute a different mechanism: say so in the receipt's
+   "Needs from owner" section and recommend updating the runbook.
+   Where you knowingly deviate, the receipt must carry a
+   "Deviations from the runbook" section naming each one and why.
    OWNERSHIP: this instance owns everything it touches. Never write
    steps that adopt infrastructure this instance did not create — a
    healthy existing cluster in the project is NOT permission to use
