@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -134,7 +135,7 @@ func (s *Scanner) canInvestigatePR(
 	if s.queue.TaskExists(filename) {
 		return false
 	}
-	if getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel) >= maxInvestigations {
+	if getInvestigationCount(comments, lastCommitTime, s.botMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel) >= maxInvestigations {
 		return true
 	}
 	return state.lastInvestigatedSHA != headSHA ||
@@ -147,8 +148,31 @@ func (s *Scanner) canInvestigatePR(
 // in failure, which makes the same revision worth retrying: the agent never got
 // to finish, so its verdict says nothing about the CI failure.
 func (s *Scanner) lastInvestigationFailed(filename string) bool {
-	last := s.queue.GetProcessedTask(filename)
+	if s.queue == nil {
+		return false
+	}
+	failedFilename := strings.TrimSuffix(filename, ".yaml") + ".failed.yaml"
+	last := s.queue.GetProcessedTask(failedFilename)
+	if last != nil && last.Status == api.StatusFailed {
+		return true
+	}
+	last = s.queue.GetProcessedTask(filename)
 	return last != nil && last.Status == api.StatusFailed
+}
+
+// lastCommentsTaskFailed reports whether the previous comments task ended
+// in failure, which makes the same revision worth retrying.
+func (s *Scanner) lastCommentsTaskFailed(filename string, headSHA string) bool {
+	if s.queue == nil {
+		return false
+	}
+	failedFilename := strings.TrimSuffix(filename, ".yaml") + ".failed.yaml"
+	last := s.queue.GetProcessedTask(failedFilename)
+	if last != nil && last.Status == api.StatusFailed && last.CommitSHA == headSHA {
+		return true
+	}
+	last = s.queue.GetProcessedTask(filename)
+	return last != nil && last.Status == api.StatusFailed && last.CommitSHA == headSHA
 }
 
 // handlePRInvestigate queues an investigation of the pull request's CI
@@ -170,11 +194,11 @@ func (s *Scanner) handlePRInvestigate(
 		return true
 	}
 
-	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel)
+	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.botMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel)
 	if investigationCount >= maxInvestigations {
 		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
 		if !s.cfg.DryRun {
-			s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to investigate/fix CI check failures for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated investigation and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxInvestigations, stopLabel, stopLabel))
+			s.comment(ctx, num, fmt.Sprintf(conventions.PauseInvestigationTemplate, maxInvestigations, stopLabel, stopLabel))
 			if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
 				klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 			}
@@ -254,6 +278,22 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
 
 	if s.queue.TaskExists(filename) {
+		return true
+	}
+
+	maxAttempts := s.cfg.MaxCommentAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = conventions.DefaultMaxCommentAttempts
+	}
+	if commentAnalysis.lastCommentsTaskFailed && commentAnalysis.commentsAttemptCount >= maxAttempts {
+		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+		if !s.cfg.DryRun {
+			s.comment(ctx, num, fmt.Sprintf(conventions.PauseProcessingTemplate, maxAttempts, stopLabel, stopLabel))
+			if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+				klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+			}
+		}
+		klog.Infof("Skipping PR #%d address-comments because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxAttempts, stopLabel)
 		return true
 	}
 

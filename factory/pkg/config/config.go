@@ -46,6 +46,7 @@ type FactoryConfig struct {
 	Env                  []EnvVar              `yaml:"env"`
 	MinNumber            int                   `yaml:"minNumber"`
 	PRInactivityTimeout  string                `yaml:"prInactivityTimeout"`
+	MaxCommentAttempts   int                   `yaml:"maxCommentAttempts"`
 	Roles                map[string]RoleConfig `yaml:"roles"`
 }
 

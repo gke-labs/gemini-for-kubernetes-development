@@ -113,6 +113,9 @@ type Config struct {
 	// InactivityTimeout pauses a pull request that has seen no human activity
 	// for this long. Zero disables the check.
 	InactivityTimeout time.Duration
+	// MaxCommentAttempts is the maximum number of retry attempts for addressing comments,
+	// are addressed before the watcher gives up.
+	MaxCommentAttempts int
 	// DryRun reports what would be queued without touching the queue or GitHub.
 	DryRun bool
 }
@@ -157,6 +160,9 @@ type Scanner struct {
 	state *stateStore
 	// lastSweep is when the full sweep last ran.
 	lastSweep time.Time
+
+	// botMap maps lowercase bot user accounts to empty structs for O(1) classification.
+	botMap map[string]struct{}
 }
 
 // New constructs a Scanner from its configuration and dependencies.
@@ -170,6 +176,10 @@ func New(cfg Config, deps Deps) *Scanner {
 	if cfg.ScanLimit <= 0 {
 		cfg.ScanLimit = defaultScanLimit
 	}
+	botMap := make(map[string]struct{}, len(cfg.BotUsers))
+	for _, bot := range cfg.BotUsers {
+		botMap[strings.ToLower(bot)] = struct{}{}
+	}
 	return &Scanner{
 		cfg:       cfg,
 		gh:        deps.GitHub,
@@ -179,6 +189,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		paused:    deps.Paused,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
+		botMap:    botMap,
 	}
 }
 
@@ -216,6 +227,8 @@ func (s *Scanner) ScanOnce(ctx context.Context) {
 		klog.V(2).Infof("Skipping pull request scan because the watcher is draining.")
 		return
 	}
+
+	s.reactions.Prune()
 
 	if s.lastSweep.IsZero() || time.Since(s.lastSweep) >= s.cfg.SweepInterval {
 		s.sweep(ctx)
@@ -439,7 +452,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	var checkAnalysis prCheckAnalysis
 	var canReview bool
 
-	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA)
+	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, headSHA)
 
 	if !isConflicting {
 		checkAnalysis, err = s.evaluateChecks(ctx, headSHA)

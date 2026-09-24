@@ -27,6 +27,10 @@ type prState struct {
 	// last addressed, which prevents processing the same feedback twice on a
 	// commit the agent decided needed no change.
 	lastCommentAddressedSHA string
+	// lastSuccessfulCommentAddressedTime is when review feedback was last successfully addressed by the bot.
+	lastSuccessfulCommentAddressedTime time.Time
+	// lastSuccessfulCommentAddressedSHA is the head commit SHA when review comments were last successfully addressed.
+	lastSuccessfulCommentAddressedSHA string
 	// lastReviewedSHA is the commit SHA for which an automated review was last queued or completed.
 	lastReviewedSHA string
 	// lastIteratedSHA is the commit SHA for which a rebase was last queued or completed.
@@ -142,7 +146,7 @@ func (s *stateStore) recoverLocked() {
 func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 	processedPRs := make(map[int]prState)
 	for filename, t := range tasks {
-		if t == nil || !strings.HasPrefix(filename, "task-pr-") {
+		if t == nil || !strings.HasPrefix(filename, "task-pr-") || strings.HasSuffix(filename, ".failed.yaml") {
 			continue
 		}
 		name := strings.TrimSuffix(strings.TrimPrefix(filename, "task-pr-"), ".yaml")
@@ -190,16 +194,22 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	case strings.HasSuffix(name, "-comments"):
 		if tTime.After(state.lastCommentAddressedTime) {
 			state.lastCommentAddressedTime = tTime
+			if t.CommitSHA != "" {
+				state.lastCommentAddressedSHA = t.CommitSHA
+			}
 		}
-		if t.CommitSHA != "" {
-			state.lastCommentAddressedSHA = t.CommitSHA
+		if tTime.After(state.lastSuccessfulCommentAddressedTime) {
+			state.lastSuccessfulCommentAddressedTime = tTime
+			if t.CommitSHA != "" {
+				state.lastSuccessfulCommentAddressedSHA = t.CommitSHA
+			}
 		}
 	case strings.HasSuffix(name, "-investigate"):
 		if tTime.After(state.lastInvestigatedTime) {
 			state.lastInvestigatedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastInvestigatedSHA = t.CommitSHA
+			if t.CommitSHA != "" {
+				state.lastInvestigatedSHA = t.CommitSHA
+			}
 		}
 	case strings.HasSuffix(name, "-review"):
 		if t.CommitSHA != "" {
@@ -208,9 +218,9 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	case strings.HasSuffix(name, "-iterate"):
 		if tTime.After(state.lastIteratedTime) {
 			state.lastIteratedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastIteratedSHA = t.CommitSHA
+			if t.CommitSHA != "" {
+				state.lastIteratedSHA = t.CommitSHA
+			}
 		}
 	}
 	return state

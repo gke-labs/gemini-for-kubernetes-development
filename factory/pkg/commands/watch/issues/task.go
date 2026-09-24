@@ -105,7 +105,7 @@ func triggerInfo(issue *githubv39.Issue, timeline []*githubv39.Timeline, trigger
 func processedIssueTimes(tasks map[string]*api.QueueTask) map[int]time.Time {
 	processed := make(map[int]time.Time)
 	for filename, t := range tasks {
-		if t == nil || !strings.HasPrefix(filename, "task-issue-") {
+		if t == nil || !strings.HasPrefix(filename, "task-issue-") || strings.HasSuffix(filename, ".failed.yaml") {
 			continue
 		}
 		trimmed := strings.TrimSuffix(strings.TrimPrefix(filename, "task-issue-"), ".yaml")

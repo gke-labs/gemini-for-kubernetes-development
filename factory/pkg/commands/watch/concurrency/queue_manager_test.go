@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -458,6 +459,148 @@ func TestWriteTaskAtomically(t *testing.T) {
 	}
 	if readTask.Number != 123 || readTask.Type != "pr-review" || readTask.Priority != "high" {
 		t.Errorf("unexpected task data: %+v", readTask)
+	}
+}
+
+func TestMoveTaskFileWithDest_WriteError(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	task := &api.QueueTask{
+		Type:     "pr-review",
+		Number:   123,
+		Priority: "high",
+	}
+
+	srcFilename := "task-pr-123-review.yaml"
+	dstFilename := "task-pr-123-review.yaml"
+
+	// Write initial task to srcDir
+	if err := writeTaskAtomically(srcDir, srcFilename, task); err != nil {
+		t.Fatalf("failed to write initial task: %v", err)
+	}
+
+	// Create a directory where writeTaskAtomically expects to write its temp file in dstDir
+	tempFilePath := filepath.Join(dstDir, ".temp-"+dstFilename)
+	if err := os.MkdirAll(tempFilePath, 0755); err != nil {
+		t.Fatalf("failed to create temp directory to block write: %v", err)
+	}
+
+	// Attempt to move the file. os.Rename should succeed but writeTaskAtomically should fail.
+	err := moveTaskFileWithDest(srcDir, dstDir, srcFilename, dstFilename, task)
+	if err == nil {
+		t.Errorf("expected error when writing task state fails, but got nil")
+	} else if !strings.Contains(err.Error(), "failed to write updated task state") {
+		t.Errorf("expected 'failed to write updated task state' error, got: %v", err)
+	}
+}
+
+func TestMoveTaskFileWithDest_RemoveError(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	task := &api.QueueTask{
+		Type:     "pr-review",
+		Number:   124,
+		Priority: "high",
+	}
+
+	srcFilename := "not-removable-dir"
+	dstFilename := "task-pr-124-review.yaml"
+
+	// Create a non-empty directory at srcPath to block os.Remove (returns EISDIR/ENOTEMPTY, not IsNotExist)
+	srcPath := filepath.Join(srcDir, srcFilename)
+	if err := os.MkdirAll(filepath.Join(srcPath, "subdir"), 0755); err != nil {
+		t.Fatalf("failed to create non-empty directory: %v", err)
+	}
+
+	// Pre-create dstPath as a regular file so that renaming the src directory to a file fails (ENOTDIR),
+	// but writeTaskAtomically (which renames a temp file to dstPath) still succeeds.
+	dstPath := filepath.Join(dstDir, dstFilename)
+	if err := os.WriteFile(dstPath, []byte("initial"), 0644); err != nil {
+		t.Fatalf("failed to pre-create dst file: %v", err)
+	}
+
+	// Call moveTaskFileWithDest. Since srcFilename is a directory and dstFilename is a file, os.Rename will fail.
+	// writeTaskAtomically will succeed to write to dstFilename.
+	// But os.Remove(srcPath) will fail because it's a directory with contents.
+	err := moveTaskFileWithDest(srcDir, dstDir, srcFilename, dstFilename, task)
+	if err == nil {
+		t.Errorf("expected error when removing source file fails, but got nil")
+	} else if !strings.Contains(err.Error(), "failed to remove source task file") {
+		t.Errorf("expected 'failed to remove source task file' error, got: %v", err)
+	}
+}
+
+func TestMoveTaskFileWithDest_IgnoreNotExist(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	task := &api.QueueTask{
+		Type:     "pr-review",
+		Number:   125,
+		Priority: "high",
+	}
+
+	srcFilename := "non-existent-task.yaml"
+	dstFilename := "task-pr-125-review.yaml"
+
+	// Call moveTaskFileWithDest. Since srcFilename does not exist, os.Rename will fail.
+	// writeTaskAtomically will succeed to write to dstFilename.
+	// os.Remove(srcPath) will fail because srcPath does not exist, but this is ignored.
+	err := moveTaskFileWithDest(srcDir, dstDir, srcFilename, dstFilename, task)
+	if err != nil {
+		t.Errorf("expected no error when source file does not exist (IsNotExist is ignored), but got: %v", err)
+	}
+
+	// Verify that dstFilename was indeed successfully written
+	dstPath := filepath.Join(dstDir, dstFilename)
+	if _, err := os.Stat(dstPath); err != nil {
+		t.Errorf("expected destination file %s to be written, but got error: %v", dstPath, err)
+	}
+}
+
+func TestMoveTaskFileWithDest_RenameAndWriteError(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	task := &api.QueueTask{
+		Type:     "pr-review",
+		Number:   126,
+		Priority: "high",
+	}
+
+	srcFilename := "non-existent-src-task.yaml"
+	dstFilename := "task-pr-126-review.yaml"
+
+	// Create a directory where writeTaskAtomically expects to write its temp file in dstDir
+	// to block the fallback write from succeeding.
+	tempFilePath := filepath.Join(dstDir, ".temp-"+dstFilename)
+	if err := os.MkdirAll(tempFilePath, 0755); err != nil {
+		t.Fatalf("failed to create temp directory to block write: %v", err)
+	}
+
+	// Call moveTaskFileWithDest. Since srcFilename does not exist, os.Rename will fail.
+	// Since .temp-dstFilename is a directory, fallback writeTaskAtomically will fail.
+	err := moveTaskFileWithDest(srcDir, dstDir, srcFilename, dstFilename, task)
+	if err == nil {
+		t.Fatalf("expected error, but got nil")
+	}
+
+	// Verify the error contains the rename error ("no such file or directory")
+	// and wraps the fallback write error ("writing temp task file").
+	errStr := err.Error()
+	if !strings.Contains(errStr, "failed to move task to") {
+		t.Errorf("expected 'failed to move task to' in error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "rename error:") {
+		t.Errorf("expected 'rename error:' in error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "no such file") {
+		t.Errorf("expected 'no such file' (rename error detail) in error, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "writing temp task file") {
+		t.Errorf("expected 'writing temp task file' (fallback write error detail) in error, got: %s", errStr)
 	}
 }
 
@@ -1077,4 +1220,81 @@ func TestProcessedTaskAccessors(t *testing.T) {
 			t.Errorf("expected nil for a task that never finished, got %+v", got)
 		}
 	})
+}
+
+func TestTaskQueueManager_FailedCommentsLogUniqueTimestamp(t *testing.T) {
+	mgr, queueDir := setupTestQueueManager(t)
+
+	prNum := 99
+	task := &api.QueueTask{
+		Type:     "pr-comments",
+		Number:   prNum,
+		Priority: "high",
+	}
+	fn := fmt.Sprintf("task-pr-%d-comments.yaml", prNum)
+	_ = mgr.Enqueue(fn, task)
+	_, claimed, _ := claimAndStartTask(mgr)
+
+	// Create dummy log in processing
+	logProcFile := filepath.Join(queueDir, "logs", "processing", fmt.Sprintf("task-pr-%d-comments.log", prNum))
+	_ = os.WriteFile(logProcFile, []byte("log failed contents"), 0644)
+
+	if err := mgr.FailTask(fn, claimed, "comments failed"); err != nil {
+		t.Fatalf("FailTask failed: %v", err)
+	}
+
+	// Verify that the failed log file exists in processed and contains the timestamp suffix
+	files, err := os.ReadDir(filepath.Join(queueDir, "logs", "processed"))
+	if err != nil {
+		t.Fatalf("failed to read processed logs dir: %v", err)
+	}
+
+	foundFailedLog := false
+	for _, file := range files {
+		name := file.Name()
+		if strings.HasPrefix(name, "task-pr-99-comments.failed.") && strings.HasSuffix(name, ".log") {
+			foundFailedLog = true
+			break
+		}
+	}
+
+	if !foundFailedLog {
+		t.Errorf("expected failed comment log with timestamp suffix, none found in processed logs directory")
+	}
+}
+
+func TestTaskQueueManager_IsRetryableTask(t *testing.T) {
+	mgr := NewTaskQueueManager(TaskQueueManagerConfig{})
+
+	tests := []struct {
+		filename string
+		task     *api.QueueTask
+		want     bool
+	}{
+		{"task-pr-10-comments.yaml", nil, true},
+		{"task-pr-999-comments.yaml", nil, true},
+		{"task-pr-10-investigate.yaml", nil, false},
+		{"task-issue-42.yaml", nil, false},
+		{"some-other-file.yaml", nil, false},
+		// Check using task property when registered
+		{"any-name.yaml", &api.QueueTask{Type: api.TypePRComments}, true},
+		{"any-name.yaml", &api.QueueTask{Type: api.TypePRInvestigate}, false},
+		// Check task with empty Type falling back to filename-based matching
+		{"task-pr-10-comments.yaml", &api.QueueTask{Type: ""}, true},
+		{"task-pr-10-investigate.yaml", &api.QueueTask{Type: ""}, false},
+	}
+
+	for _, tt := range tests {
+		got := mgr.isRetryableTask(tt.filename, tt.task)
+		if got != tt.want {
+			t.Errorf("isRetryableTask(%q, %+v) = %v, want %v", tt.filename, tt.task, got, tt.want)
+		}
+	}
+
+	// Test dynamic registration
+	mgr.RegisterRetryableTaskType(api.TypePRInvestigate)
+	got := mgr.isRetryableTask("any-name.yaml", &api.QueueTask{Type: api.TypePRInvestigate})
+	if !got {
+		t.Errorf("expected TypePRInvestigate to be retryable after registration")
+	}
 }
