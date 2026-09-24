@@ -47,7 +47,12 @@ docs-exploration/runbooks/{{.Scenario}}.md.
    - Write the receipt to
      docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
      verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
-     FAILED / BLOCKED — then an attempt log (attempt N: what failed,
+     FAILED / BLOCKED — then, if this run did anything the runbook
+     does not say, a single line immediately under it:
+     "⚠ Deviated from the runbook: <what, in one clause>" (and
+     nothing there when it followed the runbook). A reader meets the
+     causality before the detail: what happened, then why it differs
+     from the recipe they reviewed. Then an attempt log (attempt N: what failed,
      the evidence, what you changed), the Verify evidence when it
      succeeded, what is left RUNNING and where (the teardown
      contract), and cost-relevant resources created. A BLOCKED receipt
