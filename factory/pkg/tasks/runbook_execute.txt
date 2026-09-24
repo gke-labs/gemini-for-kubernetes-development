@@ -32,16 +32,18 @@ docs-exploration/runbooks/{{.Scenario}}.md.
    deployment, leave them and say so) — never leave unrecorded
    half-built infrastructure.
 3. Document what you learned where the next actor needs it:
-   - Update the runbook's What this needs / Preconditions with every
-     requirement this run discovered (exact IAM roles, APIs to enable,
-     quotas) — errors must make the runbook smarter, not just longer.
-   - If a repair changed the APPROACH rather than a detail (installing
-     published charts where the runbook builds from source, a
-     different service, a different tool), update the runbook's Steps
-     too. The runbook is the source of truth: an approach that lives
-     only in one instance's script is invisible to the next reader and
-     gets copied sideways by later instances. Note the change in the
-     receipt's "Deviations from the runbook" section as well.
+   - THE RUNBOOK IS READ-ONLY TO YOU. It is the owner's document,
+     reviewed at the plan gate and shared by every instance; a deploy
+     run must never edit it. Write only inside your instance
+     directory.
+   - Instead, end the receipt with "Recommended runbook changes": the
+     requirements this run discovered (exact IAM roles, APIs, quotas)
+     and — if a repair changed the APPROACH rather than a detail
+     (published charts where the runbook builds from source, a
+     different tool or service) — the replacement text for the Steps
+     it affects, written so the owner can apply it verbatim. Errors
+     must make the runbook smarter, but through the owner's Update
+     Runbook click, not behind their back.
    - Write the receipt to
      docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
      verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /

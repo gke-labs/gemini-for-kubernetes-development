@@ -90,11 +90,14 @@ function commitAndPushArtifacts {
     local what="$1"
     echo "Committing and pushing ${what}..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    # --ignore-removal: the harness never records a deletion as a side
-    # effect. Whatever a killed phase left missing from the worktree,
-    # the branch keeps it; retiring an instance is an explicit act
-    # through the UI, not a consequence of a crash.
-    git add --ignore-removal docs-exploration 2>/dev/null || true
+    # The runbook is read-only to a deploy run: discard any edits the
+    # engine made to it (they belong in the receipt as recommendations
+    # the owner applies deliberately), and stage only this instance's
+    # directory. --ignore-removal keeps the harness from recording a
+    # deletion as a side effect — whatever a killed phase left missing
+    # from the worktree, the branch keeps it.
+    git checkout -f -- docs-exploration/runbooks 2>/dev/null || true
+    git add --ignore-removal "docs-exploration/runbook-deployments/${RUNBOOK_INSTANCE}" 2>/dev/null || true
     if git commit -m "runbook(${RUNBOOK_INSTANCE}): ${what}"; then
         # A dropped connection after a successful server-side push makes
         # the retry fail with 'cannot lock ref … is at <our sha>'. If the
