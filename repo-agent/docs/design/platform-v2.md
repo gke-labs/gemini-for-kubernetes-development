@@ -246,6 +246,66 @@ Related: [auto-research-loops.md](auto-research-loops.md) adds
 `Study` (a loop over runs with an objective and a budget) as the
 fifth noun, composed of recipes rather than parallel to them.
 
+## Structure-aware design (what the workflow-optimization literature says)
+
+*Yue et al., "From Static Templates to Dynamic Runtime Graphs: A
+Survey of Workflow Optimization for LLM Agents" (arXiv:2603.22386).*
+
+The survey treats **workflow structure as the primary optimization
+object** and gives a vocabulary worth adopting wholesale, because it
+names three things we currently conflate:
+
+| Survey term | Ours |
+|---|---|
+| **Workflow template** — the reusable executable specification | **Recipe** |
+| **Realized graph** (`G_run`) — the structure actually used for one run | what the agent actually did |
+| **Execution trace** — states, actions, observations, **and costs** | receipt attempt log + usage report |
+
+Its taxonomy is organized by *when structure is determined* and how
+plastic it is: (1) static template optimization, (2) pre-execution
+generation or selection, (3) in-execution editing — cross-cut by
+*what* is optimized: **node** (prompts), **graph** (topology), or
+**joint**. Named approaches span DSPy (a compiler that synthesizes
+prompts/demonstrations for a module pipeline), CAPO/GEPA and OPRO
+(prompt-level optimization, LLM-as-optimizer), and routing or
+architecture search — DyLAN, MasRouter, SkillOrchestra (select teams,
+collaboration modes, models) and MaAS (a query-conditioned
+distribution over architectures via an agentic supernet).
+
+Five consequences for this design:
+
+1. **We are deliberately at the static-template end, and that is a
+   choice, not an oversight.** Recipes have no control flow on
+   purpose (see above). The plasticity the survey argues for lives
+   *inside* the agent — an LLM phase decides what to do — so our
+   realized graph already differs from the template on most runs.
+2. **Make the realized graph an artifact.** We are one small step
+   from execution traces as a dataset: receipts already carry attempt
+   logs, deviations, and cost. Emitting them as a structured block
+   (phases actually run, tools used, retries, cost per phase) turns
+   every run into optimizer-grade signal — the raw material every
+   method in the survey consumes, and something the survey says the
+   field lacks in realistic form.
+3. **Bounded in-execution plasticity beats a DSL.** Rather than
+   declaring conditionals, permit the agent to skip or repeat
+   *declared* phases and require it to log the edit as a deviation.
+   That is in-execution editing **with an audit trail** — the survey
+   notes realized structure is often unlogged, and our propose/dispose
+   governance turns that gap into a feature.
+4. **Node-level routing is the cheapest win available.** Per-phase
+   model policy (draft with a cheap model, critique with a strong one)
+   is exactly the routing axis DyLAN/MasRouter occupy, and we already
+   have multi-engine plumbing plus per-run cost data to tune it.
+5. **Structure-aware evaluation.** The survey recommends reporting
+   graph-level properties alongside task metrics — size, depth,
+   critical path, edit count, fraction of steps spent editing,
+   execution cost, robustness. For us those are per-recipe statistics
+   we can emit for free, and they are what makes two recipe versions
+   comparable. The survey's stated open problems — benchmark
+   standardization and the cost/quality interplay under dynamic
+   optimization — are both things a fleet of real SWE runs with real
+   verdicts and real dollar costs is unusually well placed to answer.
+
 ## Open questions
 
 - **Recipe versioning across a fleet**: if a repo pins recipe v2 and

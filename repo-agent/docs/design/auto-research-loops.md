@@ -127,6 +127,39 @@ marking its own homework.
   space; the repo's main branch is never a trial target — trials work
   on their own branch and the study's output is a PR.
 
+## The second search space: optimizing the recipe itself
+
+A Study optimizes *the artifact under test* — code, config, a
+deployment. The workflow-optimization literature (Yue et al.,
+arXiv:2603.22386; see platform-v2 §structure-aware design) optimizes
+*the workflow that produced it*. Both are the same loop with a
+different search space, so the same machinery should host both:
+
+```yaml
+study: improve-fix-recipe
+space: recipe                  # instead of: code
+  edit: [prompts/**, phases]   # node-level and graph-level
+objective: maximize success_rate, then minimize cost
+signal: execution traces from the last 200 runs of recipe:fix
+validation: replay on 20 held-out targets
+output: a PR against the recipe
+```
+
+This is GEPA/DSPy-shaped optimization — reflective evolution of
+prompts, and topology edits such as inserting a critic phase — with
+two properties the literature mostly lacks: the search space is
+**diffable data in git**, and the winner arrives as a **pull request
+a human reviews** rather than a silently updated artifact. The
+propose/dispose rule already built for runbooks applies unchanged:
+the optimizer proposes a recipe change, the owner merges it.
+
+Sequencing matters. Node-level first (prompts, per-phase model
+choice — cheap, measurable, low blast radius), topology second
+(adding or reordering phases), joint last if ever. And the Goodhart
+separation below applies with extra force here: a recipe optimizer
+scored on *its own* runs' verdicts is grading its own homework unless
+the verdict comes from a measurement it cannot edit.
+
 ## Prior art
 
 Optuna (Study/Trial), Kubeflow **Katib** (Experiment → Suggestion →
