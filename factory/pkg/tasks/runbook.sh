@@ -49,7 +49,7 @@ function ensureNotesBranch {
     # directories moved aside. Restore the subtree from the branch
     # before anything reads or commits it. Scoped to the deployments
     # tree so unsaved chat-session work elsewhere survives.
-    git checkout -f -- docs-exploration/runbook-deployments 2>/dev/null || true
+    git checkout -f -- docs-exploration/runbook-deployments docs-exploration/runbooks 2>/dev/null || true
     mkdir -p "docs-exploration/runbook-deployments/${RUNBOOK_INSTANCE}"
     popd > /dev/null
 }
@@ -61,29 +61,51 @@ function ensureNotesBranch {
 # repair while its runbook still said build from source). Hide them
 # for the phase rather than asking nicely.
 SIBLING_STASH="/workspaces/.tmp/sibling-instances"
+RUNBOOK_STASH="/workspaces/.tmp/sibling-runbooks"
 
 function hideSiblingInstances {
     local base="/workspaces/${REPO_NAME}/docs-exploration/runbook-deployments"
-    [ -d "${base}" ] || return 0
-    mkdir -p "${SIBLING_STASH}"
-    for d in "${base}"/*; do
-        if [ -d "${d}" ] && [ "$(basename "${d}")" != "${RUNBOOK_INSTANCE}" ]; then
-            mv "${d}" "${SIBLING_STASH}/" || true
-        fi
-    done
-    echo "Prepare scope: this instance + the runbook (siblings hidden)."
+    if [ -d "${base}" ]; then
+        mkdir -p "${SIBLING_STASH}"
+        for d in "${base}"/*; do
+            if [ -d "${d}" ] && [ "$(basename "${d}")" != "${RUNBOOK_INSTANCE}" ]; then
+                mv "${d}" "${SIBLING_STASH}/" || true
+            fi
+        done
+    fi
+    # Other recipes are the same contamination class as other
+    # instances — near-identical twins invite mixing, and a planner
+    # reading five deploy variants writes a sixth. This instance has
+    # exactly one runbook.
+    local rb="/workspaces/${REPO_NAME}/docs-exploration/runbooks"
+    if [ -d "${rb}" ]; then
+        mkdir -p "${RUNBOOK_STASH}"
+        for f in "${rb}"/*; do
+            if [ -f "${f}" ] && [ "$(basename "${f}")" != "${RUNBOOK_SCENARIO}.md" ]; then
+                mv "${f}" "${RUNBOOK_STASH}/" || true
+            fi
+        done
+    fi
+    echo "Prepare scope: instance ${RUNBOOK_INSTANCE} + runbook ${RUNBOOK_SCENARIO}.md only."
 }
 
 function restoreSiblingInstances {
     local base="/workspaces/${REPO_NAME}/docs-exploration/runbook-deployments"
-    [ -d "${SIBLING_STASH}" ] || return 0
-    mkdir -p "${base}"
-    for d in "${SIBLING_STASH}"/*; do
-        if [ -e "${d}" ]; then
-            mv "${d}" "${base}/" || true
-        fi
-    done
-    rmdir "${SIBLING_STASH}" 2>/dev/null || true
+    if [ -d "${SIBLING_STASH}" ]; then
+        mkdir -p "${base}"
+        for d in "${SIBLING_STASH}"/*; do
+            [ -e "${d}" ] && { mv "${d}" "${base}/" || true; }
+        done
+        rmdir "${SIBLING_STASH}" 2>/dev/null || true
+    fi
+    local rb="/workspaces/${REPO_NAME}/docs-exploration/runbooks"
+    if [ -d "${RUNBOOK_STASH}" ]; then
+        mkdir -p "${rb}"
+        for f in "${RUNBOOK_STASH}"/*; do
+            [ -e "${f}" ] && { mv "${f}" "${rb}/" || true; }
+        done
+        rmdir "${RUNBOOK_STASH}" 2>/dev/null || true
+    fi
 }
 
 function commitAndPushArtifacts {
