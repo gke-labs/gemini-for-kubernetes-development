@@ -209,6 +209,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Exactly one control plane drives a repo. A v2-managed repo belongs
+	// to the Run reconciler; v1 discovering, claiming, or launching
+	// alongside it is how two schedulers produce duplicate work.
+	if board.Spec.Platform == "v2" {
+		logger.V(1).Info("skipping v2-managed repo", "board", board.Name)
+		return ctrl.Result{}, nil
+	}
+
 	owner, repo, err := parseRepoURL(board.Spec.RepoURL)
 	if err != nil {
 		r.setCondition(ctx, board, "Config", metav1.ConditionFalse, "InvalidRepoURL", err.Error())

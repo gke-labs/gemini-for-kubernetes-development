@@ -87,6 +87,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			v2.GET("/repos/:repo/artifacts", s.getV2Artifacts)
 			v2.GET("/repos/:repo/artifacts/content", s.getV2ArtifactContent)
 			v2.GET("/repos/:repo/runs", s.getV2Runs)
+			v2.POST("/repos/:repo/runs", s.createV2Run)
 		}
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)

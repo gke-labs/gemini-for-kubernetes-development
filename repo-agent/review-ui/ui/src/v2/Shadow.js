@@ -43,16 +43,26 @@ function verdictChip(verdict) {
   return <Chip text={v.toLowerCase()} color="#6a737d" bg="var(--bg-secondary)" />;
 }
 
-function Verbs({ verbs, recipes, readOnly }) {
+function Verbs({ verbs, recipes, readOnly, onRun, target, busy }) {
   const byName = Object.fromEntries((recipes || []).map((r) => [r.name, r]));
   return (
     <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
       {(verbs || []).map((v) => {
         const def = byName[v];
-        const reason = readOnly ? 'this repo is v1-managed — shadow read only' : undefined;
+        // Availability and its reason come from the API, so a verb the
+        // backend would refuse is visible and explained rather than
+        // hidden — you can see the capability and what it needs.
+        const unavailable = def && def.available === false;
+        const reason = readOnly
+          ? 'this repo is v1-managed — shadow read only'
+          : unavailable ? def.reason : (def && def.summary) || v;
         return (
-          <button key={v} className="btn btn-sm" disabled
-            title={reason || (def && def.summary) || v}>{v}</button>
+          <button key={v} className="btn btn-sm"
+            disabled={readOnly || unavailable || busy === v}
+            title={reason}
+            onClick={onRun ? () => onRun(v, target) : undefined}>
+            {busy === v ? `${v}…` : v}
+          </button>
         );
       })}
     </span>
@@ -64,7 +74,7 @@ function Verbs({ verbs, recipes, readOnly }) {
 // sixth is a code change, which is the boundary that keeps this from
 // becoming a UI framework expressed in YAML.
 
-function InboxView({ rows, readOnly }) {
+function InboxView({ rows, readOnly, onRun, busy }) {
   if (!rows.length) return null;
   return (
     <div>
@@ -82,15 +92,16 @@ function InboxView({ rows, readOnly }) {
           {t.attentionReason && (
             <Chip text={t.attentionReason} color="#d73a49" bg="rgba(215,58,73,0.12)" />
           )}
-          <Verbs verbs={(t.recipes || []).filter((r) => r.available).map((r) => r.name).slice(0, 2)}
-            recipes={t.recipes} readOnly={readOnly} />
+          <Verbs verbs={(t.recipes || []).map((r) => r.name).slice(0, 3)}
+            recipes={t.recipes} readOnly={readOnly} onRun={onRun} target={t.id}
+            busy={busy && busy.target === t.id ? busy.recipe : ''} />
         </div>
       ))}
     </div>
   );
 }
 
-function TableView({ rows, columns, readOnly }) {
+function TableView({ rows, columns, readOnly, onRun, busy }) {
   if (!rows.length) return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>none</div>;
   const cell = { padding: '5px 8px', verticalAlign: 'middle' };
   return (
@@ -111,7 +122,9 @@ function TableView({ rows, columns, readOnly }) {
               )}
             </td>
             <td style={{ ...cell, textAlign: 'right' }}>
-              <Verbs verbs={(t.recipes || []).map((r) => r.name)} recipes={t.recipes} readOnly={readOnly} />
+              <Verbs verbs={(t.recipes || []).map((r) => r.name)} recipes={t.recipes}
+                readOnly={readOnly} onRun={onRun} target={t.id}
+                busy={busy && busy.target === t.id ? busy.recipe : ''} />
             </td>
           </tr>
         ))}
@@ -168,9 +181,31 @@ const VIEWS = { inbox: InboxView, table: TableView, doclist: DocListView, chips:
 
 // ── section ──────────────────────────────────────────────────────────
 
-function Section({ repo, spec, recipes, readOnly }) {
+function Section({ repo, spec, recipes, readOnly, onRan }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(null);
+
+  // Starting work is one POST: a Run is created, and the reconciler
+  // decides everything else. The UI does not know what a sandbox is.
+  const run = (recipe, target) => {
+    setBusy({ recipe, target: target || 'repo' });
+    fetch(`/api/v2/repos/${repo}/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipe, target: target || 'repo' }),
+    })
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${r.status}`);
+        }
+      })
+      .catch((e) => setError(String(e.message || e)))
+      .finally(() => {
+        setTimeout(() => setBusy(null), 1500);
+        if (onRan) onRan();
+      });
+  };
 
   const load = useCallback(() => {
     // Sections mount before the board list resolves; fetching with an
@@ -218,7 +253,8 @@ function Section({ repo, spec, recipes, readOnly }) {
         <span style={{ fontWeight: 700, letterSpacing: '0.04em', fontSize: 'small' }}>
           {(spec.title || spec.id).toUpperCase()}
         </span>
-        <Verbs verbs={spec.verbs} recipes={recipes} readOnly={readOnly} />
+        <Verbs verbs={spec.verbs} recipes={recipes} readOnly={readOnly}
+          onRun={run} target="repo" busy={busy && busy.target === 'repo' ? busy.recipe : ''} />
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 'x-small', color: 'var(--text-secondary)' }}>{spec.view}</span>
       </div>
@@ -227,7 +263,8 @@ function Section({ repo, spec, recipes, readOnly }) {
       ) : rows.length === 0 && spec.empty ? (
         <div style={{ color: 'var(--status-green, #28a745)' }}>{spec.empty}</div>
       ) : (
-        <View rows={rows} columns={spec.columns} readOnly={readOnly} />
+        <View rows={rows} columns={spec.columns} readOnly={readOnly} onRun={run}
+          busy={busy} />
       )}
     </div>
   );
@@ -241,6 +278,9 @@ export default function Shadow({ onBack }) {
   const [info, setInfo] = useState(null);
   const [page, setPage] = useState(null);
   const [recipes, setRecipes] = useState([]);
+  // Starting a run should show up without a manual reload; remounting
+  // sections is the bluntest correct way to refetch every source.
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     api('/api/boards').then((bs) => {
@@ -271,12 +311,18 @@ export default function Shadow({ onBack }) {
         {onBack && <button className="btn btn-sm" onClick={onBack}>back to v1</button>}
       </div>
 
-      {readOnly && (
+      {readOnly ? (
         <div style={{ border: '1px solid #b08800', borderRadius: '10px', padding: '8px 12px',
           marginBottom: '12px', color: '#b08800', background: 'rgba(176,136,0,0.08)' }}>
           Shadow read — this repo is <strong>{(info && info.platform) || 'v1'}</strong>-managed.
           Every verb is disabled here; v1 remains the only writer, because two platforms
           driving one repo is how duplicate runs happen.
+        </div>
+      ) : (
+        <div style={{ border: '1px solid #28a745', borderRadius: '10px', padding: '8px 12px',
+          marginBottom: '12px', color: '#28a745', background: 'rgba(40,167,69,0.08)' }}>
+          v2-managed — recipes run here, and v1 leaves this repo alone. Every verb creates a
+          Run; watch it in Activity.
         </div>
       )}
 
@@ -284,7 +330,8 @@ export default function Shadow({ onBack }) {
         <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>loading page spec…</div>
       ) : (
         (page.sections || []).map((spec) => (
-          <Section key={spec.id} repo={repo} spec={spec} recipes={recipes} readOnly={readOnly} />
+          <Section key={`${spec.id}:${tick}`} repo={repo} spec={spec} recipes={recipes}
+            readOnly={readOnly} onRan={() => setTimeout(() => setTick((n) => n + 1), 1500)} />
         ))
       )}
 

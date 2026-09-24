@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -26,7 +27,13 @@ import (
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+// runGVR is v2's execution record.
+var runGVR = schema.GroupVersionResource{
+	Group: "board.gemini.google.com", Version: "v1alpha1", Resource: "runs",
+}
 
 // Target is the envelope every kind shares. The inbox view reads only
 // these fields; kind-specific detail rides in Fields so a generic table
@@ -475,6 +482,31 @@ func (s *Server) getV2Runs(c *gin.Context) {
 		return
 	}
 	runs := []gin.H{}
+	// Real Run objects first — v2's own record of what it did.
+	if list, lerr := s.K8sManager.Client.Resource(runGVR).Namespace(namespace).List(ctx, v1.ListOptions{
+		LabelSelector: "board.gemini.google.com/repo=" + board.GetName(),
+	}); lerr == nil {
+		for i := range list.Items {
+			r := &list.Items[i]
+			recipe, _, _ := unstructured.NestedString(r.Object, "spec", "recipe")
+			target, _, _ := unstructured.NestedString(r.Object, "spec", "target")
+			phase, _, _ := unstructured.NestedString(r.Object, "status", "phase")
+			verdict, _, _ := unstructured.NestedString(r.Object, "status", "verdict")
+			msg, _, _ := unstructured.NestedString(r.Object, "status", "message")
+			started, _, _ := unstructured.NestedString(r.Object, "status", "startedAt")
+			if started == "" {
+				started = r.GetCreationTimestamp().UTC().Format(time.RFC3339)
+			}
+			if verdict == "" {
+				verdict = phase
+			}
+			runs = append(runs, gin.H{
+				"name": r.GetName(), "recipe": recipe, "target": target,
+				"verdict": verdict, "phase": phase, "message": msg,
+				"at": started, "running": phase == "Running", "derivedFrom": "run",
+			})
+		}
+	}
 	for _, t := range s.environmentTargets(c, board, member, namespace) {
 		if t.LatestRun == nil {
 			continue
@@ -490,6 +522,105 @@ func (s *Server) getV2Runs(c *gin.Context) {
 		return runs[i]["at"].(string) > runs[j]["at"].(string)
 	})
 	c.JSON(http.StatusOK, runs)
+}
+
+// ---------------------------------------------------------------------
+// Runs: the write path. Creating a Run is the only way v2 starts work,
+// which is what makes "what is happening" answerable from one object.
+// ---------------------------------------------------------------------
+
+func (s *Server) createV2Run(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("repo"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Repo not accessible", "details": err.Error()})
+		return
+	}
+	var req struct {
+		Recipe string            `json:"recipe"`
+		Target string            `json:"target"`
+		Inputs map[string]string `json:"inputs"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Recipe == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "recipe is required"})
+		return
+	}
+	if req.Target == "" {
+		req.Target = "repo"
+	}
+
+	// A repo is driven by one platform. Refusing here rather than in the
+	// reconciler means the UI gets an explanation instead of a Run that
+	// fails a second later.
+	platform, _, _ := unstructured.NestedString(board.Object, "spec", "platform")
+	if platform != "v2" {
+		c.JSON(http.StatusPreconditionFailed, gin.H{
+			"error": "this repo is v1-managed; set spec.platform=v2 to run recipes here"})
+		return
+	}
+
+	// The recipe must exist and accept this target kind — the same
+	// availability rule the UI renders, enforced where it matters.
+	kind := strings.SplitN(req.Target, ":", 2)[0]
+	var def *recipeDef
+	for i := range v2Recipes {
+		if v2Recipes[i].Name == req.Recipe {
+			def = &v2Recipes[i]
+		}
+	}
+	if def == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown recipe " + req.Recipe})
+		return
+	}
+	accepts := false
+	for _, t := range def.Targets {
+		if t == kind {
+			accepts = true
+		}
+	}
+	if !accepts {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": req.Recipe + " does not act on " + kind})
+		return
+	}
+
+	run := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "board.gemini.google.com/v1alpha1",
+		"kind":       "Run",
+		"metadata": map[string]any{
+			"generateName": req.Recipe + "-",
+			"namespace":    namespace,
+			"labels": map[string]any{
+				"board.gemini.google.com/repo":   board.GetName(),
+				"board.gemini.google.com/recipe": req.Recipe,
+			},
+		},
+		"spec": map[string]any{
+			"repo":      board.GetName(),
+			"recipe":    req.Recipe,
+			"target":    req.Target,
+			"inputs":    toStringMap(req.Inputs),
+			"requester": namespace,
+		},
+	}}
+	created, cerr := s.K8sManager.Client.Resource(runGVR).Namespace(namespace).Create(ctx, run, v1.CreateOptions{})
+	if cerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create run", "details": cerr.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"name": created.GetName(), "phase": "Pending"})
+}
+
+func toStringMap(in map[string]string) map[string]any {
+	out := map[string]any{}
+	for k, v := range in {
+		if strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------

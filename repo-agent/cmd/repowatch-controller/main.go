@@ -38,6 +38,7 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
+	runctrl "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/run"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	//+kubebuilder:scaffold:imports
 )
@@ -105,6 +106,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoBoard")
 		os.Exit(1)
 	}
+	// Platform v2: one reconciler for every recipe. It shares the
+	// runner with the v1 controller so both see the same in-flight
+	// work, and it only touches repos whose spec.platform is v2.
+	if err = (&runctrl.Reconciler{
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Factory: newRunnerWithProber(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Run")
+		os.Exit(1)
+	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
