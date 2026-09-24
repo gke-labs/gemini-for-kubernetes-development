@@ -813,12 +813,12 @@ func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesCli
 		return false, nil
 	}
 
-	name := item.GetName()
-	if IsCurrentSandbox(ctx, kubeClient, item, namespace) {
-		return false, nil
-	}
 	lastActivity, idle := idleSince(item, idleTimeout, time.Now())
 	if !idle {
+		return false, nil
+	}
+	name := item.GetName()
+	if IsCurrentSandbox(ctx, kubeClient, item, namespace) {
 		return false, nil
 	}
 

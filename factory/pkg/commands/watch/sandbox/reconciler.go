@@ -296,7 +296,7 @@ func (r *Reconciler) reconcileRunningSandboxes(ctx context.Context) {
 		}
 
 		item := &items[i]
-		if factorysandbox.IsCurrentSandbox(ctx, r.sandboxes.kube, item, r.sandboxes.namespace) {
+		if isSuspended(item) {
 			continue
 		}
 		state := ""
@@ -304,6 +304,9 @@ func (r *Reconciler) reconcileRunningSandboxes(ctx context.Context) {
 			state = annotations[annotationLastTaskState]
 		}
 		if state != "" && !strings.EqualFold(state, taskStateRunning) {
+			continue
+		}
+		if factorysandbox.IsCurrentSandbox(ctx, r.sandboxes.kube, item, r.sandboxes.namespace) {
 			continue
 		}
 
@@ -487,11 +490,11 @@ func (r *Reconciler) cleanupStaleIdleSandboxes(ctx context.Context, items []unst
 		if collected[name] {
 			continue
 		}
-		if factorysandbox.IsCurrentSandbox(ctx, r.sandboxes.kube, item, r.sandboxes.namespace) {
-			continue
-		}
 		creationTime := item.GetCreationTimestamp().Time
 		if creationTime.IsZero() || now.Sub(creationTime) <= evictionAge {
+			continue
+		}
+		if factorysandbox.IsCurrentSandbox(ctx, r.sandboxes.kube, item, r.sandboxes.namespace) {
 			continue
 		}
 

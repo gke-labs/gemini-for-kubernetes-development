@@ -273,6 +273,8 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 
 	actionsTaken := 0
 	activeSandboxesInCycle := make(map[string]bool)
+	var runningCount int
+	countedRunning := false
 
 	for {
 		select {
@@ -290,9 +292,13 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 			return
 		}
 
-		runningCount, err := d.sandboxes.CountRunningTasks(ctx)
-		if err != nil {
-			klog.Errorf("Failed to count running sandbox tasks: %v", err)
+		if !countedRunning {
+			var err error
+			runningCount, err = d.sandboxes.CountRunningTasks(ctx)
+			if err != nil {
+				klog.Errorf("Failed to count running sandbox tasks: %v", err)
+			}
+			countedRunning = true
 		}
 		_, filesInProcessing, _ := d.queue.GetCounts()
 		activeCount := max(runningCount, filesInProcessing)
@@ -321,6 +327,9 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 		if dispatched {
 			activeSandboxesInCycle[sandboxName] = true
 			actionsTaken++
+			if !d.cfg.DryRun {
+				runningCount++
+			}
 		}
 	}
 }

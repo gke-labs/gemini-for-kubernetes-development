@@ -26,6 +26,7 @@ type fakeSandboxService struct {
 	running      map[string]bool
 	completed    map[string]bool
 	runningCount int
+	countCalls   int
 	runningErr   error
 	completedErr error
 	countErr     error
@@ -65,6 +66,7 @@ func (f *fakeSandboxService) IsTaskCompleted(_ context.Context, sandboxName stri
 func (f *fakeSandboxService) CountRunningTasks(context.Context) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.countCalls++
 	return f.runningCount, f.countErr
 }
 
@@ -434,6 +436,30 @@ func TestDispatchOnce_RespectsMaxPending(t *testing.T) {
 		t.Errorf("expected no dispatch while the pending sandbox limit is reached")
 	}
 	waitForCounts(t, queue, 1, 0, 0)
+}
+
+func TestDispatchOnce_CountsRunningTasksOnceAndIncrementsWithinCycle(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
+		cfg.MaxPending = 2
+	})
+	sandboxes.runningCount = 1
+	sandboxes.resolve = func(_ api.TaskType, number int) string {
+		return fmt.Sprintf("fix-repo-%d", number)
+	}
+
+	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
+	enqueueTestTask(t, queue, "task-issue-2.yaml", 2)
+
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	if got := len(runner.invocations()); got != 1 {
+		t.Errorf("expected 1 dispatched task before hitting MaxPending=2 (with runningCount=1), got %d", got)
+	}
+	if sandboxes.countCalls != 1 {
+		t.Errorf("expected CountRunningTasks to be called once per DispatchOnce cycle, got %d", sandboxes.countCalls)
+	}
 }
 
 func TestDispatchOnce_FailedTaskIsMarkedFailed(t *testing.T) {
