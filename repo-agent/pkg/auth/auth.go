@@ -209,6 +209,15 @@ func (a *Authenticator) updateUserSecret(ctx context.Context, namespace string, 
 }
 
 func (a *Authenticator) Status(c *gin.Context) {
+	// Dev auth answers the UI's login gate too: the middleware bypass
+	// alone leaves the app on its "authentication is not configured"
+	// screen, because the shell asks these endpoints who it is.
+	if user, ns, ok := a.devAuth(); ok {
+		c.JSON(http.StatusOK, gin.H{
+			"authenticated": true, "user": user, "namespace": ns, "isAdmin": true,
+		})
+		return
+	}
 	session := sessions.Default(c)
 	userVal := session.Get(UserKey)
 	if userVal != nil {
@@ -281,6 +290,10 @@ func (a *Authenticator) SwitchNamespace(c *gin.Context) {
 }
 
 func (a *Authenticator) GetProviders(c *gin.Context) {
+	if _, _, ok := a.devAuth(); ok {
+		c.JSON(http.StatusOK, gin.H{"github": true})
+		return
+	}
 	configured := a.OAuthConfig.ClientID != "" && a.OAuthConfig.ClientSecret != ""
 	c.JSON(http.StatusOK, gin.H{"github": configured})
 }
@@ -351,8 +364,9 @@ var devAuthUser = os.Getenv("REPO_AGENT_DEV_USER")
 
 var devAuthNamespace = os.Getenv("REPO_AGENT_DEV_NAMESPACE")
 
-// DevAuthActive reports whether the dev bypass is on, so callers can
-// log it loudly at startup.
+// DevAuthActive reports whether the environment asks for the dev
+// bypass, so startup can log it loudly. It does not decide whether the
+// bypass applies — devAuth does.
 func DevAuthActive() (string, string, bool) {
 	if devAuthUser == "" {
 		return "", "", false
@@ -364,10 +378,22 @@ func DevAuthActive() (string, string, bool) {
 	return devAuthUser, ns, true
 }
 
+// devAuth decides whether to honour the bypass, and refuses whenever
+// real authentication is configured. A deployed instance has an OAuth
+// client; a laptop does not. So even if REPO_AGENT_DEV_USER leaked into
+// a manifest it would be inert in the cluster — the variable alone
+// cannot disable authentication where authentication exists.
+func (a *Authenticator) devAuth() (string, string, bool) {
+	if a != nil && a.OAuthConfig != nil && a.OAuthConfig.ClientID != "" {
+		return "", "", false
+	}
+	return DevAuthActive()
+}
+
 func (a *Authenticator) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := klog.FromContext(c.Request.Context())
-		if user, ns, ok := DevAuthActive(); ok {
+		if user, ns, ok := a.devAuth(); ok {
 			c.Set(UserKey, user)
 			c.Set(NamespaceKey, ns)
 			c.Next()

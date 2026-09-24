@@ -173,6 +173,11 @@ function Section({ repo, spec, recipes, readOnly }) {
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
+    // Sections mount before the board list resolves; fetching with an
+    // empty repo asks for /repos//targets and earns a 403 that would
+    // otherwise stick, because a later success never cleared it.
+    if (!repo) return;
+    setError('');
     const src = spec.source || {};
     let url = null;
     if (src.targets) {
@@ -199,6 +204,8 @@ function Section({ repo, spec, recipes, readOnly }) {
   }, [repo, spec]);
 
   useEffect(() => { load(); }, [load]);
+
+  if (!repo) return null;
 
   // An unknown view is skipped, never fatal — layout data must never be
   // load-bearing (the same rule runbook parsing follows).
