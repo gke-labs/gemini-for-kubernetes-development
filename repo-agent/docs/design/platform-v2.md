@@ -215,6 +215,33 @@ The row materializes from that data:
 `inputs` renders the form behind *revise*. Today that row is bespoke
 React with hard-coded "Plan ready" handling.
 
+### Three mechanisms, three questions
+
+They are easy to conflate, so state them apart:
+
+| Question | Mechanism | Nature |
+|---|---|---|
+| What **can** run on this item? | `recipe.targets` + preconditions | static: recipe × target kind |
+| What **should** I do next? | latest Run's verdict → `actions` | stateful |
+| What runs **without me**? | `triggers` on the Repo | event-driven |
+
+Availability is not granted by triggers; triggers only press buttons
+a human could have pressed. The UI falls out of the same split: the
+**primary button** comes from the verdict's `actions` (or from
+attention, when upstream state dominates — a requested review beats
+everything), the **overflow menu** is every recipe whose `targets`
+match this item, and the **palette** is every recipe across every
+target. Today's Agent ▾ drawer is a hard-coded list of four verbs;
+there it is layer one, rendered.
+
+**A trigger cannot bypass a gate.** Auto means *start the run*, never
+*approve the plan*: an auto-fix trigger runs triage, then plan, and
+stops at `requires_verdict: PLANNED` waiting for a human — unless the
+repo separately opts into auto-approval, which must be a loud, named
+setting rather than an emergent property of having automation
+enabled. Otherwise propose/dispose collapses the first time someone
+turns a trigger on.
+
 ### Automation is a trigger, not a code path
 
 Today's auto tiers (`assigned` / `labeled`), PR watch, and
