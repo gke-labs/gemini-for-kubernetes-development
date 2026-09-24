@@ -1315,6 +1315,10 @@ func countCalls(calls []string, substr string) int {
 
 // prFixture is a GitHub stand-in for one pull request that records every path
 // it is asked for.
+//
+// The knobs are the inputs that decide whether a cycle may skip the pull
+// request - its updated_at, whether CI is still running - so that a test can
+// move one of them between cycles and watch what the scanner does about it.
 type prFixture struct {
 	mu sync.Mutex
 
@@ -1325,6 +1329,14 @@ type prFixture struct {
 	body string
 	// updated is the updated_at the listing reports for the pull request.
 	updated time.Time
+	// pending makes the head commit's CI report an unfinished check run.
+	pending bool
+	// mergeable overrides the pull request's Mergeable pointer when set, and
+	// mergeableNil leaves Mergeable nil (GitHub still computing mergeability).
+	mergeable    *bool
+	mergeableNil bool
+	// checkErr makes the check-runs listing fail with a 500 error.
+	checkErr bool
 	// reviews are the submitted reviews, whose inline comments used to cost a
 	// request each.
 	reviews []*githubv39.PullRequestReview
@@ -1363,6 +1375,12 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 
 	base := "/repos/test-owner/test-repo"
 	mergeable := true
+	mergeablePtr := &mergeable
+	if f.mergeableNil {
+		mergeablePtr = nil
+	} else if f.mergeable != nil {
+		mergeablePtr = f.mergeable
+	}
 	now := time.Now()
 
 	switch r.URL.Path {
@@ -1376,7 +1394,7 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 	case fmt.Sprintf("%s/pulls/%d", base, f.num):
 		_ = json.NewEncoder(w).Encode(&githubv39.PullRequest{
 			Number:    githubv39.Int(f.num),
-			Mergeable: &mergeable,
+			Mergeable: mergeablePtr,
 			State:     githubv39.String("open"),
 			Body:      githubv39.String(f.body),
 			User:      &githubv39.User{Login: githubv39.String("bot1")},
@@ -1400,7 +1418,18 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.inline)
 
 	case base + "/commits/" + f.headSHA + "/check-runs":
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
+		if f.checkErr {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		runs := []*githubv39.CheckRun{}
+		if f.pending {
+			runs = append(runs, &githubv39.CheckRun{
+				Name:   githubv39.String("build"),
+				Status: githubv39.String("in_progress"),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": runs})
 
 	case base + "/commits/" + f.headSHA + "/statuses":
 		_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
@@ -1445,6 +1474,20 @@ func (f *prFixture) count(substr string) int {
 	return n
 }
 
+// reset forgets the recorded calls, so the next assertion covers only what
+// happened after it.
+func (f *prFixture) reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = nil
+}
+
+func (f *prFixture) set(mutate func(*prFixture)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	mutate(f)
+}
+
 // newFixtureScanner wires a scanner to the fixture with the settings the
 // request-counting tests share.
 func newFixtureScanner(t *testing.T, f *prFixture) *Scanner {
@@ -1456,4 +1499,190 @@ func newFixtureScanner(t *testing.T, f *prFixture) *Scanner {
 		TriggerLabel: "factory",
 	})
 	return s
+}
+
+// evaluated reports whether anything was fetched for the pull request itself,
+// which is the signal that a full evaluation ran rather than being skipped.
+func evaluated(f *prFixture) bool {
+	return f.count(fmt.Sprintf("/pulls/%d", f.num)) > 0
+}
+
+// TestFastPass_SkipsUnchangedPullRequest is the point of the skip gate: a pull
+// request nobody has touched is listed, found unchanged, and left alone.
+//
+// Before the gate, this second cycle re-fetched the pull request, its commits,
+// its conversation, its reviews and its CI to arrive at the verdict it had
+// already reached a minute earlier.
+func TestFastPass_SkipsUnchangedPullRequest(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour)}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	s.fastPass(ctx)
+	if !evaluated(f) {
+		t.Fatal("the first pass did not evaluate the pull request; the fixture is not wired up")
+	}
+
+	f.reset()
+	s.fastPass(ctx)
+
+	if evaluated(f) {
+		t.Errorf("the second pass re-evaluated an unchanged pull request, want it skipped")
+	}
+	if f.count("/issues?") == 0 {
+		t.Error("the second pass did not list assigned pull requests; the gate must skip the evaluation, not the cycle")
+	}
+}
+
+// TestFastPass_ReevaluatesWhenUpdatedAtMoves covers the ordinary way a pull
+// request becomes interesting again: somebody pushed, commented or labelled it.
+func TestFastPass_ReevaluatesWhenUpdatedAtMoves(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour)}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	s.fastPass(ctx)
+	f.reset()
+
+	f.set(func(f *prFixture) { f.updated = time.Now() })
+	s.fastPass(ctx)
+
+	if !evaluated(f) {
+		t.Error("a pull request whose updated_at moved was skipped, want it re-evaluated")
+	}
+}
+
+// TestFastPass_ReevaluatesWhileCIInFlight is the blind spot the gate has to
+// cover explicitly: a check run completing does not move the pull request's
+// updated_at, so a pull request waiting on CI would otherwise be skipped until
+// the next sweep - exactly the pull request the fast pass exists for.
+func TestFastPass_ReevaluatesWhileCIInFlight(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour), pending: true}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	s.fastPass(ctx)
+	f.reset()
+
+	// Nothing about the pull request changed, and nothing about it can: CI
+	// finishing is invisible in updated_at.
+	s.fastPass(ctx)
+
+	if !evaluated(f) {
+		t.Error("a pull request with CI in flight was skipped, want it re-evaluated every cycle")
+	}
+}
+
+// TestFastPass_ReevaluatesWhenTaskFinishes covers the other invisible
+// transition: a task completing is what makes a pull request ready for a human,
+// and a task that pushed nothing leaves updated_at untouched.
+func TestFastPass_ReevaluatesWhenTaskFinishes(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour)}
+
+	tempDir := t.TempDir()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:       f.start(t),
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+	ctx := context.Background()
+
+	// A task is in flight, so the first pass records the pull request as
+	// having work against it.
+	taskPath := filepath.Join(tempDir, "incoming", "task-pr-10-comments.yaml")
+	if err := os.WriteFile(taskPath, []byte("type: pr-comments\n"), 0644); err != nil {
+		t.Fatalf("writing task file: %v", err)
+	}
+	s.fastPass(ctx)
+	if !evaluated(f) {
+		t.Fatal("the first pass did not evaluate the pull request")
+	}
+
+	// The task finishes without touching the pull request on GitHub, so
+	// updated_at is exactly where the first pass left it.
+	if err := os.Remove(taskPath); err != nil {
+		t.Fatalf("removing task file: %v", err)
+	}
+
+	f.reset()
+	s.fastPass(ctx)
+
+	if !evaluated(f) {
+		t.Error("a pull request whose task just finished was skipped, want it re-evaluated so the ready-for-human label is reconciled")
+	}
+}
+
+// TestSweep_EvaluatesRegardlessOfSkipGate pins the safety valve the gate relies
+// on. Every signal the gate cannot see - a re-run check, a change upstream - is
+// bounded by the sweep, so the sweep must never consult it.
+func TestSweep_EvaluatesRegardlessOfSkipGate(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour)}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	// A fast pass first, so the pull request is on record as evaluated and a
+	// gated cycle would skip it.
+	s.fastPass(ctx)
+	f.reset()
+
+	s.sweep(ctx)
+
+	if !evaluated(f) {
+		t.Error("the sweep skipped an unchanged pull request; it must evaluate everything unconditionally")
+	}
+}
+
+// TestFastPass_ReevaluatesAfterEarlyReturnOnPreviouslyEvaluatedPR covers a pull
+// request that had already been evaluated cleanly at a given updated_at and
+// then hit an early return (such as a check listing error) during a subsequent
+// evaluation at the same timestamp: the early return must clear the previous
+// evaluation record rather than leaving the old timestamp in place.
+func TestFastPass_ReevaluatesAfterEarlyReturnOnPreviouslyEvaluatedPR(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour)}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	// 1. First pass completes cleanly and records updated_at.
+	s.fastPass(ctx)
+	if !evaluated(f) {
+		t.Fatal("the first pass did not evaluate the pull request")
+	}
+
+	// 2. A sweep runs while updated_at is unchanged, and check-runs fails mid-evaluation.
+	f.set(func(f *prFixture) { f.checkErr = true })
+	s.sweep(ctx)
+
+	// 3. The next fast pass must re-evaluate the pull request because the sweep
+	// aborted before recordEvaluation.
+	f.set(func(f *prFixture) { f.checkErr = false })
+	f.reset()
+	s.fastPass(ctx)
+
+	if !evaluated(f) {
+		t.Error("a pull request whose previous evaluation aborted early was skipped, want it re-evaluated")
+	}
+}
+
+// TestFastPass_ReevaluatesWhenMergeableUnknown covers GitHub's asynchronous
+// mergeability computation: when GetPullRequest returns Mergeable == nil, the
+// evaluation must not mark the pull request as settled, because the transition
+// to true or false does not move updated_at.
+func TestFastPass_ReevaluatesWhenMergeableUnknown(t *testing.T) {
+	f := &prFixture{num: 10, headSHA: "sha-1", updated: time.Now().Add(-time.Hour), mergeableNil: true}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	s.fastPass(ctx)
+	if f.count("/labels") > 0 {
+		t.Error("a pull request with unknown Mergeable state was labelled ready-for-human")
+	}
+
+	f.reset()
+	f.set(func(f *prFixture) { f.mergeableNil = false })
+	s.fastPass(ctx)
+
+	if !evaluated(f) {
+		t.Error("a pull request whose Mergeable state was unknown on the previous pass was skipped")
+	}
 }

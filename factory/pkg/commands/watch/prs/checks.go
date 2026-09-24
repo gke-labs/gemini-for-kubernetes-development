@@ -2,6 +2,7 @@ package prs
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -29,69 +30,70 @@ type prCheckAnalysis struct {
 // repository can be using either or both and a failure reported through the one
 // that was not read would look like a green build.
 //
-// A listing error is swallowed rather than propagated: the resulting analysis
-// reports neither failure nor pending, which leaves the pull request looking
-// unchanged until the next cycle instead of queueing work off a partial view.
-func (s *Scanner) evaluateChecks(ctx context.Context, headSHA string) prCheckAnalysis {
+// A listing error is returned so the caller can abort the evaluation rather
+// than mistaking a failed read for a green commit.
+func (s *Scanner) evaluateChecks(ctx context.Context, headSHA string) (prCheckAnalysis, error) {
 	var analysis prCheckAnalysis
 
 	checkRuns, err := s.gh.ListCheckRuns(ctx, headSHA)
-	if err == nil {
-		analysis.checkRuns = checkRuns
-		for _, run := range checkRuns {
-			if run.GetStatus() != "completed" {
-				analysis.hasPending = true
+	if err != nil {
+		return analysis, fmt.Errorf("listing check runs for %s: %w", headSHA, err)
+	}
+	analysis.checkRuns = checkRuns
+	for _, run := range checkRuns {
+		if run.GetStatus() != "completed" {
+			analysis.hasPending = true
+		}
+		c := run.GetConclusion()
+		if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
+			analysis.hasFailure = true
+			analysis.failedCount++
+			t := run.GetCompletedAt().Time
+			if t.IsZero() {
+				t = run.GetStartedAt().Time
 			}
-			c := run.GetConclusion()
-			if c == "failure" || c == "timed_out" || c == "cancelled" || c == "action_required" || c == "stale" {
-				analysis.hasFailure = true
-				analysis.failedCount++
-				t := run.GetCompletedAt().Time
-				if t.IsZero() {
-					t = run.GetStartedAt().Time
-				}
-				if !t.IsZero() {
-					if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
-						analysis.earliestFailureTime = t
-						analysis.earliestFailureName = run.GetName()
-						analysis.earliestFailureConclusion = c
-					}
-				} else if analysis.earliestFailureName == "" {
-					// A check with no timestamps at all still names the
-					// failure, which is better than reporting 'unknown check'.
+			if !t.IsZero() {
+				if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
+					analysis.earliestFailureTime = t
 					analysis.earliestFailureName = run.GetName()
 					analysis.earliestFailureConclusion = c
 				}
+			} else if analysis.earliestFailureName == "" {
+				// A check with no timestamps at all still names the
+				// failure, which is better than reporting 'unknown check'.
+				analysis.earliestFailureName = run.GetName()
+				analysis.earliestFailureConclusion = c
 			}
 		}
 	}
 
 	statuses, err := s.gh.ListStatuses(ctx, headSHA)
-	if err == nil {
-		for _, status := range statuses {
-			if status.GetState() == "pending" {
-				analysis.hasPending = true
+	if err != nil {
+		return analysis, fmt.Errorf("listing commit statuses for %s: %w", headSHA, err)
+	}
+	for _, status := range statuses {
+		if status.GetState() == "pending" {
+			analysis.hasPending = true
+		}
+		if status.GetState() == "failure" || status.GetState() == "error" {
+			analysis.hasFailure = true
+			analysis.failedCount++
+			t := status.GetUpdatedAt()
+			if t.IsZero() {
+				t = status.GetCreatedAt()
 			}
-			if status.GetState() == "failure" || status.GetState() == "error" {
-				analysis.hasFailure = true
-				analysis.failedCount++
-				t := status.GetUpdatedAt()
-				if t.IsZero() {
-					t = status.GetCreatedAt()
-				}
-				if !t.IsZero() {
-					if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
-						analysis.earliestFailureTime = t
-						analysis.earliestFailureName = status.GetContext()
-						analysis.earliestFailureConclusion = status.GetState()
-					}
-				} else if analysis.earliestFailureName == "" {
+			if !t.IsZero() {
+				if analysis.earliestFailureTime.IsZero() || t.Before(analysis.earliestFailureTime) {
+					analysis.earliestFailureTime = t
 					analysis.earliestFailureName = status.GetContext()
 					analysis.earliestFailureConclusion = status.GetState()
 				}
+			} else if analysis.earliestFailureName == "" {
+				analysis.earliestFailureName = status.GetContext()
+				analysis.earliestFailureConclusion = status.GetState()
 			}
 		}
 	}
 
-	return analysis
+	return analysis, nil
 }
