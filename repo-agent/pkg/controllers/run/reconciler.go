@@ -14,6 +14,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,11 +35,36 @@ import (
 // is about noticing it finished, not about driving it.
 const requeueWhileRunning = 20 * time.Second
 
+// Retention. A Run is a work order, not an archive: once the work has
+// left a durable artifact — notes on a branch, a receipt, a PR — the
+// object is a duplicate of something git already holds, and it goes.
+//
+// A run that failed before producing anything is the exception, and the
+// reason the object earns its place: nothing else records that it
+// happened. Those are kept long enough to be seen and diagnosed.
+const (
+	succeededRetention = time.Hour
+	failedRetention    = 7 * 24 * time.Hour
+)
+
+// noResultGrace bounds how long a Running run may go unexplained when
+// the sandbox cannot be read at all (deleted, unreachable). With an
+// Observer this is a backstop; without one it is the only stop.
+const noResultGrace = 90 * time.Minute
+
 type Reconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Factory factorycli.Launcher
+	// Observer reads a run's record off the sandbox disk. The launcher's
+	// in-memory result is the fast path and dies with the process; this
+	// is what makes a restart recoverable rather than a 90-minute
+	// timeout. Nil falls back to the timeout.
+	Observer factorycli.TaskObserver
 }
+
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=runs,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=runs/status,verbs=get;update;patch
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -53,7 +79,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if run.Status.Phase == boardv1alpha1.RunPhaseSucceeded ||
 		run.Status.Phase == boardv1alpha1.RunPhaseFailed {
-		return ctrl.Result{}, nil
+		return r.retire(ctx, &run)
 	}
 
 	var board boardv1alpha1.RepoBoard
@@ -96,7 +122,7 @@ func (r *Reconciler) launch(ctx context.Context, run *boardv1alpha1.Run, board *
 	}
 
 	key := fmt.Sprintf("%s/run/%s", run.Namespace, run.Name)
-	sandbox, err := exec(execContext{
+	where, err := exec(execContext{
 		Factory: r.Factory,
 		Key:     key,
 		Run:     run,
@@ -105,13 +131,20 @@ func (r *Reconciler) launch(ctx context.Context, run *boardv1alpha1.Run, board *
 		Token:   token,
 	})
 	if err != nil {
+		var busy errBusy
+		if errors.As(err, &busy) {
+			// One task per sandbox is the invariant, so a busy worker is
+			// a queue, not an error. Stay Pending and come back.
+			return ctrl.Result{RequeueAfter: requeueWhileRunning}, nil
+		}
 		return ctrl.Result{}, r.fail(ctx, run, err.Error())
 	}
 
 	now := metav1.Now()
 	run.Status.Phase = boardv1alpha1.RunPhaseRunning
 	run.Status.Key = key
-	run.Status.Sandbox = sandbox
+	run.Status.Sandbox = where.Sandbox
+	run.Status.TaskPrefix = where.TaskPrefix
 	run.Status.StartedAt = &now
 	run.Status.Message = "launched"
 	logger.Info("run launched", "recipe", run.Spec.Recipe, "target", run.Spec.Target, "repo", run.Spec.Repo)
@@ -121,11 +154,13 @@ func (r *Reconciler) launch(ctx context.Context, run *boardv1alpha1.Run, board *
 	return ctrl.Result{RequeueAfter: requeueWhileRunning}, nil
 }
 
-// observe records the outcome. The runner's in-memory result is the
-// fast path; a controller restart loses it, so an older run whose
-// sandbox has gone quiet is resolved from the sandbox's own record
-// rather than left Running forever — the stale-Running bug v1 had to
-// self-heal from the UI.
+// observe records the outcome, in order of authority.
+//
+// The launcher's in-memory result is the fast path and the richest —
+// it carries the error text. It dies with the process, so the fallback
+// is the task's own record on the sandbox disk, which does not: the
+// same exit_code file that told us granule had failed fifty-six times
+// while the cluster showed one standing claim.
 func (r *Reconciler) observe(ctx context.Context, run *boardv1alpha1.Run) (ctrl.Result, error) {
 	if r.Factory.IsRunning(run.Status.Key) {
 		return ctrl.Result{RequeueAfter: requeueWhileRunning}, nil
@@ -138,14 +173,81 @@ func (r *Reconciler) observe(ctx context.Context, run *boardv1alpha1.Run) (ctrl.
 			return ctrl.Result{}, r.finish(ctx, run, boardv1alpha1.RunPhaseSucceeded, "", "completed")
 		}
 	}
-	// No result and not running: either this controller never launched
-	// it (restart) or the launch is still settling. Give it a grace
-	// window before declaring anything.
-	if run.Status.StartedAt != nil && time.Since(run.Status.StartedAt.Time) > 90*time.Minute {
+
+	// This controller did not launch it — a restart, almost always. Ask
+	// the sandbox.
+	if obs, ok := r.observeOnDisk(ctx, run); ok {
+		switch obs.State {
+		case factorycli.ObserveRunning:
+			return ctrl.Result{RequeueAfter: requeueWhileRunning}, nil
+		case factorycli.ObserveFinished:
+			run.Status.TaskDir = obs.Dir
+			if obs.ExitCode != 0 {
+				return ctrl.Result{}, r.finish(ctx, run, boardv1alpha1.RunPhaseFailed, "",
+					fmt.Sprintf("task %s exited %d", obs.Dir, obs.ExitCode))
+			}
+			return ctrl.Result{}, r.finish(ctx, run, boardv1alpha1.RunPhaseSucceeded, "",
+				"completed (adopted from "+obs.Dir+")")
+		case factorycli.ObserveDead:
+			run.Status.TaskDir = obs.Dir
+			return ctrl.Result{}, r.finish(ctx, run, boardv1alpha1.RunPhaseFailed, "",
+				"task "+obs.Dir+" died without an exit code (pod restarted mid-run)")
+		}
+	}
+
+	// Nothing can be read: no observer, no sandbox, or the launch is
+	// still settling. Bound the wait rather than hang forever.
+	if run.Status.StartedAt != nil && time.Since(run.Status.StartedAt.Time) > noResultGrace {
 		return ctrl.Result{}, r.finish(ctx, run, boardv1alpha1.RunPhaseFailed, "",
-			"no result recorded within 90m (controller restart or lost executor)")
+			"no result recorded within 90m and the sandbox has no record of the task")
 	}
 	return ctrl.Result{RequeueAfter: requeueWhileRunning}, nil
+}
+
+// observeOnDisk reads the run's own task record. A reused sandbox holds
+// many tasks, so a record that predates this run belongs to someone
+// else and is not an answer about us.
+func (r *Reconciler) observeOnDisk(ctx context.Context, run *boardv1alpha1.Run) (factorycli.TaskObservation, bool) {
+	if r.Observer == nil || run.Status.Sandbox == "" || run.Status.TaskPrefix == "" {
+		return factorycli.TaskObservation{}, false
+	}
+	obs, err := r.Observer.ObserveTask(ctx, run.Namespace, run.Status.Sandbox, run.Status.TaskPrefix)
+	if err != nil {
+		log.FromContext(ctx).Info("cannot observe run task", "run", run.Name, "err", err)
+		return factorycli.TaskObservation{}, false
+	}
+	if obs.State == factorycli.ObserveNone {
+		return obs, false
+	}
+	if run.Status.StartedAt != nil && !obs.StartedAt.IsZero() &&
+		obs.StartedAt.Before(run.Status.StartedAt.Time.Add(-2*time.Minute)) {
+		// The newest task in this sandbox started before we did: ours
+		// never got far enough to create a directory.
+		return obs, false
+	}
+	return obs, true
+}
+
+// retire garbage-collects terminal runs. Deleting a succeeded run is
+// not losing it: the recipe's artifact — notes, receipt, PR — is the
+// record, and a recipe that succeeds without leaving one is a bug in
+// the recipe. Failures with no artifact are the reason this object
+// exists, so they outlive the rest.
+func (r *Reconciler) retire(ctx context.Context, run *boardv1alpha1.Run) (ctrl.Result, error) {
+	keep := succeededRetention
+	if run.Status.Phase == boardv1alpha1.RunPhaseFailed {
+		keep = failedRetention
+	}
+	done := run.Status.CompletionTime
+	if done == nil {
+		now := metav1.Now()
+		done = &now
+	}
+	if age := time.Since(done.Time); age < keep {
+		return ctrl.Result{RequeueAfter: keep - age}, nil
+	}
+	log.FromContext(ctx).Info("retiring run", "run", run.Name, "phase", run.Status.Phase)
+	return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, run))
 }
 
 func (r *Reconciler) finish(ctx context.Context, run *boardv1alpha1.Run, phase, verdict, msg string) error {

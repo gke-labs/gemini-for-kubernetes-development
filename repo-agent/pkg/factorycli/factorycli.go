@@ -477,6 +477,38 @@ const (
 	ProbeOrphanCompleted = "orphan-completed"
 )
 
+// TaskObserver reads a task's own record off the sandbox's disk, with no
+// reference to the launching process. Probe answers "may I launch?" and
+// is deliberately gated on the sandbox's last-task annotation; this
+// answers "what happened?" for a task whose identity the caller already
+// knows, which is what a restarted controller needs — its in-memory
+// LastResult is gone, but /workspaces/tasks outlives every process.
+type TaskObserver interface {
+	ObserveTask(ctx context.Context, namespace, sandboxName, prefix string) (TaskObservation, error)
+}
+
+// TaskObservation is the durable record of the newest <prefix>-* task.
+type TaskObservation struct {
+	// State is ObserveNone (no such task), ObserveRunning (a live pid),
+	// ObserveFinished (exit_code written) or ObserveDead (launched, no
+	// exit code, no process — the pod restarted mid-task).
+	State    string
+	ExitCode int
+	// Dir is the task directory, e.g. explore-20260924-215011. It names
+	// the logs a reader can go fetch.
+	Dir string
+	// StartedAt is the task's own start stamp, which is how a caller
+	// tells its task from an earlier one in a reused sandbox.
+	StartedAt time.Time
+}
+
+const (
+	ObserveNone     = "none"
+	ObserveRunning  = "running"
+	ObserveFinished = "finished"
+	ObserveDead     = "dead"
+)
+
 // preflight describes the probe for one invocation. When outputFile is
 // set the task type is adoptable (its harvest contract is a file: plan,
 // triage); review and fix finish host-side, so their orphans are

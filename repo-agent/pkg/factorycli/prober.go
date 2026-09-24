@@ -116,6 +116,67 @@ fi`, prefix, collectCmd(outputFile))
 	}
 }
 
+// ObserveTask reports the newest <prefix>-* task's own record. Unlike
+// Probe it consults no annotation and corrects nothing: a Run knows
+// which sandbox and task type it launched, and wants the facts.
+//
+// The exit code is read before liveness, because a zombie answers
+// kill -0 — the bug that once reported a finished deployment as
+// "running · 3h53m" and disabled Tear down.
+func (p *PodTaskProber) ObserveTask(ctx context.Context, namespace, sandboxName, prefix string) (TaskObservation, error) {
+	none := TaskObservation{State: ObserveNone}
+
+	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
+	if err != nil || podID == nil {
+		// No pod: whatever ran is not running now, and its record is
+		// unreachable. The caller decides what that means.
+		return none, nil
+	}
+
+	script := fmt.Sprintf(`d=$(ls -dt /workspaces/tasks/%s-* 2>/dev/null | head -1)
+if [ -z "$d" ]; then echo "none||"; exit 0; fi
+echo "DIR=$(basename "$d")"
+echo "START=$(cat "$d/start_time" 2>/dev/null)"
+if [ -f "$d/exit_code" ]; then
+  echo "finished|$(cat "$d/exit_code")"
+elif [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null &&
+     [ "$(cat /proc/$(cat "$d/pid")/stat 2>/dev/null | awk '{print $3}')" != "Z" ]; then
+  echo "running|"
+else
+  echo "dead|"
+fi`, prefix)
+
+	var stdout, stderr bytes.Buffer
+	if err := sandbox.ExecInPod(ctx, p.kube, *podID, sandbox.ExecOptions{
+		Command: []string{"sh", "-c", script},
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+	}); err != nil {
+		return none, fmt.Errorf("observing %s/%s task %s: %w", namespace, sandboxName, prefix, err)
+	}
+
+	obs := TaskObservation{State: ObserveNone}
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "DIR="):
+			obs.Dir = strings.TrimPrefix(line, "DIR=")
+		case strings.HasPrefix(line, "START="):
+			if t, err := time.Parse(time.ANSIC, strings.TrimPrefix(line, "START=")); err == nil {
+				obs.StartedAt = t
+			}
+		case strings.HasPrefix(line, "finished|"):
+			obs.State = ObserveFinished
+			fmt.Sscanf(strings.TrimPrefix(line, "finished|"), "%d", &obs.ExitCode)
+		case strings.HasPrefix(line, "running|"):
+			obs.State = ObserveRunning
+		case strings.HasPrefix(line, "dead|"):
+			obs.State = ObserveDead
+		}
+	}
+	return obs, nil
+}
+
 func collectCmd(outputFile string) string {
 	if outputFile == "" {
 		return ""

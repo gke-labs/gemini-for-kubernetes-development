@@ -14,6 +14,7 @@ package api
 // two UIs disagree, the mapping is wrong, not the data.
 
 import (
+	"context"
 	"net/http"
 	"path"
 	"sort"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
@@ -51,15 +53,22 @@ type Target struct {
 	UpdatedAt       string            `json:"updatedAt,omitempty"`
 }
 
-// RunSummary is what a target carries about its most recent run. In
-// phase 0 these are derived from receipts and sandbox annotations; once
-// Run objects exist they are read from status.
+// RunSummary is what a target carries about its most recent run. A Run
+// object wins where one exists: it is the execution's own account,
+// whereas receipts and sandbox annotations are inferences about it.
 type RunSummary struct {
 	Recipe  string `json:"recipe,omitempty"`
 	Verdict string `json:"verdict,omitempty"`
 	At      string `json:"at,omitempty"`
 	Running bool   `json:"running,omitempty"`
 	URL     string `json:"url,omitempty"` // receipt or artifact
+	// Message is why, when a run ends badly. Without it a failure reads
+	// as a red chip and the reason stays inside a pod.
+	Message string `json:"message,omitempty"`
+	// Sandbox and TaskDir locate the logs, so a row is a way in rather
+	// than a dead end.
+	Sandbox string `json:"sandbox,omitempty"`
+	TaskDir string `json:"taskDir,omitempty"`
 }
 
 // RecipeAvailable answers "may I offer this verb here, and if not, why
@@ -227,6 +236,18 @@ func (s *Server) getV2Targets(c *gin.Context) {
 	// their sandboxes — the same join the v1 runbook GET performs.
 	if kindFilter == "" || kindFilter == "environment" {
 		targets = append(targets, s.environmentTargets(c, board, member, namespace)...)
+	}
+
+	// Where a Run object exists it replaces the derived summary: v1
+	// infers "running" from a sandbox annotation and a stage word, while
+	// a Run is the executor's own record, carries the failure reason, and
+	// names the task directory holding the logs.
+	if byTarget := s.latestRunByTarget(ctx, namespace, board.GetName()); byTarget != nil {
+		for i := range targets {
+			if summary, ok := byTarget[targets[i].ID]; ok {
+				targets[i].LatestRun = summary
+			}
+		}
 	}
 
 	if attentionFilter != "" {
@@ -481,34 +502,27 @@ func (s *Server) getV2Runs(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Repo not accessible"})
 		return
 	}
+	cutoff := sinceCutoff(c.Query("since"))
+
 	runs := []gin.H{}
 	// Real Run objects first — v2's own record of what it did.
-	if list, lerr := s.K8sManager.Client.Resource(runGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "board.gemini.google.com/repo=" + board.GetName(),
-	}); lerr == nil {
-		for i := range list.Items {
-			r := &list.Items[i]
-			recipe, _, _ := unstructured.NestedString(r.Object, "spec", "recipe")
-			target, _, _ := unstructured.NestedString(r.Object, "spec", "target")
-			phase, _, _ := unstructured.NestedString(r.Object, "status", "phase")
-			verdict, _, _ := unstructured.NestedString(r.Object, "status", "verdict")
-			msg, _, _ := unstructured.NestedString(r.Object, "status", "message")
-			started, _, _ := unstructured.NestedString(r.Object, "status", "startedAt")
-			if started == "" {
-				started = r.GetCreationTimestamp().UTC().Format(time.RFC3339)
-			}
-			if verdict == "" {
-				verdict = phase
-			}
-			runs = append(runs, gin.H{
-				"name": r.GetName(), "recipe": recipe, "target": target,
-				"verdict": verdict, "phase": phase, "message": msg,
-				"at": started, "running": phase == "Running", "derivedFrom": "run",
-			})
+	for _, r := range s.listRuns(ctx, namespace, board.GetName()) {
+		if !cutoff.IsZero() && r.at.Before(cutoff) {
+			continue
 		}
+		runs = append(runs, gin.H{
+			"name": r.name, "recipe": r.summary.Recipe, "target": r.target,
+			"verdict": r.summary.Verdict, "phase": r.phase, "message": r.summary.Message,
+			"sandbox": r.summary.Sandbox, "taskDir": r.summary.TaskDir,
+			"at": r.summary.At, "running": r.summary.Running, "derivedFrom": "run",
+		})
 	}
 	for _, t := range s.environmentTargets(c, board, member, namespace) {
 		if t.LatestRun == nil {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, t.LatestRun.At); err == nil &&
+			!cutoff.IsZero() && at.Before(cutoff) {
 			continue
 		}
 		runs = append(runs, gin.H{
@@ -522,6 +536,97 @@ func (s *Server) getV2Runs(c *gin.Context) {
 		return runs[i]["at"].(string) > runs[j]["at"].(string)
 	})
 	c.JSON(http.StatusOK, runs)
+}
+
+// runRecord is one Run object, read once and reused: the Activity log
+// and every target's latestRun come from the same list rather than two
+// readings that can disagree.
+type runRecord struct {
+	name    string
+	target  string
+	phase   string
+	at      time.Time
+	summary RunSummary
+}
+
+func (s *Server) listRuns(ctx context.Context, namespace, boardName string) []runRecord {
+	list, err := s.K8sManager.Client.Resource(runGVR).Namespace(namespace).List(ctx, v1.ListOptions{
+		LabelSelector: "board.gemini.google.com/repo=" + boardName,
+	})
+	if err != nil {
+		return nil
+	}
+	out := make([]runRecord, 0, len(list.Items))
+	for i := range list.Items {
+		r := &list.Items[i]
+		recipe, _, _ := unstructured.NestedString(r.Object, "spec", "recipe")
+		target, _, _ := unstructured.NestedString(r.Object, "spec", "target")
+		phase, _, _ := unstructured.NestedString(r.Object, "status", "phase")
+		verdict, _, _ := unstructured.NestedString(r.Object, "status", "verdict")
+		msg, _, _ := unstructured.NestedString(r.Object, "status", "message")
+		sandboxName, _, _ := unstructured.NestedString(r.Object, "status", "sandbox")
+		taskDir, _, _ := unstructured.NestedString(r.Object, "status", "taskDir")
+		started, _, _ := unstructured.NestedString(r.Object, "status", "startedAt")
+		if started == "" {
+			started = r.GetCreationTimestamp().UTC().Format(time.RFC3339)
+		}
+		// A phase is a fact about the machinery; a verdict is the
+		// recipe's conclusion. Showing the phase when there is no
+		// verdict beats showing nothing.
+		if verdict == "" {
+			verdict = phase
+		}
+		at, _ := time.Parse(time.RFC3339, started)
+		out = append(out, runRecord{
+			name: r.GetName(), target: target, phase: phase, at: at,
+			summary: RunSummary{
+				Recipe: recipe, Verdict: verdict, At: started,
+				Running: phase == boardv1alpha1.RunPhaseRunning,
+				Message: msg, Sandbox: sandboxName, TaskDir: taskDir,
+			},
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].at.After(out[j].at) })
+	return out
+}
+
+// latestRunByTarget keeps the newest Run per target, which is what a row
+// shows. Returns nil when the repo has no Run objects, so callers keep
+// their v1-derived state rather than blanking it.
+func (s *Server) latestRunByTarget(ctx context.Context, namespace, boardName string) map[string]*RunSummary {
+	records := s.listRuns(ctx, namespace, boardName)
+	if len(records) == 0 {
+		return nil
+	}
+	byTarget := map[string]*RunSummary{}
+	for i := range records {
+		if _, seen := byTarget[records[i].target]; seen {
+			continue // records are newest-first
+		}
+		summary := records[i].summary
+		byTarget[records[i].target] = &summary
+	}
+	return byTarget
+}
+
+// sinceCutoff reads a window like "24h" or "7d". An unparseable or
+// absent window means no filter — a log that silently hides rows is
+// worse than a long one.
+func sinceCutoff(since string) time.Time {
+	if since == "" {
+		return time.Time{}
+	}
+	if strings.HasSuffix(since, "d") {
+		if days, err := strconv.Atoi(strings.TrimSuffix(since, "d")); err == nil {
+			return time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		}
+		return time.Time{}
+	}
+	d, err := time.ParseDuration(since)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Now().Add(-d)
 }
 
 // ---------------------------------------------------------------------

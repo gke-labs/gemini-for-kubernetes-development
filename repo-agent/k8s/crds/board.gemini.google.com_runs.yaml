@@ -77,6 +77,10 @@ spec:
               startedAt:
                 format: date-time
                 type: string
+              taskDir:
+                type: string
+              taskPrefix:
+                type: string
               verdict:
                 type: string
             type: object

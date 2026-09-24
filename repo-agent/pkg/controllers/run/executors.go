@@ -20,28 +20,38 @@ type execContext struct {
 	Token   string
 }
 
-// executor launches one recipe and returns the sandbox it runs in.
+// launched is where the work went: the sandbox running it, and the task
+// prefix under /workspaces/tasks that the run writes its record to.
+// Both are needed to observe the run after a controller restart, when
+// the launcher's in-memory result no longer exists.
+type launched struct {
+	Sandbox    string
+	TaskPrefix string
+}
+
+// executor launches one recipe and says where to watch for it.
 //
 // These bindings are the seam where v2 still leans on v1's launcher.
 // They exist so phase 1 can prove the Run object end to end without
 // also rewriting the executor; when factory grows `factory run
 // <recipe>`, this map collapses into a single call and the per-recipe
 // functions disappear.
-type executor func(execContext) (string, error)
+type executor func(execContext) (launched, error)
 
 var executors = map[string]executor{
 	"understand": runUnderstand,
 }
 
-func runUnderstand(e execContext) (string, error) {
+func runUnderstand(e execContext) (launched, error) {
 	if e.Run.Spec.Target != "repo" {
-		return "", fmt.Errorf("understand targets the repo, got %q", e.Run.Spec.Target)
+		return launched{}, fmt.Errorf("understand targets the repo, got %q", e.Run.Spec.Target)
 	}
 	owner, repo, err := splitRepoURL(e.Board.Spec.RepoURL)
 	if err != nil {
-		return "", err
+		return launched{}, err
 	}
 	sandbox := factorycli.ExploreSandboxName(repo)
+	where := launched{Sandbox: sandbox, TaskPrefix: "explore"}
 	started := e.Factory.StartExplore(e.Key, factorycli.ExploreOptions{
 		Namespace:   e.Member,
 		SandboxName: sandbox,
@@ -53,10 +63,17 @@ func runUnderstand(e execContext) (string, error) {
 	if !started {
 		// The launcher declines when that sandbox is already busy. That
 		// is a wait, not a failure — the reconciler will try again.
-		return sandbox, fmt.Errorf("sandbox %s is busy; will retry", sandbox)
+		return where, errBusy{sandbox: sandbox}
 	}
-	return sandbox, nil
+	return where, nil
 }
+
+// errBusy is a wait, not a verdict. A busy sandbox means someone else's
+// task holds the workspace; failing the Run for that would turn a queue
+// into an error.
+type errBusy struct{ sandbox string }
+
+func (e errBusy) Error() string { return "sandbox " + e.sandbox + " is busy" }
 
 func boardEngine(board *boardv1alpha1.RepoBoard) string {
 	if board.Spec.Sandbox.Engine == "claude" {

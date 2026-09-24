@@ -80,6 +80,18 @@ type RunStatus struct {
 	// +kubebuilder:validation:Optional
 	Key string `json:"key,omitempty"`
 
+	// TaskPrefix names the task family this run writes under
+	// /workspaces/tasks in its sandbox ("explore", "runbook"…). With
+	// Sandbox it is enough to read the run's own record off disk, which
+	// is the only account of the run that survives a controller restart.
+	// +kubebuilder:validation:Optional
+	TaskPrefix string `json:"taskPrefix,omitempty"`
+
+	// TaskDir is the specific directory, e.g. explore-20260924-215011 —
+	// where the logs are.
+	// +kubebuilder:validation:Optional
+	TaskDir string `json:"taskDir,omitempty"`
+
 	// +kubebuilder:validation:Optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 

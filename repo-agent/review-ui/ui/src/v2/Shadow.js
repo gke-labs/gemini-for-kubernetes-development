@@ -159,18 +159,33 @@ function ChipsView({ rows }) {
   );
 }
 
+// A run that ended badly has to say why on the row. The alternative is
+// what v1 did with granule: fifty-six identical failures, each one a red
+// chip, and the reason ("403: write access not granted") only legible by
+// exec-ing into the pod.
 function LogView({ rows }) {
   if (!rows.length) return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>no runs recorded</div>;
   return (
     <div>
       {rows.map((r, i) => (
-        <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '3px 0' }}>
-          {verdictChip(r.verdict)}
-          <span style={{ color: 'var(--text-secondary)' }}>{r.recipe}</span>
-          <span>{r.target}</span>
-          <span style={{ color: 'var(--text-secondary)' }}>{(r.at || '').replace('T', ' ').replace(':00Z', '')}</span>
-          <span style={{ flex: 1 }} />
-          {r.url && <a href={r.url} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
+        <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {verdictChip(r.verdict)}
+            <span style={{ color: 'var(--text-secondary)' }}>{r.recipe}</span>
+            <span>{r.target}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{(r.at || '').replace('T', ' ').replace(':00Z', '')}</span>
+            <span style={{ flex: 1 }} />
+            {r.url && <a href={r.url} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
+            {!r.url && r.sandbox && (
+              <a href={`/sandboxes/${r.sandbox}${r.taskDir ? `?task=${r.taskDir}` : ''}`}>logs ↗</a>
+            )}
+          </div>
+          {r.message && r.message !== 'completed' && r.message !== 'launched' && (
+            <div style={{
+              color: r.phase === 'Failed' ? '#d73a49' : 'var(--text-secondary)',
+              fontSize: '12px', paddingLeft: '4px',
+            }}>{r.message}</div>
+          )}
         </div>
       ))}
     </div>
@@ -221,7 +236,8 @@ function Section({ repo, spec, recipes, readOnly, onRan }) {
     } else if (src.artifacts) {
       url = `/api/v2/repos/${repo}/artifacts?glob=${encodeURIComponent(src.artifacts)}`;
     } else if (src.runs) {
-      url = `/api/v2/repos/${repo}/runs`;
+      const q = new URLSearchParams(src.runs).toString();
+      url = `/api/v2/repos/${repo}/runs${q ? `?${q}` : ''}`;
     }
     if (!url) { setError('unknown source'); return; }
     api(url)

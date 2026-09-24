@@ -58,6 +58,18 @@ func init() {
 // newRunnerWithProber wires the in-flight task preflight (adopt, don't
 // duplicate — the watch dispatcher's recovery discipline) when a cluster
 // client is available; without one the runner works as before.
+// taskObserver lets the Run controller read a task's record off the
+// sandbox disk. Without it a run launched by a previous process can
+// only be resolved by timing out.
+func taskObserver() factorycli.TaskObserver {
+	prober, err := factorycli.NewPodTaskProber()
+	if err != nil {
+		klog.Warningf("run observation disabled (no cluster client): %v", err)
+		return nil
+	}
+	return prober
+}
+
 func newRunnerWithProber() *factorycli.Runner {
 	runner := factorycli.NewRunner()
 	if prober, err := factorycli.NewPodTaskProber(); err == nil {
@@ -110,9 +122,10 @@ func main() {
 	// runner with the v1 controller so both see the same in-flight
 	// work, and it only touches repos whose spec.platform is v2.
 	if err = (&runctrl.Reconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Factory: newRunnerWithProber(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Factory:  newRunnerWithProber(),
+		Observer: taskObserver(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Run")
 		os.Exit(1)

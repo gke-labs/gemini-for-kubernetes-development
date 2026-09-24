@@ -20,6 +20,11 @@ rules:
 - apiGroups: ["board.gemini.google.com"]
   resources: ["repoboards"]
   verbs: ["get", "list", "create", "delete", "update", "patch"]
+# Platform v2: starting work is creating a Run. The API never writes
+# status — that is the controller's account of what happened.
+- apiGroups: ["board.gemini.google.com"]
+  resources: ["runs"]
+  verbs: ["get", "list", "create", "delete"]
 # Can manage overseers
 - apiGroups: ["overseer.gemini.google.com"]
   resources: ["overseers"]
