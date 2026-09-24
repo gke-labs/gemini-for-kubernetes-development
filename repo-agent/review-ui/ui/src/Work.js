@@ -964,10 +964,14 @@ function MermaidBlock({ code }) {
 
 // ExploreDocViewer: files on the left, rendered markdown on the right.
 // Content comes raw from the fork branch; rendering happens here.
-function ExploreDocViewer({ boardName, docs }) {
+function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
   const [selected, setSelected] = useState('');
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [collapsed, setCollapsed] = useState({});
+  const [addMode, setAddMode] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [charter, setCharter] = useState('');
 
   // README is the index — open it first; fall back to the first doc.
   useEffect(() => {
@@ -977,7 +981,7 @@ function ExploreDocViewer({ boardName, docs }) {
   }, [docs, selected]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected) { setContent(''); return; }
     let alive = true;
     setLoading(true);
     fetch(`/api/board/${boardName}/exploration/doc?path=${encodeURIComponent(selected)}`)
@@ -988,23 +992,36 @@ function ExploreDocViewer({ boardName, docs }) {
   }, [boardName, selected]);
 
   const doc = docs.find(d => d.path === selected);
+  const isRunbook = d => (d || '').startsWith('runbooks/');
+  const selectedDoc = doc ? doc.name : '';
+  const runbookName = isRunbook(selectedDoc) ? selectedDoc.replace(/^runbooks\//, '').replace(/\.md$/, '') : '';
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  const submit = () => {
+    const name = addMode ? slug(newName) : runbookName;
+    if (!name) return;
+    onAuthorRunbook(name, charter.trim());
+    setCharter(''); setNewName(''); setAddMode(false);
+  };
+
   return (
     <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
-      <div style={{ flex: '0 0 180px', borderRight: '1px solid var(--border-color)',
+      <div style={{ flex: '0 0 200px', borderRight: '1px solid var(--border-color)',
         paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
         {(() => {
           const entry = d => (
-            <div key={d.path} onClick={() => setSelected(d.path)}
+            <div key={d.path} onClick={() => { setSelected(d.path); setAddMode(false); }}
               title={d.name}
               style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
-                fontWeight: d.path === selected ? 600 : 400 }}>
-              {d.name}
+                background: d.path === selected && !addMode ? 'var(--bg-hover)' : 'transparent',
+                fontWeight: d.path === selected && !addMode ? 600 : 400 }}>
+              {d.name.includes('/') ? d.name.split('/').slice(1).join('/') : d.name}
             </div>
           );
-          // Generic grouping: root files first, then one group per
-          // top-level folder, hairlines between groups.
+          // Generic grouping: root files first, then one collapsible
+          // group per top-level folder. runbooks is the one special
+          // case — it owns the "+ add runbook" door, and exists even
+          // when empty, because creating the first one is the point.
           const folderOf = d => (d.name.includes('/') ? d.name.split('/')[0] : '');
           const order = [];
           const byFolder = {};
@@ -1013,25 +1030,77 @@ function ExploreDocViewer({ boardName, docs }) {
             if (!(f in byFolder)) { byFolder[f] = []; order.push(f); }
             byFolder[f].push(d);
           }
+          if (!('runbooks' in byFolder)) { byFolder.runbooks = []; order.push('runbooks'); }
           order.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
-          const divider = key => (
-            <div key={key} style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />
-          );
-          const groups = order.map(f => byFolder[f]);
           return (
             <>
-              {groups.map((g, i) => (
-                <React.Fragment key={i}>
-                  {i > 0 && divider(`div-${i}`)}
-                  {g.map(entry)}
-                </React.Fragment>
-              ))}
+              {order.map((folder, i) => {
+                const files = byFolder[folder];
+                const isOpen = !collapsed[folder];
+                return (
+                  <React.Fragment key={folder || '(root)'}>
+                    {i > 0 && <div style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />}
+                    {folder !== '' && (
+                      <div onClick={() => setCollapsed(prev => ({ ...prev, [folder]: !prev[folder] }))}
+                        style={{ padding: '4px 8px', cursor: 'pointer', color: 'var(--text-secondary)',
+                          display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ fontSize: 'x-small' }}>{isOpen ? '▾' : '▸'}</span>
+                        {folder}/
+                        {!isOpen && <span style={{ fontSize: 'x-small' }}>({files.length})</span>}
+                      </div>
+                    )}
+                    {isOpen && files.map(entry)}
+                    {isOpen && folder === 'runbooks' && (
+                      <div onClick={() => { setAddMode(true); setCharter(''); }}
+                        title="Describe a new runbook — the agent derives it from the repo's tooling and pushes it for review"
+                        style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
+                          color: addMode ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          background: addMode ? 'var(--bg-hover)' : 'transparent' }}>
+                        + add runbook
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </>
           );
         })()}
       </div>
       <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
-        {doc && (
+        {/* Authoring is contextual: the box appears for the runbook you
+            opened (or for a new one), pre-scoped, and is absent
+            otherwise — reading is the default mode. */}
+        {(addMode || runbookName) && (
+          <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+            background: 'var(--bg-secondary)', padding: '8px 10px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              {addMode ? (
+                <>
+                  <span style={{ color: 'var(--text-secondary)' }}>new runbook:</span>
+                  <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+                    placeholder="name (e.g. deploy-kops-gce)" autoFocus
+                    style={{ flex: '0 1 240px', padding: '3px 8px', borderRadius: '4px',
+                      border: '1px solid var(--border-color)', background: 'transparent',
+                      color: 'var(--text-primary)', font: 'inherit' }} />
+                </>
+              ) : (
+                <span style={{ color: 'var(--text-secondary)' }}>update <strong>{runbookName}</strong>:</span>
+              )}
+              <span style={{ flex: 1 }} />
+              {drafting && <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />}
+              <button className="btn btn-sm" disabled={drafting || (addMode && !newName.trim())}
+                onClick={submit}>{addMode ? 'Draft runbook' : 'Update runbook'}</button>
+              {addMode && <a href="#cancel" onClick={e => { e.preventDefault(); setAddMode(false); }}>cancel</a>}
+            </div>
+            <textarea rows={2} value={charter} onChange={e => setCharter(e.target.value)}
+              placeholder={addMode
+                ? "what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
+                : "what should change? (leave empty to refresh it against the latest code)"}
+              style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+          </div>
+        )}
+        {doc && !addMode && (
           <a href={doc.htmlURL} target="_blank" rel="noopener noreferrer"
             style={{ position: 'absolute', top: 0, right: '8px', fontSize: 'smaller' }}
             title="Canonical view on GitHub">GitHub ↗</a>
@@ -1053,10 +1122,6 @@ function ExploreDocViewer({ boardName, docs }) {
   );
 }
 
-// TryPanel: the execution surface — run a runbook scenario, watch its
-// receipts, tear it down. One run sandbox per (scenario, path); the
-// runbook/script/receipt artifacts live on the fork branch and render
-// through the exploration doc endpoint.
 // The receipt's first line, compressed to a badge — shared by the
 // per-board Runs tab and the All-boards runs view.
 function verdictBadge(receipt) {
@@ -1490,8 +1555,6 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   const [exp, setExp] = useState(null);
   const [topic, setTopic] = useState('');
   const [sinceOpen, setSinceOpen] = useState(false);
-  const [runbookName, setRunbookName] = useState('');
-  const [runbookCharter, setRunbookCharter] = useState('');
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -1530,110 +1593,69 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   };
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* Two columns: understanding on the left, recipes on the right —
-          each verb group sits on the surface it acts on. */}
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'stretch' }}>
-        <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-            <button className="btn" disabled={busy === 'onboard'}
-              title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
-              onClick={() => kickoff('onboard')}>Generate Overview</button>
-            <span style={{ position: 'relative' }}>
-              <button className="btn" disabled={busy === 'activity'}
-                title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
-                onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
-              {sinceOpen && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-                  background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                  borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
-                  {['2 weeks', '1 month', '3 months'].map(win => (
-                    <div key={win}
-                      onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
-                      style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                      last {win}
-                    </div>
-                  ))}
+      {/* One column: understanding verbs over the ask box. Runbook
+          authoring is contextual — it lives in the doc list below,
+          scoped to the runbook you opened (or a new one). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <button className="btn" disabled={busy === 'onboard'}
+          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
+          onClick={() => kickoff('onboard')}>Generate Overview</button>
+        <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
+          title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
+          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
+        <span style={{ position: 'relative' }}>
+          <button className="btn" disabled={busy === 'activity'}
+            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
+            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
+          {sinceOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
+              {['2 weeks', '1 month', '3 months'].map(win => (
+                <div key={win}
+                  onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
+                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                  last {win}
                 </div>
-              )}
-            </span>
-          </div>
-          <div style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '10px',
-            background: 'var(--bg-secondary)', padding: '10px 12px',
-            display: 'flex', flexDirection: 'column' }}>
-            <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-              placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
-              style={{ width: '100%', flex: 1, border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', color: 'var(--text-primary)',
-                font: 'inherit', boxSizing: 'border-box' }} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-              <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
-                onClick={dive}>Explore</button>
+              ))}
             </div>
-          </div>
-        </div>
-        <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-            <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
-              title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
-              onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
-            <span style={{ flex: 1 }} />
-            {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
-              <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
-                color="#b08800" bg="rgba(176,136,0,0.12)" />
-            )}
-            {sb && (
-              <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
-                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-                title={`${sb.name} — tasks & logs`}>
-                <EngineIcon engine={sb.engine} />
-              </span>
-            )}
-            {sb && (
-              <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
-                target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-                title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
-                <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
-                  color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
-                  bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
-              </a>
-            )}
-          </div>
-          <div style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '10px',
-            background: 'var(--bg-secondary)', padding: '10px 12px',
-            display: 'flex', flexDirection: 'column' }}>
-            {exp && exp.gcpProject === '' && (
-              <div style={{ color: '#b08800', fontSize: 'smaller', marginBottom: '4px' }}>
-                ⚠ no GCP project in Settings — drafted runbooks can't verify their feasibility checklist
-              </div>
-            )}
-            <input type="text" value={runbookName} onChange={e => setRunbookName(e.target.value)}
-              placeholder="runbook name — new (deploy-kops-gce) or existing to update it"
-              style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent',
-                color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box',
-                borderBottom: '1px dashed var(--border-color)', paddingBottom: '4px', marginBottom: '6px' }} />
-            <textarea rows={2} value={runbookCharter} onChange={e => setRunbookCharter(e.target.value)}
-              placeholder="what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
-              style={{ width: '100%', flex: 1, border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-              {exp && exp.pending === 'runbook' && (
-                <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />
-              )}
-              <button className="btn btn-sm"
-                disabled={!runbookName.trim() || busy === 'runbook' || (exp && exp.pending === 'runbook')}
-                title="Agent derives the recipe from the repo's own tooling with your description as pinned decisions, and pushes it to the branch for review"
-                onClick={() => {
-                  const slug = runbookName.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-                  if (!slug) return;
-                  kickoff('runbook', { scenario: slug, guidance: runbookCharter.trim() });
-                  setRunbookName('');
-                  setRunbookCharter('');
-                }}>Draft / Update Runbook</button>
-            </div>
-          </div>
+          )}
+        </span>
+        <span style={{ flex: 1 }} />
+        {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
+          <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
+            color="#b08800" bg="rgba(176,136,0,0.12)" />
+        )}
+        {sb && (
+          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
+            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+            title={`${sb.name} — tasks & logs`}>
+            <EngineIcon engine={sb.engine} />
+          </span>
+        )}
+        {sb && (
+          <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
+            target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
+            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
+            <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
+              color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
+              bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
+          </a>
+        )}
+      </div>
+      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px' }}>
+        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
+          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
+          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)',
+            font: 'inherit', boxSizing: 'border-box' }} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
+            onClick={dive}>Explore</button>
         </div>
       </div>
       {/* Artifacts: git is the record — rendered apart from the controls. */}
@@ -1644,12 +1666,15 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
               title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
           </div>
         )}
-        {(!exp || (exp.docs || []).length === 0) ? (
-          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No exploration notes yet — Generate Overview writes the first ones to your fork. Runbooks live on the Try tab.
+        {(!exp || (exp.docs || []).length === 0) && (
+          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '8px' }}>
+            No exploration notes yet — Generate Overview writes the first ones to your fork.
           </div>
-        ) : (
-          <ExploreDocViewer boardName={boardName} docs={exp.docs} />
+        )}
+        {exp && (
+          <ExploreDocViewer boardName={boardName} docs={exp.docs || []}
+            drafting={exp.pending === 'runbook'}
+            onAuthorRunbook={(name, charter) => kickoff('runbook', { scenario: name, guidance: charter })} />
         )}
       </div>
     </div>
