@@ -75,6 +75,19 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/board/:board/explore", s.kickoffExplore)
 		api.GET("/board/:board/exploration", s.getBoardExploration)
 		api.GET("/board/:board/exploration/doc", s.getBoardExplorationDoc)
+
+		// Platform v2 (shadow read — see docs/design/platform-v2.md).
+		// Generic shapes over the same world; no write paths yet.
+		v2 := api.Group("/v2")
+		{
+			v2.GET("/recipes", s.getV2Recipes)
+			v2.GET("/pages/:page", s.getV2Page)
+			v2.GET("/repos/:repo", s.getV2Repo)
+			v2.GET("/repos/:repo/targets", s.getV2Targets)
+			v2.GET("/repos/:repo/artifacts", s.getV2Artifacts)
+			v2.GET("/repos/:repo/artifacts/content", s.getV2ArtifactContent)
+			v2.GET("/repos/:repo/runs", s.getV2Runs)
+		}
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)
 		api.DELETE("/board/:board/runbook/instance/:instance", s.removeRunbookInstance)
