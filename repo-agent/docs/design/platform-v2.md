@@ -280,10 +280,10 @@ data.
 ## Backend shape
 
 - **One `Run` CRD** with real status (phase, verdict, cost, artifact
-  paths, sandbox ref). The controller becomes a single generic
-  reconciler: *pending Run → ensure sandbox → execute recipe phase →
-  record status*. `ensureFix`, `ensureReview`, `ensurePlan`,
-  `ensureExploreClaims`, `ensureRunbookClaims` collapse into it.
+  paths, sandbox ref). `ensureFix`, `ensureReview`, `ensurePlan`,
+  `ensureExploreClaims`, `ensureRunbookClaims` collapse into a single
+  reconciler — see *Two loops* below for what that reconciler does and,
+  as importantly, what it must not absorb.
 - **Factory becomes an executor library** with one entry point —
   `factory run <recipe> --target <t> --input k=v` — instead of a
   subcommand family. Its CLI remains useful standalone; repo-agent
@@ -297,6 +297,74 @@ liveness probes, duplicate runs after a watcher timeout, claims that
 re-fire — exists because run state was reconstructed from three
 unreliable places. A Run whose status is written by its own executor
 makes those bugs unrepresentable.
+
+### Two loops
+
+"One generic reconciler" is true of *execution* and false of the
+controller as a whole. Today's `Reconciler` also polls GitHub, and
+folding that into the Run controller would rebuild the god object
+under a new name. The steady state is two loops with a hard boundary:
+
+**The Run controller** owns work items and never talks to GitHub:
+admission (is this repo v2's to drive, does the recipe accept this
+target kind, are its gates satisfied — this is where *a trigger cannot
+bypass a gate* is enforced); dedup and concurrency, at most one live
+Run per `(repo, recipe, target)`, which is a label selector rather than
+v1's served-ness predicates; credential resolution; placement, honouring
+`isolation: namespace | cluster | project` when a Study fans out arms;
+launch; observation; and terminal handling, where a terminal failure
+does not retry.
+
+**The discovery loop** owns targets and never executes: it polls
+GitHub for open PRs, requested reviews, assigned issues and triage
+candidates, writes them to the Repo's status, and evaluates declared
+triggers — which create Runs. `discoverAllPRs`, `discoverRequestedReviews`,
+`discoverAssigned`, `discoverTriage`, `followUpPRs`, `filterOnboarded`
+and `loadSandboxes` move here. It is repo-scoped and continuous; a Run
+is one execution.
+
+Sorting today's ~1800-line reconciler by these two: roughly 17 methods
+collapse into the Run controller, 8 move to discovery, and 7 —
+`mailboxPlans`, `trimMailbox`, `activeCount`, `pauseFinished`,
+`updateCounts`, `stampUnpaused`, `stampEngine` — simply vanish, because
+they exist only to manage state encoded in annotations. The clearest
+symptom is `mailboxPlans`, whose signature returns **seven** slices,
+one per claim family, because v1 has no shared representation of "a
+piece of work."
+
+### What the Run object holds, and for how long
+
+A Run is a **work item**, not an archive. Three layers, each holding
+what it is good at:
+
+| Layer | Holds | Lifetime |
+|---|---|---|
+| `Run` | intent, inputs, phase, verdict, pointers | the work, plus a retention window |
+| sandbox task dir | pid, exit code, logs, prompts | the sandbox's |
+| git | receipts, notes, scripts, ledgers | forever |
+
+Two rules follow, and they are what keep the object honest:
+
+1. **A recipe that succeeds must leave a durable external artifact** —
+   notes on a branch, a receipt, a PR. A recipe that can succeed
+   without leaving one is a bug in the recipe.
+2. Therefore a **succeeded Run is retired** shortly after completion
+   (it duplicates something git already holds), while a Run that
+   **failed without producing an artifact is kept**, because nothing
+   else records that it happened.
+
+Rule 2 is not hypothetical. On 2026-09-24 the `granule` board carried
+one standing claim, `{"explore-onboard":"barney-s|2026-09-23T23:04:52Z"}`,
+while its sandbox accumulated 56 explore task directories — twelve that
+day, every one exiting 128 after the agent succeeded and the push
+returned `403: write access to repository not granted`. A permanently
+terminal failure, retried indefinitely, invisible from the cluster,
+legible only by `exec`-ing into the pod. Those are precisely the runs
+worth keeping, and precisely the retry the Run controller's terminal
+handling must refuse.
+
+The corollary is that the object must stay small: **logs and receipts
+never live in it**, only pointers to where they do.
 
 ## What we keep (hard-won invariants)
 
@@ -449,6 +517,7 @@ Five consequences for this design:
   product?** The catalog, entity model, and template UI would come
   free; we would contribute the agent-run layer. A shortcut or a
   straitjacket depending on how much the inbox experience matters.
-- **Does `Run` belong in etcd or a database?** CRD gives free
-  watch/RBAC/kubectl; volume (hundreds/day/member) is fine for CRDs,
-  but receipts and logs must not live in the object.
+- **When does `Run` outgrow etcd?** Settled below for now: a CRD, kept
+  small and retired quickly. It becomes a database question at
+  thousands of runs a day, or as soon as someone wants an aggregate git
+  cannot answer cheaply ("p95 cost of the fix recipe over 90 days").
