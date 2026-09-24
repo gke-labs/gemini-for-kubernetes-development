@@ -1176,7 +1176,9 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
           </thead>
           <tbody>
             {rows.map(({ board, inst, sb, pend, rb, scenario }) => {
-              const running = sb && sb.taskState === 'Running';
+              // The annotation can be stale (a dead watcher never stamped
+              // the final state); the probe is the truth when it speaks.
+              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
               const receipt = inst.latestReceipt;
               const v = ((receipt || {}).verdict || '').toUpperCase();
               return (
@@ -1386,7 +1388,9 @@ function TryPanel({ boardName, onOpenSandbox }) {
               {rows.map(inst => {
                 const sb = findSb(inst.name);
                 const pend = findPending(inst.name);
-                const running = sb && sb.taskState === 'Running';
+                // The annotation can be stale (a dead watcher never stamped
+              // the final state); the probe is the truth when it speaks.
+              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
                 const rb = inst.provisional
                   ? runbooks.find(r => r.scenario === inst.scenario) || null
                   : runbookFor(inst);
