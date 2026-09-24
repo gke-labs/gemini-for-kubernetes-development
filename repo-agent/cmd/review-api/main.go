@@ -22,6 +22,12 @@ const (
 )
 
 func main() {
+	if user, ns, ok := auth.DevAuthActive(); ok {
+		klog.Warningf("DEV AUTH ACTIVE — every request is attributed to %q in namespace %q. "+
+			"This exists for running the API on a laptop against a live cluster; "+
+			"REPO_AGENT_DEV_USER must never be set in a deployed environment.", user, ns)
+	}
+
 	// Kubernetes client
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
