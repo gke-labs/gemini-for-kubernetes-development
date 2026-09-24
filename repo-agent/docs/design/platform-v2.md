@@ -153,6 +153,103 @@ Plus one global door: **"Run a recipe…"** — a command palette. Pick a
 recipe, pick a target, fill the generated form, go. This is the
 discoverability fix; a verb no longer needs a home to be findable.
 
+## Worked example: issue → triage → plan → fix → PR
+
+The model has to express what already exists before it earns the
+right to reach further. The classic flow, in four nouns:
+
+```
+Target: issue:42 "reconciler flakes under load"
+
+Run 1  recipe:triage   → TRIAGED      writes: labels, triage comment
+                          actions: [plan, fix, dismiss]
+Run 2  recipe:plan     → PLANNED      writes: plans/42.md (+ issue comment)
+                          actions: [approve→fix, revise, reject]   ← the human gate
+Run 3  recipe:fix      → PR-OPENED    writes: branch, draft PR      (never main)
+                          actions: [promote, iterate, review]
+
+Target flips to pr:1324
+
+Run 4  recipe:review   → REVIEWED     writes: a pending review on GitHub (you submit)
+Run 5  recipe:address  → PUSHED       writes: commits on the PR branch
+```
+
+Each stage is an ordinary Run over a Target. There is no "issue
+pipeline" machinery — the same objects as a deployment, different
+recipes. Stages chain through `actions` (loosely coupled, each output
+durable and reviewable on its own) rather than through phases, which
+are for steps too tightly coupled to separate — plan/apply of one
+deployment being the canonical case.
+
+```yaml
+name: fix
+targets: [issue]
+inputs:
+  - {name: instruction, type: text, optional: true}
+phases:
+  - id: implement
+    requires_verdict: PLANNED       # the approval gate, declared not coded
+    writes:   [branch:fix-{{issue}}, github:pr.create]
+    readonly: [github:main, github:issue.close]
+verdicts: [PR-OPENED, NO-CHANGE-NEEDED, FAILED, BLOCKED]
+actions:
+  PR-OPENED:  [promote, iterate, review]
+  BLOCKED:    [retry, dismiss]
+```
+
+Two details carry the argument. `requires_verdict: PLANNED` is the
+entire approve-before-code gate — the same field that holds a deploy
+behind its plan, doing identical work in an unrelated domain. And
+**write scopes extend past git files to upstream objects**: the
+mechanism that stops a deploy run editing a runbook stops a fix run
+force-pushing your default branch.
+
+The row materializes from that data:
+
+```
+#42  reconciler flakes under load   📋 planned · 2h ago   [ Approve ]  ⌄
+                                                            plan ↗ · revise · reject
+```
+
+`verdicts` renders the badge, `actions[PLANNED]` renders the buttons,
+`inputs` renders the form behind *revise*. Today that row is bespoke
+React with hard-coded "Plan ready" handling.
+
+### Automation is a trigger, not a code path
+
+Today's auto tiers (`assigned` / `labeled`), PR watch, and
+auto-iterate collapse into declarative triggers on the Repo:
+
+```yaml
+triggers:
+  - {on: issue.labeled(agent-fix), run: triage}
+  - {on: review_requested(me),     run: review}
+  - {on: pr.ci_failed,             run: fix-ci, if: pr.auto_iterate}
+```
+
+A user adds their own reflex without touching the controller.
+
+### What this deletes
+
+- `ensureTriage`, `ensurePlan`, `ensureFix`, `ensureReview`,
+  `ensurePRTaskClicks/Claims` → one generic reconciler
+- `fix-*`, `plan-*`, `triage-*`, `review-*`, `iterate-*` claim keys →
+  Runs
+- verdict-panel special cases, "Plan ready"/"Review ready" chip
+  logic, the Agent ▾ drawer's hard-coded verbs → `verdicts` +
+  `actions`
+- `FixOptions` / `PlanOptions` / `ReviewOptions` / `PRTaskOptions` →
+  one `RunSpec` with inputs
+
+### What does not collapse
+
+The **attention computation** — *does this need me?* — stays real
+code, because it fuses upstream state (review requested, CI red,
+draft versus ready) with the latest Run's verdict, and no declarative
+table expresses that well. That is the inbox's intelligence and the
+product's actual differentiator; everything else in this flow becomes
+data.
+
 ## Backend shape
 
 - **One `Run` CRD** with real status (phase, verdict, cost, artifact
