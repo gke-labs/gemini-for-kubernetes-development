@@ -291,19 +291,45 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if annotations[annoTaskState] == factorycli.TaskStateRunning {
 				if podID, perr := sandbox.FindSandboxPodInNamespace(ctx, sb.GetName(), namespace); perr == nil && podID != nil {
 					var stdout bytes.Buffer
+					// Mirrors factory's own liveness check: an exit code
+					// ends the story, a zombie is not alive (kill -0
+					// succeeds on Z), and start_time guards against PID
+					// reuse.
 					script := `d=$(ls -dt /workspaces/tasks/runbook-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
-						`pid=$(cat $d/pid 2>/dev/null); alive=no; [ -n "$pid" ] && kill -0 $pid 2>/dev/null && alive=yes; ` +
-						`echo "$alive|$(cat $d/exit_code 2>/dev/null)|$(stat -c %Y $d/pid 2>/dev/null)"`
+						`code=$(cat $d/exit_code 2>/dev/null); pid=$(cat $d/pid 2>/dev/null); alive=no; ` +
+						`if [ -z "$code" ] && [ -n "$pid" ]; then ` +
+						`stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1); ` +
+						`want=$(cat $d/start_time 2>/dev/null | xargs); got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs); ` +
+						`if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; fi; fi; ` +
+						`echo "$alive|$code|$(stat -c %Y $d/pid 2>/dev/null)"`
 					if eerr := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
 						Command: []string{"sh", "-c", script},
 						Stdout:  &stdout,
 					}); eerr == nil {
 						parts := strings.SplitN(strings.TrimSpace(stdout.String()), "|", 3)
 						if len(parts) == 3 {
-							row["taskAlive"] = parts[0] == "yes"
+							alive := parts[0] == "yes"
+							row["taskAlive"] = alive
 							row["taskExit"] = parts[1]
 							if secs, aerr := strconv.ParseInt(parts[2], 10, 64); aerr == nil {
 								row["taskStartedAt"] = time.Unix(secs, 0).UTC().Format(time.RFC3339)
+							}
+							// Self-heal the stale Running annotation: the
+							// watcher that would have stamped the final
+							// state died with its leash, and one-shot
+							// claims mean no relaunch will correct it.
+							// Leaving it Running exempts the sandbox from
+							// idle-pause and disables its row's actions.
+							if !alive && parts[1] != "" {
+								state := factorycli.TaskStateCompleted
+								if parts[1] != "0" {
+									state = factorycli.TaskStateFailed
+								}
+								row["taskState"] = state
+								now := time.Now().UTC().Format(time.RFC3339)
+								_ = s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sb.GetName(), annoTaskState, state)
+								_ = s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sb.GetName(), "sandbox.gemini.google.com/completion-time", now)
+								_ = s.K8sManager.UpdateSandboxAnnotation(ctx, namespace, sb.GetName(), "sandbox.gemini.google.com/last-task-time", now)
 							}
 						}
 					}
