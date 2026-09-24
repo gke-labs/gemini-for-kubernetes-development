@@ -239,6 +239,7 @@ func (s *Scanner) sweep(ctx context.Context) {
 	if err != nil {
 		klog.Errorf("Failed to list open PRs: %v", err)
 	} else {
+		klog.Infof("Fetched %d open PRs from GitHub API", len(prs))
 		s.entities.UpdateOpenPRs(prs)
 
 		// Repair the pull requests the listing below cannot see before it
@@ -263,11 +264,13 @@ func (s *Scanner) sweep(ctx context.Context) {
 // mostly sitting green waiting for a human, nearly all of that was being spent
 // to re-derive a verdict that had not changed.
 func (s *Scanner) fastPass(ctx context.Context) {
+	klog.Infof("Running fast PR scan cycle...")
 	candidates, err := s.scanAssigned(ctx)
 	if err != nil {
 		klog.Errorf("Failed to scan assigned PRs: %v", err)
 	}
 	if len(candidates) == 0 {
+		klog.Infof("evaluateAll called with 0 PRs")
 		return
 	}
 
@@ -278,7 +281,7 @@ func (s *Scanner) fastPass(ctx context.Context) {
 		}
 	}
 	if len(changed) == 0 {
-		klog.V(2).Infof("Skipping fast pass: none of the %d assigned PRs have moved since their last evaluation.", len(candidates))
+		klog.Infof("Skipping fast pass: none of the %d assigned PRs have moved since their last evaluation.", len(candidates))
 		return
 	}
 
@@ -329,6 +332,7 @@ func (s *Scanner) needsEvaluation(prIssue *githubv39.Issue) bool {
 // evaluateAll evaluates the candidates sequentially and returns once every one
 // of them has been handled.
 func (s *Scanner) evaluateAll(ctx context.Context, candidates []*githubv39.Issue) {
+	klog.Infof("evaluateAll called with %d PRs", len(candidates))
 	for _, prIssue := range candidates {
 		if ctx.Err() != nil {
 			return
