@@ -169,6 +169,43 @@ apply-examples:
 delete-instance:
 	kubectl delete sandbox demo
 
+# ---------------------------------------------------------------------
+# Dev loop: run the API and controller on your laptop against a live
+# cluster. pkg/clients falls back to your kubeconfig when it is not in
+# a pod, and ctrl.GetConfigOrDie does the same — so no image build, no
+# rollout, no merge. Prompt edits are picked up by a local factory
+# build, turning a ten-minute cycle into seconds.
+# ---------------------------------------------------------------------
+DEV_USER ?= $(shell kubectl config view --minify -o jsonpath='{..namespace}')
+DEV_PORT ?= 8080
+
+.PHONY: dev-api
+dev-api:
+	@test -n "$(DEV_USER)" || { echo "set DEV_USER=<your member namespace>"; exit 1; }
+	@echo "API on :$(DEV_PORT) as $(DEV_USER) (dev auth — never deploy this env)"
+	REPO_AGENT_DEV_USER=$(DEV_USER) PORT=$(DEV_PORT) go run ./cmd/review-api
+
+# Exactly one controller may run against a cluster: two reconcilers
+# means duplicate runs. This scales the in-cluster one down first and
+# restores it on exit.
+.PHONY: dev-controller
+dev-controller:
+	@echo "scaling in-cluster controller to 0 (restored on exit)…"
+	kubectl -n repo-agent-system scale statefulset repowatch-controller --replicas=0
+	mkdir -p bin && go build -o bin/factory ../factory
+	- PATH=$(PWD)/bin:$$PATH go run ./cmd/repowatch-controller
+	@echo "restoring in-cluster controller…"
+	kubectl -n repo-agent-system scale statefulset repowatch-controller --replicas=1
+
+# If a local controller run is killed hard, put the cluster back.
+.PHONY: dev-restore
+dev-restore:
+	kubectl -n repo-agent-system scale statefulset repowatch-controller --replicas=1
+
+.PHONY: dev-ui
+dev-ui:
+	cd review-ui/ui && REACT_APP_API=http://localhost:$(DEV_PORT) npm start
+
 .PHONY: port-forward
 port-forward:
 	while true; do \

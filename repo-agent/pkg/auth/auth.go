@@ -342,9 +342,37 @@ func (a *Authenticator) AdminMiddleware() gin.HandlerFunc {
 	}
 }
 
+// devAuthUser lets the API run on a laptop against a live cluster: with
+// REPO_AGENT_DEV_USER set, requests are attributed to that user instead
+// of a gateway-issued session. It is read once at startup and is never
+// set in a deployed environment — the gateway supplies sessions there,
+// and nothing in the manifests defines this variable.
+var devAuthUser = os.Getenv("REPO_AGENT_DEV_USER")
+
+var devAuthNamespace = os.Getenv("REPO_AGENT_DEV_NAMESPACE")
+
+// DevAuthActive reports whether the dev bypass is on, so callers can
+// log it loudly at startup.
+func DevAuthActive() (string, string, bool) {
+	if devAuthUser == "" {
+		return "", "", false
+	}
+	ns := devAuthNamespace
+	if ns == "" {
+		ns = devAuthUser
+	}
+	return devAuthUser, ns, true
+}
+
 func (a *Authenticator) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log := klog.FromContext(c.Request.Context())
+		if user, ns, ok := DevAuthActive(); ok {
+			c.Set(UserKey, user)
+			c.Set(NamespaceKey, ns)
+			c.Next()
+			return
+		}
 		session := sessions.Default(c)
 		userVal := session.Get(UserKey)
 		if userVal == nil {
