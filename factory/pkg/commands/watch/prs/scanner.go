@@ -553,8 +553,16 @@ func (s *Scanner) reconcileReadiness(
 	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
+	// When GitHub invalidates cached mergeability after a push to the base
+	// branch, GetPullRequest returns Mergeable == nil while kicking off a
+	// background recalculation. Require a positive Mergeable == true before
+	// newly marking a PR ready (and unassigning its bot), but do not strip an
+	// existing ready-for-human label while Mergeable is merely unknown.
+	mergeableSatisfied := pc.pr.GetMergeable() ||
+		(pc.pr.Mergeable == nil && hasReadyForHumanLabel(pc.prIssue.Labels, s.cfg.TriggerLabel))
+
 	isReadyForHuman := !isConflicting &&
-		pc.pr.GetMergeable() &&
+		mergeableSatisfied &&
 		!checkAnalysis.hasFailure &&
 		!checkAnalysis.hasPending &&
 		!commentAnalysis.hasNewComments &&
@@ -566,7 +574,7 @@ func (s *Scanner) reconcileReadiness(
 
 	s.reconcileReadyForHumanLabel(ctx, num, pc.prIssue, isReadyForHuman, pc.headSHA)
 
-	if isReadyForHuman && assignedBot != "" {
+	if isReadyForHuman && pc.pr.GetMergeable() && assignedBot != "" {
 		if s.cfg.DryRun {
 			fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
 		} else {

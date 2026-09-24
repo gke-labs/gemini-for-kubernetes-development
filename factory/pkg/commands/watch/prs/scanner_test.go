@@ -1335,6 +1335,8 @@ type prFixture struct {
 	// mergeableNil leaves Mergeable nil (GitHub still computing mergeability).
 	mergeable    *bool
 	mergeableNil bool
+	// readyForHuman adds the trigger's ready-for-human label to the listed PR.
+	readyForHuman bool
 	// checkErr makes the check-runs listing fail with a 500 error.
 	checkErr bool
 	// reviews are the submitted reviews, whose inline comments used to cost a
@@ -1352,7 +1354,7 @@ func (f *prFixture) start(t *testing.T) *githubv39.Client {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		call := r.URL.Path
+		call := r.Method + " " + r.URL.Path
 		if q := r.URL.RawQuery; q != "" {
 			call += "?" + q
 		}
@@ -1452,12 +1454,16 @@ func (f *prFixture) route(w http.ResponseWriter, r *http.Request) {
 // caller must hold f.mu.
 func (f *prFixture) listingIssueLocked() *githubv39.Issue {
 	updated := f.updated
+	labels := []*githubv39.Label{{Name: githubv39.String("factory")}}
+	if f.readyForHuman {
+		labels = append(labels, &githubv39.Label{Name: githubv39.String("factory/ready-for-human")})
+	}
 	return &githubv39.Issue{
 		Number:           githubv39.Int(f.num),
 		UpdatedAt:        &updated,
 		PullRequestLinks: &githubv39.PullRequestLinks{},
 		Assignees:        []*githubv39.User{{Login: githubv39.String("bot1")}},
-		Labels:           []*githubv39.Label{{Name: githubv39.String("factory")}},
+		Labels:           labels,
 	}
 }
 
@@ -1684,5 +1690,37 @@ func TestFastPass_ReevaluatesWhenMergeableUnknown(t *testing.T) {
 
 	if !evaluated(f) {
 		t.Error("a pull request whose Mergeable state was unknown on the previous pass was skipped")
+	}
+}
+
+// TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that when a
+// commit merges to the base branch and invalidates GitHub's cached mergeability
+// (Mergeable == nil), an already-ready pull request does not have its
+// ready-for-human label stripped while GitHub recomputes mergeability, unless
+// another readiness gate (such as a pending CI check) fails.
+func TestSweep_PreservesReadyForHumanWhenMergeableUnknown(t *testing.T) {
+	f := &prFixture{
+		num:           10,
+		headSHA:       "sha-1",
+		updated:       time.Now().Add(-time.Hour),
+		mergeableNil:  true,
+		readyForHuman: true,
+	}
+	s := newFixtureScanner(t, f)
+	ctx := context.Background()
+
+	// 1. Mergeable == nil while all other gates pass: ready-for-human must not be removed.
+	s.sweep(ctx)
+	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
+		t.Fatal("ready-for-human label was removed when Mergeable was temporarily nil")
+	}
+
+	// 2. If another readiness gate fails (e.g., CI pending) while Mergeable == nil,
+	// ready-for-human must still be removed.
+	f.reset()
+	f.set(func(f *prFixture) { f.pending = true })
+	s.sweep(ctx)
+	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") == 0 {
+		t.Fatal("expected ready-for-human label to be removed when CI became pending")
 	}
 }
