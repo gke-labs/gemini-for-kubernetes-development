@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,7 +168,13 @@ fi`, prefix)
 			}
 		case strings.HasPrefix(line, "finished|"):
 			obs.State = ObserveFinished
-			fmt.Sscanf(strings.TrimPrefix(line, "finished|"), "%d", &obs.ExitCode)
+			code, cerr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "finished|")))
+			if cerr != nil {
+				// exit_code exists but is unreadable. The task is over
+				// and we cannot say it passed, which is a failure.
+				code = -1
+			}
+			obs.ExitCode = code
 		case strings.HasPrefix(line, "running|"):
 			obs.State = ObserveRunning
 		case strings.HasPrefix(line, "dead|"):
