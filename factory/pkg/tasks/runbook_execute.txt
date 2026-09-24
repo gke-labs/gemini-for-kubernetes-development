@@ -35,6 +35,13 @@ docs-exploration/runbooks/{{.Scenario}}.md.
    - Update the runbook's What this needs / Preconditions with every
      requirement this run discovered (exact IAM roles, APIs to enable,
      quotas) — errors must make the runbook smarter, not just longer.
+   - If a repair changed the APPROACH rather than a detail (installing
+     published charts where the runbook builds from source, a
+     different service, a different tool), update the runbook's Steps
+     too. The runbook is the source of truth: an approach that lives
+     only in one instance's script is invisible to the next reader and
+     gets copied sideways by later instances. Note the change in the
+     receipt's "Deviations from the runbook" section as well.
    - Write the receipt to
      docs-exploration/runbook-deployments/{{.Instance}}/receipt-<UTC yyyymmdd-hhmm>.md:
      verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
