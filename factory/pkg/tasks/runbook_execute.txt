@@ -32,6 +32,14 @@ docs-exploration/runbooks/{{.Scenario}}.md.
    deployment, leave them and say so) — never leave unrecorded
    half-built infrastructure.
 3. Document what you learned where the next actor needs it:
+   - If a fix requires changing the REPOSITORY's own source, capture
+     it as a patch file in your instance directory (git diff >
+     patches/<name>.patch) and have deploy.sh apply it before
+     building. A source edit that lives only in this sandbox's
+     working tree makes the deployment unreproducible: the next run
+     builds unpatched code and fails differently. If the change is
+     right for everyone, say so in the receipt — it belongs in a PR,
+     not in a deployment.
    - THE RUNBOOK IS READ-ONLY TO YOU. It is the owner's document,
      reviewed at the plan gate and shared by every instance; a deploy
      run must never edit it. Write only inside your instance
@@ -55,7 +63,14 @@ docs-exploration/runbooks/{{.Scenario}}.md.
      from the recipe they reviewed. Then an attempt log (attempt N: what failed,
      the evidence, what you changed), the Verify evidence when it
      succeeded, what is left RUNNING and where (the teardown
-     contract), and cost-relevant resources created. A BLOCKED receipt
+     contract), and cost-relevant resources created. Close with
+     "Deviations from the runbook": one entry per difference, each
+     naming WHY — the failure or constraint that forced it and the
+     attempt it came from ("no local docker daemon → Cloud Build";
+     "attempt 2: source build hit a ClusterTrustBundle
+     incompatibility → published charts"). A deviation without a
+     reason reads as a whim and leaves the owner unable to judge
+     whether the runbook or the deployment is wrong. A BLOCKED receipt
      must carry a "Needs from owner" section with the EXACT commands
      that unblock it (gcloud grant / enable-api / quota request).
 4. Only when execution succeeded: verify per the runbook's Verify
