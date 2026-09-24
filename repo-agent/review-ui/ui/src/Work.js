@@ -1122,6 +1122,431 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
   );
 }
 
+// The receipt's first line, compressed to a badge — shared by the
+// per-board Runs tab and the All-boards runs view.
+function verdictBadge(receipt) {
+  if (!receipt || !receipt.verdict) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
+  const v = receipt.verdict.toUpperCase();
+  const date = (receipt.name.match(/(\d{8})/) || [])[1];
+  const when = date ? ` · ${date.slice(4, 6)}-${date.slice(6, 8)}` : '';
+  if (v.startsWith('PLANNED')) return <Chip text={`📋 planned${when} — review, then Deploy`} color="#0366d6" bg="rgba(3,102,214,0.08)" />;
+  if (v.startsWith('VERIFIED')) return <Chip text={`✅ verified${when}`} color="#28a745" bg="rgba(40,167,69,0.10)" />;
+  if (v.startsWith('TORN-DOWN')) return <Chip text={`🔻 torn down${when}`} color="#6a737d" bg="var(--bg-secondary)" />;
+  if (v.startsWith('BLOCKED')) return <Chip text={`🔒 blocked${when} — see receipt: Needs from owner`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  if (v.startsWith('FAILED') || v.startsWith('PARTIAL')) return <Chip text={`❌ ${v.split(' ')[0].toLowerCase()}${when}`} color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
+}
+
+// elapsedSince renders a compact age ("1h43m") for running tasks.
+function elapsedSince(iso) {
+  if (!iso) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}m`;
+}
+
+// What the live task is doing, named by the standing claim's mode —
+// "running" alone leaves you guessing whether a teardown took.
+const RUNBOOK_VERB = { plan: 'planning', deploy: 'deploying', run: 'deploying', teardown: 'tearing down' };
+
+// runningChipFor: the truth about a Running sandbox — alive (with verb
+// and elapsed), finished-but-unstamped, or interrupted (pid gone, no
+// exit code).
+function runningChipFor(sb, pend) {
+  if (sb.taskAlive === false) {
+    if (sb.taskExit !== '' && sb.taskExit !== undefined) {
+      return <Chip text="finishing…" color="#b08800" bg="rgba(176,136,0,0.12)" />;
+    }
+    return <Chip text="💥 interrupted — Re-deploy to retry" color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  }
+  const verb = (pend && RUNBOOK_VERB[pend.mode]) || 'running';
+  const age = elapsedSince(sb.taskStartedAt);
+  const tearing = pend && pend.mode === 'teardown';
+  return <Chip text={age ? `${verb} · ${age}` : verb}
+    color={tearing ? '#6a737d' : '#b08800'}
+    bg={tearing ? 'var(--bg-secondary)' : 'rgba(176,136,0,0.12)'} />;
+}
+
+// AllRunsPanel: the fleet dashboard — every deployment across every
+// board in one table. Read + act (each row posts to its own board);
+// creation stays on the per-board Runs tab. Polls at 30s: the runbook
+// GET fans out to GitHub, and deployments change on minute scales.
+function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
+  const [data, setData] = useState({});
+  const [busy, setBusy] = useState('');
+
+  const names = boards.map(b => b.name);
+  const key = names.join(',');
+  const load = useCallback(() => {
+    Promise.all(names.map(n =>
+      fetch(`/api/board/${n}/runbook`).then(r => (r.ok ? r.json() : null)).then(d => [n, d]).catch(() => [n, null])
+    )).then(entries => setData(Object.fromEntries(entries.filter(e => e[1]))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const kickoff = (board, mode, scenario, instance) => {
+    setBusy(`${board}:${instance}`);
+    fetch(`/api/board/${board}/runbook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, scenario, instance, guidance: '' }),
+    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); }).catch(() => setBusy(''));
+  };
+
+  const rows = [];
+  for (const [board, d] of Object.entries(data)) {
+    const instances = d.instances || [];
+    const pending = d.pending || [];
+    const sandboxes = d.sandboxes || [];
+    const runbooks = d.runbooks || [];
+    const merged = [...instances];
+    for (const p of pending) {
+      if (p.mode === 'teardown') continue;
+      const name = p.instance || p.scenario;
+      if (!merged.some(i => i.name === name)) merged.push({ name, provisional: true, scenario: p.scenario });
+    }
+    for (const inst of merged) {
+      const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
+      const pend = pending.find(p => (p.instance || p.scenario) === inst.name);
+      const rb = inst.provisional
+        ? runbooks.find(r => r.scenario === inst.scenario) || null
+        : (sb && runbooks.find(r => r.scenario === sb.scenario)) ||
+          runbooks.find(r => inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) || null;
+      rows.push({ board, inst, sb, pend, rb, scenario: inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '') });
+    }
+  }
+  const rank = r => {
+    const v = ((r.inst.latestReceipt || {}).verdict || '').toUpperCase();
+    if (r.sb && r.sb.taskState === 'Running') return 0;
+    if (r.pend) return 0;
+    if (v.startsWith('PLANNED')) return 1;
+    if (v.startsWith('BLOCKED') || v.startsWith('FAILED')) return 2;
+    if (v.startsWith('VERIFIED')) return 3;
+    return 4;
+  };
+  rows.sort((a, b) => rank(a) - rank(b) || a.board.localeCompare(b.board) || a.inst.name.localeCompare(b.inst.name));
+  const cell = { padding: '5px 8px', verticalAlign: 'middle' };
+
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {rows.length === 0 ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No deployments anywhere — plan one from a board's Runs tab.
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+              <th style={cell}>board</th>
+              <th style={cell}>deployment</th>
+              <th style={cell}>agent</th>
+              <th style={cell}>runbook</th>
+              <th style={cell}>last run</th>
+              <th style={{ ...cell, textAlign: 'right' }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ board, inst, sb, pend, rb, scenario }) => {
+              // The annotation can be stale (a dead watcher never stamped
+              // the final state); the probe is the truth when it speaks.
+              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
+              const receipt = inst.latestReceipt;
+              const v = ((receipt || {}).verdict || '').toUpperCase();
+              return (
+                <tr key={`${board}/${inst.name}`} style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <td style={cell}>
+                    <a href="#board" onClick={e => { e.preventDefault(); onGoBoard(board); }}
+                      title="Open this board's Runs tab">{board}</a>
+                  </td>
+                  <td style={cell}>
+                    {inst.provisional ? <span style={{ fontWeight: 500 }}>⛭ {inst.name}</span> : (
+                      <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                        style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}>⛭ {inst.name} ↗</a>
+                    )}
+                  </td>
+                  <td style={cell}>
+                    {sb ? (
+                      <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name, board)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                        title={`${sb.name} — tasks & logs`}>
+                        {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
+                        {running && runningChipFor(sb, pend)}
+                        {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                      </span>
+                    ) : (pend ? <Chip text={inst.provisional ? 'preparing…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                  </td>
+                  <td style={cell}>
+                    {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer">{rb.scenario} ↗</a>
+                      : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
+                  </td>
+                  <td style={cell}>
+                    {verdictBadge(receipt)}{' '}
+                    {receipt && <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {v.startsWith('PLANNED') ? (
+                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                        onClick={() => kickoff(board, 'deploy', scenario, inst.name)}>▶ Deploy</button>
+                    ) : (
+                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                        onClick={() => kickoff(board, 'run', scenario, inst.name)}>▶ Re-deploy</button>
+                    )}
+                    <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
+                      onClick={() => kickoff(board, 'teardown', scenario, inst.name)}>Tear down</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function TryPanel({ boardName, onOpenSandbox }) {
+  const [state, setState] = useState(null);
+  const [selRunbook, setSelRunbook] = useState('');
+  const [instName, setInstName] = useState('');
+  const [guidance, setGuidance] = useState('');
+  const [busy, setBusy] = useState('');
+
+  const load = useCallback(() => {
+    fetch(`/api/board/${boardName}/runbook`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => setState(data))
+      .catch(() => {});
+  }, [boardName]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const runbooks = (state && state.runbooks) || [];
+  const sandboxes = (state && state.sandboxes) || [];
+  const pending = (state && state.pending) || [];
+  const instances = (state && state.instances) || [];
+  const findSb = (inst) => sandboxes.find(s => (s.instance || s.scenario) === inst);
+  const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
+  const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+
+  // Which recipe a deployment came from: the sandbox annotation when
+  // one exists, else the longest runbook name that prefixes the
+  // instance name.
+  const runbookFor = (inst) => {
+    const sb = findSb(inst.name);
+    if (sb && sb.scenario) return runbooks.find(r => r.scenario === sb.scenario) || null;
+    let best = null;
+    for (const r of runbooks) {
+      if ((inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) &&
+          (!best || r.scenario.length > best.scenario.length)) best = r;
+    }
+    return best;
+  };
+
+  // Default instance names auto-increment per runbook: deploy-gcp-1,
+  // -2, … — unique across runbooks (the namespace is flat) and never
+  // colliding with the recipe's own name.
+  const nextRunName = (runbook) => {
+    const taken = new Set([
+      ...instances.map(i => i.name),
+      ...pending.map(p => p.instance || p.scenario),
+      ...sandboxes.map(s => s.instance || s.scenario),
+    ]);
+    for (let n = 1; n < 100; n++) {
+      const candidate = `${runbook}-${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${runbook}-${Date.now() % 1000}`;
+  };
+
+  const kickoff = (mode, scenario, instance) => {
+    setBusy(`${mode}:${scenario}:${instance || ''}`);
+    fetch(`/api/board/${boardName}/runbook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, scenario, instance: instance || '', guidance: guidance.trim() }),
+    }).then(res => {
+      if (res.ok) {
+        setGuidance('');
+        setInstName('');
+        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, instance: instance || '' }] } : prev);
+      }
+      setTimeout(load, 2000);
+      setTimeout(() => setBusy(''), 2000);
+    }).catch(() => setBusy(''));
+  };
+
+  const activeRunbook = selRunbook || (runbooks[0] && runbooks[0].scenario) || '';
+  const defaultName = activeRunbook ? nextRunName(activeRunbook) : '';
+  const composerInst = instName.trim() ? slugName(instName) : defaultName;
+  const composerPend = composerInst ? findPending(composerInst) : null;
+  const cell = { padding: '5px 8px', verticalAlign: 'middle' };
+
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {state && state.gcpProject === '' && (
+        <div style={{ border: '1px solid #b08800', borderRadius: '10px', padding: '8px 12px',
+          marginBottom: '10px', color: '#b08800', background: 'rgba(176,136,0,0.08)' }}>
+          ⚠ No GCP project configured — feasibility can't be verified and gcp plans will be
+          blocked. Set one in <a href="#/settings" style={{ color: 'inherit' }}>Settings</a>,
+          or name a project in the run guidance.
+        </div>
+      )}
+      {/* One composer: pick the recipe, name the deployment, steer it. */}
+      {runbooks.length > 0 ? (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          background: 'var(--bg-secondary)', padding: '10px 12px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>new:</span>
+            <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
+              {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
+            </select>
+            <span style={{ display: 'inline-flex', alignItems: 'center', flex: '0 1 300px',
+              border: '1px solid var(--border-color)', borderRadius: '4px', padding: '0 0 0 8px' }}
+              title="Cloud resources this run creates are named <prefix>-<instance>[-suffix] — the prefix is added for you, so don't repeat the repo in the name">
+              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{(state && state.repoShort) || ''}-</span>
+              <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
+                placeholder={`instance name (default: ${defaultName})`}
+                style={{ flex: 1, padding: '3px 8px 3px 2px', border: 'none', outline: 'none',
+                  background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
+            </span>
+            {composerPend && <Chip text={`${composerPend.mode} queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
+            <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
+              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
+              style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`plan:${activeRunbook}:`)}
+              title="Plan a new instance: scripts, params.env and a PLANNED receipt are pushed for review — nothing executes until you click Deploy on its row"
+              onClick={() => kickoff('plan', activeRunbook, composerInst)}>▶ Plan</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
+        </div>
+      )}
+      {/* One table: every deployment across every runbook. A run that
+          was just clicked appears immediately as a provisional row —
+          its directory lands on the branch only after the prepare
+          phase pushes (a cold boot takes minutes). */}
+      {(() => {
+        const rows = [...instances];
+        for (const p of pending) {
+          if (p.mode === 'teardown') continue; // teardown acts on an existing row
+          const name = p.instance || p.scenario;
+          if (!rows.some(i => i.name === name)) {
+            rows.push({ name, provisional: true, scenario: p.scenario });
+          }
+        }
+        return rows.length > 0 && (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+          padding: '6px 8px', marginBottom: '10px' }}>
+          <div style={{ fontWeight: 700, padding: '4px 8px 2px' }}>Deployments</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+                <th style={cell}>deployment</th>
+                <th style={cell}>agent</th>
+                <th style={cell}>runbook</th>
+                <th style={cell}>last run</th>
+                <th style={cell}></th>
+                <th style={{ ...cell, textAlign: 'right' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(inst => {
+                const sb = findSb(inst.name);
+                const pend = findPending(inst.name);
+                // The annotation can be stale (a dead watcher never stamped
+              // the final state); the probe is the truth when it speaks.
+              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
+                const rb = inst.provisional
+                  ? runbooks.find(r => r.scenario === inst.scenario) || null
+                  : runbookFor(inst);
+                const receipt = inst.latestReceipt;
+                const scenario = inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '');
+                return (
+                  <tr key={inst.name} style={{ borderTop: '1px solid var(--border-color)' }}>
+                    <td style={cell}>
+                      {inst.provisional ? (
+                        <span style={{ fontWeight: 500 }}
+                          title="Provisioning — the deployment's directory appears on the branch after the prepare phase pushes (first run boots and clones, a few minutes)">⛭ {inst.name}</span>
+                      ) : (
+                        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                          style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+                          title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
+                      )}
+                    </td>
+                    <td style={cell}>
+                      {sb ? (
+                        <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                          title={`${sb.name} — tasks & logs`}>
+                          {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
+                          {running && runningChipFor(sb, pend)}
+                          {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                        </span>
+                      ) : (pend ? <Chip text={inst.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                    </td>
+                    <td style={cell}>
+                      {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The recipe this deployment came from">{rb.scenario} ↗</a>
+                        : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
+                    </td>
+                    <td style={cell}>{verdictBadge(receipt)}</td>
+                    <td style={cell}>
+                      {receipt && (
+                        <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
+                          title="Latest receipt — verdict, verify evidence, what is left running">receipt ↗</a>
+                      )}
+                    </td>
+                    <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {(() => {
+                        const v = ((receipt && receipt.verdict) || '').toUpperCase();
+                        const planned = v.startsWith('PLANNED');
+                        const dead = v.startsWith('TORN-DOWN') || v.startsWith('FAILED') || v.startsWith('BLOCKED');
+                        return (
+                          <>
+                            {planned ? (
+                              <button className="btn btn-sm" disabled={running || !!pend}
+                                title="Execute the reviewed plan — runs the pushed deploy.sh"
+                                onClick={() => kickoff('deploy', scenario, inst.name)}>▶ Deploy</button>
+                            ) : (
+                              <button className="btn btn-sm" disabled={running || !!pend}
+                                title="Plan and deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
+                                onClick={() => kickoff('run', scenario, inst.name)}>▶ Re-deploy</button>
+                            )}
+                            <button className="btn btn-sm" disabled={running || !!pend} style={{ marginLeft: '6px' }}
+                              title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
+                              onClick={() => kickoff('teardown', scenario, inst.name)}>Tear down</button>
+                            {dead && !running && !pend && (
+                              <button className="btn btn-sm" style={{ marginLeft: '6px' }}
+                                title="Remove this retired instance's records from the branch (receipts included) — never touches cloud resources"
+                                onClick={() => {
+                                  fetch(`/api/board/${boardName}/runbook/instance/${inst.name}`, { method: 'DELETE' })
+                                    .then(() => setTimeout(load, 1500));
+                                }}>✕ Remove</button>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        );
+      })()}
+
+    </div>
+  );
+}
+
 // ExplorePanel: the board's understanding surface — docs from the
 // member's fork branch (git is the record; renders with the sandbox
 // paused or gone), kickoff buttons for the three exploration kinds, and
