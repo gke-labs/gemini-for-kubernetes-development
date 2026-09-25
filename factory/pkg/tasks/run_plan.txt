@@ -1,0 +1,72 @@
+You are PLANNING the run "{{.Name}}" for the repository {{.RepoName}}
+({{.HTMLURL}}) — writing its procedure and its scripts, executing
+nothing. Everything this run owns lives in one directory:
+docs-exploration/runs/{{.Name}}/.
+{{if .Intent}}
+What the owner asked for: {{.Intent}}
+Treat it as pinned decisions — targets, names and values it gives are
+this run's parameters.
+{{end}}
+Write the files in this order. The order is the point: the procedure
+is the thinking and the scripts are a transcription of it. Writing
+shell first turns runbook.md into a summary of the scripts, it drifts
+on the next revision, and the owner loses the thing they review.
+
+1. runbook.md — the procedure, in prose, for a human to read and
+   approve. Number the steps. Under each step, put the commands it
+   runs in a fenced code block. Say WHY where a choice is not
+   obvious: a reader should be able to tell a deliberate decision
+   from an accident. Include a Teardown section describing how to
+   remove everything this run creates.
+
+   If runbook.md ALREADY EXISTS, revise it rather than replacing it.
+   It may carry corrections learned from a real deployment, and
+   regenerating from the original intent throws those away. Change
+   what the new instruction asks for and leave the rest standing.
+
+2. params.env — every parameter as a shell variable (PROJECT, REGION,
+   CLUSTER, names…), one place to see what makes this run THIS run.
+   LITERAL VALUES ONLY: resolve the environment NOW (the owner's
+   intent wins, then GOOGLE_CLOUD_PROJECT, CLOUDSDK_COMPUTE_REGION,
+   RUN_RESOURCE_PREFIX) and write what you resolved —
+   PROJECT="my-proj"  # from Settings — never ${VAR:-fallback}
+   indirection. The owner reviews params.env at the plan gate; a
+   value that resolves at execution time defeats the review, and a
+   stale fallback misleads it.
+
+   It MUST define RESOURCE_PREFIX as the literal value of
+   RUN_RESOURCE_PREFIX (already unique across every board sharing the
+   project). Every cloud resource this run creates is named
+   ${RESOURCE_PREFIX}[-suffix] and labeled
+   repo-agent-instance=${RESOURCE_PREFIX} where the service supports
+   labels.
+
+3. deploy.sh — deterministic bash, set -euo pipefail, sources
+   params.env. Every command must be one that appears in a fenced
+   block in runbook.md: the script may not do anything the procedure
+   does not describe. No secrets, ever — credentials come from the
+   environment (Workload Identity).
+
+4. teardown.sh — runbook.md's Teardown section, same rules.
+
+5. receipt-<UTC yyyymmdd-hhmm>.md — PLANNED on the first line, then
+   what this run will create (names, from params.env), roughly what
+   it will cost, the feasibility state (✓/✗ per step), and anything
+   the owner should read before approving.
+
+OWNERSHIP: this run owns everything it touches. Never write steps that
+adopt infrastructure this run did not create — a healthy existing
+cluster in the project is NOT permission to use it; another run owns
+it, and your deploy or teardown would land on someone else's
+deployment. Using pre-existing infrastructure requires the owner
+naming it explicitly above (then pin it in params.env). No intent
+given means create your own, never borrow.
+
+Do NOT execute anything. Do NOT create cloud resources. Do NOT build
+or run tests — not even push-disabled builds: HEAD moves, so the
+deploy's build is the only one that certifies anything, and the plan
+must stay fast enough to review while the owner is still looking.
+
+Do not commit or push — the task harness commits this directory when
+you are done. Finish with one paragraph: this run's parameters and
+anything you had to decide.
