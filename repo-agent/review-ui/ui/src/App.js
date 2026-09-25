@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Settings from './Settings';
-import Shadow from './v2/Shadow';
 import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
@@ -43,9 +42,7 @@ function App() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  // #/v2 is deep-linkable on purpose: comparing v1 and v2 means two
-  // browser tabs on the same repo, not a toggle.
-  const [view, setView] = useState(window.location.hash.startsWith('#/v2') ? 'v2' : 'work'); // 'work', 'overseer', 'usage', 'settings', 'v2'
+  const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
@@ -289,7 +286,6 @@ function App() {
                   { label: 'Work', run: () => setView('work') },
                   ...(isAdmin ? [{ label: 'Overseer', run: () => setView('overseer') }] : []),
                   { label: 'Usage', run: () => setView('usage') },
-                  { label: 'v2 preview', run: () => { window.location.hash = '#/v2'; setView('v2'); } },
                   { label: 'Feedback', run: handleFeedbackClick },
                   { label: 'Settings', run: () => setView('settings') },
                 ].map(mi => (
@@ -331,7 +327,6 @@ function App() {
       {view === 'overseer' && <Overseer onBack={() => setView('work')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
       {view === 'usage' && <TokenUsage onBack={() => setView('work')} />}
       {view === 'settings' && <Settings onBack={() => setView('work')} />}
-      {view === 'v2' && <Shadow onBack={() => { window.location.hash = ''; setView('work'); }} />}
 
       {feedbackModalOpen && (
         <div className="modal-overlay" onClick={() => setFeedbackModalOpen(false)}>
