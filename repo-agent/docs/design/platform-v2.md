@@ -49,6 +49,11 @@ draft-runbook, deploy, teardown — no exceptions.
 
 ## The model: four nouns
 
+These four describe the *work*. The **worker** — sandbox, task,
+terminal, session — is a second axis with its own surface and its own
+endpoints; see *The second axis: the worker*. The two meet only at a
+Run, which records which worker ran it.
+
 **Repo** — the unit of subscription and identity: source URL, member
 token, engine, limits, settings. (Today's RepoBoard, renamed for what
 users call it.)
@@ -365,6 +370,55 @@ handling must refuse.
 
 The corollary is that the object must stay small: **logs and receipts
 never live in it**, only pointers to where they do.
+
+### The second axis: the worker
+
+Four nouns describe *work*. They do not describe the **worker**, and a
+third of what people actually do with this system is inspect one.
+
+| Axis | Nouns | The question it answers |
+|---|---|---|
+| work | Repo, Target, Recipe, Run | what should happen, and what did |
+| worker | Sandbox, task, terminal, session | where it ran, and what is going on in there *now* |
+
+The worker axis already exists in v1 and has its own endpoints, which
+notably mention none of the four nouns: `/api/sandbox-card/:name/...`,
+`/api/terminal/:namespace/:name`. It carries the web terminal, the task
+history with log tails, wake/pause, delete-for-wedge-recovery, and
+Continue session — resuming the agent's own conversation.
+
+Leaving it unnamed had two consequences worth recording, because both
+showed up the first time v2 was used in anger:
+
+- The v2 page has no worker surface at all, so the terminal, the task
+  history and Continue session were simply unreachable — not removed by
+  a decision, just never given a home.
+- A run row's link to its logs was written as a route,
+  `/sandboxes/<name>`, which does not exist. The sandbox card is a
+  component opened by state, and there is no URL for a worker anywhere
+  in the product.
+
+Two things follow.
+
+**The axes join at the Run.** `status.sandbox` and `status.taskDir` are
+the only bridge: a work item says which worker ran it and where that
+worker wrote the record. That join is what makes "show me the logs for
+this run" answerable, and it is the reason those two fields exist.
+
+**The worker surface is code, not page data.** A terminal is a dense,
+stateful, bidirectional component; an enum of view types will never
+describe one. This is the escape hatch the declarative model needs and
+should state plainly: *a section may name a rich component that code
+owns entirely.* The rule that keeps it from becoming a CMS is unchanged
+— data chooses among code-owned components, and never describes layout
+— and the cost of each such component is a named code change, which is
+an honest signal. Two exist today: the sandbox card and (still to come)
+the exploration composer. A third should prompt the question of whether
+the declarative model is carrying its weight.
+
+The concrete gap: a **worker section** in the page spec, so Continue
+session and wedge recovery have somewhere to live that is not bolted
+onto the activity log.
 
 ## What we keep (hard-won invariants)
 
