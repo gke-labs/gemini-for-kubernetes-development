@@ -1,7 +1,36 @@
 # Platform v2: recipes, runs, and a UI that materializes
 
-Status: proposal · supersedes nothing yet · companion to
+Status: **explored, not being implemented** (2026-09-25) · companion to
 [repoboard.md](repoboard.md) and [factory-cli-migration.md](factory-cli-migration.md)
+
+> **Why this was set down.** The order was wrong. Every generic surface
+> here depends on recipes being data, and recipes cannot be data until
+> factory grows one entry point — `factory run <recipe> --target <t>
+> --input k=v` — that takes its prompt from the repo instead of its own
+> binary. Without it, `executors` can only be a table of Go functions,
+> and a page has nothing to materialize *from*. So the work moves to
+> the factory command first, and the UI question is reopened after.
+>
+> Two findings from the survey below are worth acting on regardless,
+> and neither needs this design:
+>
+> - The **GitHub-reactive inbox** is the most differentiated thing in
+>   the product. No tool surveyed offers a groomable cross-source queue
+>   of issues + review requests + CI failures before a session exists.
+> - **Typed workflows** — declared inputs, a rendered prompt, a
+>   structured output, and typed actions — are a real gap, not a
+>   reinvention. The nearest shipping thing is GitHub Agentic Workflows'
+>   `import-schema` plus `safe-outputs`, whose security model (agent
+>   runs read-only, emits structured requests, a separate privileged
+>   job validates and applies them) is the pattern to copy.
+>
+> What was built and then removed: #1590 (shadow read) landed and is
+> reverted in #1601; #1592 (the Run object, one reconciler, retention,
+> durable task observation) was closed unmerged and survives on the
+> `v2-run-explore` branch. Retained here for the analysis — especially
+> *Two loops*, *What the Run object holds*, and *The second axis: the
+> worker*, which describe the system as it actually is rather than as
+> this proposal wished it were.
 
 ## Why
 
