@@ -150,17 +150,6 @@ type RepoBoardSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="repoURL is immutable"
 	RepoURL string `json:"repoURL"`
 
-	// Platform selects which control plane drives this repo. Exactly
-	// one may: v1 is the per-verb reconciler and its claim mailbox, v2
-	// is the generic Run pipeline (docs/design/platform-v2.md). Two
-	// reconcilers on one repo means duplicate runs, so the flip is a
-	// field rather than a feature flag — visible, per repo, and
-	// reversible with kubectl.
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum=v1;v2
-	// +kubebuilder:default=v1
-	Platform string `json:"platform,omitempty"`
-
 	// +kubebuilder:validation:Optional
 	View ViewSpec `json:"view,omitempty"`
 

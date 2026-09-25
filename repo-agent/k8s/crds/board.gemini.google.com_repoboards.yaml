@@ -77,12 +77,6 @@ spec:
                     default: 5
                     type: integer
                 type: object
-              platform:
-                default: v1
-                enum:
-                - v1
-                - v2
-                type: string
               policy:
                 properties:
                   autoIterate:
