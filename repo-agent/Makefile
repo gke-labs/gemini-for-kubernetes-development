@@ -178,6 +178,10 @@ delete-instance:
 # ---------------------------------------------------------------------
 DEV_USER ?= $(shell kubectl config view --minify -o jsonpath='{..namespace}')
 DEV_PORT ?= 8080
+# The controller's own listeners, kept clear of DEV_PORT so the API and
+# the controller can run side by side — which the dev loop assumes.
+DEV_METRICS_PORT ?= 8090
+DEV_PROBE_PORT ?= 8091
 
 .PHONY: dev-api
 dev-api:
@@ -193,7 +197,10 @@ dev-controller:
 	@echo "scaling in-cluster controller to 0 (restored on exit)…"
 	kubectl -n repo-agent-system scale statefulset repowatch-controller --replicas=0
 	mkdir -p bin && go build -o bin/factory ../factory
-	- PATH=$(PWD)/bin:$$PATH go run ./cmd/repowatch-controller
+	@# The metrics server defaults to :8080, which is where dev-api
+	@# already is. Move it rather than making the two loops exclusive.
+	- PATH=$(PWD)/bin:$$PATH go run ./cmd/repowatch-controller \
+		--metrics-bind-address=:$(DEV_METRICS_PORT) --health-probe-bind-address=:$(DEV_PROBE_PORT)
 	@echo "restoring in-cluster controller…"
 	kubectl -n repo-agent-system scale statefulset repowatch-controller --replicas=1
 
