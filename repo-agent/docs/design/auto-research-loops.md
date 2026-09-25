@@ -1,6 +1,31 @@
 # Auto-research loops: Study and Trial
 
-Status: proposal · extends [platform-v2.md](platform-v2.md)
+Status: **deferred, to be re-based on v1** (2026-09-25) · written as
+an extension of [platform-v2.md](platform-v2.md), which was set down
+
+> **The idea stands; the substrate changes.** This was drafted on top
+> of the v2 nouns — recipes as data, Run objects, a generic executor —
+> and none of those are coming. Picking it up means re-expressing it on
+> what v1 actually has: claims, per-target sandboxes, and receipts in
+> git.
+>
+> Most of the design survives that move intact, because it was never
+> really about the plumbing: the objective extracted by code rather
+> than asked of the model, the hard budget, the ledger committed to
+> git, and the Goodhart separation that forbids the optimizer from
+> touching the measurer. Isolation maps cleanly too — `namespace |
+> cluster | project` is a sandbox-placement question either way.
+>
+> What has to be rewritten is anything phrased in terms of Recipe and
+> Run, and the second search space (optimizing the recipe itself),
+> which presumes recipes are data.
+>
+> One survey finding worth keeping in view: running N attempts at one
+> task is a recognised feature elsewhere — Vibe Kanban models it as
+> task attempts, and uzi, Cursor, Codex and Jules all ship a form of
+> it — but **nobody automates choosing the winner**; Cursor goes
+> furthest and merely suggests. So the novel part here was never the
+> fan-out, it is the code-extracted objective.
 
 ## The ask
 
