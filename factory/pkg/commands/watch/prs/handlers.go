@@ -23,6 +23,10 @@ import (
 // futile repetition rather than on the pull request as a whole.
 const maxInvestigations = 3
 
+// maxCommentRetries is how many times a failed address-comments task for the
+// same commit SHA is retried before the watcher stops requeueing it.
+const maxCommentRetries = 3
+
 // investigationRetryAfter is how long after an investigation the same revision
 // becomes worth investigating again.
 //
@@ -241,11 +245,32 @@ func (s *Scanner) handlePRInvestigate(
 	return true
 }
 
-// handlePRComments queues a task to address the outstanding review feedback.
+// shouldRetryComments reports whether the previous address-comments task
+// failed against the current head commit and needs retry handling (either
+// queueing a retry, or applying the stop label once maxCommentRetries is
+// reached).
+func (s *Scanner) shouldRetryComments(num int, headSHA string) bool {
+	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+	if s.queue.TaskExists(filename) {
+		return false
+	}
+	return s.hasFailedCommentsOnHead(num, headSHA)
+}
+
+// hasFailedCommentsOnHead reports whether the last processed address-comments
+// task for this pull request failed against the current head commit.
+func (s *Scanner) hasFailedCommentsOnHead(num int, headSHA string) bool {
+	filename := fmt.Sprintf("task-pr-%d-comments.yaml", num)
+	last := s.queue.GetProcessedTask(filename)
+	return last != nil && last.Status == api.StatusFailed && last.CommitSHA == headSHA
+}
+
+// handlePRComments queues a task to address the outstanding review feedback,
+// or retries a previous address-comments task that failed on the same commit.
 // It reports whether the phase completed cleanly; a false return means a
 // sandbox probe or enqueue failed and the pull request must be looked at again
 // next cycle.
-func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis) bool {
+func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAnalysis prCommentAnalysis, comments []*githubv39.IssueComment) bool {
 	if os.Getenv("DRY_RUN") == "true" {
 		return true
 	}
@@ -255,6 +280,63 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 
 	if s.queue.TaskExists(filename) {
 		return true
+	}
+
+	var eventTime time.Time
+	var notes string
+	retryCount := 0
+
+	if commentAnalysis.hasNewComments {
+		commitInfo := ""
+		if !pc.lastCommitTime.IsZero() {
+			commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339))
+		}
+		authorStr := ""
+		if commentAnalysis.oldestCommentAuthor != "" {
+			authorStr = fmt.Sprintf(" by %s", commentAnalysis.oldestCommentAuthor)
+		}
+		cType := commentAnalysis.oldestCommentType
+		if cType == "" {
+			cType = "comment"
+		}
+		eventTime = commentAnalysis.oldestCommentTime
+		notes = fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
+	} else {
+		last := s.queue.GetProcessedTask(filename)
+		if last != nil && last.RetryCount >= maxCommentRetries {
+			stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+			if !hasCommentPauseAfter(comments, last.CompletedAt) {
+				if !s.cfg.DryRun {
+					if err := s.gh.AddLabels(ctx, num, []string{stopLabel}); err != nil {
+						klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
+						return false
+					}
+					s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated feedback addressing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentRetries, stopLabel, stopLabel))
+				}
+				klog.Infof("Skipping PR #%d address-comments retry because it has reached the maximum retry limit (%d retries) for SHA %s and applying stop label '%s'.", num, maxCommentRetries, pc.headSHA, stopLabel)
+				return true
+			}
+			// A pause comment was already posted after the last failure, and the
+			// stop label is no longer present on the PR: a human removed the label
+			// to request another attempt. Reset retryCount to 0.
+			retryCount = 0
+			eventTime = last.TriggerEventTime
+			if eventTime.IsZero() {
+				eventTime = pc.lastCommitTime
+			}
+			notes = fmt.Sprintf("Retrying failed address-comments task after '%s' label removal on commit %s", stopLabel, pc.shortSHA)
+		} else {
+			if last != nil {
+				retryCount = last.RetryCount + 1
+				eventTime = last.TriggerEventTime
+			} else {
+				retryCount = 1
+			}
+			if eventTime.IsZero() {
+				eventTime = pc.lastCommitTime
+			}
+			notes = fmt.Sprintf("Retrying failed address-comments task (retry %d/%d) on commit %s", retryCount, maxCommentRetries, pc.shortSHA)
+		}
 	}
 
 	sandboxName := s.sandboxes.ResolveName(ctx, api.TypePRComments, num)
@@ -267,20 +349,6 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		return false
 	}
 
-	commitInfo := ""
-	if !pc.lastCommitTime.IsZero() {
-		commitInfo = fmt.Sprintf(" since last commit %s (committer date %s)", pc.shortSHA, pc.lastCommitTime.Format(time.RFC3339))
-	}
-	authorStr := ""
-	if commentAnalysis.oldestCommentAuthor != "" {
-		authorStr = fmt.Sprintf(" by %s", commentAnalysis.oldestCommentAuthor)
-	}
-	cType := commentAnalysis.oldestCommentType
-	if cType == "" {
-		cType = "comment"
-	}
-	notes := fmt.Sprintf("Oldest unaddressed %s%s added at %s (ID %d)%s", cType, authorStr, commentAnalysis.oldestCommentTime.Format(time.RFC3339), commentAnalysis.oldestCommentID, commitInfo)
-
 	task := s.newTask(taskOptions{
 		Type:             api.TypePRComments,
 		PR:               pc.pr,
@@ -288,7 +356,8 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		Phase:            api.PhaseComments,
 		Assignee:         pc.taskAssignee,
 		CommitSHA:        pc.headSHA,
-		TriggerEventTime: commentAnalysis.oldestCommentTime,
+		RetryCount:       retryCount,
+		TriggerEventTime: eventTime,
 		TriggerReason:    api.TriggerReasonPRCommentsAdded,
 		TriggerNotes:     notes,
 	})
@@ -298,6 +367,10 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		return true
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
+	if err := s.queue.Enqueue(filename, task); err != nil {
+		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
+		return false
+	}
 	// The acknowledgement reactions are what tell the next cycle these comments
 	// are already spoken for, and what tell the commenter they were seen.
 	for _, cid := range commentAnalysis.unackCommentIDs {
@@ -306,13 +379,8 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	for _, cid := range commentAnalysis.unackPRCommentIDs {
 		s.reactToReviewComment(ctx, cid, conventions.ReactionAcknowledged)
 	}
-	state.lastCommentAddressedTime = time.Now()
-	state.lastCommentAddressedSHA = pc.headSHA
+	state.lastCommentAddressedTime = task.EnqueuedAt
 	s.state.set(num, state)
-	if err := s.queue.Enqueue(filename, task); err != nil {
-		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
-		return false
-	}
 	return true
 }
 

@@ -443,7 +443,9 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	var checkAnalysis prCheckAnalysis
 	var canReview bool
 
-	commentAnalysis := s.evaluateComments(ctx, num, pr, history, history.lastCommitTime, state.lastCommentAddressedTime, state.lastCommentAddressedSHA, headSHA)
+	commentAnalysis := s.evaluateComments(ctx, pr, history, history.lastCommitTime, state.lastCommentAddressedTime)
+	shouldAddressComments := commentAnalysis.hasNewComments || s.shouldRetryComments(num, headSHA)
+	hasUnresolvedComments := shouldAddressComments || s.hasFailedCommentsOnHead(num, headSHA)
 
 	if !isConflicting {
 		checkAnalysis, err = s.evaluateChecks(ctx, headSHA)
@@ -455,7 +457,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
-		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
+		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !hasUnresolvedComments && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
 			canReview = !hasBotReviewAfterLastCommit(history.reviews, history.lastCommitTime, headSHA, s.cfg.GitHubLogin, s.cfg.AllowlistedBots)
 		}
 	}
@@ -490,8 +492,8 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// Top level case statement for handling each type of PR task
 	completed := true
 	switch {
-	case commentAnalysis.hasNewComments:
-		completed = s.handlePRComments(ctx, pc, commentAnalysis)
+	case shouldAddressComments:
+		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments)
 
 	case isConflicting:
 		// Returns without recording the evaluation, so a conflicted pull
@@ -508,7 +510,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
 
-	s.reconcileReadiness(ctx, pc, checkAnalysis, commentAnalysis, history, isConflicting, assignedBot)
+	s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
 	if !completed {
 		return
 	}
@@ -546,7 +548,7 @@ func (s *Scanner) reconcileReadiness(
 	ctx context.Context,
 	pc *prContext,
 	checkAnalysis prCheckAnalysis,
-	commentAnalysis prCommentAnalysis,
+	hasPendingComments bool,
 	history *prHistory,
 	isConflicting bool,
 	assignedBot string,
@@ -569,7 +571,7 @@ func (s *Scanner) reconcileReadiness(
 		mergeableSatisfied &&
 		!checkAnalysis.hasFailure &&
 		!checkAnalysis.hasPending &&
-		!commentAnalysis.hasNewComments &&
+		!hasPendingComments &&
 		!s.queue.HasActivePRTask(num) &&
 		reviewSatisfied &&
 		!conventions.HasStopLabel(pc.prIssue.Labels, s.cfg.TriggerLabel) &&

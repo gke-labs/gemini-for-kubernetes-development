@@ -29,9 +29,6 @@ func TestFoldProcessedPRTask(t *testing.T) {
 	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
 		t.Errorf("expected lastCommentAddressedTime to be %v, got %v", expectedCommentTime, state.lastCommentAddressedTime)
 	}
-	if state.lastCommentAddressedSHA != "csha789" {
-		t.Errorf("expected lastCommentAddressedSHA to be 'csha789', got '%s'", state.lastCommentAddressedSHA)
-	}
 
 	expectedInvestigateTime, _ := time.Parse(time.RFC3339, "2026-07-23T13:00:00Z")
 	state = foldProcessedPRTask(&api.QueueTask{
@@ -59,16 +56,32 @@ func TestFoldProcessedPRTask(t *testing.T) {
 		t.Errorf("expected lastIteratedSHA to be 'efgh456', got '%s'", state.lastIteratedSHA)
 	}
 
-	// A failed task did not actually do the work, so folding it in would
-	// suppress the retry.
-	failedAt, _ := time.Parse(time.RFC3339, "2026-07-23T20:00:00Z")
+	// A failed comments task is still folded in using its EnqueuedAt time so
+	// comments posted while the task was running are not skipped on restart.
+	enqueuedCommentsAt, _ := time.Parse(time.RFC3339, "2026-07-23T18:30:00Z")
+	failedCommentsAt, _ := time.Parse(time.RFC3339, "2026-07-23T19:00:00Z")
 	state = foldProcessedPRTask(&api.QueueTask{
 		Type:        api.TypePRComments,
 		Status:      api.StatusFailed,
-		CompletedAt: failedAt,
+		CommitSHA:   "csha999",
+		EnqueuedAt:  enqueuedCommentsAt,
+		CompletedAt: failedCommentsAt,
+		RetryCount:  2,
 	}, "task-pr-123-comments", state)
-	if !state.lastCommentAddressedTime.Equal(expectedCommentTime) {
-		t.Errorf("expected lastCommentAddressedTime to remain unchanged when task is Failed, got %v", state.lastCommentAddressedTime)
+	if !state.lastCommentAddressedTime.Equal(enqueuedCommentsAt) {
+		t.Errorf("expected lastCommentAddressedTime to be EnqueuedAt %v when comments task Failed, got %v", enqueuedCommentsAt, state.lastCommentAddressedTime)
+	}
+
+	// A failed non-comments task did not actually do the work, so folding it in
+	// would suppress the retry.
+	failedAt, _ := time.Parse(time.RFC3339, "2026-07-23T20:00:00Z")
+	state = foldProcessedPRTask(&api.QueueTask{
+		Type:        api.TypePRInvestigate,
+		Status:      api.StatusFailed,
+		CompletedAt: failedAt,
+	}, "task-pr-123-investigate", state)
+	if !state.lastInvestigatedTime.Equal(expectedInvestigateTime) {
+		t.Errorf("expected lastInvestigatedTime to remain unchanged when task is Failed, got %v", state.lastInvestigatedTime)
 	}
 }
 
@@ -97,8 +110,8 @@ func TestProcessedPRStates(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected pr 200 in the recovered state")
 	}
-	if state.lastCommentAddressedSHA != "sha200" {
-		t.Errorf("expected lastCommentAddressedSHA 'sha200', got %q", state.lastCommentAddressedSHA)
+	if !state.lastCommentAddressedTime.Equal(at("2026-08-01T11:00:00Z")) {
+		t.Errorf("expected lastCommentAddressedTime '2026-08-01T11:00:00Z', got %v", state.lastCommentAddressedTime)
 	}
 	if state.lastInvestigatedSHA != "sha-inv" {
 		t.Errorf("expected lastInvestigatedSHA 'sha-inv', got %q", state.lastInvestigatedSHA)
