@@ -6,7 +6,6 @@ import (
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 )
@@ -26,30 +25,21 @@ type prCommentAnalysis struct {
 	oldestCommentID     int64
 }
 
-// evaluateComments decides whether a pull request has feedback still waiting on
-// the agent.
+// evaluateComments decides whether a pull request has new feedback from a human
+// or reviewbot since the last commit and the last address-comments task.
 //
-// A comment counts as outstanding only if it post-dates all three of: the last
-// commit (a push is taken as the answer to everything said before it), the last
-// address-comments task (whose work is not on GitHub yet), and the last bot
-// reply (which already answered it in the thread). Any one of those being newer
-// means the feedback has been dealt with.
+// A comment counts as outstanding only if it post-dates both the last commit
+// (a push is taken as the answer to everything said before it) and the last
+// address-comments task.
 //
 // Reactions are the second gate. What the emoji on a comment mean, and which
 // of them outrank the others, is conventions.CommentState's business; this
 // function only asks whether the comment still needs attention.
-//
-// Human feedback always wins. Bot review feedback is held back when an
-// address-comments task already ran against this exact commit, because the
-// agent looking at the same review and producing no commit means it judged
-// there was nothing to change - running it again would loop forever.
 func (s *Scanner) evaluateComments(
 	ctx context.Context,
-	num int,
 	pr *githubv39.PullRequest,
 	history *prHistory,
 	lastCommitTime, lastCommentAddressedTime time.Time,
-	lastCommentAddressedSHA, headSHA string,
 ) prCommentAnalysis {
 	var analysis prCommentAnalysis
 
@@ -57,23 +47,6 @@ func (s *Scanner) evaluateComments(
 	reviews := history.reviews
 	revCommentsMap := history.revCommentsMap
 	bots := s.cfg.AllowlistedBots
-
-	// Find the latest timestamp of any reply made by an allowlisted bot user
-	// (excluding reviewer bots, whose reviews are feedback rather than replies).
-	var latestBotReplyTime time.Time
-	for _, c := range comments {
-		if !conventions.IsReviewerBot(c.GetUser(), s.cfg.ReviewerLogins) && conventions.IsBotReply(c.GetUser(), s.cfg.GitHubLogin, bots) && c.GetCreatedAt().After(latestBotReplyTime) {
-			latestBotReplyTime = c.GetCreatedAt()
-		}
-	}
-	for _, r := range reviews {
-		if !conventions.IsReviewerBot(r.GetUser(), s.cfg.ReviewerLogins) && conventions.IsBotReply(r.GetUser(), s.cfg.GitHubLogin, bots) && r.GetSubmittedAt().After(latestBotReplyTime) {
-			latestBotReplyTime = r.GetSubmittedAt()
-		}
-	}
-
-	hasNewHumanComments := false
-	hasNewBotReviews := false
 
 	updateOldestComment := func(t time.Time, author string, cType string, id int64) {
 		if !t.IsZero() && (analysis.oldestCommentTime.IsZero() || t.Before(analysis.oldestCommentTime)) {
@@ -96,15 +69,11 @@ func (s *Scanner) evaluateComments(
 		if conventions.HasIgnorePrefix(c.GetBody(), s.cfg.TriggerLabel) {
 			continue
 		}
-		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) && c.GetCreatedAt().After(latestBotReplyTime) {
+		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
 			if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
 				continue
 			}
-			if isReviewer {
-				hasNewBotReviews = true
-			} else {
-				hasNewHumanComments = true
-			}
+			analysis.hasNewComments = true
 			analysis.unackCommentIDs = append(analysis.unackCommentIDs, c.GetID())
 			author := ""
 			if c.GetUser() != nil {
@@ -118,23 +87,16 @@ func (s *Scanner) evaluateComments(
 	for _, r := range reviews {
 		isReviewer := conventions.IsReviewerBot(r.GetUser(), s.cfg.ReviewerLogins)
 		if !isReviewer && conventions.ShouldIgnoreUser(r.GetUser(), s.cfg.GitHubLogin, bots) {
-			if r.GetSubmittedAt().After(latestBotReplyTime) {
-				latestBotReplyTime = r.GetSubmittedAt()
-			}
 			continue
 		}
 		if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 			continue
 		}
-		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) && r.GetSubmittedAt().After(latestBotReplyTime) {
+		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) {
 			if conventions.HasIgnorePrefix(r.GetBody(), s.cfg.TriggerLabel) {
 				continue
 			}
-			if isReviewer {
-				hasNewBotReviews = true
-			} else {
-				hasNewHumanComments = true
-			}
+			analysis.hasNewComments = true
 			// A review with an empty body carries no instruction of its own -
 			// its inline comments below are the feedback.
 			if strings.TrimSpace(r.GetBody()) != "" {
@@ -150,23 +112,16 @@ func (s *Scanner) evaluateComments(
 		for _, rc := range revComments {
 			isInlineReviewer := conventions.IsReviewerBot(rc.GetUser(), s.cfg.ReviewerLogins)
 			if !isInlineReviewer && conventions.ShouldIgnoreUser(rc.GetUser(), s.cfg.GitHubLogin, bots) {
-				if rc.GetCreatedAt().After(latestBotReplyTime) {
-					latestBotReplyTime = rc.GetCreatedAt()
-				}
 				continue
 			}
 			if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
 				continue
 			}
-			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) && rc.GetCreatedAt().After(latestBotReplyTime) {
+			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) {
 				if conventions.HasIgnorePrefix(rc.GetBody(), s.cfg.TriggerLabel) {
 					continue
 				}
-				if isInlineReviewer {
-					hasNewBotReviews = true
-				} else {
-					hasNewHumanComments = true
-				}
+				analysis.hasNewComments = true
 				analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
 				author := ""
 				if rc.GetUser() != nil {
@@ -174,16 +129,6 @@ func (s *Scanner) evaluateComments(
 				}
 				updateOldestComment(rc.GetCreatedAt(), author, "inline review comment", rc.GetID())
 			}
-		}
-	}
-
-	if hasNewHumanComments {
-		analysis.hasNewComments = true
-	} else if hasNewBotReviews {
-		if lastCommentAddressedSHA != "" && lastCommentAddressedSHA == headSHA {
-			klog.Infof("Skipping bot review feedback on PR #%d because an address-comments task already ran against SHA %s without resulting in a commit.", num, headSHA)
-		} else {
-			analysis.hasNewComments = true
 		}
 	}
 
@@ -244,4 +189,15 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 		}
 	}
 	return investigationCount
+}
+
+// hasCommentPauseAfter reports whether the watcher has posted a comment pausing
+// automated feedback addressing since the given timestamp.
+func hasCommentPauseAfter(comments []*githubv39.IssueComment, after time.Time) bool {
+	for _, c := range comments {
+		if strings.Contains(c.GetBody(), "pausing automated feedback addressing") && c.GetCreatedAt().After(after) {
+			return true
+		}
+	}
+	return false
 }

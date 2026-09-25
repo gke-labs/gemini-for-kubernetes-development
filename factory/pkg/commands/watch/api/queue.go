@@ -107,6 +107,7 @@ type QueueTask struct {
 	AgentFile    string     `yaml:"agentFile,omitempty"` // For chore tasks
 	SessionID    string     `yaml:"sessionId,omitempty"` // For workflow sessions
 	CommitSHA    string     `yaml:"commitSHA,omitempty"`
+	RetryCount   int        `yaml:"retryCount,omitempty"`
 	Instructions []string   `yaml:"instructions,omitempty"`
 	// Recovered marks a task that startup recovery is moving back from processing to
 	// incoming, which is what allows Enqueue to overwrite a processing entry rather
