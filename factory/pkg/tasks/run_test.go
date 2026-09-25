@@ -97,3 +97,32 @@ func TestRunScriptParses(t *testing.T) {
 		t.Fatalf("run.sh does not parse: %v\n%s", err, out)
 	}
 }
+
+// Legacy deployments created by `factory runbook` live under
+// runbook-deployments/<instance>/. They are adopted lazily, at the
+// moment someone touches the run, rather than by a big-bang migration
+// of live infrastructure.
+func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		"adoptLegacyInstance",
+		"docs-exploration/runbook-deployments/${RUN_NAME}",
+		// --ignore-removal will not record the old path vanishing, so
+		// the removal has to be staged explicitly or the branch keeps
+		// both copies.
+		`git add -A "${legacy}"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("run.sh missing %q", want)
+		}
+	}
+	// A bare `[ … ] && return 0` aborts the whole script under set -e
+	// when the test fails.
+	if strings.Contains(s, `[ -d "${RUN_DIR}" ] && return 0`) {
+		t.Error("guard written as a bare && list; under set -e a false test kills the run")
+	}
+}

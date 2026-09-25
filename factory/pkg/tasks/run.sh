@@ -54,8 +54,44 @@ function ensureNotesBranch {
     # previous invocation was killed mid-write. Scoped to this run, so
     # nothing else in the worktree is touched.
     git checkout -f -- "${RUN_DIR}" 2>/dev/null || true
+    adoptLegacyInstance
     mkdir -p "${RUN_DIR}"
     popd > /dev/null
+}
+
+# adoptLegacyInstance migrates a deployment created by the older
+# `factory runbook` command, which kept artifacts under
+# runbook-deployments/<instance>/ and the procedure in a shared
+# runbooks/<scenario>.md.
+#
+# Lazily, and only for a run someone actually touches: a big-bang
+# migration of live deployments is a worse risk than a git mv at the
+# moment of use. The sandbox is already the same one — the naming is
+# unchanged — so the PVC, the cluster state and the teardown script
+# all come along.
+#
+# runbook.md is deliberately NOT synthesised from the old shared
+# runbook: that document describes the scenario, not what this
+# particular deployment actually did, and inventing prose about live
+# infrastructure is how a teardown ends up removing the wrong thing.
+# The first deploy or teardown of an adopted run reconciles one from
+# the scripts, which is the only honest source.
+function adoptLegacyInstance {
+    local legacy="docs-exploration/runbook-deployments/${RUN_NAME}"
+    # Written as an if rather than `[ … ] && return 0`: under set -e a
+    # failing test as a bare && list aborts the script.
+    if [ ! -d "${legacy}" ] || [ -d "${RUN_DIR}" ]; then
+        return 0
+    fi
+    echo "Adopting legacy deployment ${RUN_NAME} into ${RUN_DIR}..."
+    mkdir -p "$(dirname "${RUN_DIR}")"
+    if ! git mv "${legacy}" "${RUN_DIR}" 2>/dev/null; then
+        mv "${legacy}" "${RUN_DIR}"
+    fi
+    # The commit stages ${RUN_DIR} with --ignore-removal, which by
+    # design will not record the old path's disappearance. Stage that
+    # removal here, or the branch ends up carrying both copies.
+    git add -A "${legacy}" 2>/dev/null || true
 }
 
 # seedFromRun copies an existing run's procedure as the starting point.
