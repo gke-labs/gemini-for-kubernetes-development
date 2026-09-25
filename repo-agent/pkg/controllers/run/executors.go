@@ -42,6 +42,17 @@ var executors = map[string]executor{
 	"understand": runUnderstand,
 }
 
+// Ported reports whether a recipe can actually execute on v2 yet.
+//
+// The API asks so it can grey the verb out with a reason, instead of
+// accepting a filled-in form and refusing the Run a second later. This
+// table is the single source of that answer: a recipe cannot be
+// advertised as available and then found to have no executor.
+func Ported(recipe string) bool {
+	_, ok := executors[recipe]
+	return ok
+}
+
 func runUnderstand(e execContext) (launched, error) {
 	if e.Run.Spec.Target != "repo" {
 		return launched{}, fmt.Errorf("understand targets the repo, got %q", e.Run.Spec.Target)

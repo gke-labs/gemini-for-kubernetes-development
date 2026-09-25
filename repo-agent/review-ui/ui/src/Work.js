@@ -694,7 +694,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
 // SandboxCard: the half-screen overlay behind every sandbox chip — task
 // history (newest first) with expandable log tails and Follow, plus
 // wake/pause. Terminal and richer lifecycle land here later.
-function SandboxCard({ name, namespace, onClose }) {
+// Exported so platform v2 can reuse it. The terminal, the task history
+// and the log tails are a dense, stateful surface: the kind of thing a
+// declarative section names and code owns, rather than one a page spec
+// tries to describe.
+export function SandboxCard({ name, namespace, onClose }) {
   const [card, setCard] = useState(null);
   const [err, setErr] = useState('');
   const [openTask, setOpenTask] = useState('');

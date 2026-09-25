@@ -24,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	runctrl "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/run"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
@@ -150,9 +151,17 @@ var v2Recipes = []recipeDef{
 // otherwise, and carrying everything the renderer needs to draw more
 // than a bare button.
 func offer(r recipeDef) RecipeAvailable {
-	return RecipeAvailable{
+	a := RecipeAvailable{
 		Name: r.Name, Available: true, Summary: r.Summary, Inputs: r.Inputs,
 	}
+	// A verb with no executor is shown, greyed, with the reason. The
+	// alternative — which this replaced — was accepting a filled-in form
+	// and failing the Run a second later, which costs a gesture and
+	// leaves a tombstone for something that was never possible.
+	if !runctrl.Ported(r.Name) {
+		a.Available, a.Reason = false, "not ported to v2 yet"
+	}
+	return a
 }
 
 func recipesForKind(kind string) []recipeDef {
@@ -706,6 +715,16 @@ func (s *Server) createV2Run(c *gin.Context) {
 		return
 	}
 
+	// Refusing an unported recipe here means no Run object is created
+	// for work that cannot happen. Creating one and failing it costs a
+	// tombstone that outlives the click by a week, and reads in the
+	// Activity log as though the user's action broke.
+	if !runctrl.Ported(req.Recipe) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": req.Recipe + " is not ported to v2 yet"})
+		return
+	}
+
 	// Required inputs are enforced here, not only in the form. A recipe
 	// launched without its topic or its instance burns a sandbox to
 	// discover what the declaration already knew.
@@ -783,5 +802,8 @@ func (s *Server) getV2Repo(c *gin.Context) {
 		"repoURL": repoURL, "platform": platform, "engine": engineOrDefault(engine),
 		"branchURL": "https://github.com/" + path.Join(member, repo) + "/tree/exploration/notes",
 		"readOnly":  platform != "v2",
+		// The sandbox card is addressed by namespace and name, so a run
+		// row can open the terminal, the task history and the logs.
+		"namespace": board.GetNamespace(),
 	})
 }

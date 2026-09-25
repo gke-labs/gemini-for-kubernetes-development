@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
+// The sandbox card is code-owned and reused as-is: terminal, task
+// history, log tails and wake/pause are not expressible as page data.
+import { SandboxCard } from '../Work';
 
 // Platform v2, phase 0: shadow read.
 //
@@ -256,7 +259,7 @@ function ChipsView({ rows }) {
 // what v1 did with granule: fifty-six identical failures, each one a red
 // chip, and the reason ("403: write access not granted") only legible by
 // exec-ing into the pod.
-function LogView({ rows }) {
+function LogView({ rows, onOpenSandbox }) {
   if (!rows.length) return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>no runs recorded</div>;
   return (
     <div>
@@ -269,8 +272,12 @@ function LogView({ rows }) {
             <span style={{ color: 'var(--text-secondary)' }}>{(r.at || '').replace('T', ' ').replace(':00Z', '')}</span>
             <span style={{ flex: 1 }} />
             {r.url && <a href={r.url} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
-            {!r.url && r.sandbox && (
-              <a href={`/sandboxes/${r.sandbox}${r.taskDir ? `?task=${r.taskDir}` : ''}`}>logs ↗</a>
+            {r.sandbox && onOpenSandbox && (
+              // The sandbox card, not a URL: there is no route for one,
+              // and the terminal, task history and log tails already
+              // live in that component.
+              <button className="btn btn-sm btn-v2"
+                onClick={() => onOpenSandbox(r.sandbox)}>logs</button>
             )}
           </div>
           {r.message && r.message !== 'completed' && r.message !== 'launched' && (
@@ -289,7 +296,7 @@ const VIEWS = { inbox: InboxView, table: TableView, doclist: DocListView, chips:
 
 // ── section ──────────────────────────────────────────────────────────
 
-function Section({ repo, spec, recipes, readOnly, onRan }) {
+function Section({ repo, spec, recipes, readOnly, onRan, onOpenSandbox }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null);
@@ -373,7 +380,7 @@ function Section({ repo, spec, recipes, readOnly, onRan }) {
         <div style={{ color: 'var(--status-green, #28a745)' }}>{spec.empty}</div>
       ) : (
         <View rows={rows} columns={spec.columns} readOnly={readOnly} onRun={run}
-          busy={busy} />
+          busy={busy} onOpenSandbox={onOpenSandbox} />
       )}
     </div>
   );
@@ -385,6 +392,7 @@ export default function Shadow({ onBack }) {
   const [repos, setRepos] = useState([]);
   const [repo, setRepo] = useState('');
   const [info, setInfo] = useState(null);
+  const [cardSandbox, setCardSandbox] = useState('');
   const [page, setPage] = useState(null);
   const [recipes, setRecipes] = useState([]);
   // Starting a run should show up without a manual reload; remounting
@@ -440,8 +448,14 @@ export default function Shadow({ onBack }) {
       ) : (
         (page.sections || []).map((spec) => (
           <Section key={`${spec.id}:${tick}`} repo={repo} spec={spec} recipes={recipes}
-            readOnly={readOnly} onRan={() => setTimeout(() => setTick((n) => n + 1), 1500)} />
+            readOnly={readOnly} onOpenSandbox={setCardSandbox}
+            onRan={() => setTimeout(() => setTick((n) => n + 1), 1500)} />
         ))
+      )}
+
+      {cardSandbox && info && (
+        <SandboxCard name={cardSandbox} namespace={info.namespace}
+          onClose={() => setCardSandbox('')} />
       )}
 
       <div style={{ marginTop: '18px', paddingTop: '8px', borderTop: '1px dashed var(--border-color)',

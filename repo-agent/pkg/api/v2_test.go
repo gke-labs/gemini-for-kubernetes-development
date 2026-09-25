@@ -33,3 +33,37 @@ func TestSinceCutoff(t *testing.T) {
 		}
 	}
 }
+
+// A verb the platform cannot execute must be offered greyed out with a
+// reason, not offered plainly and refused after the user fills in a
+// form. The availability field exists for exactly this judgement.
+func TestUnportedRecipesAreOfferedUnavailable(t *testing.T) {
+	var ported, unported int
+	for _, r := range v2Recipes {
+		a := offer(r)
+		if a.Available {
+			ported++
+			continue
+		}
+		unported++
+		if a.Reason == "" {
+			t.Errorf("%s is unavailable with no reason — a disabled button must say why", r.Name)
+		}
+	}
+	if ported == 0 || unported == 0 {
+		t.Fatalf("ported=%d unported=%d; expected a mix while the migration is partway", ported, unported)
+	}
+}
+
+// Inputs must survive the trip to the row. Dropping them here is what
+// cost investigate its topic box.
+func TestOfferCarriesDeclaredInputs(t *testing.T) {
+	for _, r := range v2Recipes {
+		if len(r.Inputs) == 0 {
+			continue
+		}
+		if got := len(offer(r).Inputs); got != len(r.Inputs) {
+			t.Errorf("%s: offer carries %d inputs, recipe declares %d", r.Name, got, len(r.Inputs))
+		}
+	}
+}
