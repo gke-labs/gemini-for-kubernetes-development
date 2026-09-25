@@ -1,6 +1,10 @@
 package common
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -177,6 +181,7 @@ name: test-agent
 description: A test agent
 schedule: "0 * * * *"
 cooldown: 15m
+redirect: https://example.com/upstream.txt
 preconditionScript: |
   #!/bin/bash
   echo "precondition check"
@@ -202,11 +207,72 @@ You are a test assistant.
 	if def.Cooldown != "15m" {
 		t.Errorf("Cooldown = %q; want %q", def.Cooldown, "15m")
 	}
+	if def.Redirect != "https://example.com/upstream.txt" {
+		t.Errorf("Redirect = %q; want %q", def.Redirect, "https://example.com/upstream.txt")
+	}
 	expectedPrecondition := "#!/bin/bash\necho \"precondition check\"\nexit 0\n"
 	if def.PreconditionScript != expectedPrecondition {
 		t.Errorf("PreconditionScript = %q; want %q", def.PreconditionScript, expectedPrecondition)
 	}
 	if def.Prompt != "You are a test assistant." {
 		t.Errorf("Prompt = %q; want %q", def.Prompt, "You are a test assistant.")
+	}
+}
+
+func TestFetchWorkflowContentRedirect(t *testing.T) {
+	upstreamContent := `---
+name: checklist-for-kind
+mode: workflow
+cooldown: 2h
+---
+Upstream canonical prompt content.
+`
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/stub":
+			fmt.Fprintf(w, `---
+name: checklist-for-kind
+mode: workflow
+redirect: %s/upstream
+---
+Moved to upstream.
+`, srv.URL)
+		case "/upstream":
+			fmt.Fprint(w, upstreamContent)
+		case "/loop":
+			fmt.Fprintf(w, `---
+name: loop
+mode: workflow
+redirect: %s/loop
+---
+Looping.
+`, srv.URL)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	got, err := FetchWorkflowContent(ctx, nil, srv.URL+"/stub")
+	if err != nil {
+		t.Fatalf("FetchWorkflowContent(/stub) unexpected error: %v", err)
+	}
+	if string(got) != upstreamContent {
+		t.Errorf("FetchWorkflowContent(/stub) = %q; want %q", string(got), upstreamContent)
+	}
+
+	def, err := ParseAgent(got)
+	if err != nil {
+		t.Fatalf("ParseAgent failed: %v", err)
+	}
+	if def.Prompt != "Upstream canonical prompt content." || def.Cooldown != "2h" {
+		t.Errorf("parsed redirected agent = %+v; want upstream prompt and 2h cooldown", def)
+	}
+
+	if _, err := FetchWorkflowContent(ctx, nil, srv.URL+"/loop"); err == nil {
+		t.Errorf("FetchWorkflowContent(/loop) expected error on chained redirect, got nil")
 	}
 }
