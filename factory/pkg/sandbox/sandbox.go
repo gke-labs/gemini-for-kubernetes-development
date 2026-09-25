@@ -17,6 +17,48 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// terminating reports whether a sandbox is on its way out. Every
+// Ensure*Sandbox reuses an existing sandbox by name or by label, and a
+// sandbox with a deletion timestamp answers both lookups while being
+// incapable of running anything: its pod is going away and will not
+// come back. Returning one leaves the caller waiting for a pod that
+// will never be ready, which is an indefinite hang rather than a
+// failure — the same shape as the zombie process that once answered
+// kill -0.
+func terminating(sb *unstructured.Unstructured) bool {
+	return sb != nil && sb.GetDeletionTimestamp() != nil
+}
+
+// awaitSandboxGone waits for a terminating sandbox to finish leaving,
+// so the caller can create a fresh one under the same name. Deleting a
+// sandbox and immediately re-running the task that used it is an
+// ordinary thing to do, and it should work rather than collide.
+func awaitSandboxGone(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) error {
+	const (
+		timeout = 90 * time.Second
+		poll    = 2 * time.Second
+	)
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("waiting for terminating sandbox %s: %w", name, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("sandbox %s is still terminating after %s; retry once it is gone", name, timeout)
+		}
+		klog.Infof("sandbox %s is terminating; waiting for it to finish before recreating", name)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
 func fillEnvResources(opts *DevSandboxOptions) {
 	if opts.CPURequest == "" {
 		opts.CPURequest = os.Getenv("SANDBOX_CPU_REQUEST")
@@ -113,11 +155,18 @@ func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	}
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
+	switch {
+	case err == nil && terminating(sb):
+		// Reusing a sandbox that is being deleted means waiting for a
+		// pod that will never be ready. Wait for the name to free up
+		// and fall through to creating a fresh one.
+		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
+			return "", werr
+		}
+	case err == nil:
 		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
 		return name, nil
-	}
-	if !strings.Contains(err.Error(), "not found") {
+	case !strings.Contains(err.Error(), "not found"):
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 
@@ -169,11 +218,18 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	name := RunbookSandboxName(repoName, instance)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
+	switch {
+	case err == nil && terminating(sb):
+		// Reusing a sandbox that is being deleted means waiting for a
+		// pod that will never be ready. Wait for the name to free up
+		// and fall through to creating a fresh one.
+		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
+			return "", werr
+		}
+	case err == nil:
 		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
 		return name, nil
-	}
-	if !strings.Contains(err.Error(), "not found") {
+	case !strings.Contains(err.Error(), "not found"):
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
@@ -236,7 +292,13 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
+	if err == nil && terminating(sb) {
+		// See awaitSandboxGone: a deleted sandbox still answers Get
+		// until its finalizers clear, and handing it back would hang.
+		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
+			return "", werr
+		}
+	} else if err == nil {
 		labels := sb.GetLabels()
 		if labels == nil {
 			labels = make(map[string]string)
@@ -250,8 +312,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			}
 		}
 		return name, nil
-	}
-	if !strings.Contains(err.Error(), "not found") {
+	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 
@@ -314,7 +375,13 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
+	if err == nil && terminating(sb) {
+		// See awaitSandboxGone: a deleted sandbox still answers Get
+		// until its finalizers clear, and handing it back would hang.
+		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
+			return "", werr
+		}
+	} else if err == nil {
 		labels := sb.GetLabels()
 		if labels == nil {
 			labels = make(map[string]string)
@@ -328,8 +395,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			}
 		}
 		return name, nil
-	}
-	if !strings.Contains(err.Error(), "not found") {
+	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 
@@ -376,7 +442,13 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	name := fmt.Sprintf("adopt-%s-%d", repoName, prNum)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
+	if err == nil && terminating(sb) {
+		// See awaitSandboxGone: a deleted sandbox still answers Get
+		// until its finalizers clear, and handing it back would hang.
+		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
+			return "", werr
+		}
+	} else if err == nil {
 		labels := sb.GetLabels()
 		if labels == nil {
 			labels = make(map[string]string)
@@ -390,8 +462,7 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			}
 		}
 		return name, nil
-	}
-	if !strings.Contains(err.Error(), "not found") {
+	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
 	}
 
@@ -533,6 +604,16 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			if !sandboxBelongsToRepo(sb, repo, prHTMLURL) {
 				continue
 			}
+			// The PR label outlives the sandbox it is on. Deleting a
+			// PR's fix sandbox and immediately re-running a follow-up
+			// verb used to resolve the alias to the dying sandbox and
+			// wait forever for its pod. Skipping it costs only the
+			// warm workspace: the canonical name below is free, so a
+			// fresh sandbox is created instead of colliding.
+			if terminating(sb) {
+				klog.Infof("sandbox %s carries the PR label but is terminating; not reusing it", sb.GetName())
+				continue
+			}
 			ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
 			return sb.GetName(), nil
 		}
@@ -551,6 +632,16 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			continue
 		}
 		if candidate != name && !sandboxBelongsToRepo(sbGet, repo, prHTMLURL) {
+			continue
+		}
+		if terminating(sbGet) {
+			// Only the canonical name blocks creation below; a dying
+			// legacy-named sandbox can simply be ignored.
+			if candidate == name {
+				if werr := awaitSandboxGone(ctx, kubeClient, namespace, candidate); werr != nil {
+					return "", werr
+				}
+			}
 			continue
 		}
 		ensureSandboxUserLabel(ctx, kubeClient, namespace, sbGet, user)
