@@ -112,7 +112,7 @@ func (s *Scanner) adoptOrphanedBotPR(ctx context.Context, pr *githubv39.PullRequ
 		return
 	}
 
-	missing := getMissingLabelsForPR(pr.Labels, refIssues)
+	missing := getMissingLabelsForPR(pr.Labels, refIssues, s.cfg.TriggerLabel)
 	if len(missing) == 0 {
 		return
 	}

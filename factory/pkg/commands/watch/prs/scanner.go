@@ -360,7 +360,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
-		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return
 	}
@@ -407,7 +406,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
-		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, "")
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return
 	}
@@ -420,7 +418,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// pass skip the pull request until the task finishes.
 	if s.queue.HasActivePRTask(num) {
 		klog.V(2).Infof("Skipping PR #%d evaluation because a task is already active in the queue", num)
-		s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
 		s.recordEvaluation(prIssue, pr, prCheckAnalysis{})
 		return
 	}
@@ -535,8 +532,9 @@ func (s *Scanner) recordEvaluation(prIssue *githubv39.Issue, pr *githubv39.PullR
 }
 
 // reconcileReadiness decides whether a pull request is ready for a human and
-// applies the consequences: the label, and unassigning the bot that was working
-// on it.
+// applies the consequences: adding the ready-for-human label, removing any
+// review label, inheriting human assignees from the parent issues, and
+// unassigning the bot that was working on it.
 //
 // Every gate has to hold, including that no task is queued or running for the
 // pull request. Reading that from the in-memory queue rather than from disk is
@@ -557,16 +555,8 @@ func (s *Scanner) reconcileReadiness(
 	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 
-	// When GitHub invalidates cached mergeability after a push to the base
-	// branch, GetPullRequest returns Mergeable == nil while kicking off a
-	// background recalculation. Require a positive Mergeable == true before
-	// newly marking a PR ready (and unassigning its bot), but do not strip an
-	// existing ready-for-human label while Mergeable is merely unknown.
-	mergeableSatisfied := pc.pr.GetMergeable() ||
-		(pc.pr.Mergeable == nil && hasReadyForHumanLabel(pc.prIssue.Labels, s.cfg.TriggerLabel))
-
 	isReadyForHuman := !isConflicting &&
-		mergeableSatisfied &&
+		pc.pr.GetMergeable() &&
 		!checkAnalysis.hasFailure &&
 		!checkAnalysis.hasPending &&
 		!commentAnalysis.hasNewComments &&
@@ -576,9 +566,50 @@ func (s *Scanner) reconcileReadiness(
 		!pc.pr.GetDraft() &&
 		pc.pr.GetState() == "open"
 
-	s.reconcileReadyForHumanLabel(ctx, num, pc.prIssue, isReadyForHuman, pc.headSHA)
+	if !isReadyForHuman || !s.gh.Ready() || pc.prIssue == nil {
+		return
+	}
 
-	if isReadyForHuman && pc.pr.GetMergeable() && assignedBot != "" {
+	alreadyReady := hasReadyForHumanLabel(pc.prIssue.Labels, s.cfg.TriggerLabel)
+	if alreadyReady {
+		return
+	}
+	readyLabel := readyForHumanLabel(s.cfg.TriggerLabel)
+	// Add ready label
+	if s.cfg.DryRun {
+		fmt.Printf("[DRYRUN] Would add label '%s' to PR #%d (passed review on SHA %s)\n", readyLabel, num, pc.headSHA)
+	} else {
+		klog.Infof("PR #%d passed automated review on SHA %s. Adding label '%s'.", num, pc.headSHA, readyLabel)
+		if err := s.gh.AddLabels(ctx, num, []string{readyLabel}); err != nil {
+			klog.Errorf("Failed to add label '%s' to PR #%d: %v", readyLabel, num, err)
+		}
+	}
+	// Remove review label(s) to disable bot reviews
+	for _, revLabel := range getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel) {
+		if s.cfg.DryRun {
+			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d (ready for human review)\n", revLabel, num)
+		} else {
+			klog.Infof("PR #%d is ready for human review on SHA %s. Removing label '%s'.", num, pc.headSHA, revLabel)
+			if err := s.gh.RemoveLabel(ctx, num, revLabel); err != nil {
+				klog.Errorf("Failed to remove label '%s' from PR #%d: %v", revLabel, num, err)
+			}
+		}
+	}
+	// Inherit human assignees from parent issue
+	if pc.refIssues != nil {
+		if humanAssignees := s.getMissingHumanAssigneesForPR(pc.prIssue.Assignees, pc.refIssues.all(ctx)); len(humanAssignees) > 0 {
+			if s.cfg.DryRun {
+				fmt.Printf("[DRYRUN] Would assign inherited human assignees %v to PR #%d (ready for human review)\n", humanAssignees, num)
+			} else {
+				klog.Infof("Assigning inherited human assignees %v to PR #%d (ready for human review)", humanAssignees, num)
+				if err := s.gh.AddAssignees(ctx, num, humanAssignees); err != nil {
+					klog.Errorf("Failed to assign inherited human assignees %v to PR #%d: %v", humanAssignees, num, err)
+				}
+			}
+		}
+	}
+	// Remove bot assignee
+	if assignedBot != "" {
 		if s.cfg.DryRun {
 			fmt.Printf("[DRYRUN] Would unassign bot %s from PR #%d (ready for human review)\n", assignedBot, num)
 		} else {

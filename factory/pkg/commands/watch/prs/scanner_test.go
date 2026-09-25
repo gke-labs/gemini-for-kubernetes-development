@@ -419,13 +419,13 @@ func TestEvaluate_ReadyForHuman_GatedByPendingCheckRuns(t *testing.T) {
 		t.Errorf("expected ready-for-human label added after check runs completed, got %v", addedLabels)
 	}
 
-	// 3. New commit or check run becomes queued/in_progress on PR with label -> label SHOULD be removed
+	// 3. New commit or check run becomes queued/in_progress on PR with label -> label must NOT be removed
 	prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: stringPtr("factory/ready-for-human")})
 	checkRunStatus = "queued"
 	checkRunConclusion = ""
 	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
-	if len(removedLabels) != 1 || removedLabels[0] != "factory/ready-for-human" {
-		t.Errorf("expected ready-for-human label removed when checks become queued, got %v", removedLabels)
+	if len(removedLabels) != 0 {
+		t.Errorf("expected ready-for-human label NOT to be removed when checks become queued, got %v", removedLabels)
 	}
 }
 
@@ -1693,11 +1693,9 @@ func TestFastPass_ReevaluatesWhenMergeableUnknown(t *testing.T) {
 	}
 }
 
-// TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that when a
-// commit merges to the base branch and invalidates GitHub's cached mergeability
-// (Mergeable == nil), an already-ready pull request does not have its
-// ready-for-human label stripped while GitHub recomputes mergeability, unless
-// another readiness gate (such as a pending CI check) fails.
+// TestSweep_PreservesReadyForHumanWhenMergeableUnknown verifies that an
+// already-ready pull request never has its ready-for-human label stripped by
+// the watcher, whether mergeability is temporarily unknown or CI is pending.
 func TestSweep_PreservesReadyForHumanWhenMergeableUnknown(t *testing.T) {
 	f := &prFixture{
 		num:           10,
@@ -1715,12 +1713,242 @@ func TestSweep_PreservesReadyForHumanWhenMergeableUnknown(t *testing.T) {
 		t.Fatal("ready-for-human label was removed when Mergeable was temporarily nil")
 	}
 
-	// 2. If another readiness gate fails (e.g., CI pending) while Mergeable == nil,
-	// ready-for-human must still be removed.
+	// 2. Even if another readiness gate fails (e.g., CI pending), ready-for-human
+	// must never be removed by the watcher.
 	f.reset()
 	f.set(func(f *prFixture) { f.pending = true })
 	s.sweep(ctx)
-	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") == 0 {
-		t.Fatal("expected ready-for-human label to be removed when CI became pending")
+	if f.count("DELETE /repos/test-owner/test-repo/issues/10/labels/") > 0 {
+		t.Fatal("expected ready-for-human label never to be removed when CI became pending")
+	}
+}
+
+func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+
+	prNum := 10
+	issueNum := 7
+	mergeable := true
+	headSHA := "sha-1"
+	now := time.Now()
+
+	var addedPRLabels []string
+	var removedPRLabels []string
+	var removedIssueLabels []string
+	var addedAssignees []string
+	var removedAssignees []string
+
+	var reviews []*githubv39.PullRequestReview
+	reviews = []*githubv39.PullRequestReview{
+		{
+			User:        &githubv39.User{Login: stringPtr("reviewbot")},
+			CommitID:    stringPtr(headSHA),
+			State:       stringPtr("APPROVED"),
+			SubmittedAt: &now,
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				Body:      stringPtr("Fixes #7"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &now,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/7":
+			parentIssue := &githubv39.Issue{
+				Number: &issueNum,
+				Labels: []*githubv39.Label{
+					{Name: stringPtr("factory")},
+					{Name: stringPtr("overseer/review")},
+				},
+				Assignees: []*githubv39.User{
+					{Login: stringPtr("bot1")},
+					{Login: stringPtr("reviewbot")},
+					{Login: stringPtr("human-alice")},
+					{Login: stringPtr("human-bob")},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(parentIssue)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &now},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.IssueComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode(reviews)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []interface{}{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/labels":
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			addedPRLabels = append(addedPRLabels, labels...)
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/10/labels/"):
+			label := strings.TrimPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/10/labels/")
+			removedPRLabels = append(removedPRLabels, label)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/7/labels/"):
+			label := strings.TrimPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/7/labels/")
+			removedIssueLabels = append(removedIssueLabels, label)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/assignees":
+			var payload struct {
+				Assignees []string `json:"assignees"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			addedAssignees = append(addedAssignees, payload.Assignees...)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+		case r.Method == "DELETE" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/assignees":
+			var payload struct {
+				Assignees []string `json:"assignees"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			removedAssignees = append(removedAssignees, payload.Assignees...)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{}"))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:         ghClient,
+		Kube:           newTestKubeClient(),
+		BotUsers:       []string{"bot1"},
+		GitHubLogin:    "bot1",
+		TriggerLabel:   "factory",
+		ReviewerLogins: []string{"reviewbot"},
+	})
+
+	// 1. Initial settle: PR has overseer/review, bot review is completed on headSHA.
+	// Expect:
+	// - factory/ready-for-human added to PR
+	// - overseer/review removed from PR (and NOT from parent issue #7)
+	// - human-alice and human-bob assigned to PR from parent issue #7
+	// - bot1 unassigned from PR
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+			{Name: stringPtr("overseer/review")},
+		},
+	}
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	if len(addedPRLabels) != 1 || addedPRLabels[0] != "factory/ready-for-human" {
+		t.Fatalf("step 1: addedPRLabels = %v, want [factory/ready-for-human]", addedPRLabels)
+	}
+	if len(removedPRLabels) != 1 || removedPRLabels[0] != "overseer/review" {
+		t.Fatalf("step 1: removedPRLabels = %v, want [overseer/review]", removedPRLabels)
+	}
+	if len(removedIssueLabels) != 0 {
+		t.Fatalf("step 1: removedIssueLabels = %v, want none (parent issue must keep overseer/review)", removedIssueLabels)
+	}
+	if len(addedAssignees) != 2 || addedAssignees[0] != "human-alice" || addedAssignees[1] != "human-bob" {
+		t.Fatalf("step 1: addedAssignees = %v, want [human-alice human-bob]", addedAssignees)
+	}
+	if len(removedAssignees) != 1 || removedAssignees[0] != "bot1" {
+		t.Fatalf("step 1: removedAssignees = %v, want [bot1]", removedAssignees)
+	}
+
+	// 2. Subsequent cycle on a new commit (sha-2) after settling:
+	// PR has factory/ready-for-human, parent issue #7 still has overseer/review.
+	// overseer/review must NOT be re-synced to the PR and must NOT trigger a new review.
+	addedPRLabels = nil
+	removedPRLabels = nil
+	addedAssignees = nil
+	removedAssignees = nil
+	headSHA = "sha-2"
+	reviews = nil
+
+	prIssueSettled := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("human-alice")},
+			{Login: stringPtr("human-bob")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+			{Name: stringPtr("factory/ready-for-human")},
+		},
+	}
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssueSettled})
+
+	if len(addedPRLabels) != 0 {
+		t.Fatalf("step 2: addedPRLabels = %v, want none (overseer/review must not be re-synced from parent issue)", addedPRLabels)
+	}
+	reviewTaskFile := filepath.Join(incomingDir, "task-pr-10-review.yaml")
+	if _, err := os.Stat(reviewTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("step 2: expected no review task to be queued when overseer/review was only on the parent issue")
+	}
+	if len(addedAssignees) != 0 {
+		t.Fatalf("step 2: addedAssignees = %v, want none on already-ready PR", addedAssignees)
+	}
+
+	// 3. Human manually re-adds overseer/review to the settled PR:
+	// It should queue a bot review task and keep overseer/review while the review is pending.
+	prIssueReReview := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("human-alice")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+			{Name: stringPtr("factory/ready-for-human")},
+			{Name: stringPtr("overseer/review")},
+		},
+	}
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssueReReview})
+
+	if _, err := os.Stat(reviewTaskFile); os.IsNotExist(err) {
+		t.Fatalf("step 3: expected review task to be queued when human manually re-added overseer/review to PR")
+	}
+	if len(removedPRLabels) != 0 {
+		t.Fatalf("step 3: removedPRLabels = %v, want none while review task is still pending", removedPRLabels)
+	}
+
+	// 4. Bot review completes on sha-2 and review task finishes:
+	// PR settles again and removes overseer/review from the PR again.
+	_ = os.Remove(reviewTaskFile)
+	_ = queue.RemoveTask("task-pr-10-review.yaml")
+	reviews = []*githubv39.PullRequestReview{
+		{
+			User:        &githubv39.User{Login: stringPtr("reviewbot")},
+			CommitID:    stringPtr(headSHA),
+			State:       stringPtr("APPROVED"),
+			SubmittedAt: &now,
+		},
+	}
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssueReReview})
+
+	if len(removedPRLabels) != 1 || removedPRLabels[0] != "overseer/review" {
+		t.Fatalf("step 4: removedPRLabels = %v, want [overseer/review] removed after re-review settled", removedPRLabels)
 	}
 }
