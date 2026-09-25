@@ -1020,3 +1020,32 @@ body.dark-mode .warning-banner {
   background-color: var(--text-danger);
   color: white;
 }
+
+/* Platform v2 verbs. `.btn` supplies geometry only — every v1 usage
+   pairs it with a variant for colour, and without one a verb renders as
+   bare text, which is why the v2 surfaces read as a page of links. */
+.btn-v2 {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+.btn-v2:hover:not(:disabled) {
+  background: var(--border-color);
+}
+.btn-v2:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* One action per group carries the weight; the rest recede. */
+.btn-v2-primary {
+  background: #0366d6;
+  color: #fff;
+  border: 1px solid #0366d6;
+}
+.btn-v2-primary:hover:not(:disabled) {
+  background: #0256b4;
+}
+.btn-v2-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

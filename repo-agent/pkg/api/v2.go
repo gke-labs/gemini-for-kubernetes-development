@@ -78,6 +78,12 @@ type RecipeAvailable struct {
 	Name      string `json:"name"`
 	Available bool   `json:"available"`
 	Reason    string `json:"reason,omitempty"`
+	// Summary and Inputs ride along because a verb is rendered from this
+	// envelope, not from the recipe catalogue. Without them the UI can
+	// only draw a bare button: the reason `investigate` lost the topic
+	// box it had in v1 was that its declared input stopped here.
+	Summary string        `json:"summary,omitempty"`
+	Inputs  []recipeInput `json:"inputs,omitempty"`
 }
 
 // ---------------------------------------------------------------------
@@ -138,6 +144,15 @@ var v2Recipes = []recipeDef{
 			"VERIFIED": {"reapply", "teardown"}}},
 	{Name: "teardown", Targets: []string{"environment"}, Summary: "remove what a deployment created",
 		Verdicts: []string{"TORN-DOWN", "PARTIAL", "BLOCKED"}},
+}
+
+// offer is how a recipe reaches a row: available until something says
+// otherwise, and carrying everything the renderer needs to draw more
+// than a bare button.
+func offer(r recipeDef) RecipeAvailable {
+	return RecipeAvailable{
+		Name: r.Name, Available: true, Summary: r.Summary, Inputs: r.Inputs,
+	}
 }
 
 func recipesForKind(kind string) []recipeDef {
@@ -299,7 +314,7 @@ func targetFromWorkItem(w *models.WorkItem) Target {
 			Running: w.Sandbox != nil && strings.Contains(strings.ToLower(w.Stage), "ing")}
 	}
 	for _, r := range recipesForKind(kind) {
-		avail := RecipeAvailable{Name: r.Name, Available: true}
+		avail := offer(r)
 		for _, need := range r.Needs {
 			if need == "verdict:PLANNED" && !w.PlanApproved {
 				avail.Available, avail.Reason = false, "needs an approved plan"
@@ -392,7 +407,7 @@ func (s *Server) environmentTargets(c *gin.Context, board *unstructured.Unstruct
 			t.UpdatedAt = ann["sandbox.gemini.google.com/last-task-time"]
 		}
 		for _, r := range recipesForKind("environment") {
-			t.Recipes = append(t.Recipes, RecipeAvailable{Name: r.Name, Available: true})
+			t.Recipes = append(t.Recipes, offer(r))
 		}
 		out = append(out, t)
 	}
@@ -689,6 +704,20 @@ func (s *Server) createV2Run(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": req.Recipe + " does not act on " + kind})
 		return
+	}
+
+	// Required inputs are enforced here, not only in the form. A recipe
+	// launched without its topic or its instance burns a sandbox to
+	// discover what the declaration already knew.
+	for _, in := range def.Inputs {
+		if in.Optional {
+			continue
+		}
+		if strings.TrimSpace(req.Inputs[in.Name]) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": req.Recipe + " needs " + in.Name})
+			return
+		}
 	}
 
 	run := &unstructured.Unstructured{Object: map[string]any{

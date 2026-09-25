@@ -43,28 +43,117 @@ function verdictChip(verdict) {
   return <Chip text={v.toLowerCase()} color="#6a737d" bg="var(--bg-secondary)" />;
 }
 
-function Verbs({ verbs, recipes, readOnly, onRun, target, busy }) {
-  const byName = Object.fromEntries((recipes || []).map((r) => [r.name, r]));
+// The input vocabulary. Five entries, deliberately: a recipe picks one
+// per input and the renderer owns the widget. Declaring a sixth is a
+// code change — the same boundary the five views draw, which is what
+// keeps this a menu rather than a form builder.
+const FIELDS = {
+  text: (p) => <input type="text" {...p} />,
+  textarea: (p) => <textarea rows={3} {...p} style={{ ...p.style, resize: 'vertical' }} />,
+  duration: (p) => <input type="text" {...p} />,
+  select: (p) => (
+    <select {...p}>
+      {(p.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  ),
+  boolean: (p) => <input type="checkbox" checked={p.value === 'true'} onChange={p.onToggle} />,
+};
+
+const fieldStyle = {
+  width: '100%', padding: '5px 8px', fontSize: '0.9rem',
+  border: '1px solid var(--border-color)', borderRadius: '4px',
+  background: 'var(--bg-primary, inherit)', color: 'inherit',
+};
+
+// RecipeForm appears only when the recipe declares inputs. A verb with
+// none stays a single click — asking for confirmation you did not need
+// is its own kind of friction.
+function RecipeForm({ recipe, onSubmit, onCancel, busy }) {
+  const [values, setValues] = useState({});
+  const missing = (recipe.inputs || [])
+    .filter((i) => !i.optional && !String(values[i.name] || '').trim())
+    .map((i) => i.name);
+
+  const set = (name) => (e) => setValues({ ...values, [name]: e.target.value });
+
   return (
-    <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
-      {(verbs || []).map((v) => {
-        const def = byName[v];
-        // Availability and its reason come from the API, so a verb the
-        // backend would refuse is visible and explained rather than
-        // hidden — you can see the capability and what it needs.
-        const unavailable = def && def.available === false;
-        const reason = readOnly
-          ? 'this repo is v1-managed — shadow read only'
-          : unavailable ? def.reason : (def && def.summary) || v;
+    <div style={{
+      border: '1px solid var(--border-color)', borderRadius: '6px',
+      padding: '10px', marginTop: '6px', maxWidth: '520px',
+    }}>
+      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+        {recipe.name}{recipe.summary ? ` — ${recipe.summary}` : ''}
+      </div>
+      {(recipe.inputs || []).map((input) => {
+        const render = FIELDS[input.type] || FIELDS.text;
         return (
-          <button key={v} className="btn btn-sm"
-            disabled={readOnly || unavailable || busy === v}
-            title={reason}
-            onClick={onRun ? () => onRun(v, target) : undefined}>
-            {busy === v ? `${v}…` : v}
-          </button>
+          <label key={input.name} style={{ display: 'block', marginBottom: '8px' }}>
+            <span style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>
+              {input.name}{input.optional ? '' : ' *'}
+            </span>
+            {render({
+              value: values[input.name] || '',
+              onChange: set(input.name),
+              onToggle: (e) => setValues({ ...values, [input.name]: String(e.target.checked) }),
+              placeholder: input.hint || '',
+              options: input.options,
+              style: fieldStyle,
+            })}
+          </label>
         );
       })}
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <button className="btn btn-sm btn-v2-primary"
+          disabled={missing.length > 0 || busy}
+          title={missing.length ? `needs ${missing.join(', ')}` : ''}
+          onClick={() => onSubmit(values)}>
+          {busy ? 'starting…' : `run ${recipe.name}`}
+        </button>
+        <button className="btn btn-sm btn-v2" onClick={onCancel}>cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function Verbs({ verbs, recipes, readOnly, onRun, target, busy }) {
+  const byName = Object.fromEntries((recipes || []).map((r) => [r.name, r]));
+  const [open, setOpen] = useState(null);
+
+  const start = (def) => {
+    // Inputs the recipe declares are collected before the run, not
+    // guessed afterwards. Without any, the click is the whole gesture.
+    if ((def.inputs || []).length) { setOpen(def.name); return; }
+    onRun(def.name, target, {});
+  };
+
+  return (
+    <span>
+      <span style={{ display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
+        {(verbs || []).map((v) => {
+          const def = byName[v] || { name: v };
+          // Availability and its reason come from the API, so a verb the
+          // backend would refuse is visible and explained rather than
+          // hidden — you can see the capability and what it needs.
+          const unavailable = def.available === false;
+          const reason = readOnly
+            ? 'this repo is v1-managed — shadow read only'
+            : unavailable ? def.reason : def.summary || v;
+          const needsInput = (def.inputs || []).length > 0;
+          return (
+            <button key={v} className="btn btn-sm btn-v2"
+              disabled={readOnly || unavailable || busy === v}
+              title={reason}
+              onClick={onRun ? () => start(def) : undefined}>
+              {busy === v ? `${v}…` : v}{needsInput ? ' …' : ''}
+            </button>
+          );
+        })}
+      </span>
+      {open && byName[open] && (
+        <RecipeForm recipe={byName[open]} busy={busy === open}
+          onCancel={() => setOpen(null)}
+          onSubmit={(values) => { setOpen(null); onRun(open, target, values); }} />
+      )}
     </span>
   );
 }
@@ -203,11 +292,11 @@ function Section({ repo, spec, recipes, readOnly, onRan }) {
 
   // Starting work is one POST: a Run is created, and the reconciler
   // decides everything else. The UI does not know what a sandbox is.
-  const run = (recipe, target) => {
+  const run = (recipe, target, inputs) => {
     setBusy({ recipe, target: target || 'repo' });
     fetch(`/api/v2/repos/${repo}/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipe, target: target || 'repo' }),
+      body: JSON.stringify({ recipe, target: target || 'repo', inputs: inputs || {} }),
     })
       .then(async (r) => {
         if (!r.ok) {
