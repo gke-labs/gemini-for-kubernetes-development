@@ -47,9 +47,13 @@ function verdictChip(verdict) {
 // per input and the renderer owns the widget. Declaring a sixth is a
 // code change — the same boundary the five views draw, which is what
 // keeps this a menu rather than a form builder.
+// `line` is the default because that is what the registry means by an
+// input with no type (since, instance, name). `text` is reserved for
+// the free-text fields — a topic, a charter, an instruction — which are
+// paragraphs, and read as truncated in a one-line box.
 const FIELDS = {
-  text: (p) => <input type="text" {...p} />,
-  textarea: (p) => <textarea rows={3} {...p} style={{ ...p.style, resize: 'vertical' }} />,
+  line: (p) => <input type="text" {...p} />,
+  text: (p) => <textarea rows={3} {...p} style={{ ...p.style, resize: 'vertical' }} />,
   duration: (p) => <input type="text" {...p} />,
   select: (p) => (
     <select {...p}>
@@ -85,7 +89,7 @@ function RecipeForm({ recipe, onSubmit, onCancel, busy }) {
         {recipe.name}{recipe.summary ? ` — ${recipe.summary}` : ''}
       </div>
       {(recipe.inputs || []).map((input) => {
-        const render = FIELDS[input.type] || FIELDS.text;
+        const render = FIELDS[input.type] || FIELDS.line;
         return (
           <label key={input.name} style={{ display: 'block', marginBottom: '8px' }}>
             <span style={{ fontSize: '12px', display: 'block', marginBottom: '2px' }}>
