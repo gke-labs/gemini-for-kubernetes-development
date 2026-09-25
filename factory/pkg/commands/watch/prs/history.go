@@ -104,7 +104,6 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 	}
 
 	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
-	s.reconcileReadyForHumanLabel(ctx, num, prIssue, false, headSHA)
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
 		return true

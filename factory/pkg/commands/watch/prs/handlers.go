@@ -59,9 +59,6 @@ func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 	num := pc.prIssue.GetNumber()
 	state := s.state.get(num)
 
-	// A conflicted pull request is never ready for a human, whatever it looked
-	// like before.
-	s.reconcileReadyForHumanLabel(ctx, num, pc.prIssue, false, pc.headSHA)
 	if state.lastIteratedSHA != "" && state.lastIteratedSHA == pc.headSHA {
 		klog.Infof("Skipping PR #%d rebase/conflict resolution because an iterate task was already processed for head SHA %s.", num, pc.headSHA)
 		return

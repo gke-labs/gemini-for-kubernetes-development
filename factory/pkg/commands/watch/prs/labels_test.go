@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
 func TestGetMissingLabelsForPR(t *testing.T) {
 	tests := []struct {
-		name      string
-		prLabels  []string
-		refIssues [][]string
-		expected  []string
+		name         string
+		triggerLabel string
+		prLabels     []string
+		refIssues    [][]string
+		expected     []string
 	}{
 		{
 			name:      "All issue labels are missing from PR",
@@ -49,6 +49,20 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 			refIssues: [][]string{{"greenfield"}},
 			expected:  []string{"greenfield", "step/controller"},
 		},
+		{
+			name:         "Review label is synced before ready-for-human is present",
+			triggerLabel: "factory",
+			prLabels:     []string{"factory"},
+			refIssues:    [][]string{{"overseer/review", "factory/review", "bug"}},
+			expected:     []string{"factory", "overseer/review", "factory/review", "bug"},
+		},
+		{
+			name:         "Review label is skipped once ready-for-human is present",
+			triggerLabel: "factory",
+			prLabels:     []string{"factory", "factory/ready-for-human"},
+			refIssues:    [][]string{{"overseer/review", "factory/review", "bug"}},
+			expected:     []string{"factory", "factory/ready-for-human", "bug"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -67,7 +81,7 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 				refIssues = append(refIssues, &githubv39.Issue{Labels: labels})
 			}
 
-			got := getMissingLabelsForPR(prLabels, refIssues)
+			got := getMissingLabelsForPR(prLabels, refIssues, tc.triggerLabel)
 
 			// Build the final set of labels on the PR (original labels + added labels)
 			finalLabelsMap := make(map[string]bool)
@@ -271,41 +285,64 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 			},
 		},
 		{
-			name:           "Not ready with label removes overseer/ready-for-human",
+			name:           "Ready with overseer/review adds ready-for-human and removes overseer/review",
 			triggerLabel:   "",
-			isReady:        false,
-			existingLabels: []string{"bug", "overseer/ready-for-human"},
+			isReady:        true,
+			existingLabels: []string{"bug", "overseer/review"},
 			expectedCalls: []apiCall{
 				{
+					method: "POST",
+					path:   "/repos/test-owner/test-repo/issues/100/labels",
+					body:   `["overseer/ready-for-human"]`,
+				},
+				{
 					method: "DELETE",
-					path:   "/repos/test-owner/test-repo/issues/100/labels/overseer/ready-for-human",
+					path:   "/repos/test-owner/test-repo/issues/100/labels/overseer/review",
 				},
 			},
 		},
 		{
-			name:           "Custom trigger label adds custom/ready-for-human",
+			name:           "Ready when already ready-for-human and overseer/review re-added removes overseer/review",
+			triggerLabel:   "",
+			isReady:        true,
+			existingLabels: []string{"overseer/ready-for-human", "overseer/review"},
+			expectedCalls: []apiCall{
+				{
+					method: "DELETE",
+					path:   "/repos/test-owner/test-repo/issues/100/labels/overseer/review",
+				},
+			},
+		},
+		{
+			name:           "Not ready with label never removes overseer/ready-for-human",
+			triggerLabel:   "",
+			isReady:        false,
+			existingLabels: []string{"bug", "overseer/ready-for-human"},
+			expectedCalls:  nil,
+		},
+		{
+			name:           "Custom trigger label adds custom/ready-for-human and removes custom/review",
 			triggerLabel:   "mybot",
 			isReady:        true,
-			existingLabels: []string{"bug"},
+			existingLabels: []string{"bug", "mybot/review"},
 			expectedCalls: []apiCall{
 				{
 					method: "POST",
 					path:   "/repos/test-owner/test-repo/issues/100/labels",
 					body:   `["mybot/ready-for-human"]`,
 				},
+				{
+					method: "DELETE",
+					path:   "/repos/test-owner/test-repo/issues/100/labels/mybot/review",
+				},
 			},
 		},
 		{
-			name:           "Custom trigger label removes custom/ready-for-human",
+			name:           "Custom trigger label never removes custom/ready-for-human when not ready",
 			triggerLabel:   "mybot",
 			isReady:        false,
 			existingLabels: []string{"mybot/ready-for-human"},
-			expectedCalls: []apiCall{
-				{
-					method: "DELETE",
-					path:   "/repos/test-owner/test-repo/issues/100/labels/mybot/ready-for-human",
-				},
-			},
+			expectedCalls:  nil,
 		},
 		{
 			name:           "Idempotent: Ready and already has label makes 0 API calls",
@@ -325,7 +362,7 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 			name:           "Dry-run mode makes 0 API calls",
 			triggerLabel:   "",
 			isReady:        true,
-			existingLabels: []string{"bug"},
+			existingLabels: []string{"bug", "overseer/review"},
 			dryRun:         true,
 			expectedCalls:  nil,
 		},
@@ -365,13 +402,11 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 				ghClient.BaseURL, _ = url.Parse(server.URL + "/")
 			}
 
-			s := &Scanner{
-				cfg: Config{
-					TriggerLabel: tc.triggerLabel,
-					DryRun:       tc.dryRun,
-				},
-				gh: github.ForRepo(ghClient, "test-owner", "test-repo"),
-			}
+			s, _ := newTestScanner(t, t.TempDir(), testOpts{
+				GitHub:       ghClient,
+				TriggerLabel: tc.triggerLabel,
+			})
+			s.cfg.DryRun = tc.dryRun
 
 			prNum := 100
 			var labels []*githubv39.Label
@@ -382,8 +417,30 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 				Number: &prNum,
 				Labels: labels,
 			}
+			mergeable := true
+			now := time.Now()
+			pc := &prContext{
+				pr: &githubv39.PullRequest{
+					Number:    &prNum,
+					Mergeable: &mergeable,
+					State:     stringPtr("open"),
+				},
+				prIssue:   prIssue,
+				headSHA:   "sha123",
+				refIssues: &refIssues{loaded: true},
+			}
+			history := &prHistory{
+				reviews: []*githubv39.PullRequestReview{
+					{
+						User:        &githubv39.User{Login: stringPtr("reviewbot")},
+						CommitID:    stringPtr("sha123"),
+						State:       stringPtr("APPROVED"),
+						SubmittedAt: &now,
+					},
+				},
+			}
 
-			s.reconcileReadyForHumanLabel(context.Background(), prNum, prIssue, tc.isReady, "sha123")
+			s.reconcileReadiness(context.Background(), pc, prCheckAnalysis{}, prCommentAnalysis{}, history, !tc.isReady, "")
 
 			if len(recordedCalls) != len(tc.expectedCalls) {
 				t.Fatalf("recorded %d API calls (%v); want %d (%v)", len(recordedCalls), recordedCalls, len(tc.expectedCalls), tc.expectedCalls)
@@ -406,5 +463,52 @@ func TestReconcileReadyForHumanLabel(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGetMissingHumanAssigneesForPR(t *testing.T) {
+	s := &Scanner{
+		cfg: Config{
+			BotUsers:       []string{"ada-coder", "overseer-watcher"},
+			ReviewerLogins: []string{"custom-reviewer"},
+			GitHubLogin:    "overseer-watcher",
+		},
+	}
+
+	prAssignees := []*githubv39.User{
+		{Login: stringPtr("ada-coder")},
+		{Login: stringPtr("alice")},
+	}
+
+	refIssues := []*githubv39.Issue{
+		{
+			Assignees: []*githubv39.User{
+				{Login: stringPtr("ada-coder")},
+				{Login: stringPtr("overseer-watcher")},
+				{Login: stringPtr("custom-reviewer")},
+				{Login: stringPtr("reviewbot-robot")},
+				{Login: stringPtr("dependabot[bot]"), Type: stringPtr("Bot")},
+				{Login: stringPtr("Alice")}, // already assigned to PR (case-insensitive)
+				{Login: stringPtr("bob")},
+			},
+		},
+		{
+			Assignees: []*githubv39.User{
+				{Login: stringPtr("bob")}, // duplicate across referenced issues
+				{Login: stringPtr("carol")},
+			},
+		},
+	}
+
+	got := s.getMissingHumanAssigneesForPR(prAssignees, refIssues)
+	want := []string{"bob", "carol"}
+
+	if len(got) != len(want) {
+		t.Fatalf("getMissingHumanAssigneesForPR() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("getMissingHumanAssigneesForPR()[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }

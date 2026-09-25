@@ -2,7 +2,6 @@ package prs
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -21,25 +20,32 @@ import (
 // request, which is why the caller re-checks the stop label immediately after
 // calling this.
 func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.PullRequest, prIssue *githubv39.Issue, refs *refIssues) {
-	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refs.all(ctx))
+	allMissingLabels := getMissingLabelsForPR(prIssue.Labels, refs.all(ctx), s.cfg.TriggerLabel)
 
 	if len(allMissingLabels) > 0 {
 		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
 		if err := s.gh.AddLabels(ctx, pr.GetNumber(), allMissingLabels); err != nil {
 			klog.Errorf("Failed to add labels %v to PR #%d: %v", allMissingLabels, pr.GetNumber(), err)
+		} else {
+			for _, labelName := range allMissingLabels {
+				prIssue.Labels = append(prIssue.Labels, &githubv39.Label{Name: githubv39.String(labelName)})
+			}
 		}
 	}
 }
 
 // getMissingLabelsForPR returns the labels present on the referenced issues but
-// not yet on the pull request.
-func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.Issue) []string {
+// not yet on the pull request. Once the pull request carries ready-for-human,
+// review labels on the parent issues are not re-copied onto the pull request.
+func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.Issue, triggerLabel string) []string {
 	prLabelsSet := make(map[string]bool)
 	for _, label := range prLabels {
 		if label.GetName() != "" {
 			prLabelsSet[label.GetName()] = true
 		}
 	}
+
+	skipReview := hasReadyForHumanLabel(prLabels, triggerLabel)
 
 	var allMissingLabels []string
 	missingLabelsSet := make(map[string]bool)
@@ -51,7 +57,13 @@ func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.I
 
 		for _, label := range refIssue.Labels {
 			labelName := label.GetName()
-			if labelName != "" && !prLabelsSet[labelName] && !missingLabelsSet[labelName] {
+			if labelName == "" {
+				continue
+			}
+			if skipReview && isReviewLabel(labelName, triggerLabel) {
+				continue
+			}
+			if !prLabelsSet[labelName] && !missingLabelsSet[labelName] {
 				missingLabelsSet[labelName] = true
 				allMissingLabels = append(allMissingLabels, labelName)
 			}
@@ -94,36 +106,52 @@ func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, rev
 	return hasApproved && !hasChangesRequested
 }
 
-// hasReviewLabel reports whether a set of labels opts the change into automated
-// review.
-func hasReviewLabel(labels []*githubv39.Label, triggerLabel string) bool {
-	reviewLabels := []string{"overseer/review"}
-	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
-		reviewLabels = append(reviewLabels, triggerLabel+"/review")
+// isReviewLabel reports whether labelName is a review opt-in label.
+func isReviewLabel(labelName, triggerLabel string) bool {
+	if strings.EqualFold(labelName, "overseer/review") {
+		return true
 	}
-	for _, label := range labels {
-		for _, rev := range reviewLabels {
-			if strings.EqualFold(label.GetName(), rev) {
-				return true
-			}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		if strings.EqualFold(labelName, triggerLabel+"/review") {
+			return true
 		}
 	}
 	return false
 }
 
+// getReviewLabels returns the review opt-in labels currently present in labels.
+func getReviewLabels(labels []*githubv39.Label, triggerLabel string) []string {
+	var out []string
+	for _, label := range labels {
+		name := label.GetName()
+		if isReviewLabel(name, triggerLabel) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// hasReviewLabel reports whether a set of labels opts the change into automated
+// review.
+func hasReviewLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	return len(getReviewLabels(labels, triggerLabel)) > 0
+}
+
 // shouldAutoReviewPR reports whether the pull request has been opted into
-// automated review, either directly or through an issue it closes.
+// automated review, either directly or (before ready-for-human is set) through
+// an issue it closes.
 //
 // Review is opt-in rather than universal because it costs an agent run per
-// commit; the label is how a repository says a change is worth that.
-//
-// This is asked twice per evaluation - once to decide whether to queue a
-// review, and again to decide whether a missing review is what is keeping the
-// pull request from being ready for a human - so it reads the parent issues
-// through the shared resolver rather than fetching them itself.
+// commit; the label is how a repository says a change is worth that. Once a
+// pull request has settled and been marked ready-for-human, its review label is
+// removed and only a review label explicitly re-added to the pull request
+// itself triggers another automated review.
 func (s *Scanner) shouldAutoReviewPR(ctx context.Context, prIssue *githubv39.Issue, refs *refIssues) bool {
 	if hasReviewLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		return true
+	}
+	if hasReadyForHumanLabel(prIssue.Labels, s.cfg.TriggerLabel) {
+		return false
 	}
 	for _, refIssue := range refs.all(ctx) {
 		if hasReviewLabel(refIssue.Labels, s.cfg.TriggerLabel) {
@@ -180,37 +208,54 @@ func (s *Scanner) hasCompletedBotReviewOnHead(reviews []*githubv39.PullRequestRe
 	return latestReview.GetState() != "CHANGES_REQUESTED"
 }
 
-// reconcileReadyForHumanLabel brings the ready-for-human label in line with
-// whether the pull request is actually waiting on a person.
-//
-// It runs in both directions. Removing the label matters as much as adding it:
-// a pull request that was ready and then had CI break or a review land must
-// stop advertising itself as done, or a human will review a change the watcher
-// is about to push over.
-func (s *Scanner) reconcileReadyForHumanLabel(ctx context.Context, num int, prIssue *githubv39.Issue, isReady bool, headSHA string) {
-	if !s.gh.Ready() || prIssue == nil {
-		return
+// isHumanUser reports whether u is a human account rather than one of the
+// configured or recognised bot accounts.
+func (s *Scanner) isHumanUser(u *githubv39.User) bool {
+	if u == nil || u.GetLogin() == "" {
+		return false
 	}
-	readyLabel := readyForHumanLabel(s.cfg.TriggerLabel)
-	hasLabel := hasReadyForHumanLabel(prIssue.Labels, s.cfg.TriggerLabel)
+	login := u.GetLogin()
+	for _, bot := range s.cfg.BotUsers {
+		if strings.EqualFold(login, bot) {
+			return false
+		}
+	}
+	if conventions.IsReviewerBot(u, s.cfg.ReviewerLogins) {
+		return false
+	}
+	if conventions.ShouldIgnoreUser(u, s.cfg.GitHubLogin, nil) {
+		return false
+	}
+	return true
+}
 
-	if isReady && !hasLabel {
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would add label '%s' to PR #%d (passed review on SHA %s)\n", readyLabel, num, headSHA)
-		} else {
-			klog.Infof("PR #%d passed automated review on SHA %s. Adding label '%s'.", num, headSHA, readyLabel)
-			if err := s.gh.AddLabels(ctx, num, []string{readyLabel}); err != nil {
-				klog.Errorf("Failed to add label '%s' to PR #%d: %v", readyLabel, num, err)
-			}
+// getMissingHumanAssigneesForPR returns the human assignees on the referenced
+// parent issues that are not yet assigned to the pull request.
+func (s *Scanner) getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, refIssues []*githubv39.Issue) []string {
+	existing := make(map[string]bool, len(prAssignees))
+	for _, u := range prAssignees {
+		if login := u.GetLogin(); login != "" {
+			existing[strings.ToLower(login)] = true
 		}
-	} else if !isReady && hasLabel {
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d\n", readyLabel, num)
-		} else {
-			klog.Infof("PR #%d is no longer ready for human review. Removing label '%s'.", num, readyLabel)
-			if err := s.gh.RemoveLabel(ctx, num, readyLabel); err != nil {
-				klog.Errorf("Failed to remove label '%s' from PR #%d: %v", readyLabel, num, err)
+	}
+
+	var missing []string
+	seen := make(map[string]bool)
+	for _, refIssue := range refIssues {
+		if refIssue == nil {
+			continue
+		}
+		for _, u := range refIssue.Assignees {
+			if !s.isHumanUser(u) {
+				continue
+			}
+			login := u.GetLogin()
+			key := strings.ToLower(login)
+			if !existing[key] && !seen[key] {
+				seen[key] = true
+				missing = append(missing, login)
 			}
 		}
 	}
+	return missing
 }
