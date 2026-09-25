@@ -193,6 +193,11 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		content = []byte(contentStr)
 	}
 
+	content, err = common.ResolveWorkflowRedirect(ctx, repoClient, content)
+	if err != nil {
+		return fmt.Errorf("resolving agent redirect: %w", err)
+	}
+
 	agentDef, err := common.ParseAgent(content)
 	if err != nil {
 		return fmt.Errorf("parsing agent definition: %w", err)

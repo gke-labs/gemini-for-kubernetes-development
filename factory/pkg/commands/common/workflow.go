@@ -23,6 +23,7 @@ type AgentDefinition struct {
 	Mode               string `yaml:"mode,omitempty"`
 	Cooldown           string `yaml:"cooldown,omitempty"`
 	PreconditionScript string `yaml:"preconditionScript,omitempty"`
+	Redirect           string `yaml:"redirect,omitempty"`
 	Prompt             string `yaml:"-"`
 }
 
@@ -100,16 +101,43 @@ func FindWorkflowPath(body string) string {
 }
 
 func FetchWorkflowContent(ctx context.Context, ghClient *github.Client, urlStr string) ([]byte, error) {
+	content, err := fetchWorkflowContentOnce(ctx, ghClient, urlStr)
+	if err != nil {
+		return nil, err
+	}
+	return ResolveWorkflowRedirect(ctx, ghClient, content)
+}
+
+func ResolveWorkflowRedirect(ctx context.Context, ghClient *github.Client, content []byte) ([]byte, error) {
+	def, err := ParseAgent(content)
+	if err != nil || def.Redirect == "" {
+		return content, nil
+	}
+	target := SanitizeWorkflowPath(def.Redirect)
+	klog.Infof("Following workflow redirect to %s", target)
+	nextContent, err := fetchWorkflowContentOnce(ctx, ghClient, target)
+	if err != nil {
+		return nil, fmt.Errorf("following workflow redirect to %s: %w", target, err)
+	}
+	if nextDef, err := ParseAgent(nextContent); err == nil && nextDef.Redirect != "" {
+		return nil, fmt.Errorf("chained workflow redirects are not supported (redirected from %s to %s)", target, nextDef.Redirect)
+	}
+	return nextContent, nil
+}
+
+func fetchWorkflowContentOnce(ctx context.Context, ghClient *github.Client, urlStr string) ([]byte, error) {
 	urlStr = SanitizeWorkflowPath(urlStr)
-	if owner, repo, branch, path, ok := ParseGitHubURL(urlStr); ok {
-		klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
-		// The URL may point outside the repository this client is bound to,
-		// which is the whole reason a workflow can be referenced by URL.
-		contentStr, err := ghClient.FileContentIn(ctx, owner, repo, path, branch)
-		if err != nil {
-			return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
+	if ghClient != nil {
+		if owner, repo, branch, path, ok := ParseGitHubURL(urlStr); ok {
+			klog.Infof("Fetching agent from GitHub repository %s/%s at branch/ref %s, path %s", owner, repo, branch, path)
+			// The URL may point outside the repository this client is bound to,
+			// which is the whole reason a workflow can be referenced by URL.
+			contentStr, err := ghClient.FileContentIn(ctx, owner, repo, path, branch)
+			if err != nil {
+				return nil, fmt.Errorf("fetching content from GitHub repo: %w", err)
+			}
+			return []byte(contentStr), nil
 		}
-		return []byte(contentStr), nil
 	}
 
 	klog.Infof("Fetching agent from HTTP URL %s", urlStr)
@@ -205,7 +233,7 @@ func GetWorkflowCooldown(ctx context.Context, ghClient *github.Client, path stri
 		var contentStr string
 		contentStr, err = ghClient.FileContent(ctx, cleanPath, "")
 		if err == nil {
-			content = []byte(contentStr)
+			content, err = ResolveWorkflowRedirect(ctx, ghClient, []byte(contentStr))
 		}
 	}
 	if err != nil {
