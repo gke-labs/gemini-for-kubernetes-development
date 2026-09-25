@@ -1,0 +1,31 @@
+You are tearing down the run "{{.Name}}" for the repository
+{{.RepoName}} ({{.HTMLURL}}). Everything it owns is in
+docs-exploration/runs/{{.Name}}/ — runbook.md is the procedure,
+params.env the resolved parameters, teardown.sh the generated script,
+and the receipts record what each execution left running.
+{{if .Intent}}
+The owner's instruction for this teardown: {{.Intent}}
+{{end}}
+1. Prefer the deterministic path: execute teardown.sh (it sources
+   params.env). If it fails, follow runbook.md's Teardown section and
+   repair the script so the next teardown is deterministic.
+
+2. Read the newest receipt in the run's directory — its "left
+   RUNNING" section is the checklist of what must come down. Verify
+   each item is actually gone (gcloud and kubectl queries, not
+   assumptions), and hunt for stragglers named or labeled for this
+   run: ${RESOURCE_PREFIX} and repo-agent-instance=${RESOURCE_PREFIX}.
+
+3. If you had to repair teardown.sh, reconcile runbook.md's Teardown
+   section to match — once, at the end, same rule as a deploy. A
+   teardown that needed a manual step the procedure does not mention
+   will need it again next time.
+
+4. Write receipt-<UTC yyyymmdd-hhmm>-teardown.md in the run's
+   directory: verdict on the first line (TORN-DOWN / PARTIAL /
+   BLOCKED), what was removed with the verifying evidence, and
+   anything that remains and why. If you amended runbook.md, list the
+   changes under "## Procedure amended" with the reason for each.
+
+Do not commit or push — the task harness commits and pushes when you
+finish. Finish with one paragraph: verdict and anything that remains.

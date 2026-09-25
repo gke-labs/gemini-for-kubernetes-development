@@ -1,0 +1,86 @@
+You are DEPLOYING the run "{{.Name}}" for the repository {{.RepoName}}
+({{.HTMLURL}}). Everything it owns is in docs-exploration/runs/{{.Name}}/
+— runbook.md is the procedure the owner reviewed and approved,
+params.env holds the resolved parameters, and deploy.sh / teardown.sh
+were generated from runbook.md.
+
+1. Execute deploy.sh. If a step fails, fix the script — not just the
+   moment — so the next run is deterministic.
+
+   THE ATTEMPT BUDGET IS 3. Cloud attempts cost real money — every
+   create/delete cycle spins up and destroys real resources. Rules:
+   - Before re-running, diagnose with READ-ONLY commands (describe,
+     get-iam-policy, list) until you can name the failure's cause.
+     Never re-run the script just to see the error again.
+   - If the same failure signature appears twice, STOP — it will not
+     fix itself on the third try.
+   - Repairs must respect ownership: never fix a failure by adopting
+     infrastructure this run did not create (an existing cluster
+     belongs to another run). Resources you create are named
+     ${RESOURCE_PREFIX}[-suffix], and labeled
+     repo-agent-instance=${RESOURCE_PREFIX} where the service
+     supports labels — the NAME is the ownership guarantee, the
+     label is a bonus for auditing.
+   - A permission, quota, or billing failure is BLOCKED, not a bug you
+     can fix: confirm it read-only (e.g. testIamPermissions, a denied
+     describe), then STOP immediately. Do not keep creating and
+     deleting resources around a wall only the owner can remove.
+
+2. When you stop for any reason, leave the world accounted for: tear
+   down partial resources THIS run created (or, if they are the
+   deployment, leave them and say so) — never leave unrecorded
+   half-built infrastructure.
+
+3. If a fix requires changing the REPOSITORY's own source, capture it
+   as a patch file in this run's directory (git diff >
+   patches/<name>.patch) and have deploy.sh apply it before building.
+   A source edit that lives only in this sandbox's working tree makes
+   the deployment unreproducible: the next run builds unpatched code
+   and fails differently. If the change is right for everyone, say so
+   in the receipt — it belongs in a PR, not in a deployment.
+
+4. RECONCILE runbook.md — once, at the end, after your final attempt.
+   Bring the procedure back in line with the scripts as they now
+   stand: a step you had to reorder, a flag you had to add, a step
+   that turned out to be unnecessary. Keep the prose explaining WHY,
+   because that is what the next reader needs — "wait for the
+   nodepool before granting WI; the binding fails against a cluster
+   still provisioning" is worth more than the flag alone.
+
+   Do this whether the deploy succeeded or failed. runbook.md is not
+   a claim that the procedure works — the receipt's verdict says
+   that. runbook.md is the readable form of these scripts, and if the
+   scripts changed and it did not, the next revision starts from a
+   document that no longer describes them.
+
+   Do not rewrite it wholesale, and do not restate the attempt log
+   there. Change the steps that changed.
+
+5. Write the receipt to
+   docs-exploration/runs/{{.Name}}/receipt-<UTC yyyymmdd-hhmm>.md:
+   verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
+   FAILED / BLOCKED. Then:
+   - "## Procedure amended" — one line per change you made to
+     runbook.md, each naming WHY: the failure or constraint that
+     forced it and the attempt it came from ("attempt 2: source build
+     hit a ClusterTrustBundle incompatibility → published charts").
+     Headlines only; the detail is in the file and the diff is one
+     click away. Nothing here if runbook.md needed no change.
+   - the attempt log: attempt N, what failed, the evidence, what you
+     changed.
+   - the Verify evidence when it succeeded.
+   - what is left RUNNING and where — the teardown contract.
+   - cost-relevant resources created.
+   - a BLOCKED receipt must carry "## Needs from owner" with the
+     EXACT commands that unblock it (gcloud grant / enable-api /
+     quota request).
+
+6. Only when execution succeeded: verify per runbook.md's Verify
+   section — probe the endpoints, run the health commands, read the
+   output. Judgment matters here; a clean exit code is not
+   verification.
+
+Do not commit or push — the task harness commits and pushes when you
+finish, in one commit carrying the scripts, the reconciled runbook.md
+and the receipt together. Finish with one paragraph: verdict, what is
+running where, and anything that surprised you.
