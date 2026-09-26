@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { ResearchPanel } from './Research';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
 import { Terminal as XTerm } from 'xterm';
@@ -2004,6 +2005,11 @@ function Work({ onBack, namespace }) {
                 onClick={() => setActiveGroup('explore')}
               >Explore</button>
               <button
+                className={`group-tab ${shown === 'research' ? 'active' : ''}`}
+                title="Deep research — a conversation with an agent that has this repo checked out; the transcript is the artifact"
+                onClick={() => setActiveGroup('research')}
+              >Research</button>
+              <button
                 className={`group-tab ${shown === 'try' ? 'active' : ''}`}
                 title="Plan, deploy, verify and tear down — each run carries its own procedure"
                 onClick={() => setActiveGroup('try')}
@@ -2045,6 +2051,8 @@ function Work({ onBack, namespace }) {
 
             {shown === 'explore' ? (
               <ExplorePanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
+            ) : shown === 'research' ? (
+              <ResearchPanel boardName={activeBoard} repoURL={board && board.repoURL} />
             ) : shown === 'try' ? (
               <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
             ) : (

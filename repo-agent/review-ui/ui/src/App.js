@@ -5,6 +5,7 @@ import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
 import SandboxTerminal from './Terminal';
+import { ResearchConversation } from './Research';
 
 // Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
 // The legacy RepoWatch dashboard (Review/Issues/Dev tabs) retired with
@@ -19,6 +20,32 @@ import SandboxTerminal from './Terminal';
 function terminalRoute() {
   const m = window.location.hash.match(/^#\/terminal\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)(?:\?chat=([a-z]+))?$/);
   return m ? { namespace: m[1], name: m[2], chat: m[3] || '' } : null;
+}
+
+// Hash route #/research/<sessionId>: one deep-research conversation in
+// its own window, for the same reasons the terminal has one — a long
+// conversation wants the screen, and the link is shareable with anyone
+// in the namespace that owns it. The id pattern mirrors the server's
+// validation (handlers_research.go), so a malformed hash never becomes
+// a request.
+function researchRoute() {
+  const m = window.location.hash.match(/^#\/research\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/);
+  return m ? { sessionId: m[1] } : null;
+}
+
+function ResearchPage({ route }) {
+  useEffect(() => {
+    document.title = `research ${route.sessionId.slice(0, 8)}`;
+  }, [route]);
+  return (
+    <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <ResearchConversation
+        sessionId={route.sessionId}
+        fill
+        onDeleted={() => { window.location.href = '/'; }}
+      />
+    </div>
+  );
 }
 
 function TerminalPage({ route }) {
@@ -45,6 +72,7 @@ function App() {
   const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
+  const [rschRoute] = useState(researchRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [providersError, setProvidersError] = useState(false);
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
@@ -222,6 +250,7 @@ function App() {
   // The standalone terminal window bypasses the shell chrome entirely
   // (auth still applies: the websocket endpoint sits behind the session).
   if (termRoute && isAuthenticated) return <TerminalPage route={termRoute} />;
+  if (rschRoute && isAuthenticated) return <ResearchPage route={rschRoute} />;
 
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
 
