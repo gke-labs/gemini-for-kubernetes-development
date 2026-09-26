@@ -39,7 +39,7 @@ function ensureNotesBranch {
     else
         git checkout -B "${NOTES_BRANCH}"
     fi
-    # Runs must execute against LATEST code (same rule as explore).
+    # Runs must execute against LATEST code.
     SRC_REMOTE="upstream"
     git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE="origin"
     DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)

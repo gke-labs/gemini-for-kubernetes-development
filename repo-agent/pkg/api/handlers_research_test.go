@@ -42,6 +42,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // A real UUID: the short id is a digest of these exact bytes, so the
@@ -230,6 +231,7 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	})
 	r.GET("/api/research", server.getResearchSessions)
 	r.GET("/api/research/:session", server.getResearchSession)
+	r.PATCH("/api/research/:session", server.renameResearchSession)
 	r.DELETE("/api/research/:session", server.deleteResearchSession)
 	r.POST("/api/research/:session/prompt", server.promptResearchSession)
 	r.POST("/api/research/:session/permission", server.resolveResearchPermission)
@@ -653,5 +655,199 @@ func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 	}
 	if !acp.sawCall("POST /sessions") {
 		t.Errorf("the stream did not start an engine; calls: %v", acp.calls)
+	}
+}
+
+// --- titles and pending rows ------------------------------------------
+
+func researchBoardCR(requests map[string]string) *unstructured.Unstructured {
+	raw, _ := json.Marshal(requests)
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "board.gemini.google.com/v1alpha1",
+		"kind":       "RepoBoard",
+		"metadata": map[string]interface{}{
+			"name": "myboard", "namespace": "alice",
+			"annotations": map[string]interface{}{annoBoardRequests: string(raw)},
+		},
+		"spec": map[string]interface{}{"repoURL": "https://github.com/kubernetes/" + researchRepo},
+	}}
+}
+
+func listResearch(t *testing.T, r *gin.Engine) []researchSandboxView {
+	t.Helper()
+	w := doJSON(t, r, http.MethodGet, "/api/research", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Sessions []researchSandboxView `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got.Sessions
+}
+
+// The title is what the list is read by. It comes off the sandbox, so
+// it survives everything except deleting the session.
+func TestResearchListCarriesTheTitle(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	annotations := sb.GetAnnotations()
+	annotations[research.TitleAnnotation] = "overview"
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+
+	sessions := listResearch(t, r)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	if sessions[0].Title != "overview" {
+		t.Errorf("title = %q, want overview", sessions[0].Title)
+	}
+	if !sessions[0].Opening {
+		t.Error("a session whose opening turn is still owed must say so")
+	}
+}
+
+// A click is minutes away from being a sandbox. Without a row for it
+// the member sees nothing happen and clicks again — which is a second
+// sandbox and a second engine.
+func TestResearchListShowsRequestedSessions(t *testing.T) {
+	pending := "9f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
+	claim := research.Claim{
+		Member:  "alice",
+		At:      time.Now().UTC(),
+		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "1 month"},
+	}
+	r, dyn := researchTestServer(t, nil, nil)
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
+		researchBoardCR(map[string]string{"research-" + pending: claim.Encode()}), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := listResearch(t, r)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want the requested one: %+v", len(sessions), sessions)
+	}
+	got := sessions[0]
+	if got.SessionID != pending || !got.Requested {
+		t.Errorf("row = %+v, want the pending session marked requested", got)
+	}
+	if got.Title != "what happened · 1 month" {
+		t.Errorf("title = %q", got.Title)
+	}
+	if got.Repo != researchRepo {
+		t.Errorf("repo = %q, want %q — taken from the board that holds the claim", got.Repo, researchRepo)
+	}
+}
+
+// The controller trims a claim as soon as the sandbox exists, but the
+// two states overlap for one reconcile. Showing both would double the
+// row under the member's cursor.
+func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
+	claim := research.Claim{Member: "alice", At: time.Now().UTC()}
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
+		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := listResearch(t, r)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d rows for one session: %+v", len(sessions), sessions)
+	}
+	if sessions[0].Requested {
+		t.Error("the sandbox exists; the row must be the real one")
+	}
+}
+
+// A claim filed by someone else, sitting on a board this member can
+// read, is not this member's session.
+func TestResearchListIgnoresAnotherMembersClaim(t *testing.T) {
+	claim := research.Claim{Member: "bob", At: time.Now().UTC()}
+	r, dyn := researchTestServer(t, nil, nil)
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
+		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if sessions := listResearch(t, r); len(sessions) != 0 {
+		t.Errorf("got %+v, want nothing", sessions)
+	}
+}
+
+// Renaming must work on a session that cannot be dialed: a paused one
+// is exactly the session you want to label before you forget what it
+// was for.
+func TestResearchRenameWorksOnAPausedSession(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, true)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+
+	w := doJSON(t, r, http.MethodPatch, "/api/research/"+researchSession, `{"title":"retry loop, where?"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "retry loop, where?" {
+		t.Errorf("stored title = %q", title)
+	}
+}
+
+func TestResearchRenameRejectsAnEmptyTitle(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+	w := doJSON(t, r, http.MethodPatch, "/api/research/"+researchSession, `{"title":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+}
+
+// A conversation nobody named is named by what was asked of it — the
+// alternative is a list of identical rows.
+func TestResearchFirstPromptTitlesTheSession(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{}
+	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt",
+		`{"text":"where does the retry loop live?\nand who calls it"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "where does the retry loop live?" {
+		t.Errorf("title = %q, want the first line of the first prompt", title)
+	}
+}
+
+// Only the first. A session that already has a name keeps it, whether
+// that name came from a canned opening or from the member.
+func TestResearchLaterPromptsDoNotRetitle(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	annotations := sb.GetAnnotations()
+	annotations[research.TitleAnnotation] = "overview"
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{}
+	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"and the backoff?"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "overview" {
+		t.Errorf("title = %q, want the name it already had", title)
 	}
 }

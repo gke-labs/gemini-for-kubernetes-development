@@ -103,12 +103,6 @@ const (
 	AnnotationIterateInstruction   = "board.gemini.google.com/iterate-instruction"
 	AnnotationAddressRequested     = "board.gemini.google.com/address-requested-at"
 	AnnotationInvestigateRequested = "board.gemini.google.com/investigate-requested-at"
-	// Exploration requests: kind-scoped, stamped on the explore sandbox
-	// once it exists (the mailbox bridges creation, exactly like the PR
-	// follow-up claims). Params ride alongside.
-	AnnotationExploreTopic    = "board.gemini.google.com/explore-topic"
-	AnnotationExploreSince    = "board.gemini.google.com/explore-since"
-	AnnotationExploreGuidance = "board.gemini.google.com/explore-guidance"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -133,6 +127,13 @@ type Reconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Factory factorycli.Launcher
+
+	// APIReader reads straight from the API server, bypassing the
+	// controller's cache. Used for pods: they are needed only to find a
+	// research sandbox's address, and caching them would mean watching
+	// every pod in the cluster to answer that. Optional — a Reconciler
+	// built without one falls back to the cached client.
+	APIReader client.Reader
 
 	// NewGithubClient is injectable for tests; defaults to
 	// memberGithubClient (token from the namespace's github-pat secret).
@@ -338,9 +339,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// from reading a follow-up's fresh factory-pr sandbox as an
 	// interrupted review.
 	converted := r.ensurePRTaskClaims(ctx, work, mail.prTasks)
-	r.ensureExploreClaims(ctx, work, mail.explores)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
+	// Deliver any opening prompt whose sandbox has come up since. Not
+	// part of the claim pass: by the time a pod is running the claim is
+	// long trimmed, and the sandbox is what carries the request.
+	r.sendResearchKickoffs(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
@@ -563,7 +567,6 @@ type mailbox struct {
 	triages  []int
 	plans    []planRequest
 	prTasks  []prTaskClaim
-	explores []exploreClaim
 	runbooks []runbookClaim
 	research []researchClaim
 }
@@ -584,7 +587,6 @@ func (r *Reconciler) mailboxPlans(work *workState) mailbox {
 	var triages []int
 	var plans []planRequest
 	var prTasks []prTaskClaim
-	var explores []exploreClaim
 	var runbookClaims []runbookClaim
 	var research []researchClaim
 	for key, member := range requests {
@@ -623,19 +625,6 @@ func (r *Reconciler) mailboxPlans(work *workState) mailbox {
 				runbookClaimedAt = time.Time{}
 			}
 			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt, intent: tryIntent})
-		case strings.HasPrefix(key, "explore-"):
-			kind := strings.TrimPrefix(key, "explore-")
-			if kind == "onboard" || kind == "activity" || kind == "topic" {
-				// Explore claims carry their click time ("member|RFC3339"):
-				// served-ness is decided against the runner's result for
-				// the per-kind key, no sandbox annotations involved.
-				claimMember, at, _ := strings.Cut(member, "|")
-				claimedAt, err := time.Parse(time.RFC3339, at)
-				if err != nil {
-					claimedAt = time.Time{}
-				}
-				explores = append(explores, exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt})
-			}
 		case strings.HasPrefix(key, "research-"):
 			// research-<session id>: one deep-research conversation, and
 			// the sandbox that hosts it. Not board work — the board is
@@ -657,7 +646,6 @@ func (r *Reconciler) mailboxPlans(work *workState) mailbox {
 		triages:  triages,
 		plans:    plans,
 		prTasks:  prTasks,
-		explores: explores,
 		runbooks: runbookClaims,
 		research: research,
 	}
@@ -1198,16 +1186,6 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 			if r.runbookClaimConsumed(runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
 				continue
 			}
-		case strings.HasPrefix(key, "explore-"):
-			kind := strings.TrimPrefix(key, "explore-")
-			claimMember, at, _ := strings.Cut(member, "|")
-			claimedAt, terr := time.Parse(time.RFC3339, at)
-			if terr != nil {
-				claimedAt = time.Time{}
-			}
-			if r.exploreClaimServed(exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt}, work) {
-				continue
-			}
 		case strings.HasPrefix(key, "research-"):
 			claim, ok := parseResearchClaim(key, member)
 			if !ok {
@@ -1265,74 +1243,6 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 	return r.Update(ctx, work.board)
 }
 
-// followUpPRs keeps a factory pr watch running for every fix sandbox aliased
-// to an open PR, in the sandbox owner's namespace with their identity.
-// exploreClaim is an exploration click from the board's Explore tab.
-type exploreClaim struct {
-	kind      string // onboard | activity | topic
-	member    string
-	claimedAt time.Time
-}
-
-// exploreKey is per KIND: served-ness must never cross kinds (an
-// onboard finishing while a topic claim waits must not mask it).
-func exploreKey(member, repo, kind string) string {
-	return fmt.Sprintf("%s/explore-%s-%s", member, repo, kind)
-}
-
-// exploreClaimServed: the runner finished a successful run of this kind
-// AFTER the click. In-memory only — a controller restart forgets results
-// and re-runs a standing claim once, which is acceptable for an
-// idempotent docs refresh and self-terminates on the new result.
-func (r *Reconciler) exploreClaimServed(claim exploreClaim, work *workState) bool {
-	res, ok := r.Factory.LastResult(exploreKey(claim.member, work.repo, claim.kind))
-	return ok && res.Err == nil && res.FinishedAt.After(claim.claimedAt)
-}
-
-// ensureExploreClaims drives exploration clicks straight from the
-// mailbox: the claim IS the durable request (timestamped at click), the
-// runner's per-kind result decides served-ness, and factory ensures the
-// explore sandbox itself. Concurrent kinds serialize at the sandbox-wide
-// preflight (skip-busy keeps the claim standing for the next reconcile).
-func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, claims []exploreClaim) {
-	logger := log.FromContext(ctx)
-	for _, claim := range claims {
-		key := exploreKey(claim.member, work.repo, claim.kind)
-		if r.Factory.IsRunning(key) {
-			continue
-		}
-		if r.exploreClaimServed(claim, work) {
-			continue // the trim pass drops it
-		}
-		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-			continue
-		}
-		token, err := r.executorToken(ctx, claim.member)
-		if err != nil {
-			continue
-		}
-		boardAnnotations := work.board.GetAnnotations()
-		name := factorycli.ExploreSandboxName(work.repo)
-		if sb := work.findSandbox(claim.member, name); sb != nil {
-			r.stampUnpaused(ctx, sb)
-			r.stampEngine(ctx, sb, boardEngine(work.board))
-		}
-		if r.Factory.StartExplore(key, factorycli.ExploreOptions{
-			Namespace:   claim.member,
-			SandboxName: name,
-			Kind:        claim.kind,
-			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
-			Topic:       boardAnnotations[AnnotationExploreTopic],
-			Since:       boardAnnotations[AnnotationExploreSince],
-			Guidance:    boardAnnotations[AnnotationExploreGuidance],
-			GithubToken: token,
-			Engine:      boardEngine(work.board),
-		}) {
-			logger.Info("launched factory explore", "kind", claim.kind, "board", work.board.Name)
-		}
-	}
-}
-
 // runbookClaim is a runbook execution click from the Try tab.
 type runbookClaim struct {
 	mode      string // run | teardown
@@ -1361,8 +1271,8 @@ func (r *Reconciler) runbookClaimConsumed(claim runbookClaim, work *workState) b
 	return ok && res.FinishedAt.After(claim.claimedAt)
 }
 
-// ensureRunbookClaims mirrors the explore claims v2 pattern: the timestamped
-// mailbox claim is the request, the runner result is the receipt, and
+// ensureRunbookClaims: the timestamped mailbox claim is the request,
+// the runner result is the receipt, and
 // factory ensures the run sandbox itself. run and teardown for the same
 // path share a sandbox, so the sandbox-wide preflight serializes them.
 func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, claims []runbookClaim) {
@@ -1603,6 +1513,8 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 	}
 }
 
+// followUpPRs keeps a factory pr watch running for every fix sandbox aliased
+// to an open PR, in the sandbox owner's namespace with their identity.
 func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefault bool) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {

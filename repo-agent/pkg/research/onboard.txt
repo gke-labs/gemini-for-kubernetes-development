@@ -1,0 +1,20 @@
+Give me an overview of the repository {{.Repo}} ({{.HTMLURL}}), which
+is checked out in front of you.
+
+Read it the way a senior engineer would on day one: manifests and build
+files first, then entry points, then the core packages. Do not read
+every file — name what a contributor must know and leave the rest.
+
+Answer here in the conversation, in this order:
+
+1. **Overview** — what this project does, for whom, and why it exists.
+   Two or three paragraphs, no bullet soup.
+2. **Architecture** — the components and how data flows between them,
+   with a Mermaid `graph` diagram kept small enough to read.
+3. **Code map** — directory by directory: what lives where, the entry
+   points, and the one file to open first for each area. A table.
+4. **Open questions** — what the code left ambiguous. Say you could not
+   resolve something rather than guessing.
+
+Keep it under what fits on a couple of screens. I will ask follow-up
+questions, so depth can wait for the question that needs it.

@@ -527,7 +527,7 @@ const RESEARCH_VIEW_KEY = 'repoboard.research.view';
 // ago, "not found" means the controller has not made the sandbox yet,
 // while for any other session it means the sandbox is gone. The caller
 // knows which; this component cannot.
-export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fill }) {
+export function ResearchConversation({ sessionId, pending, title, onBack, onDeleted, onRenamed, fill }) {
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
   //   starting — it exists but has no running pod yet
@@ -538,6 +538,15 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
   const [phase, setPhase] = useState('probing');
   const [detail, setDetail] = useState('');
   const [info, setInfo] = useState(null);
+  // The session's name, and the draft while it is being edited (null
+  // when it is not). Seeded from the row that was clicked so the header
+  // reads right before the probe answers.
+  const [name, setName] = useState(title || '');
+  const [renaming, setRenaming] = useState(null);
+  // Mirrored so the probe's answer can tell "nobody is editing" without
+  // making itself depend on the draft.
+  const renamingRef = useRef(null);
+  const editName = (draftName) => { renamingRef.current = draftName; setRenaming(draftName); };
   const [transcript, setTranscript] = useState(emptyTranscript);
   const [openBusy, setOpenBusy] = useState(false);
   const [caughtUp, setCaughtUp] = useState(false);
@@ -715,6 +724,15 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [transcript, phase]);
 
+  // A different session is a different name; the seed from the list is
+  // the best one available until the probe answers with the stored one.
+  useEffect(() => { setName(title || ''); editName(null); }, [sessionId, title]);
+  useEffect(() => {
+    // Never while the member is typing over it: the probe re-runs on
+    // every reconnect, and it must not eat an edit in progress.
+    if (info && info.title && renamingRef.current === null) setName(info.title);
+  }, [info]);
+
   const send = () => {
     const text = draft.trim();
     if (!text || sending || busy || phase !== 'live') return;
@@ -739,6 +757,27 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
       })
       .catch(err => setError(`send failed: ${err}`))
       .finally(() => setSending(false));
+  };
+
+  const commitRename = () => {
+    const next = (renaming || '').trim();
+    editName(null);
+    if (!next || next === name) return;
+    // Shown immediately and corrected by the answer: the server
+    // truncates, so what comes back is what the name actually is.
+    setName(next);
+    fetch(`/api/research/${encodeURIComponent(sessionId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: next }),
+    })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(body.error || `rename failed: HTTP ${res.status}`); return; }
+        if (body.title) setName(body.title);
+        if (onRenamed) onRenamed(sessionId, body.title || next);
+      })
+      .catch(err => setError(`rename failed: ${err}`));
   };
 
   const resolve = (resolution) => {
@@ -802,7 +841,29 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
         padding: '8px 0', fontSize: 'small', flex: '0 0 auto',
       }}>
         {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
-        <strong>{repo || 'research'}</strong>
+        {/* The name, editable in place. A session is found again by what
+            it was about, so the title is the one thing here worth the
+            width — the repo and the id follow it, quietly. */}
+        {renaming === null ? (
+          <strong onClick={() => editName(name)} style={{ cursor: 'text' }}
+            title="Click to rename this conversation">
+            {name || repo || 'research'}
+          </strong>
+        ) : (
+          <input autoFocus value={renaming} aria-label="Session title"
+            onChange={e => editName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              if (e.key === 'Escape') { e.preventDefault(); editName(null); }
+            }}
+            style={{
+              font: 'inherit', fontWeight: 600, padding: '1px 6px', minWidth: '220px',
+              border: '1px solid var(--border-color)', borderRadius: '6px',
+              background: 'var(--bg-card)', color: 'var(--text-primary)',
+            }} />
+        )}
+        {name && repo && <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>}
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
         <Pill {...statusPill} title={detail} />
         <span style={{ flex: 1 }} />
@@ -887,10 +948,21 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
           <p style={{ color: 'var(--text-danger)' }}>Cannot reach this session: {detail}</p>
         )}
         {phase === 'live' && !transcript.items.length && (
-          <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
-            checkout in front of it.
-          </p>
+          info && info.openingError ? (
+            <p style={{ color: 'var(--text-danger)' }}>
+              The opening question was never delivered: {info.openingError}. Ask it yourself below —
+              the sandbox itself is fine.
+            </p>
+          ) : info && info.opening ? (
+            <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+              Sending the opening question…
+            </p>
+          ) : (
+            <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+              Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
+              checkout in front of it.
+            </p>
+          )
         )}
         {transcript.items.map(item => (terminal
           ? <TerminalItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
@@ -934,9 +1006,15 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
   );
 }
 
-// ResearchPanel is the board's Research tab: the sessions for this
-// repository, the button that asks for a new one, and the conversation
-// once one is open.
+// ResearchPanel is the board's Research tab: the ways to start a
+// conversation about this repository, the conversations already
+// started, and the conversation itself once one is open.
+//
+// The three starters differ only in who writes the first message. Two
+// are canned — the overview read, the recent-activity digest — and one
+// is whatever the member types. All of them produce the same thing: an
+// ordinary session you can ask a follow-up in, which is why the old
+// Explore tab collapsed into this one.
 //
 // The list comes from /api/research, which is namespace-wide and knows
 // nothing about boards — a session carries only the repo it was started
@@ -947,42 +1025,77 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
 // unreachable.
 export function ResearchPanel({ boardName, repoURL }) {
   const [sessions, setSessions] = useState(null);
-  const [open, setOpen] = useState(null); // { sessionId, pending }
-  const [creating, setCreating] = useState(false);
+  const [open, setOpen] = useState(null); // { sessionId, pending, title }
+  const [busy, setBusy] = useState(''); // which starter is in flight
+  const [topic, setTopic] = useState('');
+  const [title, setTitle] = useState('');
+  const [sinceOpen, setSinceOpen] = useState(false);
   const [error, setError] = useState('');
   const [showOthers, setShowOthers] = useState(false);
+  const [forkOwner, setForkOwner] = useState('');
 
   const load = useCallback(() => {
     fetch('/api/research')
       .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
-      .then(data => setSessions(Array.isArray(data.sessions) ? data.sessions : []))
+      .then(data => {
+        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        setForkOwner(data.forkOwner || '');
+      })
       .catch(err => { setSessions([]); setError(`Could not list research sessions: ${err}`); });
   }, []);
 
   // Poll while the tab is open. A newly claimed session takes minutes to
-  // become a sandbox, and until it does it is not in this list at all.
+  // become a sandbox; until it does it is a standing claim, which the
+  // list reports as a requested row.
   useEffect(() => {
     load();
     const t = setInterval(() => { if (!document.hidden) load(); }, 10000);
     return () => clearInterval(t);
   }, [load]);
 
-  const start = () => {
-    setCreating(true);
+  const repo = repoFromURL(repoURL);
+
+  // start files a claim. `enter` opens the conversation straight away:
+  // right for a question you just typed and want the answer to, wrong
+  // for a canned read you fire and come back to — that one leaves you on
+  // the list, where its row appears immediately so nobody clicks twice
+  // and pays for a second sandbox.
+  const start = (kickoff, enter) => {
+    const what = kickoff.kind || 'new';
+    setBusy(what);
     setError('');
-    fetch(`/api/board/${boardName}/research`, { method: 'POST' })
+    fetch(`/api/board/${boardName}/research`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(kickoff),
+    })
       .then(async res => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setError(body.error || `could not start a session: HTTP ${res.status}`); return; }
-        // Straight into the conversation: the sandbox is minutes away and
-        // watching it arrive beats a list row that says "requested".
-        // `pending` is what stops the 404 in the meantime reading as
-        // "this session does not exist".
-        setOpen({ sessionId: body.sessionId, pending: true });
+        if (enter) {
+          // `pending` is what stops the 404 in the meantime reading as
+          // "this session does not exist".
+          setOpen({ sessionId: body.sessionId, pending: true, title: body.title || '' });
+        } else {
+          setSessions(prev => [{
+            sessionId: body.sessionId,
+            title: body.title || '',
+            repo,
+            requested: true,
+            createdAt: new Date().toISOString(),
+          }, ...(prev || [])]);
+        }
         setTimeout(load, 3000);
       })
       .catch(err => setError(`could not start a session: ${err}`))
-      .finally(() => setCreating(false));
+      .finally(() => setBusy(''));
+  };
+
+  const ask = () => {
+    if (!topic.trim() || busy) return;
+    start({ kind: 'topic', topic: topic.trim(), title: title.trim() }, true);
+    setTopic('');
+    setTitle('');
   };
 
   if (open) {
@@ -991,52 +1104,140 @@ export function ResearchPanel({ boardName, repoURL }) {
         <ResearchConversation
           sessionId={open.sessionId}
           pending={open.pending}
+          title={open.title}
           onBack={() => { setOpen(null); load(); }}
           onDeleted={() => { setOpen(null); load(); }}
+          onRenamed={load}
         />
       </div>
     );
   }
 
-  const repo = repoFromURL(repoURL);
   const all = sessions || [];
   const mine = repo ? all.filter(s => s.repo === repo) : all;
   const others = repo ? all.filter(s => s.repo !== repo) : [];
 
+  const stateOf = (s) => {
+    if (s.requested) {
+      return <Pill text="requested" color="#b08800" bg="rgba(176,136,0,0.12)"
+        title="Asked for — the controller has not built the sandbox yet. A few minutes." />;
+    }
+    if (s.openingError) {
+      return <Pill text="opening failed" color="var(--text-danger)" bg="var(--bg-danger-light)"
+        title={s.openingError} />;
+    }
+    if (s.opening) {
+      return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
+        title="The first question has not reached the agent yet" />;
+    }
+    if (s.paused) {
+      return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
+        title="Scaled to zero — the transcript survives, the engine does not" />;
+    }
+    return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />;
+  };
+
   const row = (s) => (
     <tr key={s.sessionId} style={{ borderBottom: '1px solid var(--border-color)' }}>
-      <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{shortSession(s.sessionId)}</td>
+      <td style={{ padding: '6px 8px' }}>
+        {/* The title carries the row: it is what someone scanning for
+            "the one about the retry loop" is actually reading. */}
+        <div>{s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}</div>
+        <div style={{ fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
+          {shortSession(s.sessionId)}
+        </div>
+      </td>
       <td style={{ padding: '6px 8px' }}>
         {s.htmlUrl
           ? <a href={s.htmlUrl} target="_blank" rel="noopener noreferrer">{s.repo}</a>
           : s.repo}
       </td>
       <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }} title={s.createdAt}>{ageOf(s.createdAt)}</td>
-      <td style={{ padding: '6px 8px' }}>
-        {s.paused
-          ? <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
-            title="Scaled to zero — the transcript survives, the engine does not" />
-          : <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />}
-      </td>
+      <td style={{ padding: '6px 8px' }}>{stateOf(s)}</td>
       <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
         {s.sandbox}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-        <button className="btn btn-sm" onClick={() => setOpen({ sessionId: s.sessionId, pending: false })}>Open</button>
+        <button className="btn btn-sm"
+          onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}>
+          Open
+        </button>
       </td>
     </tr>
   );
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-        <button className="btn" disabled={creating} onClick={start}
-          title="Start a deep-research conversation about this repository — a sandbox with the repo checked out, which you then talk to">
-          {creating ? 'Requesting…' : 'New conversation'}
+      {/* The canned reads, then the ask box: the same shape the Explore
+          tab had, now producing sessions rather than a separate thing. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <button className="btn" disabled={!!busy}
+          title="Starts a conversation that reads the repo end to end: what it is, how it is put together, where the code lives"
+          onClick={() => start({ kind: 'onboard' }, false)}>
+          {busy === 'onboard' ? 'Requesting…' : 'Generate Overview'}
         </button>
-        <span style={{ color: 'var(--text-secondary)' }}>
-          A conversation is a sandbox with this repo checked out. It takes a few minutes to appear.
+        <span style={{ position: 'relative' }}>
+          <button className="btn" disabled={!!busy}
+            title="Starts a conversation that digests a recent window: themes, churn, notable merges, and maintainer asks"
+            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
+          {sinceOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px',
+            }}>
+              {['2 weeks', '1 month', '3 months'].map(win => (
+                <div key={win}
+                  onClick={() => { setSinceOpen(false); start({ kind: 'activity', since: win }, false); }}
+                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                  last {win}
+                </div>
+              ))}
+            </div>
+          )}
         </span>
+        <span style={{ flex: 1 }} />
+        <button className="btn btn-sm" disabled={!!busy}
+          title="Start an empty conversation and type the first message yourself"
+          onClick={() => start({}, true)}>
+          {busy === 'new' ? 'Requesting…' : 'Empty conversation'}
+        </button>
+      </div>
+
+      <div style={{
+        border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px',
+      }}>
+        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
+          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          style={{
+            width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)',
+            font: 'inherit', boxSizing: 'border-box',
+          }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+          {/* Optional: the question makes a perfectly good name, and
+              nobody should have to invent one to ask something. */}
+          <input value={title} onChange={e => setTitle(e.target.value)}
+            placeholder="name (optional)" aria-label="Session name"
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
+            style={{
+              flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
+              border: '1px solid var(--border-color)', borderRadius: '6px',
+              background: 'var(--bg-card)', color: 'var(--text-primary)',
+            }} />
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
+            {busy === 'topic' ? 'Requesting…' : 'Research'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ color: 'var(--text-secondary)', margin: '8px 0 10px' }}>
+        Each one is a sandbox with this repo checked out. It takes a few minutes to appear.
       </div>
 
       {error && (
@@ -1055,7 +1256,7 @@ export function ResearchPanel({ boardName, repoURL }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-              <th style={{ padding: '6px 8px' }}>Session</th>
+              <th style={{ padding: '6px 8px' }}>Conversation</th>
               <th style={{ padding: '6px 8px' }}>Repo</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
               <th style={{ padding: '6px 8px' }}>State</th>
@@ -1079,6 +1280,20 @@ export function ResearchPanel({ boardName, repoURL }) {
               <tbody>{others.map(row)}</tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* The notes branch on the member's fork. Research does not write
+          there yet — runs still do, and the old explore notes are still
+          on it — so this is a plain link out rather than anything the
+          page reads back. */}
+      {forkOwner && repo && (
+        <div style={{ marginTop: '14px', paddingTop: '8px', borderTop: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+          Earlier notes and run artifacts live on{' '}
+          <a href={`https://github.com/${forkOwner}/${repo}/tree/exploration/notes`}
+            target="_blank" rel="noopener noreferrer">
+            {forkOwner}/{repo} @ exploration/notes ↗
+          </a>
         </div>
       )}
     </div>

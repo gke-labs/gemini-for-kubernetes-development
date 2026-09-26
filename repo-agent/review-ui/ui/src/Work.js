@@ -1,8 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-// Explore docs are GFM — code maps and architecture notes are mostly
-// tables, which CommonMark alone renders as a paragraph of pipes.
-import remarkGfm from 'remark-gfm';
 import { ResearchPanel } from './Research';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
@@ -919,140 +915,6 @@ function SandboxCard({ name, namespace, onClose }) {
   );
 }
 
-// MermaidBlock renders a ```mermaid fence into an SVG in the browser
-// (the same client-side model GitHub uses). The dep is heavy, so it
-// loads lazily — only a doc containing a diagram pays for it. A diagram
-// that fails to parse falls back to its source, never a blank doc.
-let mermaidSeq = 0;
-function MermaidBlock({ code }) {
-  const [svg, setSvg] = useState('');
-  const [failed, setFailed] = useState(false);
-  const idRef = useRef(`explore-mmd-${++mermaidSeq}`);
-  const isDark = document.body.className.indexOf('dark-mode') !== -1;
-  useEffect(() => {
-    let alive = true;
-    import('mermaid').then(mod => {
-      const mermaid = mod.default;
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict',
-        theme: isDark ? 'dark' : 'default' });
-      return mermaid.render(idRef.current, code);
-    }).then(res => { if (alive) setSvg(res.svg); })
-      .catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-  }, [code, isDark]);
-  if (failed) {
-    return <pre style={{ overflow: 'auto', background: 'var(--bg-secondary)', padding: '8px', borderRadius: '6px' }}>{code}</pre>;
-  }
-  if (!svg) {
-    return <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '8px' }}>rendering diagram…</div>;
-  }
-  return <div style={{ overflow: 'auto' }} dangerouslySetInnerHTML={{ __html: svg }} />;
-}
-
-// ExploreDocViewer: files on the left, rendered markdown on the right.
-// Content comes raw from the fork branch; rendering happens here.
-function ExploreDocViewer({ boardName, docs }) {
-  const [selected, setSelected] = useState('');
-  const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [collapsed, setCollapsed] = useState({});
-
-  // README is the index — open it first; fall back to the first doc.
-  useEffect(() => {
-    if (selected && docs.some(d => d.path === selected)) return;
-    const readme = docs.find(d => d.name === 'README.md');
-    setSelected(readme ? readme.path : (docs[0] ? docs[0].path : ''));
-  }, [docs, selected]);
-
-  useEffect(() => {
-    if (!selected) { setContent(''); return; }
-    let alive = true;
-    setLoading(true);
-    fetch(`/api/board/${boardName}/exploration/doc?path=${encodeURIComponent(selected)}`)
-      .then(res => (res.ok ? res.text() : Promise.reject(res.status)))
-      .then(text => { if (alive) { setContent(text); setLoading(false); } })
-      .catch(() => { if (alive) { setContent('_could not load this doc_'); setLoading(false); } });
-    return () => { alive = false; };
-  }, [boardName, selected]);
-
-  const doc = docs.find(d => d.path === selected);
-
-  return (
-    <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
-      <div style={{ flex: '0 0 200px', borderRight: '1px solid var(--border-color)',
-        paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
-        {(() => {
-          const entry = d => (
-            <div key={d.path} onClick={() => setSelected(d.path)}
-              title={d.name}
-              style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
-                fontWeight: d.path === selected ? 600 : 400 }}>
-              {d.name.includes('/') ? d.name.split('/').slice(1).join('/') : d.name}
-            </div>
-          );
-          // Generic grouping: root files first, then one collapsible
-          // group per top-level folder. No folder is special any more:
-          // a procedure belongs to the run that uses it, and a run is
-          // started from the Runs tab.
-          const folderOf = d => (d.name.includes('/') ? d.name.split('/')[0] : '');
-          const order = [];
-          const byFolder = {};
-          for (const d of docs) {
-            const f = folderOf(d);
-            if (!(f in byFolder)) { byFolder[f] = []; order.push(f); }
-            byFolder[f].push(d);
-          }
-          order.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
-          return (
-            <>
-              {order.map((folder, i) => {
-                const files = byFolder[folder];
-                const isOpen = !collapsed[folder];
-                return (
-                  <React.Fragment key={folder || '(root)'}>
-                    {i > 0 && <div style={{ borderTop: '1px solid var(--border-color)', margin: '6px 4px' }} />}
-                    {folder !== '' && (
-                      <div onClick={() => setCollapsed(prev => ({ ...prev, [folder]: !prev[folder] }))}
-                        style={{ padding: '4px 8px', cursor: 'pointer', color: 'var(--text-secondary)',
-                          display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontSize: 'x-small' }}>{isOpen ? '▾' : '▸'}</span>
-                        {folder}/
-                        {!isOpen && <span style={{ fontSize: 'x-small' }}>({files.length})</span>}
-                      </div>
-                    )}
-                    {isOpen && files.map(entry)}
-                  </React.Fragment>
-                );
-              })}
-            </>
-          );
-        })()}
-      </div>
-      <div className="md-body" style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
-        {doc && (
-          <a href={doc.htmlURL} target="_blank" rel="noopener noreferrer"
-            style={{ position: 'absolute', top: 0, right: '8px', fontSize: 'smaller' }}
-            title="Canonical view on GitHub">GitHub ↗</a>
-        )}
-        {loading ? (
-          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>loading…</div>
-        ) : (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-            code({ className, children, ...props }) {
-              if (/language-mermaid/.test(className || '')) {
-                return <MermaidBlock code={String(children)} />;
-              }
-              return <code className={className} {...props}>{children}</code>;
-            },
-          }}>{content}</ReactMarkdown>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // The receipt's first line, compressed to a badge — shared by the
 // per-board Runs tab and the All-boards runs view.
 function verdictBadge(receipt) {
@@ -1461,134 +1323,6 @@ function TryPanel({ boardName, onOpenSandbox }) {
           </table>
         </div>
       )}
-    </div>
-  );
-}
-
-// ExplorePanel: the board's understanding surface — docs from the
-// member's fork branch (git is the record; renders with the sandbox
-// paused or gone), kickoff buttons for the three exploration kinds, and
-// the deep-dive chat door.
-function ExplorePanel({ boardName, onOpenSandbox }) {
-  const [exp, setExp] = useState(null);
-  const [topic, setTopic] = useState('');
-  const [sinceOpen, setSinceOpen] = useState(false);
-  const [busy, setBusy] = useState('');
-
-  const load = useCallback(() => {
-    fetch(`/api/board/${boardName}/exploration`)
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => setExp(data))
-      .catch(() => {});
-  }, [boardName]);
-  // Poll while the tab is open: exploration runs take minutes (cold
-  // boots clone the repo) and the docs should appear without a reload.
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 10000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  const kickoff = (kind, extra) => {
-    setBusy(kind);
-    fetch(`/api/board/${boardName}/explore`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, ...extra }),
-    }).then(res => {
-      if (!res.ok) { setBusy(''); return; }
-      // Optimistic queued state until the server reports it.
-      setExp(prev => ({ ...(prev || {}), pending: kind }));
-      setTimeout(load, 2000);
-      setTimeout(() => setBusy(''), 2000);
-    }).catch(() => setBusy(''));
-  };
-
-  const sb = exp && exp.sandbox;
-  const dive = () => {
-    if (!topic.trim() || busy === 'topic') return;
-    kickoff('topic', { topic });
-    setTopic('');
-  };
-  return (
-    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* One column: understanding verbs over the ask box. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-        <button className="btn" disabled={busy === 'onboard'}
-          title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
-          onClick={() => kickoff('onboard')}>Generate Overview</button>
-        <span style={{ position: 'relative' }}>
-          <button className="btn" disabled={busy === 'activity'}
-            title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
-            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
-          {sinceOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px' }}>
-              {['2 weeks', '1 month', '3 months'].map(win => (
-                <div key={win}
-                  onClick={() => { setSinceOpen(false); kickoff('activity', { since: win }); }}
-                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                  last {win}
-                </div>
-              ))}
-            </div>
-          )}
-        </span>
-        <span style={{ flex: 1 }} />
-        {exp && exp.pending && (!sb || sb.taskState !== 'Running') && (
-          <Chip text={sb ? `${exp.pending} queued…` : `${exp.pending} requested — preparing the sandbox…`}
-            color="#b08800" bg="rgba(176,136,0,0.12)" />
-        )}
-        {sb && (
-          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)}
-            style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-            title={`${sb.name} — tasks & logs`}>
-            <EngineIcon engine={sb.engine} />
-          </span>
-        )}
-        {sb && (
-          <a href={`#/terminal/${exp.forkOwner}/${sb.name}?chat=explore`}
-            target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-            title="Interactive exploration — ask questions, the agent updates the docs; same session across days">
-            <Chip text={`explore: ${sb.taskState === 'Running' ? 'running' : 'parked'}`}
-              color={sb.taskState === 'Running' ? '#b08800' : '#6a737d'}
-              bg={sb.taskState === 'Running' ? 'rgba(176,136,0,0.12)' : 'var(--bg-card)'} />
-          </a>
-        )}
-      </div>
-      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-        background: 'var(--bg-secondary)', padding: '10px 12px' }}>
-        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); dive(); } }}
-          style={{ width: '100%', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)',
-            font: 'inherit', boxSizing: 'border-box' }} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-          <button className="btn btn-sm" disabled={!topic.trim() || busy === 'topic'}
-            onClick={dive}>Explore</button>
-        </div>
-      </div>
-      {/* Artifacts: git is the record — rendered apart from the controls. */}
-      <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border-color)' }}>
-        {exp && (
-          <div style={{ marginBottom: '6px' }}>
-            <a href={exp.branchURL} target="_blank" rel="noopener noreferrer"
-              title="Your understanding docs, rendered on GitHub">notes branch ↗</a>
-          </div>
-        )}
-        {(!exp || (exp.docs || []).length === 0) && (
-          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '8px' }}>
-            No exploration notes yet — Generate Overview writes the first ones to your fork.
-          </div>
-        )}
-        {exp && (
-          <ExploreDocViewer boardName={boardName} docs={exp.docs || []}
- />
-        )}
-      </div>
     </div>
   );
 }
@@ -2003,13 +1737,8 @@ function Work({ onBack, namespace }) {
                 );
               })}
               <button
-                className={`group-tab ${shown === 'explore' ? 'active' : ''}`}
-                title="Understanding docs for this repo — onboarding, architecture, recent activity, deep dives"
-                onClick={() => setActiveGroup('explore')}
-              >Explore</button>
-              <button
                 className={`group-tab ${shown === 'research' ? 'active' : ''}`}
-                title="Deep research — a conversation with an agent that has this repo checked out; the transcript is the artifact"
+                title="Understand this repo — an overview read, a digest of recent activity, or any question you ask; each one a conversation with an agent that has the repo checked out"
                 onClick={() => setActiveGroup('research')}
               >Research</button>
               <button
@@ -2052,9 +1781,7 @@ function Work({ onBack, namespace }) {
               </span>
             </nav>
 
-            {shown === 'explore' ? (
-              <ExplorePanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
-            ) : shown === 'research' ? (
+            {shown === 'research' ? (
               <ResearchPanel boardName={activeBoard} repoURL={board && board.repoURL} />
             ) : shown === 'try' ? (
               <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />

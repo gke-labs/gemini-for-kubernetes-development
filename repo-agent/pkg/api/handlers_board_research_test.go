@@ -28,6 +28,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // The click writes a claim the controller will act on, and answers with
@@ -136,5 +137,85 @@ func TestStartResearchSessionForbiddenForNonMember(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// A canned exploration is an ordinary session whose first prompt
+// someone else typed. The click files it on the claim, because the
+// sandbox that will answer it does not exist yet.
+func TestStartResearchSessionCarriesTheKickoff(t *testing.T) {
+	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+
+	req, _ := http.NewRequest("POST", "/board/myboard/research",
+		strings.NewReader(`{"kind":"topic","topic":"how does the mailbox get trimmed?"}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		SessionID string `json:"sessionId"`
+		Title     string `json:"title"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	// The title comes back so the UI can name the row it is about to
+	// show, before anything exists to read it from.
+	if got.Title != "how does the mailbox get trimmed?" {
+		t.Errorf("title = %q", got.Title)
+	}
+
+	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := map[string]string{}
+	_ = json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests)
+	claim, ok := research.DecodeClaim(requests["research-"+got.SessionID])
+	if !ok {
+		t.Fatalf("claim %q does not decode", requests["research-"+got.SessionID])
+	}
+	if claim.Kickoff.Kind != research.KindTopic || claim.Kickoff.Topic != "how does the mailbox get trimmed?" {
+		t.Errorf("kickoff = %+v", claim.Kickoff)
+	}
+}
+
+// The plain "new conversation" click still files exactly the claim it
+// always did: no third field, nothing to send.
+func TestStartResearchSessionWithoutAKickoff(t *testing.T) {
+	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+
+	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	board, _ := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+	requests := map[string]string{}
+	_ = json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests)
+	for _, value := range requests {
+		if strings.Count(value, "|") != 1 {
+			t.Errorf("claim %q carries a kickoff nobody asked for", value)
+		}
+	}
+}
+
+// A kind the server cannot render is refused at the door. Defaulting it
+// would spend minutes of engine time on the wrong exploration.
+func TestStartResearchSessionRejectsAnUnknownKickoff(t *testing.T) {
+	for _, body := range []string{`{"kind":"onboarding"}`, `{"kind":"topic"}`, `{"kind":"topic","topic":"  "}`} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400: %s", body, w.Code, w.Body.String())
+		}
+		board, _ := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+		if raw := board.GetAnnotations()[annoBoardRequests]; strings.Contains(raw, "research-") {
+			t.Errorf("%s: a refused click must file no claim, got %q", body, raw)
+		}
 	}
 }

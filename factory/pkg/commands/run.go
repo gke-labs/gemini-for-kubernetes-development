@@ -18,6 +18,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// slugifyScenario makes the scenario safe as a filename under
+// runbooks/ (lowercase, dashes, nothing else). A typed ".md" is the
+// name of the file, not part of it: "deploy-gcp.md" means the
+// existing deploy-gcp run, never a new deploy-gcp-md twin.
+func slugifyScenario(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSuffix(s, ".md")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:] // a pasted path names its file
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // NewRunCommand plans, deploys or tears down one run.
 //
 //	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--from …]

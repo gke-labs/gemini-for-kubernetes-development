@@ -137,10 +137,9 @@ func researchEnv(envs []EnvVar) []EnvVar {
 
 // EnsureResearchSandbox ensures the sandbox for one research session.
 //
-// Unlike the explore sandbox, which is one per repo and long-lived,
-// this is one per conversation: the transcript lives on the PVC and
-// dies with the sandbox, so sharing one between sessions would mean
-// sharing a transcript.
+// One per conversation rather than one per repo: the transcript lives
+// on the PVC and dies with the sandbox, so sharing one between sessions
+// would mean sharing a transcript.
 //
 // The sandbox runs acpd because ACPD_ENABLE is set here. Nothing else
 // turns it on, so every other sandbox type is unaffected.
