@@ -11,6 +11,10 @@ import (
 )
 
 const (
+	// WorkspacesPath is the PVC mount: the sandbox's durable storage and
+	// the parent of every repository checkout.
+	WorkspacesPath = "/workspaces"
+
 	GoCachePath    = "/workspaces/.cache/go-build"
 	GoModCachePath = "/workspaces/.cache/mod"
 	TmpDirPath     = "/workspaces/.tmp"
