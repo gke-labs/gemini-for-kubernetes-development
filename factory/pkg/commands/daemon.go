@@ -59,7 +59,7 @@ func runDaemon(ctx context.Context) error {
 	// here rather than orchestrated from outside because this process is
 	// the sandbox's PID 1: anything else would need envd to start it, and
 	// acpd exists precisely so a conversation does not go through envd.
-	if os.Getenv(EnvACPDEnable) != "" {
+	if os.Getenv(sandbox.EnvACPDEnable) != "" {
 		port := acpdPortFromEnv(ctx)
 		go func() {
 			// A failed acpd must not take the sandbox down with it — envd
