@@ -44,6 +44,12 @@ const (
 	// KindError is a failure worth showing the user: the engine died, a
 	// prompt call returned an RPC error.
 	KindError = "error"
+	// KindModeChanged records a mode acpd asked the engine for. Its
+	// payload matches ACP's current_mode_update ({"currentModeId": …}) so
+	// a reader can treat the two the same; they are separate kinds only
+	// because the engine does not notify on its own set_mode, and a
+	// session that stopped prompting owes the transcript a reason.
+	KindModeChanged = "mode_changed"
 )
 
 // Transcript is an append-only NDJSON file plus the means to follow it.

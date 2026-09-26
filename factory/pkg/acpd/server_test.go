@@ -20,8 +20,18 @@ import (
 // handshake and answer one prompt. It echoes the credential it was started
 // with back as agent output, which is how the test proves the key reached
 // the process environment rather than merely being accepted by the API.
+//
+// With --modes it also implements session modes: session/new advertises
+// two, session/set_mode enforces the list, and the prompt echo names the
+// mode in force — so a test can prove the switch reached the engine and
+// not merely acpd's own bookkeeping. Without the flag it behaves like an
+// agent that has never heard of modes, which is the other case that has
+// to keep working.
 const fakeAgent = `
 import json, os, sys
+
+modes = "--modes" in sys.argv[1:]
+current = "default"
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -42,21 +52,43 @@ for line in sys.stdin:
     elif method == "authenticate":
         send({"jsonrpc": "2.0", "id": mid, "result": {}})
     elif method == "session/new":
-        send({"jsonrpc": "2.0", "id": mid, "result": {"sessionId": "agent-side-id"}})
+        result = {"sessionId": "agent-side-id"}
+        if modes:
+            result["modes"] = {
+                "currentModeId": current,
+                "availableModes": [
+                    {"id": "default", "name": "Default", "description": "Prompts for approval"},
+                    {"id": "yolo", "name": "YOLO", "description": "Auto-approves all tools"}]}
+        send({"jsonrpc": "2.0", "id": mid, "result": result})
+    elif method == "session/set_mode":
+        wanted = msg["params"]["modeId"]
+        if not modes or wanted not in ("default", "yolo"):
+            send({"jsonrpc": "2.0", "id": mid,
+                  "error": {"code": -32602, "message": "no such mode: %s" % wanted}})
+        else:
+            current = wanted
+            send({"jsonrpc": "2.0", "id": mid, "result": {}})
     elif method == "session/prompt":
         prompt = msg["params"]["prompt"][0]["text"]
+        if prompt.startswith("!mode "):
+            current = prompt.split(" ", 1)[1]
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": "agent-side-id",
+                "update": {"sessionUpdate": "current_mode_update", "currentModeId": current}}})
         send({"jsonrpc": "2.0", "method": "session/update", "params": {
             "sessionId": "agent-side-id",
             "update": {"sessionUpdate": "agent_message_chunk",
                        "content": {"type": "text",
-                                   "text": "saw:%s key:%s" % (prompt, os.environ.get("FAKE_KEY", "<unset>"))}}}})
+                                   "text": "saw:%s key:%s mode:%s" % (
+                                       prompt, os.environ.get("FAKE_KEY", "<unset>"), current)}}}})
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
     elif mid is not None:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": method}})
 `
 
-// registerFakeEngine installs a python-backed agent under the name
-// "fake" for the duration of the test.
+// registerFakeEngine installs the python-backed agent under two names for
+// the duration of the test: "fake", which knows nothing about modes, and
+// "fake-modes", which implements them.
 func registerFakeEngine(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
@@ -74,7 +106,16 @@ func registerFakeEngine(t *testing.T) {
 		APIKeyEnv:    "FAKE_KEY",
 		AuthMethodID: "fake-auth",
 	}
-	t.Cleanup(func() { delete(Engines, "fake") })
+	Engines["fake-modes"] = Engine{
+		Command:      "python3",
+		Args:         []string{script, "--modes"},
+		APIKeyEnv:    "FAKE_KEY",
+		AuthMethodID: "fake-auth",
+	}
+	t.Cleanup(func() {
+		delete(Engines, "fake")
+		delete(Engines, "fake-modes")
+	})
 }
 
 func newTestServer(t *testing.T) (*Server, *httptest.Server) {

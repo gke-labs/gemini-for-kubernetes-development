@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acp"
 	"k8s.io/klog/v2"
 )
 
@@ -63,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{id}/events", s.handleEvents)
 	mux.HandleFunc("POST /sessions/{id}/permission", s.handlePermission)
 	mux.HandleFunc("POST /sessions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /sessions/{id}/mode", s.handleSetMode)
 	return mux
 }
 
@@ -97,6 +99,9 @@ type createSessionRequest struct {
 	Engine       string `json:"engine"`
 	AuthMethodID string `json:"authMethodId,omitempty"`
 	CWD          string `json:"cwd,omitempty"`
+	// Mode is the approval mode to start in. Empty leaves the engine's
+	// own default, which for gemini means prompting on every tool call.
+	Mode string `json:"mode,omitempty"`
 }
 
 type sessionResponse struct {
@@ -106,6 +111,11 @@ type sessionResponse struct {
 	CreatedAt time.Time `json:"createdAt"`
 	Busy      bool      `json:"busy"`
 	Offset    int64     `json:"offset"`
+	// Mode and AvailableModes let a client that did not create the
+	// session — a browser attaching to one the controller started — show
+	// and change what it is running under.
+	Mode           string            `json:"mode,omitempty"`
+	AvailableModes []acp.SessionMode `json:"availableModes,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +159,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		APIKey:       apiKey,
 		AuthMethodID: req.AuthMethodID,
 		CWD:          cwd,
+		Mode:         req.Mode,
 		Dir:          filepath.Join(s.stateDir, req.ID),
 	})
 	if err != nil {
@@ -163,7 +174,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.sessions[req.ID] = sess
 	s.mu.Unlock()
 
-	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD)
+	mode, _ := sess.Modes()
+	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD, "mode", mode)
 	writeJSON(w, http.StatusCreated, describe(sess))
 }
 
@@ -335,6 +347,42 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetMode switches the session's approval mode mid-conversation.
+//
+// Allowed while a turn is in flight on purpose: the reason to reach for
+// this is usually a prompt that has just appeared, and making the member
+// stop the turn first would throw away the work that produced it. The
+// engine applies the new mode to the next tool call either way.
+func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.lookup(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("decoding body: %v", err))
+		return
+	}
+	if body.Mode == "" {
+		writeError(w, http.StatusBadRequest, "mode is required")
+		return
+	}
+	if err := sess.SetMode(r.Context(), body.Mode); err != nil {
+		// A mode the engine does not offer is the caller's mistake, and
+		// the message names what it does offer. Anything else is the
+		// engine failing to answer.
+		if !sess.offersMode(body.Mode) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, describe(sess))
+}
+
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.lookup(w, r)
 	if !ok {
@@ -366,13 +414,16 @@ func (s *Server) count() int {
 }
 
 func describe(sess *Session) sessionResponse {
+	mode, available := sess.Modes()
 	return sessionResponse{
-		ID:        sess.ID,
-		Engine:    sess.Engine,
-		CWD:       sess.CWD,
-		CreatedAt: sess.CreatedAt,
-		Busy:      sess.Busy(),
-		Offset:    sess.Transcript().Size(),
+		ID:             sess.ID,
+		Engine:         sess.Engine,
+		CWD:            sess.CWD,
+		CreatedAt:      sess.CreatedAt,
+		Busy:           sess.Busy(),
+		Offset:         sess.Transcript().Size(),
+		Mode:           mode,
+		AvailableModes: available,
 	}
 }
 

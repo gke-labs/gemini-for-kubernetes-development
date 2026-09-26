@@ -35,6 +35,11 @@ const (
 // prompt turn or session replay.
 const MethodSessionUpdate = "session/update"
 
+// MethodSetSessionMode switches a session's mode. Optional in ACP: an
+// agent that does not implement it answers MethodNotFound, and one that
+// does advertises the modes it will accept in NewSessionResponse.
+const MethodSetSessionMode = "session/set_mode"
+
 // InitializeRequest are the client's parameters for the initialize handshake.
 type InitializeRequest struct {
 	ProtocolVersion    int                `json:"protocolVersion"`
@@ -108,9 +113,34 @@ type NewSessionRequest struct {
 
 // NewSessionResponse is the agent's response to session/new.
 type NewSessionResponse struct {
-	SessionID string         `json:"sessionId"`
-	Modes     map[string]any `json:"modes,omitempty"`
-	Models    map[string]any `json:"models,omitempty"`
+	SessionID string `json:"sessionId"`
+	// Modes is the session's approval mode and the set it may be switched
+	// to. Nil from an agent that does not implement modes at all, which is
+	// a different thing from an agent whose only mode is the default.
+	Modes  *SessionModeState `json:"modes,omitempty"`
+	Models map[string]any    `json:"models,omitempty"`
+}
+
+// SessionMode is one approval mode the agent will accept. The ids are the
+// agent's own — ACP fixes the shape of this, not the vocabulary — so a
+// client picks by matching against AvailableModes rather than by assuming
+// a name.
+type SessionMode struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// SessionModeState is which mode a session is in and which it offers.
+type SessionModeState struct {
+	AvailableModes []SessionMode `json:"availableModes,omitempty"`
+	CurrentModeID  string        `json:"currentModeId,omitempty"`
+}
+
+// SetSessionModeRequest are the parameters for session/set_mode.
+type SetSessionModeRequest struct {
+	SessionID string `json:"sessionId"`
+	ModeID    string `json:"modeId"`
 }
 
 // LoadSessionRequest are the parameters for session/load.
@@ -148,6 +178,10 @@ const (
 	UpdateToolCall          = "tool_call"
 	UpdateToolCallUpdate    = "tool_call_update"
 	UpdatePlan              = "plan"
+	// UpdateCurrentMode reports that the session's mode changed. An agent
+	// may send it unprompted — a mode the agent leaves on its own — so it
+	// is not simply an echo of set_mode.
+	UpdateCurrentMode = "current_mode_update"
 )
 
 // SessionUpdateNotification is the payload of a session/update notification.
@@ -175,6 +209,9 @@ type SessionUpdate struct {
 
 	// Set for plan.
 	Entries []PlanEntry `json:"entries,omitempty"`
+
+	// Set for current_mode_update.
+	CurrentModeID string `json:"currentModeId,omitempty"`
 }
 
 // PlanEntry is one item in an agent's plan update.

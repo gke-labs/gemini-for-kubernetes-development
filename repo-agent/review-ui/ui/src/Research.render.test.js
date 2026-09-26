@@ -56,7 +56,9 @@ const reply = (status, body) => Promise.resolve({
 // on the element, so assigning .value directly is invisible to it. The
 // prototype's setter is what an actual keystroke goes through.
 const nativeSet = (el, value) => {
-    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement : window.HTMLInputElement;
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement
+        : el.tagName === 'SELECT' ? window.HTMLSelectElement
+            : window.HTMLInputElement;
     Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, value);
 };
 
@@ -286,6 +288,82 @@ describe('ResearchConversation', () => {
         expect(container.textContent).toContain('paused');
         expect(container.textContent).toContain('scaled to zero');
         expect(container.querySelector('textarea').disabled).toBe(true);
+    });
+
+    // The modes gemini advertises, as the API forwards them.
+    const modes = [
+        { id: 'default', name: 'Default', description: 'Prompts for approval' },
+        { id: 'autoEdit', name: 'Auto Edit', description: 'Auto-approves edit tools' },
+        { id: 'yolo', name: 'YOLO', description: 'Auto-approves all tools' },
+    ];
+
+    test('the header offers the engine\'s modes and switches between them', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({
+                type: 'open', session: { busy: false, offset: 0, mode: 'yolo', availableModes: modes },
+            });
+        });
+
+        const picker = container.querySelector('select[aria-label="Approval mode"]');
+        expect(picker).toBeTruthy();
+        // Research starts auto-approving; the control is there to tighten
+        // that, so it has to open on what the session is actually in.
+        expect(picker.value).toBe('yolo');
+        expect([...picker.options].map(o => o.textContent)).toEqual(['Default', 'Auto Edit', 'YOLO']);
+
+        global.fetch.mockClear();
+        global.fetch.mockImplementation(() => reply(200, {
+            sessionId: 's1', mode: 'default', availableModes: modes,
+        }));
+        await act(async () => {
+            nativeSet(picker, 'default');
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        expect(global.fetch).toHaveBeenCalledWith('/api/research/s1/mode', expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ mode: 'default' }),
+        }));
+        expect(container.querySelector('select[aria-label="Approval mode"]').value).toBe('default');
+    });
+
+    test('a mode changed elsewhere arrives on the stream and moves the control', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0, mode: 'yolo', availableModes: modes } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: { seq: 1, kind: 'mode_changed', data: { currentModeId: 'default' } },
+            });
+        });
+
+        // Another tab, or the engine leaving a mode on its own: the reply
+        // to our own POST is not the only way a mode changes.
+        expect(container.querySelector('select[aria-label="Approval mode"]').value).toBe('default');
+        expect(container.textContent).toContain('approval mode: default');
+    });
+
+    test('an engine that offers no modes gets no control', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } });
+        });
+
+        expect(container.querySelector('select[aria-label="Approval mode"]')).toBeNull();
     });
 
     test('a 404 is "gone" for an existing session and "starting" for a just-claimed one', async () => {

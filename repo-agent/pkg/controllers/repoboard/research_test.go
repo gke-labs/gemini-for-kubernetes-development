@@ -545,6 +545,10 @@ func TestResearchKickoffIsSentAndCleared(t *testing.T) {
 	// The key reaches acpd in a header at create, and nowhere else.
 	g.Expect(acp.keys()).To(gomega.Equal([]string{"AIza-test"}))
 	g.Expect(acp.created[0].CWD).To(gomega.Equal("/workspaces/repo"))
+	// Auto-approving, because nobody is watching this one. A canned
+	// opening that stops to ask blocks until acpd's permission timeout
+	// and is then cancelled, so the answer never arrives at all.
+	g.Expect(acp.created[0].Mode).To(gomega.Equal(acpd.ResearchMode))
 
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),

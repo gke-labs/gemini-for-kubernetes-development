@@ -30,6 +30,33 @@ const DefaultPort = 49984
 // registered server-side today; an unknown engine fails at create.
 const EngineGemini = "gemini"
 
+// The approval modes gemini offers. ACP fixes the shape of a mode but not
+// its vocabulary, so these are the engine's names and not the protocol's:
+// acpd matches whatever is asked for against what the engine advertised
+// and refuses the create if it is not there, which makes a renamed mode a
+// loud failure rather than a session that quietly starts prompting again.
+const (
+	// ModeDefault prompts for approval on every tool call.
+	ModeDefault = "default"
+	// ModeAutoEdit auto-approves edit tools and prompts for the rest.
+	ModeAutoEdit = "autoEdit"
+	// ModeYolo auto-approves every tool call.
+	ModeYolo = "yolo"
+	// ModePlan is read-only, and only offered when plan is enabled.
+	ModePlan = "plan"
+)
+
+// ResearchMode is the mode research sessions run in.
+//
+// Yolo, because a research session is a conversation with a throwaway
+// checkout and nobody is necessarily watching it. The canned openings
+// make that concrete: an activity digest runs `git log`, an execute tool,
+// so a read-only mode would not spare it the prompt — and the controller
+// fires those with no browser attached, where an unanswered prompt blocks
+// the turn until acpd's permission timeout and then cancels it. The blast
+// radius is one sandbox's disk, which is deleted with the conversation.
+const ResearchMode = ModeYolo
+
 // Session is the server's view of one conversation.
 type Session struct {
 	ID        string    `json:"id"`
@@ -43,6 +70,19 @@ type Session struct {
 	// which is where a follower should resume from to see only what
 	// happens next.
 	Offset int64 `json:"offset"`
+	// Mode is the approval mode in force, and AvailableModes the set it
+	// can be switched to. Both are empty for an engine that does not
+	// implement modes, which is how a client knows not to offer the
+	// switch at all rather than offering one that will fail.
+	Mode           string        `json:"mode,omitempty"`
+	AvailableModes []SessionMode `json:"availableModes,omitempty"`
+}
+
+// SessionMode is one approval mode the engine will accept.
+type SessionMode struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // CreateSessionRequest is the body of POST /sessions. The engine
@@ -59,6 +99,10 @@ type CreateSessionRequest struct {
 	// CWD is the repository checkout the conversation is about. Empty
 	// means the sandbox's workspace root.
 	CWD string `json:"cwd,omitempty"`
+	// Mode is the approval mode to start in. Empty leaves the engine's
+	// own, which for gemini means prompting on every tool call. A mode
+	// the engine does not offer fails the create.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Event is one line of the NDJSON transcript.
@@ -83,6 +127,11 @@ const (
 	KindPermissionResolved = "permission_resolved"
 	KindTurnEnd            = "turn_end"
 	KindError              = "error"
+	// KindModeChanged records a mode acpd asked the engine for. Its
+	// payload is ACP's current_mode_update ({"currentModeId": …}), which
+	// the engine also emits when it changes mode by itself — the two
+	// kinds carry the same thing and a reader should treat them alike.
+	KindModeChanged = "mode_changed"
 )
 
 // PermissionRequest is the payload of a KindPermissionRequest event: the

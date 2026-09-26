@@ -249,6 +249,26 @@ describe('applyResearchEvent', () => {
         expect(t.items[1].log).toBe('/tmp/engine.log');
     });
 
+    test('both mode kinds mean the same thing, and the last one wins', () => {
+        // acpd writes mode_changed for a switch it made, because gemini
+        // does not notify on its own set_mode; current_mode_update is the
+        // engine reporting one it made itself. A reader wants the same
+        // answer from either.
+        const t = buildResearchTranscript([
+            ev(1, 'mode_changed', { currentModeId: 'yolo' }),
+            ev(2, 'user_prompt', { text: 'hi' }),
+            ev(3, 'current_mode_update', { currentModeId: 'plan' }),
+        ]);
+        expect(t.mode).toBe('plan');
+        expect(t.items.map(i => i.role)).toEqual(['mode', 'user', 'mode']);
+        expect(t.items[0].mode).toBe('yolo');
+    });
+
+    test('a mode event with no mode in it changes nothing', () => {
+        const before = buildResearchTranscript([ev(1, 'mode_changed', { currentModeId: 'yolo' })]);
+        expect(applyResearchEvent(before, ev(2, 'mode_changed', {}))).toBe(before);
+    });
+
     test('an unknown kind is rendered, not dropped', () => {
         const t = applyResearchEvent(emptyTranscript, ev(1, 'available_commands_update', { commands: ['x'] }));
         expect(t.items).toHaveLength(1);

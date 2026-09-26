@@ -335,3 +335,57 @@ func TestNewForPodIP(t *testing.T) {
 		t.Errorf("baseURL = %q, want %q", c.baseURL, want)
 	}
 }
+
+func TestSetMode(t *testing.T) {
+	client, rec := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Session{
+			ID:             "s1",
+			Mode:           ModeYolo,
+			AvailableModes: []SessionMode{{ID: ModeDefault, Name: "Default"}, {ID: ModeYolo, Name: "YOLO"}},
+		})
+	})
+
+	got, err := client.SetMode(context.Background(), "s1", ModeYolo)
+	if err != nil {
+		t.Fatalf("SetMode: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/sessions/s1/mode" {
+		t.Errorf("got %s %s, want POST /sessions/s1/mode", rec.method, rec.path)
+	}
+	if !strings.Contains(string(rec.body), `"mode":"yolo"`) {
+		t.Errorf("body = %s, want the mode in it", rec.body)
+	}
+	if got.Mode != ModeYolo {
+		t.Errorf("mode = %q, want yolo", got.Mode)
+	}
+	// The set the UI builds its switcher from. Dropping it here would
+	// leave the browser with a mode it cannot change back.
+	if len(got.AvailableModes) != 2 {
+		t.Errorf("availableModes = %+v, want both", got.AvailableModes)
+	}
+}
+
+// An empty mode is caught before the request: acpd would answer 400, but
+// a caller that meant "leave it alone" should not be making the call.
+func TestSetModeRejectsAnEmptyMode(t *testing.T) {
+	called := false
+	client, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if _, err := client.SetMode(context.Background(), "s1", ""); err == nil {
+		t.Error("expected an error for an empty mode")
+	}
+	if called {
+		t.Error("an empty mode reached the server")
+	}
+}
+
+// Research sessions run auto-approving. The canned openings are fired by
+// the controller with nothing attached, so a permission prompt there is
+// not friction but a turn that blocks and is then cancelled.
+func TestResearchModeIsAutoApproving(t *testing.T) {
+	if ResearchMode != ModeYolo {
+		t.Errorf("ResearchMode = %q, want %q", ResearchMode, ModeYolo)
+	}
+}
