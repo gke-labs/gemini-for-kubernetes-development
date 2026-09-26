@@ -14,13 +14,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// EnvACPDEnable gates the listener started by `factory daemon`.
-//
-// Opt-in rather than always-on: acpd is an unauthenticated port that
-// starts agent processes, and only research sandboxes have any use for it.
-// Every other sandbox keeps the surface it has today.
-const EnvACPDEnable = "ACPD_ENABLE"
-
 // EnvACPDPort overrides the listen port.
 const EnvACPDPort = "ACPD_PORT"
 

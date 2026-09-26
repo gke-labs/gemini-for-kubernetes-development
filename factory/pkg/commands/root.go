@@ -152,6 +152,10 @@ coding tasks without local side effects or host dependencies.`,
 	acpdCmd.GroupID = "management"
 	cmd.AddCommand(acpdCmd)
 
+	researchCmd := NewResearchCommand(ctx)
+	researchCmd.GroupID = "workflows"
+	cmd.AddCommand(researchCmd)
+
 	return cmd
 }
 
