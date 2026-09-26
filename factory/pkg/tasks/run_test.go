@@ -126,3 +126,28 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 		t.Error("guard written as a bare && list; under set -e a false test kills the run")
 	}
 }
+
+// A re-plan is the same command with the same flag, so the prompt has
+// to tell the model how to read a terse refinement. "5 nodes" is an
+// amendment to an existing plan, not a brief that silently drops the
+// cluster, the IAM grants and the build.
+func TestPlanPromptDistinguishesAmendmentFromBrief(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n", Intent: "5 nodes"})
+	for _, want := range []string{"AMENDMENT to it", "this is the whole brief"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan prompt missing %q — a refinement could be read as a replacement brief", want)
+		}
+	}
+}
+
+// Planning does not remove infrastructure, but a PLANNED receipt is
+// the newest thing anyone reads. If it drops the running-resources
+// list, a live cluster goes invisible and bills until noticed.
+func TestPlanReceiptCarriesRunningResourcesForward(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n"})
+	for _, want := range []string{"Currently deployed", "left\n   RUNNING", "has not been applied"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan prompt missing %q", want)
+		}
+	}
+}

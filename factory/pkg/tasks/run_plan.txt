@@ -6,6 +6,14 @@ docs-exploration/runs/{{.Name}}/.
 What the owner asked for: {{.Intent}}
 Treat it as pinned decisions — targets, names and values it gives are
 this run's parameters.
+
+How to read it depends on whether this run already has a plan:
+  - No runbook.md yet: this is the whole brief.
+  - runbook.md exists: this is an AMENDMENT to it, not a replacement
+    brief. A refinement is written as the few things to change — "5
+    nodes, bucket in us-east1" — and says nothing about the cluster,
+    the IAM grants or the build, because those are already decided.
+    Change what it asks for and leave everything else standing.
 {{end}}
 Write the files in this order. The order is the point: the procedure
 is the thinking and the scripts are a transcription of it. Writing
@@ -53,6 +61,15 @@ on the next revision, and the owner loses the thing they review.
    what this run will create (names, from params.env), roughly what
    it will cost, the feasibility state (✓/✗ per step), and anything
    the owner should read before approving.
+
+   If an earlier receipt in this directory reported resources left
+   RUNNING, carry them forward under "## Currently deployed" —
+   verbatim, with the receipt they came from. Planning does not
+   remove infrastructure, and this receipt is the newest thing
+   anyone reads: drop that list and a live cluster becomes invisible,
+   nobody offers to tear it down, and it bills until somebody
+   notices. Say plainly that this plan supersedes the deployed state
+   and has not been applied.
 
 OWNERSHIP: this run owns everything it touches. Never write steps that
 adopt infrastructure this run did not create — a healthy existing
