@@ -70,7 +70,7 @@ func TestValidate(t *testing.T) {
 		{"topic with text", Kickoff{Kind: KindTopic, Topic: "why?"}, true},
 		{"topic with none", Kickoff{Kind: KindTopic}, false},
 		{"topic of spaces", Kickoff{Kind: KindTopic, Topic: "   "}, false},
-		{"invented kind", Kickoff{Kind: "onbaord"}, false},
+		{"invented kind", Kickoff{Kind: "onboarding"}, false},
 	} {
 		if err := tc.k.Validate(); (err == nil) != tc.ok {
 			t.Errorf("%s: Validate() = %v, want ok=%v", tc.name, err, tc.ok)

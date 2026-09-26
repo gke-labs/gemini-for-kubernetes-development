@@ -205,7 +205,7 @@ func TestStartResearchSessionWithoutAKickoff(t *testing.T) {
 // A kind the server cannot render is refused at the door. Defaulting it
 // would spend minutes of engine time on the wrong exploration.
 func TestStartResearchSessionRejectsAnUnknownKickoff(t *testing.T) {
-	for _, body := range []string{`{"kind":"onbaord"}`, `{"kind":"topic"}`, `{"kind":"topic","topic":"  "}`} {
+	for _, body := range []string{`{"kind":"onboarding"}`, `{"kind":"topic"}`, `{"kind":"topic","topic":"  "}`} {
 		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
 		w := httptest.NewRecorder()
