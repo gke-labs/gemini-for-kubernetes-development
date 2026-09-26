@@ -20,17 +20,16 @@ import (
 
 // NewRunCommand plans, deploys or tears down one run.
 //
-//	factory run draft    --url <repo> --name deploy-gke      [--intent …]
 //	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--from …]
 //	factory run deploy   --url <repo> --name deploy-gke-k8s1
 //	factory run teardown --url <repo> --name deploy-gke-k8s1
 //
-// Draft writes the procedure and stops: it is account-agnostic, has no
-// resolved parameters and no scripts, and its value is the feasibility
-// checklist — a missing IAM role should surface there rather than at
-// VM prices during a deploy. Plan then turns a draft into something
-// executable, revising the drafted runbook.md rather than replacing
-// it, which is the same path a re-plan takes.
+// Plan does the drafting too. It writes the procedure first and the
+// scripts from it, and where the parameters cannot be resolved — no
+// GCP project configured, a target the owner has not chosen — it
+// stops after the procedure and says what it needs. Nothing executes
+// at plan time either way, so there was never a reason to offer a
+// separate, earlier stopping point.
 //
 // A run owns everything it needs, in one directory on the fork's
 // exploration/notes branch: runbook.md is the procedure, the scripts
@@ -88,11 +87,6 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 		}
 	}
 
-	draftCmd := &cobra.Command{
-		Use:   "draft",
-		Short: "Write the procedure only — no parameters, no scripts, nothing executed",
-		RunE:  exec("draft"),
-	}
 	planCmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Author the procedure and generate its scripts; nothing executes",
@@ -109,12 +103,11 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 		RunE:  exec("teardown"),
 	}
 
-	for _, sub := range []*cobra.Command{draftCmd, planCmd, deployCmd, teardownCmd} {
+	for _, sub := range []*cobra.Command{planCmd, deployCmd, teardownCmd} {
 		sub.Flags().StringVar(&repoURL, "url", "", "GitHub repository URL (e.g. https://github.com/owner/repo)")
 		sub.Flags().StringVar(&name, "name", "", "The run's identity and directory (e.g. deploy-gke-k8s1)")
 		cmd.AddCommand(sub)
 	}
-	draftCmd.Flags().StringVar(&intent, "intent", "", "The charter for this run: what it should achieve")
 	planCmd.Flags().StringVar(&intent, "intent", "", "What this run should do, or what to change on a re-plan")
 	planCmd.Flags().StringVar(&from, "from", "", "Seed the procedure from an existing run's runbook.md")
 	teardownCmd.Flags().StringVar(&intent, "intent", "", "Anything the owner wants watched during teardown")

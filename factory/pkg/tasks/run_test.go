@@ -152,30 +152,51 @@ func TestPlanReceiptCarriesRunningResourcesForward(t *testing.T) {
 	}
 }
 
-// Draft writes the procedure and stops. Emitting params or scripts
-// there would resolve an account and a target before the owner has
-// chosen either, which is what plan is for.
-func TestDraftPromptWritesProcedureOnly(t *testing.T) {
-	got := renderRun(t, "draft", RunParams{RepoName: "open-rl", Name: "deploy-gke"})
+// Plan absorbs what a separate draft mode would have done: the
+// feasibility probing, and stopping at the procedure when the
+// parameters cannot be resolved. Nothing executes at plan time, so
+// there was never a reason for an earlier stopping point.
+func TestPlanPromptVerifiesFeasibility(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
 	for _, want := range []string{
-		"docs-exploration/runs/deploy-gke/",
-		"DRAFTED on the first line",
-		"ACCOUNT-AGNOSTIC",
 		"VERIFY FEASIBILITY",
-		"Do NOT write params.env, deploy.sh or teardown.sh",
+		"testIamPermissions",
+		"✗ MISSING",
+		"ACCOUNT-AGNOSTIC",
+		"docs-exploration/SKILL.md",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("draft prompt missing %q", want)
+			t.Errorf("plan prompt missing %q", want)
 		}
-	}
-	if strings.Contains(got, "docs-exploration/runbooks/") {
-		t.Error("draft prompt still points at the shared runbook tree")
 	}
 }
 
-// Drafting has no name to scope the move, and an empty RUN_NAME would
-// make the legacy path the whole deployments tree — moving every
-// instance at once.
+// A repo with no GCP project configured should still get a readable
+// procedure and a list of what it needs — not scripts built on
+// invented values.
+func TestPlanDegradesWhenParametersCannotResolve(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
+	for _, want := range []string{
+		"IF THE PARAMETERS CANNOT BE RESOLVED",
+		"BLOCKED instead of PLANNED",
+		"Needs from owner",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan prompt missing %q", want)
+		}
+	}
+}
+
+// There is no draft mode. If one reappears, the command surface and
+// the stage count grew back.
+func TestThereIsNoDraftMode(t *testing.T) {
+	if _, err := RenderRunPrompt("draft", RunParams{}); err == nil {
+		t.Error("draft resolved to a prompt; plan is supposed to do the drafting")
+	}
+}
+
+// An empty RUN_NAME would make the legacy path the whole deployments
+// tree, moving every instance at once.
 func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
 	b, err := GetRunScript()
 	if err != nil {

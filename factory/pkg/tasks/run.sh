@@ -167,14 +167,6 @@ ensureNotesBranch
 configureGemini
 
 case "${RUN_MODE}" in
-draft)
-    # Procedure only: no parameters resolved, no scripts generated,
-    # nothing executed. The feasibility checklist is the point — a
-    # missing IAM role should surface here, not at VM prices during a
-    # deploy.
-    runEngine
-    commitAndPushRun "draft (runbook.md + DRAFTED receipt — not yet planned)"
-    ;;
 plan)
     # Authors (or revises) runbook.md, then generates the scripts from
     # it, then writes a PLANNED receipt. Nothing executes: the owner

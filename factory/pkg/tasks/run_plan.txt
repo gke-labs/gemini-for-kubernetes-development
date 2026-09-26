@@ -21,11 +21,31 @@ shell first turns runbook.md into a summary of the scripts, it drifts
 on the next revision, and the owner loses the thing they review.
 
 1. runbook.md — the procedure, in prose, for a human to read and
-   approve. Number the steps. Under each step, put the commands it
+   approve. Follow the section structure in docs-exploration/SKILL.md
+   in this checkout: What this needs, Preconditions, Steps, Verify,
+   Teardown. Number the steps. Under each step, put the commands it
    runs in a fenced code block. Say WHY where a choice is not
    obvious: a reader should be able to tell a deliberate decision
-   from an accident. Include a Teardown section describing how to
-   remove everything this run creates.
+   from an accident.
+
+   Derive the real path from the repository's own tooling: the
+   Makefile, scripts/, CI workflows (.github/workflows is the ground
+   truth for what actually builds and tests), helm charts, kustomize
+   bases, container files. Do not invent commands — every step must
+   trace to something the repo ships.
+
+   Open What this needs by answering one question plainly: can this
+   run in the pod (binaries, tests, envtest, a single-process
+   server), or does it need real infrastructure? Node-level reality
+   forces the latter: CSI drivers, device plugins, privileged
+   DaemonSets, kubelet sockets, host mounts. Say which component
+   forces it.
+
+   Keep runbook.md ACCOUNT-AGNOSTIC. Project ids, regions and cluster
+   names are parameters and belong in params.env; in the procedure
+   they are variables the reader sets. A procedure that names a
+   project works for exactly one person and then silently misleads
+   the next.
 
    If runbook.md ALREADY EXISTS, revise it rather than replacing it.
    It may carry corrections learned from a real deployment, and
@@ -78,6 +98,35 @@ it, and your deploy or teardown would land on someone else's
 deployment. Using pre-existing infrastructure requires the owner
 naming it explicitly above (then pin it in params.env). No intent
 given means create your own, never borrow.
+
+VERIFY FEASIBILITY before you claim a step works. You are running
+under the SAME identity and in the same kind of environment this run
+will execute in, so check, don't assume:
+  - Permissions: enumerate the IAM permissions each step needs (what
+    does the tool CREATE and BIND? kops on GCE, for example, creates
+    service accounts, attaches them to instances —
+    iam.serviceAccounts.actAs — and binds project roles —
+    resourcemanager.projects.setIamPolicy). Probe with read-only
+    calls: projects.testIamPermissions, a get-iam-policy, a dry-run
+    where the tool offers one.
+  - Tools: verify the binaries the steps call actually exist here (a
+    missing docker daemon means Cloud Build, not a doomed step).
+    Verification means --version, --help and dry-runs.
+
+Write the results into What this needs as a checklist: ✓
+granted/present, ✗ MISSING — each missing item with the exact command
+that grants or installs it. Never write steps around a missing
+permission; name it instead. A plan whose requirements are not met is
+a pre-run checklist for the owner, not a discovery the deploy makes
+at VM prices.
+
+IF THE PARAMETERS CANNOT BE RESOLVED — no GCP project configured, a
+target the owner has not chosen, a required value nowhere to be found
+— stop after runbook.md. Write no params.env and no scripts, and make
+the receipt BLOCKED instead of PLANNED, with a "## Needs from owner"
+section naming exactly what is missing and the command or setting
+that supplies it. A procedure the owner can read and act on is worth
+far more than scripts built on invented values.
 
 Do NOT execute anything. Do NOT create cloud resources. Do NOT build
 or run tests — not even push-disabled builds: HEAD moves, so the

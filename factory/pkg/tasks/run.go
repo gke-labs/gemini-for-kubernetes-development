@@ -22,8 +22,7 @@ type RunParams struct {
 	// Name is the run's identity and its directory under
 	// docs-exploration/runs/.
 	Name string
-	// Mode is draft | plan | deploy | teardown. Each is one engine
-	// invocation.
+	// Mode is plan | deploy | teardown. Each is one engine invocation.
 	Mode string
 	// Intent is the owner's free text: what to build on the first
 	// plan, what to change on a re-plan, what to watch on a teardown.
@@ -36,13 +35,12 @@ type RunParams struct {
 // RenderRunPrompt renders the prompt for one run mode.
 func RenderRunPrompt(mode string, params RunParams) ([]byte, error) {
 	name := map[string]string{
-		"draft":    "run_draft.txt",
 		"plan":     "run_plan.txt",
 		"deploy":   "run_deploy.txt",
 		"teardown": "run_teardown.txt",
 	}[mode]
 	if name == "" {
-		return nil, fmt.Errorf("unknown run mode %q (draft|plan|deploy|teardown)", mode)
+		return nil, fmt.Errorf("unknown run mode %q (plan|deploy|teardown)", mode)
 	}
 	t, err := getPromptTemplate(name)
 	if err != nil {
