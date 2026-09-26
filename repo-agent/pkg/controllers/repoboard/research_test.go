@@ -55,6 +55,10 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 			},
 			"annotations": map[string]interface{}{
 				"repo": "repo",
+				// The bare repo URL, as `factory research start` writes
+				// it. Leaving it out of this fixture hid a filter that
+				// dropped every real research sandbox on the floor.
+				"htmlURL": "https://github.com/test/repo",
 				"sandbox.gemini.google.com/research-session-id": testSession,
 			},
 		},
@@ -450,6 +454,42 @@ func TestResearchKickoffMovesFromClaimToSandbox(t *testing.T) {
 	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff),
 		"the kickoff must survive the claim on the sandbox")
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
+}
+
+// The bug that made the whole feature look broken in the cluster: the
+// sandbox filter matched htmlURL against a hint ending in "/", which a
+// PR URL satisfies and a bare repo URL does not. Every research sandbox
+// was dropped from work.sandboxes, so no claim was ever served — the
+// kickoff was never stamped, no opening was ever sent, and deleting the
+// conversation handed the still-standing claim straight back to the
+// controller, which built it again.
+func TestResearchSandboxIsNotFilteredOutByItsBareRepoURL(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchSandboxObj("alice", name))
+	work := &workState{owner: "test", repo: "repo"}
+
+	g.Expect(r.loadSandboxes(context.Background(), work, map[string]bool{"alice": true})).To(gomega.Succeed())
+	g.Expect(work.findSandbox("alice", name)).NotTo(gomega.BeNil(),
+		"a research sandbox names the repo itself, with no path after it")
+}
+
+// The boundary the trailing slash was there for: a prefix of another
+// repo's name must still not match.
+func TestSandboxesOfAPrefixSharingRepoAreStillFilteredOut(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo-extra", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations["repo"] = ""
+	annotations["htmlURL"] = "https://github.com/test/repo-extra"
+	sb.SetAnnotations(annotations)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
+	work := &workState{owner: "test", repo: "repo"}
+
+	g.Expect(r.loadSandboxes(context.Background(), work, map[string]bool{"alice": true})).To(gomega.Succeed())
+	g.Expect(work.findSandbox("alice", name)).To(gomega.BeNil())
 }
 
 // The window this was actually lost in: `factory research start`

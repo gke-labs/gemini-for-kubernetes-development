@@ -716,7 +716,13 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 				if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != work.repo {
 					continue
 				}
-				if htmlURL := annotations["htmlURL"]; htmlURL != "" && !strings.Contains(htmlURL, repoHint) {
+				// The hint keeps its trailing slash so that open-rl does
+				// not match open-rl-extra, and the URL is given one so
+				// that a bare repo URL still matches. Review and fix
+				// sandboxes carry a PR URL, which has a path after the
+				// repo; a research sandbox is about the repo itself and
+				// carries nothing after it.
+				if htmlURL := annotations["htmlURL"]; htmlURL != "" && !strings.Contains(htmlURL+"/", repoHint) {
 					continue
 				}
 			}
