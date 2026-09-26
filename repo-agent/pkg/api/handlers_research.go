@@ -438,6 +438,12 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 		ID:     conn.view.SessionID,
 		Engine: acpd.EngineGemini,
 		CWD:    conn.view.cwd(),
+		// Set here as well as on the controller's create because either
+		// side can be the one that gets there first: a member who opens
+		// the tab before the kickoff is delivered creates the session
+		// through this path. The mode has to be the same either way, or
+		// whether you are prompted would depend on who was quicker.
+		Mode: acpd.ResearchMode,
 	}, apiKey)
 }
 
@@ -488,6 +494,8 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		body["offset"] = session.Offset
 		body["engine"] = session.Engine
 		body["createdAt"] = session.CreatedAt
+		body["mode"] = session.Mode
+		body["availableModes"] = session.AvailableModes
 	case errors.Is(err, acpd.ErrNotFound):
 		// The sandbox is up but no engine is running in it: the normal
 		// state of a session nobody has opened yet, and of one whose
@@ -644,6 +652,42 @@ func (s *Server) cancelResearchSession(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// setResearchSessionMode switches how much the engine asks before it
+// acts.
+//
+// Like the permission route, it does not create a session: there is
+// nothing to set a mode on until an engine is running, and a create here
+// would give the member a session as a side effect of adjusting one. A
+// session that does not exist yet gets its mode at create instead — see
+// ensureResearchSession.
+func (s *Server) setResearchSessionMode(c *gin.Context) {
+	conn, ok := s.resolveResearch(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Mode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode is required"})
+		return
+	}
+	session, err := conn.client.SetMode(c.Request.Context(), conn.view.SessionID, req.Mode)
+	if err != nil {
+		// A 400 from acpd names the modes the engine does offer, and it
+		// travels through unchanged: the UI built its list from the same
+		// source, so a rejection here means the engine has been upgraded
+		// underneath it and the message is the useful part.
+		researchError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"sessionId":      conn.view.SessionID,
+		"mode":           session.Mode,
+		"availableModes": session.AvailableModes,
+	})
 }
 
 // deleteResearchSession ends a conversation for good.

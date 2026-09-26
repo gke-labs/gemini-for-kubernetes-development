@@ -51,6 +51,13 @@ const researchSession = "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00"
 
 const researchRepo = "kubernetes"
 
+// fakeModes is what a mode-aware engine advertises, trimmed to the two
+// ends of the range.
+var fakeModes = []acpd.SessionMode{
+	{ID: acpd.ModeDefault, Name: "Default", Description: "Prompts for approval"},
+	{ID: acpd.ModeYolo, Name: "YOLO", Description: "Auto-approves all tools"},
+}
+
 // fakeACPD stands in for the conversation server in the sandbox. It
 // records what arrived so the tests can assert on the wire, not on the
 // handler's intentions.
@@ -62,6 +69,11 @@ type fakeACPD struct {
 	createKey  string
 	createBody string
 	promptBody string
+	modeBody   string
+	// mode is the approval mode the session is in, set by the create and
+	// by POST /mode — so a test can see what actually stuck rather than
+	// only what was asked for.
+	mode string
 
 	// sessionExists controls whether GET /sessions/<id> answers or 404s,
 	// which is the difference between reusing a session and creating one.
@@ -95,6 +107,7 @@ func (f *fakeACPD) handler() http.Handler {
 		f.record(r.Method, "/sessions/"+r.PathValue("id"))
 		f.mu.Lock()
 		exists := f.sessionExists
+		mode := f.mode
 		f.mu.Unlock()
 		if !exists {
 			w.WriteHeader(http.StatusNotFound)
@@ -103,18 +116,50 @@ func (f *fakeACPD) handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(acpd.Session{
 			ID: researchSession, Engine: acpd.EngineGemini, CWD: "/workspaces/" + researchRepo, Offset: 128,
+			Mode: mode, AvailableModes: fakeModes,
 		})
 	})
 	mux.HandleFunc("POST /sessions", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions")
 		body, _ := io.ReadAll(r.Body)
+		var req acpd.CreateSessionRequest
+		_ = json.Unmarshal(body, &req)
 		f.mu.Lock()
 		f.createKey = r.Header.Get(acpd.APIKeyHeader)
 		f.createBody = string(body)
 		f.sessionExists = true
+		f.mode = req.Mode
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(acpd.Session{ID: researchSession, Engine: acpd.EngineGemini})
+		_ = json.NewEncoder(w).Encode(acpd.Session{
+			ID: researchSession, Engine: acpd.EngineGemini, Mode: req.Mode, AvailableModes: fakeModes,
+		})
+	})
+	mux.HandleFunc("POST /sessions/{id}/mode", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r.Method, "/sessions/"+r.PathValue("id")+"/mode")
+		f.mu.Lock()
+		exists := f.sessionExists
+		f.mu.Unlock()
+		// The real acpd has no session to set a mode on before one is
+		// created, and answers 404. The fake has to agree, or the test
+		// that this route never creates one proves nothing.
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"no such session"}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		_ = json.Unmarshal(body, &req)
+		f.mu.Lock()
+		f.modeBody = string(body)
+		f.mode = req.Mode
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(acpd.Session{
+			ID: researchSession, Engine: acpd.EngineGemini, Mode: req.Mode, AvailableModes: fakeModes,
+		})
 	})
 	mux.HandleFunc("POST /sessions/{id}/prompt", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions/"+r.PathValue("id")+"/prompt")
@@ -236,6 +281,7 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	r.POST("/api/research/:session/prompt", server.promptResearchSession)
 	r.POST("/api/research/:session/permission", server.resolveResearchPermission)
 	r.POST("/api/research/:session/cancel", server.cancelResearchSession)
+	r.POST("/api/research/:session/mode", server.setResearchSessionMode)
 	r.GET("/api/research-events/:session", server.streamResearchEvents)
 	return r, dynamicClient
 }
@@ -888,5 +934,95 @@ func TestResearchLaterPromptsDoNotRetitle(t *testing.T) {
 	}
 	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "overview" {
 		t.Errorf("title = %q, want the name it already had", title)
+	}
+}
+
+// Research sessions are created auto-approving. The canned openings need
+// shell tools — an activity digest runs git log — so a read-only mode
+// would not spare them the prompt, and the controller fires them with no
+// browser attached, where an unanswered prompt blocks the turn until
+// acpd's permission timeout and is then cancelled.
+func TestResearchSessionIsCreatedAutoApproving(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: false}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(acp.createBody, `"mode":"`+acpd.ResearchMode+`"`) {
+		t.Errorf("session was not created in the research mode: %s", acp.createBody)
+	}
+}
+
+// The mode is on the status so the header can render the switcher on the
+// first paint, without a second round trip to find out what it is on.
+func TestResearchStatusReportsTheMode(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"mode":"yolo"`) {
+		t.Errorf("mode missing from the status: %s", w.Body.String())
+	}
+	// Without the set there is nothing to switch to, so the UI would
+	// have to hardcode one engine's vocabulary to offer the control.
+	if !strings.Contains(w.Body.String(), `"availableModes"`) {
+		t.Errorf("availableModes missing from the status: %s", w.Body.String())
+	}
+}
+
+func TestResearchModeCanBeSwitchedMidConversation(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(acp.modeBody, `"mode":"default"`) {
+		t.Errorf("the mode did not reach acpd: %s", acp.modeBody)
+	}
+	if !strings.Contains(w.Body.String(), `"mode":"default"`) {
+		t.Errorf("the reply does not report the new mode: %s", w.Body.String())
+	}
+}
+
+func TestResearchModeRejectsAnEmptyBody(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{}`); w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if acp.sawCall("POST /sessions/" + researchSession + "/mode") {
+		t.Error("an empty mode reached acpd")
+	}
+}
+
+// Like the permission route, this one must not spawn an engine: there is
+// nothing to set a mode on until a session exists, and a create here
+// would hand the member a conversation as a side effect of adjusting one.
+func TestSettingTheModeDoesNotCreateASession(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: false}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`); w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for a session with no engine", w.Code)
+	}
+	if acp.sawCall("POST /sessions") {
+		t.Errorf("setting the mode spawned an engine; calls: %v", acp.calls)
 	}
 }

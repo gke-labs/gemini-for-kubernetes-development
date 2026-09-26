@@ -83,6 +83,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/research/:session/prompt", s.promptResearchSession)
 		api.POST("/research/:session/permission", s.resolveResearchPermission)
 		api.POST("/research/:session/cancel", s.cancelResearchSession)
+		api.POST("/research/:session/mode", s.setResearchSessionMode)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)

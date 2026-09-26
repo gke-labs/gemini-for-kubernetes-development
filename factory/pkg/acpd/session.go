@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,23 @@ var Engines = map[string]Engine{
 	},
 }
 
+// The approval modes gemini advertises. ACP fixes the shape of a mode but
+// not its name, so these are the engine's vocabulary rather than the
+// protocol's: they are here to be recognised, not to be relied on. acpd
+// matches whatever the caller asks for against what the engine actually
+// advertised and fails if it is not there, so a renamed mode is a clear
+// error at create rather than a session that silently keeps prompting.
+const (
+	// GeminiModeDefault prompts for approval on every tool call.
+	GeminiModeDefault = "default"
+	// GeminiModeAutoEdit auto-approves edit tools and prompts for the rest.
+	GeminiModeAutoEdit = "autoEdit"
+	// GeminiModeYolo auto-approves every tool call.
+	GeminiModeYolo = "yolo"
+	// GeminiModePlan is read-only, and only offered when plan is enabled.
+	GeminiModePlan = "plan"
+)
+
 // PermissionRequest is a tool call waiting on the user, as published to the
 // transcript. RequestID is ours, not ACP's: the protocol correlates by
 // JSON-RPC message id, which never leaves this process.
@@ -73,6 +91,10 @@ type SessionConfig struct {
 	AuthMethodID string
 	// CWD is the workspace the agent operates in.
 	CWD string
+	// Mode is the approval mode to switch to once the session exists.
+	// Empty leaves the engine on whatever it starts in. The ids are the
+	// engine's, advertised in the session/new reply — see GeminiMode*.
+	Mode string
 	// Dir is where the transcript and engine log are written.
 	Dir string
 	// PermissionTimeout bounds how long a tool call waits on a user who
@@ -106,11 +128,16 @@ type Session struct {
 
 	permissionTimeout time.Duration
 
-	mu       sync.Mutex
-	pending  map[string]chan permissionResolution
-	nextReq  int64
-	busy     bool
-	finished bool
+	// availableModes is fixed at handshake — the engine advertises it once
+	// and it does not change — so it needs no lock.
+	availableModes []acp.SessionMode
+
+	mu          sync.Mutex
+	currentMode string
+	pending     map[string]chan permissionResolution
+	nextReq     int64
+	busy        bool
+	finished    bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -256,7 +283,85 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 		return fmt.Errorf("session/new: %w", err)
 	}
 	s.acpSessionID = resp.SessionID
+	if resp.Modes != nil {
+		s.availableModes = resp.Modes.AvailableModes
+		s.currentMode = resp.Modes.CurrentModeID
+	}
+
+	if cfg.Mode == "" {
+		return nil
+	}
+	// A mode the caller asked for and did not get is a failure at create,
+	// not a warning in a log. The reason to ask is that nobody is watching
+	// the session: an unnoticed fallback to prompting turns a fire-and-
+	// forget run into one that blocks for permissionTimeout and dies.
+	//
+	// An engine with no modes at all is the one exception. That is a
+	// missing feature rather than a wrong answer, and failing there would
+	// make acpd refuse to run any engine but this one.
+	if len(s.availableModes) == 0 {
+		klog.FromContext(ctx).Info("engine advertises no session modes; ignoring the requested one",
+			"session", s.ID, "engine", cfg.Engine, "mode", cfg.Mode)
+		return nil
+	}
+	if err := s.SetMode(ctx, cfg.Mode); err != nil {
+		return err
+	}
 	return nil
+}
+
+// Modes reports the session's current mode and the set it may be switched
+// to. Both are empty for an engine that does not implement modes.
+func (s *Session) Modes() (string, []acp.SessionMode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentMode, s.availableModes
+}
+
+// SetMode switches the session's approval mode.
+//
+// Checked against what the engine advertised before it goes on the wire,
+// so a typo fails here with the list rather than as an opaque engine
+// error. Recorded in the transcript because a mode is the answer to "why
+// was nothing asked before that command ran" — a session that stops
+// prompting must say when it started doing so, and who asked.
+func (s *Session) SetMode(ctx context.Context, modeID string) error {
+	if modeID == "" {
+		return fmt.Errorf("mode is required")
+	}
+	if !s.offersMode(modeID) {
+		return fmt.Errorf("engine does not offer mode %q (offers: %s)", modeID, s.modeIDs())
+	}
+	if err := s.client.SetSessionMode(ctx, acp.SetSessionModeRequest{
+		SessionID: s.acpSessionID,
+		ModeID:    modeID,
+	}); err != nil {
+		return fmt.Errorf("session/set_mode %q: %w", modeID, err)
+	}
+
+	s.mu.Lock()
+	s.currentMode = modeID
+	s.mu.Unlock()
+
+	_ = s.transcript.AppendValue(KindModeChanged, map[string]string{"currentModeId": modeID})
+	return nil
+}
+
+func (s *Session) offersMode(modeID string) bool {
+	for _, m := range s.availableModes {
+		if m.ID == modeID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) modeIDs() string {
+	ids := make([]string, 0, len(s.availableModes))
+	for _, m := range s.availableModes {
+		ids = append(ids, m.ID)
+	}
+	return strings.Join(ids, ", ")
 }
 
 // chooseAuthMethod picks the method to authenticate with, or "" to skip
@@ -309,6 +414,14 @@ func (s *Session) onNotification(method string, params json.RawMessage) {
 			"message": fmt.Sprintf("undecodable session/update: %v", err),
 		})
 		return
+	}
+	// An agent may leave a mode on its own — plan mode ends when the plan
+	// does — so the mode acpd reports has to follow the engine's word and
+	// not only its own set_mode calls.
+	if notif.Update.SessionUpdateKind == acp.UpdateCurrentMode && notif.Update.CurrentModeID != "" {
+		s.mu.Lock()
+		s.currentMode = notif.Update.CurrentModeID
+		s.mu.Unlock()
 	}
 	data, err := json.Marshal(notif.Update)
 	if err != nil {

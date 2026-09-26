@@ -185,6 +185,26 @@ func (c *Client) ResolvePermission(ctx context.Context, id string, res Permissio
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/permission", res, nil, "")
 }
 
+// SetMode switches the session's approval mode and returns the session
+// as it now stands.
+//
+// Allowed mid-turn: the reason to reach for this is usually a permission
+// prompt that has just appeared, and making the caller stop the turn
+// first would throw away the work that produced it.
+func (c *Client) SetMode(ctx context.Context, id, mode string) (*Session, error) {
+	if mode == "" {
+		return nil, errors.New("acpd: mode is required")
+	}
+	body := struct {
+		Mode string `json:"mode"`
+	}{Mode: mode}
+	var out Session
+	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/mode", body, &out, ""); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Cancel interrupts the turn in flight. ACP models cancellation as a
 // notification, so the turn ends with a cancelled stopReason rather than
 // the call failing — expect a turn_end event, not silence.

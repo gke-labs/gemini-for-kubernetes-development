@@ -87,7 +87,10 @@ export function ageOf(ts) {
 // busy is tracked here rather than read from the session because the
 // stream is the only thing that reports a turn ending. It is NOT
 // authoritative during replay — see `busy` in ResearchConversation.
-export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '' };
+//
+// mode carries the same caveat for the same reason: it is the last mode
+// the transcript saw, which is the live one only once replay is done.
+export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '', mode: '' };
 
 // applyResearchEvent folds one transcript event into the render model.
 //
@@ -173,6 +176,18 @@ export function applyResearchEvent(state, event) {
         content: chunkText(data.content) || prev.content,
       };
       return { ...state, items: next };
+    }
+
+    // Two kinds, one meaning. mode_changed is acpd's own record of a
+    // switch it made; current_mode_update is the engine reporting one it
+    // made itself. Both say what the session is running under now, and a
+    // reader wants the same thing from either — which is also what keeps
+    // the header honest when the switch came from another tab.
+    case 'mode_changed':
+    case 'current_mode_update': {
+      const next = data.currentModeId || '';
+      if (!next) return state;
+      return { ...push({ role: 'mode', mode: next }), mode: next };
     }
 
     // A plan update supersedes the last one rather than adding to the
@@ -385,6 +400,15 @@ function TranscriptItem({ item, onResolve, resolving }) {
       return <ToolRow item={item} />;
     case 'permission':
       return <PermissionRow item={item} onResolve={onResolve} busy={resolving} />;
+    // Marked in the body of the transcript, not only in the header,
+    // because it is the answer to "why was nothing asked before that
+    // command ran" — and the answer depends on when it changed.
+    case 'mode':
+      return (
+        <div style={{ margin: '8px 0', fontSize: 'x-small', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          approval mode: {item.mode}
+        </div>
+      );
     case 'stop':
       return (
         <div style={{ margin: '8px 0', fontSize: 'x-small', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
@@ -467,6 +491,8 @@ function TerminalItem({ item, onResolve, resolving }) {
     }
     case 'permission':
       return <PermissionRow item={item} onResolve={onResolve} busy={resolving} />;
+    case 'mode':
+      return <div className="term-line term-dim">— approval mode: {item.mode} —</div>;
     case 'stop':
       return <div className="term-line term-dim">— turn ended: {item.stopReason} —</div>;
     case 'error':
@@ -554,6 +580,13 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   const [sending, setSending] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
+  // The approval mode the session is in, and the set the engine will
+  // accept. Seeded from whichever of the probe and the open frame
+  // answers first; the transcript takes over once it is caught up,
+  // because a mode switched in another tab — or left by the engine on
+  // its own — arrives as an event and never as a reply to us.
+  const [modeState, setModeState] = useState({ current: '', available: [] });
+  const [switching, setSwitching] = useState(false);
   // rich | terminal. A reading preference, not session state, so it is
   // remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
@@ -616,6 +649,10 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
           setError('');
           setOpenBusy(!!session.busy);
           setCaughtUp(false);
+          setModeState(m => ({
+            current: session.mode || m.current,
+            available: session.availableModes || m.available,
+          }));
           return;
         }
         if (frame.type === 'event' && frame.event) {
@@ -656,6 +693,10 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
           if (state.closed) return;
           if (status === 200) {
             setInfo(body);
+            setModeState(m => ({
+              current: body.mode || m.current,
+              available: body.availableModes || m.available,
+            }));
             if (body.unreachable) {
               // The sandbox is up but acpd is not answering. Said
               // separately from "still starting" because the remedy is
@@ -705,6 +746,7 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
     everLiveRef.current = false;
     setTranscript(emptyTranscript);
     setCaughtUp(false);
+    setModeState({ current: '', available: [] });
     setPhase('probing');
     setDetail('');
     probe();
@@ -796,6 +838,30 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
       .finally(() => setResolving(false));
   };
 
+  // Switching mid-turn is deliberate: the reason to reach for this is
+  // usually a prompt that has just appeared, and making the member stop
+  // the turn first would throw away the work that produced it.
+  const chooseMode = (next) => {
+    if (!next || switching) return;
+    setSwitching(true);
+    setError('');
+    fetch(`/api/research/${encodeURIComponent(sessionId)}/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next }),
+    })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(body.error || `mode change failed: HTTP ${res.status}`); return; }
+        setModeState(m => ({
+          current: body.mode || next,
+          available: body.availableModes || m.available,
+        }));
+      })
+      .catch(err => setError(`mode change failed: ${err}`))
+      .finally(() => setSwitching(false));
+  };
+
   const cancel = () => {
     fetch(`/api/research/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' })
       .then(async res => {
@@ -832,6 +898,16 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   const repo = (info && info.repo) || '';
   const composerDisabled = phase !== 'live' || busy || sending;
 
+  // Same split as `busy`: the fold is the truthful source only once
+  // replay is behind us, and until then the session we attached to is.
+  const mode = (caughtUp && transcript.mode) || modeState.current;
+  // A mode the engine no longer advertises still gets an entry, so the
+  // control shows what the session is in rather than an empty box —
+  // the list comes from the engine and can change under a live session.
+  const modeOptions = !mode || modeState.available.some(m => m.id === mode)
+    ? modeState.available
+    : modeState.available.concat([{ id: mode, name: mode }]);
+
   return (
     <div style={fill
       ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
@@ -867,6 +943,34 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
         <Pill {...statusPill} title={detail} />
         <span style={{ flex: 1 }} />
+        {/* How much the engine asks before it acts. A research session
+            starts auto-approving — nobody is necessarily watching one,
+            and a prompt nobody answers stalls the turn until acpd
+            cancels it — so this is here to tighten that, not to loosen
+            it. Hidden entirely for an engine that offers no modes:
+            there is nothing to choose between. */}
+        {modeOptions.length > 0 && (
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+            fontSize: 'x-small', color: 'var(--text-secondary)',
+          }}>
+            approvals
+            <select value={mode} aria-label="Approval mode"
+              disabled={phase !== 'live' || switching}
+              onChange={e => chooseMode(e.target.value)}
+              title={(modeOptions.find(m => m.id === mode) || {}).description
+                || 'How much the engine asks before it acts'}
+              style={{
+                font: 'inherit', padding: '1px 4px', borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-card)', color: 'var(--text-primary)',
+              }}>
+              {modeOptions.map(m => (
+                <option key={m.id} value={m.id} title={m.description || ''}>{m.name || m.id}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {/* Two segments rather than one flip button: which view you are
             in should be readable without knowing whether the label names
             the state or the action. */}

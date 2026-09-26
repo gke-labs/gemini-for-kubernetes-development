@@ -267,6 +267,14 @@ func (c *Client) LoadSession(ctx context.Context, req LoadSessionRequest) error 
 	return c.Call(ctx, "session/load", req, nil)
 }
 
+// SetSessionMode switches the session's approval mode. The agent answers
+// MethodNotFound if it does not implement modes, and an error if the mode
+// is not one it offers — so the reply is the only trustworthy confirmation
+// that the switch took.
+func (c *Client) SetSessionMode(ctx context.Context, req SetSessionModeRequest) error {
+	return c.Call(ctx, MethodSetSessionMode, req, nil)
+}
+
 // Prompt sends a user prompt and blocks until the turn completes. Streaming
 // output arrives via session/update notifications while the call is pending.
 func (c *Client) Prompt(ctx context.Context, req PromptRequest) (*PromptResponse, error) {
