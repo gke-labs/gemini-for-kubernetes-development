@@ -28,14 +28,13 @@ import (
 //	factory explore onboard  --url <repo>              foundation docs
 //	factory explore activity --url <repo> --since "2 weeks"
 //	factory explore topic    --url <repo> --topic "compare with Envoy"
-//	factory explore runbook  --url <repo> --scenario deploy
 func NewExploreCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "explore",
 		Short: "Build and maintain understanding docs for a repository in your fork",
 	}
 
-	var repoURL, topic, since, scenario, guidance string
+	var repoURL, topic, since string
 
 	run := func(kind string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -48,18 +47,12 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 			if kind == "topic" && strings.TrimSpace(topic) == "" {
 				return fmt.Errorf("--topic is required for `explore topic`")
 			}
-			if kind == "runbook" {
-				scenario = slugifyScenario(scenario)
-				if scenario == "" {
-					return fmt.Errorf("--scenario is required for `explore runbook` (e.g. deploy, upgrade)")
-				}
-			}
 			if rootFlags.Timeout > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runExplore(ctx, kind, repoURL, topic, since, scenario, guidance)
+			return runExplore(ctx, kind, repoURL, topic, since)
 		}
 	}
 
@@ -78,20 +71,13 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 		Short: "Free-form deep dive on a topic (architecture question, comparison, subsystem)",
 		RunE:  run("topic"),
 	}
-	runbook := &cobra.Command{
-		Use:   "runbook",
-		Short: "Write executable runbooks into runbooks/ (--scenario deploy|upgrade|…, or all)",
-		RunE:  run("runbook"),
-	}
 
-	for _, sub := range []*cobra.Command{onboard, activity, topicCmd, runbook} {
+	for _, sub := range []*cobra.Command{onboard, activity, topicCmd} {
 		sub.Flags().StringVar(&repoURL, "url", "", "GitHub repository URL (e.g. https://github.com/owner/repo)")
 		cmd.AddCommand(sub)
 	}
 	activity.Flags().StringVar(&since, "since", "2 weeks", "Window to digest (e.g. \"2 weeks\", \"1 month\")")
 	topicCmd.Flags().StringVar(&topic, "topic", "", "The question or comparison to investigate")
-	runbook.Flags().StringVar(&scenario, "scenario", "all", "The scenario to write (deploy, upgrade, …) or \"all\" for the standard set")
-	runbook.Flags().StringVar(&guidance, "guidance", "", "Owner guidance: targets and constraints (e.g. \"deploy to GKE, project my-proj\")")
 
 	return cmd
 }
@@ -99,7 +85,7 @@ func NewExploreCommand(ctx context.Context) *cobra.Command {
 // slugifyScenario makes the scenario safe as a filename under
 // runbooks/ (lowercase, dashes, nothing else). A typed ".md" is the
 // name of the file, not part of it: "deploy-gcp.md" means the
-// existing deploy-gcp runbook, never a new deploy-gcp-md twin.
+// existing deploy-gcp run, never a new deploy-gcp-md twin.
 func slugifyScenario(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimSuffix(s, ".md")
@@ -118,7 +104,7 @@ func slugifyScenario(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario, guidance string) error {
+func runExplore(ctx context.Context, kind, repoURL, topic, since string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repository URL: %w", err)
@@ -154,8 +140,6 @@ func runExplore(ctx context.Context, kind, repoURL, topic, since, scenario, guid
 		HTMLURL:  htmlURL,
 		Topic:    topic,
 		Since:    since,
-		Scenario: scenario,
-		Guidance: guidance,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering exploration prompt: %w", err)

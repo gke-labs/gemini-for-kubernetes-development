@@ -319,7 +319,7 @@ function App() {
 
       {isAuthenticated && !isGeminiKeySet && (
         <div className="warning-banner">
-          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <a href="#" onClick={(e) => { e.preventDefault(); setView('settings'); }}>Settings</a> to enable fixes, reviews and triage.
+          <strong>⚠️ Gemini API Key Missing:</strong> Please configure your Gemini API Key in <button type="button" className="link-button" onClick={() => setView('settings')}>Settings</button> to enable fixes, reviews and triage.
         </div>
       )}
 

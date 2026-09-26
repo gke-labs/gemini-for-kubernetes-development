@@ -108,7 +108,6 @@ const (
 	// follow-up claims). Params ride alongside.
 	AnnotationExploreTopic    = "board.gemini.google.com/explore-topic"
 	AnnotationExploreSince    = "board.gemini.google.com/explore-since"
-	AnnotationExploreScenario = "board.gemini.google.com/explore-scenario"
 	AnnotationExploreGuidance = "board.gemini.google.com/explore-guidance"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
@@ -600,7 +599,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt, intent: tryIntent})
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
-			if kind == "onboard" || kind == "activity" || kind == "topic" || kind == "runbook" {
+			if kind == "onboard" || kind == "activity" || kind == "topic" {
 				// Explore claims carry their click time ("member|RFC3339"):
 				// served-ness is decided against the runner's result for
 				// the per-kind key, no sandbox annotations involved.
@@ -1271,7 +1270,6 @@ func (r *Reconciler) ensureExploreClaims(ctx context.Context, work *workState, c
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			Topic:       boardAnnotations[AnnotationExploreTopic],
 			Since:       boardAnnotations[AnnotationExploreSince],
-			Scenario:    boardAnnotations[AnnotationExploreScenario],
 			Guidance:    boardAnnotations[AnnotationExploreGuidance],
 			GithubToken: token,
 			Engine:      boardEngine(work.board),

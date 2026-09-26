@@ -200,7 +200,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		return
 	}
 
-	out := gin.H{"forkOwner": member, "runbooks": []gin.H{}, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
+	out := gin.H{"forkOwner": member, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
 	// The banner signal: with no deploy project, generation cannot
 	// verify feasibility and -gcp plans are BLOCKED by contract.
 	if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr == nil {
@@ -213,18 +213,6 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	if terr == nil {
 		gh := githubClientForToken(ctx, token)
 		ref := &github.RepositoryContentGetOptions{Ref: "exploration/notes"}
-
-		runbooks := []gin.H{}
-		if _, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, "docs-exploration/runbooks", ref); derr == nil {
-			for _, entry := range dir {
-				if entry.GetType() != "file" || !strings.HasSuffix(entry.GetName(), ".md") {
-					continue
-				}
-				scenario := strings.TrimSuffix(entry.GetName(), ".md")
-				runbooks = append(runbooks, gin.H{"scenario": scenario, "htmlURL": entry.GetHTMLURL(), "path": entry.GetPath()})
-			}
-		}
-		out["runbooks"] = runbooks
 
 		// Runs: one directory per run, holding its own runbook.md, the
 		// scripts generated from it, and the receipts. The legacy
