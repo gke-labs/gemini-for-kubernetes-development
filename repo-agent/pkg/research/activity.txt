@@ -1,0 +1,24 @@
+Tell me what happened in {{.Repo}} ({{.HTMLURL}}) over the last
+{{.Since}}. I am catching up after being away, and the repository is
+checked out in front of you.
+
+Gather the window from the checkout's own history first — `git log`
+against the default branch is always available here. If the `gh` CLI
+turns out to be authenticated in this sandbox, use it for pull
+requests, issues and releases as well; if it is not, work from git
+alone and say so at the end rather than guessing at what you could not
+see.
+
+Answer here in the conversation:
+
+1. **Themes** — what the window was actually about, in a few
+   paragraphs. Not a commit list.
+2. **Notable changes** — what merged that matters, and why it matters.
+3. **Where the churn is** — which directories and subsystems moved,
+   as a table.
+4. **What I must know** — the things that would bite someone returning
+   after this window: changed interfaces, moved files, new conventions.
+5. **Where help is wanted** — if you could reach issues and pull
+   requests, the concrete items someone could pick up.
+
+Date your claims: say which window you actually covered.

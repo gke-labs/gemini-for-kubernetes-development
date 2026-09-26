@@ -19,6 +19,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // startResearchSession opens a deep-research conversation about the
@@ -42,6 +44,13 @@ import (
 // Asynchronous by necessity — an image pull, a PVC and a clone is
 // minutes — so the response is the session's identity and the name of
 // the sandbox that will appear, not a running session.
+//
+// An optional body carries a kickoff: the canned openings (overview,
+// what happened) and the topic box all land here, because a canned
+// session is an ordinary session whose first prompt someone else typed.
+// The prompt itself is not sent from this handler — the sandbox will not
+// exist for minutes, and by then the click is long over. It rides on the
+// claim and the controller sends it.
 func (s *Server) startResearchSession(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -49,6 +58,20 @@ func (s *Server) startResearchSession(c *gin.Context) {
 	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+
+	// An empty body is the plain "New conversation" click, which is how
+	// this endpoint was called before kickoffs existed.
+	var kickoff research.Kickoff
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&kickoff); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+			return
+		}
+	}
+	if err := kickoff.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
@@ -72,10 +95,14 @@ func (s *Server) startResearchSession(c *gin.Context) {
 	if raw := annotations[annoBoardRequests]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
-	// Member namespace and click time, the shape every timestamped
-	// claim uses. The controller drops this once the sandbox exists,
-	// and drops it unserved after its TTL.
-	requests["research-"+sessionID] = namespace + "|" + nowRFC3339()
+	// Member namespace, click time, and the opening turn when there is
+	// one. The controller drops this once the sandbox exists, and drops
+	// it unserved after its TTL.
+	requests["research-"+sessionID] = research.Claim{
+		Member:  namespace,
+		At:      time.Now().UTC(),
+		Kickoff: kickoff,
+	}.Encode()
 	buf, _ := json.Marshal(requests)
 	annotations[annoBoardRequests] = string(buf)
 	board.SetAnnotations(annotations)
@@ -91,5 +118,6 @@ func (s *Server) startResearchSession(c *gin.Context) {
 		"sandbox":   factorycli.ResearchSandboxName(repo, sessionID),
 		"namespace": namespace,
 		"repo":      repo,
+		"title":     kickoff.ResolvedTitle(),
 	})
 }

@@ -74,25 +74,6 @@ func fillEnvResources(opts *DevSandboxOptions) {
 	}
 }
 
-// ExploreSandboxName returns the per-repo exploration sandbox name
-// (explore-<slug>), slug-budgeted for the companion -lb Service's DNS cap.
-func ExploreSandboxName(repo string) string {
-	slug := strings.ToLower(repo)
-	var b strings.Builder
-	for _, r := range slug {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	slug = strings.Trim(b.String(), "-")
-	if budget := 60 - len("explore-"); len(slug) > budget {
-		slug = strings.Trim(slug[:budget], "-")
-	}
-	return "explore-" + slug
-}
-
 // RunbookSandboxName is the run environment for one deployment
 // instance: runbook-<repo>-<instance>. One sandbox per instance (the
 // same runbook deploys many times with different parameters); re-runs
@@ -120,11 +101,11 @@ func RunbookSandboxName(repo, instance string) string {
 	return "runbook-" + slug + "-" + suffix
 }
 
-// DeployerServiceAccount is the per-namespace KSA explore sandboxes run
-// as. Direct Workload Identity federation makes it a GCP principal
-// (principal://…/subject/ns/<ns>/sa/factory-deployer) the member grants roles to
-// in their own project — no keys stored anywhere. It carries no
-// Kubernetes RBAC; only the explore/deploy surface uses it.
+// DeployerServiceAccount is the per-namespace KSA the research and
+// runbook sandboxes run as. Direct Workload Identity federation makes it
+// a GCP principal (principal://…/subject/ns/<ns>/sa/factory-deployer) the
+// member grants roles to in their own project — no keys stored anywhere.
+// It carries no Kubernetes RBAC; only the research/deploy surface uses it.
 const DeployerServiceAccount = "factory-deployer"
 
 // ensureDeployerServiceAccount creates the deployer KSA if missing.
@@ -142,72 +123,6 @@ func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.Kuber
 		return fmt.Errorf("creating %s service account: %w", DeployerServiceAccount, cerr)
 	}
 	return nil
-}
-
-// EnsureExploreSandbox ensures the repo's exploration sandbox: one per
-// repo per namespace — the workshop where understanding docs are built
-// and interactive exploration sessions live. Reuses the fix sandbox
-// conventions (managed label, repo/cloneURL/htmlURL annotations).
-func EnsureExploreSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := ExploreSandboxName(repoName)
-	if err := ensureDeployerServiceAccount(ctx, kubeClient, namespace); err != nil {
-		return "", err
-	}
-
-	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	switch {
-	case err == nil && terminating(sb):
-		// Reusing a sandbox that is being deleted means waiting for a
-		// pod that will never be ready. Wait for the name to free up
-		// and fall through to creating a fresh one.
-		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
-			return "", werr
-		}
-	case err == nil:
-		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
-		return name, nil
-	case !strings.Contains(err.Error(), "not found"):
-		return "", fmt.Errorf("checking sandbox existence: %w", err)
-	}
-
-	if diskSize == "" {
-		diskSize = "10Gi"
-	}
-
-	opt := AgentSandboxOptions{
-		DevSandboxOptions: DevSandboxOptions{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "explore",
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/user":    user,
-			},
-			Annotations: map[string]string{
-				"repo":     repoName,
-				"cloneURL": cloneURL,
-				"htmlURL":  htmlURL,
-			},
-			Image:              image,
-			Replicas:           1,
-			WorkspaceDiskSize:  diskSize,
-			EphemeralStorage:   ephemeralStorage,
-			Secrets:            secrets,
-			Env:                envs,
-			ServiceAccountName: DeployerServiceAccount,
-		},
-	}
-
-	fillEnvResources(&opt.DevSandboxOptions)
-	sbObj, svc := NewAgentSandbox(opt)
-
-	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-	if _, err := kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
-	}
-	return name, nil
 }
 
 // EnsureRunbookSandbox creates (or finds) the run environment for one

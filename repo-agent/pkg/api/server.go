@@ -78,13 +78,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// nothing after that click goes through it.
 		api.GET("/research", s.getResearchSessions)
 		api.GET("/research/:session", s.getResearchSession)
+		api.PATCH("/research/:session", s.renameResearchSession)
 		api.DELETE("/research/:session", s.deleteResearchSession)
 		api.POST("/research/:session/prompt", s.promptResearchSession)
 		api.POST("/research/:session/permission", s.resolveResearchPermission)
 		api.POST("/research/:session/cancel", s.cancelResearchSession)
-		api.POST("/board/:board/explore", s.kickoffExplore)
-		api.GET("/board/:board/exploration", s.getBoardExploration)
-		api.GET("/board/:board/exploration/doc", s.getBoardExplorationDoc)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)

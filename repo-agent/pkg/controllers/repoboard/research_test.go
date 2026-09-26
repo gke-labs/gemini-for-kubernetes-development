@@ -18,16 +18,24 @@ package repoboard
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // The session used throughout; the sandbox name it produces is derived,
@@ -320,4 +328,276 @@ func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "a research claim must not launch a review")
 		g.Expect(l.FixOpts).To(gomega.BeNil(), "a research claim must not launch a fix")
 	}
+}
+
+// --- the opening turn -------------------------------------------------
+
+// fakeACPD is an acpd that records what it was asked.
+type fakeACPD struct {
+	mu       sync.Mutex
+	exists   bool  // a session is already live
+	offset   int64 // its transcript length, when it is
+	created  []acpd.CreateSessionRequest
+	apiKeys  []string
+	prompts  []string
+	promptNo int
+}
+
+func (f *fakeACPD) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/sessions":
+			var in acpd.CreateSessionRequest
+			_ = json.NewDecoder(req.Body).Decode(&in)
+			f.created = append(f.created, in)
+			f.apiKeys = append(f.apiKeys, req.Header.Get(acpd.APIKeyHeader))
+			f.exists = true
+			_ = json.NewEncoder(w).Encode(acpd.Session{ID: in.ID, Engine: in.Engine, CWD: in.CWD})
+		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/sessions/"):
+			if !f.exists {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"no such session"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(acpd.Session{ID: testSession, Offset: f.offset})
+		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/prompt"):
+			var in struct {
+				Text string `json:"text"`
+			}
+			_ = json.NewDecoder(req.Body).Decode(&in)
+			f.prompts = append(f.prompts, in.Text)
+			f.promptNo++
+			_ = json.NewEncoder(w).Encode(map[string]int64{"offset": 128})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"unexpected ` + req.Method + " " + req.URL.Path + `"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	prev := researchACPD
+	researchACPD = func(string) *acpd.Client { return acpd.New(srv.URL) }
+	t.Cleanup(func() { researchACPD = prev })
+	return srv
+}
+
+func (f *fakeACPD) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
+}
+
+func (f *fakeACPD) keys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.apiKeys...)
+}
+
+// engineSecret is the member's own engine credential. The controller
+// copies it into factory-user on every reconcile, which is where the
+// kickoff reads it from — so the fixture is the source, not the copy.
+func engineSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: geminiSecretName, Namespace: "alice"},
+		Data:       map[string][]byte{"gemini": []byte("AIza-test")},
+	}
+}
+
+// researchPod is the sandbox's pod, running and addressable.
+func researchPod(sandboxName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sandboxName + "-0",
+			Namespace: "alice",
+			Labels:    map[string]string{"sandbox": sandboxName},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.1.2.3"},
+	}
+}
+
+func sandboxAnnotations(t *testing.T, r *Reconciler, name string) map[string]string {
+	t.Helper()
+	sb := &unstructured.Unstructured{}
+	sb.SetGroupVersionKind(sandboxGVK)
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: name}, sb); err != nil {
+		t.Fatalf("reading the sandbox back: %v", err)
+	}
+	return sb.GetAnnotations()
+}
+
+// The claim carries the kickoff only until the sandbox exists; the
+// handoff has to happen in the same reconcile that trims the claim, or
+// the opening prompt is lost with it.
+func TestResearchKickoffMovesFromClaimToSandbox(t *testing.T) {
+	g := gomega.NewWithT(t)
+	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	kickoff := research.Kickoff{Kind: research.KindOnboard}
+	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt+"|"+kickoff.Encode()))
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	// No pod: the sandbox exists but is still booting, which is the
+	// state this handoff is for.
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), board, githubSecret(), researchSandboxObj("alice", name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).NotTo(gomega.ContainSubstring("research-"),
+		"the claim is served and must be trimmed")
+	annotations := sandboxAnnotations(t, r, name)
+	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff),
+		"the kickoff must survive the claim on the sandbox")
+	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
+}
+
+// Once the pod is up the controller opens the conversation itself: the
+// member may be minutes and a closed tab away.
+func TestResearchKickoffIsSentAndCleared(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
+	sb.SetAnnotations(map[string]string{
+		"repo":                      "repo",
+		researchSessionIDAnnotation: testSession,
+		research.KickoffAnnotation:  kickoff.Encode(),
+		research.TitleAnnotation:    kickoff.ResolvedTitle(),
+	})
+	acp := &fakeACPD{}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	sent := acp.sent()
+	g.Expect(sent).To(gomega.HaveLen(1))
+	g.Expect(sent[0]).To(gomega.ContainSubstring("where does the retry loop live?"))
+	g.Expect(sent[0]).To(gomega.ContainSubstring("repo"), "the prompt names the checkout it is about")
+	// The key reaches acpd in a header at create, and nowhere else.
+	g.Expect(acp.keys()).To(gomega.Equal([]string{"AIza-test"}))
+	g.Expect(acp.created[0].CWD).To(gomega.Equal("/workspaces/repo"))
+
+	annotations := sandboxAnnotations(t, r, name)
+	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),
+		"a delivered kickoff must be cleared, or it would be sent again")
+	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("where does the retry loop live?"))
+}
+
+// The receipt is the annotation's absence, so the second reconcile must
+// be silent. This is the loop that would otherwise spend engine time on
+// every pass.
+func TestResearchKickoffIsSentOnce(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	for i := 0; i < 3; i++ {
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+	g.Expect(acp.sent()).To(gomega.HaveLen(1))
+}
+
+// A conversation that has already been talked to keeps its history: the
+// opening turn belongs at the start or not at all. This is what makes a
+// lost receipt survivable.
+func TestResearchKickoffSkipsAConversationInProgress(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{exists: true, offset: 4096}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.BeEmpty())
+	g.Expect(sandboxAnnotations(t, r, name)).NotTo(gomega.HaveKey(research.KickoffAnnotation),
+		"an opening that can no longer be sent must stop being owed")
+}
+
+// No pod yet is the normal state for a sandbox's first minutes. It is
+// not an error, and nothing about it is recorded.
+func TestResearchKickoffWaitsForThePod(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.BeEmpty())
+	got := sandboxAnnotations(t, r, name)
+	g.Expect(got).To(gomega.HaveKey(research.KickoffAnnotation), "still owed")
+	g.Expect(got).NotTo(gomega.HaveKey(research.KickoffErrorAnnotation), "and not yet given up on")
+}
+
+// A pod that never comes up eventually stops being retried, and says
+// so: a session that was supposed to open with a question should not
+// sit there silently looking answered.
+func TestResearchKickoffGivesUpAndSaysWhy(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	sb.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-researchKickoffTTL - time.Minute)))
+	acp := &fakeACPD{}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	got := sandboxAnnotations(t, r, name)
+	g.Expect(got[research.KickoffErrorAnnotation]).To(gomega.ContainSubstring("pod"))
+	g.Expect(got).To(gomega.HaveKey(research.KickoffAnnotation),
+		"what was owed stays readable next to why it was not delivered")
+
+	// And it is not retried after that.
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.BeEmpty())
+}
+
+// A plain "new conversation" claim files no kickoff, and the sandbox it
+// produces must be left exactly as factory made it.
+func TestResearchWithoutAKickoffStampsNothing(t *testing.T) {
+	g := gomega.NewWithT(t)
+	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	acp := &fakeACPD{}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), board, githubSecret(),
+		engineSecret(), researchSandboxObj("alice", name), researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.BeEmpty(), "nobody asked for an opening turn")
+	got := sandboxAnnotations(t, r, name)
+	g.Expect(got).NotTo(gomega.HaveKey(research.KickoffAnnotation))
+	g.Expect(got).NotTo(gomega.HaveKey(research.TitleAnnotation))
 }

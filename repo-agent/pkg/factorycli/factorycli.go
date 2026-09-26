@@ -54,75 +54,6 @@ func FixSandboxName(repo string, issueNumber int) string {
 	return fmt.Sprintf("fix-%s-%d", repo, issueNumber)
 }
 
-// ExploreSandboxName mirrors factory's ExploreSandboxName: the per-repo
-// exploration sandbox (explore-<slug>), slug-budgeted for the -lb cap.
-func ExploreSandboxName(repo string) string {
-	slug := strings.ToLower(repo)
-	var b strings.Builder
-	for _, r := range slug {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	slug = strings.Trim(b.String(), "-")
-	if budget := 60 - len("explore-"); len(slug) > budget {
-		slug = strings.Trim(slug[:budget], "-")
-	}
-	return "explore-" + slug
-}
-
-// ExploreOptions are the inputs for a `factory explore <kind>` invocation:
-// understanding docs built in the member's fork (exploration/notes).
-type ExploreOptions struct {
-	// SandboxName enables the in-flight preflight (explore-<repo>).
-	SandboxName string
-
-	Namespace string
-	// Kind is onboard | activity | topic.
-	Kind    string
-	RepoURL string
-	// Topic parameterizes kind=topic; Since parameterizes kind=activity.
-	Guidance    string // runbook kind only: owner targets/constraints free-text
-	Topic       string
-	Since       string
-	GithubToken string
-	Timeout     time.Duration
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine string
-}
-
-// StartExplore launches `factory explore <kind>`.
-func (r *Runner) StartExplore(key string, opts ExploreOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 45 * time.Minute
-	}
-	args := []string{
-		"explore", opts.Kind,
-		"--url", opts.RepoURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	// Each subcommand only defines its own flag — a leftover board
-	// annotation for the other kind must not become an unknown-flag
-	// death (a topic click once died on the activity click's --since).
-	if opts.Kind == "topic" && opts.Topic != "" {
-		args = append(args, "--topic", opts.Topic)
-	}
-	if opts.Kind == "activity" && opts.Since != "" {
-		args = append(args, "--since", opts.Since)
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "explore",
-	})
-}
-
 // RunbookInstance is the default instance name for a runbook —
 // mirrors factory's default so claims and sandbox names agree.
 func RunbookInstance(runbook, instance string) string {
@@ -412,9 +343,6 @@ type Launcher interface {
 	// running; a controller pass harvests the finished invocation's output
 	// (see ExtractPlan) via LastResult.
 	StartPlan(key string, opts PlanOptions) bool
-	// StartExplore launches `factory explore <kind>` (understanding docs
-	// in the member's fork).
-	StartExplore(key string, opts ExploreOptions) bool
 	// StartRun launches `factory run <mode>` (plan, deploy or teardown
 	// of one run, in that run's sandbox) unless one is already running.
 	StartRun(key string, opts RunOptions) bool

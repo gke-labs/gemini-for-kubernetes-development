@@ -1,7 +1,7 @@
 # GCP access for deployments: Workload Identity, bring-your-own project
 
-Runbook deployments (the Explore tab's deploy/upgrade scenarios, and the
-future Try surface) sometimes need real GCP resources — a GKE cluster, a
+Runbook deployments (the Runs tab's deploy/upgrade scenarios) sometimes
+need real GCP resources — a GKE cluster, a
 VM, cloud APIs. This document explains how sandbox agents get that
 access, what is stored where, and how to grant and revoke it.
 
@@ -11,8 +11,8 @@ one IAM binding on your side.
 
 ## How it works
 
-Explore sandboxes run as a Kubernetes ServiceAccount named `factory-deployer` in
-your member namespace (created automatically, carrying **no** Kubernetes
+Runbook and research sandboxes run as a Kubernetes ServiceAccount named
+`factory-deployer` in your member namespace (created automatically, carrying **no** Kubernetes
 RBAC). On GKE, [direct Workload Identity federation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 makes that ServiceAccount a GCP principal:
 
@@ -68,12 +68,13 @@ short-lived token expires.
 - **Per-member identity.** The principal names your namespace: agents
   in other members' namespaces are different principals with no access
   to your project unless you grant them.
-- **Scope of exposure.** Any agent task running in *your* explore
-  sandbox can use the identity while the binding exists. Treat the
+- **Scope of exposure.** Any agent task running in *your* runbook or
+  research sandbox can use the identity while the binding exists. Treat the
   grant as "my repo-agent may touch this project" — use a dedicated
   project, not a production one.
-- **Only explore sandboxes** run as `factory-deployer`. Fix, review, plan and
-  triage sandboxes keep the default pod identity and have no GCP reach.
+- **Only runbook and research sandboxes** run as `factory-deployer`. Fix,
+  review, plan and triage sandboxes keep the default pod identity and
+  have no GCP reach.
 - **Cleanup is a runbook contract.** Every runbook's Teardown section
   is the cleanup path; resources a deploy creates should be labeled and
   torn down when you're done. Budget alerts on your project are a good

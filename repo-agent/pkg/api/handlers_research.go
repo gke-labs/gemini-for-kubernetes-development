@@ -35,12 +35,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +56,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // Labels and annotations factory stamps on a research sandbox. Mirrored
@@ -106,6 +109,19 @@ type researchSandboxView struct {
 	Repo      string `json:"repo"`
 	HTMLURL   string `json:"htmlUrl,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
+	// Title is what the session is called: the canned exploration's
+	// name, the topic it was started with, or the first thing the member
+	// said. Empty until one of those has happened.
+	Title string `json:"title,omitempty"`
+	// Opening reports that a canned first turn is still owed — the
+	// controller sends it once the pod is up, which is a minute or two
+	// after the row first appears.
+	Opening bool `json:"opening,omitempty"`
+	// OpeningError is why an owed first turn was given up on.
+	OpeningError string `json:"openingError,omitempty"`
+	// Requested marks a session that has been asked for but has no
+	// sandbox yet: a standing claim on the board, not an object.
+	Requested bool `json:"requested,omitempty"`
 	// Paused is a sandbox scaled to zero: the conversation's transcript
 	// survives on the PVC but the engine is gone, so resuming means a
 	// fresh session over the same history.
@@ -137,11 +153,14 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		return researchSandboxView{}, false
 	}
 	view := researchSandboxView{
-		SessionID: sessionID,
-		Sandbox:   sb.GetName(),
-		Namespace: sb.GetNamespace(),
-		Repo:      annotations["repo"],
-		HTMLURL:   annotations["htmlURL"],
+		SessionID:    sessionID,
+		Sandbox:      sb.GetName(),
+		Namespace:    sb.GetNamespace(),
+		Repo:         annotations["repo"],
+		HTMLURL:      annotations["htmlURL"],
+		Title:        annotations[research.TitleAnnotation],
+		Opening:      annotations[research.KickoffAnnotation] != "",
+		OpeningError: annotations[research.KickoffErrorAnnotation],
 	}
 	if ts := sb.GetCreationTimestamp(); !ts.IsZero() {
 		view.CreatedAt = ts.UTC().Format(time.RFC3339)
@@ -152,7 +171,14 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 	return view, true
 }
 
-// getResearchSessions lists the member's research sandboxes.
+// getResearchSessions lists the member's research sessions: every
+// research sandbox, plus the ones that have been asked for and do not
+// exist yet.
+//
+// The pending rows matter more here than in any other list. A sandbox
+// is minutes away — image pull, PVC, clone — and a member who clicked
+// "overview" and saw nothing appear would reasonably click again, which
+// costs another sandbox and another engine.
 func (s *Server) getResearchSessions(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -166,11 +192,14 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 	}
 
 	views := []researchSandboxView{}
+	exists := map[string]bool{}
 	for i := range list.Items {
 		if view, ok := researchViewFromSandbox(&list.Items[i]); ok {
 			views = append(views, view)
+			exists[view.SessionID] = true
 		}
 	}
+	views = append(views, s.requestedResearchSessions(ctx, namespace, exists)...)
 	// Newest first: a session list is read from the top, and the one you
 	// just started is the one you want.
 	sort.Slice(views, func(i, j int) bool {
@@ -180,6 +209,63 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 		return views[i].Sandbox < views[j].Sandbox
 	})
 	c.JSON(http.StatusOK, gin.H{"sessions": views})
+}
+
+// requestedResearchSessions reads the standing research claims off the
+// member's boards and renders them as rows.
+//
+// Read from the boards rather than remembered here because the API
+// server is stateless and replicated: the claim on the board is the
+// only record of a click between the POST and the sandbox appearing.
+// A board that cannot be read is skipped rather than failing the list —
+// the sessions that DO exist are the more important half of the answer.
+func (s *Server) requestedResearchSessions(ctx context.Context, namespace string, exists map[string]bool) []researchSandboxView {
+	boards, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).List(ctx, v1.ListOptions{})
+	if err != nil {
+		klog.V(2).Infof("research: cannot list boards for pending sessions in %s: %v", namespace, err)
+		return nil
+	}
+	var out []researchSandboxView
+	for i := range boards.Items {
+		board := &boards.Items[i]
+		raw := board.GetAnnotations()[annoBoardRequests]
+		if raw == "" {
+			continue
+		}
+		requests := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &requests); err != nil {
+			continue
+		}
+		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+		_, repo, _ := parseRepoURL(repoURL)
+		for key, value := range requests {
+			if !strings.HasPrefix(key, "research-") {
+				continue
+			}
+			sessionID := strings.TrimPrefix(key, "research-")
+			// A claim whose sandbox has arrived is about to be trimmed
+			// by the controller; showing both would double the row.
+			if exists[sessionID] || !safeResearchSessionID.MatchString(sessionID) {
+				continue
+			}
+			claim, ok := research.DecodeClaim(value)
+			if !ok || claim.Member != namespace {
+				continue
+			}
+			out = append(out, researchSandboxView{
+				SessionID: sessionID,
+				Sandbox:   factorycli.ResearchSandboxName(repo, sessionID),
+				Namespace: namespace,
+				Repo:      repo,
+				HTMLURL:   repoURL,
+				CreatedAt: claim.At.UTC().Format(time.RFC3339),
+				Title:     claim.Kickoff.ResolvedTitle(),
+				Opening:   claim.Kickoff != research.Kickoff{},
+				Requested: true,
+			})
+		}
+	}
+	return out
 }
 
 // findResearchSandbox locates the sandbox hosting one session.
@@ -353,6 +439,12 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		"repo":      conn.view.Repo,
 		"cwd":       conn.view.cwd(),
 		"live":      false,
+		// The title and the state of any owed opening turn, so a
+		// conversation opened straight from a click can name itself and
+		// say what it is waiting for without also fetching the list.
+		"title":        conn.view.Title,
+		"opening":      conn.view.Opening,
+		"openingError": conn.view.OpeningError,
 	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.view.SessionID)
 	switch {
@@ -404,7 +496,85 @@ func (s *Server) promptResearchSession(c *gin.Context) {
 		researchError(c, err)
 		return
 	}
+	// A session nobody named is named by what was asked of it. Only the
+	// first turn does this, and only when nothing else has: a canned
+	// session already has its title, and a renamed one keeps it.
+	if conn.view.Title == "" {
+		if title := research.Truncate(req.Text); title != "" {
+			if err := s.setResearchTitle(ctx, conn.view.Namespace, conn.view.Sandbox, title); err != nil {
+				// Best effort. The turn is already delivered, and an
+				// untitled row is a cosmetic loss.
+				klog.V(2).Infof("research: could not title %s: %v", conn.view.Sandbox, err)
+			}
+		}
+	}
 	c.JSON(http.StatusAccepted, gin.H{"offset": offset})
+}
+
+// renameResearchSession sets what a session is called.
+//
+// It does not go through resolveResearch: renaming a paused or
+// still-booting session is reasonable, and neither has a pod to dial.
+func (s *Server) renameResearchSession(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionID := c.Param("session")
+	if !safeResearchSessionID.MatchString(sessionID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+		return
+	}
+	// Truncated rather than rejected: the member pasted something long
+	// and meant it as a name.
+	title := research.Truncate(req.Title)
+	if title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+		return
+	}
+	view, found, err := s.findResearchSandbox(ctx, namespace, sessionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the session", "details": err.Error()})
+		return
+	}
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "research session not found"})
+		return
+	}
+	if err := s.setResearchTitle(ctx, view.Namespace, view.Sandbox, title); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rename the session", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"sessionId": sessionID, "title": title})
+}
+
+// setResearchTitle writes the title annotation onto the sandbox.
+//
+// On the sandbox rather than in a table because the sandbox is the
+// session: deleting it must take the name with it, and nothing else
+// here has a database.
+func (s *Server) setResearchTitle(ctx context.Context, namespace, sandboxName, title string) error {
+	sandboxes := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace)
+	sb, err := sandboxes.Get(ctx, sandboxName, v1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	annotations := sb.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	if annotations[research.TitleAnnotation] == title {
+		return nil
+	}
+	annotations[research.TitleAnnotation] = title
+	sb.SetAnnotations(annotations)
+	_, err = sandboxes.Update(ctx, sb, v1.UpdateOptions{})
+	return err
 }
 
 // resolveResearchPermission answers a permission request the engine is

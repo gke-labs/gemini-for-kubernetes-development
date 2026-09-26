@@ -1,0 +1,14 @@
+{{.Topic}}
+
+For context: the repository {{.Repo}} ({{.HTMLURL}}) is checked out in
+front of you, and that is what the question is about.
+
+Investigate it in the source — read the relevant packages and trace the
+flows rather than answering from general knowledge. Use web search where
+the question calls for comparison with another project or for ecosystem
+context the checkout cannot supply.
+
+Answer here in the conversation. Tables for comparisons, a Mermaid
+diagram where structure is the point, and file:line references for
+anything you assert about this code. Say plainly what you could not
+determine.
