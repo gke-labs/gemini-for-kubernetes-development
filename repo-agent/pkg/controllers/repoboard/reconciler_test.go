@@ -53,7 +53,7 @@ type fakeLaunch struct {
 	PRTaskOpts  *factorycli.PRTaskOptions
 	PRTaskKind  string
 	ExploreOpts *factorycli.ExploreOptions
-	RunbookOpts *factorycli.RunbookOptions
+	RunOpts     *factorycli.RunOptions
 }
 
 type fakeLauncher struct {
@@ -129,10 +129,10 @@ func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) b
 	return true
 }
 
-func (f *fakeLauncher) StartRunbook(key string, opts factorycli.RunbookOptions) bool {
+func (f *fakeLauncher) StartRun(key string, opts factorycli.RunOptions) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, RunbookOpts: &opts})
+	f.calls = append(f.calls, fakeLaunch{Key: key, RunOpts: &opts})
 	return true
 }
 

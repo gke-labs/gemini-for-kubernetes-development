@@ -162,46 +162,55 @@ func RunbookSandboxName(repo, instance string) string {
 	return "runbook-" + slug + "-" + suffix
 }
 
-// RunbookOptions parameterize `factory runbook <mode>` — executing a runbook
-// scenario (or its teardown) in the dedicated run sandbox.
-type RunbookOptions struct {
+// RunOptions parameterize `factory run <mode>` — planning, deploying
+// or tearing down one run, in that run's own sandbox.
+type RunOptions struct {
 	SandboxName string
 	Namespace   string
-	Mode        string // run | teardown
-	Scenario    string // the runbook name: deploy-gcp, upgrade-gcp, …
-	Instance    string // deployment instance (default: the runbook name)
-	Guidance    string // run mode only
+	// Mode is plan | deploy | teardown.
+	Mode string
+	// Name is the run's identity and its directory under
+	// docs-exploration/runs/. It is the old instance name: adoption of
+	// a legacy deployment matches on it, and so does the sandbox.
+	Name string
+	// Intent is the owner's free text — the brief on a first plan, the
+	// amendment on a re-plan.
+	Intent      string
 	RepoURL     string
 	GithubToken string
 	Timeout     time.Duration
 	Engine      string
 }
 
-// StartRunbook launches `factory runbook <mode>`.
-func (r *Runner) StartRunbook(key string, opts RunbookOptions) bool {
+// StartRun launches `factory run <mode>`.
+func (r *Runner) StartRun(key string, opts RunOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
 	}
 	args := []string{
-		"runbook", opts.Mode,
+		"run", opts.Mode,
 		"--url", opts.RepoURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
-		"--scenario", opts.Scenario,
+		"--name", opts.Name,
 	}
-	if opts.Instance != "" {
-		args = append(args, "--instance", opts.Instance)
-	}
-	if opts.Mode == "run" && opts.Guidance != "" {
-		args = append(args, "--guidance", opts.Guidance)
+	if opts.Intent != "" && opts.Mode != "deploy" {
+		// Deploy executes a plan the owner already reviewed; taking
+		// fresh instructions there would change what was approved.
+		args = append(args, "--intent", opts.Intent)
 	}
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "runbook",
+		// The task directory prefix follows the command: `factory run`
+		// writes /workspaces/tasks/run-<ts>. A stale "runbook" prefix
+		// here would make the preflight look for in-flight work under
+		// a name nothing writes any more, and every launch would think
+		// the sandbox was free.
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "run",
 	})
 }
 
@@ -413,9 +422,9 @@ type Launcher interface {
 	// StartExplore launches `factory explore <kind>` (understanding docs
 	// in the member's fork).
 	StartExplore(key string, opts ExploreOptions) bool
-	// StartRunbook launches `factory runbook <mode>` (runbook execution in
-	// the dedicated run sandbox) for key unless one is already running.
-	StartRunbook(key string, opts RunbookOptions) bool
+	// StartRun launches `factory run <mode>` (plan, deploy or teardown
+	// of one run, in that run's sandbox) unless one is already running.
+	StartRun(key string, opts RunOptions) bool
 	// StartInvestigate / StartAddressComments / StartIterate launch the
 	// PR follow-up verbs in the PR's fix sandbox.
 	StartInvestigate(key string, opts PRTaskOptions) bool
