@@ -110,7 +110,6 @@ const (
 	AnnotationExploreSince    = "board.gemini.google.com/explore-since"
 	AnnotationExploreScenario = "board.gemini.google.com/explore-scenario"
 	AnnotationExploreGuidance = "board.gemini.google.com/explore-guidance"
-	AnnotationRunbookGuidance = "board.gemini.google.com/runbook-guidance"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -592,12 +591,13 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			if scenario == "" {
 				continue
 			}
-			tryMember, tryAt, _ := strings.Cut(member, "|")
+			tryMember, tryRest, _ := strings.Cut(member, "|")
+			tryAt, tryIntent, _ := strings.Cut(tryRest, "|")
 			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
 			if tryErr != nil {
 				runbookClaimedAt = time.Time{}
 			}
-			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt})
+			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt, intent: tryIntent})
 		case strings.HasPrefix(key, "explore-"):
 			kind := strings.TrimPrefix(key, "explore-")
 			if kind == "onboard" || kind == "activity" || kind == "topic" || kind == "runbook" {
@@ -1287,7 +1287,9 @@ type runbookClaim struct {
 	scenario  string // the runbook name: deploy-gcp, upgrade-gcp, …
 	instance  string // default: the runbook name
 	member    string
-	claimedAt time.Time
+	claimedAt time.Time	// intent is this run's brief, carried on the claim so it dies
+	// with it rather than outliving every other run on the board.
+	intent    string
 }
 
 func runbookKey(member, repo string, c runbookClaim) string {
@@ -1324,7 +1326,6 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 		if err != nil {
 			continue
 		}
-		boardAnnotations := work.board.GetAnnotations()
 		instance := factorycli.RunbookInstance(claim.scenario, claim.instance)
 		name := factorycli.RunbookSandboxName(work.repo, instance)
 		if sb := work.findSandbox(claim.member, name); sb != nil {
@@ -1340,7 +1341,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			// legacy deployment matches on it, and so does the
 			// sandbox, so an existing deployment keeps its workspace.
 			Name:        instance,
-			Intent:      runIntent(claim.scenario, instance, boardAnnotations[AnnotationRunbookGuidance]),
+			Intent:      runIntent(claim.scenario, instance, claim.intent),
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
