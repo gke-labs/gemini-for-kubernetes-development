@@ -151,3 +151,58 @@ func TestPlanReceiptCarriesRunningResourcesForward(t *testing.T) {
 		}
 	}
 }
+
+// Plan absorbs what a separate draft mode would have done: the
+// feasibility probing, and stopping at the procedure when the
+// parameters cannot be resolved. Nothing executes at plan time, so
+// there was never a reason for an earlier stopping point.
+func TestPlanPromptVerifiesFeasibility(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
+	for _, want := range []string{
+		"VERIFY FEASIBILITY",
+		"testIamPermissions",
+		"✗ MISSING",
+		"ACCOUNT-AGNOSTIC",
+		"docs-exploration/SKILL.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan prompt missing %q", want)
+		}
+	}
+}
+
+// A repo with no GCP project configured should still get a readable
+// procedure and a list of what it needs — not scripts built on
+// invented values.
+func TestPlanDegradesWhenParametersCannotResolve(t *testing.T) {
+	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
+	for _, want := range []string{
+		"IF THE PARAMETERS CANNOT BE RESOLVED",
+		"BLOCKED instead of PLANNED",
+		"Needs from owner",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan prompt missing %q", want)
+		}
+	}
+}
+
+// There is no draft mode. If one reappears, the command surface and
+// the stage count grew back.
+func TestThereIsNoDraftMode(t *testing.T) {
+	if _, err := RenderRunPrompt("draft", RunParams{}); err == nil {
+		t.Error("draft resolved to a prompt; plan is supposed to do the drafting")
+	}
+}
+
+// An empty RUN_NAME would make the legacy path the whole deployments
+// tree, moving every instance at once.
+func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	if !strings.Contains(string(b), `if [ -z "${RUN_NAME}" ]; then`) {
+		t.Error("adoptLegacyInstance does not guard against an empty run name")
+	}
+}

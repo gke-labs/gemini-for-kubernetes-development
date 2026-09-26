@@ -24,6 +24,13 @@ import (
 //	factory run deploy   --url <repo> --name deploy-gke-k8s1
 //	factory run teardown --url <repo> --name deploy-gke-k8s1
 //
+// Plan does the drafting too. It writes the procedure first and the
+// scripts from it, and where the parameters cannot be resolved — no
+// GCP project configured, a target the owner has not chosen — it
+// stops after the procedure and says what it needs. Nothing executes
+// at plan time either way, so there was never a reason to offer a
+// separate, earlier stopping point.
+//
 // A run owns everything it needs, in one directory on the fork's
 // exploration/notes branch: runbook.md is the procedure, the scripts
 // are generated from it, the receipts are the test results. Nothing is

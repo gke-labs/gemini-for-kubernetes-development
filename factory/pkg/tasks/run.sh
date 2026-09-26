@@ -78,6 +78,11 @@ function ensureNotesBranch {
 # the scripts, which is the only honest source.
 function adoptLegacyInstance {
     local legacy="docs-exploration/runbook-deployments/${RUN_NAME}"
+    # An empty name would make ${legacy} the whole deployments tree and
+    # move every instance at once.
+    if [ -z "${RUN_NAME}" ]; then
+        return 0
+    fi
     # Written as an if rather than `[ … ] && return 0`: under set -e a
     # failing test as a bare && list aborts the script.
     if [ ! -d "${legacy}" ] || [ -d "${RUN_DIR}" ]; then
