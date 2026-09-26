@@ -89,6 +89,73 @@ func TestResearchShortIDShape(t *testing.T) {
 	}
 }
 
+// The sandbox name is a repo slug and a digest, so the object has to
+// say for itself which conversation and which repository it belongs to.
+// Losing either leaves a running pod nothing can be traced back to.
+func TestResearchAnnotationsIdentifyTheSessionAndRepo(t *testing.T) {
+	const sessionID = "1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00"
+	got := researchAnnotations("kubernetes", sessionID,
+		"https://github.com/kubernetes/kubernetes.git",
+		"https://github.com/kubernetes/kubernetes")
+
+	want := map[string]string{
+		"repo":                      "kubernetes",
+		"cloneURL":                  "https://github.com/kubernetes/kubernetes.git",
+		"htmlURL":                   "https://github.com/kubernetes/kubernetes",
+		AnnotationResearchSessionID: sessionID,
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("annotation %q = %q, want %q", k, got[k], v)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %d annotations, want %d: %+v", len(got), len(want), got)
+	}
+}
+
+// The label can only carry the digest, so the annotation is the only
+// place the full session id survives. A caller's id need not be a legal
+// label value, and truncating or sanitising it here would silently make
+// the sandbox unaddressable from the session that owns it.
+func TestResearchSessionIDAnnotationIsVerbatim(t *testing.T) {
+	for _, sessionID := range []string{
+		"1d9f5c1e-3f4a-4f0e-9c3b-2a1b7d8e6f00",
+		"org/team/session-1",
+		"Session With Spaces",
+		strings.Repeat("x", 300),
+	} {
+		got := researchAnnotations("repo", sessionID, "clone", "html")
+		if got[AnnotationResearchSessionID] != sessionID {
+			t.Errorf("session id %q was stored as %q", sessionID, got[AnnotationResearchSessionID])
+		}
+	}
+}
+
+// The label is what a lookup by session selects on, so it has to be a
+// legal label value for every session id a caller might choose, and it
+// has to agree with the digest baked into the sandbox name.
+func TestResearchLabelsMatchTheSandboxName(t *testing.T) {
+	const sessionID = "org/team/session-1"
+	labels := researchLabels(sessionID, "barney-s")
+
+	if got := labels[LabelResearchSession]; got != ResearchShortID(sessionID) {
+		t.Errorf("session label = %q, want the short id %q", got, ResearchShortID(sessionID))
+	}
+	if !strings.HasSuffix(ResearchSandboxName("kubernetes", sessionID), labels[LabelResearchSession]) {
+		t.Error("the session label does not match the digest in the sandbox name")
+	}
+	if !dns1123Label.MatchString(labels[LabelResearchSession]) {
+		t.Errorf("session label %q is not a legal label value", labels[LabelResearchSession])
+	}
+	if labels["sandbox.gemini.google.com/type"] != "research" {
+		t.Errorf("type label = %q, want research", labels["sandbox.gemini.google.com/type"])
+	}
+	if labels["factory.gemini.google.com/user"] != "barney-s" {
+		t.Errorf("user label = %q, want barney-s", labels["factory.gemini.google.com/user"])
+	}
+}
+
 // A research sandbox that does not run acpd is a sandbox nothing can
 // talk to, and the caller's own --env must survive alongside it.
 func TestResearchEnvAddsACPDWithoutDroppingCallerEnv(t *testing.T) {

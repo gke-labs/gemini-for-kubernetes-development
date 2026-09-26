@@ -14,8 +14,51 @@ import (
 )
 
 // LabelResearchSession carries the session a research sandbox belongs
-// to, so the sandbox can be found from the session id alone.
+// to, so the sandbox can be found from the session id alone. It holds
+// the short form, because a label value has a charset and a length the
+// caller's session id need not respect.
 const LabelResearchSession = "sandbox.gemini.google.com/research-session"
+
+// Annotations a research sandbox carries. Its name is a repo slug and a
+// digest, which on its own says nothing about what the sandbox is for;
+// these are what `kubectl describe` and the board read it back from.
+//
+// Prefixed, as the runbook annotations are, because they are specific
+// to this sandbox type. The repository is recorded in the unprefixed
+// repo/cloneURL/htmlURL keys instead — every sandbox type writes those
+// and the UI already reads them, so a research-specific spelling of the
+// same three values would only be a second place to keep in sync.
+const (
+	// AnnotationResearchSessionID is the caller's session id in full —
+	// the one that addresses the conversation in acpd. The label cannot
+	// hold it, so this is the only place the mapping from sandbox back
+	// to session survives.
+	AnnotationResearchSessionID = "sandbox.gemini.google.com/research-session-id"
+)
+
+// researchLabels is the label set for one research session's sandbox.
+//
+// Type "research" keeps these out of the board's task-slot accounting,
+// as runbook sandboxes are.
+func researchLabels(sessionID, user string) map[string]string {
+	return map[string]string{
+		"sandbox.gemini.google.com/type":    "research",
+		"factory.gemini.google.com/managed": "true",
+		"factory.gemini.google.com/user":    user,
+		LabelResearchSession:                ResearchShortID(sessionID),
+	}
+}
+
+// researchAnnotations records what the sandbox is for: which
+// conversation, and which repository.
+func researchAnnotations(repoName, sessionID, cloneURL, htmlURL string) map[string]string {
+	return map[string]string{
+		"repo":                      repoName,
+		"cloneURL":                  cloneURL,
+		"htmlURL":                   htmlURL,
+		AnnotationResearchSessionID: sessionID,
+	}
+}
 
 // researchShortIDLen is how much of the session digest goes in the name.
 // Eight hex characters is 32 bits: enough that a collision between two
@@ -97,8 +140,7 @@ func researchEnv(envs []EnvVar) []EnvVar {
 // Unlike the explore sandbox, which is one per repo and long-lived,
 // this is one per conversation: the transcript lives on the PVC and
 // dies with the sandbox, so sharing one between sessions would mean
-// sharing a transcript. Type label "research" keeps these out of the
-// board's task-slot accounting, as runbook sandboxes are.
+// sharing a transcript.
 //
 // The sandbox runs acpd because ACPD_ENABLE is set here. Nothing else
 // turns it on, so every other sandbox type is unaffected.
@@ -133,24 +175,10 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 
 	opt := AgentSandboxOptions{
 		DevSandboxOptions: DevSandboxOptions{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "research",
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/user":    user,
-				LabelResearchSession:                ResearchShortID(sessionID),
-			},
-			Annotations: map[string]string{
-				"repo":     repoName,
-				"cloneURL": cloneURL,
-				"htmlURL":  htmlURL,
-				// The full session id does not fit the label charset
-				// (it is a UUID from the caller and need not be one),
-				// so the label carries the short form for selecting and
-				// the annotation carries the original for display.
-				"researchSessionID": sessionID,
-			},
+			Name:               name,
+			Namespace:          namespace,
+			Labels:             researchLabels(sessionID, user),
+			Annotations:        researchAnnotations(repoName, sessionID, cloneURL, htmlURL),
 			Image:              image,
 			Replicas:           1,
 			WorkspaceDiskSize:  diskSize,
