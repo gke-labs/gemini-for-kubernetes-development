@@ -143,6 +143,18 @@ function commitAndPushRun {
         echo "       nothing would be committed and the run would vanish silently." >&2
         exit 1
     fi
+    # A run owns its own directory and nothing else. Anything it
+    # changed outside is collateral — a .gitignore it edited to get at
+    # its own files, a shared doc it wandered into — and committing it
+    # is not this run's business. Restoring also leaves the worktree
+    # clean, which matters: a stray modification made the replay below
+    # fail with "cannot rebase: You have unstaged changes", turning a
+    # recoverable push race into a lost receipt.
+    if ! git diff --quiet; then
+        echo "Discarding changes outside ${RUN_DIR}:"
+        git diff --name-only | sed "s/^/  /"
+        git checkout -f -- . 2>/dev/null || true
+    fi
     if git commit -m "run(${RUN_NAME}): ${what}"; then
         # A dropped connection after a successful server-side push makes
         # the retry fail with 'cannot lock ref … is at <our sha>'. If the
@@ -154,7 +166,7 @@ function commitAndPushRun {
             # The remote moved: another run pushed to this branch while
             # we worked. Replay onto it rather than dying — losing a
             # completed plan to a race is how a run silently vanishes.
-            elif git rebase "origin/${NOTES_BRANCH}"; then
+            elif git rebase --autostash "origin/${NOTES_BRANCH}"; then
                 echo "Remote had moved; replayed onto it."
                 git push origin "${NOTES_BRANCH}"
             else

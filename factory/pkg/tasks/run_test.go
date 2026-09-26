@@ -218,3 +218,25 @@ func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
 		t.Error("adoptLegacyInstance does not guard against an empty run name")
 	}
 }
+
+// Observed live: a teardown edited .gitignore to get at its own files
+// and wandered into a shared doc. Neither is inside the run's
+// directory, so `git add ${RUN_DIR}` never staged them — and the
+// leftover modifications made the push-race replay fail with "cannot
+// rebase: You have unstaged changes", turning a recoverable race into
+// a lost receipt.
+func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "git checkout -f -- .") {
+		t.Error("run.sh does not discard changes outside the run directory")
+	}
+	// Belt and braces: even a clean-tree check can race, so the replay
+	// must survive a dirty worktree on its own.
+	if !strings.Contains(s, `git rebase --autostash`) {
+		t.Error("the push-race replay is not autostashing; an unstaged file will block it")
+	}
+}
