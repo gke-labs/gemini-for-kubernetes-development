@@ -175,9 +175,13 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 //
 // A failed task is folded in as nothing at all: the work it represents did not
 // actually happen, so recording it would suppress the retry.
+// However, for an iterate (rebase) task, even if it fails, we want to record
+// the SHA to prevent infinite rescheduling on the same commit SHA.
 func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-		return state
+		if !strings.HasSuffix(name, "-iterate") {
+			return state
+		}
 	}
 
 	// The queue dates every finished task, falling back to the task file's own
