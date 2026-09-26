@@ -427,6 +427,11 @@ type Launcher interface {
 	// one is already running. The triage YAML is recovered from the
 	// invocation's output (see ExtractTriageYAML) via LastResult.
 	StartTriage(key string, opts TriageOptions) bool
+	// StartResearch launches `factory research start` (the sandbox one
+	// deep-research conversation runs in). Unlike the verbs above it
+	// runs no agent task: it makes a sandbox and clones into it, and
+	// the conversation happens afterwards over acpd's HTTP port.
+	StartResearch(key string, opts ResearchOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.

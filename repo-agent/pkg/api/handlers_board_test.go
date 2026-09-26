@@ -119,6 +119,7 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
+	r.POST("/board/:board/research", server.startResearchSession)
 	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
 	r.POST("/board/:board/prs/:id/iterate", server.iterateBoardPR)
