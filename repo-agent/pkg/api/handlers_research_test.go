@@ -848,6 +848,66 @@ func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
 	}
 }
 
+// The sandbox object exists minutes before the controller stamps a
+// title on it — `factory research start` creates it and then clones —
+// and the claim is hidden as served for that whole window. Reading the
+// row's name off the sandbox alone is what made a session flip from
+// "what happened · 2 weeks" to "untitled" and back a minute later.
+func TestAServedClaimStillNamesItsUntitledSandbox(t *testing.T) {
+	claim := research.Claim{
+		Member:  "alice",
+		At:      time.Now().UTC(),
+		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"},
+	}
+	// No title annotation: the controller has not run since the sandbox
+	// appeared, which is the whole of the window under test.
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
+		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := listResearch(t, r)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d rows for one session: %+v", len(sessions), sessions)
+	}
+	if sessions[0].Requested {
+		t.Error("the sandbox exists; the row must be the real one")
+	}
+	if sessions[0].Title != "what happened · 2 weeks" {
+		t.Errorf("title = %q, want the claim's — the sandbox has none yet", sessions[0].Title)
+	}
+}
+
+// ...and the sandbox wins once it has one. A rename writes the
+// annotation and leaves the claim alone, so a claim that outlives the
+// rename must not drag the old name back.
+func TestASandboxTitleBeatsTheClaimItCameFrom(t *testing.T) {
+	claim := research.Claim{
+		Member:  "alice",
+		At:      time.Now().UTC(),
+		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"},
+	}
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	annotations := sb.GetAnnotations()
+	annotations[research.TitleAnnotation] = "the retry loop"
+	sb.SetAnnotations(annotations)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
+		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := listResearch(t, r)
+	if len(sessions) != 1 {
+		t.Fatalf("got %d rows: %+v", len(sessions), sessions)
+	}
+	if sessions[0].Title != "the retry loop" {
+		t.Errorf("title = %q, want the sandbox's", sessions[0].Title)
+	}
+}
+
 // A claim filed by someone else, sitting on a board this member can
 // read, is not this member's session.
 func TestResearchListIgnoresAnotherMembersClaim(t *testing.T) {
