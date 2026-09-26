@@ -1082,19 +1082,19 @@ body.dark-mode .warning-banner {
 .md-body > :first-child { margin-top: 0; }
 .md-body > :last-child { margin-bottom: 0; }
 
-/* Terminal view of the research transcript. Solarized light is the
-   light canvas because it is the palette people already read terminals
-   on; the dark canvas is a plain charcoal rather than the page's
-   near-black, so the transcript reads as a pane and not as a hole. */
+/* Terminal view of the research transcript. Both canvases are neutral
+   greys a shade off the page behind them, so the transcript reads as a
+   pane: light grey against the white card, charcoal rather than the
+   dark theme's near-black, which would read as a hole. */
 .research-terminal {
-  --term-bg: #fdf6e3;      /* solarized base3 */
-  --term-fg: #657b83;      /* base00 */
-  --term-dim: #93a1a1;     /* base1 */
-  --term-accent: #268bd2;  /* blue */
-  --term-green: #859900;
-  --term-yellow: #b58900;
-  --term-red: #dc322f;
-  --term-quote: rgba(147, 161, 161, 0.18);
+  --term-bg: #f2f3f5;
+  --term-fg: #3c4043;
+  --term-dim: #80868b;
+  --term-accent: #1a63d8;
+  --term-green: #188038;
+  --term-yellow: #b06000;
+  --term-red: #c5221f;
+  --term-quote: rgba(60, 64, 67, 0.07);
 
   background: var(--term-bg);
   color: var(--term-fg);
