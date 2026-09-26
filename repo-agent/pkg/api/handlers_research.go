@@ -206,7 +206,22 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 			exists[view.SessionID] = true
 		}
 	}
-	views = append(views, s.requestedResearchSessions(ctx, namespace, exists)...)
+	requested, claimed := s.requestedResearchSessions(ctx, namespace, exists)
+	views = append(views, requested...)
+	// Fill an untitled sandbox from the claim that asked for it.
+	//
+	// `factory research start` creates the Sandbox object early and then
+	// clones for minutes, while the title is stamped onto it by the
+	// controller in the pass that first notices it exists. Those are
+	// different moments, and between them the row has a sandbox (so the
+	// claim is hidden as served) and no annotation (so it has no name) —
+	// which is how a session that was just called "what happened · 2
+	// weeks" turns into "untitled" and back again a minute later.
+	for i := range views {
+		if views[i].Title == "" {
+			views[i].Title = claimed[views[i].SessionID]
+		}
+	}
 	// Newest first: a session list is read from the top, and the one you
 	// just started is the one you want.
 	sort.Slice(views, func(i, j int) bool {
@@ -229,13 +244,20 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 // only record of a click between the POST and the sandbox appearing.
 // A board that cannot be read is skipped rather than failing the list —
 // the sessions that DO exist are the more important half of the answer.
-func (s *Server) requestedResearchSessions(ctx context.Context, namespace string, exists map[string]bool) []researchSandboxView {
+//
+// Returns the rows, and separately the title every claim carries —
+// including the ones whose sandbox has arrived, which get no row. Those
+// titles are the only copy there is until the controller stamps the
+// sandbox, and the caller needs them to keep a name on the row in the
+// meantime.
+func (s *Server) requestedResearchSessions(ctx context.Context, namespace string, exists map[string]bool) ([]researchSandboxView, map[string]string) {
 	boards, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).List(ctx, v1.ListOptions{})
 	if err != nil {
 		klog.V(2).Infof("research: cannot list boards for pending sessions in %s: %v", namespace, err)
-		return nil
+		return nil, nil
 	}
 	var out []researchSandboxView
+	titles := map[string]string{}
 	for i := range boards.Items {
 		board := &boards.Items[i]
 		raw := board.GetAnnotations()[annoBoardRequests]
@@ -253,13 +275,21 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 				continue
 			}
 			sessionID := strings.TrimPrefix(key, "research-")
-			// A claim whose sandbox has arrived is about to be trimmed
-			// by the controller; showing both would double the row.
-			if exists[sessionID] || !safeResearchSessionID.MatchString(sessionID) {
+			if !safeResearchSessionID.MatchString(sessionID) {
 				continue
 			}
 			claim, ok := research.DecodeClaim(value)
 			if !ok || claim.Member != namespace {
+				continue
+			}
+			if title := claim.Kickoff.ResolvedTitle(); title != "" {
+				titles[sessionID] = title
+			}
+			// A claim whose sandbox has arrived is about to be trimmed
+			// by the controller; showing both would double the row. Its
+			// title is taken first, above: the sandbox it was served by
+			// does not necessarily carry one yet.
+			if exists[sessionID] {
 				continue
 			}
 			out = append(out, researchSandboxView{
@@ -275,7 +305,7 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 			})
 		}
 	}
-	return out
+	return out, titles
 }
 
 // findResearchSandbox locates the sandbox hosting one session.
