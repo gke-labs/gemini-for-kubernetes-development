@@ -116,6 +116,10 @@ type sessionResponse struct {
 	// and change what it is running under.
 	Mode           string            `json:"mode,omitempty"`
 	AvailableModes []acp.SessionMode `json:"availableModes,omitempty"`
+	// ModeError is why Mode is not the mode the session was created with.
+	// The session runs anyway; this is what a client shows instead of
+	// letting it look like nobody asked.
+	ModeError string `json:"modeError,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -424,6 +428,7 @@ func describe(sess *Session) sessionResponse {
 		Offset:         sess.Transcript().Size(),
 		Mode:           mode,
 		AvailableModes: available,
+		ModeError:      sess.ModeError(),
 	}
 }
 

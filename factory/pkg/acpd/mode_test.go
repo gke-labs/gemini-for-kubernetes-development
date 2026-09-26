@@ -58,10 +58,19 @@ func promptAndReadEcho(t *testing.T, ts *httptest.Server, id, text string) strin
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
+	// From here, not from the start: what a session already said before
+	// this turn is not this turn's business, and a session created with a
+	// complaint on the record would fail the error check below.
+	head, err := ts.Client().Get(fmt.Sprintf("%s/sessions/%s", ts.URL, id))
+	if err != nil {
+		t.Fatalf("GET session: %v", err)
+	}
+	from := decodeSession(t, head, http.StatusOK).Offset
+
 	// Attach before prompting, or the reply can land before the stream is
 	// open and the read below waits for a turn that is already over.
 	streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/sessions/%s/events?offset=0", ts.URL, id), nil)
+		fmt.Sprintf("%s/sessions/%s/events?offset=%d", ts.URL, id, from), nil)
 	if err != nil {
 		t.Fatalf("building stream request: %v", err)
 	}
@@ -122,28 +131,66 @@ func TestSessionStartsInTheModeTheCallerAsked(t *testing.T) {
 	}
 }
 
-func TestCreateFailsWhenTheEngineDoesNotOfferTheMode(t *testing.T) {
+func TestAnEngineThatRefusesTheModeStillGetsASession(t *testing.T) {
 	registerFakeEngine(t)
 	_, ts := newTestServer(t)
 
-	// Loudly, rather than falling back to prompting. Nobody is watching a
-	// session the controller started, so a silent fallback is a turn that
-	// blocks for the permission timeout and then dies — the failure this
-	// whole mechanism exists to prevent.
-	resp := create(t, ts, "s1", "fake-modes", "banana")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("create with an unknown mode returned %d, want 500", resp.StatusCode)
+	// gemini in a folder it does not trust: the modes are advertised and
+	// then set_mode is refused. The session is fine — it will just ask
+	// before it acts — and throwing it away would cost the member the
+	// conversation, the sandbox and the clone to report one refusal.
+	got := decodeSession(t, create(t, ts, "s1", "fake-untrusted", GeminiModeYolo), http.StatusCreated)
+	if got.Mode != GeminiModeDefault {
+		t.Errorf("mode = %q, want the one the engine stayed in", got.Mode)
+	}
+	if !strings.Contains(got.ModeError, "untrusted folder") {
+		t.Errorf("modeError = %q, want the engine's refusal", got.ModeError)
 	}
 
-	// And the half-started session must not be left in the registry.
-	missing, err := ts.Client().Get(ts.URL + "/sessions/s1")
-	if err != nil {
-		t.Fatalf("GET session: %v", err)
+	// On the session for a tab opened later, and in the transcript for
+	// the member reading the conversation from the top.
+	if !transcriptHas(t, ts, "s1", KindError, "untrusted folder") {
+		t.Error("the refusal was not recorded in the transcript")
 	}
-	defer missing.Body.Close()
-	if missing.StatusCode != http.StatusNotFound {
-		t.Errorf("failed create left session registered: GET returned %d", missing.StatusCode)
+
+	// And it is a working session, not a husk kept for its error message.
+	if echo := promptAndReadEcho(t, ts, "s1", "hello"); !strings.Contains(echo, "saw:hello") {
+		t.Errorf("session did not answer a prompt: %s", echo)
+	}
+}
+
+func TestAModeTheEngineNeverOfferedIsReportedTheSameWay(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	// A caller naming a mode that is not on the list is our bug rather
+	// than the engine's, but it reaches the member as the same thing —
+	// a session that keeps asking — so it is reported the same way.
+	got := decodeSession(t, create(t, ts, "s1", "fake-modes", "banana"), http.StatusCreated)
+	if got.Mode != GeminiModeDefault {
+		t.Errorf("mode = %q, want the engine's own default", got.Mode)
+	}
+	if !strings.Contains(got.ModeError, "banana") {
+		t.Errorf("modeError = %q, want it to name the mode that was asked for", got.ModeError)
+	}
+}
+
+func TestSwitchingSuccessfullyClearsTheRefusal(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, create(t, ts, "s1", "fake-modes", "banana"), http.StatusCreated)
+
+	// The member has been told what the session is in by putting it
+	// there. Leaving the complaint up would make the header argue with
+	// the picker sitting next to it.
+	resp, err := ts.Client().Post(ts.URL+"/sessions/s1/mode", "application/json",
+		strings.NewReader(`{"mode":"yolo"}`))
+	if err != nil {
+		t.Fatalf("POST mode: %v", err)
+	}
+	if got := decodeSession(t, resp, http.StatusOK); got.ModeError != "" {
+		t.Errorf("modeError after a switch that worked = %q, want empty", got.ModeError)
 	}
 }
 

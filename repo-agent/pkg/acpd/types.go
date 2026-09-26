@@ -76,6 +76,10 @@ type Session struct {
 	// switch at all rather than offering one that will fail.
 	Mode           string        `json:"mode,omitempty"`
 	AvailableModes []SessionMode `json:"availableModes,omitempty"`
+	// ModeError is why Mode is not the mode the session was created
+	// with. The session runs anyway — it just asks before it acts — so
+	// this is the only account anybody gets of why it keeps stopping.
+	ModeError string `json:"modeError,omitempty"`
 }
 
 // SessionMode is one approval mode the engine will accept.

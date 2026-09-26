@@ -27,10 +27,14 @@ import (
 // not merely acpd's own bookkeeping. Without the flag it behaves like an
 // agent that has never heard of modes, which is the other case that has
 // to keep working.
+//
+// With --refuse it advertises those modes and then refuses to leave the
+// default one, which is what gemini does in a folder it does not trust.
 const fakeAgent = `
 import json, os, sys
 
 modes = "--modes" in sys.argv[1:]
+refuse = "--refuse" in sys.argv[1:]
 current = "default"
 
 def send(obj):
@@ -62,7 +66,11 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": mid, "result": result})
     elif method == "session/set_mode":
         wanted = msg["params"]["modeId"]
-        if not modes or wanted not in ("default", "yolo"):
+        if refuse and wanted != "default":
+            send({"jsonrpc": "2.0", "id": mid,
+                  "error": {"code": -32603, "message": "Internal error",
+                            "data": {"details": "Cannot enable privileged approval modes in an untrusted folder."}}})
+        elif not modes or wanted not in ("default", "yolo"):
             send({"jsonrpc": "2.0", "id": mid,
                   "error": {"code": -32602, "message": "no such mode: %s" % wanted}})
         else:
@@ -79,16 +87,18 @@ for line in sys.stdin:
             "sessionId": "agent-side-id",
             "update": {"sessionUpdate": "agent_message_chunk",
                        "content": {"type": "text",
-                                   "text": "saw:%s key:%s mode:%s" % (
-                                       prompt, os.environ.get("FAKE_KEY", "<unset>"), current)}}}})
+                                   "text": "saw:%s key:%s mode:%s extra:%s" % (
+                                       prompt, os.environ.get("FAKE_KEY", "<unset>"),
+                                       current, os.environ.get("FAKE_EXTRA", "<unset>"))}}}})
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
     elif mid is not None:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": method}})
 `
 
-// registerFakeEngine installs the python-backed agent under two names for
-// the duration of the test: "fake", which knows nothing about modes, and
-// "fake-modes", which implements them.
+// registerFakeEngine installs the python-backed agent under three names
+// for the duration of the test: "fake", which knows nothing about modes,
+// "fake-modes", which implements them, and "fake-untrusted", which
+// advertises them and then refuses to leave the one it starts in.
 func registerFakeEngine(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
@@ -112,9 +122,16 @@ func registerFakeEngine(t *testing.T) {
 		APIKeyEnv:    "FAKE_KEY",
 		AuthMethodID: "fake-auth",
 	}
+	Engines["fake-untrusted"] = Engine{
+		Command:      "python3",
+		Args:         []string{script, "--modes", "--refuse"},
+		APIKeyEnv:    "FAKE_KEY",
+		AuthMethodID: "fake-auth",
+	}
 	t.Cleanup(func() {
 		delete(Engines, "fake")
 		delete(Engines, "fake-modes")
+		delete(Engines, "fake-untrusted")
 	})
 }
 
@@ -279,6 +296,28 @@ func TestEventsResumeFromOffset(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "second") {
 		t.Errorf("resuming at offset %d missed the new event: %s", offset, buf.String())
+	}
+}
+
+func TestTheEngineTablesEnvironmentReachesTheProcess(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	// acpd builds the engine's environment from nothing rather than
+	// inheriting one, so a setting an engine needs is only a setting if
+	// the table's copy of it survives that. gemini's folder trust is the
+	// one that does; this proves the mechanism, not the value.
+	engine := Engines["fake"]
+	engine.Env = []string{"FAKE_EXTRA=carried"}
+	Engines["fake"] = engine
+
+	resp := createSession(t, ts, "s1", "k")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create returned %d", resp.StatusCode)
+	}
+	if echo := promptAndReadEcho(t, ts, "s1", "hello"); !strings.Contains(echo, "extra:carried") {
+		t.Errorf("the engine's environment did not reach it: %s", echo)
 	}
 }
 

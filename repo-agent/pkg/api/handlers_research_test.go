@@ -74,6 +74,9 @@ type fakeACPD struct {
 	// by POST /mode — so a test can see what actually stuck rather than
 	// only what was asked for.
 	mode string
+	// modeError is acpd's account of why mode is not the one the session
+	// was created with, which it reports instead of refusing to start.
+	modeError string
 
 	// sessionExists controls whether GET /sessions/<id> answers or 404s,
 	// which is the difference between reusing a session and creating one.
@@ -107,7 +110,7 @@ func (f *fakeACPD) handler() http.Handler {
 		f.record(r.Method, "/sessions/"+r.PathValue("id"))
 		f.mu.Lock()
 		exists := f.sessionExists
-		mode := f.mode
+		mode, modeError := f.mode, f.modeError
 		f.mu.Unlock()
 		if !exists {
 			w.WriteHeader(http.StatusNotFound)
@@ -116,7 +119,7 @@ func (f *fakeACPD) handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(acpd.Session{
 			ID: researchSession, Engine: acpd.EngineGemini, CWD: "/workspaces/" + researchRepo, Offset: 128,
-			Mode: mode, AvailableModes: fakeModes,
+			Mode: mode, AvailableModes: fakeModes, ModeError: modeError,
 		})
 	})
 	mux.HandleFunc("POST /sessions", func(w http.ResponseWriter, r *http.Request) {
@@ -975,6 +978,28 @@ func TestResearchStatusReportsTheMode(t *testing.T) {
 	// have to hardcode one engine's vocabulary to offer the control.
 	if !strings.Contains(w.Body.String(), `"availableModes"`) {
 		t.Errorf("availableModes missing from the status: %s", w.Body.String())
+	}
+}
+
+// A session that did not get the mode it asked for still runs, and the
+// only place the reason survives is on the session: the create that saw
+// the refusal was over before anybody attached to this conversation.
+func TestResearchStatusCarriesWhyTheModeDidNotStick(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{
+		sessionExists: true,
+		mode:          acpd.ModeDefault,
+		modeError:     `session/set_mode "yolo": Cannot enable privileged approval modes in an untrusted folder.`,
+	}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "untrusted folder") {
+		t.Errorf("modeError missing from the status: %s", w.Body.String())
 	}
 }
 

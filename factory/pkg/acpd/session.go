@@ -31,6 +31,11 @@ type Engine struct {
 	// AuthMethodID is the default method to authenticate with, used when
 	// the caller does not name one and the agent advertises several.
 	AuthMethodID string
+	// Env is added to the engine's environment, which acpd sets
+	// explicitly rather than inheriting (see spawn). For settings the CLI
+	// has no flag for and that every session started here wants — not for
+	// credentials, which come from APIKeyEnv and the request.
+	Env []string
 }
 
 // Engines is the set acpd knows how to start. Only gemini speaks ACP
@@ -43,6 +48,18 @@ var Engines = map[string]Engine{
 		Args:         []string{"--acp"},
 		APIKeyEnv:    "GEMINI_API_KEY",
 		AuthMethodID: "gemini-api-key",
+		// Folder trust is on by default and a fresh sandbox has no
+		// ~/.gemini/trustedFolders.json, so the checkout is untrusted and
+		// gemini refuses every approval mode but its own: "Cannot enable
+		// privileged approval modes in an untrusted folder."
+		//
+		// The prompt that decision exists to force cannot be answered
+		// here — there is no human at the sandbox, and the checkout is a
+		// clone the session was created to work on. Saying so is
+		// therefore the honest answer rather than a way around the
+		// question. It does mean the checkout's own .gemini config is
+		// live too: project hooks, stdio MCP servers, project GEMINI.md.
+		Env: []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
 	},
 }
 
@@ -50,8 +67,9 @@ var Engines = map[string]Engine{
 // not its name, so these are the engine's vocabulary rather than the
 // protocol's: they are here to be recognised, not to be relied on. acpd
 // matches whatever the caller asks for against what the engine actually
-// advertised and fails if it is not there, so a renamed mode is a clear
-// error at create rather than a session that silently keeps prompting.
+// advertised, so a renamed mode is reported as one the session did not
+// get rather than disappearing into a session that quietly keeps
+// prompting.
 const (
 	// GeminiModeDefault prompts for approval on every tool call.
 	GeminiModeDefault = "default"
@@ -134,10 +152,14 @@ type Session struct {
 
 	mu          sync.Mutex
 	currentMode string
-	pending     map[string]chan permissionResolution
-	nextReq     int64
-	busy        bool
-	finished    bool
+	// modeError is why the session is not in the mode it was created
+	// with, kept because the create call that would have reported it is
+	// long over by the time anybody attaches.
+	modeError string
+	pending   map[string]chan permissionResolution
+	nextReq   int64
+	busy      bool
+	finished  bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -216,6 +238,7 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 		"TERM=dumb",
 		engine.APIKeyEnv + "=" + cfg.APIKey,
 	}
+	cmd.Env = append(cmd.Env, engine.Env...)
 	// Engine stderr is diagnostics, not conversation. It goes to a file
 	// beside the transcript so a broken engine is debuggable without
 	// flooding what the user reads.
@@ -291,21 +314,34 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 	if cfg.Mode == "" {
 		return nil
 	}
-	// A mode the caller asked for and did not get is a failure at create,
-	// not a warning in a log. The reason to ask is that nobody is watching
-	// the session: an unnoticed fallback to prompting turns a fire-and-
-	// forget run into one that blocks for permissionTimeout and dies.
-	//
-	// An engine with no modes at all is the one exception. That is a
-	// missing feature rather than a wrong answer, and failing there would
-	// make acpd refuse to run any engine but this one.
+	// An engine with no modes at all has not refused one, it has never
+	// heard of them, and there is nothing to report to anybody.
 	if len(s.availableModes) == 0 {
 		klog.FromContext(ctx).Info("engine advertises no session modes; ignoring the requested one",
 			"session", s.ID, "engine", cfg.Engine, "mode", cfg.Mode)
 		return nil
 	}
+	// A mode the caller asked for and did not get is worth saying loudly,
+	// but not worth throwing the session away over. The engine is up, it
+	// has a session, and it will answer questions — it will just ask
+	// before it acts. Failing the create instead costs the member the
+	// conversation, the sandbox and the clone, and leaves nothing behind
+	// to read but an HTTP status.
+	//
+	// So it is recorded in two places, because it has two readers: the
+	// transcript, where it sits above the first prompt as the reason this
+	// conversation keeps stopping, and the session itself, where it
+	// outlives a reload and a tab opened later.
 	if err := s.SetMode(ctx, cfg.Mode); err != nil {
-		return err
+		klog.FromContext(ctx).Error(err, "session did not start in the requested mode",
+			"session", s.ID, "engine", cfg.Engine, "mode", cfg.Mode)
+		s.mu.Lock()
+		s.modeError = err.Error()
+		s.mu.Unlock()
+		_ = s.transcript.AppendValue(KindError, map[string]string{
+			"message": fmt.Sprintf("this session asked to start in %q and the engine refused: %v."+
+				" It will ask permission before each tool call.", cfg.Mode, err),
+		})
 	}
 	return nil
 }
@@ -316,6 +352,14 @@ func (s *Session) Modes() (string, []acp.SessionMode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.currentMode, s.availableModes
+}
+
+// ModeError reports why the session is not in the mode it was asked to
+// start in, and is empty when it is (or was never asked).
+func (s *Session) ModeError() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modeError
 }
 
 // SetMode switches the session's approval mode.
@@ -341,6 +385,10 @@ func (s *Session) SetMode(ctx context.Context, modeID string) error {
 
 	s.mu.Lock()
 	s.currentMode = modeID
+	// A switch that worked answers the complaint the create left behind,
+	// whether or not it is the mode that was refused: the member has just
+	// been told what the session is in, by the session doing it.
+	s.modeError = ""
 	s.mu.Unlock()
 
 	_ = s.transcript.AppendValue(KindModeChanged, map[string]string{"currentModeId": modeID})

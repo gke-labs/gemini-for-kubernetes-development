@@ -355,6 +355,43 @@ describe('ResearchConversation', () => {
         expect(container.textContent).toContain('approval mode: default');
     });
 
+    test('a mode the session did not get is flagged beside the picker', async () => {
+        const refused = 'session/set_mode "yolo": Cannot enable privileged approval modes in an untrusted folder.';
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', mode: 'default', availableModes: modes, modeError: refused,
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({
+                type: 'open',
+                session: { busy: false, offset: 0, mode: 'default', availableModes: modes, modeError: refused },
+            });
+        });
+
+        // The session works, so nothing here blocks: the picker still
+        // shows what it is really in, with the reason it is not what was
+        // asked for hanging off it.
+        expect(container.querySelector('select[aria-label="Approval mode"]').value).toBe('default');
+        const warning = container.querySelector('[role="status"]');
+        expect(warning).toBeTruthy();
+        expect(warning.title).toContain('untrusted folder');
+
+        // And a switch that works settles it, without waiting for a
+        // probe to come back and say so.
+        global.fetch.mockImplementation(() => reply(200, {
+            sessionId: 's1', mode: 'yolo', availableModes: modes,
+        }));
+        const picker = container.querySelector('select[aria-label="Approval mode"]');
+        await act(async () => {
+            nativeSet(picker, 'yolo');
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.querySelector('[role="status"]')).toBeNull();
+    });
+
     test('an engine that offers no modes gets no control', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });

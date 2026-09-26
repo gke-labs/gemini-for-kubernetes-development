@@ -496,6 +496,7 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		body["createdAt"] = session.CreatedAt
 		body["mode"] = session.Mode
 		body["availableModes"] = session.AvailableModes
+		body["modeError"] = session.ModeError
 	case errors.Is(err, acpd.ErrNotFound):
 		// The sandbox is up but no engine is running in it: the normal
 		// state of a session nobody has opened yet, and of one whose

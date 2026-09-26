@@ -585,7 +585,10 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   // answers first; the transcript takes over once it is caught up,
   // because a mode switched in another tab — or left by the engine on
   // its own — arrives as an event and never as a reply to us.
-  const [modeState, setModeState] = useState({ current: '', available: [] });
+  // problem is acpd's account of why current is not the mode the
+  // session was created with — the session runs anyway, it just asks
+  // before it acts, and this is the only place that says why.
+  const [modeState, setModeState] = useState({ current: '', available: [], problem: '' });
   const [switching, setSwitching] = useState(false);
   // rich | terminal. A reading preference, not session state, so it is
   // remembered across conversations and across the pop-out window —
@@ -652,6 +655,10 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
           setModeState(m => ({
             current: session.mode || m.current,
             available: session.availableModes || m.available,
+            // Not defended with `|| m.problem`, unlike the two above: a
+            // session that is in the mode it was asked for says nothing
+            // here, and that silence is the good news.
+            problem: session.modeError || '',
           }));
           return;
         }
@@ -696,6 +703,7 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
             setModeState(m => ({
               current: body.mode || m.current,
               available: body.availableModes || m.available,
+              problem: body.modeError || '',
             }));
             if (body.unreachable) {
               // The sandbox is up but acpd is not answering. Said
@@ -746,7 +754,7 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
     everLiveRef.current = false;
     setTranscript(emptyTranscript);
     setCaughtUp(false);
-    setModeState({ current: '', available: [] });
+    setModeState({ current: '', available: [], problem: '' });
     setPhase('probing');
     setDetail('');
     probe();
@@ -856,6 +864,10 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
         setModeState(m => ({
           current: body.mode || next,
           available: body.availableModes || m.available,
+          // A switch that worked settles the complaint the create left
+          // behind: the member has just been told what the session is
+          // in, by putting it there themselves.
+          problem: '',
         }));
       })
       .catch(err => setError(`mode change failed: ${err}`))
@@ -969,6 +981,17 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
                 <option key={m.id} value={m.id} title={m.description || ''}>{m.name || m.id}</option>
               ))}
             </select>
+            {/* The session asked for a mode and did not get it. It is in
+                the transcript too, where it belongs chronologically, but
+                that scrolls away and this does not — and the question it
+                answers ("why is it asking me again?") is asked long
+                after the first screen. */}
+            {modeState.problem && (
+              <span role="status" title={modeState.problem}
+                style={{ color: 'var(--status-red, #c62828)', cursor: 'help' }}>
+                ⚠ not applied
+              </span>
+            )}
           </label>
         )}
         {/* Two segments rather than one flip button: which view you are
