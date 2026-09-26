@@ -165,8 +165,11 @@ func TestRoutesAndMethods(t *testing.T) {
 		wantPath   string
 	}{
 		{
-			name:       "prompt",
-			call:       func(c *Client) error { return c.Prompt(context.Background(), "s1", "hello") },
+			name: "prompt",
+			call: func(c *Client) error {
+				_, err := c.Prompt(context.Background(), "s1", "hello")
+				return err
+			},
 			wantMethod: http.MethodPost,
 			wantPath:   "/sessions/s1/prompt",
 		},
@@ -204,6 +207,10 @@ func TestRoutesAndMethods(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client, rec := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
+				// An empty object rather than an empty body: the verbs
+				// that decode a reply would otherwise fail on EOF, which
+				// would be this table testing the body and not the route.
+				_, _ = w.Write([]byte("{}"))
 			})
 			if err := tc.call(client); err != nil {
 				t.Fatalf("call: %v", err)
@@ -212,6 +219,23 @@ func TestRoutesAndMethods(t *testing.T) {
 				t.Errorf("got %s %s, want %s %s", rec.method, rec.path, tc.wantMethod, tc.wantPath)
 			}
 		})
+	}
+}
+
+// The offset a prompt returns is what a follower resumes from, and it is
+// the position AFTER the user_prompt event acpd just wrote. Dropping it
+// would make the UI re-read the message it only just sent.
+func TestPromptReturnsResumeOffset(t *testing.T) {
+	client, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"offset":4096}`))
+	})
+	offset, err := client.Prompt(context.Background(), "s1", "hello")
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if offset != 4096 {
+		t.Errorf("offset = %d, want 4096", offset)
 	}
 }
 
@@ -238,7 +262,7 @@ func TestLocalValidation(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if err := client.Prompt(context.Background(), "s1", ""); err == nil {
+	if _, err := client.Prompt(context.Background(), "s1", ""); err == nil {
 		t.Error("expected an error for empty prompt text")
 	}
 	if err := client.ResolvePermission(context.Background(), "s1", PermissionResolution{}); err == nil {

@@ -153,14 +153,24 @@ func (c *Client) DeleteSession(ctx context.Context, id string) error {
 // transcript. A prompt sent while a turn is already in flight is
 // rejected rather than queued, so callers that dispatch from a UI should
 // check Session.Busy or handle the error.
-func (c *Client) Prompt(ctx context.Context, id, text string) error {
+//
+// The returned offset is the transcript position *after* the user_prompt
+// event acpd just appended, so a caller that follows from it sees the
+// agent's reply and not an echo of what it only just sent.
+func (c *Client) Prompt(ctx context.Context, id, text string) (int64, error) {
 	if text == "" {
-		return errors.New("acpd: prompt text is required")
+		return 0, errors.New("acpd: prompt text is required")
 	}
 	body := struct {
 		Text string `json:"text"`
 	}{Text: text}
-	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/prompt", body, nil, "")
+	var out struct {
+		Offset int64 `json:"offset"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/prompt", body, &out, ""); err != nil {
+		return 0, err
+	}
+	return out.Offset, nil
 }
 
 // ResolvePermission answers a permission request the engine is blocked

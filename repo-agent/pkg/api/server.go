@@ -73,6 +73,15 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/board/:board/prs/:id/investigate", s.investigateBoardPR)
 		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
 		api.POST("/board/:board/research", s.startResearchSession)
+		// Addressed by session id alone, with no board in the path: the
+		// board is only the mailbox that got the sandbox made, and
+		// nothing after that click goes through it.
+		api.GET("/research", s.getResearchSessions)
+		api.GET("/research/:session", s.getResearchSession)
+		api.DELETE("/research/:session", s.deleteResearchSession)
+		api.POST("/research/:session/prompt", s.promptResearchSession)
+		api.POST("/research/:session/permission", s.resolveResearchPermission)
+		api.POST("/research/:session/cancel", s.cancelResearchSession)
 		api.POST("/board/:board/explore", s.kickoffExplore)
 		api.GET("/board/:board/exploration", s.getBoardExploration)
 		api.GET("/board/:board/exploration/doc", s.getBoardExplorationDoc)
@@ -123,6 +132,16 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	terminal.Use(s.Auth.Middleware())
 	{
 		terminal.GET("/:namespace/:name", s.overseerTerminal)
+	}
+
+	// The research event stream, attached directly to the router for the
+	// same reason the sandbox proxy is: the logging middleware buffers
+	// the response, which would hold every event until the conversation
+	// ended.
+	research := router.Group("/api/research-events")
+	research.Use(s.Auth.Middleware())
+	{
+		research.GET("/:session", s.streamResearchEvents)
 	}
 
 	// Protected sandbox proxy routes
