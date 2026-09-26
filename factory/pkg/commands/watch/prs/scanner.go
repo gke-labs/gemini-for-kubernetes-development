@@ -572,6 +572,12 @@ func (s *Scanner) reconcileReadiness(
 
 	alreadyReady := hasReadyForHumanLabel(pc.prIssue.Labels, s.cfg.TriggerLabel)
 	if alreadyReady {
+		// The label is already there, so there is nothing to add — but
+		// a review label can arrive AFTER a PR goes ready (adoption
+		// re-adds overseer/review to bot-authored PRs carrying no
+		// trigger label), and returning here left it on the PR
+		// forever, re-arming bot reviews on work a human already owns.
+		s.removeReviewLabels(ctx, pc, num)
 		return
 	}
 	readyLabel := readyForHumanLabel(s.cfg.TriggerLabel)
@@ -584,17 +590,7 @@ func (s *Scanner) reconcileReadiness(
 			klog.Errorf("Failed to add label '%s' to PR #%d: %v", readyLabel, num, err)
 		}
 	}
-	// Remove review label(s) to disable bot reviews
-	for _, revLabel := range getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel) {
-		if s.cfg.DryRun {
-			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d (ready for human review)\n", revLabel, num)
-		} else {
-			klog.Infof("PR #%d is ready for human review on SHA %s. Removing label '%s'.", num, pc.headSHA, revLabel)
-			if err := s.gh.RemoveLabel(ctx, num, revLabel); err != nil {
-				klog.Errorf("Failed to remove label '%s' from PR #%d: %v", revLabel, num, err)
-			}
-		}
-	}
+	s.removeReviewLabels(ctx, pc, num)
 	// Inherit human assignees from parent issue
 	if pc.refIssues != nil {
 		if humanAssignees := s.getMissingHumanAssigneesForPR(pc.prIssue.Assignees, pc.refIssues.all(ctx)); len(humanAssignees) > 0 {
@@ -617,6 +613,23 @@ func (s *Scanner) reconcileReadiness(
 			if err := s.gh.RemoveAssignees(ctx, num, []string{assignedBot}); err != nil {
 				klog.Errorf("Failed to unassign bot %s from PR #%d: %v", assignedBot, num, err)
 			}
+		}
+	}
+}
+
+// removeReviewLabels takes the review label off a PR that is ready for
+// a human, so bot reviews stay disabled. Idempotent: a PR with no
+// review label makes no API calls, which is what lets it run on every
+// pass over an already-ready PR.
+func (s *Scanner) removeReviewLabels(ctx context.Context, pc *prContext, num int) {
+	for _, revLabel := range getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel) {
+		if s.cfg.DryRun {
+			fmt.Printf("[DRYRUN] Would remove label '%s' from PR #%d (ready for human review)\n", revLabel, num)
+			continue
+		}
+		klog.Infof("PR #%d is ready for human review on SHA %s. Removing label '%s'.", num, pc.headSHA, revLabel)
+		if err := s.gh.RemoveLabel(ctx, num, revLabel); err != nil {
+			klog.Errorf("Failed to remove label '%s' from PR #%d: %v", revLabel, num, err)
 		}
 	}
 }
