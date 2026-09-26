@@ -208,7 +208,10 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 		}
 		return views[i].Sandbox < views[j].Sandbox
 	})
-	c.JSON(http.StatusOK, gin.H{"sessions": views})
+	// forkOwner is the member's GitHub login, which is also the owner of
+	// the fork the runbooks push notes to. The panel needs it only to
+	// build the footnote link to that branch; it is not per-session.
+	c.JSON(http.StatusOK, gin.H{"sessions": views, "forkOwner": s.Auth.GetUserFromContext(c)})
 }
 
 // requestedResearchSessions reads the standing research claims off the

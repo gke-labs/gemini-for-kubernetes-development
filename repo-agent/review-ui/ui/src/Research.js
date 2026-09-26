@@ -1032,11 +1032,15 @@ export function ResearchPanel({ boardName, repoURL }) {
   const [sinceOpen, setSinceOpen] = useState(false);
   const [error, setError] = useState('');
   const [showOthers, setShowOthers] = useState(false);
+  const [forkOwner, setForkOwner] = useState('');
 
   const load = useCallback(() => {
     fetch('/api/research')
       .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
-      .then(data => setSessions(Array.isArray(data.sessions) ? data.sessions : []))
+      .then(data => {
+        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        setForkOwner(data.forkOwner || '');
+      })
       .catch(err => { setSessions([]); setError(`Could not list research sessions: ${err}`); });
   }, []);
 
@@ -1276,6 +1280,20 @@ export function ResearchPanel({ boardName, repoURL }) {
               <tbody>{others.map(row)}</tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* The notes branch on the member's fork. Research does not write
+          there yet — runs still do, and the old explore notes are still
+          on it — so this is a plain link out rather than anything the
+          page reads back. */}
+      {forkOwner && repo && (
+        <div style={{ marginTop: '14px', paddingTop: '8px', borderTop: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+          Earlier notes and run artifacts live on{' '}
+          <a href={`https://github.com/${forkOwner}/${repo}/tree/exploration/notes`}
+            target="_blank" rel="noopener noreferrer">
+            {forkOwner}/{repo} @ exploration/notes ↗
+          </a>
         </div>
       )}
     </div>

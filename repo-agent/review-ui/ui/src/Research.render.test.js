@@ -441,4 +441,22 @@ describe('ResearchPanel', () => {
         await renderPanel();
         expect(container.textContent).toContain('opening failed');
     });
+
+    test('the notes branch is a footnote link to the member\'s fork', async () => {
+        global.fetch = jest.fn(() => reply(200, { ...sessions, forkOwner: 'barney-s' }));
+
+        await renderPanel();
+        const link = [...container.querySelectorAll('a')]
+            .find(a => a.textContent.includes('exploration/notes'));
+        expect(link).toBeTruthy();
+        expect(link.getAttribute('href'))
+            .toBe('https://github.com/barney-s/repo-agent/tree/exploration/notes');
+    });
+
+    test('with no fork owner there is no footnote to click', async () => {
+        global.fetch = jest.fn(() => reply(200, sessions));
+
+        await renderPanel();
+        expect(container.textContent).not.toContain('exploration/notes');
+    });
 });
