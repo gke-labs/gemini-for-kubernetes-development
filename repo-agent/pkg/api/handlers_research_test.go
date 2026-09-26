@@ -285,6 +285,45 @@ func TestResearchSessionListDoesNotNeedAReachablePod(t *testing.T) {
 	}
 }
 
+// A sandbox object exists minutes before its pod does. Reporting that
+// as up sends people into a conversation that cannot answer, so the row
+// says starting until there is something to dial.
+func TestResearchSessionListSaysStartingUntilThePodRuns(t *testing.T) {
+	booting := researchSandboxCR("alice", researchSession, researchRepo, false)
+	other := "3c2f9a71-0000-4000-8000-000000000002"
+	up := researchSandboxCR("alice", other, researchRepo, false)
+	sleeping := researchSandboxCR("alice", "3c2f9a71-0000-4000-8000-000000000003", researchRepo, true)
+
+	r, _ := researchTestServer(t, nil,
+		[]*unstructured.Unstructured{booting, up, sleeping},
+		researchPod("alice", up.GetName(), "10.0.0.9", corev1.PodRunning),
+		// Pending, so it does not count: an IP-less pod cannot be dialed.
+		researchPod("alice", booting.GetName(), "", corev1.PodPending))
+
+	w := doJSON(t, r, http.MethodGet, "/api/research", "")
+	var got struct {
+		Sessions []researchSandboxView `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	starting := map[string]bool{}
+	for _, s := range got.Sessions {
+		starting[s.SessionID] = s.Starting
+	}
+	if !starting[researchSession] {
+		t.Errorf("a sandbox with no running pod should be starting: %s", w.Body.String())
+	}
+	if starting[other] {
+		t.Errorf("a sandbox with a running pod should not be starting: %s", w.Body.String())
+	}
+	// Paused is its own state and its own answer — resuming is a click,
+	// not a wait, and calling it starting would promise it is coming back.
+	if starting["3c2f9a71-0000-4000-8000-000000000003"] {
+		t.Errorf("a paused sandbox should not be starting: %s", w.Body.String())
+	}
+}
+
 // Every route here starts from a session id, so a research sandbox
 // without one cannot be opened, prompted or followed. Listing it would
 // put a row in the UI that does nothing when clicked.

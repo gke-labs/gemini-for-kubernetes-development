@@ -1122,17 +1122,24 @@ export function ResearchPanel({ boardName, repoURL }) {
       return <Pill text="requested" color="#b08800" bg="rgba(176,136,0,0.12)"
         title="Asked for — the controller has not built the sandbox yet. A few minutes." />;
     }
+    if (s.paused) {
+      return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
+        title="Scaled to zero — the transcript survives, the engine does not" />;
+    }
     if (s.openingError) {
       return <Pill text="opening failed" color="var(--text-danger)" bg="var(--bg-danger-light)"
         title={s.openingError} />;
     }
+    // Before opening…: the sandbox object exists for minutes before its
+    // pod does, and "up" on a session nothing can reach yet is a lie
+    // that costs a click.
+    if (s.starting) {
+      return <Pill text="starting…" color="#b08800" bg="rgba(176,136,0,0.12)"
+        title="The sandbox exists; its pod is still coming up — image, disk, clone" />;
+    }
     if (s.opening) {
       return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
         title="The first question has not reached the agent yet" />;
-    }
-    if (s.paused) {
-      return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
-        title="Scaled to zero — the transcript survives, the engine does not" />;
     }
     return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />;
   };
