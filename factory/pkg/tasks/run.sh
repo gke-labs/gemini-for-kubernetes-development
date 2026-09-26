@@ -5,7 +5,7 @@ set -o pipefail
 # Run task: plan, deploy or tear down one run, in that run's own
 # sandbox. A run owns everything it needs — runbook.md is the
 # procedure, the scripts are generated from it, the receipts are the
-# test results — all under docs-exploration/runs/<name>/ on the
+# test results — all under docs-exploration/agent-runs/<name>/ on the
 # exploration/notes branch of the member's fork.
 #
 # The difference from the runbook task this replaces is that nothing is
@@ -29,7 +29,7 @@ set -o pipefail
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
 NOTES_BRANCH="exploration/notes"
-RUN_DIR="docs-exploration/runs/${RUN_NAME}"
+RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
 
 function ensureNotesBranch {
     echo "Ensuring notes branch ${NOTES_BRANCH}..."
@@ -59,44 +59,48 @@ function ensureNotesBranch {
     popd > /dev/null
 }
 
-# adoptLegacyInstance migrates a deployment created by the older
-# `factory runbook` command, which kept artifacts under
-# runbook-deployments/<instance>/ and the procedure in a shared
-# runbooks/<scenario>.md.
-#
-# Lazily, and only for a run someone actually touches: a big-bang
-# migration of live deployments is a worse risk than a git mv at the
-# moment of use. The sandbox is already the same one — the naming is
-# unchanged — so the PVC, the cluster state and the teardown script
+# LEGACY_RUN_DIRS are the paths a run has lived under before now:
+# runbook-deployments/<name>/ from `factory runbook`, and a short-lived
+# runs/<name>/ that had to be renamed — "runs/" is a bare .gitignore
+# entry in a great many repositories (TensorBoard and friends write
+# there), and a bare pattern matches at any depth, so
+# docs-exploration/runs/ was ignored wherever that appeared.
+LEGACY_RUN_DIRS="docs-exploration/runbook-deployments docs-exploration/runs"
+
+# adoptLegacyInstance moves a run from wherever it used to live into
+# RUN_DIR, lazily, and only for a run someone actually touches: a
+# big-bang migration of live deployments is a worse risk than a git mv
+# at the moment of use. The sandbox is already the same one — naming
+# is unchanged — so the PVC, the cluster state and the teardown script
 # all come along.
 #
-# runbook.md is deliberately NOT synthesised from the old shared
-# runbook: that document describes the scenario, not what this
-# particular deployment actually did, and inventing prose about live
-# infrastructure is how a teardown ends up removing the wrong thing.
-# The first deploy or teardown of an adopted run reconciles one from
-# the scripts, which is the only honest source.
+# runbook.md is deliberately NOT synthesised for a deployment that
+# never had one: the old shared runbook described a scenario, not what
+# this particular deployment did, and inventing prose about live
+# infrastructure is how a teardown removes the wrong thing. The first
+# deploy or teardown reconciles one from the scripts, which is the
+# only honest source.
 function adoptLegacyInstance {
-    local legacy="docs-exploration/runbook-deployments/${RUN_NAME}"
-    # An empty name would make ${legacy} the whole deployments tree and
-    # move every instance at once.
-    if [ -z "${RUN_NAME}" ]; then
+    # An empty name would make the legacy path the whole tree and move
+    # every run at once.
+    if [ -z "${RUN_NAME}" ] || [ -d "${RUN_DIR}" ]; then
         return 0
     fi
-    # Written as an if rather than `[ … ] && return 0`: under set -e a
-    # failing test as a bare && list aborts the script.
-    if [ ! -d "${legacy}" ] || [ -d "${RUN_DIR}" ]; then
+    local legacy
+    for base in ${LEGACY_RUN_DIRS}; do
+        legacy="${base}/${RUN_NAME}"
+        [ -d "${legacy}" ] || continue
+        echo "Adopting ${legacy} into ${RUN_DIR}..."
+        mkdir -p "$(dirname "${RUN_DIR}")"
+        if ! git mv "${legacy}" "${RUN_DIR}" 2>/dev/null; then
+            mv "${legacy}" "${RUN_DIR}"
+        fi
+        # The commit stages RUN_DIR with --ignore-removal, which by
+        # design will not record the old path's disappearance. Stage
+        # that removal here, or the branch keeps both copies.
+        git add -A "${legacy}" 2>/dev/null || true
         return 0
-    fi
-    echo "Adopting legacy deployment ${RUN_NAME} into ${RUN_DIR}..."
-    mkdir -p "$(dirname "${RUN_DIR}")"
-    if ! git mv "${legacy}" "${RUN_DIR}" 2>/dev/null; then
-        mv "${legacy}" "${RUN_DIR}"
-    fi
-    # The commit stages ${RUN_DIR} with --ignore-removal, which by
-    # design will not record the old path's disappearance. Stage that
-    # removal here, or the branch ends up carrying both copies.
-    git add -A "${legacy}" 2>/dev/null || true
+    done
 }
 
 # seedFromRun copies an existing run's procedure as the starting point.
@@ -129,7 +133,16 @@ function commitAndPushRun {
     # Stage only this run's directory. --ignore-removal keeps the
     # harness from recording a deletion as a side effect: whatever a
     # killed phase left missing from the worktree, the branch keeps.
-    git add --ignore-removal "${RUN_DIR}" 2>/dev/null || true
+    #
+    # Errors are NOT swallowed. git refuses to add a path the repo
+    # ignores, and suppressing that turned a whole run into a silent
+    # "nothing to commit" — the work done, the receipt written, and
+    # nothing on the branch to show for it.
+    if ! git add --ignore-removal "${RUN_DIR}"; then
+        echo "ERROR: could not stage ${RUN_DIR}. If the repository ignores this path," >&2
+        echo "       nothing would be committed and the run would vanish silently." >&2
+        exit 1
+    fi
     if git commit -m "run(${RUN_NAME}): ${what}"; then
         # A dropped connection after a successful server-side push makes
         # the retry fail with 'cannot lock ref … is at <our sha>'. If the

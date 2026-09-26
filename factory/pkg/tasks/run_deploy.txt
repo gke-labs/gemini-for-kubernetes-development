@@ -1,5 +1,5 @@
 You are DEPLOYING the run "{{.Name}}" for the repository {{.RepoName}}
-({{.HTMLURL}}). Everything it owns is in docs-exploration/runs/{{.Name}}/
+({{.HTMLURL}}). Everything it owns is in docs-exploration/agent-runs/{{.Name}}/
 — runbook.md is the procedure the owner reviewed and approved,
 params.env holds the resolved parameters, and deploy.sh / teardown.sh
 were generated from runbook.md.
@@ -57,7 +57,7 @@ were generated from runbook.md.
    there. Change the steps that changed.
 
 5. Write the receipt to
-   docs-exploration/runs/{{.Name}}/receipt-<UTC yyyymmdd-hhmm>.md:
+   docs-exploration/agent-runs/{{.Name}}/receipt-<UTC yyyymmdd-hhmm>.md:
    verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
    FAILED / BLOCKED. Then:
    - "## Procedure amended" — one line per change you made to
