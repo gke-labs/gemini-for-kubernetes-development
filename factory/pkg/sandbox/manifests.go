@@ -36,6 +36,7 @@ type DevSandboxOptions struct {
 	Replicas          int64
 	WorkspaceDiskSize string
 	EphemeralStorage  string
+	Resources         corev1.ResourceRequirements
 	CPURequest        string
 	CPULimit          string
 	MemoryRequest     string
@@ -51,8 +52,6 @@ type DevSandboxOptions struct {
 // AgentSandboxOptions holds options for creating an AgentSandbox.
 type AgentSandboxOptions struct {
 	DevSandboxOptions
-
-	Resources corev1.ResourceRequirements
 }
 
 // ReviewSandboxOptions holds options for creating a ReviewSandbox.
@@ -71,9 +70,7 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
-func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
-	sandboxName := opt.Name
+func buildPodResources(opt DevSandboxOptions) map[string]interface{} {
 	resources := opt.Resources
 	if resources.Requests == nil {
 		resources.Requests = make(corev1.ResourceList)
@@ -121,6 +118,26 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		resources.Limits["ephemeral-storage"] = resource.MustParse(ephemeralStorage)
 	}
 
+	ephemeralRequest := resources.Requests["ephemeral-storage"]
+	ephemeralLimit := resources.Limits["ephemeral-storage"]
+
+	return map[string]interface{}{
+		"requests": map[string]interface{}{
+			"cpu":               resources.Requests.Cpu().String(),
+			"memory":            resources.Requests.Memory().String(),
+			"ephemeral-storage": ephemeralRequest.String(),
+		},
+		"limits": map[string]interface{}{
+			"cpu":               resources.Limits.Cpu().String(),
+			"memory":            resources.Limits.Memory().String(),
+			"ephemeral-storage": ephemeralLimit.String(),
+		},
+	}
+}
+
+// NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
+func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
+	sandboxName := opt.Name
 	labelsInterface := make(map[string]interface{}, len(opt.Labels)+1)
 	for k, v := range opt.Labels {
 		labelsInterface[k] = v
@@ -131,9 +148,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	for k, v := range opt.Annotations {
 		annotationsInterface[k] = v
 	}
-
-	ephemeralRequest := resources.Requests["ephemeral-storage"]
-	ephemeralLimit := resources.Limits["ephemeral-storage"]
 
 	diskSize := opt.WorkspaceDiskSize
 	if diskSize == "" {
@@ -177,21 +191,10 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	podSpecMap := map[string]interface{}{
 		"containers": []interface{}{
 			map[string]interface{}{
-				"name":    "sandbox",
-				"image":   opt.Image,
-				"command": []interface{}{"factory", "daemon"},
-				"resources": map[string]interface{}{
-					"requests": map[string]interface{}{
-						"cpu":               resources.Requests.Cpu().String(),
-						"memory":            resources.Requests.Memory().String(),
-						"ephemeral-storage": ephemeralRequest.String(),
-					},
-					"limits": map[string]interface{}{
-						"cpu":               resources.Limits.Cpu().String(),
-						"memory":            resources.Limits.Memory().String(),
-						"ephemeral-storage": ephemeralLimit.String(),
-					},
-				},
+				"name":         "sandbox",
+				"image":        opt.Image,
+				"command":      []interface{}{"factory", "daemon"},
+				"resources":    buildPodResources(opt.DevSandboxOptions),
 				"env":          env,
 				"volumeMounts": volumeMounts,
 				"ports": []interface{}{
@@ -304,11 +307,6 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		diskSize = "10Gi"
 	}
 
-	ephemeralStorage := opt.EphemeralStorage
-	if ephemeralStorage == "" {
-		ephemeralStorage = "6Gi"
-	}
-
 	env := []interface{}{
 		map[string]interface{}{"name": "HOME", "value": "/workspaces/.home"},
 		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
@@ -346,17 +344,10 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 	podSpecMap := map[string]interface{}{
 		"containers": []interface{}{
 			map[string]interface{}{
-				"name":    "sandbox",
-				"image":   opt.Image,
-				"command": []interface{}{"factory", "daemon"},
-				"resources": map[string]interface{}{
-					"limits": map[string]interface{}{
-						"ephemeral-storage": ephemeralStorage,
-					},
-					"requests": map[string]interface{}{
-						"ephemeral-storage": ephemeralStorage,
-					},
-				},
+				"name":         "sandbox",
+				"image":        opt.Image,
+				"command":      []interface{}{"factory", "daemon"},
+				"resources":    buildPodResources(opt.DevSandboxOptions),
 				"env":          env,
 				"volumeMounts": volumeMounts,
 				"ports": []interface{}{
