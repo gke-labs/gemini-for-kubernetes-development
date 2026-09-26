@@ -134,6 +134,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 
 	// 1. Check issue comments
 	for _, c := range comments {
+		if c == nil {
+			continue
+		}
 		isBot := conventions.IsBotReply(c.GetUser(), githubLogin, bots)
 		if !isBot {
 			if conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
@@ -147,6 +150,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 
 	// 2. Check reviews and review comments
 	for _, r := range reviews {
+		if r == nil {
+			continue
+		}
 		if !conventions.IsBotReply(r.GetUser(), githubLogin, bots) {
 			if conventions.HasIgnorePrefix(r.GetBody(), triggerLabel) {
 				continue
@@ -158,6 +164,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 
 		if rcList, ok := revComments[r.GetID()]; ok {
 			for _, rc := range rcList {
+				if rc == nil {
+					continue
+				}
 				if !conventions.IsBotReply(rc.GetUser(), githubLogin, bots) {
 					if conventions.HasIgnorePrefix(rc.GetBody(), triggerLabel) {
 						continue
@@ -177,6 +186,9 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 // posted since the last activity.
 func hasInactivityComment(comments []*githubv39.IssueComment, lastActivity time.Time) bool {
 	for _, c := range comments {
+		if c == nil {
+			continue
+		}
 		if strings.Contains(c.GetBody(), "paused automated processing on this pull request due to a period of inactivity") {
 			if c.GetCreatedAt().After(lastActivity) {
 				return true

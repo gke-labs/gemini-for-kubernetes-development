@@ -1,6 +1,7 @@
 package prs
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -82,12 +83,83 @@ func TestGetInvestigationCount(t *testing.T) {
 			allBotUsers:   []string{"pool-bot"},
 			expectedCount: 1,
 		},
+		{
+			name: "githubLogin should be recognized as a pool bot when distinct from allBotUsers",
+			comments: []*githubv39.IssueComment{
+				{
+					User:      &githubv39.User{Login: stringPtr("orchestrator-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-2 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("orchestrator-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-1 * time.Hour)),
+				},
+			},
+			allBotUsers:   []string{"pool-bot"},
+			githubLogin:   "orchestrator-bot",
+			expectedCount: 2,
+		},
+		{
+			name: "Case-insensitive start and pause substrings should match correctly",
+			comments: []*githubv39.IssueComment{
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 ai factory started investigating ci check failures"),
+					CreatedAt: timePtr(time.Now().Add(-4 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("PAUSING AUTOMATED INVESTIGATION and stopped"),
+					CreatedAt: timePtr(time.Now().Add(-3 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI FACTORY STARTED INVESTIGATING CI CHECK FAILURES"),
+					CreatedAt: timePtr(time.Now().Add(-2 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-1 * time.Hour)),
+				},
+			},
+			allBotUsers:   []string{"pool-bot"},
+			expectedCount: 2,
+		},
+		{
+			name: "Unsorted comments should be sorted chronologically and counted correctly",
+			comments: []*githubv39.IssueComment{
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-1 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("real-human"), Type: stringPtr("User")},
+					Body:      stringPtr("Can you look into this?"),
+					CreatedAt: timePtr(time.Now().Add(-2 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-3 * time.Hour)),
+				},
+			},
+			allBotUsers:   []string{"pool-bot"},
+			expectedCount: 1,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lastCommitTime := time.Now().Add(-24 * time.Hour)
-			count := getInvestigationCount(tc.comments, lastCommitTime, tc.allBotUsers, tc.githubLogin, tc.allowlist, "factory")
+			botMap := make(map[string]struct{}, len(tc.allBotUsers))
+			for _, bot := range tc.allBotUsers {
+				botMap[strings.ToLower(bot)] = struct{}{}
+			}
+			count := getInvestigationCount(tc.comments, lastCommitTime, botMap, tc.githubLogin, tc.allowlist, "factory")
 			if count != tc.expectedCount {
 				t.Errorf("expected count %d, got %d", tc.expectedCount, count)
 			}

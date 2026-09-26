@@ -104,17 +104,18 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 // per pull request - and everything else used to wait behind it; now nothing does.
 func (w *Watcher) newPRScanner() *prs.Scanner {
 	return prs.New(prs.Config{
-		Interval:          prs.DefaultInterval,
-		SweepInterval:     prs.DefaultSweepInterval,
-		TriggerLabel:      w.triggerLabel,
-		GitHubLogin:       w.githubLogin,
-		BotUsers:          w.allBotUsers,
-		ReviewerLogins:    w.reviewerLogins(),
-		AllowlistedBots:   w.allowlistedBots(),
-		ScanLimit:         w.ScanLimit,
-		MinNumber:         w.minIssueNumber(),
-		InactivityTimeout: w.PRInactivityTimeout,
-		DryRun:            w.DryRun,
+		Interval:           prs.DefaultInterval,
+		SweepInterval:      prs.DefaultSweepInterval,
+		TriggerLabel:       w.triggerLabel,
+		GitHubLogin:        w.githubLogin,
+		BotUsers:           w.allBotUsers,
+		ReviewerLogins:     w.reviewerLogins(),
+		AllowlistedBots:    w.allowlistedBots(),
+		ScanLimit:          w.ScanLimit,
+		MinNumber:          w.minIssueNumber(),
+		InactivityTimeout:  w.PRInactivityTimeout,
+		MaxCommentAttempts: w.maxCommentAttempts(),
+		DryRun:             w.DryRun,
 	}, prs.Deps{
 		GitHub:    w.repoClient,
 		Queue:     w.queueMgr,
@@ -131,6 +132,15 @@ func (w *Watcher) minIssueNumber() int {
 		return 0
 	}
 	return w.cfg.MinNumber
+}
+
+// maxCommentAttempts is the maximum number of retry attempts for addressing comments,
+// as configured. Defaults to conventions.DefaultMaxCommentAttempts.
+func (w *Watcher) maxCommentAttempts() int {
+	if w.cfg == nil || w.cfg.MaxCommentAttempts <= 0 {
+		return conventions.DefaultMaxCommentAttempts
+	}
+	return w.cfg.MaxCommentAttempts
 }
 
 // reviewerLogins are the accounts configured in the reviewer role, whose
@@ -308,15 +318,15 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 func taskStartedComment(taskType api.TaskType) string {
 	switch taskType {
 	case api.TypeIssueFix:
-		return "🤖 AI Factory started fixing this issue in a sandbox."
+		return "🤖 AI Factory " + conventions.AnnouncementStartedFixingIssue + " in a sandbox."
 	case api.TypePRInvestigate:
-		return "🤖 AI Factory started investigating CI check failures for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
+		return "🤖 AI Factory " + conventions.AnnouncementStartedInvestigatingCheck + " for this pull request.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
 	case api.TypePRComments:
-		return "🤖 AI Factory started addressing review feedback for this pull request."
+		return "🤖 AI Factory " + conventions.AnnouncementStartedAddressingReview + " for this pull request."
 	case api.TypePRIterate:
-		return "🤖 AI Factory started resolving merge conflicts / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
+		return "🤖 AI Factory " + conventions.AnnouncementStartedResolvingConflicts + " / rebasing this pull request in a sandbox.\n\nNote: We recommend waiting for the 'ready-for-human' label before leaving review comments. Comments added while the system is actively working may be associated with outdated commits once a new commit is pushed, causing them to be ignored."
 	case api.TypePRReview:
-		return "🤖 AI Factory started reviewing this pull request in a sandbox."
+		return "🤖 AI Factory " + conventions.AnnouncementStartedReviewing + " in a sandbox."
 	default:
 		return ""
 	}

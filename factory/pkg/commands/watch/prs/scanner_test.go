@@ -1219,6 +1219,8 @@ type testOpts struct {
 	AllowlistedBots []string
 	// MinNumber skips pull requests numbered below it.
 	MinNumber int
+	// MaxCommentAttempts is the maximum retry limit for comment tasks.
+	MaxCommentAttempts int
 }
 
 // newTestScanner builds a Scanner over a real queue manager rooted at tempDir,
@@ -1255,12 +1257,13 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 	})
 
 	scanner := New(Config{
-		TriggerLabel:    opts.TriggerLabel,
-		GitHubLogin:     opts.GitHubLogin,
-		BotUsers:        opts.BotUsers,
-		ReviewerLogins:  opts.ReviewerLogins,
-		AllowlistedBots: opts.AllowlistedBots,
-		MinNumber:       opts.MinNumber,
+		TriggerLabel:       opts.TriggerLabel,
+		GitHubLogin:        opts.GitHubLogin,
+		BotUsers:           opts.BotUsers,
+		ReviewerLogins:     opts.ReviewerLogins,
+		AllowlistedBots:    opts.AllowlistedBots,
+		MinNumber:          opts.MinNumber,
+		MaxCommentAttempts: opts.MaxCommentAttempts,
 	}, Deps{
 		GitHub:    github.ForRepo(opts.GitHub, "test-owner", "test-repo"),
 		Queue:     queue,
@@ -1950,5 +1953,886 @@ func TestEvaluate_ReadyForHuman_ReviewLabelAndHumanAssignees(t *testing.T) {
 
 	if len(removedPRLabels) != 1 || removedPRLabels[0] != "overseer/review" {
 		t.Fatalf("step 4: removedPRLabels = %v, want [overseer/review] removed after re-review settled", removedPRLabels)
+	}
+}
+
+func TestEvaluate_CommentsRetry(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+	botCommentTime := time.Date(2026, 8, 1, 11, 5, 0, 0, time.UTC)
+
+	var listComments []*githubv39.IssueComment
+	var addedComments []string
+	var addedLabels []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &commitTime},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode(listComments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/comments"):
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			addedComments = append(addedComments, body.Body)
+			_ = json.NewEncoder(w).Encode(&githubv39.IssueComment{Body: stringPtr(body.Body)})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/labels"):
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			addedLabels = append(addedLabels, labels...)
+			_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/reactions"):
+			_ = json.NewEncoder(w).Encode(&githubv39.Reaction{Content: stringPtr("eyes")})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	parsedURL, _ := url.Parse(server.URL + "/")
+	ghClient.BaseURL = parsedURL
+	ghClient.UploadURL = parsedURL
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         kubeClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+		},
+	}
+
+	// Case 1: Human comment is present, but previously enqueued comments task has Failed.
+	// Attempt count is 1 (which is < maxCommentAttempts).
+	// It should trigger a retry and enqueue task-pr-10-comments.yaml again.
+	listComments = []*githubv39.IssueComment{
+		{
+			ID:        githubv39.Int64(100),
+			User:      &githubv39.User{Login: stringPtr("human-alice")},
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Please fix the typo in the config"),
+		},
+		{
+			ID:        githubv39.Int64(101),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &botCommentTime,
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+	}
+
+	// Write failed task to processed dir
+	failedTaskFile := filepath.Join(processedDir, "task-pr-10-comments.failed.yaml")
+	_ = os.WriteFile(failedTaskFile, []byte("type: pr-comments\nstatus: Failed\ncommitSHA: sha-1234\n"), 0644)
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	commentsTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml to be enqueued for retry when last task failed and attempt count is 1")
+	}
+
+	// Case 2: Attempt count is 3 (>= maxCommentAttempts = 3) and last task failed.
+	// It should NOT queue a retry, but should add a stop comment and stop label.
+	_ = os.Remove(commentsTaskFile)
+	_ = queue.RemoveTask("task-pr-10-comments.yaml")
+
+	botCommentTime2 := botCommentTime.Add(time.Minute)
+	botCommentTime3 := botCommentTime.Add(2 * time.Minute)
+
+	listComments = []*githubv39.IssueComment{
+		{
+			ID:        githubv39.Int64(100),
+			User:      &githubv39.User{Login: stringPtr("human-alice")},
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Please fix the typo in the config"),
+		},
+		{
+			ID:        githubv39.Int64(101),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &botCommentTime,
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+		{
+			ID:        githubv39.Int64(102),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &botCommentTime2,
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+		{
+			ID:        githubv39.Int64(103),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &botCommentTime3,
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+	}
+
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	if _, err := os.Stat(commentsTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml NOT to be enqueued because maxCommentAttempts is reached")
+	}
+
+	// Verify stop comment was posted
+	foundStopComment := false
+	for _, c := range addedComments {
+		if strings.Contains(c, "pausing automated processing") {
+			foundStopComment = true
+			break
+		}
+	}
+	if !foundStopComment {
+		t.Errorf("expected stop comment to be added, got: %v", addedComments)
+	}
+
+	// Verify stop label was added
+	foundStopLabel := false
+	for _, l := range addedLabels {
+		if l == "factory/stop" {
+			foundStopLabel = true
+			break
+		}
+	}
+	if !foundStopLabel {
+		t.Errorf("expected stop label 'factory/stop' to be added, got: %v", addedLabels)
+	}
+}
+
+func TestEvaluate_CommentsRetry_GatedByActiveTask(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+	botCommentTime := time.Date(2026, 8, 1, 11, 5, 0, 0, time.UTC)
+
+	var addedComments []string
+	var addedLabels []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &commitTime},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			botCommentTime2 := botCommentTime.Add(time.Minute)
+			botCommentTime3 := botCommentTime.Add(2 * time.Minute)
+			listComments := []*githubv39.IssueComment{
+				{
+					ID:        githubv39.Int64(100),
+					User:      &githubv39.User{Login: stringPtr("human-alice")},
+					CreatedAt: &commentTime,
+					Body:      stringPtr("Please fix the typo in the config"),
+				},
+				{
+					ID:        githubv39.Int64(101),
+					User:      &githubv39.User{Login: stringPtr("bot1")},
+					CreatedAt: &botCommentTime,
+					Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+				},
+				{
+					ID:        githubv39.Int64(102),
+					User:      &githubv39.User{Login: stringPtr("bot1")},
+					CreatedAt: &botCommentTime2,
+					Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+				},
+				{
+					ID:        githubv39.Int64(103),
+					User:      &githubv39.User{Login: stringPtr("bot1")},
+					CreatedAt: &botCommentTime3,
+					Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+				},
+			}
+			_ = json.NewEncoder(w).Encode(listComments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/comments"):
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			addedComments = append(addedComments, body.Body)
+			_ = json.NewEncoder(w).Encode(&githubv39.IssueComment{Body: stringPtr(body.Body)})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/labels"):
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			addedLabels = append(addedLabels, labels...)
+			_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	parsedURL, _ := url.Parse(server.URL + "/")
+	ghClient.BaseURL = parsedURL
+	ghClient.UploadURL = parsedURL
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{
+		DynamicClient: fakeDynamic,
+	}
+
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         kubeClient,
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+		},
+	}
+
+	// Write failed task to processed dir so lastCommentsTaskFailed is true
+	failedTaskFile := filepath.Join(processedDir, "task-pr-10-comments.failed.yaml")
+	_ = os.WriteFile(failedTaskFile, []byte("type: pr-comments\nstatus: Failed\ncommitSHA: sha-1234\n"), 0644)
+
+	// Simulate active task existing in incoming queue
+	activeTaskFile := filepath.Join(incomingDir, "task-pr-10-comments.yaml")
+	_ = os.WriteFile(activeTaskFile, []byte("type: pr-comments\n"), 0644)
+
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	// Run evaluation cycle. It should see the active task and return early,
+	// without evaluating the retry budget (which has reached the limit) and without adding stop labels/comments.
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	// Verify no stop comments or stop labels were posted/added
+	for _, c := range addedComments {
+		if strings.Contains(c, "pausing automated processing") {
+			t.Errorf("unexpected pause/stop comment posted while task was still active/enqueued")
+		}
+	}
+	for _, l := range addedLabels {
+		if l == "factory/stop" {
+			t.Errorf("unexpected stop label added while task was still active/enqueued")
+		}
+	}
+}
+
+func TestGetCommentsAttemptCount_NilUser(t *testing.T) {
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	comments := []*githubv39.IssueComment{
+		{
+			ID:        githubv39.Int64(100),
+			User:      nil, // Nil user
+			CreatedAt: &commitTime,
+			Body:      stringPtr("Comment from deleted user"),
+		},
+	}
+	// Should not panic and return 0
+	botMap := map[string]struct{}{"bot1": {}}
+	count := getCommentsAttemptCount(comments, commitTime, botMap, "bot1", []string{"bot1"}, "factory")
+	if count != 0 {
+		t.Errorf("expected count to be 0, got %d", count)
+	}
+
+	investigateCount := getInvestigationCount(comments, commitTime, botMap, "bot1", []string{"bot1"}, "factory")
+	if investigateCount != 0 {
+		t.Errorf("expected investigate count to be 0, got %d", investigateCount)
+	}
+}
+
+func TestEvaluateComments_DiffCommitSHA(t *testing.T) {
+	tempDir := t.TempDir()
+	s, queue := newTestScanner(t, tempDir, testOpts{})
+
+	filename := "task-pr-10-comments.yaml"
+	failedTaskFile := filepath.Join(tempDir, "processed", "task-pr-10-comments.failed.yaml")
+	_ = os.WriteFile(failedTaskFile, []byte("type: pr-comments\nstatus: Failed\ncommitSHA: sha-old\n"), 0644)
+
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load task from disk: %v", err)
+	}
+
+	// lastCommentsTaskFailed should be false for headSHA "sha-new" because of mismatched commit SHA
+	if s.lastCommentsTaskFailed(filename, "sha-new") {
+		t.Errorf("expected lastCommentsTaskFailed to be false for different commit SHA")
+	}
+
+	// lastCommentsTaskFailed should be true for headSHA "sha-old"
+	if !s.lastCommentsTaskFailed(filename, "sha-old") {
+		t.Errorf("expected lastCommentsTaskFailed to be true for matching commit SHA")
+	}
+}
+
+func TestEvaluateComments_ResumptionWithPausingComment(t *testing.T) {
+	tempDir := t.TempDir()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prNum := 10
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+	pauseTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+
+	pr := &githubv39.PullRequest{
+		Number:    &prNum,
+		State:     stringPtr("open"),
+		User:      &githubv39.User{Login: stringPtr("author-user")},
+		Head:      &githubv39.PullRequestBranch{SHA: stringPtr("sha-1234")},
+		CreatedAt: &commitTime,
+	}
+
+	// Comments include a human comment followed by a pausing automated processing comment.
+	comments := []*githubv39.IssueComment{
+		{
+			ID:        githubv39.Int64(100),
+			User:      &githubv39.User{Login: stringPtr("human-alice")},
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Please fix the typo in the config"),
+		},
+		{
+			ID:        githubv39.Int64(101),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &pauseTime,
+			Body:      stringPtr("🤖 AI Factory has attempted to address review feedback ... pausing automated processing and attaching stop label."),
+		},
+	}
+
+	history := &prHistory{
+		comments: comments,
+	}
+
+	// Although pauseTime (latest bot reply) is after commentTime, the pausing comment is excluded.
+	// Therefore, evaluateComments should detect the human comment as outstanding and return hasNewComments = true.
+	analysis := s.evaluateComments(
+		context.Background(),
+		prNum,
+		pr,
+		history,
+		commitTime,
+		"sha-1234",
+	)
+
+	if !analysis.hasNewComments {
+		t.Errorf("expected evaluateComments to find outstanding comment even when pausing comment is the latest bot reply")
+	}
+}
+
+func TestEvaluateComments_NilUser(t *testing.T) {
+	tempDir := t.TempDir()
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prNum := 10
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+
+	// pr user is nil too to check both c.GetUser() != nil and pr.GetUser() != nil checks
+	pr := &githubv39.PullRequest{
+		Number:    &prNum,
+		State:     stringPtr("open"),
+		User:      nil, // PR author is nil
+		Head:      &githubv39.PullRequestBranch{SHA: stringPtr("sha-1234")},
+		CreatedAt: &commitTime,
+	}
+
+	// Issue comment with nil user and empty login user, as well as actual nil elements
+	comments := []*githubv39.IssueComment{
+		nil,
+		{
+			ID:        githubv39.Int64(100),
+			User:      nil, // Nil user
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Comment from deleted user"),
+		},
+		nil,
+		{
+			ID:        githubv39.Int64(101),
+			User:      &githubv39.User{Login: stringPtr("")}, // Empty login user
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Comment from empty login user"),
+		},
+	}
+
+	// Review with nil user, as well as actual nil elements
+	reviews := []*githubv39.PullRequestReview{
+		nil,
+		{
+			ID:          githubv39.Int64(200),
+			User:        nil, // Nil user
+			SubmittedAt: &commentTime,
+			Body:        stringPtr("Review from deleted user"),
+		},
+		nil,
+	}
+
+	// Inline review comment with nil user, as well as actual nil elements
+	revCommentsMap := map[int64][]*githubv39.PullRequestComment{
+		200: {
+			nil,
+			{
+				ID:        githubv39.Int64(300),
+				User:      nil, // Nil user
+				CreatedAt: &commentTime,
+				Body:      stringPtr("Inline review comment from deleted user"),
+			},
+			nil,
+		},
+	}
+
+	history := &prHistory{
+		comments:       comments,
+		reviews:        reviews,
+		revCommentsMap: revCommentsMap,
+	}
+
+	// Should not panic
+	analysis := s.evaluateComments(
+		context.Background(),
+		prNum,
+		pr,
+		history,
+		commitTime,
+		"sha-1234",
+	)
+
+	// Since they are not ignored, they should count as new comments
+	if !analysis.hasNewComments {
+		t.Errorf("expected evaluateComments to successfully process comments even with nil users")
+	}
+}
+
+func TestEvaluateComments_ConfigurableMaxCommentAttempts(t *testing.T) {
+	tempDir := t.TempDir()
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	commentTime := time.Date(2026, 8, 1, 11, 0, 0, 0, time.UTC)
+	botCommentTime := time.Date(2026, 8, 1, 11, 5, 0, 0, time.UTC)
+
+	var listComments []*githubv39.IssueComment
+	var addedComments []string
+	var addedLabels []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &commitTime},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode(listComments)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []*githubv39.CheckRun{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]*githubv39.RepoStatus{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/comments"):
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			addedComments = append(addedComments, body.Body)
+			_ = json.NewEncoder(w).Encode(&githubv39.IssueComment{Body: stringPtr(body.Body)})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/labels"):
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			addedLabels = append(addedLabels, labels...)
+			_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/reactions"):
+			_ = json.NewEncoder(w).Encode(&githubv39.Reaction{Content: stringPtr("eyes")})
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	parsedURL, _ := url.Parse(server.URL + "/")
+	ghClient.BaseURL = parsedURL
+	ghClient.UploadURL = parsedURL
+
+	// Set MaxCommentAttempts specifically to 5!
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:             ghClient,
+		BotUsers:           []string{"bot1"},
+		GitHubLogin:        "bot1",
+		TriggerLabel:       "factory",
+		MaxCommentAttempts: 5,
+	})
+
+	prIssue := &githubv39.Issue{
+		Number: &prNum,
+		Assignees: []*githubv39.User{
+			{Login: stringPtr("bot1")},
+		},
+		Labels: []*githubv39.Label{
+			{Name: stringPtr("factory")},
+		},
+	}
+
+	// 4 bot comments - under our budget of 5!
+	listComments = []*githubv39.IssueComment{
+		{
+			ID:        githubv39.Int64(100),
+			User:      &githubv39.User{Login: stringPtr("human-alice")},
+			CreatedAt: &commentTime,
+			Body:      stringPtr("Please fix"),
+		},
+		{
+			ID:        githubv39.Int64(101),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: &botCommentTime,
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+		{
+			ID:        githubv39.Int64(102),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: timePtr(botCommentTime.Add(time.Minute)),
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+		{
+			ID:        githubv39.Int64(103),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: timePtr(botCommentTime.Add(2 * time.Minute)),
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+		{
+			ID:        githubv39.Int64(104),
+			User:      &githubv39.User{Login: stringPtr("bot1")},
+			CreatedAt: timePtr(botCommentTime.Add(3 * time.Minute)),
+			Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+		},
+	}
+
+	// Write failed task to processed dir so it triggers retry decision
+	failedTaskFile := filepath.Join(tempDir, "processed", "task-pr-10-comments.failed.yaml")
+	_ = os.WriteFile(failedTaskFile, []byte("type: pr-comments\nstatus: Failed\ncommitSHA: sha-1234\n"), 0644)
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	commentsTaskFile := filepath.Join(tempDir, "incoming", "task-pr-10-comments.yaml")
+	if _, err := os.Stat(commentsTaskFile); os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml to be enqueued for retry because 4 attempts is under the budget of 5")
+	}
+
+	// Now add a 5th attempt - meeting/exceeding our budget of 5!
+	_ = os.Remove(commentsTaskFile)
+	_ = queue.RemoveTask("task-pr-10-comments.yaml")
+
+	listComments = append(listComments, &githubv39.IssueComment{
+		ID:        githubv39.Int64(105),
+		User:      &githubv39.User{Login: stringPtr("bot1")},
+		CreatedAt: timePtr(botCommentTime.Add(4 * time.Minute)),
+		Body:      stringPtr("🤖 AI Factory started addressing review feedback for this pull request."),
+	})
+
+	s.evaluateAll(context.Background(), []*githubv39.Issue{prIssue})
+
+	if _, err := os.Stat(commentsTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("expected task-pr-10-comments.yaml NOT to be enqueued because budget of 5 attempts is reached")
+	}
+}
+
+func TestEvaluateComments_Retry_ReconstructStateFromDisk(t *testing.T) {
+	tempDir := t.TempDir()
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prNum := 10
+	commitSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	// Last successful task was at T1 (10:30)
+	t1 := time.Date(2026, 8, 1, 10, 30, 0, 0, time.UTC)
+	// A review created at T1-5m (10:25) -> should be skipped (already addressed)
+	tOldReview := time.Date(2026, 8, 1, 10, 25, 0, 0, time.UTC)
+	// A new review created at T1+5m (10:35) -> should be targeted/addressed
+	tNewReview := time.Date(2026, 8, 1, 10, 35, 0, 0, time.UTC)
+
+	pr := &githubv39.PullRequest{
+		Number:    &prNum,
+		State:     stringPtr("open"),
+		User:      &githubv39.User{Login: stringPtr("author-user")},
+		Head:      &githubv39.PullRequestBranch{SHA: stringPtr(commitSHA)},
+		CreatedAt: &commitTime,
+	}
+
+	// Write successful task at T1 to processed dir
+	successTaskFile := filepath.Join(tempDir, "processed", "task-pr-10-comments.yaml")
+	_ = os.WriteFile(successTaskFile, []byte(fmt.Sprintf("type: pr-comments\nstatus: Completed\ncommitSHA: %s\ncompletedAt: %s\n", commitSHA, t1.Format(time.RFC3339))), 0644)
+
+	// Write failed task to processed dir so lastCommentsTaskFailed is true
+	failedTaskFile := filepath.Join(tempDir, "processed", "task-pr-10-comments.failed.yaml")
+	_ = os.WriteFile(failedTaskFile, []byte(fmt.Sprintf("type: pr-comments\nstatus: Failed\ncommitSHA: %s\n", commitSHA)), 0644)
+
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	// We set up reviews/comments:
+	// 1. An old review created before T1
+	// 2. A new review created after T1
+	reviews := []*githubv39.PullRequestReview{
+		{
+			ID:          githubv39.Int64(1),
+			User:        &githubv39.User{Login: stringPtr("reviewer-bob")},
+			SubmittedAt: &tOldReview,
+			Body:        stringPtr("This is an old review from bob"),
+		},
+		{
+			ID:          githubv39.Int64(2),
+			User:        &githubv39.User{Login: stringPtr("reviewer-bob")},
+			SubmittedAt: &tNewReview,
+			Body:        stringPtr("This is a new review from bob"),
+		},
+	}
+
+	history := &prHistory{
+		comments:       []*githubv39.IssueComment{},
+		reviews:        reviews,
+		revCommentsMap: map[int64][]*githubv39.PullRequestComment{},
+	}
+
+	// Get initial PR State (with in-memory values that we want to bypass/override for retry)
+	state := s.state.get(prNum)
+	// Even if we set the state.lastCommentAddressedTime to a future/stale time in-memory:
+	state.lastCommentAddressedTime = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	s.state.set(prNum, state)
+
+	analysis := s.evaluateComments(
+		context.Background(),
+		prNum,
+		pr,
+		history,
+		commitTime,
+		commitSHA,
+	)
+
+	if !analysis.lastCommentsTaskFailed {
+		t.Errorf("expected lastCommentsTaskFailed to be true")
+	}
+
+	if !analysis.hasNewComments {
+		t.Errorf("expected hasNewComments to be true because of the new review")
+	}
+
+	// The old review should not have its ID added to any unacknowledged or oldestComment context
+	if analysis.oldestCommentID != 2 {
+		t.Errorf("expected oldestCommentID to be 2 (the new review), got %d", analysis.oldestCommentID)
+	}
+}
+
+func TestEvaluateComments_ClockResolutionSync(t *testing.T) {
+	tempDir := t.TempDir()
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "bot1",
+		TriggerLabel: "factory",
+	})
+
+	prNum := 11
+	commitSHA := "sha-1234"
+	otherSHA := "sha-5678"
+	commitTime := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+
+	t1 := time.Date(2026, 8, 1, 10, 30, 0, 0, time.UTC)
+
+	pr := &githubv39.PullRequest{
+		Number:    &prNum,
+		State:     stringPtr("open"),
+		User:      &githubv39.User{Login: stringPtr("author-user")},
+		Head:      &githubv39.PullRequestBranch{SHA: stringPtr(commitSHA)},
+		CreatedAt: &commitTime,
+	}
+
+	// Write successful task at T1 to processed dir with otherSHA
+	successTaskFile := filepath.Join(tempDir, "processed", "task-pr-11-comments.yaml")
+	_ = os.WriteFile(successTaskFile, []byte(fmt.Sprintf("type: pr-comments\nstatus: Completed\ncommitSHA: %s\ncompletedAt: %s\n", otherSHA, t1.Format(time.RFC3339))), 0644)
+
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	// Case 1: Equal timestamp but mismatching SHA
+	state := s.state.get(prNum)
+	state.lastSuccessfulCommentAddressedTime = t1
+	state.lastSuccessfulCommentAddressedSHA = "initial-mismatching-sha"
+	s.state.set(prNum, state)
+
+	_ = s.evaluateComments(
+		context.Background(),
+		prNum,
+		pr,
+		&prHistory{},
+		commitTime,
+		commitSHA,
+	)
+
+	state = s.state.get(prNum)
+	if state.lastSuccessfulCommentAddressedSHA != otherSHA {
+		t.Errorf("Expected SHA to be updated to %s on clock resolution Equal match, but got %s", otherSHA, state.lastSuccessfulCommentAddressedSHA)
+	}
+
+	// Case 2: Older completed time (regression)
+	// Write an older task at T1-1h
+	tOlder := t1.Add(-1 * time.Hour)
+	_ = os.WriteFile(successTaskFile, []byte(fmt.Sprintf("type: pr-comments\nstatus: Completed\ncommitSHA: %s\ncompletedAt: %s\n", "older-sha", tOlder.Format(time.RFC3339))), 0644)
+	if err := queue.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load queue from disk: %v", err)
+	}
+
+	// The existing state has t1 (newer)
+	state.lastSuccessfulCommentAddressedTime = t1
+	state.lastSuccessfulCommentAddressedSHA = otherSHA
+	s.state.set(prNum, state)
+
+	_ = s.evaluateComments(
+		context.Background(),
+		prNum,
+		pr,
+		&prHistory{},
+		commitTime,
+		commitSHA,
+	)
+
+	state = s.state.get(prNum)
+	if state.lastSuccessfulCommentAddressedTime != t1 || state.lastSuccessfulCommentAddressedSHA != otherSHA {
+		t.Errorf("Expected state to preserve newer time %v and SHA %s, but got time %v and SHA %s",
+			t1, otherSHA, state.lastSuccessfulCommentAddressedTime, state.lastSuccessfulCommentAddressedSHA)
 	}
 }

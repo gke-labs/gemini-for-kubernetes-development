@@ -2,6 +2,8 @@ package conventions
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -84,6 +86,11 @@ type ReactionLister interface {
 	IssueCommentReactions(ctx context.Context, commentID int64) ([]*githubv39.Reaction, error)
 }
 
+type cachedState struct {
+	state CommentState
+	time  time.Time
+}
+
 // ReactionInterpreter turns the reactions on a comment into a CommentState.
 //
 // It exists as a value rather than a package function because the reading
@@ -94,12 +101,65 @@ type ReactionInterpreter struct {
 	lister    ReactionLister
 	selfLogin string
 	bots      []string
+
+	mu    sync.RWMutex
+	cache map[int64]cachedState
+	ttl   time.Duration
 }
+
+const maxCommentReactionCacheSize = 1000
 
 // NewReactionInterpreter binds an interpreter to the watcher's own account and
 // the bots whose reactions count as the watcher's own side.
 func NewReactionInterpreter(lister ReactionLister, selfLogin string, bots []string) *ReactionInterpreter {
-	return &ReactionInterpreter{lister: lister, selfLogin: selfLogin, bots: bots}
+	return &ReactionInterpreter{
+		lister:    lister,
+		selfLogin: selfLogin,
+		bots:      bots,
+		cache:     make(map[int64]cachedState),
+		ttl:       1 * time.Minute,
+	}
+}
+
+// WithTTL sets a custom cache TTL and returns the interpreter for chaining.
+// A non-positive duration (zero or negative) explicitly disables caching.
+func (i *ReactionInterpreter) WithTTL(ttl time.Duration) *ReactionInterpreter {
+	if i != nil {
+		i.mu.Lock()
+		i.ttl = ttl
+		if ttl <= 0 {
+			i.cache = make(map[int64]cachedState)
+		}
+		i.mu.Unlock()
+	}
+	return i
+}
+
+// Prune removes entries from the cache that are older than the TTL.
+// The active Scanner calls Prune at the start of each cycle to maintain cache
+// health without throwing away valid non-expired entries.
+func (i *ReactionInterpreter) Prune() {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	now := time.Now()
+	for id, entry := range i.cache {
+		if now.Sub(entry.time) >= i.ttl {
+			delete(i.cache, id)
+		}
+	}
+}
+
+// Clear empties the cache completely.
+func (i *ReactionInterpreter) Clear() {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.cache = make(map[int64]cachedState)
 }
 
 // CommentState fetches a comment's reactions and interprets them.
@@ -116,11 +176,56 @@ func (i *ReactionInterpreter) CommentState(ctx context.Context, commentID int64)
 	if i == nil || i.lister == nil {
 		return CommentState{}
 	}
+
+	i.mu.RLock()
+	ttl := i.ttl
+	if i.cache != nil && ttl > 0 {
+		if entry, ok := i.cache[commentID]; ok && time.Since(entry.time) < ttl {
+			i.mu.RUnlock()
+			return entry.state
+		}
+	}
+	i.mu.RUnlock()
+
 	reactions, err := i.lister.IssueCommentReactions(ctx, commentID)
 	if err != nil {
 		return CommentState{}
 	}
-	return i.Interpret(reactions)
+	state := i.Interpret(reactions)
+
+	i.mu.Lock()
+	if i.ttl > 0 {
+		if i.cache == nil {
+			i.cache = make(map[int64]cachedState)
+		}
+		if len(i.cache) >= maxCommentReactionCacheSize {
+			// First, prune expired entries to make space
+			now := time.Now()
+			for id, entry := range i.cache {
+				if now.Sub(entry.time) >= i.ttl {
+					delete(i.cache, id)
+				}
+			}
+			// If still exceeding or equal to maxCommentReactionCacheSize, evict arbitrary entries to keep it under limit
+			if len(i.cache) >= maxCommentReactionCacheSize {
+				// Evict down to 90% of capacity (900 entries)
+				targetSize := int(float64(maxCommentReactionCacheSize) * 0.9)
+				for id := range i.cache {
+					delete(i.cache, id)
+					if len(i.cache) < targetSize {
+						break
+					}
+				}
+			}
+		}
+		i.cache[commentID] = cachedState{
+			state: state,
+			time:  time.Now(),
+		}
+	}
+	i.mu.Unlock()
+
+	return state
 }
 
 // Interpret reads an already-fetched set of reactions. It is the whole of the

@@ -110,3 +110,61 @@ func TestProcessedPRStates(t *testing.T) {
 		t.Errorf("expected lastIteratedSHA 'sha-iter', got %q", state.lastIteratedSHA)
 	}
 }
+
+func TestProcessedPRStates_TemporalAssociation(t *testing.T) {
+	at := func(s string) time.Time {
+		parsed, _ := time.Parse(time.RFC3339, s)
+		return parsed
+	}
+
+	// We have two completed comment tasks for PR 300.
+	// Task A (newer): completed at 12:00, SHA "newer-sha"
+	// Task B (older): completed at 10:00, SHA "older-sha"
+	// Under the previous implementation, depending on the map iteration order, if Task B was folded *after* Task A,
+	// Task B's older "older-sha" would unconditionally overwrite the newer "newer-sha" because it wasn't gated by tTime.After.
+	// We want to verify that regardless of how they are processed, the newer SHA is preserved.
+
+	// Let's test folding both orderings explicitly:
+	taskNewer := &api.QueueTask{
+		Type:        api.TypePRComments,
+		CommitSHA:   "newer-sha",
+		CompletedAt: at("2026-08-01T12:00:00Z"),
+	}
+	taskOlder := &api.QueueTask{
+		Type:        api.TypePRComments,
+		CommitSHA:   "older-sha",
+		CompletedAt: at("2026-08-01T10:00:00Z"),
+	}
+
+	t.Run("Newer then Older", func(t *testing.T) {
+		state := prState{}
+		state = foldProcessedPRTask(taskNewer, "task-pr-300-comments", state)
+		state = foldProcessedPRTask(taskOlder, "task-pr-300-comments", state)
+
+		if state.lastCommentAddressedSHA != "newer-sha" {
+			t.Errorf("expected lastCommentAddressedSHA to remain 'newer-sha', got %q", state.lastCommentAddressedSHA)
+		}
+		if state.lastSuccessfulCommentAddressedSHA != "newer-sha" {
+			t.Errorf("expected lastSuccessfulCommentAddressedSHA to remain 'newer-sha', got %q", state.lastSuccessfulCommentAddressedSHA)
+		}
+		if !state.lastCommentAddressedTime.Equal(at("2026-08-01T12:00:00Z")) {
+			t.Errorf("expected time to be 12:00, got %v", state.lastCommentAddressedTime)
+		}
+	})
+
+	t.Run("Older then Newer", func(t *testing.T) {
+		state := prState{}
+		state = foldProcessedPRTask(taskOlder, "task-pr-300-comments", state)
+		state = foldProcessedPRTask(taskNewer, "task-pr-300-comments", state)
+
+		if state.lastCommentAddressedSHA != "newer-sha" {
+			t.Errorf("expected lastCommentAddressedSHA to become 'newer-sha', got %q", state.lastCommentAddressedSHA)
+		}
+		if state.lastSuccessfulCommentAddressedSHA != "newer-sha" {
+			t.Errorf("expected lastSuccessfulCommentAddressedSHA to become 'newer-sha', got %q", state.lastSuccessfulCommentAddressedSHA)
+		}
+		if !state.lastCommentAddressedTime.Equal(at("2026-08-01T12:00:00Z")) {
+			t.Errorf("expected time to be 12:00, got %v", state.lastCommentAddressedTime)
+		}
+	})
+}

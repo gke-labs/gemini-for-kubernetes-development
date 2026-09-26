@@ -91,6 +91,9 @@ func isPRApprovedOrLGTM(pr *githubv39.PullRequest, prIssue *githubv39.Issue, rev
 	hasChangesRequested := false
 	latestReviews := make(map[string]string)
 	for _, r := range reviews {
+		if r == nil {
+			continue
+		}
 		if r.GetUser() != nil && r.GetState() != "" {
 			latestReviews[r.GetUser().GetLogin()] = r.GetState()
 		}
@@ -196,6 +199,9 @@ func hasReadyForHumanLabel(labels []*githubv39.Label, triggerLabel string) bool 
 func (s *Scanner) hasCompletedBotReviewOnHead(reviews []*githubv39.PullRequestReview, headSHA string, lastCommitTime time.Time) bool {
 	var latestReview *githubv39.PullRequestReview
 	for _, r := range reviews {
+		if r == nil {
+			continue
+		}
 		if conventions.IsReviewerBot(r.GetUser(), s.cfg.ReviewerLogins) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
 			if latestReview == nil || r.GetSubmittedAt().After(latestReview.GetSubmittedAt()) {
 				latestReview = r

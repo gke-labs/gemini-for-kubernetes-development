@@ -23,6 +23,8 @@ Here are the available fields in `.factory.cfg`:
 * **`workspaceDiskSize`** (string, default: `10Gi`): Default size of the persistent volume claim (PVC) for the sandbox workspace (e.g., `20Gi`).
 * **`ephemeralStorage`** (string, default: `6Gi`): Default ephemeral storage request and limit for the sandbox pod (e.g., `10Gi`).
 * **`minNumber`** (integer, default: 0): Minimum issue or PR number to process. Any issue or PR with a number less than `minNumber` will be ignored.
+* **`maxCommentAttempts`** (integer, default: 3): Maximum number of times the watcher will attempt to address comments on the same revision before giving up and pausing processing (attaching a stop label).
+* **`prInactivityTimeout`** (string, default: disabled): Duration of inactivity with no human comments before pausing automated processing on a PR (e.g. `24h`, `168h`).
 
 ### Repository Watching & Triggering
 * **`triggerLabel`** (string, default: `factory`): The GitHub label that triggers automatic issue fixing when detected by `factory watch`.
@@ -65,6 +67,7 @@ ephemeralStorage: 10Gi
 maxActiveReviews: 5
 maxActiveIssues: 3
 minNumber: 10400
+maxCommentAttempts: 3
 
 # Watching Options
 triggerLabel: overseer

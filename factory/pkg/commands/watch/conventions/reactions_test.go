@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 )
@@ -204,5 +205,165 @@ func TestCommentStateWithoutLister(t *testing.T) {
 	interpreter := NewReactionInterpreter(nil, testSelfLogin, testBots())
 	if got := interpreter.CommentState(context.Background(), 42); got != (CommentState{}) {
 		t.Errorf("CommentState() = %+v, want zero value", got)
+	}
+}
+
+// TestCommentStateUsesCache verifies that calling CommentState multiple times
+// within the TTL on the same comment ID reuses the cached value and does not make
+// duplicate lister calls.
+func TestCommentStateUsesCache(t *testing.T) {
+	lister := &fakeReactionLister{reactions: []*githubv39.Reaction{
+		reaction(ReactionAcknowledged, testSelfLogin),
+	}}
+	interpreter := NewReactionInterpreter(lister, testSelfLogin, testBots())
+
+	// First call - should hit lister
+	state1 := interpreter.CommentState(context.Background(), 42)
+	// Second call - should hit cache
+	state2 := interpreter.CommentState(context.Background(), 42)
+
+	if lister.calls != 1 {
+		t.Errorf("IssueCommentReactions called %d times, want exactly 1 call (caching should prevent the 2nd call)", lister.calls)
+	}
+	want := CommentState{Acknowledged: true}
+	if state1 != want {
+		t.Errorf("state1 = %+v, want %+v", state1, want)
+	}
+	if state2 != want {
+		t.Errorf("state2 = %+v, want %+v", state2, want)
+	}
+}
+
+// TestReactionInterpreter_WithTTL_Prune_Clear verifies the Custom TTL, Prune, and Clear behaviors.
+func TestReactionInterpreter_WithTTL_Prune_Clear(t *testing.T) {
+	lister := &fakeReactionLister{reactions: []*githubv39.Reaction{
+		reaction(ReactionAcknowledged, testSelfLogin),
+	}}
+	// Set a very small TTL (e.g., 5 milliseconds)
+	interpreter := NewReactionInterpreter(lister, testSelfLogin, testBots()).WithTTL(5 * time.Millisecond)
+
+	// First call - should cache
+	_ = interpreter.CommentState(context.Background(), 42)
+	_ = interpreter.CommentState(context.Background(), 42)
+	if lister.calls != 1 {
+		t.Fatalf("Expected 1 call, got %d", lister.calls)
+	}
+
+	// Wait for expiration
+	time.Sleep(10 * time.Millisecond)
+
+	// Third call - expired, should hit lister again
+	_ = interpreter.CommentState(context.Background(), 42)
+	if lister.calls != 2 {
+		t.Fatalf("Expected 2 calls after expiration, got %d", lister.calls)
+	}
+
+	// Set a large TTL
+	interpreter.WithTTL(10 * time.Second)
+	_ = interpreter.CommentState(context.Background(), 42)
+	_ = interpreter.CommentState(context.Background(), 43)
+
+	// Prune should delete expired but keep non-expired.
+	// Since we set a large TTL, 42 and 43 are not expired.
+	interpreter.Prune()
+	interpreter.mu.RLock()
+	if len(interpreter.cache) != 2 {
+		t.Errorf("Expected 2 cached entries, got %d", len(interpreter.cache))
+	}
+	interpreter.mu.RUnlock()
+
+	// Clear should empty the cache completely
+	interpreter.Clear()
+	interpreter.mu.RLock()
+	if len(interpreter.cache) != 0 {
+		t.Errorf("Expected 0 cached entries after Clear(), got %d", len(interpreter.cache))
+	}
+	interpreter.mu.RUnlock()
+}
+
+func TestReactionInterpreter_WithTTL_NonPositive_DisablesCaching(t *testing.T) {
+	lister := &fakeReactionLister{reactions: []*githubv39.Reaction{
+		reaction(ReactionAcknowledged, testSelfLogin),
+	}}
+	interpreter := NewReactionInterpreter(lister, testSelfLogin, testBots())
+
+	// Default should be 1 minute
+	if interpreter.ttl != 1*time.Minute {
+		t.Errorf("Expected default TTL of 1m, got %s", interpreter.ttl)
+	}
+
+	// Setting non-positive TTL (e.g. 0) should set it and bypass/disable caching
+	// First, set a positive TTL and populate the cache
+	interpreter.WithTTL(5 * time.Minute)
+	_ = interpreter.CommentState(context.Background(), 99)
+	interpreter.mu.RLock()
+	if len(interpreter.cache) == 0 {
+		t.Errorf("Expected cache to be populated, but it was empty")
+	}
+	interpreter.mu.RUnlock()
+
+	// Setting non-positive TTL should clear it immediately
+	interpreter.WithTTL(0)
+	interpreter.mu.RLock()
+	if len(interpreter.cache) != 0 {
+		t.Errorf("Expected cache to be cleared immediately when TTL is set to non-positive value, but got %d entries", len(interpreter.cache))
+	}
+	interpreter.mu.RUnlock()
+
+	// Reset lister calls to isolate the bypass test
+	lister.calls = 0
+
+	if interpreter.ttl != 0 {
+		t.Errorf("Expected TTL of 0, got %s", interpreter.ttl)
+	}
+
+	// First call
+	_ = interpreter.CommentState(context.Background(), 42)
+	// Second call - should not cache because TTL is 0
+	_ = interpreter.CommentState(context.Background(), 42)
+
+	if lister.calls != 2 {
+		t.Errorf("Expected cache to be bypassed when TTL is non-positive, got %d calls instead of 2", lister.calls)
+	}
+
+	// Setting negative TTL (e.g. -1s) should also set it and bypass caching
+	interpreter.WithTTL(-1 * time.Second)
+	if interpreter.ttl != -1*time.Second {
+		t.Errorf("Expected TTL of -1s, got %s", interpreter.ttl)
+	}
+
+	// Third call
+	_ = interpreter.CommentState(context.Background(), 42)
+	if lister.calls != 3 {
+		t.Errorf("Expected cache to be bypassed when TTL is negative, got %d calls instead of 3", lister.calls)
+	}
+
+	// Setting positive TTL should work
+	interpreter.WithTTL(2 * time.Minute)
+	if interpreter.ttl != 2*time.Minute {
+		t.Errorf("Expected TTL of 2m after positive WithTTL, got %s", interpreter.ttl)
+	}
+}
+
+func TestReactionInterpreter_CacheEviction(t *testing.T) {
+	lister := &fakeReactionLister{}
+	interpreter := NewReactionInterpreter(lister, testSelfLogin, testBots())
+
+	// Call CommentState 1005 times. Since maxCommentReactionCacheSize is 1000,
+	// this will trigger eviction on the 1001st call, reducing size to 899,
+	// and subsequent calls will bring it to 904.
+	for i := 0; i < 1005; i++ {
+		_ = interpreter.CommentState(context.Background(), int64(i))
+	}
+
+	interpreter.mu.RLock()
+	cacheSize := len(interpreter.cache)
+	interpreter.mu.RUnlock()
+
+	if cacheSize > 1000 {
+		t.Errorf("Expected cache size to be capped, but got %d", cacheSize)
+	}
+	if cacheSize != 904 {
+		t.Errorf("Expected cache size after eviction to be 904, but got %d", cacheSize)
 	}
 }

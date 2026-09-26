@@ -41,6 +41,8 @@ type TaskQueueManager struct {
 	processedLogDir  string
 	queueDir         string
 	dryRun           bool
+
+	retryableTaskTypes map[api.TaskType]bool
 }
 
 // NewTaskQueueManager creates a new TaskQueueManager instance with configured directories.
@@ -66,18 +68,21 @@ func NewTaskQueueManager(cfg TaskQueueManagerConfig) *TaskQueueManager {
 		processedLogDir = filepath.Join(cfg.QueueDir, "logs", "processed")
 	}
 
-	return &TaskQueueManager{
-		incoming:         NewTaskPriorityQueue(),
-		processing:       make(map[string]*api.QueueTask),
-		processed:        make(map[string]*api.QueueTask),
-		incomingDir:      incomingDir,
-		processingDir:    processingDir,
-		processedDir:     processedDir,
-		processingLogDir: processingLogDir,
-		processedLogDir:  processedLogDir,
-		queueDir:         cfg.QueueDir,
-		dryRun:           cfg.DryRun,
+	m := &TaskQueueManager{
+		incoming:           NewTaskPriorityQueue(),
+		processing:         make(map[string]*api.QueueTask),
+		processed:          make(map[string]*api.QueueTask),
+		incomingDir:        incomingDir,
+		processingDir:      processingDir,
+		processedDir:       processedDir,
+		processingLogDir:   processingLogDir,
+		processedLogDir:    processedLogDir,
+		queueDir:           cfg.QueueDir,
+		dryRun:             cfg.DryRun,
+		retryableTaskTypes: make(map[api.TaskType]bool),
 	}
+	m.retryableTaskTypes[api.TypePRComments] = true
+	return m
 }
 
 // loadTaskFromDisk reads and parses a task YAML file from disk, applying defaults for
@@ -429,6 +434,12 @@ func (m *TaskQueueManager) finishTask(filename string, task *api.QueueTask, stat
 
 	duration := t.Duration()
 
+	dstFilename := filename
+	isCommentsTask := m.isRetryableTask(filename, t)
+	if status == api.StatusFailed && isCommentsTask {
+		dstFilename = strings.TrimSuffix(filename, ".yaml") + ".failed.yaml"
+	}
+
 	if !m.dryRun {
 		srcDir := m.processingDir
 		if m.processingDir != "" {
@@ -436,14 +447,18 @@ func (m *TaskQueueManager) finishTask(filename string, task *api.QueueTask, stat
 				srcDir = m.incomingDir
 			}
 		}
-		if err := moveTaskFile(srcDir, m.processedDir, filename, t); err != nil {
+		if err := moveTaskFileWithDest(srcDir, m.processedDir, filename, dstFilename, t); err != nil {
 			return err
 		}
 
 		if m.processingLogDir != "" && m.processedLogDir != "" {
-			baseName := strings.TrimSuffix(filename, ".yaml")
-			logSrc := filepath.Join(m.processingLogDir, baseName+".log")
-			logDst := filepath.Join(m.processedLogDir, baseName+".log")
+			srcBaseName := strings.TrimSuffix(filename, ".yaml")
+			dstBaseName := strings.TrimSuffix(dstFilename, ".yaml")
+			if status == api.StatusFailed && isCommentsTask {
+				dstBaseName = fmt.Sprintf("%s.%s", dstBaseName, t.CompletedAt.Format("20060102-150405.000"))
+			}
+			logSrc := filepath.Join(m.processingLogDir, srcBaseName+".log")
+			logDst := filepath.Join(m.processedLogDir, dstBaseName+".log")
 			if _, err := os.Stat(logSrc); err == nil {
 				_ = os.MkdirAll(m.processedLogDir, 0755)
 				_ = os.Rename(logSrc, logDst)
@@ -456,9 +471,18 @@ func (m *TaskQueueManager) finishTask(filename string, task *api.QueueTask, stat
 	// The processed set keeps the queue's own copy. Holding the caller's task
 	// would leave it able to edit finished state after the fact, which is the
 	// same leak the read accessors guard against.
-	m.processed[filename] = t.DeepCopy()
+	m.processed[dstFilename] = t.DeepCopy()
 
-	m.writeJournalEvent(filename, t, string(status), duration)
+	if status == api.StatusCompleted && isCommentsTask {
+		// Clean up any failed attempt task file and memory record under the same lock context
+		failedFilename := strings.TrimSuffix(filename, ".yaml") + ".failed.yaml"
+		if !m.dryRun && m.processedDir != "" {
+			_ = os.Remove(filepath.Join(m.processedDir, failedFilename))
+		}
+		delete(m.processed, failedFilename)
+	}
+
+	m.writeJournalEvent(dstFilename, t, string(status), duration)
 	return nil
 }
 
@@ -703,19 +727,50 @@ func writeTaskAtomically(dir string, filename string, task *api.QueueTask) error
 // moveTaskFile moves a task file from srcDir to dstDir, ensuring the updated task state
 // is atomically written to the destination and the source file is removed.
 func moveTaskFile(srcDir, dstDir, filename string, task *api.QueueTask) error {
+	return moveTaskFileWithDest(srcDir, dstDir, filename, filename, task)
+}
+
+// moveTaskFileWithDest moves a task file from srcFilename in srcDir to dstFilename in dstDir,
+// ensuring the updated task state is atomically written to the destination and the source file is removed.
+func moveTaskFileWithDest(srcDir, dstDir, srcFilename, dstFilename string, task *api.QueueTask) error {
 	if srcDir == "" || dstDir == "" {
 		return nil
 	}
-	srcPath := filepath.Join(srcDir, filename)
-	dstPath := filepath.Join(dstDir, filename)
+	srcPath := filepath.Join(srcDir, srcFilename)
+	dstPath := filepath.Join(dstDir, dstFilename)
 
 	if err := os.Rename(srcPath, dstPath); err != nil {
-		if writeErr := writeTaskAtomically(dstDir, filename, task); writeErr != nil {
-			return fmt.Errorf("failed to move task to %s: %w", dstDir, err)
+		if writeErr := writeTaskAtomically(dstDir, dstFilename, task); writeErr != nil {
+			return fmt.Errorf("failed to move task to %s (rename error: %v): %w", dstDir, err, writeErr)
 		}
-		_ = os.Remove(srcPath)
+		if removeErr := os.Remove(srcPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("failed to remove source task file %s after fallback write: %w", srcPath, removeErr)
+		}
 	} else {
-		_ = writeTaskAtomically(dstDir, filename, task)
+		if writeErr := writeTaskAtomically(dstDir, dstFilename, task); writeErr != nil {
+			return fmt.Errorf("failed to write updated task state to %s: %w", dstDir, writeErr)
+		}
 	}
 	return nil
+}
+
+// RegisterRetryableTaskType dynamically registers a TaskType as retryable.
+func (m *TaskQueueManager) RegisterRetryableTaskType(t api.TaskType) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.retryableTaskTypes == nil {
+		m.retryableTaskTypes = make(map[api.TaskType]bool)
+	}
+	m.retryableTaskTypes[t] = true
+}
+
+// isRetryableTask reports whether a given task is of a task type
+// that supports the idempotent retry and separate failure tracking mechanism.
+// Note: This method must be called while holding m.mu (read or write lock) to ensure thread-safety.
+func (m *TaskQueueManager) isRetryableTask(filename string, task *api.QueueTask) bool {
+	if task != nil && task.Type != "" && m.retryableTaskTypes != nil {
+		return m.retryableTaskTypes[task.Type]
+	}
+	// Fallback to filename-based matching if task is nil, task.Type is empty, or retryableTaskTypes is not initialized.
+	return strings.HasPrefix(filename, "task-pr-") && strings.HasSuffix(filename, "-comments.yaml")
 }
