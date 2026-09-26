@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -215,48 +216,13 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		}
 		out["runbooks"] = runbooks
 
-		// Deployment instances: one directory per parameterized
-		// deployment (params.env, deploy.sh, teardown.sh, receipts).
-		// Content renders through the existing exploration doc endpoint.
-		instances := []gin.H{}
-		if _, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, "docs-exploration/runbook-deployments", ref); derr == nil {
-			for _, entry := range dir {
-				if entry.GetType() != "dir" {
-					continue
-				}
-				inst := gin.H{"name": entry.GetName(), "htmlURL": entry.GetHTMLURL(), "files": []gin.H{}}
-				if _, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref); serr == nil {
-					files := []gin.H{}
-					var newestReceipt gin.H
-					for _, f := range sub {
-						if f.GetType() != "file" {
-							continue
-						}
-						fh := gin.H{"name": f.GetName(), "path": f.GetPath(), "htmlURL": f.GetHTMLURL()}
-						files = append(files, fh)
-						if strings.HasPrefix(f.GetName(), "receipt-") {
-							if newestReceipt == nil || f.GetName() > newestReceipt["name"].(string) {
-								newestReceipt = fh
-							}
-						}
-					}
-					inst["files"] = files
-					if newestReceipt != nil {
-						// Verdict is the receipt's first line — the one
-						// glance that turns the tab into a status board.
-						if rf, _, _, rerr := gh.Repositories.GetContents(ctx, member, repo, newestReceipt["path"].(string), ref); rerr == nil && rf != nil {
-							if content, cerr := rf.GetContent(); cerr == nil {
-								if line, _, _ := strings.Cut(strings.TrimSpace(content), "\n"); line != "" {
-									newestReceipt["verdict"] = strings.TrimSpace(line)
-								}
-							}
-						}
-						inst["latestReceipt"] = newestReceipt
-					}
-				}
-				instances = append(instances, inst)
-			}
-		}
+		// Runs: one directory per run, holding its own runbook.md, the
+		// scripts generated from it, and the receipts. The legacy
+		// layout is read too — `factory runbook` kept artifacts under
+		// runbook-deployments/<instance>/ with the procedure in a
+		// shared document — because those deployments are live and
+		// their teardown has to stay reachable until each is adopted.
+		instances := s.scanRunDirectories(ctx, gh, member, repo, ref)
 		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
 		out["instances"] = instances
 	}
@@ -378,4 +344,156 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, out)
+}
+
+// runsPath and legacyRunsPath are the two layouts a deployment can
+// live in. `factory run` writes the first; `factory runbook` wrote the
+// second and is being retired. A run is adopted into the new path the
+// first time anything touches it, so both are read until the last
+// legacy deployment has been torn down or adopted.
+const (
+	runsPath       = "docs-exploration/runs"
+	legacyRunsPath = "docs-exploration/runbook-deployments"
+)
+
+// deployedVerdicts are the receipt verdicts that settle whether
+// infrastructure exists. PLANNED is absent on purpose: planning does
+// not deploy anything, and a re-plan of a live run must not make it
+// look torn down — that is what decides whether teardown is offered,
+// and getting it wrong strands a running cluster.
+//
+// FAILED counts as deployed. A failed deploy may have left partial
+// resources behind, and offering a teardown that finds nothing is
+// cheap next to hiding one that was needed.
+var deployedVerdicts = map[string]bool{
+	"VERIFIED":            true,
+	"DEPLOYED-UNVERIFIED": true,
+	"FAILED":              true,
+	"PARTIAL":             true,
+	"TORN-DOWN":           false,
+}
+
+// receiptScanLimit bounds how deep we read to settle deployed-ness.
+// Each read is an API call; the deciding receipt is nearly always the
+// newest or the one behind it, and a run with a long tail of plans is
+// exactly the case we do not want to pay for.
+const receiptScanLimit = 5
+
+// scanRunDirectories reads both layouts and returns one row per run.
+// A run present in both wins from the new path: adoption moves the
+// directory, and a stale legacy copy must not shadow it.
+func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, member, repo string, ref *github.RepositoryContentGetOptions) []gin.H {
+	byName := map[string]gin.H{}
+	order := []string{}
+	for _, base := range []string{legacyRunsPath, runsPath} {
+		_, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, base, ref)
+		if derr != nil {
+			continue
+		}
+		for _, entry := range dir {
+			if entry.GetType() != "dir" {
+				continue
+			}
+			row := s.readRunDirectory(ctx, gh, member, repo, entry, ref)
+			row["legacy"] = base == legacyRunsPath
+			if _, seen := byName[entry.GetName()]; !seen {
+				order = append(order, entry.GetName())
+			}
+			byName[entry.GetName()] = row
+		}
+	}
+	out := make([]gin.H, 0, len(order))
+	for _, n := range order {
+		out = append(out, byName[n])
+	}
+	return out
+}
+
+// readRunDirectory turns one run's directory into a row: its files,
+// the newest receipt for display, and whether anything is deployed.
+func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member, repo string, entry *github.RepositoryContent, ref *github.RepositoryContentGetOptions) gin.H {
+	row := gin.H{"name": entry.GetName(), "htmlURL": entry.GetHTMLURL(), "files": []gin.H{}}
+	_, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref)
+	if serr != nil {
+		return row
+	}
+	files := []gin.H{}
+	receipts := []gin.H{}
+	for _, f := range sub {
+		if f.GetType() != "file" {
+			continue
+		}
+		fh := gin.H{"name": f.GetName(), "path": f.GetPath(), "htmlURL": f.GetHTMLURL()}
+		files = append(files, fh)
+		switch {
+		case strings.HasPrefix(f.GetName(), "receipt-"):
+			receipts = append(receipts, fh)
+		case f.GetName() == "runbook.md":
+			// The review surface. A legacy deployment has none until
+			// its first deploy or teardown reconciles one.
+			row["runbook"] = fh
+		}
+	}
+	row["files"] = files
+	// Newest first: receipt names carry a UTC timestamp, so the name
+	// sorts the same way the clock does.
+	sort.Slice(receipts, func(i, j int) bool {
+		return receipts[i]["name"].(string) > receipts[j]["name"].(string)
+	})
+	if len(receipts) == 0 {
+		return row
+	}
+
+	deployedDecided := false
+	for i, r := range receipts {
+		if i >= receiptScanLimit {
+			break
+		}
+		verdict := s.receiptVerdict(ctx, gh, member, repo, r["path"].(string), ref)
+		if verdict == "" {
+			continue
+		}
+		r["verdict"] = verdict
+		if i == 0 {
+			// The newest receipt is what the row displays, whatever it
+			// says — including PLANNED for a re-planned live run.
+			row["latestReceipt"] = r
+		}
+		if deployedDecided {
+			continue
+		}
+		// Presence in the map is what makes a verdict decisive; its
+		// value is the answer. PLANNED and BLOCKED are absent, so a
+		// re-plan of a live run leaves the earlier deploy deciding.
+		if deployed, decisive := deployedVerdicts[verdictWord(verdict)]; decisive {
+			row["deployed"] = deployed
+			deployedDecided = true
+		}
+	}
+	if _, ok := row["latestReceipt"]; !ok {
+		row["latestReceipt"] = receipts[0]
+	}
+	return row
+}
+
+// verdictWord takes the first token of a verdict line, so
+// "VERIFIED (3 resources)" still reads as VERIFIED.
+func verdictWord(verdict string) string {
+	word, _, _ := strings.Cut(strings.TrimSpace(verdict), " ")
+	return strings.ToUpper(word)
+}
+
+// receiptVerdict reads a receipt's first line, which is the verdict by
+// contract with the run prompts.
+func (s *Server) receiptVerdict(ctx context.Context, gh *github.Client, member, repo, path string, ref *github.RepositoryContentGetOptions) string {
+	rf, _, _, rerr := gh.Repositories.GetContents(ctx, member, repo, path, ref)
+	if rerr != nil || rf == nil {
+		return ""
+	}
+	content, cerr := rf.GetContent()
+	if cerr != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
+	return strings.TrimSpace(line)
 }
