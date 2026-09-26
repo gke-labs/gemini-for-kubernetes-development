@@ -418,6 +418,74 @@ function TranscriptItem({ item, onResolve, resolving }) {
   }
 }
 
+// TerminalItem is the same transcript rendered the way a terminal would
+// render it: no markdown parsing at all, the agent's source shown as it
+// was written, in a fixed-width font on a flat log rather than bubbles.
+//
+// It exists because the rich view is lossy in one direction. Markdown is
+// a rendering *of* something, and a research answer often wants reading
+// as the thing itself — a table's exact columns, a diff, a command to
+// copy out unchanged. The rich view is better for prose; this one is
+// better for anything you intend to use.
+//
+// Permission prompts keep their rich form. They are the one part of a
+// transcript that is a control and not a record, and a misread
+// permission is a worse outcome than a seam in the styling.
+function TerminalItem({ item, onResolve, resolving }) {
+  const [open, setOpen] = useState(false);
+
+  switch (item.role) {
+    case 'user':
+      return (
+        <div className="term-line term-user"><span className="term-sigil">❯ </span>{item.text}</div>
+      );
+    case 'agent':
+      return <div className="term-line term-agent">{item.text}</div>;
+    case 'thought':
+      return (
+        <div className="term-line term-dim" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
+          <span className="term-sigil">{open ? '▾ ' : '▸ '}</span>thinking
+          {open && <div className="term-quote">{item.text}</div>}
+        </div>
+      );
+    case 'tool': {
+      const detail = [
+        item.rawInput === undefined ? '' : JSON.stringify(item.rawInput, null, 2),
+        item.content || '',
+      ].filter(Boolean).join('\n\n');
+      return (
+        <div className="term-line">
+          <span onClick={() => detail && setOpen(o => !o)} style={{ cursor: detail ? 'pointer' : 'default' }}>
+            <span className={`term-sigil term-status-${item.status || 'pending'}`}>● </span>
+            <span className="term-dim">{item.toolKind || 'tool'} </span>
+            {item.title || item.toolCallId}
+            <span className={`term-status-${item.status || 'pending'}`}> [{item.status || 'pending'}]</span>
+          </span>
+          {open && detail && <div className="term-quote">{detail}</div>}
+        </div>
+      );
+    }
+    case 'permission':
+      return <PermissionRow item={item} onResolve={onResolve} busy={resolving} />;
+    case 'stop':
+      return <div className="term-line term-dim">— turn ended: {item.stopReason} —</div>;
+    case 'error':
+      return (
+        <div className="term-line term-error">
+          ! {item.message}
+          {item.log && <div className="term-quote">engine stderr in the sandbox: {item.log}</div>}
+        </div>
+      );
+    default:
+      return (
+        <div className="term-line term-dim" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
+          <span className="term-sigil">{open ? '▾ ' : '▸ '}</span>{item.kind}
+          {open && <div className="term-quote">{JSON.stringify(item.data, null, 2)}</div>}
+        </div>
+      );
+  }
+}
+
 function PlanPanel({ entries }) {
   const [open, setOpen] = useState(true);
   if (!entries || !entries.length) return null;
@@ -449,6 +517,9 @@ function PlanPanel({ entries }) {
 // that the conversation opens on its own when the pod lands.
 const PROBE_INTERVAL_MS = 5000;
 
+// Where the rich/terminal choice is remembered.
+const RESEARCH_VIEW_KEY = 'repoboard.research.view';
+
 // ResearchConversation is one conversation: the transcript, the
 // composer, and the machinery that keeps a websocket attached to it.
 //
@@ -474,6 +545,18 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
   const [sending, setSending] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
+  // rich | terminal. A reading preference, not session state, so it is
+  // remembered across conversations and across the pop-out window —
+  // whoever wants the terminal wants it for all of them.
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem(RESEARCH_VIEW_KEY) === 'terminal' ? 'terminal' : 'rich'; }
+    catch (e) { return 'rich'; } // private mode
+  });
+  const terminal = view === 'terminal';
+  const chooseView = (next) => {
+    setView(next);
+    try { localStorage.setItem(RESEARCH_VIEW_KEY, next); } catch (e) { /* private mode */ }
+  };
 
   // The resume cursor. A ref, not state: the socket's onmessage handler
   // closes over it, and it must never be a render behind.
@@ -723,6 +806,26 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
         <Pill {...statusPill} title={detail} />
         <span style={{ flex: 1 }} />
+        {/* Two segments rather than one flip button: which view you are
+            in should be readable without knowing whether the label names
+            the state or the action. */}
+        <span style={{
+          display: 'inline-flex', border: '1px solid var(--border-color)',
+          borderRadius: '6px', overflow: 'hidden',
+        }}>
+          {[
+            ['rich', 'Rendered markdown'],
+            ['terminal', 'The transcript as a terminal would print it — fixed-width, unrendered source'],
+          ].map(([v, hint]) => (
+            <button key={v} onClick={() => chooseView(v)} title={hint}
+              style={{
+                border: 'none', padding: '2px 8px', fontSize: 'x-small', cursor: 'pointer',
+                background: view === v ? 'var(--bg-hover)' : 'transparent',
+                color: view === v ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: view === v ? 600 : 400,
+              }}>{v}</button>
+          ))}
+        </span>
         {phase === 'live' && busy && (
           <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
         )}
@@ -744,6 +847,7 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
       )}
 
       <div ref={scrollRef}
+        className={terminal ? 'research-terminal' : undefined}
         onScroll={e => {
           const el = e.currentTarget;
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -751,7 +855,10 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
         style={{
           flex: '1 1 auto', minHeight: fill ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
           border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-card)', padding: '10px 14px',
+          // The terminal canvas is its own colour, and an inline
+          // background would win over the class that sets it.
+          background: terminal ? undefined : 'var(--bg-card)',
+          padding: '10px 14px',
         }}>
         {phase === 'gone' && (
           <p style={{ color: 'var(--text-secondary)' }}>
@@ -785,8 +892,9 @@ export function ResearchConversation({ sessionId, pending, onBack, onDeleted, fi
             checkout in front of it.
           </p>
         )}
-        {transcript.items.map(item => (
-          <TranscriptItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
+        {transcript.items.map(item => (terminal
+          ? <TerminalItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
+          : <TranscriptItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
         ))}
         {busy && !waiting && (
           <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'small', margin: '8px 0' }}>

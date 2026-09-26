@@ -62,6 +62,9 @@ let root;
 beforeEach(() => {
     FakeSocket.instances = [];
     mockMarkdownCalls.length = 0;
+    // The rich/terminal choice is sticky across sessions, so a test that
+    // flips it would otherwise flip it for the tests after it.
+    localStorage.clear();
     global.WebSocket = FakeSocket;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -132,6 +135,43 @@ describe('ResearchConversation', () => {
 
         expect(mockMarkdownCalls.length).toBeGreaterThan(0);
         expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
+    });
+
+    test('the terminal view shows the source unparsed and remembers itself', async () => {
+        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({ type: 'event', offset: 20, event: { seq: 1, kind: 'user_prompt', data: { text: 'compare them' } } });
+            ws.deliver({
+                type: 'event', offset: 80,
+                event: { seq: 2, kind: 'agent_message_chunk', data: { content: { type: 'text', text: table } } },
+            });
+            ws.deliver({ type: 'event', offset: 100, event: { seq: 3, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
+        });
+        expect(container.querySelector('.research-terminal')).toBeNull();
+
+        const rendersBefore = mockMarkdownCalls.length;
+        const flip = [...container.querySelectorAll('button')].find(b => b.textContent === 'terminal');
+        await act(async () => { flip.click(); });
+
+        // No markdown pass at all in this view: the agent's own line
+        // breaks are what make the table line up.
+        expect(mockMarkdownCalls.length).toBe(rendersBefore);
+        const pane = container.querySelector('.research-terminal');
+        expect(pane).toBeTruthy();
+        expect(pane.querySelector('.term-agent').textContent).toBe(table);
+        expect(pane.querySelector('.term-user').textContent).toContain('compare them');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('terminal');
+
+        // And the next conversation opened comes up in it.
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        expect(container.querySelector('.research-terminal')).toBeTruthy();
     });
 
     test('a live turn disables the composer and offers Stop', async () => {
