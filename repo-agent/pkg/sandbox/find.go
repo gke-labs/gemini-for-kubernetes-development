@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -34,6 +35,40 @@ const RepoSandboxBinary = "/opt/repo-agent/repo-sandbox"
 // If namespace is empty, it uses the current namespace from kube config.
 // If the pod is not found, it returns (nil, nil).
 func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace string) (*types.NamespacedName, error) {
+	pod, err := findSandboxPod(ctx, sandboxName, namespace)
+	if err != nil || pod == nil {
+		return nil, err
+	}
+	return &types.NamespacedName{
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+	}, nil
+}
+
+// FindSandboxPodIP returns the pod IP for a sandbox, or "" if there is no
+// pod or it has not been assigned one yet.
+//
+// Callers that dial a sandbox port directly need this rather than a pod
+// name: the acpd conversation server is not on the <sandbox>-lb Service,
+// so there is no stable name to resolve. The IP is only good while the
+// pod lives, which is the same lifetime as the thing being dialled.
+func FindSandboxPodIP(ctx context.Context, sandboxName, namespace string) (string, error) {
+	pod, err := findSandboxPod(ctx, sandboxName, namespace)
+	if err != nil || pod == nil {
+		return "", err
+	}
+	if pod.Status.Phase != corev1.PodRunning {
+		// A pod IP on a pending or terminating pod is either absent or
+		// about to stop answering; report it as not there yet rather
+		// than hand back an address that fails on connect.
+		return "", nil
+	}
+	return pod.Status.PodIP, nil
+}
+
+// findSandboxPod returns the sandbox's pod, preferring a running one, or
+// (nil, nil) when the sandbox has no pods.
+func findSandboxPod(ctx context.Context, sandboxName, namespace string) (*corev1.Pod, error) {
 	kube, err := clients.NewKubernetesClient()
 	if err != nil {
 		return nil, err
@@ -60,16 +95,11 @@ func FindSandboxPodInNamespace(ctx context.Context, sandboxName, namespace strin
 	// Pick the first running pod, or just the first one if none are running yet (though exec will fail)
 	pod := &pods.Items[0]
 
-	for _, p := range pods.Items {
-		if p.Status.Phase == "Running" {
-			pod = &p
+	for i := range pods.Items {
+		if pods.Items[i].Status.Phase == corev1.PodRunning {
+			pod = &pods.Items[i]
 			break
 		}
 	}
-
-	podID := &types.NamespacedName{
-		Name:      pod.Name,
-		Namespace: pod.Namespace,
-	}
-	return podID, nil
+	return pod, nil
 }
