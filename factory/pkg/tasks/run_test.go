@@ -151,3 +151,37 @@ func TestPlanReceiptCarriesRunningResourcesForward(t *testing.T) {
 		}
 	}
 }
+
+// Draft writes the procedure and stops. Emitting params or scripts
+// there would resolve an account and a target before the owner has
+// chosen either, which is what plan is for.
+func TestDraftPromptWritesProcedureOnly(t *testing.T) {
+	got := renderRun(t, "draft", RunParams{RepoName: "open-rl", Name: "deploy-gke"})
+	for _, want := range []string{
+		"docs-exploration/runs/deploy-gke/",
+		"DRAFTED on the first line",
+		"ACCOUNT-AGNOSTIC",
+		"VERIFY FEASIBILITY",
+		"Do NOT write params.env, deploy.sh or teardown.sh",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("draft prompt missing %q", want)
+		}
+	}
+	if strings.Contains(got, "docs-exploration/runbooks/") {
+		t.Error("draft prompt still points at the shared runbook tree")
+	}
+}
+
+// Drafting has no name to scope the move, and an empty RUN_NAME would
+// make the legacy path the whole deployments tree — moving every
+// instance at once.
+func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	if !strings.Contains(string(b), `if [ -z "${RUN_NAME}" ]; then`) {
+		t.Error("adoptLegacyInstance does not guard against an empty run name")
+	}
+}

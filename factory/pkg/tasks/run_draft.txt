@@ -1,0 +1,87 @@
+You are DRAFTING the run "{{.Name}}" for the repository {{.RepoName}}
+({{.HTMLURL}}) — writing the procedure only. No parameters are
+resolved, no scripts are generated, nothing executes. Everything this
+run owns lives in one directory: docs-exploration/runs/{{.Name}}/.
+
+The exploration contract — the section structure and the requirements
+rules — is docs-exploration/SKILL.md in this checkout. Follow it.
+{{if .Intent}}
+The owner's charter for this run: {{.Intent}}
+
+Treat it as pinned decisions. Derive the steps that achieve it from
+the repository's own tooling, and where the charter is silent, make
+the call and record the assumption under What this needs.
+{{end}}
+Write docs-exploration/runs/{{.Name}}/runbook.md, using the skill's
+fixed sections — What this needs, Preconditions, Steps, Verify,
+Teardown. It must be executable top to bottom on its own. Number the
+steps and put each step's commands in a fenced code block. Say WHY
+where a choice is not obvious: a later reader should be able to tell
+a deliberate decision from an accident.
+
+1. KEEP IT ACCOUNT-AGNOSTIC. Never hardcode project ids, regions,
+   cluster names or other owner-specific values. A draft is the
+   procedure; those are parameters, and `factory run plan` resolves
+   them into params.env from Settings and the owner's intent. A
+   procedure that names a project works for exactly one person and
+   then silently misleads the next. Lift concrete values into
+   Preconditions as variables the reader sets.
+
+2. Derive the real path from the repository's own tooling: the
+   Makefile, scripts/, CI workflows (.github/workflows is the ground
+   truth for what actually builds and tests), helm charts, kustomize
+   bases, container files. Do not invent commands — every step must
+   trace to something the repo ships.
+
+3. Open What this needs by answering one question plainly: can this
+   run in the pod (binaries, tests, envtest, a single-process
+   server), or does it need real infrastructure — a cluster or cloud?
+   Node-level reality forces the latter: CSI drivers, device plugins,
+   privileged DaemonSets, kubelet sockets, host mounts. Say exactly
+   which component forces it.
+
+4. VERIFY FEASIBILITY — you are running under the SAME identity and
+   in the same kind of environment this run will execute in, so
+   check, don't assume:
+   - Permissions: enumerate the IAM permissions each step needs (what
+     does the tool CREATE and BIND? kops on GCE, for example, creates
+     service accounts, attaches them to instances —
+     iam.serviceAccounts.actAs — and binds project roles —
+     resourcemanager.projects.setIamPolicy). Probe with read-only
+     calls: projects.testIamPermissions, a get-iam-policy, a dry-run
+     where the tool offers one.
+   - Tools: verify the binaries the steps call actually exist here (a
+     missing docker daemon means Cloud Build, not a doomed step).
+     Verification means --version, --help and dry-runs — never full
+     builds or test runs while drafting: HEAD will have moved by
+     deploy time, so a compile now certifies a commit nobody will
+     deploy, at real cost. The deploy phase builds for real.
+
+   Write the results into What this needs as a checklist: ✓
+   granted/present, ✗ MISSING — each missing item with the exact
+   command that grants or installs it. A procedure whose
+   requirements are not met must say so at the top: it is a
+   pre-run checklist for the owner, not a discovery the deploy makes
+   at VM prices. Never write steps around a missing permission; name
+   it instead.
+
+5. If runbook.md already exists, update it against the current code
+   rather than rewriting from scratch, and note what changed since
+   the last revision in one line at the top.
+
+6. Write receipt-<UTC yyyymmdd-hhmm>.md in the run's directory:
+   DRAFTED on the first line, then the feasibility checklist's
+   verdict (what is missing and the commands that fix it), what this
+   run would create once planned, and what the owner must decide
+   before planning it.
+
+Do NOT write params.env, deploy.sh or teardown.sh — `factory run
+plan` generates those from this procedure once the owner is ready to
+target a real environment. Do NOT create cloud resources.
+
+Also add anything the code left ambiguous to
+docs-exploration/questions.md.
+
+Do not commit or push — the task harness commits this directory when
+you are done. Finish with a short summary: what this run needs, and
+where the procedure cuts corners.
