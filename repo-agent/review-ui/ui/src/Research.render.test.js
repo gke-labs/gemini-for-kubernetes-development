@@ -10,7 +10,15 @@ const act = React.act || domAct;
 
 // react-markdown is ESM and jest does not transform node_modules. The
 // stub renders its children as text, which is all these assertions need.
-jest.mock('react-markdown', () => ({ children }) => children);
+// The stub renders its children as text and records the props it was
+// given, so a test can assert the GFM plugin is still wired in.
+const mockMarkdownCalls = [];
+jest.mock('react-markdown', () => ({ children, remarkPlugins }) => {
+    mockMarkdownCalls.push({ remarkPlugins });
+    return children;
+});
+// remark-gfm is ESM too; the identity of the stub is all we assert on.
+jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 
 // Rendering tests for the parts the pure reducer tests cannot reach: the
 // probe-then-attach state machine, and the board filter on the session
@@ -53,6 +61,7 @@ let root;
 
 beforeEach(() => {
     FakeSocket.instances = [];
+    mockMarkdownCalls.length = 0;
     global.WebSocket = FakeSocket;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -99,6 +108,30 @@ describe('ResearchConversation', () => {
         const send = [...container.querySelectorAll('button')].find(b => b.textContent === 'Send');
         expect(send.disabled).toBe(true); // nothing typed yet
         expect(container.querySelector('textarea').disabled).toBe(false);
+    });
+
+    test('agent messages are rendered with the GFM plugin', async () => {
+        // Without it react-markdown is CommonMark only, and a table —
+        // which is how agents answer comparison questions — degrades
+        // into one paragraph of pipes.
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: {
+                    seq: 1, kind: 'agent_message_chunk',
+                    data: { content: { type: 'text', text: '| a | b |\n| :-- | :-- |\n| 1 | 2 |' } },
+                },
+            });
+        });
+
+        expect(mockMarkdownCalls.length).toBeGreaterThan(0);
+        expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
     });
 
     test('a live turn disables the composer and offers Stop', async () => {

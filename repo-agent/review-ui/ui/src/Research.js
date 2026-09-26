@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+// react-markdown is CommonMark only. Agents answer with GFM — tables
+// above all — and without this a table parses as one paragraph, its
+// newlines collapsing to spaces into a wall of pipes.
+import remarkGfm from 'remark-gfm';
 
 // Research: conversation-based deep research, the third mode alongside
 // doc-based Explore and deploy-based Runs.
@@ -371,8 +375,8 @@ function TranscriptItem({ item, onResolve, resolving }) {
       );
     case 'agent':
       return (
-        <div className="research-markdown" style={{ margin: '10px 0', lineHeight: 1.5 }}>
-          <ReactMarkdown>{item.text}</ReactMarkdown>
+        <div className="research-markdown md-body" style={{ margin: '10px 0', lineHeight: 1.5 }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
         </div>
       );
     case 'thought':

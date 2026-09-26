@@ -14,6 +14,7 @@ import {
 // so importing it for real would fail to parse before a single
 // assertion ran. Nothing here renders, so a stub is enough.
 jest.mock('react-markdown', () => () => null);
+jest.mock('remark-gfm', () => () => {});
 
 // Events as acpd writes them: a seq, a kind, and a payload whose shape
 // is the kind's business.

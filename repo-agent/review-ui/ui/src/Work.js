@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+// Explore docs are GFM — code maps and architecture notes are mostly
+// tables, which CommonMark alone renders as a paragraph of pipes.
+import remarkGfm from 'remark-gfm';
 import { ResearchPanel } from './Research';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
@@ -1027,7 +1030,7 @@ function ExploreDocViewer({ boardName, docs }) {
           );
         })()}
       </div>
-      <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
+      <div className="md-body" style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
         {doc && (
           <a href={doc.htmlURL} target="_blank" rel="noopener noreferrer"
             style={{ position: 'absolute', top: 0, right: '8px', fontSize: 'smaller' }}
@@ -1036,7 +1039,7 @@ function ExploreDocViewer({ boardName, docs }) {
         {loading ? (
           <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>loading…</div>
         ) : (
-          <ReactMarkdown components={{
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
             code({ className, children, ...props }) {
               if (/language-mermaid/.test(className || '')) {
                 return <MermaidBlock code={String(children)} />;

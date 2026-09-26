@@ -1033,3 +1033,51 @@ body.dark-mode .warning-banner {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Rendered markdown — the research transcript and the explore doc
+   viewer. Agents answer in GFM, so tables are common and often wide;
+   a table scrolls on its own axis rather than stretching the column
+   it sits in. */
+.md-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: smaller;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--border-color);
+  padding: 5px 9px;
+  vertical-align: top;
+}
+
+.md-body th {
+  background-color: var(--bg-secondary);
+  font-weight: 600;
+}
+
+.md-body tbody tr:nth-child(even) {
+  background-color: var(--bg-hover);
+}
+
+/* Long prose in a narrow column needs the break; an unbroken URL or a
+   Go identifier would otherwise widen the whole transcript. */
+.md-body {
+  overflow-wrap: break-word;
+}
+
+.md-body pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.md-body :is(h1, h2, h3, h4) {
+  margin: 14px 0 6px;
+  line-height: 1.25;
+}
+
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
