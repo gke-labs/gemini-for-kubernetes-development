@@ -1331,20 +1331,54 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			r.stampUnpaused(ctx, sb)
 			r.stampEngine(ctx, sb, boardEngine(work.board))
 		}
-		if r.Factory.StartRunbook(key, factorycli.RunbookOptions{
+		mode := runMode(claim.mode)
+		if r.Factory.StartRun(key, factorycli.RunOptions{
 			Namespace:   claim.member,
 			SandboxName: name,
-			Mode:        claim.mode,
-			Scenario:    claim.scenario,
-			Instance:    instance,
-			Guidance:    boardAnnotations[AnnotationRunbookGuidance],
+			Mode:        mode,
+			// The run's name is the old instance name. Adoption of a
+			// legacy deployment matches on it, and so does the
+			// sandbox, so an existing deployment keeps its workspace.
+			Name:        instance,
+			Intent:      runIntent(claim.scenario, instance, boardAnnotations[AnnotationRunbookGuidance]),
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
 		}) {
-			logger.Info("launched factory runbook", "mode", claim.mode, "scenario", claim.scenario, "instance", instance, "board", work.board.Name)
+			logger.Info("launched factory run", "mode", mode, "name", instance, "board", work.board.Name)
 		}
 	}
+}
+
+// runMode maps a claim's mode onto what `factory run` offers. The
+// combined plan-and-execute pass is gone: a claim asking for it stops
+// at the plan gate instead, which is what the owner would see anyway
+// and cannot spend money without their say-so.
+func runMode(claimMode string) string {
+	switch claimMode {
+	case "deploy", "teardown":
+		return claimMode
+	default:
+		return "plan"
+	}
+}
+
+// runIntent carries the scenario forward when it still says something.
+// A runbook used to be a shared document the scenario pointed at;
+// there is no such document now, so the shape it named survives only
+// as words in the brief — and only when the run's own name does not
+// already carry it.
+func runIntent(scenario, name, guidance string) string {
+	guidance = strings.TrimSpace(guidance)
+	scenario = strings.TrimSpace(scenario)
+	if scenario == "" || scenario == name {
+		return guidance
+	}
+	shape := "This run is a " + scenario + "."
+	if guidance == "" {
+		return shape
+	}
+	return shape + " " + guidance
 }
 
 // ensurePRTaskClaims handles follow-up clicks on PRs with no sandbox:

@@ -104,7 +104,7 @@ func repoShortName(repo string) string {
 }
 
 // kickoffRunbook plants a timestamped runbook claim: run or tear down one
-// runbook scenario path. The controller launches `factory runbook` and the
+// runbook scenario path. The controller launches `factory run` and the
 // claim trims when the runner result outdates the click (claims v2).
 func (s *Server) kickoffRunbook(c *gin.Context) {
 	ctx := c.Request.Context()

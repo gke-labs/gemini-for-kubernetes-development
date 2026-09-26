@@ -233,3 +233,32 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, from string) error
 	fmt.Printf("Run %s %s finished for %s/%s; pushed to the exploration/notes branch.\n", name, mode, owner, repo)
 	return nil
 }
+
+// shortName compresses a repo name for resource prefixes: initials of
+// hyphenated words (in-cluster-storage → ics), else the name truncated.
+func shortName(repo string) string {
+	slug := slugifyScenario(repo)
+	words := strings.Split(slug, "-")
+	if len(words) >= 2 {
+		var b strings.Builder
+		for _, w := range words {
+			if w != "" {
+				b.WriteByte(w[0])
+			}
+		}
+		return b.String()
+	}
+	if len(slug) > 8 {
+		return slug[:8]
+	}
+	return slug
+}
+
+// resourcePrefix is the project-unique identity for everything a run
+// creates: shortName(repo)-name. Deliberately dumb — no stutter
+// collapsing (it would be renaming the user cannot control, and it can
+// alias two runs onto one prefix). Stutter is prevented at the source:
+// the UI shows the prefix so nobody hand-types it.
+func resourcePrefix(repo, name string) string {
+	return shortName(repo) + "-" + name
+}
