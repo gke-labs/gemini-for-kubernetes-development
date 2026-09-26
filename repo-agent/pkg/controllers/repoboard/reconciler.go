@@ -1287,9 +1287,10 @@ type runbookClaim struct {
 	scenario  string // the runbook name: deploy-gcp, upgrade-gcp, …
 	instance  string // default: the runbook name
 	member    string
-	claimedAt time.Time	// intent is this run's brief, carried on the claim so it dies
-	// with it rather than outliving every other run on the board.
-	intent    string
+	claimedAt time.Time
+	// intent is this run's brief, carried on the claim so it dies with
+	// it rather than outliving every other run on the board.
+	intent string
 }
 
 func runbookKey(member, repo string, c runbookClaim) string {
