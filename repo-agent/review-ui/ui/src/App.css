@@ -1020,3 +1020,16 @@ body.dark-mode .warning-banner {
   background-color: var(--text-danger);
   color: white;
 }
+
+/* A control that reads as a link. `href="#"` is not a destination, and
+   a screen reader announcing it as a link promises navigation that
+   never happens — jsx-a11y/anchor-is-valid is right to refuse it. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--link-color, #0366d6);
+  text-decoration: underline;
+  cursor: pointer;
+}

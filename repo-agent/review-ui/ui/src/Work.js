@@ -182,23 +182,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPlan]);
   const planShown = freshPlan || item.plan;
-  const planPost = (path, body, label) => {
-    fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {}),
-    }).then(async res => {
-      if (res.ok) {
-        setPlanErr('');
-        if (onRefresh) onRefresh();
-      } else {
-        const t = await res.text();
-        let msg = t;
-        try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw text */ }
-        setPlanErr(`${label} failed: ${msg}`);
-      }
-    }).catch(err => setPlanErr(`${label} failed: ${err}`));
-  };
   const planPut = (path, body, label, onOk) => {
     fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
       method: 'PUT',
@@ -964,14 +947,11 @@ function MermaidBlock({ code }) {
 
 // ExploreDocViewer: files on the left, rendered markdown on the right.
 // Content comes raw from the fork branch; rendering happens here.
-function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
+function ExploreDocViewer({ boardName, docs }) {
   const [selected, setSelected] = useState('');
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [collapsed, setCollapsed] = useState({});
-  const [addMode, setAddMode] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [charter, setCharter] = useState('');
 
   // README is the index — open it first; fall back to the first doc.
   useEffect(() => {
@@ -992,16 +972,6 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
   }, [boardName, selected]);
 
   const doc = docs.find(d => d.path === selected);
-  const isRunbook = d => (d || '').startsWith('runbooks/');
-  const selectedDoc = doc ? doc.name : '';
-  const runbookName = isRunbook(selectedDoc) ? selectedDoc.replace(/^runbooks\//, '').replace(/\.md$/, '') : '';
-  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-  const submit = () => {
-    const name = addMode ? slug(newName) : runbookName;
-    if (!name) return;
-    onAuthorRunbook(name, charter.trim());
-    setCharter(''); setNewName(''); setAddMode(false);
-  };
 
   return (
     <div style={{ display: 'flex', gap: '12px', alignItems: 'stretch' }}>
@@ -1009,19 +979,19 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
         paddingRight: '8px', maxHeight: '60vh', overflowY: 'auto' }}>
         {(() => {
           const entry = d => (
-            <div key={d.path} onClick={() => { setSelected(d.path); setAddMode(false); }}
+            <div key={d.path} onClick={() => setSelected(d.path)}
               title={d.name}
               style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                background: d.path === selected && !addMode ? 'var(--bg-hover)' : 'transparent',
-                fontWeight: d.path === selected && !addMode ? 600 : 400 }}>
+                background: d.path === selected ? 'var(--bg-hover)' : 'transparent',
+                fontWeight: d.path === selected ? 600 : 400 }}>
               {d.name.includes('/') ? d.name.split('/').slice(1).join('/') : d.name}
             </div>
           );
           // Generic grouping: root files first, then one collapsible
-          // group per top-level folder. runbooks is the one special
-          // case — it owns the "+ add runbook" door, and exists even
-          // when empty, because creating the first one is the point.
+          // group per top-level folder. No folder is special any more:
+          // a procedure belongs to the run that uses it, and a run is
+          // started from the Runs tab.
           const folderOf = d => (d.name.includes('/') ? d.name.split('/')[0] : '');
           const order = [];
           const byFolder = {};
@@ -1030,7 +1000,6 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
             if (!(f in byFolder)) { byFolder[f] = []; order.push(f); }
             byFolder[f].push(d);
           }
-          if (!('runbooks' in byFolder)) { byFolder.runbooks = []; order.push('runbooks'); }
           order.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
           return (
             <>
@@ -1050,15 +1019,6 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
                       </div>
                     )}
                     {isOpen && files.map(entry)}
-                    {isOpen && folder === 'runbooks' && (
-                      <div onClick={() => { setAddMode(true); setCharter(''); }}
-                        title="Describe a new runbook — the agent derives it from the repo's tooling and pushes it for review"
-                        style={{ padding: '4px 8px', cursor: 'pointer', borderRadius: '4px',
-                          color: addMode ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          background: addMode ? 'var(--bg-hover)' : 'transparent' }}>
-                        + add runbook
-                      </div>
-                    )}
                   </React.Fragment>
                 );
               })}
@@ -1067,40 +1027,7 @@ function ExploreDocViewer({ boardName, docs, onAuthorRunbook, drafting }) {
         })()}
       </div>
       <div style={{ flex: 1, minWidth: 0, maxHeight: '60vh', overflowY: 'auto', position: 'relative' }}>
-        {/* Authoring is contextual: the box appears for the runbook you
-            opened (or for a new one), pre-scoped, and is absent
-            otherwise — reading is the default mode. */}
-        {(addMode || runbookName) && (
-          <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-            background: 'var(--bg-secondary)', padding: '8px 10px', marginBottom: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              {addMode ? (
-                <>
-                  <span style={{ color: 'var(--text-secondary)' }}>new runbook:</span>
-                  <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
-                    placeholder="name (e.g. deploy-kops-gce)" autoFocus
-                    style={{ flex: '0 1 240px', padding: '3px 8px', borderRadius: '4px',
-                      border: '1px solid var(--border-color)', background: 'transparent',
-                      color: 'var(--text-primary)', font: 'inherit' }} />
-                </>
-              ) : (
-                <span style={{ color: 'var(--text-secondary)' }}>update <strong>{runbookName}</strong>:</span>
-              )}
-              <span style={{ flex: 1 }} />
-              {drafting && <Chip text="drafting…" color="#b08800" bg="rgba(176,136,0,0.12)" />}
-              <button className="btn btn-sm" disabled={drafting || (addMode && !newName.trim())}
-                onClick={submit}>{addMode ? 'Draft runbook' : 'Update runbook'}</button>
-              {addMode && <a href="#cancel" onClick={e => { e.preventDefault(); setAddMode(false); }}>cancel</a>}
-            </div>
-            <textarea rows={2} value={charter} onChange={e => setCharter(e.target.value)}
-              placeholder={addMode
-                ? "what should it do? ('deploy the CSI driver on a kops-managed GCE cluster, 3 nodes…') — its charter, treated as pinned decisions"
-                : "what should change? (leave empty to refresh it against the latest code)"}
-              style={{ width: '100%', marginTop: '6px', border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-          </div>
-        )}
-        {doc && !addMode && (
+        {doc && (
           <a href={doc.htmlURL} target="_blank" rel="noopener noreferrer"
             style={{ position: 'absolute', top: 0, right: '8px', fontSize: 'smaller' }}
             title="Canonical view on GitHub">GitHub ↗</a>
@@ -1188,11 +1115,11 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
     return () => clearInterval(t);
   }, [load]);
 
-  const kickoff = (board, mode, scenario, instance) => {
-    setBusy(`${board}:${instance}`);
+  const kickoff = (board, mode, name) => {
+    setBusy(`${board}:${name}`);
     fetch(`/api/board/${board}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, scenario, instance, guidance: '' }),
+      body: JSON.stringify({ mode, name, intent: '' }),
     }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); }).catch(() => setBusy(''));
   };
 
@@ -1201,21 +1128,16 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
     const instances = d.instances || [];
     const pending = d.pending || [];
     const sandboxes = d.sandboxes || [];
-    const runbooks = d.runbooks || [];
     const merged = [...instances];
     for (const p of pending) {
       if (p.mode === 'teardown') continue;
       const name = p.instance || p.scenario;
-      if (!merged.some(i => i.name === name)) merged.push({ name, provisional: true, scenario: p.scenario });
+      if (!merged.some(i => i.name === name)) merged.push({ name, provisional: true });
     }
     for (const inst of merged) {
       const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
       const pend = pending.find(p => (p.instance || p.scenario) === inst.name);
-      const rb = inst.provisional
-        ? runbooks.find(r => r.scenario === inst.scenario) || null
-        : (sb && runbooks.find(r => r.scenario === sb.scenario)) ||
-          runbooks.find(r => inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) || null;
-      rows.push({ board, inst, sb, pend, rb, scenario: inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '') });
+      rows.push({ board, inst, sb, pend });
     }
   }
   const rank = r => {
@@ -1243,13 +1165,13 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
               <th style={cell}>board</th>
               <th style={cell}>deployment</th>
               <th style={cell}>agent</th>
-              <th style={cell}>runbook</th>
+              <th style={cell}>procedure</th>
               <th style={cell}>last run</th>
               <th style={{ ...cell, textAlign: 'right' }}></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ board, inst, sb, pend, rb, scenario }) => {
+            {rows.map(({ board, inst, sb, pend }) => {
               // The annotation can be stale (a dead watcher never stamped
               // the final state); the probe is the truth when it speaks.
               const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
@@ -1278,8 +1200,10 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                     ) : (pend ? <Chip text={inst.provisional ? 'preparing…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
                   </td>
                   <td style={cell}>
-                    {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer">{rb.scenario} ↗</a>
-                      : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
+                    {inst.runbook
+                      ? <a href={inst.runbook.htmlURL} target="_blank" rel="noopener noreferrer"
+                          title="This run's procedure">runbook.md ↗</a>
+                      : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
                   </td>
                   <td style={cell}>
                     {verdictBadge(receipt)}{' '}
@@ -1288,13 +1212,18 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                   <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {v.startsWith('PLANNED') ? (
                       <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
-                        onClick={() => kickoff(board, 'deploy', scenario, inst.name)}>▶ Deploy</button>
+                        title="Execute the reviewed plan"
+                        onClick={() => kickoff(board, 'deploy', inst.name)}>▶ Deploy</button>
                     ) : (
                       <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
-                        onClick={() => kickoff(board, 'run', scenario, inst.name)}>▶ Re-deploy</button>
+                        title="Plan this run again"
+                        onClick={() => kickoff(board, 'plan', inst.name)}>▶ Re-plan</button>
                     )}
-                    <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
-                      onClick={() => kickoff(board, 'teardown', scenario, inst.name)}>Tear down</button>
+                    {inst.deployed === true && (
+                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
+                        title="Remove what this run created"
+                        onClick={() => kickoff(board, 'teardown', inst.name)}>Tear down</button>
+                    )}
                   </td>
                 </tr>
               );
@@ -1306,11 +1235,19 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
   );
 }
 
+// TryPanel is the Runs tab: every run for this repo, and the composer
+// that starts a new one.
+//
+// There is no runbook picker any more. A run owns its own runbook.md —
+// the procedure, authored at plan time and corrected by each deploy —
+// so starting one means naming it and saying what it should do, not
+// choosing from a library of shared documents.
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
-  const [selRunbook, setSelRunbook] = useState('');
-  const [instName, setInstName] = useState('');
-  const [guidance, setGuidance] = useState('');
+  const [name, setName] = useState('');
+  const [intent, setIntent] = useState('');
+  const [refining, setRefining] = useState('');
+  const [refineText, setRefineText] = useState('');
   const [busy, setBusy] = useState('');
 
   const load = useCallback(() => {
@@ -1325,224 +1262,201 @@ function TryPanel({ boardName, onOpenSandbox }) {
     return () => clearInterval(t);
   }, [load]);
 
-  const runbooks = (state && state.runbooks) || [];
   const sandboxes = (state && state.sandboxes) || [];
   const pending = (state && state.pending) || [];
-  const instances = (state && state.instances) || [];
-  const findSb = (inst) => sandboxes.find(s => (s.instance || s.scenario) === inst);
-  const findPending = (inst) => pending.find(p => (p.instance || p.scenario) === inst);
-  const slugName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  const runs = (state && state.instances) || [];
+  const findSb = (n) => sandboxes.find(s => (s.instance || s.scenario) === n);
+  const findPending = (n) => pending.find(p => (p.instance || p.scenario) === n);
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
-  // Which recipe a deployment came from: the sandbox annotation when
-  // one exists, else the longest runbook name that prefixes the
-  // instance name.
-  const runbookFor = (inst) => {
-    const sb = findSb(inst.name);
-    if (sb && sb.scenario) return runbooks.find(r => r.scenario === sb.scenario) || null;
-    let best = null;
-    for (const r of runbooks) {
-      if ((inst.name === r.scenario || inst.name.startsWith(r.scenario + '-')) &&
-          (!best || r.scenario.length > best.scenario.length)) best = r;
-    }
-    return best;
-  };
-
-  // Default instance names auto-increment per runbook: deploy-gcp-1,
-  // -2, … — unique across runbooks (the namespace is flat) and never
-  // colliding with the recipe's own name.
-  const nextRunName = (runbook) => {
-    const taken = new Set([
-      ...instances.map(i => i.name),
-      ...pending.map(p => p.instance || p.scenario),
-      ...sandboxes.map(s => s.instance || s.scenario),
-    ]);
-    for (let n = 1; n < 100; n++) {
-      const candidate = `${runbook}-${n}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-    return `${runbook}-${Date.now() % 1000}`;
-  };
-
-  const kickoff = (mode, scenario, instance) => {
-    setBusy(`${mode}:${scenario}:${instance || ''}`);
+  const kickoff = (mode, runName, text) => {
+    setBusy(`${mode}:${runName}`);
     fetch(`/api/board/${boardName}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, scenario, instance: instance || '', guidance: guidance.trim() }),
+      body: JSON.stringify({ mode, name: runName, intent: (text || '').trim() }),
     }).then(res => {
       if (res.ok) {
-        setGuidance('');
-        setInstName('');
-        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, scenario, instance: instance || '' }] } : prev);
+        setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, instance: runName }] } : prev);
       }
       setTimeout(load, 2000);
       setTimeout(() => setBusy(''), 2000);
     }).catch(() => setBusy(''));
   };
 
-  const activeRunbook = selRunbook || (runbooks[0] && runbooks[0].scenario) || '';
-  const defaultName = activeRunbook ? nextRunName(activeRunbook) : '';
-  const composerInst = instName.trim() ? slugName(instName) : defaultName;
-  const composerPend = composerInst ? findPending(composerInst) : null;
+  const startNew = () => {
+    const n = slug(name);
+    if (!n) return;
+    kickoff('plan', n, intent);
+    setName('');
+    setIntent('');
+  };
+
+  const replan = (runName) => {
+    kickoff('plan', runName, refineText);
+    setRefining('');
+    setRefineText('');
+  };
+
+  const composerName = slug(name);
+  const taken = composerName && runs.some(r => r.name === composerName);
   const cell = { padding: '5px 8px', verticalAlign: 'middle' };
+
+  // A run just clicked has no directory on the branch yet — the first
+  // push lands minutes later, after a cold boot and clone. Show it
+  // immediately so the click is not swallowed.
+  const rows = [...runs];
+  for (const p of pending) {
+    if (p.mode === 'teardown') continue;
+    const n = p.instance || p.scenario;
+    if (n && !rows.some(r => r.name === n)) rows.push({ name: n, provisional: true });
+  }
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
       {state && state.gcpProject === '' && (
         <div style={{ border: '1px solid #b08800', borderRadius: '10px', padding: '8px 12px',
           marginBottom: '10px', color: '#b08800', background: 'rgba(176,136,0,0.08)' }}>
-          ⚠ No GCP project configured — feasibility can't be verified and gcp plans will be
-          blocked. Set one in <a href="#/settings" style={{ color: 'inherit' }}>Settings</a>,
-          or name a project in the run guidance.
+          ⚠ No GCP project configured — a plan will stop at the procedure and tell you what it
+          needs. Set one in <a href="#/settings" style={{ color: 'inherit' }}>Settings</a>.
         </div>
       )}
-      {/* One composer: pick the recipe, name the deployment, steer it. */}
-      {runbooks.length > 0 ? (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '10px 12px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>new:</span>
-            <select value={activeRunbook} onChange={e => setSelRunbook(e.target.value)} style={{ padding: '3px' }}>
-              {runbooks.map(r => <option key={r.scenario} value={r.scenario}>{r.scenario}</option>)}
-            </select>
-            <span style={{ display: 'inline-flex', alignItems: 'center', flex: '0 1 300px',
-              border: '1px solid var(--border-color)', borderRadius: '4px', padding: '0 0 0 8px' }}
-              title="Cloud resources this run creates are named <prefix>-<instance>[-suffix] — the prefix is added for you, so don't repeat the repo in the name">
-              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{(state && state.repoShort) || ''}-</span>
-              <input type="text" value={instName} onChange={e => setInstName(e.target.value)}
-                placeholder={`instance name (default: ${defaultName})`}
-                style={{ flex: 1, padding: '3px 8px 3px 2px', border: 'none', outline: 'none',
-                  background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
-            </span>
-            {composerPend && <Chip text={`${composerPend.mode} queued as ${composerInst}…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
-            <textarea rows={1} value={guidance} onChange={e => setGuidance(e.target.value)}
-              placeholder="guidance — region overrides, flags, 'skip step 4'… (rides this ▶ Run; also the next ▶ Re-deploy)"
-              style={{ flex: 1, border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-            <button className="btn btn-sm" disabled={!activeRunbook || !!composerPend || busy.startsWith(`plan:${activeRunbook}:`)}
-              title="Plan a new instance: scripts, params.env and a PLANNED receipt are pushed for review — nothing executes until you click Deploy on its row"
-              onClick={() => kickoff('plan', activeRunbook, composerInst)}>▶ Plan</button>
-          </div>
+
+      <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>new run:</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', flex: '0 1 320px',
+            border: '1px solid var(--border-color)', borderRadius: '4px', padding: '0 0 0 8px' }}
+            title="Cloud resources this run creates are named <prefix>-<name>[-suffix] — the prefix is added for you, so don't repeat the repo in the name">
+            <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{(state && state.repoShort) || ''}-</span>
+            <input type="text" value={name} onChange={e => setName(e.target.value)}
+              placeholder="name, e.g. deploy-gke-k8s1"
+              style={{ flex: 1, padding: '3px 8px 3px 2px', border: 'none', outline: 'none',
+                background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
+          </span>
+          {taken && <Chip text="name already used" color="#d73a49" bg="rgba(215,58,73,0.12)" />}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
+          <textarea rows={2} value={intent} onChange={e => setIntent(e.target.value)}
+            placeholder="what should this run do? e.g. deploy this repo on GKE with 3 ubuntu nodes and the streams flag on"
+            style={{ flex: 1, border: 'none', outline: 'none', resize: 'vertical',
+              background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+          <button className="btn btn-sm" disabled={!composerName || taken || !!busy}
+            title="Writes the procedure and its scripts, pushed for review. Nothing executes until you approve."
+            onClick={startNew}>▶ Plan</button>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No runs yet — name one above and say what it should do.
         </div>
       ) : (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No runbooks yet — draft them on the Explore tab (Draft Runbooks, or a custom one from a description).
-        </div>
-      )}
-      {/* One table: every deployment across every runbook. A run that
-          was just clicked appears immediately as a provisional row —
-          its directory lands on the branch only after the prepare
-          phase pushes (a cold boot takes minutes). */}
-      {(() => {
-        const rows = [...instances];
-        for (const p of pending) {
-          if (p.mode === 'teardown') continue; // teardown acts on an existing row
-          const name = p.instance || p.scenario;
-          if (!rows.some(i => i.name === name)) {
-            rows.push({ name, provisional: true, scenario: p.scenario });
-          }
-        }
-        return rows.length > 0 && (
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px',
-          padding: '6px 8px', marginBottom: '10px' }}>
-          <div style={{ fontWeight: 700, padding: '4px 8px 2px' }}>Deployments</div>
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '6px 8px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
-                <th style={cell}>deployment</th>
-                <th style={cell}>agent</th>
-                <th style={cell}>runbook</th>
-                <th style={cell}>last run</th>
-                <th style={cell}></th>
-                <th style={{ ...cell, textAlign: 'right' }}></th>
-              </tr>
-            </thead>
             <tbody>
-              {rows.map(inst => {
-                const sb = findSb(inst.name);
-                const pend = findPending(inst.name);
-                // The annotation can be stale (a dead watcher never stamped
-              // the final state); the probe is the truth when it speaks.
-              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
-                const rb = inst.provisional
-                  ? runbooks.find(r => r.scenario === inst.scenario) || null
-                  : runbookFor(inst);
-                const receipt = inst.latestReceipt;
-                const scenario = inst.scenario || (rb && rb.scenario) || (sb && sb.scenario) || inst.name.replace(/-\d+$/, '');
+              {rows.map(run => {
+                const sb = findSb(run.name);
+                const pend = findPending(run.name);
+                // The annotation can be stale (a dead watcher never
+                // stamped the final state); the probe is the truth
+                // when it speaks.
+                const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
+                const receipt = run.latestReceipt;
+                const verdict = ((receipt && receipt.verdict) || '').toUpperCase();
+                const planned = verdict.startsWith('PLANNED');
+                // Whether infrastructure exists is the API's call now,
+                // from the newest receipt that settles it — a re-plan
+                // of a live run must not hide its teardown.
+                const deployed = run.deployed === true;
+                const idle = !running && !pend;
                 return (
-                  <tr key={inst.name} style={{ borderTop: '1px solid var(--border-color)' }}>
-                    <td style={cell}>
-                      {inst.provisional ? (
-                        <span style={{ fontWeight: 500 }}
-                          title="Provisioning — the deployment's directory appears on the branch after the prepare phase pushes (first run boots and clones, a few minutes)">⛭ {inst.name}</span>
-                      ) : (
-                        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
-                          style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
-                          title="This deployment's files on GitHub — params.env, deploy.sh, teardown.sh, receipts">⛭ {inst.name} ↗</a>
-                      )}
-                    </td>
-                    <td style={cell}>
-                      {sb ? (
-                        <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-                          title={`${sb.name} — tasks & logs`}>
-                          {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
-                          {running && runningChipFor(sb, pend)}
-                          {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
-                        </span>
-                      ) : (pend ? <Chip text={inst.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
-                    </td>
-                    <td style={cell}>
-                      {rb ? <a href={rb.htmlURL} target="_blank" rel="noopener noreferrer" title="The recipe this deployment came from">{rb.scenario} ↗</a>
-                        : <span style={{ color: 'var(--text-secondary)' }}>{scenario}</span>}
-                    </td>
-                    <td style={cell}>{verdictBadge(receipt)}</td>
-                    <td style={cell}>
-                      {receipt && (
-                        <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer"
-                          title="Latest receipt — verdict, verify evidence, what is left running">receipt ↗</a>
-                      )}
-                    </td>
-                    <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {(() => {
-                        const v = ((receipt && receipt.verdict) || '').toUpperCase();
-                        const planned = v.startsWith('PLANNED');
-                        const dead = v.startsWith('TORN-DOWN') || v.startsWith('FAILED') || v.startsWith('BLOCKED');
-                        return (
-                          <>
-                            {planned ? (
-                              <button className="btn btn-sm" disabled={running || !!pend}
-                                title="Execute the reviewed plan — runs the pushed deploy.sh"
-                                onClick={() => kickoff('deploy', scenario, inst.name)}>▶ Deploy</button>
-                            ) : (
-                              <button className="btn btn-sm" disabled={running || !!pend}
-                                title="Plan and deploy this instance again — after a teardown, a params.env edit, code drift, or a failed run; reuses its pushed script when nothing drifted"
-                                onClick={() => kickoff('run', scenario, inst.name)}>▶ Re-deploy</button>
-                            )}
-                            <button className="btn btn-sm" disabled={running || !!pend} style={{ marginLeft: '6px' }}
-                              title="Runs the instance's teardown script, verifies resources are gone, writes a teardown receipt"
-                              onClick={() => kickoff('teardown', scenario, inst.name)}>Tear down</button>
-                            {dead && !running && !pend && (
-                              <button className="btn btn-sm" style={{ marginLeft: '6px' }}
-                                title="Remove this retired instance's records from the branch (receipts included) — never touches cloud resources"
-                                onClick={() => {
-                                  fetch(`/api/board/${boardName}/runbook/instance/${inst.name}`, { method: 'DELETE' })
-                                    .then(() => setTimeout(load, 1500));
-                                }}>✕ Remove</button>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </td>
-                  </tr>
+                  <React.Fragment key={run.name}>
+                    <tr style={{ borderTop: '1px solid var(--border-color)' }}>
+                      <td style={cell}>
+                        {run.provisional ? (
+                          <span style={{ fontWeight: 500 }}
+                            title="Provisioning — the run's directory appears on the branch after the plan pushes (a first run boots and clones, a few minutes)">⛭ {run.name}</span>
+                        ) : (
+                          <a href={run.htmlURL} target="_blank" rel="noopener noreferrer"
+                            style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+                            title="This run's files on GitHub">⛭ {run.name} ↗</a>
+                        )}
+                      </td>
+                      <td style={cell}>
+                        {sb ? (
+                          <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                            title={`${sb.name} — tasks & logs`}>
+                            {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
+                            {running && runningChipFor(sb, pend)}
+                            {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                          </span>
+                        ) : (pend ? <Chip text={run.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                      </td>
+                      <td style={cell}>{verdictBadge(receipt)}</td>
+                      <td style={cell}>
+                        {run.runbook && (
+                          <a href={run.runbook.htmlURL} target="_blank" rel="noopener noreferrer"
+                            title="The procedure — read this before approving. Deploys correct it in place.">runbook.md ↗</a>
+                        )}
+                        {receipt && (
+                          <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '8px' }}
+                            title="Latest receipt — verdict, evidence, what is left running">receipt ↗</a>
+                        )}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {planned && (
+                          <button className="btn btn-sm" disabled={!idle} style={{ marginRight: '6px' }}
+                            title="Change the plan before it runs — re-plans in place, keeping this run's history"
+                            onClick={() => { setRefining(refining === run.name ? '' : run.name); setRefineText(''); }}>Refine</button>
+                        )}
+                        {planned ? (
+                          <button className="btn btn-sm" disabled={!idle}
+                            title="Execute the reviewed plan — runs the pushed deploy.sh, then brings runbook.md in line with what actually worked"
+                            onClick={() => kickoff('deploy', run.name, '')}>▶ Deploy</button>
+                        ) : (
+                          <button className="btn btn-sm" disabled={!idle}
+                            title="Plan this run again — after a teardown, an edit, code drift, or a failure"
+                            onClick={() => { setRefining(refining === run.name ? '' : run.name); setRefineText(''); }}>▶ Re-plan</button>
+                        )}
+                        {deployed && (
+                          <button className="btn btn-sm" disabled={!idle} style={{ marginLeft: '6px' }}
+                            title="Runs this run's teardown script, verifies the resources are gone, writes a teardown receipt"
+                            onClick={() => kickoff('teardown', run.name, '')}>Tear down</button>
+                        )}
+                        {!deployed && !run.provisional && idle && (
+                          <button className="btn btn-sm" style={{ marginLeft: '6px' }}
+                            title="Remove this run's records from the branch (receipts included) — never touches cloud resources"
+                            onClick={() => {
+                              fetch(`/api/board/${boardName}/runbook/instance/${run.name}`, { method: 'DELETE' })
+                                .then(() => setTimeout(load, 1500));
+                            }}>✕ Remove</button>
+                        )}
+                      </td>
+                    </tr>
+                    {refining === run.name && (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '0 8px 8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+                            <textarea rows={2} value={refineText} onChange={e => setRefineText(e.target.value)}
+                              placeholder="what to change — e.g. 5 nodes, state bucket in us-east1. The rest of the plan stands."
+                              style={{ flex: 1, border: '1px solid var(--border-color)', borderRadius: '4px',
+                                padding: '4px 8px', resize: 'vertical', background: 'var(--bg-primary, transparent)',
+                                color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
+                            <button className="btn btn-sm" disabled={!refineText.trim() || !idle}
+                              onClick={() => replan(run.name)}>Re-plan</button>
+                            <button className="btn btn-sm" onClick={() => { setRefining(''); setRefineText(''); }}>Cancel</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
-        );
-      })()}
-
+      )}
     </div>
   );
 }
@@ -1593,16 +1507,11 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
   };
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* One column: understanding verbs over the ask box. Runbook
-          authoring is contextual — it lives in the doc list below,
-          scoped to the runbook you opened (or a new one). */}
+      {/* One column: understanding verbs over the ask box. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
         <button className="btn" disabled={busy === 'onboard'}
           title="Agent reads the repo and writes overview, architecture (mermaid) and code-map docs to your fork's exploration/notes branch"
           onClick={() => kickoff('onboard')}>Generate Overview</button>
-        <button className="btn" disabled={busy === 'runbook' || (exp && exp.pending === 'runbook')}
-          title="Agent drafts (or refreshes against latest code) the standard runbooks that apply: deploy-gcp, deploy-in-pod, upgrade-gcp — run them on the Runs tab"
-          onClick={() => kickoff('runbook', { scenario: 'all' })}>Draft Runbooks</button>
         <span style={{ position: 'relative' }}>
           <button className="btn" disabled={busy === 'activity'}
             title="Agent digests the recent window: themes, churn, notable merges, and maintainer asks (help-wanted, review-starved PRs)"
@@ -1673,8 +1582,7 @@ function ExplorePanel({ boardName, onOpenSandbox }) {
         )}
         {exp && (
           <ExploreDocViewer boardName={boardName} docs={exp.docs || []}
-            drafting={exp.pending === 'runbook'}
-            onAuthorRunbook={(name, charter) => kickoff('runbook', { scenario: name, guidance: charter })} />
+ />
         )}
       </div>
     </div>
@@ -2097,7 +2005,7 @@ function Work({ onBack, namespace }) {
               >Explore</button>
               <button
                 className={`group-tab ${shown === 'try' ? 'active' : ''}`}
-                title="Run the repo from its runbooks — deploy, verify, tear down"
+                title="Plan, deploy, verify and tear down — each run carries its own procedure"
                 onClick={() => setActiveGroup('try')}
               >Runs</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
