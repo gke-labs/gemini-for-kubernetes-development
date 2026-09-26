@@ -128,4 +128,16 @@ func TestGeminiEngineIsConfiguredForACP(t *testing.T) {
 	if !hasACPFlag {
 		t.Errorf("gemini engine args %v do not put the CLI in ACP mode", engine.Args)
 	}
+	// Without this the checkout is an untrusted folder, and gemini
+	// refuses every approval mode but prompting — which is the whole
+	// point of a session nobody is sitting in front of.
+	var trusts bool
+	for _, kv := range engine.Env {
+		if kv == "GEMINI_CLI_TRUST_WORKSPACE=true" {
+			trusts = true
+		}
+	}
+	if !trusts {
+		t.Errorf("gemini engine env %v does not trust the workspace", engine.Env)
+	}
 }
