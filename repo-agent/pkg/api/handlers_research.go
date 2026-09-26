@@ -126,6 +126,11 @@ type researchSandboxView struct {
 	// survives on the PVC but the engine is gone, so resuming means a
 	// fresh session over the same history.
 	Paused bool `json:"paused"`
+	// Starting is a sandbox whose pod is not running yet. The object
+	// exists minutes before the conversation can be had — an image to
+	// pull, a PVC to bind, a repo to clone — and reporting that as up
+	// sends people to a session that cannot answer.
+	Starting bool `json:"starting,omitempty"`
 	// PodIP is empty until the pod is running. Its presence is what
 	// "reachable" means for every other call here.
 	PodIP string `json:"-"`
@@ -191,10 +196,12 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 		return
 	}
 
+	running := s.runningSandboxPods(ctx, namespace)
 	views := []researchSandboxView{}
 	exists := map[string]bool{}
 	for i := range list.Items {
 		if view, ok := researchViewFromSandbox(&list.Items[i]); ok {
+			view.Starting = !view.Paused && !running[view.Sandbox]
 			views = append(views, view)
 			exists[view.SessionID] = true
 		}
@@ -290,6 +297,30 @@ func (s *Server) findResearchSandbox(ctx context.Context, namespace, sessionID s
 		}
 	}
 	return researchSandboxView{}, false, nil
+}
+
+// runningSandboxPods names the sandboxes in the namespace that have a
+// running pod behind them.
+//
+// One list for the whole page rather than a lookup per row: the answer
+// is only used to colour a state pill, and a member with a dozen
+// sessions should not cost a dozen pod lists every ten seconds. A
+// failure is reported as "nothing is running", which reads as starting
+// — the honest answer when the pods cannot be seen at all.
+func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]bool {
+	running := map[string]bool{}
+	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox"})
+	if err != nil {
+		klog.V(2).Infof("research: cannot list sandbox pods in %s: %v", namespace, err)
+		return running
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
+			running[pod.Labels["sandbox"]] = true
+		}
+	}
+	return running
 }
 
 // researchPodIP returns the sandbox pod's IP, or "" when there is no

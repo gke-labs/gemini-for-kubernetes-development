@@ -452,6 +452,31 @@ func TestResearchKickoffMovesFromClaimToSandbox(t *testing.T) {
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
 }
 
+// The window this was actually lost in: `factory research start`
+// creates the Sandbox and then clones for minutes, so the launch is
+// still running while the sandbox already exists — and the trim pass
+// reads that existence as served. Skipping the stamp because the runner
+// is busy dropped the claim with the kickoff still on it, and the
+// session came up untitled with nothing ever asked.
+func TestResearchKickoffIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
+	g := gomega.NewWithT(t)
+	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	kickoff := research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"}
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	fake := newFakeLauncher()
+	fake.running["alice/"+name] = true
+	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt+"|"+kickoff.Encode()))
+	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), researchSandboxObj("alice", name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "a sandbox that exists must not be launched again")
+	annotations := sandboxAnnotations(t, r, name)
+	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff))
+	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("what happened · 2 weeks"))
+}
+
 // Once the pod is up the controller opens the conversation itself: the
 // member may be minutes and a closed tab away.
 func TestResearchKickoffIsSentAndCleared(t *testing.T) {

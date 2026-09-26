@@ -151,14 +151,19 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
 		key := researchKey(claim.member, work.repo, claim.sessionID)
-		if r.Factory.IsRunning(key) {
+		// Served is checked before running, and the order is load-bearing.
+		// `factory research start` creates the Sandbox early and then
+		// clones for minutes, so there is a long window where the launch
+		// is still running AND the sandbox already exists. trimMailbox
+		// reads that same existence as served and drops the claim later in
+		// this very reconcile — so skipping the stamp while the launch
+		// runs loses the opening turn, and the session comes up untitled
+		// with nothing ever asked.
+		if r.researchClaimServed(claim, work) {
+			r.stampResearchKickoff(ctx, work, claim)
 			continue
 		}
-		if r.researchClaimServed(claim, work) {
-			// The sandbox is up: hand the claim's kickoff over to it
-			// before the trim pass drops the claim, later in this very
-			// reconcile.
-			r.stampResearchKickoff(ctx, work, claim)
+		if r.Factory.IsRunning(key) {
 			continue
 		}
 		if researchClaimExpired(claim, time.Now()) {

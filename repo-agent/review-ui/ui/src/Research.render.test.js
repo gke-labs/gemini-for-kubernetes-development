@@ -442,6 +442,21 @@ describe('ResearchPanel', () => {
         expect(container.textContent).toContain('opening failed');
     });
 
+    test('a sandbox whose pod is not up yet is starting, not up', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessions: [{
+                sessionId: 'eeeeeeee-5555', sandbox: 'rsch-repo-agent-5', repo: 'repo-agent',
+                title: 'overview', starting: true, opening: true, createdAt: '2026-09-26T10:00:00Z',
+            }],
+        }));
+
+        await renderPanel();
+        // Starting wins over opening: the prompt cannot land on a pod
+        // that does not exist, and the wait is the thing being reported.
+        expect(container.textContent).toContain('starting…');
+        expect(container.textContent).not.toContain('opening…');
+    });
+
     test('the notes branch is a footnote link to the member\'s fork', async () => {
         global.fetch = jest.fn(() => reply(200, { ...sessions, forkOwner: 'barney-s' }));
 
