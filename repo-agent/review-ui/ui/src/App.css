@@ -1033,3 +1033,122 @@ body.dark-mode .warning-banner {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Rendered markdown — the research transcript and the explore doc
+   viewer. Agents answer in GFM, so tables are common and often wide;
+   a table scrolls on its own axis rather than stretching the column
+   it sits in. */
+.md-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: smaller;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--border-color);
+  padding: 5px 9px;
+  vertical-align: top;
+}
+
+.md-body th {
+  background-color: var(--bg-secondary);
+  font-weight: 600;
+}
+
+.md-body tbody tr:nth-child(even) {
+  background-color: var(--bg-hover);
+}
+
+/* Long prose in a narrow column needs the break; an unbroken URL or a
+   Go identifier would otherwise widen the whole transcript. */
+.md-body {
+  overflow-wrap: break-word;
+}
+
+.md-body pre {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.md-body :is(h1, h2, h3, h4) {
+  margin: 14px 0 6px;
+  line-height: 1.25;
+}
+
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+
+/* Terminal view of the research transcript. Solarized light is the
+   light canvas because it is the palette people already read terminals
+   on; the dark canvas is a plain charcoal rather than the page's
+   near-black, so the transcript reads as a pane and not as a hole. */
+.research-terminal {
+  --term-bg: #fdf6e3;      /* solarized base3 */
+  --term-fg: #657b83;      /* base00 */
+  --term-dim: #93a1a1;     /* base1 */
+  --term-accent: #268bd2;  /* blue */
+  --term-green: #859900;
+  --term-yellow: #b58900;
+  --term-red: #dc322f;
+  --term-quote: rgba(147, 161, 161, 0.18);
+
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+body.dark-mode .research-terminal {
+  --term-bg: #24282c;
+  --term-fg: #d3d7dc;
+  --term-dim: #8b949e;
+  --term-accent: #79b8ff;
+  --term-green: #85e89d;
+  --term-yellow: #ffab70;
+  --term-red: #f97583;
+  --term-quote: rgba(139, 148, 158, 0.16);
+}
+
+/* The whole point of the view: the agent's source, unparsed, with its
+   own line breaks — which is what makes a table line up. */
+.research-terminal .term-line {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  margin: 0;
+}
+
+.research-terminal .term-user {
+  color: var(--term-accent);
+  font-weight: 600;
+  margin: 12px 0 2px;
+}
+
+.research-terminal .term-agent { margin-bottom: 8px; }
+.research-terminal .term-dim { color: var(--term-dim); }
+.research-terminal .term-error { color: var(--term-red); }
+/* A sigil is decoration, not content — leave it out of a copied block. */
+.research-terminal .term-sigil { user-select: none; }
+
+.research-terminal .term-status-completed { color: var(--term-green); }
+.research-terminal .term-status-failed { color: var(--term-red); }
+.research-terminal .term-status-in_progress { color: var(--term-yellow); }
+.research-terminal .term-status-pending { color: var(--term-dim); }
+
+/* Expanded tool output and thinking: still terminal text, set back from
+   the log so it reads as the detail under a line rather than as a line. */
+.research-terminal .term-quote {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  margin: 2px 0 6px 14px;
+  padding: 4px 8px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--term-quote);
+  border-left: 2px solid var(--term-dim);
+  color: var(--term-fg);
+}
