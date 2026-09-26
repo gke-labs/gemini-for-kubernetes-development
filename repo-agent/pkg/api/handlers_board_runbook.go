@@ -116,15 +116,27 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Mode     string `json:"mode"`     // run (default) | teardown
-		Scenario string `json:"scenario"` // the runbook name: deploy-gcp, …
-		Instance string `json:"instance"` // default: the runbook name
+		Mode string `json:"mode"` // plan (default) | deploy | teardown
+		// Name is the run's identity. Scenario and Instance are the
+		// older spelling of the same thing and are still accepted.
+		Name     string `json:"name"`
+		Scenario string `json:"scenario"`
+		Instance string `json:"instance"`
+		// Intent is this run's brief, or the amendment on a re-plan.
+		// Guidance is its older name.
+		Intent   string `json:"intent"`
 		Guidance string `json:"guidance"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Scenario) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "scenario is required"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
+	name := firstNonEmpty(req.Name, req.Instance, req.Scenario)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	intent := strings.TrimSpace(firstNonEmpty(req.Intent, req.Guidance))
 	if req.Mode == "" {
 		req.Mode = "run"
 	}
@@ -137,7 +149,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	// runbooks — the pod's metadata default is the PLATFORM cluster's
 	// project, never a tenant's deploy target. In-pod runbooks need no
 	// project; teardown is allowed so cleanup is never locked out.
-	if req.Mode != "teardown" && !strings.HasSuffix(strings.TrimSpace(req.Scenario), "-in-pod") {
+	if req.Mode != "teardown" && !strings.HasSuffix(name, "-in-pod") {
 		if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr != nil || len(sec.Data["project"]) == 0 {
 			c.JSON(http.StatusPreconditionFailed, gin.H{"error": "no GCP project configured — set one in Settings, or name a project in the run guidance and use an -in-pod runbook otherwise"})
 			return
@@ -148,18 +160,16 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	if req.Mode == "run" || req.Mode == "plan" {
-		annotations["board.gemini.google.com/runbook-guidance"] = strings.TrimSpace(req.Guidance)
-	}
 	requests := map[string]string{}
 	if raw := annotations[annoBoardRequests]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &requests)
 	}
-	key := "runbook-" + req.Mode + "-" + strings.TrimSpace(req.Scenario)
-	if inst := strings.TrimSpace(req.Instance); inst != "" {
-		key += ":" + inst
-	}
-	requests[key] = namespace + "|" + nowRFC3339()
+	key := "runbook-" + req.Mode + "-" + name
+	// The intent rides the claim rather than a board annotation. A
+	// board-level field is shared by every run and outlives all of
+	// them — which is how a question typed for one deployment ended up
+	// steering the next. This dies when the claim is consumed.
+	requests[key] = namespace + "|" + nowRFC3339() + "|" + clampIntent(intent)
 	buf, _ := json.Marshal(requests)
 	annotations[annoBoardRequests] = string(buf)
 	board.SetAnnotations(annotations)
@@ -496,4 +506,33 @@ func (s *Server) receiptVerdict(ctx context.Context, gh *github.Client, member, 
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
 	return strings.TrimSpace(line)
+}
+
+// firstNonEmpty returns the first value with content, so the older
+// request spellings keep working while the UI moves over.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if t := strings.TrimSpace(v); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// intentClaimLimit bounds what rides an annotation. Kubernetes caps
+// all annotations on an object at 256KB together, and a board carries
+// one claim per queued run; a brief longer than this is a document,
+// and belongs in the run's own runbook.md.
+const intentClaimLimit = 4000
+
+// clampIntent keeps a claim from being the thing that makes a board
+// unwritable. Newlines go too: the claim is a single annotation value
+// read back by splitting on "|".
+func clampIntent(intent string) string {
+	intent = strings.ReplaceAll(intent, "|", "/")
+	intent = strings.Join(strings.Fields(intent), " ")
+	if len(intent) > intentClaimLimit {
+		return intent[:intentClaimLimit]
+	}
+	return intent
 }

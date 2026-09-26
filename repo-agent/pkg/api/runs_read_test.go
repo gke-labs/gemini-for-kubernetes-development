@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Deployed-ness decides whether teardown is offered, so the rule has
 // to survive a re-plan of a live run. PLANNED must not settle it:
@@ -61,5 +64,38 @@ func TestBothRunLayoutsAreRead(t *testing.T) {
 	}
 	if legacyRunsPath != "docs-exploration/runbook-deployments" {
 		t.Errorf("legacyRunsPath = %q", legacyRunsPath)
+	}
+}
+
+// The intent rides the claim so it dies when the claim is consumed. A
+// board-level field is shared by every run and outlives all of them,
+// which is how a brief typed for one deployment came to steer the
+// next — the fossilized explore-guidance seen live on several boards.
+func TestClampIntentKeepsAClaimWritable(t *testing.T) {
+	// "|" is the claim's own separator; an intent carrying one would
+	// split into a bogus field on the way back.
+	if got := clampIntent("five nodes | us-east1"); got != "five nodes / us-east1" {
+		t.Errorf("clampIntent did not neutralise the separator: %q", got)
+	}
+	// Newlines have to go: the claim is one annotation value.
+	if got := clampIntent("five nodes\n\nand us-east1"); got != "five nodes and us-east1" {
+		t.Errorf("clampIntent left newlines: %q", got)
+	}
+	// All annotations on an object share a 256KB budget.
+	long := clampIntent(strings.Repeat("x", intentClaimLimit*2))
+	if len(long) != intentClaimLimit {
+		t.Errorf("clampIntent len = %d, want %d", len(long), intentClaimLimit)
+	}
+}
+
+func TestFirstNonEmptyPrefersTheNewSpelling(t *testing.T) {
+	if got := firstNonEmpty("", "  ", "instance-name"); got != "instance-name" {
+		t.Errorf("firstNonEmpty = %q", got)
+	}
+	if got := firstNonEmpty("name", "instance"); got != "name" {
+		t.Errorf("firstNonEmpty = %q, want the first", got)
+	}
+	if got := firstNonEmpty("", " "); got != "" {
+		t.Errorf("firstNonEmpty = %q, want empty", got)
 	}
 }
