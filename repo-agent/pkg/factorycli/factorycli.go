@@ -163,7 +163,7 @@ type RunOptions struct {
 	// Mode is plan | deploy | teardown.
 	Mode string
 	// Name is the run's identity and its directory under
-	// docs-exploration/runs/. It is the old instance name: adoption of
+	// docs-exploration/agent-runs/. It is the old instance name: adoption of
 	// a legacy deployment matches on it, and so does the sandbox.
 	Name string
 	// Intent is the owner's free text — the brief on a first plan, the

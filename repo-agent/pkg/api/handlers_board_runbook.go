@@ -344,15 +344,22 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// runsPath and legacyRunsPath are the two layouts a deployment can
-// live in. `factory run` writes the first; `factory runbook` wrote the
-// second and is being retired. A run is adopted into the new path the
-// first time anything touches it, so both are read until the last
-// legacy deployment has been torn down or adopted.
-const (
-	runsPath       = "docs-exploration/runs"
-	legacyRunsPath = "docs-exploration/runbook-deployments"
-)
+// runsPath is where `factory run` writes; legacyRunPaths are where a
+// run may still be found until it is adopted, which happens the first
+// time anything touches it.
+//
+// The middle path is a rename, not history: "runs/" is a bare
+// .gitignore entry in a great many repositories — TensorBoard and
+// friends write there — and a bare pattern matches at any depth, so
+// docs-exploration/runs/ was ignored wherever that appeared. The
+// symptom was quiet: agents could not read files under it, and a new
+// run's commit staged nothing at all.
+const runsPath = "docs-exploration/agent-runs"
+
+var legacyRunPaths = []string{
+	"docs-exploration/runbook-deployments",
+	"docs-exploration/runs",
+}
 
 // deployedVerdicts are the receipt verdicts that settle whether
 // infrastructure exists. PLANNED is absent on purpose: planning does
@@ -383,7 +390,7 @@ const receiptScanLimit = 5
 func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, member, repo string, ref *github.RepositoryContentGetOptions) []gin.H {
 	byName := map[string]gin.H{}
 	order := []string{}
-	for _, base := range []string{legacyRunsPath, runsPath} {
+	for _, base := range append(append([]string{}, legacyRunPaths...), runsPath) {
 		_, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, base, ref)
 		if derr != nil {
 			continue
@@ -393,7 +400,7 @@ func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, memb
 				continue
 			}
 			row := s.readRunDirectory(ctx, gh, member, repo, entry, ref)
-			row["legacy"] = base == legacyRunsPath
+			row["legacy"] = base != runsPath
 			if _, seen := byName[entry.GetName()]; !seen {
 				order = append(order, entry.GetName())
 			}

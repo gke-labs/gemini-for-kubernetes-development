@@ -18,7 +18,7 @@ func renderRun(t *testing.T, mode string, p RunParams) string {
 func TestRunPromptsCarryTheRunDirectory(t *testing.T) {
 	for _, mode := range []string{"plan", "deploy", "teardown"} {
 		got := renderRun(t, mode, RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-		if want := "docs-exploration/runs/deploy-gke-k8s1/"; !strings.Contains(got, want) {
+		if want := "docs-exploration/agent-runs/deploy-gke-k8s1/"; !strings.Contains(got, want) {
 			t.Errorf("%s prompt does not name %s", mode, want)
 		}
 		// A run owns one directory. Any mention of the old shared
@@ -110,7 +110,7 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 	s := string(b)
 	for _, want := range []string{
 		"adoptLegacyInstance",
-		"docs-exploration/runbook-deployments/${RUN_NAME}",
+		"docs-exploration/runbook-deployments docs-exploration/runs",
 		// --ignore-removal will not record the old path vanishing, so
 		// the removal has to be staged explicitly or the branch keeps
 		// both copies.
@@ -124,6 +124,18 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 	// when the test fails.
 	if strings.Contains(s, `[ -d "${RUN_DIR}" ] && return 0`) {
 		t.Error("guard written as a bare && list; under set -e a false test kills the run")
+	}
+	// "runs/" is a bare .gitignore entry in a great many repos
+	// (TensorBoard writes there) and a bare pattern matches at any
+	// depth, so docs-exploration/runs/ was ignored wherever it
+	// appeared — silently, because git add's refusal was suppressed.
+	if strings.Contains(s, `RUN_DIR="docs-exploration/runs/`) {
+		t.Error("run directory is back under runs/, which repositories commonly gitignore")
+	}
+	// A staging failure must be loud. Swallowing it turns a completed
+	// run into "nothing to commit" with the work already done.
+	if strings.Contains(s, `git add --ignore-removal "${RUN_DIR}" 2>/dev/null`) {
+		t.Error("git add errors are suppressed again; an ignored path would vanish the run")
 	}
 }
 
@@ -202,7 +214,29 @@ func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRunScript: %v", err)
 	}
-	if !strings.Contains(string(b), `if [ -z "${RUN_NAME}" ]; then`) {
+	if !strings.Contains(string(b), `[ -z "${RUN_NAME}" ]`) {
 		t.Error("adoptLegacyInstance does not guard against an empty run name")
+	}
+}
+
+// Observed live: a teardown edited .gitignore to get at its own files
+// and wandered into a shared doc. Neither is inside the run's
+// directory, so `git add ${RUN_DIR}` never staged them — and the
+// leftover modifications made the push-race replay fail with "cannot
+// rebase: You have unstaged changes", turning a recoverable race into
+// a lost receipt.
+func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "git checkout -f -- .") {
+		t.Error("run.sh does not discard changes outside the run directory")
+	}
+	// Belt and braces: even a clean-tree check can race, so the replay
+	// must survive a dirty worktree on its own.
+	if !strings.Contains(s, `git rebase --autostash`) {
+		t.Error("the push-race replay is not autostashing; an unstaged file will block it")
 	}
 }

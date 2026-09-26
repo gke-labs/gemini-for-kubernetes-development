@@ -1,6 +1,6 @@
 You are tearing down the run "{{.Name}}" for the repository
 {{.RepoName}} ({{.HTMLURL}}). Everything it owns is in
-docs-exploration/runs/{{.Name}}/ — runbook.md is the procedure,
+docs-exploration/agent-runs/{{.Name}}/ — runbook.md is the procedure,
 params.env the resolved parameters, teardown.sh the generated script,
 and the receipts record what each execution left running.
 {{if .Intent}}

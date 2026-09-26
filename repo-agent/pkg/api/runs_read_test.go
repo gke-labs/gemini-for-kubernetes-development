@@ -56,14 +56,30 @@ func TestVerdictWordIgnoresTrailingProse(t *testing.T) {
 	}
 }
 
-// Both layouts are read until the last legacy deployment is adopted
-// or torn down; their teardown has to stay reachable in the meantime.
-func TestBothRunLayoutsAreRead(t *testing.T) {
-	if runsPath != "docs-exploration/runs" {
+// Every layout a run may still be sitting in is read, until the last
+// one is adopted or torn down; teardown has to stay reachable.
+func TestEveryRunLayoutIsRead(t *testing.T) {
+	if runsPath != "docs-exploration/agent-runs" {
 		t.Errorf("runsPath = %q", runsPath)
 	}
-	if legacyRunsPath != "docs-exploration/runbook-deployments" {
-		t.Errorf("legacyRunsPath = %q", legacyRunsPath)
+	// "runs/" is a bare .gitignore entry in a great many repos and a
+	// bare pattern matches at any depth, so this path was ignored
+	// wherever it appeared — silently.
+	if runsPath == "docs-exploration/runs" {
+		t.Error("runsPath is back under runs/, which repositories commonly gitignore")
+	}
+	want := map[string]bool{
+		"docs-exploration/runbook-deployments": true,
+		"docs-exploration/runs":                true,
+	}
+	for _, p := range legacyRunPaths {
+		if !want[p] {
+			t.Errorf("unexpected legacy path %q", p)
+		}
+		delete(want, p)
+	}
+	for p := range want {
+		t.Errorf("legacy path %q is no longer read; runs there become invisible", p)
 	}
 }
 
