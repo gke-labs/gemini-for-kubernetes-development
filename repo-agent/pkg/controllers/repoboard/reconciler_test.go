@@ -44,16 +44,17 @@ import (
 )
 
 type fakeLaunch struct {
-	Key         string
-	FixOpts     *factorycli.FixOptions
-	ReviewOpts  *factorycli.ReviewOptions
-	PRWatchOpts *factorycli.PRWatchOptions
-	TriageOpts  *factorycli.TriageOptions
-	PlanOpts    *factorycli.PlanOptions
-	PRTaskOpts  *factorycli.PRTaskOptions
-	PRTaskKind  string
-	ExploreOpts *factorycli.ExploreOptions
-	RunOpts     *factorycli.RunOptions
+	Key          string
+	FixOpts      *factorycli.FixOptions
+	ReviewOpts   *factorycli.ReviewOptions
+	PRWatchOpts  *factorycli.PRWatchOptions
+	TriageOpts   *factorycli.TriageOptions
+	PlanOpts     *factorycli.PlanOptions
+	PRTaskOpts   *factorycli.PRTaskOptions
+	PRTaskKind   string
+	ExploreOpts  *factorycli.ExploreOptions
+	RunOpts      *factorycli.RunOptions
+	ResearchOpts *factorycli.ResearchOptions
 }
 
 type fakeLauncher struct {
@@ -140,6 +141,16 @@ func (f *fakeLauncher) StartExplore(key string, opts factorycli.ExploreOptions) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, ExploreOpts: &opts})
+	return true
+}
+
+// Records unconditionally, like StartExplore and StartRun: the single
+// flight under test is the caller's IsRunning check, and a fake that
+// refused a busy key would pass whether or not the caller made it.
+func (f *fakeLauncher) StartResearch(key string, opts factorycli.ResearchOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, ResearchOpts: &opts})
 	return true
 }
 

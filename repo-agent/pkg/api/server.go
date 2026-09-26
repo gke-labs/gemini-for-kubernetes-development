@@ -72,6 +72,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/board/:board/prs/:id/address-comments", s.addressBoardPR)
 		api.POST("/board/:board/prs/:id/investigate", s.investigateBoardPR)
 		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
+		api.POST("/board/:board/research", s.startResearchSession)
 		api.POST("/board/:board/explore", s.kickoffExplore)
 		api.GET("/board/:board/exploration", s.getBoardExploration)
 		api.GET("/board/:board/exploration/doc", s.getBoardExplorationDoc)

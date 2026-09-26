@@ -260,20 +260,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mailFixes, mailReviews, mailTriages, mailPlans, mailPRTasks, mailExplores, mailRunbooks := r.mailboxPlans(work)
-	fixes = append(fixes, mailFixes...)
-	reviews = append(reviews, mailReviews...)
+	mail := r.mailboxPlans(work)
+	fixes = append(fixes, mail.fixes...)
+	reviews = append(reviews, mail.reviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
 	// Clicks override the rejected-draft tombstone; auto candidates don't.
 	clickedTriage := map[int]bool{}
-	for _, n := range mailTriages {
+	for _, n := range mail.triages {
 		clickedTriage[n] = true
 	}
 	seenTriage := map[int]bool{}
 	for _, issue := range triageCandidates {
 		seenTriage[issue.GetNumber()] = true
 	}
-	for _, n := range mailTriages {
+	for _, n := range mail.triages {
 		if seenTriage[n] {
 			continue
 		}
@@ -293,8 +293,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, plan := range fixes {
 		namespaces[plan.executor] = true
 	}
-	for _, req := range mailPlans {
+	for _, req := range mail.plans {
 		namespaces[req.member] = true
+	}
+	// A research claim is served by its sandbox existing, so the
+	// member's namespace has to be one the sandbox load covers. Boards
+	// are personal today, which makes that the board's own namespace —
+	// listed already. This is here for the same reason the plan claims
+	// above list theirs: a claim from elsewhere would otherwise be
+	// relaunched on every reconcile.
+	for _, claim := range mail.research {
+		namespaces[claim.member] = true
 	}
 	for _, plan := range reviews {
 		if plan.executor != "" {
@@ -320,7 +329,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, issue := range triageCandidates {
 		r.ensureTriage(ctx, work, issue, clickedTriage[issue.GetNumber()])
 	}
-	for _, req := range mailPlans {
+	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
 	}
 
@@ -328,9 +337,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// the ownership annotations they stamp are what stops resumeReviews
 	// from reading a follow-up's fresh factory-pr sandbox as an
 	// interrupted review.
-	converted := r.ensurePRTaskClaims(ctx, work, mailPRTasks)
-	r.ensureExploreClaims(ctx, work, mailExplores)
-	r.ensureRunbookClaims(ctx, work, mailRunbooks)
+	converted := r.ensurePRTaskClaims(ctx, work, mail.prTasks)
+	r.ensureExploreClaims(ctx, work, mail.explores)
+	r.ensureRunbookClaims(ctx, work, mail.runbooks)
+	r.ensureResearchClaims(ctx, work, mail.research)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
@@ -543,16 +553,31 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 	}
 }
 
+// mailbox is one parse of the kickoff annotation: a slice per verb the
+// UI can click. A struct rather than a return list because there are
+// eight of them now, and a reader had to count commas to tell which was
+// which.
+type mailbox struct {
+	fixes    []fixPlan
+	reviews  []reviewPlan
+	triages  []int
+	plans    []planRequest
+	prTasks  []prTaskClaim
+	explores []exploreClaim
+	runbooks []runbookClaim
+	research []researchClaim
+}
+
 // mailboxPlans turns pending UI requests into plans; consent is the click,
 // recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []int, []planRequest, []prTaskClaim, []exploreClaim, []runbookClaim) {
+func (r *Reconciler) mailboxPlans(work *workState) mailbox {
 	raw := work.board.GetAnnotations()[AnnotationRequests]
 	if raw == "" {
-		return nil, nil, nil, nil, nil, nil, nil
+		return mailbox{}
 	}
 	requests := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return nil, nil, nil, nil, nil, nil, nil
+		return mailbox{}
 	}
 	var fixes []fixPlan
 	var reviews []reviewPlan
@@ -561,6 +586,7 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 	var prTasks []prTaskClaim
 	var explores []exploreClaim
 	var runbookClaims []runbookClaim
+	var research []researchClaim
 	for key, member := range requests {
 		switch {
 		case strings.HasPrefix(key, "fix-"):
@@ -610,6 +636,14 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 				}
 				explores = append(explores, exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt})
 			}
+		case strings.HasPrefix(key, "research-"):
+			// research-<session id>: one deep-research conversation, and
+			// the sandbox that hosts it. Not board work — the board is
+			// only the mailbox that reaches the controller's factory
+			// binary.
+			if claim, ok := parseResearchClaim(key, member); ok {
+				research = append(research, claim)
+			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
 			kind, numStr, _ := strings.Cut(key, "-")
 			if n, err := strconv.Atoi(numStr); err == nil {
@@ -617,7 +651,16 @@ func (r *Reconciler) mailboxPlans(work *workState) ([]fixPlan, []reviewPlan, []i
 			}
 		}
 	}
-	return fixes, reviews, triages, plans, prTasks, explores, runbookClaims
+	return mailbox{
+		fixes:    fixes,
+		reviews:  reviews,
+		triages:  triages,
+		plans:    plans,
+		prTasks:  prTasks,
+		explores: explores,
+		runbooks: runbookClaims,
+		research: research,
+	}
 }
 
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
@@ -1163,6 +1206,17 @@ func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
 				claimedAt = time.Time{}
 			}
 			if r.exploreClaimServed(exploreClaim{kind: kind, member: claimMember, claimedAt: claimedAt}, work) {
+				continue
+			}
+		case strings.HasPrefix(key, "research-"):
+			claim, ok := parseResearchClaim(key, member)
+			if !ok {
+				continue // malformed: nothing will ever serve it
+			}
+			// Dropped once the session's sandbox exists, and dropped
+			// unserved once the claim outlives its TTL — so a session
+			// that cannot be created does not sit here forever.
+			if r.researchClaimServed(claim, work) || researchClaimExpired(claim, time.Now()) {
 				continue
 			}
 		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
