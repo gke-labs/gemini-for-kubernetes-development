@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,14 +44,38 @@ import (
 )
 
 type boardMockRT struct {
+	mu        sync.Mutex
 	responses map[string]string
+	// writes records every non-GET as "METHOD path", in order, so a
+	// test can assert what a handler actually changed on the fork —
+	// deleting the wrong file and deleting nothing look the same from
+	// the response alone.
+	writes []string
 }
 
 func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
-	body, ok := m.responses[req.URL.String()]
+	if req.Method != http.MethodGet {
+		m.mu.Lock()
+		m.writes = append(m.writes, req.Method+" "+req.URL.Path)
+		m.mu.Unlock()
+	}
+	// A method-qualified key wins, so a test can answer a DELETE to a
+	// path it also serves a GET for.
+	body, ok := m.responses[req.Method+" "+req.URL.String()]
+	if !ok {
+		body, ok = m.responses[req.URL.String()]
+	}
 	status := http.StatusOK
 	if !ok {
+		// An unregistered read is a 404 — that is how tests say a path
+		// does not exist. An unregistered write succeeds: what it did
+		// is in writes, and making every test spell out a response for
+		// each file it expects deleted would only restate the
+		// assertion.
 		body, status = `{}`, http.StatusNotFound
+		if req.Method != http.MethodGet {
+			status = http.StatusOK
+		}
 	}
 	return &http.Response{
 		StatusCode: status,
@@ -61,6 +86,14 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
+	server, r, dyn, _ := boardTestServerWithRT(t, ghResponses, objs...)
+	return server, r, dyn
+}
+
+// boardTestServerWithRT hands back the fake GitHub as well, for tests
+// about what a handler writes rather than what it returns.
+func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient, *boardMockRT) {
 	t.Helper()
 	// Package-global caches; drop verdicts from earlier tests.
 	workFeedCache.Lock()
@@ -99,9 +132,10 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 		Data:       map[string][]byte{"oauth_pat": []byte("gho_alice")},
 	})
 
+	rt := &boardMockRT{responses: ghResponses}
 	prev := githubClientForToken
 	githubClientForToken = func(_ context.Context, _ string) *github.Client {
-		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &boardMockRT{responses: ghResponses}})
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: rt})
 	}
 	t.Cleanup(func() { githubClientForToken = prev })
 
@@ -131,7 +165,8 @@ func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtim
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
-	return server, r, dynamicClient
+	r.DELETE("/board/:board/runbook/instance/:instance", server.removeRunbookInstance)
+	return server, r, dynamicClient, rt
 }
 
 func boardCR() *unstructured.Unstructured {
