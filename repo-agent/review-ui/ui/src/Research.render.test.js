@@ -189,6 +189,26 @@ describe('ResearchConversation', () => {
         expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
     });
 
+    test('the prompt sigil does not borrow the spacing that separates turns', async () => {
+        // It is the same mark as a user turn's and wants the same
+        // colour, which is how it came to wear .term-user — but that
+        // class also carries `margin: 12px 0 2px`, the gap between one
+        // turn and the last. On the prompt that put the `❯` half a line
+        // below the caret beside it, and made the row that much taller
+        // than the line in it, which pushed the status line down with
+        // it. jsdom has no layout, so the class list is the only place
+        // this is visible; the colour lives in a .term-prompt rule now.
+        await withATable('| a | b |\n| :-- | :-- |\n| 1 | 2 |');
+
+        const sigil = container.querySelector('.term-prompt .term-sigil');
+        expect(sigil.textContent).toBe('❯ ');
+        expect(sigil.className).toBe('term-sigil');
+
+        // The transcript's own turns still want that spacing — this is
+        // about the prompt only.
+        expect(container.querySelector('.term-user').className).toContain('term-user');
+    });
+
     test('the raw view shows the source unparsed and remembers itself', async () => {
         const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
         await withATable(table);

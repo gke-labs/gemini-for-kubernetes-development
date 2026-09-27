@@ -1203,6 +1203,16 @@ body.dark-mode .research-terminal {
   align-items: flex-start;
 }
 
+/* The prompt's sigil is the same mark as a user turn's and wants the
+   same colour, but not .term-user — that class also carries the margin
+   that spaces one turn off the last, which here pushed the `❯` half a
+   line below the caret beside it and made the whole row that much
+   taller than the line it holds. */
+.research-terminal .term-prompt .term-sigil {
+  color: var(--term-accent);
+  font-weight: 600;
+}
+
 .research-terminal .term-prompt textarea {
   flex: 1 1 auto;
   min-width: 0;
