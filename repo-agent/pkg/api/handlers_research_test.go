@@ -988,7 +988,7 @@ func TestResearchListShowsRequestedSessions(t *testing.T) {
 	if got.SessionID != pending || !got.Requested {
 		t.Errorf("row = %+v, want the pending session marked requested", got)
 	}
-	if got.Title != "what happened · 1 month" {
+	if got.Title != "Changes in the last 1 month" {
 		t.Errorf("title = %q", got.Title)
 	}
 	if got.Repo != researchRepo {
@@ -1021,7 +1021,7 @@ func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
 // title on it — `factory research start` creates it and then clones —
 // and the claim is hidden as served for that whole window. Reading the
 // row's name off the sandbox alone is what made a session flip from
-// "what happened · 2 weeks" to "untitled" and back a minute later.
+// "Changes in the last 2 weeks" to "untitled" and back a minute later.
 func TestAServedClaimStillNamesItsUntitledSandbox(t *testing.T) {
 	claim := research.Claim{
 		Member:  "alice",
@@ -1044,7 +1044,7 @@ func TestAServedClaimStillNamesItsUntitledSandbox(t *testing.T) {
 	if sessions[0].Requested {
 		t.Error("the sandbox exists; the row must be the real one")
 	}
-	if sessions[0].Title != "what happened · 2 weeks" {
+	if sessions[0].Title != "Changes in the last 2 weeks" {
 		t.Errorf("title = %q, want the claim's — the sandbox has none yet", sessions[0].Title)
 	}
 }

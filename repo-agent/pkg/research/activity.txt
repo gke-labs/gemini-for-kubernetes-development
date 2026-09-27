@@ -1,6 +1,8 @@
-Tell me what happened in {{.Repo}} ({{.HTMLURL}}) over the last
-{{.Since}}. I am catching up after being away, and the repository is
-checked out in front of you.
+Changes in the last {{.Since}}
+
+What happened in {{.Repo}} ({{.HTMLURL}}) over that window? I am
+catching up after being away, and the repository is checked out in
+front of you.
 
 Gather the window from the checkout's own history first — `git log`
 against the default branch is always available here. If the `gh` CLI

@@ -1131,12 +1131,12 @@ describe('ResearchPanel', () => {
         expect(container.querySelector('textarea')).toBeTruthy();
 
         await selectRow('the retry loop');
-        expect(container.querySelector('textarea[placeholder^="Ask anything about this repo"]')).toBeNull();
+        expect(container.querySelector('textarea[placeholder^="Ask anything about repo-agent"]')).toBeNull();
         expect(newRow.getAttribute('aria-current')).toBeNull();
 
         await act(async () => { newRow.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
         await flush();
-        expect(container.querySelector('textarea[placeholder^="Ask anything about this repo"]')).toBeTruthy();
+        expect(container.querySelector('textarea[placeholder^="Ask anything about repo-agent"]')).toBeTruthy();
         expect(newRow.getAttribute('aria-current')).toBe('true');
     });
 
@@ -1308,8 +1308,18 @@ describe('ResearchPanel', () => {
     // claimFetch answers the list and the claim; everything else 404s,
     // which is what a session whose sandbox does not exist yet looks
     // like to the conversation's probe.
+    // The canned openings, as the server renders them for the board's
+    // repository. Short stand-ins for the real templates — what matters
+    // to the pane is that the text arrives and that its first line is
+    // what the session will be called.
+    const cannedPrompts = {
+        onboard: 'Overview of the repo\n\nrepo-agent is checked out in front of you.\n\nCode map: directory by directory.',
+        activity: 'Changes in the last month\n\nWhat happened in repo-agent over that window?',
+    };
+
     const claimFetch = (claimed) => jest.fn((url, opts) => {
         if (url === '/api/research') return reply(200, { sessions: [] });
+        if (url === '/api/board/repo-agent/research/prompts') return reply(200, { prompts: cannedPrompts });
         if (url === '/api/board/repo-agent/research') {
             claimed.push(JSON.parse((opts && opts.body) || '{}'));
             return reply(202, { sessionId: 'new-session', title: 'overview' });
@@ -1344,51 +1354,111 @@ describe('ResearchPanel', () => {
         expect(container.textContent).not.toContain('Empty conversation');
     });
 
-    test('Generate Overview claims the canned read and shows the row at once', async () => {
+    test('overview fills the box with the prompt instead of starting a session', async () => {
+        // The canned read stopped being a button that spends minutes of
+        // sandbox on a prompt nobody was shown. It puts that prompt in
+        // the ask box, where it can be read, narrowed, or sent as it
+        // stands — and until it is sent, nothing has been claimed.
         const claimed = [];
         global.fetch = claimFetch(claimed);
 
         await renderPanel();
-        await clickButton('Generate Overview');
+        await clickButton('overview');
 
-        expect(claimed).toEqual([{ kind: 'onboard' }]);
-        // Stays on the list: a second click is a second sandbox and a
-        // second engine, so the request has to be visible immediately —
-        // before the server's own list has caught up with the claim.
-        expect(container.textContent).toContain('overview');
-        expect(container.textContent).toContain('requested');
-        expect(container.textContent).not.toContain('Preparing the sandbox');
-    });
-
-    test('what happened asks for the window that was picked', async () => {
-        const claimed = [];
-        global.fetch = claimFetch(claimed);
-
-        await renderPanel();
-        await clickButton('What happened ▾');
-        const window = [...container.querySelectorAll('div')].find(d => d.textContent === 'last 1 month');
-        await act(async () => { window.click(); });
-        await flush();
-
-        expect(claimed).toEqual([{ kind: 'activity', since: '1 month' }]);
-    });
-
-    test('a typed question carries its optional name and opens the conversation', async () => {
-        const claimed = [];
-        global.fetch = claimFetch(claimed);
-
-        await renderPanel();
         const box = container.querySelector('textarea');
-        const name = container.querySelector('input[aria-label="Session name"]');
+        expect(box.value).toContain('Overview of the repo');
+        expect(box.value).toContain('Code map');
+        expect(claimed).toEqual([]);
+    });
+
+    test('the filled prompt is sent as an ordinary question', async () => {
+        // No kind on the wire: what runs is what is in the box, edits
+        // and all, and the session is named from its first line — which
+        // is why the prompt opens with one.
+        const claimed = [];
+        global.fetch = claimFetch(claimed);
+
+        await renderPanel();
+        await clickButton('overview');
+        await clickButton('Research');
+
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0].kind).toBe('topic');
+        expect(claimed[0].topic).toContain('Overview of the repo');
+        expect(claimed[0].title).toBeUndefined();
+    });
+
+    test('overview waits for the prompt it would fill the box with', async () => {
+        // Nothing to put in the box until the prompts land, and a
+        // control that silently does nothing is worse than one that
+        // says it is not ready yet.
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/research') return reply(200, { sessions: [] });
+            return reply(500, { error: 'no prompts today' });
+        });
+
+        await renderPanel();
+        const overview = [...container.querySelectorAll('button')].find(b => b.textContent === 'overview');
+        expect(overview.disabled).toBe(true);
+    });
+
+    test('recent changes fills the box, window and all', async () => {
+        // The window used to be a dropdown of three fixed spans. It is
+        // the first line of the prompt now, in the box, where it can be
+        // changed to a week — or to something no dropdown could have
+        // offered, like "since the 1.4 release".
+        const claimed = [];
+        global.fetch = claimFetch(claimed);
+
+        await renderPanel();
+        await clickButton('recent changes');
+
+        const box = container.querySelector('textarea');
+        expect(box.value).toContain('Changes in the last month');
+        expect(claimed).toEqual([]);
+    });
+
+    test('a window edited in the box is the window that runs', async () => {
+        // The whole argument for filling the box rather than running the
+        // prompt behind a button: what is sent is what is on screen,
+        // including the edit — and the session is named after it,
+        // because the window lives in the line the name comes from.
+        const claimed = [];
+        global.fetch = claimFetch(claimed);
+
+        await renderPanel();
+        await clickButton('recent changes');
+        const box = container.querySelector('textarea');
         await act(async () => {
-            nativeSet(box, 'where does the retry loop live?');
+            nativeSet(box, box.value.replace('last month', 'last week'));
             box.dispatchEvent(new Event('input', { bubbles: true }));
-            nativeSet(name, 'retries');
-            name.dispatchEvent(new Event('input', { bubbles: true }));
         });
         await clickButton('Research');
 
-        expect(claimed).toEqual([{ kind: 'topic', topic: 'where does the retry loop live?', title: 'retries' }]);
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0].topic).toContain('Changes in the last week');
+        expect(claimed[0].topic).not.toContain('last month');
+    });
+
+    test('a typed question is the whole of it, and opens the conversation', async () => {
+        // No name goes with it. The box that asked for one was optional
+        // and was left empty every time, which is the right answer —
+        // the server names the session after the question — so what it
+        // actually was is a second control between a typed question and
+        // sending it.
+        const claimed = [];
+        global.fetch = claimFetch(claimed);
+
+        await renderPanel();
+        expect(container.querySelector('input[aria-label="Session name"]')).toBeNull();
+        const box = container.querySelector('textarea');
+        await act(async () => {
+            nativeSet(box, 'where does the retry loop live?');
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await clickButton('Research');
+
+        expect(claimed).toEqual([{ kind: 'topic', topic: 'where does the retry loop live?' }]);
         await flush();
         expect(container.textContent).toContain('Preparing the sandbox');
     });
@@ -1397,12 +1467,12 @@ describe('ResearchPanel', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessions: [{
                 sessionId: 'cccccccc-3333', repo: 'repo-agent', requested: true,
-                title: 'what happened · 2 weeks', createdAt: '2026-09-26T10:00:00Z',
+                title: 'Changes in the last month', createdAt: '2026-09-26T10:00:00Z',
             }],
         }));
 
         await renderPanel();
-        expect(container.textContent).toContain('what happened · 2 weeks');
+        expect(container.textContent).toContain('Changes in the last month');
         expect(container.textContent).toContain('requested');
     });
 

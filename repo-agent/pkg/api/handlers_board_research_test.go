@@ -89,6 +89,60 @@ func TestStartResearchSessionWritesClaim(t *testing.T) {
 	}
 }
 
+// The canned openings are handed over as text, rendered for the board's
+// repository, so the pane can put one in the member's box instead of
+// running it behind a button.
+func TestGetResearchPromptsRendersThemForTheBoardsRepo(t *testing.T) {
+	_, r, _ := boardTestServer(t, map[string]string{}, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/myboard/research/prompts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var got struct {
+		Prompts map[string]string `json:"prompts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("bad response %q: %v", w.Body.String(), err)
+	}
+	for _, kind := range []string{research.KindOnboard, research.KindActivity} {
+		text := got.Prompts[kind]
+		if text == "" {
+			t.Fatalf("no %s prompt in %v", kind, got.Prompts)
+		}
+		// Rendered, not the template: this text goes straight into a box
+		// the member sends, so an unrendered action would reach the
+		// engine verbatim.
+		if strings.Contains(text, "{{") || strings.Contains(text, "<no value>") {
+			t.Errorf("%s prompt was handed over unrendered:\n%s", kind, text)
+		}
+		if !strings.Contains(text, "repo") {
+			t.Errorf("%s prompt does not name the board's repository:\n%s", kind, text)
+		}
+	}
+	// What the member will see it called in the rail, since the box is
+	// sent as an ordinary question and the title is derived from it.
+	if title := research.Truncate(got.Prompts[research.KindOnboard]); title != "Overview of the repo" {
+		t.Errorf("the overview would be listed as %q", title)
+	}
+}
+
+// The prompts are the board's, so they are behind the board's access
+// check like everything else on that path.
+func TestGetResearchPromptsRefusesABoardYouCannotSee(t *testing.T) {
+	_, r, _ := boardTestServer(t, map[string]string{}, boardCR())
+
+	req, _ := http.NewRequest("GET", "/board/someone-elses/research/prompts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // Two clicks are two conversations. The transcript lives on the
 // sandbox's disk, so a shared session id would be a shared transcript.
 func TestStartResearchSessionMintsADistinctSessionEachTime(t *testing.T) {

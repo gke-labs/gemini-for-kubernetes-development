@@ -83,8 +83,21 @@ var activityPrompt string
 //go:embed topic.txt
 var topicPrompt string
 
-// DefaultSince is the activity window when a caller names none.
-const DefaultSince = "2 weeks"
+// DefaultSince is the activity window when a caller names none, which
+// since the landing pane started filling the member's box rather than
+// running the prompt behind a button is every caller from the UI.
+//
+// A month, not a fortnight: it is the window someone back from leave
+// actually means, and it is the one that still has something in it for a
+// repository that had a quiet couple of weeks.
+//
+// The window survives being a constant because activity.txt names it
+// once, in its first line, and says "that window" everywhere after. The
+// member edits "last month" to "last week" in the box and the whole
+// prompt follows — including the session's name, which is that line.
+// That is what a dropdown of three fixed windows used to buy, except
+// this version also does "since the 1.4 release".
+const DefaultSince = "month"
 
 // Kickoff is the opening turn a session starts with, or the zero value
 // for a session the member will type into themselves.
@@ -177,7 +190,9 @@ func (k Kickoff) ResolvedTitle() string {
 		if since == "" {
 			since = DefaultSince
 		}
-		return "what happened · " + since
+		// The same words the prompt opens with, so a session started
+		// through the API is listed as one started from the box.
+		return "Changes in the last " + since
 	case KindTopic:
 		return Truncate(k.Topic)
 	default:
