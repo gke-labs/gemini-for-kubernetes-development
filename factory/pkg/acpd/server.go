@@ -116,7 +116,12 @@ type sessionResponse struct {
 	CWD       string    `json:"cwd"`
 	CreatedAt time.Time `json:"createdAt"`
 	Busy      bool      `json:"busy"`
-	Offset    int64     `json:"offset"`
+	// Waiting says the turn stopped on a permission request that is still
+	// unanswered. It is a refinement of Busy, never a replacement: a
+	// waiting session is also busy, and a client that only knows Busy
+	// stays correct.
+	Waiting bool  `json:"waiting,omitempty"`
+	Offset  int64 `json:"offset"`
 	// Mode and AvailableModes let a client that did not create the
 	// session — a browser attaching to one the controller started — show
 	// and change what it is running under.
@@ -442,6 +447,7 @@ func describe(sess *Session) sessionResponse {
 		CWD:            sess.CWD,
 		CreatedAt:      sess.CreatedAt,
 		Busy:           sess.Busy(),
+		Waiting:        sess.Waiting(),
 		Offset:         sess.Transcript().Size(),
 		Mode:           mode,
 		AvailableModes: available,

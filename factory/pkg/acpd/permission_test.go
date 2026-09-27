@@ -216,6 +216,78 @@ func TestAPermissionRequestWaitsForTheUserWhenNobodySaidOtherwise(t *testing.T) 
 	}
 }
 
+// A blocked session has to be distinguishable from a working one without
+// reading its transcript, because the list that would most like to know —
+// a rail of every session a member has — cannot afford to read N of them.
+// Busy alone cannot say it: both states are a turn in flight.
+func TestASessionBlockedOnAPermissionRequestSaysSo(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, createAuto(t, ts, "s1", false), http.StatusCreated)
+
+	idle := getSession(t, ts, "s1")
+	if idle.Busy || idle.Waiting {
+		t.Fatalf("a session nobody has prompted reports busy=%t waiting=%t", idle.Busy, idle.Waiting)
+	}
+
+	stream := promptForPermission(t, ts, "s1", "!ask")
+	req := decodeInto[PermissionRequest](t, stream.next(KindPermissionRequest))
+
+	// The request is pending before it is written to the transcript, so
+	// seeing the event means the state is already there — no poll loop.
+	blocked := getSession(t, ts, "s1")
+	if !blocked.Waiting {
+		t.Error("a session stopped on an unanswered permission request did not report waiting")
+	}
+	// A refinement of busy, not a replacement: a client that only knows
+	// busy must still see a turn in flight.
+	if !blocked.Busy {
+		t.Error("a waiting session stopped reporting itself busy")
+	}
+
+	answerPermission(t, ts, "s1", `{"requestId":"`+req.RequestID+`","optionId":"proceed_once"}`)
+	stream.next(KindTurnEnd)
+
+	// Asserted after the turn ends rather than after the resolution event:
+	// the pending entry is dropped as onRequest returns, which is after the
+	// transcript append but before the engine is let go.
+	if done := getSession(t, ts, "s1"); done.Waiting {
+		t.Error("the session still reported waiting after the request was answered")
+	}
+}
+
+// An auto-approving session never waits, because it answers before
+// anything is made pending. Worth pinning: the rail uses waiting to decide
+// which sessions are asking for a human, and an unattended research turn
+// that showed up there would send someone to a conversation with nothing
+// to answer.
+func TestAnAutoApprovedSessionNeverReportsWaiting(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, createAuto(t, ts, "s1", true), http.StatusCreated)
+
+	stream := promptForPermission(t, ts, "s1", "!ask")
+	stream.next(KindPermissionRequest)
+
+	if got := getSession(t, ts, "s1"); got.Waiting {
+		t.Error("an auto-approved session reported waiting on a request it answers itself")
+	}
+	stream.next(KindTurnEnd)
+}
+
+// getSession reads one session's state the way a client polling the list
+// does.
+func getSession(t *testing.T, ts *httptest.Server, id string) sessionResponse {
+	t.Helper()
+	resp, err := ts.Client().Get(fmt.Sprintf("%s/sessions/%s", ts.URL, id))
+	if err != nil {
+		t.Fatalf("GET session: %v", err)
+	}
+	return decodeSession(t, resp, http.StatusOK)
+}
+
 // An auto-approved session answers what it can and no more. A request
 // that offers only refusals is not one acpd may decide on its own: the
 // caller said nobody would be answering, not that everything is allowed.
