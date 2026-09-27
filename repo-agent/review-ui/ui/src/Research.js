@@ -1466,10 +1466,19 @@ export function ResearchConversation({
 // The list comes from /api/research, which is namespace-wide and knows
 // nothing about boards — a session carries only the repo it was started
 // on. So the board's repoURL is reduced to a repo name the same way the
-// server does it, and matched. Sessions for any other repo are still
-// shown, behind a disclosure: they are the member's, they cost a disk,
-// and hiding them because their board was deleted would make them
-// unreachable.
+// server does it, and matched, and nothing else is listed.
+//
+// The rail used to end in a disclosure holding every session for every
+// other repository, on the argument that one whose board was deleted
+// would otherwise be unreachable. That is a rare session paid for by
+// every common one: a member with five boards open saw four rails each
+// carrying the other four boards' conversations, and the count in the
+// summary line — "4 conversations for other repositories" — was
+// four-fifths of their work described as somewhere else's. A board's
+// research tab is about that repository. An orphaned session is still
+// reachable by its own link, #/research/<id>, and still listed by the
+// API, which is the thing that would have to change to make one truly
+// lost.
 export function ResearchPanel({ boardName, repoURL }) {
   const [sessions, setSessions] = useState(null);
   const [open, setOpen] = useState(null); // { sessionId, pending, title }
@@ -1478,7 +1487,6 @@ export function ResearchPanel({ boardName, repoURL }) {
   const [title, setTitle] = useState('');
   const [sinceOpen, setSinceOpen] = useState(false);
   const [error, setError] = useState('');
-  const [showOthers, setShowOthers] = useState(false);
   const [forkOwner, setForkOwner] = useState('');
   // The branch notes are written to, as the server names it. Held in
   // state rather than written here so there is one copy of the string,
@@ -1552,7 +1560,6 @@ export function ResearchPanel({ boardName, repoURL }) {
 
   const all = sessions || [];
   const mine = repo ? all.filter(s => s.repo === repo) : all;
-  const others = repo ? all.filter(s => s.repo !== repo) : [];
 
   const stateOf = (s) => {
     if (s.requested) {
@@ -1620,11 +1627,10 @@ export function ResearchPanel({ boardName, repoURL }) {
   // the row is the selection, and a click that lands two pixels off the
   // text should not do nothing.
   //
-  // showRepo is for the other-repositories disclosure below, where the
-  // repo is the whole reason the row is listed separately. It is text
-  // rather than a link here — a link inside a button is not a thing —
-  // and the URL keeps its place in the tooltip.
-  const railRow = (s, showRepo) => {
+  // No repo on the row: every row is this board's repo now, and a
+  // column that says the same word all the way down is a column that
+  // costs width in a 260px rail and tells nobody anything.
+  const railRow = (s) => {
     const selected = !!open && open.sessionId === s.sessionId;
     return (
       <button key={s.sessionId} type="button"
@@ -1649,7 +1655,6 @@ export function ResearchPanel({ boardName, repoURL }) {
           `session ${s.sessionId}`,
           'double-click to rename',
           s.sandbox ? `sandbox ${s.sandbox}` : '',
-          showRepo && s.htmlUrl ? s.htmlUrl : '',
         ].filter(Boolean).join('\n')}
         style={{
           display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
@@ -1666,7 +1671,6 @@ export function ResearchPanel({ boardName, repoURL }) {
           color: 'var(--text-secondary)', fontSize: 'x-small',
         }}>
           <span title={s.createdAt}>{ageOf(s.createdAt)}</span>
-          {showRepo && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.repo}</span>}
           {stateOf(s)}
         </div>
       </button>
@@ -1830,19 +1834,8 @@ export function ResearchPanel({ boardName, repoURL }) {
               <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 8px' }}>
                 No conversations for {repo || 'this board'} yet.
               </div>
-            ) : mine.map(s => railRow(s, false))}
+            ) : mine.map(s => railRow(s))}
           </div>
-
-          {others.length > 0 && (
-            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
-              <div onClick={() => setShowOthers(o => !o)}
-                style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'x-small', padding: '0 8px' }}
-                title="Sessions you own for other repositories — listed here so one whose board is gone is still reachable">
-                {showOthers ? '▾' : '▸'} {others.length} conversation{others.length === 1 ? '' : 's'} for other repositories
-              </div>
-              {showOthers && <div style={{ marginTop: '4px' }}>{others.map(s => railRow(s, true))}</div>}
-            </div>
-          )}
 
           {/* The notes branch on the member's fork. Research does not
               write there yet — runs still do, and the old explore notes
