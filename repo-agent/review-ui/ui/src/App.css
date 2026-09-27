@@ -1152,3 +1152,40 @@ body.dark-mode .research-terminal {
   border-left: 2px solid var(--term-dim);
   color: var(--term-fg);
 }
+
+/* The mono view: the agent's prose parsed as markdown, but still on the
+   terminal canvas. Only the pieces that carry their own colour need
+   saying again — the page's greys are wrong against this background,
+   and a table drawn in --border-color on charcoal is nearly invisible.
+   Everything else (the fixed-width face, the size, the leading) is
+   already cascading down from .research-terminal. */
+.research-terminal .term-rendered {
+  white-space: normal;
+}
+
+/* smaller off an already-small terminal size is unreadable, and the
+   whole reason to be in this view is that the table is the content. */
+.research-terminal .md-body table { font-size: inherit; }
+
+.research-terminal .md-body :is(th, td) { border-color: var(--term-dim); }
+.research-terminal .md-body thead { border-bottom: 2px solid var(--term-dim); }
+.research-terminal .md-body th,
+.research-terminal .md-body tbody tr:nth-child(even) { background-color: var(--term-quote); }
+
+.research-terminal .md-body :is(pre, code) { background: var(--term-quote); }
+.research-terminal .md-body pre { padding: 6px 8px; border-radius: 4px; }
+.research-terminal .md-body pre code { background: none; padding: 0; }
+.research-terminal .md-body a { color: var(--term-accent); }
+.research-terminal .md-body blockquote {
+  margin: 8px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--term-dim);
+  color: var(--term-dim);
+}
+/* Headings in a log want to be legible without becoming a page's
+   headings — the surrounding text is 12.5px and a 2em h1 would tower. */
+.research-terminal .md-body :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; }
+.research-terminal .md-body hr {
+  border: none;
+  border-top: 1px solid var(--term-dim);
+}

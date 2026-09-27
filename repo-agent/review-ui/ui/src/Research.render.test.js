@@ -147,8 +147,9 @@ describe('ResearchConversation', () => {
         expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
     });
 
-    test('the terminal view shows the source unparsed and remembers itself', async () => {
-        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+    // A conversation with one prompt and one table in it, which is the
+    // shape the three views actually differ over.
+    const withATable = async (table) => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
@@ -163,11 +164,20 @@ describe('ResearchConversation', () => {
             });
             ws.deliver({ type: 'event', offset: 100, event: { seq: 3, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
         });
+    };
+
+    const chooseView = async (label) => {
+        const seg = [...container.querySelectorAll('button')].find(b => b.textContent === label);
+        await act(async () => { seg.click(); });
+    };
+
+    test('the raw view shows the source unparsed and remembers itself', async () => {
+        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+        await withATable(table);
         expect(container.querySelector('.research-terminal')).toBeNull();
 
         const rendersBefore = mockMarkdownCalls.length;
-        const flip = [...container.querySelectorAll('button')].find(b => b.textContent === 'terminal');
-        await act(async () => { flip.click(); });
+        await chooseView('raw');
 
         // No markdown pass at all in this view: the agent's own line
         // breaks are what make the table line up.
@@ -176,12 +186,40 @@ describe('ResearchConversation', () => {
         expect(pane).toBeTruthy();
         expect(pane.querySelector('.term-agent').textContent).toBe(table);
         expect(pane.querySelector('.term-user').textContent).toContain('compare them');
-        expect(localStorage.getItem('repoboard.research.view')).toBe('terminal');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('raw');
 
         // And the next conversation opened comes up in it.
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
         expect(container.querySelector('.research-terminal')).toBeTruthy();
+    });
+
+    test('the mono view is the terminal canvas with the markdown parsed', async () => {
+        // The other reading of "as a terminal would render it": still
+        // the flat fixed-width log, but the table gets real borders
+        // instead of pipes that happen to line up.
+        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+        await withATable(table);
+
+        const rendersBefore = mockMarkdownCalls.length;
+        await chooseView('mono');
+
+        const pane = container.querySelector('.research-terminal');
+        expect(pane).toBeTruthy();
+        expect(mockMarkdownCalls.length).toBeGreaterThan(rendersBefore);
+        expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
+        // Parsed, so it is not a pre-wrap log line any more.
+        expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('mono');
+
+        // Your own prompt is a line you typed, not a document: it keeps
+        // its sigil and does not go through markdown in either view.
+        expect(pane.querySelector('.term-user').className).toContain('term-line');
+
+        // And raw is still raw — the two are not the same segment.
+        await chooseView('raw');
+        expect(container.querySelector('.term-rendered')).toBeNull();
+        expect(container.querySelector('.term-agent').textContent).toBe(table);
     });
 
     test('a live turn disables the composer and offers Stop', async () => {

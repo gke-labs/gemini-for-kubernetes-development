@@ -478,7 +478,19 @@ function TranscriptItem({ item, onResolve, resolving }) {
 // Permission prompts keep their rich form. They are the one part of a
 // transcript that is a control and not a record, and a misread
 // permission is a worse outcome than a seam in the styling.
-function TerminalItem({ item, onResolve, resolving }) {
+//
+// `rendered` is the mono view: the same flat log on the same canvas,
+// but the agent's prose goes through markdown, so a table gets real
+// borders instead of pipes that happen to line up. Everything else —
+// the sigils, the collapsed tool lines, the fixed-width face — is
+// identical, because the two views differ over one question only.
+//
+// Only the agent's prose is affected. Your own prompt keeps its `❯ `
+// and stays verbatim — it is a line you typed, not a document — and
+// tool output and expanded thinking stay verbatim too: they are program
+// output, not markdown, and a JSON blob with an asterisk in it should
+// not come back italic.
+function TerminalItem({ item, onResolve, resolving, rendered }) {
   const [open, setOpen] = useState(false);
 
   switch (item.role) {
@@ -487,7 +499,13 @@ function TerminalItem({ item, onResolve, resolving }) {
         <div className="term-line term-user"><span className="term-sigil">❯ </span>{item.text}</div>
       );
     case 'agent':
-      return <div className="term-line term-agent">{item.text}</div>;
+      return rendered
+        ? (
+          <div className="term-agent term-rendered md-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+          </div>
+        )
+        : <div className="term-line term-agent">{item.text}</div>;
     case 'thought':
       return (
         <div className="term-line term-dim" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
@@ -566,8 +584,24 @@ function PlanPanel({ entries }) {
 // that the conversation opens on its own when the pod lands.
 const PROBE_INTERVAL_MS = 5000;
 
-// Where the rich/terminal choice is remembered.
+// Where the reading choice is remembered.
 const RESEARCH_VIEW_KEY = 'repoboard.research.view';
+
+// normaliseView reads a stored choice, including the one this tab used
+// to write. `terminal` meant unparsed source, which is now `raw` — so
+// anyone who picked it keeps what they picked rather than being moved
+// to a view they have never seen.
+export function normaliseView(stored) {
+  switch (stored) {
+    case 'mono':
+    case 'raw':
+      return stored;
+    case 'terminal':
+      return 'raw';
+    default:
+      return 'rich';
+  }
+}
 
 // ResearchConversation is one conversation: the transcript, the
 // composer, and the machinery that keeps a websocket attached to it.
@@ -633,18 +667,26 @@ export function ResearchConversation({
   // would do it in a stylesheet, but every style in this file is
   // inline and one rule in App.css for one box is worse than a bool.
   const [composerFocused, setComposerFocused] = useState(false);
-  // rich | terminal. A reading preference, not session state, so it is
-  // remembered across conversations and across the pop-out window —
+  // rich | mono | raw. A reading preference, not session state, so it
+  // is remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
+  //
+  // mono and raw share the terminal canvas and differ only in whether
+  // the markdown is parsed. They are both here because "as a terminal
+  // would render it" turned out to mean two things: the bytes the agent
+  // actually sent, and a table with real borders in a fixed-width face.
+  // The first is what you want when you are going to copy it out; the
+  // second when you are going to read it.
   const [view, setView] = useState(() => {
-    try { return localStorage.getItem(RESEARCH_VIEW_KEY) === 'terminal' ? 'terminal' : 'rich'; }
+    try { return normaliseView(localStorage.getItem(RESEARCH_VIEW_KEY)); }
     catch (e) { return 'rich'; } // private mode
   });
-  const terminal = view === 'terminal';
+  const terminal = view === 'mono' || view === 'raw';
   const chooseView = (next) => {
     setView(next);
     try { localStorage.setItem(RESEARCH_VIEW_KEY, next); } catch (e) { /* private mode */ }
   };
+
 
   // The resume cursor. A ref, not state: the socket's onmessage handler
   // closes over it, and it must never be a render behind.
@@ -1093,16 +1135,18 @@ export function ResearchConversation({
             ⚠ not applied
           </span>
         )}
-        {/* Two segments rather than one flip button: which view you are
-            in should be readable without knowing whether the label names
-            the state or the action. */}
+        {/* Segments rather than a flip button: which view you are in
+            should be readable without knowing whether the label names
+            the state or the action — and with three of them a flip
+            button is not an option anyway. */}
         <span style={{
           display: 'inline-flex', border: '1px solid var(--border-color)',
           borderRadius: '6px', overflow: 'hidden',
         }}>
           {[
-            ['rich', 'Rendered markdown'],
-            ['terminal', 'The transcript as a terminal would print it — fixed-width, unrendered source'],
+            ['rich', 'Rendered markdown, in the page\'s own type'],
+            ['mono', 'Rendered markdown in a fixed-width face on the terminal canvas — tables get real borders'],
+            ['raw', 'The bytes the agent sent, unparsed, as a terminal would print them'],
           ].map(([v, hint]) => (
             <button key={v} onClick={() => chooseView(v)} title={hint}
               style={{
@@ -1246,7 +1290,8 @@ export function ResearchConversation({
           )
         )}
         {transcript.items.map(item => (terminal
-          ? <TerminalItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
+          ? <TerminalItem key={item.key} item={item} rendered={view === 'mono'}
+            onResolve={resolve} resolving={resolving} />
           : <TranscriptItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
         ))}
         {busy && !waiting && (
