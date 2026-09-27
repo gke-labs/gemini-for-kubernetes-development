@@ -642,7 +642,7 @@ describe('ResearchPanel', () => {
         // text, because the board's own repo name appears all over this
         // panel and would make a text check pass with the column back.
         expect([...container.querySelectorAll('thead th')].map(th => th.textContent))
-            .toEqual(['Conversation', 'Age', 'Sandbox']);
+            .toEqual(['Conversation', 'Age', 'Agent']);
         expect(container.querySelectorAll('tbody tr')[0].querySelectorAll('td')).toHaveLength(3);
 
         // Both are still one hover away, for the times you are going to

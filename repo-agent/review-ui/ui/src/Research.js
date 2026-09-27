@@ -1542,10 +1542,17 @@ export function ResearchPanel({ boardName, repoURL }) {
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>Conversation</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
-              {/* Whether there is a sandbox and whether it can be
-                  reached — not what the agent is doing inside it. */}
-              <th style={{ padding: '6px 8px' }} title="The sandbox: whether it exists yet, and whether it is reachable">
-                Sandbox
+              {/* Whether there is an agent to talk to. What it says
+                  underneath is really about the sandbox — whether one
+                  exists yet and whether it can be reached — but that
+                  is plumbing, and naming the column after it asks the
+                  member to care about a thing they did not ask for.
+                  The honest reading of every pill in this column is
+                  "can I open this and get an answer", so the header
+                  says the agent and the tooltip owns the caveat. */}
+              <th style={{ padding: '6px 8px' }}
+                title="Whether there is an agent to talk to. Open a conversation to see what it is doing.">
+                Agent
               </th>
             </tr>
           </thead>
