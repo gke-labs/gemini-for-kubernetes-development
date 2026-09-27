@@ -33,16 +33,18 @@ var capturePrompt string
 
 // NotesRoot is where a session's notes live, both in the checkout and on
 // the notes branch of the member's fork. It must match ResearchNotesDir
-// in factory's pkg/tasks: the conversation writes under this path and
-// `factory research save-notes` pushes exactly that directory.
+// in factory's pkg/tasks: the conversation writes here and `factory
+// research save-notes` pushes exactly this file.
 //
 // The two are separate constants in separate modules on purpose —
 // repo-agent never Go-imports factory — so nothing but a test keeps them
 // equal.
 const NotesRoot = "docs-exploration/research"
 
-// NotesDir is the directory holding one session's notes.
-func NotesDir(sessionID string) string { return NotesRoot + "/" + sessionID }
+// NotesPath is where one session's note lives, relative to the root of
+// the checkout. A file and not a directory: a conversation writes one
+// document, and a directory per session was a container for one file.
+func NotesPath(note string) string { return NotesRoot + "/" + note }
 
 // Annotations for a save that has been asked for but not yet made.
 const (
@@ -54,56 +56,60 @@ const (
 	// member who asked for a note and got nothing should be told, rather
 	// than going to look for it on the fork.
 	CaptureErrorAnnotation = "sandbox.gemini.google.com/research-capture-error"
+	// NoteAnnotation is the file this session writes to, decided at the
+	// first capture and never again.
+	//
+	// Pinned rather than derived each time, because it is derived from
+	// the title and the title can change. A session renamed between two
+	// captures would otherwise push its second note under a second name
+	// and leave the first one orphaned under one nothing refers to any
+	// more.
+	NoteAnnotation = "sandbox.gemini.google.com/research-note"
 )
 
 // NoteLimit is how long a note's file name may be, extension aside.
 const NoteLimit = 64
 
-// DefaultNote is where a capture goes when the member names no file. A
-// session that never asks for anything else ends up with one readable
-// document, which is the common case.
-const DefaultNote = "notes.md"
+// DefaultWhat is what gets captured when the member says nothing. It is
+// the common case and the reason saving is one click: the answer to
+// "which part of this was worth keeping" is almost always "the part
+// that was not obvious", and the conversation knows which part that was
+// better than a form does.
+const DefaultWhat = "Everything in this conversation worth keeping: what was asked, " +
+	"what was found, and what is still open."
 
-// Capture is a member's request to turn part of a conversation into a
-// note on the fork: what to write down, and which file to write it to.
-//
-// Both halves are needed because neither is derivable. A session is
-// explored over many turns and only the member knows which stretch of it
-// was worth keeping; and whether this belongs in the document they
-// already have or wants its own is a judgement about the shape of the
-// archive, not about this conversation.
+// Capture is a request to turn a conversation into a note on the fork.
 type Capture struct {
-	// What the member wants written down, in their words. Reaches the
-	// engine verbatim as the body of the prompt.
-	What string `json:"what"`
-	// Note is the file within the session's directory, already
-	// normalised by NormaliseNote.
+	// Note is the file under NotesRoot, already normalised: see
+	// NoteName and UniqueNote.
 	Note string `json:"note"`
+	// What the member wants written down, in their words. Reaches the
+	// engine verbatim as the body of the prompt. Empty is the ordinary
+	// case and means DefaultWhat.
+	What string `json:"what,omitempty"`
 }
 
 // capturePromptData is what capture.txt sees.
 type capturePromptData struct {
 	Path string
-	Dir  string
 	What string
 }
 
-// NormaliseNote turns what the member typed into a file name inside the
-// session's directory, or reports why it cannot be one.
+// slug folds a title or a file name down to the characters that are safe
+// everywhere this ends up.
 //
 // The result reaches a shell as part of a path and reaches git as part
 // of a pushed tree, so this is a whitelist rather than an escape: every
 // character that is not a lowercase letter or a digit becomes a dash.
-// That takes "Retry loop findings" to "retry-loop-findings.md", which is
+// That takes "Retry loop findings" to "retry-loop-findings", which is
 // what someone typing a title meant, and it takes "../../etc/passwd" to
 // "etc-passwd", which is not an escape attempt that survives.
-func NormaliseNote(name string) (string, error) {
-	n := strings.ToLower(strings.TrimSpace(name))
-	n = strings.TrimSuffix(n, ".md")
-
+//
+// Returns "" for anything with nothing usable in it.
+func slug(name string) string {
 	var b strings.Builder
 	dash := false
-	for _, r := range n {
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
 		switch {
 		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
 			b.WriteRune(r)
@@ -118,21 +124,57 @@ func NormaliseNote(name string) (string, error) {
 			}
 		}
 	}
-	stem := strings.Trim(b.String(), "-")
-	if stem == "" {
-		return "", fmt.Errorf("%q does not contain anything usable as a file name", name)
+	out := strings.Trim(b.String(), "-")
+	if len(out) > NoteLimit {
+		out = strings.TrimRight(out[:NoteLimit], "-")
 	}
-	if len(stem) > NoteLimit {
-		stem = strings.TrimRight(stem[:NoteLimit], "-")
+	return out
+}
+
+// NoteName is the file a session's write-up wants to be: its name,
+// folded to a path segment, with .md on it.
+//
+// The name and not the id, because this file is the note's address for
+// as long as the fork exists, and it is read by people. A session id is
+// a handle for the machinery — it names the sandbox, the label and the
+// single-flight key — and none of that survives on a branch of prose.
+// It remains the fallback: a session that has not been named yet still
+// has one, and an id is a worse file name than a title but a much
+// better one than none.
+func NoteName(title, sessionID string) string {
+	if s := slug(title); s != "" {
+		return s + ".md"
 	}
-	return stem + ".md", nil
+	return sessionID + ".md"
+}
+
+// UniqueNote is name, or the first name-N.md that nothing has taken.
+//
+// Two sessions can genuinely want the same file — the canned
+// explorations are the common case, since every "first read" of a repo
+// is called the same thing — and a save overwrites what is there, so
+// sharing a name is not two sessions collaborating on a note. It is the
+// second one replacing the first one's.
+func UniqueNote(name string, taken map[string]bool) string {
+	if !taken[name] {
+		return name
+	}
+	stem := strings.TrimSuffix(name, ".md")
+	// Terminates: taken is finite, so some suffix is free.
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d.md", stem, i)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
 }
 
 // Validate reports whether the capture is one this package can render.
+//
+// The name is derived here rather than taken from the member, so this
+// is the assertion that it stayed one path component: it reaches a
+// shell as part of a path and git as part of a pushed tree.
 func (c Capture) Validate() error {
-	if strings.TrimSpace(c.What) == "" {
-		return fmt.Errorf("say what to capture")
-	}
 	if c.Note == "" {
 		return fmt.Errorf("a capture needs a note to write to")
 	}
@@ -143,20 +185,22 @@ func (c Capture) Validate() error {
 }
 
 // Path is where the note lands, relative to the root of the checkout.
-func (c Capture) Path(sessionID string) string {
-	return NotesDir(sessionID) + "/" + c.Note
-}
+func (c Capture) Path() string { return NotesPath(c.Note) }
 
 // Prompt renders the turn that asks the conversation to write the note.
 //
 // This is a turn in the conversation like any other, not a side channel:
 // the agent has the whole exploration in its context, which is the only
-// reason a one-line "what to capture" is enough to produce a document.
-// It also means the member sees it happen, and can follow it with "no,
-// keep the part about the retry loop" and capture again.
-func (c Capture) Prompt(sessionID string) (string, error) {
+// reason a canned "write this up" is enough to produce a document. It
+// also means the member sees it happen, and can follow it with "no, keep
+// the part about the retry loop" and capture again.
+func (c Capture) Prompt() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
+	}
+	what := strings.TrimSpace(c.What)
+	if what == "" {
+		what = DefaultWhat
 	}
 	t, err := template.New("capture").Parse(capturePrompt)
 	if err != nil {
@@ -164,9 +208,8 @@ func (c Capture) Prompt(sessionID string) (string, error) {
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, capturePromptData{
-		Path: c.Path(sessionID),
-		Dir:  NotesDir(sessionID),
-		What: strings.TrimSpace(c.What),
+		Path: c.Path(),
+		What: what,
 	}); err != nil {
 		return "", fmt.Errorf("rendering the capture prompt: %w", err)
 	}
@@ -181,9 +224,11 @@ func (c Capture) Prompt(sessionID string) (string, error) {
 // the turn that writes the note may run for minutes, and the save has to
 // survive whichever replica served the request going away.
 type Pending struct {
-	// Note is the file the turn was asked to write. The save pushes the
-	// whole directory regardless, so this is for saying what is in
-	// flight, not for choosing what to push.
+	// Note is the file the turn was asked to write, and the one the
+	// save pushes. It travels with the request rather than being
+	// re-derived by the controller: what gets pushed has to be what the
+	// prompt was told to write, whatever the session has been renamed
+	// to since.
 	Note string `json:"note"`
 	// At is when the prompt was sent. It bounds the wait, and it is what
 	// tells a finished save-notes run apart from one left over from an

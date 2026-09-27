@@ -308,7 +308,6 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	r.POST("/api/research/:session/cancel", server.cancelResearchSession)
 	r.POST("/api/research/:session/mode", server.setResearchSessionMode)
 	r.POST("/api/research/:session/capture", server.captureResearchNotes)
-	r.GET("/api/research/:session/notes", server.getResearchNotes)
 	r.GET("/api/research-events/:session", server.streamResearchEvents)
 	return r, dynamicClient
 }

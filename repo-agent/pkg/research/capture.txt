@@ -17,8 +17,8 @@ Keep the file:line references, command lines and concrete names — they
 are the part worth saving. Say plainly what is still unresolved rather
 than rounding it off into a conclusion.
 
-Write nothing outside `{{.Dir}}`, and put no tokens, keys or other
-credentials into the file: this note is pushed to a branch on the
-member's fork on GitHub.
+Touch no file but `{{.Path}}` — it is the only one that gets saved —
+and put no tokens, keys or other credentials into it: this note is
+pushed to a branch on the member's fork on GitHub.
 
 When the file is written, say in one line what you put in it, and stop.

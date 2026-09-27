@@ -20,20 +20,27 @@ set -o pipefail
 # - GH_TOKEN (the member's; transient)
 # - REPO_NAME (the checkout under /workspaces)
 # - UPSTREAM_REPO (owner/repo the member's fork is of)
-# - SESSION_ID (names the directory the notes land in)
+# - SESSION_ID (the conversation this is; names the sandbox)
+# - NOTES_FILE (the note that gets pushed; defaults to SESSION_ID.md)
 # - GITHUB_USER_NAME / GITHUB_USER_EMAIL (commit identity)
 
 NOTES_BRANCH="research/notes"
-NOTES_DIR="docs-exploration/research/${SESSION_ID}"
-SRC="/workspaces/${REPO_NAME}/${NOTES_DIR}"
+# Named after the conversation rather than numbered after it. The file
+# is the note's address on a branch someone reads months later, and the
+# caller is the half that knows what the session is called; the id is
+# what is left when nothing does.
+NOTES_FILE="${NOTES_FILE:-${SESSION_ID}.md}"
+NOTES_PATH="docs-exploration/research/${NOTES_FILE}"
+SRC="/workspaces/${REPO_NAME}/${NOTES_PATH}"
 
 # Nothing to save is an error, not a quiet success. The caller asked
-# the conversation to write notes and then asked for them to be saved;
-# an empty directory means the first half did not happen, and reporting
-# "saved" would send someone to a branch that has nothing on it.
-if [ ! -d "${SRC}" ] || [ -z "$(ls -A "${SRC}" 2>/dev/null)" ]; then
-    echo "ERROR: ${NOTES_DIR} is missing or empty in the checkout." >&2
-    echo "       The conversation has not written its notes there yet." >&2
+# the conversation to write the note and then asked for it to be saved;
+# a missing or empty file means the first half did not happen, and
+# reporting "saved" would send someone to a branch that has nothing on
+# it.
+if [ ! -s "${SRC}" ]; then
+    echo "ERROR: ${NOTES_PATH} is missing or empty in the checkout." >&2
+    echo "       The conversation has not written its note there yet." >&2
     exit 1
 fi
 
@@ -85,13 +92,12 @@ git -C "${WORK}/notes" config user.name "${GITHUB_USER_NAME}"
 git -C "${WORK}/notes" config user.email "${GITHUB_USER_EMAIL}"
 git -C "${WORK}/notes" config credential.helper "${GIT_CRED}"
 
-# Replace this session's directory wholesale rather than copying over
-# it, so a file the conversation deleted does not survive on the branch
-# as a stale note. Scoped to this session: no other session's notes are
-# in reach.
-mkdir -p "${WORK}/notes/$(dirname "${NOTES_DIR}")"
-rm -rf "${WORK}/notes/${NOTES_DIR}"
-cp -R "${SRC}" "${WORK}/notes/${NOTES_DIR}"
+# One file, named by the caller, and nothing else. Whatever else the
+# conversation left lying around its checkout stays there: this copies
+# the note it was asked for, so no other session's note is in reach and
+# no stray file rides along onto the branch.
+mkdir -p "${WORK}/notes/$(dirname "${NOTES_PATH}")"
+cp "${SRC}" "${WORK}/notes/${NOTES_PATH}"
 
 cd "${WORK}/notes"
 
@@ -99,15 +105,15 @@ cd "${WORK}/notes"
 # and suppressing that is how a run once turned into a silent "nothing
 # to commit" with the work already done — see commitAndPushRun in
 # run.sh, which learned this the hard way.
-if ! git add --all "${NOTES_DIR}"; then
-    echo "ERROR: could not stage ${NOTES_DIR}." >&2
+if ! git add --all "${NOTES_PATH}"; then
+    echo "ERROR: could not stage ${NOTES_PATH}." >&2
     exit 1
 fi
 if git diff --cached --quiet; then
-    echo "No change: ${NOTES_BRANCH} already has these notes."
+    echo "No change: ${NOTES_BRANCH} already has this note."
     exit 0
 fi
-git commit --quiet -m "research(${SESSION_ID}): notes"
+git commit --quiet -m "research(${NOTES_FILE}): notes"
 
 # A dropped connection after a successful server-side push makes the
 # retry fail with 'cannot lock ref … is at <our sha>'. If the remote is
@@ -129,4 +135,4 @@ if ! git push origin "${NOTES_BRANCH}"; then
     fi
 fi
 
-echo "Saved ${NOTES_DIR} to ${FORK_OWNER}/${REPO_NAME} on ${NOTES_BRANCH}"
+echo "Saved ${NOTES_PATH} to ${FORK_OWNER}/${REPO_NAME} on ${NOTES_BRANCH}"

@@ -509,16 +509,6 @@ const PROBE_INTERVAL_MS = 5000;
 // Where the reading choice is remembered.
 const RESEARCH_VIEW_KEY = 'repoboard.research.view';
 
-// The note a session writes into when nobody picks another. The server
-// has the same default and applies it to an empty `note`; this copy is
-// only so the picker has something to show before the notes list has
-// answered, and before the first note exists to be listed.
-const DEFAULT_NOTE = 'notes.md';
-
-// The picker's value for "somewhere new". Not a name, so it cannot
-// collide with one — every real option is a file name ending .md.
-const NEW_NOTE = '+new';
-
 // normaliseView reads a stored choice, including the two this tab used
 // to write before the conversation became a terminal outright.
 //
@@ -610,23 +600,10 @@ export function ResearchConversation({
   // it are the three things you reach for once a session and never
   // while reading one, and they were costing header width all the time.
   const [menuOpen, setMenuOpen] = useState(false);
-  // The save-notes form, which is the one thing in the ⋯ menu that needs
-  // more than a click: what to write up, and which note to write it
-  // into. Open state, the two answers, and the list of notes already on
-  // the branch — a session writes into the same file over and over, so
-  // the common case is picking one that is there rather than naming a
-  // new one.
-  //
-  // saveNote is the file name, or NEW_NOTE while the member is typing
-  // one in saveNewNote. Kept apart so backing out of "new note" puts the
-  // previous choice back rather than an empty box.
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [saveWhat, setSaveWhat] = useState('');
-  const [saveNote, setSaveNote] = useState('');
-  const [saveNewNote, setSaveNewNote] = useState('');
+  // A save in flight, which lasts as long as one POST. Everything after
+  // it — the turn, the push — is on the sandbox and comes back on the
+  // probe, so there is nothing else here to remember.
   const [saving, setSaving] = useState(false);
-  const [notes, setNotes] = useState(null);
-  const [notesError, setNotesError] = useState('');
   // Only so the composer can lift when it has the caret. :focus-within
   // would do it in a stylesheet, but every style in this file is
   // inline and one rule in App.css for one box is worse than a bool.
@@ -1061,72 +1038,34 @@ export function ResearchConversation({
       .catch(err => setError(`delete failed: ${err}`));
   };
 
-  // What is already on the notes branch, read when the form opens.
+  // captureNotes asks the conversation to write itself up, and the
+  // server records on the sandbox that a push is owed once the turn
+  // ends. One POST with nothing in it.
   //
-  // Fetched then rather than kept live: a note appears on the branch
-  // minutes after it is asked for — the agent has to finish the turn and
-  // the controller has to push — so there is nothing here that polling
-  // would catch sooner than the next time somebody opens the form.
-  //
-  // A list that cannot be read is not an error the member has to clear:
-  // the fork may simply have no notes branch yet, which is the state
-  // every session is in until the first save lands. The form still
-  // works — naming a new note is what it was going to do anyway.
-  useEffect(() => {
-    if (!saveOpen) return undefined;
-    let closed = false;
-    setNotesError('');
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/notes`)
-      .then(async res => {
-        const body = await res.json().catch(() => ({}));
-        if (closed) return;
-        if (!res.ok) { setNotesError(body.error || `HTTP ${res.status}`); return; }
-        setNotes(body);
-        if (body.unreadable) setNotesError(body.unreadable);
-        setSaveNote(n => n || body.defaultNote || DEFAULT_NOTE);
-      })
-      .catch(err => { if (!closed) setNotesError(String(err)); });
-    return () => { closed = true; };
-  }, [saveOpen, sessionId]);
-
-  // captureNotes sends the canned write-up prompt and records, on the
-  // sandbox, that a push is owed once the turn ends. Both halves are the
-  // server's; this is one POST.
-  //
-  // The form closes on success and the header says what is in flight
-  // from then on, because what happens next takes minutes and none of it
-  // happens here — leaving the form open would make it look like
-  // something was still being filled in.
+  // Nothing in it is the point. What to write is the conversation and
+  // where it goes is the session — both of which the server already
+  // knows — so this is a button and not the form it used to be. A
+  // member who wants something narrower says so to the agent, in the
+  // conversation, and then saves.
   const captureNotes = () => {
-    const what = saveWhat.trim();
-    const note = (saveNote === NEW_NOTE ? saveNewNote : saveNote).trim();
-    if (!what || !note || saving || busy || phase !== 'live') return;
+    if (saving || busy || phase !== 'live') return;
     setSaving(true);
     setError('');
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/capture`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ what, note }),
-    })
+    fetch(`/api/research/${encodeURIComponent(sessionId)}/capture`, { method: 'POST' })
       .then(async res => {
-        const body = await res.json().catch(() => ({}));
         if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
           // 409 is acpd refusing a second prompt while a turn is in
-          // flight. Said as the thing to do about it: the form's own
+          // flight. Said as the thing to do about it: the button's own
           // guard closes the gap between the last frame and the click,
           // not the race with another tab.
           setError(res.status === 409
-            ? 'The agent is mid-turn — wait for it to finish, then ask again.'
+            ? 'The agent is mid-turn — wait for it to finish, then save again.'
             : (body.error || `save notes failed: HTTP ${res.status}`));
           return;
         }
-        setSaveOpen(false);
-        setSaveWhat('');
-        // The note that was just asked for becomes the resting choice:
-        // the next thing written up in this session usually belongs in
-        // the same file.
-        if (body.note) setSaveNote(body.note);
-        setSaveNewNote('');
+        // The write-up is a turn like any other, so it scrolls in below
+        // — and the member should be looking at it.
         stickRef.current = true;
       })
       .catch(err => setError(`save notes failed: ${err}`))
@@ -1155,23 +1094,9 @@ export function ResearchConversation({
   const repo = (info && info.repo) || '';
   const composerDisabled = phase !== 'live' || busy || sending;
 
-  // The notes this session could write into: the one it writes into by
-  // default, whatever is already on the branch, and — until the branch
-  // catches up — the one just asked for. A note takes minutes to appear
-  // on the fork, and a picker that forgot the name in between would make
-  // the second write-up of an afternoon look like a new file.
-  const defaultNote = (notes && notes.defaultNote) || DEFAULT_NOTE;
-  const noteChoices = [defaultNote]
-    .concat(notes && notes.notes ? notes.notes.map(n => n.name) : [])
-    .concat([saveNote])
-    .filter(n => n && n !== NEW_NOTE)
-    .filter((n, i, all) => all.indexOf(n) === i);
   // A capture is a prompt, so it is refused for the same reasons one is
-  // — acpd will not take a second one mid-turn. It stops the button and
-  // nothing else: the boxes stay live so the member can write up what
-  // they want captured while the turn they want captured is finishing.
+  // — acpd will not take a second one mid-turn.
   const captureDisabled = phase !== 'live' || busy || saving;
-  const captureNote = saveNote === NEW_NOTE ? saveNewNote.trim() : saveNote;
 
   // Why the composer will not send, as a line beside the Send button.
   // It used to be the textarea's placeholder, which is the one place it
@@ -1334,6 +1259,24 @@ export function ResearchConversation({
           {phase === 'live' && busy && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
           )}
+          {/* The one way anything said here outlives the sandbox's disk,
+              and it takes no answers: the note is the session's one
+              document and what goes in it is the conversation. It was a
+              form in the ⋯ menu asking which part and which file, which
+              is two questions to click through for the answer nearly
+              everyone wanted — and it hid the feature behind a menu
+              nobody opens mid-read.
+
+              On the bar and not in the menu because saving is something
+              you do *while* reading, at the moment the answer lands,
+              which is exactly the boundary the ⋯ menu draws. */}
+          <button className="btn btn-sm" onClick={captureNotes} disabled={captureDisabled}
+            aria-label="Save notes"
+            title={phase !== 'live' ? 'Not connected'
+              : busy ? 'The agent is working — save once the turn ends'
+                : 'Write this conversation up as a note and push it to your fork'}>
+            {saving ? '⋯' : '💾'}
+          </button>
           {/* Two ways to get more room, and they are different enough to
               both be here rather than one behind the other. Full screen
               keeps the conversation you are in — same socket, same draft,
@@ -1386,16 +1329,6 @@ export function ResearchConversation({
                       style={{ fontSize: 'x-small', padding: '4px 6px' }}
                       title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                   )}
-                  {/* The one way anything said here outlives the
-                      sandbox's disk. It opens a form rather than doing
-                      something, because "write this up" needs to know
-                      which part and into which note — and both answers
-                      are the member's. */}
-                  <button role="menuitem" className="btn btn-sm"
-                    onClick={() => { setMenuOpen(false); setSaveOpen(true); }}
-                    title="Have the agent write part of this conversation up as a note, and push it to your fork">
-                    Save notes…
-                  </button>
                   <button role="menuitem" className="btn btn-delete btn-sm"
                     onClick={() => { setMenuOpen(false); destroy(); }}
                     title="Delete the sandbox — the transcript lives on its disk and goes with it">
@@ -1416,9 +1349,9 @@ export function ResearchConversation({
             Not dismissible, because it is not this tab's state: it is
             written on the sandbox, and the thing that clears it is the
             next capture. A push fails for reasons that outlast a click
-            — no notes branch, a token that expired, an empty directory
-            — and a banner the member could wave away would leave the
-            session looking like it had saved. */}
+            — no notes branch, a token that expired, a note the turn
+            never wrote — and a banner the member could wave away
+            would leave the session looking like it had saved. */}
         {info && info.captureError && (
           <div className="warning-banner" style={{ flex: '0 0 auto' }}>
             The last note was not pushed: {info.captureError}. Ask for it again to retry.
@@ -1429,115 +1362,12 @@ export function ResearchConversation({
             remembered here, so it survives a reload, shows up in the
             second tab, and outlives the API replica that took the
             click. */}
-        {info && info.capturing && !saveOpen && (
+        {info && info.capturing && (
           <div style={{
             flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'x-small',
             color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)',
           }}>
-            Writing up <strong>{info.capturing}</strong> — it is pushed to your fork when this turn finishes.
-          </div>
-        )}
-
-        {/* Save notes: the two things the server needs that only the
-            member knows.
-
-            A form rather than a button, because neither answer has a
-            sensible default. "Everything since the last one" would need
-            this pane to know where that was, which it does not; and a
-            note per capture would turn an afternoon of questions into a
-            directory of fragments, when what makes a note worth keeping
-            is that it is the one place the subject is written down. So:
-            what to capture, in the member's words, and which file it
-            belongs in — with the files already on the branch listed,
-            because picking one of those is the common case. */}
-        {saveOpen && (
-          <div style={{
-            flex: '0 0 auto', textAlign: 'left', padding: '10px 12px', fontSize: 'small',
-            background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '6px' }}>
-              <strong>Save notes</strong>
-              <span style={{ flex: 1, fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-                The agent writes the note in its checkout; it is pushed to{' '}
-                <code>{(notes && notes.branch) || 'research/notes'}</code> on your fork
-                once the turn ends.
-              </span>
-              <button className="btn btn-sm" onClick={() => setSaveOpen(false)}>Close</button>
-            </div>
-
-            <GrowingTextarea value={saveWhat} onChange={e => setSaveWhat(e.target.value)}
-              minRows={2} maxRows={8}
-              aria-label="What to capture"
-              placeholder="What should this note cover? — e.g. how the retry loop actually terminates, and the two cases we found that it does not"
-              style={{
-                width: '100%', font: 'inherit', padding: '6px 8px',
-                border: '1px solid var(--border-color)', borderRadius: '6px',
-                background: 'var(--bg-card)', color: 'var(--text-primary)',
-              }} />
-
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '8px',
-            }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 'x-small' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Into</span>
-                <select value={saveNote || defaultNote} aria-label="Which note"
-                  onChange={e => setSaveNote(e.target.value)}
-                  style={{
-                    font: 'inherit', padding: '2px 4px', borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    background: 'var(--bg-card)', color: 'var(--text-primary)',
-                  }}>
-                  {noteChoices.map(n => <option key={n} value={n}>{n}</option>)}
-                  <option value={NEW_NOTE}>New note…</option>
-                </select>
-              </label>
-              {saveNote === NEW_NOTE && (
-                // Free text, not a file name. The server folds whatever
-                // is typed here down to lower case and dashes and adds
-                // the .md, which is what keeps "Retry loop" and "retry
-                // loop" from becoming two notes.
-                <input value={saveNewNote} onChange={e => setSaveNewNote(e.target.value)}
-                  aria-label="New note name"
-                  placeholder="what it is about — e.g. retry loop"
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); captureNotes(); } }}
-                  style={{
-                    font: 'inherit', fontSize: 'x-small', padding: '2px 6px', minWidth: '200px',
-                    border: '1px solid var(--border-color)', borderRadius: '6px',
-                    background: 'var(--bg-card)', color: 'var(--text-primary)',
-                  }} />
-              )}
-              {/* Where the chosen note is now, for anyone deciding
-                  whether to add to it or start another. Only for one
-                  that exists: the rest are a file name and a promise. */}
-              {notes && (notes.notes || []).filter(n => n.name === saveNote && n.htmlUrl).map(n => (
-                <a key={n.name} href={n.htmlUrl} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: 'x-small' }} title={`Read ${n.path} on GitHub`}>read it ↗</a>
-              ))}
-              <span style={{ flex: 1 }} />
-              {/* Said beside the button rather than as a disabled
-                  tooltip: the reason a capture will not go is nearly
-                  always the turn in flight, and that is the one thing
-                  worth knowing before typing a paragraph into the box
-                  above. */}
-              <span role="status" style={{ fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-                {phase !== 'live' ? 'Not connected'
-                  : busy ? 'The agent is working — wait for the turn to end'
-                    : info && info.capturing ? `Replaces the ${info.capturing} save already owed`
-                      : ''}
-              </span>
-              <button className="btn btn-sm"
-                disabled={captureDisabled || !saveWhat.trim() || !captureNote}
-                onClick={captureNotes}
-                title="Ask the agent to write this up, and push it when the turn ends">
-                {saving ? 'asking…' : 'Save notes'}
-              </button>
-            </div>
-
-            {notesError && (
-              <div style={{ marginTop: '6px', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-                Could not list the notes already saved ({notesError}) — naming a new one still works.
-              </div>
-            )}
+            Writing this conversation up — the note is pushed to your fork when this turn finishes.
           </div>
         )}
 
