@@ -349,9 +349,10 @@ function PermissionRow({ item, onResolve, busy }) {
       {resolved ? (
         <div style={{ color: 'var(--text-secondary)' }}>
           {item.outcome === 'cancelled' ? 'cancelled' : `allowed: ${item.optionId || '—'}`}
-          {/* A reason is set only when acpd answered for us, which today
-              means the ten-minute timeout ran out. Saying so is the
-              difference between "you did this" and "nobody did". */}
+          {/* A reason is set only when acpd answered for us: the
+              ten-minute timeout ran out, or the session auto-approves.
+              Saying so is the difference between "you did this" and
+              "nobody did". */}
           {item.reason && <span> — {item.reason}</span>}
         </div>
       ) : (
@@ -902,9 +903,15 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
     unreachable: { text: 'not answering', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
     gone: { text: 'gone', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
     failed: { text: 'unavailable', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
-    live: busy
-      ? { text: 'agent working', color: '#b08800', bg: 'rgba(176,136,0,0.12)' }
-      : { text: 'ready', color: 'var(--status-green)', bg: 'rgba(40,167,69,0.12)' },
+    // A blocked turn is busy, so "agent working" is true and useless: it
+    // reads as progress when in fact nothing will happen until someone
+    // scrolls down and clicks. The pill is the one part of this panel
+    // visible from across a room, so it is where the ask belongs.
+    live: waiting
+      ? { text: '⚠ needs permission', color: 'var(--status-red, #c62828)', bg: 'rgba(198,40,40,0.10)' }
+      : busy
+        ? { text: 'agent working', color: '#b08800', bg: 'rgba(176,136,0,0.12)' }
+        : { text: 'ready', color: 'var(--status-green)', bg: 'rgba(40,167,69,0.12)' },
   }[phase];
 
   const repo = (info && info.repo) || '';
@@ -953,7 +960,9 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
         )}
         {name && repo && <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>}
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
-        <Pill {...statusPill} title={detail} />
+        <Pill {...statusPill} title={phase === 'live' && waiting
+          ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
+          : detail} />
         <span style={{ flex: 1 }} />
         {/* How much the engine asks before it acts. A research session
             starts auto-approving — nobody is necessarily watching one,

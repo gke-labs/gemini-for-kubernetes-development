@@ -115,6 +115,23 @@ type SessionConfig struct {
 	Mode string
 	// Dir is where the transcript and engine log are written.
 	Dir string
+	// AutoApprove answers permission requests as they arrive instead of
+	// waiting for a user.
+	//
+	// Mode should already have said this, and mostly it does — but an
+	// engine may ask anyway. gemini's shell tool checks the command for
+	// tokens lifted from earlier tool output (a prompt-injection guard)
+	// before it consults the approval mode, so a yolo session still stops
+	// dead on `git show <sha-it-just-read>`; there is no setting for it,
+	// and answering "allow for this session" does not record an allowlist
+	// entry, so the next command asks again. A session nobody is watching
+	// then burns PermissionTimeout per tool call and gets cancelled.
+	//
+	// So this is a property of the session, not of the mode: the caller
+	// states up front that no human will be reading, and acpd stops
+	// pretending one might. Every request is still written to the
+	// transcript, with its resolution, so the record is unchanged.
+	AutoApprove bool
 	// PermissionTimeout bounds how long a tool call waits on a user who
 	// may have closed the tab. Zero means DefaultPermissionTimeout.
 	PermissionTimeout time.Duration
@@ -133,6 +150,10 @@ type Session struct {
 	CWD       string
 	Engine    string
 	CreatedAt time.Time
+	// AutoApprove is SessionConfig.AutoApprove, fixed for the life of the
+	// session: a client that attaches later needs to know whether this
+	// conversation will ever ask it anything.
+	AutoApprove bool
 
 	transcript *Transcript
 	client     *acp.Client
@@ -199,6 +220,7 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 		CWD:               cfg.CWD,
 		Engine:            cfg.Engine,
 		CreatedAt:         time.Now().UTC(),
+		AutoApprove:       cfg.AutoApprove,
 		transcript:        transcript,
 		permissionTimeout: timeout,
 		pending:           make(map[string]chan permissionResolution),
@@ -446,6 +468,30 @@ func chooseAuthMethod(advertised []acp.AuthMethod, requested, engineDefault stri
 	return ""
 }
 
+// allowOnceOption picks the option an auto-approved session answers with,
+// and reports whether there was one.
+//
+// Once, not always: an "allow always" answer asks the engine to remember a
+// rule derived from this call, which is a broader thing to decide than the
+// call itself and — for the check that makes AutoApprove necessary at all
+// — is refused anyway. Answering each request on its own merits costs a
+// round trip nobody is waiting through. An always option is still better
+// than nothing if once is not offered.
+func allowOnceOption(options []acp.PermissionOption) (string, bool) {
+	fallback := ""
+	for _, o := range options {
+		switch o.Kind {
+		case acp.PermissionAllowOnce:
+			return o.OptionID, true
+		case acp.PermissionAllowAlways:
+			if fallback == "" {
+				fallback = o.OptionID
+			}
+		}
+	}
+	return fallback, fallback != ""
+}
+
 // onNotification writes agent traffic straight through to the transcript.
 //
 // Session updates are recorded under their own ACP kind, so a variant this
@@ -499,18 +545,27 @@ func (s *Session) onRequest(method string, params json.RawMessage) (any, *acp.RP
 		return nil, &acp.RPCError{Code: acp.InvalidParams, Message: err.Error()}
 	}
 
+	// An auto-approved session answers before anything is made pending:
+	// no client may see this as a request it could still resolve, because
+	// no client ever will. Both events are still written — the transcript
+	// is the record of what the agent did, and "it asked, and was allowed
+	// without being read" is part of that.
+	//
+	// Not when every option denies: approving is then not on offer, so the
+	// request falls through to a human, or to the timeout.
+	autoOption, autoOK := "", false
+	if s.AutoApprove {
+		autoOption, autoOK = allowOnceOption(req.Options)
+	}
+
 	s.mu.Lock()
 	s.nextReq++
 	requestID := fmt.Sprintf("perm-%d", s.nextReq)
 	ch := make(chan permissionResolution, 1)
-	s.pending[requestID] = ch
+	if !autoOK {
+		s.pending[requestID] = ch
+	}
 	s.mu.Unlock()
-
-	defer func() {
-		s.mu.Lock()
-		delete(s.pending, requestID)
-		s.mu.Unlock()
-	}()
 
 	if err := s.transcript.AppendValue(KindPermissionRequest, PermissionRequest{
 		RequestID: requestID,
@@ -519,6 +574,25 @@ func (s *Session) onRequest(method string, params json.RawMessage) (any, *acp.RP
 	}); err != nil {
 		return nil, &acp.RPCError{Code: acp.InternalError, Message: err.Error()}
 	}
+
+	if autoOK {
+		_ = s.transcript.AppendValue(KindPermissionResolved, map[string]any{
+			"requestId": requestID,
+			"outcome":   acp.PermissionSelected,
+			"optionId":  autoOption,
+			"reason":    "auto-approved: session was created with autoApprove",
+		})
+		return acp.RequestPermissionResult{Outcome: acp.PermissionOutcome{
+			Outcome:  acp.PermissionSelected,
+			OptionID: autoOption,
+		}}, nil
+	}
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.pending, requestID)
+		s.mu.Unlock()
+	}()
 
 	select {
 	case res := <-ch:

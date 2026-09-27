@@ -341,8 +341,10 @@ func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, s
 			// Nobody is watching this one. A canned opening that stops to
 			// ask permission blocks until acpd's permission timeout and
 			// is then cancelled, so the digest the member clicked for
-			// never arrives.
-			Mode: acpd.ResearchMode,
+			// never arrives. The mode is not enough on its own to stop
+			// that happening — see ResearchAutoApprove.
+			Mode:        acpd.ResearchMode,
+			AutoApprove: acpd.ResearchAutoApprove,
 		}, apiKey); cerr != nil {
 			return cerr
 		}

@@ -30,6 +30,11 @@ import (
 //
 // With --refuse it advertises those modes and then refuses to leave the
 // default one, which is what gemini does in a folder it does not trust.
+//
+// A prompt beginning "!ask" makes it request permission before replying
+// and report the answer it got, which is the only way to see what acpd
+// does with a request from the far side. "!ask always" offers no
+// allow_once, "!ask deny" offers no way to allow at all.
 const fakeAgent = `
 import json, os, sys
 
@@ -78,6 +83,36 @@ for line in sys.stdin:
             send({"jsonrpc": "2.0", "id": mid, "result": {}})
     elif method == "session/prompt":
         prompt = msg["params"]["prompt"][0]["text"]
+        if prompt.startswith("!ask"):
+            allow = [{"optionId": "proceed_once", "name": "Allow", "kind": "allow_once"},
+                     {"optionId": "proceed_always", "name": "Allow for this session",
+                      "kind": "allow_always"}]
+            if "always" in prompt:
+                allow = [allow[1]]
+            if "deny" in prompt:
+                allow = []
+            send({"jsonrpc": "2.0", "id": "perm-req", "method": "session/request_permission",
+                  "params": {"sessionId": "agent-side-id",
+                             "toolCall": {"toolCallId": "t1", "title": "echo hi",
+                                          "kind": "execute", "status": "pending"},
+                             "options": allow + [{"optionId": "cancel", "name": "Reject",
+                                                  "kind": "reject_once"}]}})
+            answer = "<none>"
+            for reply in sys.stdin:
+                reply = reply.strip()
+                if not reply:
+                    continue
+                r = json.loads(reply)
+                if r.get("id") == "perm-req" and "method" not in r:
+                    out = (r.get("result") or {}).get("outcome") or {}
+                    answer = "%s/%s" % (out.get("outcome", "?"), out.get("optionId", ""))
+                    break
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": "agent-side-id",
+                "update": {"sessionUpdate": "agent_message_chunk",
+                           "content": {"type": "text", "text": "permission:%s" % answer}}}})
+            send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
+            continue
         if prompt.startswith("!mode "):
             current = prompt.split(" ", 1)[1]
             send({"jsonrpc": "2.0", "method": "session/update", "params": {
