@@ -629,33 +629,44 @@ describe('ResearchPanel', () => {
 
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
 
-        // Name, age, sandbox state. On the board's own table the repo
-        // is the board you are standing on, and both ids are two
-        // spellings of "which pod" — none of the three is what anyone
-        // is scanning the list for.
-        const name = [...container.querySelectorAll('button')]
-            .find(b => b.textContent === 'the retry loop');
-        expect(name).toBeTruthy();
+        // Name, then age and sandbox state in small print. On the
+        // board's own rail the repo is the board you are standing on,
+        // and both ids are two spellings of "which pod" — none of the
+        // three is what anyone is scanning the list for.
+        const row = [...container.querySelectorAll('button')]
+            .find(b => b.textContent.startsWith('the retry loop'));
+        expect(row).toBeTruthy();
         expect(container.textContent).not.toContain('aaaaaaaa');
         expect(container.textContent).not.toContain('rsch-repo-agent-1');
-        // Three columns and no more. Counted rather than read off the
-        // text, because the board's own repo name appears all over this
-        // panel and would make a text check pass with the column back.
-        expect([...container.querySelectorAll('thead th')].map(th => th.textContent))
-            .toEqual(['Conversation', 'Age', 'Agent']);
-        expect(container.querySelectorAll('tbody tr')[0].querySelectorAll('td')).toHaveLength(3);
+        // The rail is a list, not a table: no header row survives the
+        // width, and there is nothing left to head.
+        expect(container.querySelector('table')).toBeNull();
+        // Age is relative to now, so it is checked for being there
+        // rather than for what it says.
+        expect(row.textContent).toContain('up');
+        expect(row.querySelector('[title="2026-09-26T10:00:00Z"]')).toBeTruthy();
 
-        // Both are still one hover away, for the times you are going to
-        // go and look at the pod.
-        expect(name.title).toContain('session aaaaaaaa-1111');
-        expect(name.title).toContain('sandbox rsch-repo-agent-1');
+        // Both ids are still one hover away, for the times you are
+        // going to go and look at the pod.
+        expect(row.title).toContain('session aaaaaaaa-1111');
+        expect(row.title).toContain('sandbox rsch-repo-agent-1');
 
         // The other repo's session is accounted for but not in the table.
         expect(container.textContent).not.toContain('rollout flags');
         expect(container.textContent).toContain('1 conversation for other repositories');
     });
 
-    test('the name is the control — there is no Open button beside it', async () => {
+    // selectRow clicks a rail row by the title on its first line.
+    const selectRow = async (title) => {
+        const row = [...container.querySelectorAll('button')]
+            .find(b => b.textContent.startsWith(title));
+        expect(row).toBeTruthy();
+        await act(async () => { row.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await flush();
+        return row;
+    };
+
+    test('the row is the selection, and the rail it came from stays put', async () => {
         global.fetch = jest.fn(() => reply(404, { error: 'not found' }));
         global.fetch.mockImplementationOnce(() => reply(200, sessions));
 
@@ -666,119 +677,102 @@ describe('ResearchPanel', () => {
 
         expect([...container.querySelectorAll('button')].map(b => b.textContent)).not.toContain('Open');
 
-        const name = [...container.querySelectorAll('button')]
-            .find(b => b.textContent === 'the retry loop');
-        await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
+        const row = await selectRow('the retry loop');
 
-        // The conversation opens over the list, not instead of it: the
-        // sheet is up and the row you clicked is still behind it.
-        const sheet = container.querySelector('[role="dialog"]');
-        expect(sheet).toBeTruthy();
-        expect(container.querySelector('tbody tr')).toBeTruthy();
+        // The conversation fills the right-hand pane; the row that
+        // opened it is still on the left, and now says it is the one
+        // being shown.
+        expect(container.textContent).toContain('no longer exists');
+        expect(row.isConnected).toBe(true);
+        expect(row.getAttribute('aria-current')).toBe('true');
     });
 
-    test('the sheet closes on ✕, on the backdrop, and on Escape', async () => {
-        const openSheet = async () => {
-            const name = [...container.querySelectorAll('button')]
-                .find(b => b.textContent === 'the retry loop');
-            await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    test('the tab lands on the ask box, and + New conversation goes back to it', async () => {
+        // Nothing is covering anything, so there is no ✕ and no
+        // Escape: the way back is the row at the top of the rail.
+        global.fetch = jest.fn(() => reply(404, { error: 'not found' }));
+        global.fetch.mockImplementationOnce(() => reply(200, sessions));
+
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        const newRow = [...container.querySelectorAll('button')]
+            .find(b => b.textContent === '+ New conversation');
+        expect(newRow.getAttribute('aria-current')).toBe('true');
+        expect(container.querySelector('textarea')).toBeTruthy();
+
+        await selectRow('the retry loop');
+        expect(container.querySelector('textarea[placeholder^="Ask anything about this repo"]')).toBeNull();
+        expect(newRow.getAttribute('aria-current')).toBeNull();
+
+        await act(async () => { newRow.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await flush();
+        expect(container.querySelector('textarea[placeholder^="Ask anything about this repo"]')).toBeTruthy();
+        expect(newRow.getAttribute('aria-current')).toBe('true');
+    });
+
+    test('a half-typed question does not follow you into the next conversation', async () => {
+        // Switching straight from one conversation to another is new
+        // with the rail. The conversation resets what it knows is
+        // per-session, but the composer is not on that list, and a
+        // draft carried across and sent into the wrong session is the
+        // failure that matters.
+        const seen = [];
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/research') return reply(200, sessions);
+            const m = /^\/api\/research\/([^/?]+)$/.exec(url);
+            if (m) {
+                seen.push(m[1]);
+                return reply(200, { sessionId: m[1], sandbox: 'rsch-x', repo: 'repo-agent', live: true });
+            }
+            return reply(404, { error: 'not found' });
+        });
+
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        const goLive = async (id) => {
+            const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+            await act(async () => { ws.deliver({ type: 'open', session: { id, busy: false, offset: 0 } }); });
             await flush();
-            expect(container.querySelector('[role="dialog"]')).toBeTruthy();
         };
 
-        global.fetch = jest.fn(() => reply(200, sessions));
+        await selectRow('the retry loop');
+        expect(seen).toContain('aaaaaaaa-1111');
+        await goLive('aaaaaaaa-1111');
+
+        const composer = container.querySelector('textarea');
         await act(async () => {
-            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+            nativeSet(composer, 'half a question about retries');
+            composer.dispatchEvent(new Event('input', { bubbles: true }));
         });
-        await flush();
+        expect(container.querySelector('textarea').value).toBe('half a question about retries');
 
-        await openSheet();
-        const close = container.querySelector('[aria-label="Close"]');
-        await act(async () => { close.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-        expect(container.querySelector('[role="dialog"]')).toBeNull();
+        // The other repo's session, reached through the disclosure.
+        const disclosure = container.querySelector('[title^="Sessions you own for other repositories"]');
+        await act(async () => { disclosure.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await selectRow('rollout flags');
+        expect(seen).toContain('bbbbbbbb-2222');
+        await goLive('bbbbbbbb-2222');
 
-        await openSheet();
-        const backdrop = container.querySelector('[aria-hidden="true"]');
-        await act(async () => { backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-        expect(container.querySelector('[role="dialog"]')).toBeNull();
-
-        await openSheet();
-        await act(async () => {
-            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
-        });
-        await flush();
-        expect(container.querySelector('[role="dialog"]')).toBeNull();
+        expect(container.querySelector('textarea').value).toBe('');
     });
 
-    test('Escape that cancelled a rename does not also close the sheet', async () => {
-        // The rename input handles Escape and calls preventDefault. If
-        // the sheet closed on it too, abandoning an edit would throw
-        // away a half-typed prompt alongside it.
+    test('a conversation in the detail pane still offers to pop out', async () => {
+        // fill and standalone used to be one prop. The detail pane
+        // wants the full height and the pop-out both; only the
+        // popped-out window itself should be without it.
         global.fetch = jest.fn(() => reply(200, sessions));
         await act(async () => {
             root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
         });
         await flush();
 
-        const name = [...container.querySelectorAll('button')]
-            .find(b => b.textContent === 'the retry loop');
-        await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-
-        const heading = container.querySelector('[role="dialog"] strong');
-        await act(async () => { heading.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-
-        const field = container.querySelector('input[aria-label="Session title"]');
-        expect(field).toBeTruthy();
-        await act(async () => {
-            // cancelable, as a real keydown is: without it preventDefault
-            // is a no-op and this test would pass for the wrong reason.
-            field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-        });
-        await flush();
-
-        // The edit is gone; the sheet is not.
-        expect(container.querySelector('input[aria-label="Session title"]')).toBeNull();
-        expect(container.querySelector('[role="dialog"]')).toBeTruthy();
-    });
-
-    test('the sheet opens at 70% and widens on request', async () => {
-        global.fetch = jest.fn(() => reply(200, sessions));
-        await act(async () => {
-            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
-        });
-        await flush();
-
-        const name = [...container.querySelectorAll('button')]
-            .find(b => b.textContent === 'the retry loop');
-        await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-
-        const sheet = container.querySelector('[role="dialog"]');
-        expect(sheet.style.width).toBe('70%');
-
-        const widen = container.querySelector('[aria-label="Widen the panel"]');
-        await act(async () => { widen.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        expect(container.querySelector('[role="dialog"]').style.width).toBe('95%');
-    });
-
-    test('a conversation in the sheet still offers to pop out', async () => {
-        // fill and standalone used to be one prop. The sheet wants the
-        // full height and the pop-out both; only the popped-out window
-        // itself should be without it.
-        global.fetch = jest.fn(() => reply(200, sessions));
-        await act(async () => {
-            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
-        });
-        await flush();
-
-        const name = [...container.querySelectorAll('button')]
-            .find(b => b.textContent === 'the retry loop');
-        await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
+        await selectRow('the retry loop');
 
         const more = container.querySelector('[aria-label="More actions"]');
         await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
@@ -831,7 +825,7 @@ describe('ResearchPanel', () => {
         global.fetch = claimFetch(claimed);
 
         await renderPanel();
-        expect(container.textContent).toContain('No research conversations for repo-agent yet');
+        expect(container.textContent).toContain('No conversations for repo-agent yet');
         await clickButton('Empty conversation');
 
         expect(claimed).toEqual([{}]);
