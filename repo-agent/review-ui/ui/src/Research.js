@@ -553,9 +553,16 @@ export function normaliseView(stored) {
 // second tab of itself means anything there.
 // They were one prop, which stopped being true the moment the panel
 // opened the conversation in a slide-over: that wants the full height
-// and the pop-out both.
+// and the pop-out both. The panel passes neither any more — it opens
+// full screen, which is its own height — so `fill` is the standalone
+// route's, where the conversation is the page.
+// `onClose` says there is a list behind this conversation and full
+// screen is how it was opened, not somewhere it was expanded to. It
+// therefore mounts full screen, and the two ways out of full screen —
+// Escape and the header's button — go back to that list instead of
+// shrinking into a pane the panel no longer has.
 export function ResearchConversation({
-  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone, renameAt,
+  sessionId, pending, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt,
 }) {
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
@@ -621,7 +628,10 @@ export function ResearchConversation({
   // full screen is something you do to read one long answer, not a way
   // you like the page to be, and a board that came back full screen
   // after a refresh would be a board you had lost the rest of.
-  const [expanded, setExpanded] = useState(false);
+  //
+  // Opened from a list, it starts here: the row is the collapsed state,
+  // so there is no smaller version of this to expand from.
+  const [expanded, setExpanded] = useState(!!onClose);
   // rendered | raw: whether the agent's prose is parsed as markdown.
   // A reading preference, not session state, so it is remembered across
   // conversations and across the pop-out window.
@@ -654,11 +664,18 @@ export function ResearchConversation({
   // calls preventDefault, so typing a name and hitting Escape puts the
   // name back without also throwing away the screen you were reading it
   // on. Only the outermost unhandled Escape gets here.
+  // Where Escape and the header's button both land. Opened from a list
+  // there is nothing to shrink to — the row is the small version — so
+  // leaving full screen is closing the conversation.
+  const leaveFullScreen = useCallback(() => {
+    if (onClose) onClose(); else setExpanded(false);
+  }, [onClose]);
+
   useEffect(() => {
     if (!expanded) return undefined;
     const onKey = (e) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
-      setExpanded(false);
+      leaveFullScreen();
     };
     window.addEventListener('keydown', onKey);
     const wasOverflow = document.body.style.overflow;
@@ -667,7 +684,7 @@ export function ResearchConversation({
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = wasOverflow;
     };
-  }, [expanded]);
+  }, [expanded, leaveFullScreen]);
 
   // The resume cursor. A ref, not state: the socket's onmessage handler
   // closes over it, and it must never be a render behind.
@@ -857,7 +874,7 @@ export function ResearchConversation({
     if (info && info.title && renamingRef.current === null) setName(info.title);
   }, [info]);
 
-  // The rail asking for a rename. It is a counter and not a boolean
+  // The list asking for a rename. It is a counter and not a boolean
   // because double-clicking the row you are already on has to work too,
   // and that does not remount anything — the only thing that changes is
   // that you asked again.
@@ -1166,7 +1183,6 @@ export function ResearchConversation({
           padding: '6px 10px', fontSize: 'small', flex: '0 0 auto',
           background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)',
         }}>
-          {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
           {/* The name, editable in place. A session is found again by what
               it was about, so the title is the one thing here worth the
               width — the repo and the id follow it, quietly.
@@ -1206,8 +1222,8 @@ export function ResearchConversation({
           )}
           {/* The repo, as a way to get to it. It has been a piece of grey
               text here since the header existed, which is the one place
-              the name is not also a link — the rail links it, and a
-              conversation opened from a link never saw the rail. */}
+              the name is not also a link — the list links it, and a
+              conversation opened from a link never saw the list. */}
           {/* repo is read off info, so info is here whenever repo is. */}
           {name && repo && (info.htmlUrl
             ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
@@ -1298,11 +1314,20 @@ export function ResearchConversation({
               once. An icon each, because they are a pair. */}
           {!standalone && (
             <>
-              <button className="btn btn-sm" onClick={() => setExpanded(e => !e)}
-                aria-pressed={expanded}
-                aria-label={expanded ? 'Exit full screen' : 'Full screen'}
-                title={expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
-                {expanded ? '⤢' : '⛶'}
+              {/* Opened from a list, this is the way back to it, and it
+                  says which key does the same thing. The glyph alone
+                  named the gesture and not the shortcut, which left
+                  Escape documented in a `title` nobody hovers to read —
+                  on a pane that covers the whole window, the way out
+                  should be legible without being hunted for. */}
+              <button className="btn btn-sm"
+                onClick={() => { if (onClose) leaveFullScreen(); else setExpanded(e => !e); }}
+                aria-pressed={onClose ? undefined : expanded}
+                aria-label={onClose ? 'Close this conversation'
+                  : expanded ? 'Exit full screen' : 'Full screen'}
+                title={onClose ? 'Back to the conversations (Esc)'
+                  : expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
+                {onClose ? 'esc ⤢' : expanded ? '⤢' : '⛶'}
               </button>
               <a className="btn btn-sm" href={`#/research/${sessionId}`}
                 target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
@@ -1518,7 +1543,18 @@ export function ResearchConversation({
                 screen reader would read these out afresh every time the
                 turn ended, which is the moment it should be saying that
                 the turn ended. */}
-            {!composerState && <span className="term-dim">⏎ send · ⇧⏎ newline</span>}
+            {/* `esc close` joins them rather than being a badge of its
+                own: it is a key hint, the pane already has a voice for
+                those, and a second voice for one more would read as a
+                second kind of thing. The header carries the way out as
+                well — this group is conditional, and the moment the
+                composer has something to say is not the moment to stop
+                saying how to leave. */}
+            {!composerState && (
+              <span className="term-dim">
+                ⏎ send · ⇧⏎ newline{onClose ? ' · esc close' : ''}
+              </span>
+            )}
             {/* Why it will not send, beside the button rather than in the
                 placeholder: a placeholder is gone the instant anybody
                 types, and "the agent is waiting on a permission above"
@@ -1741,21 +1777,24 @@ export function ResearchPanel({ boardName, repoURL }) {
       title="The sandbox is ready. Nothing is running in it until you open the conversation." />;
   };
 
-  // railRow is one conversation in the left rail: what it was about on
-  // the first line, how old it is and whether there is an agent on the
-  // second. The rail is ~260px, which a three-column table does not
-  // survive — and the columns were never the point. What someone scans
-  // for is the title, and the rest is the answer to "is this one worth
-  // opening", which is small print by definition.
+  // sessionRow is one conversation, across the whole tab: the title
+  // with the room to be read, then the repo, the id, its age and what
+  // it is doing. One line, because everything after the title is the
+  // answer to "is this one worth opening" and that is small print by
+  // definition.
   //
-  // The whole row is the control, not just the title: in a master pane
-  // the row is the selection, and a click that lands two pixels off the
-  // text should not do nothing.
+  // It was a 260px rail beside the conversation, and the rail cost the
+  // conversation 272px of width for the whole session while truncating
+  // every title it held. Full width buys back both: the titles fit, and
+  // what opens fills the window.
   //
-  // No repo on the row: every row is this board's repo now, and a
-  // column that says the same word all the way down is a column that
-  // costs width in a 260px rail and tells nobody anything.
-  const railRow = (s) => {
+  // The whole row is the control, not just the title: a click that
+  // lands two pixels off the text should not do nothing.
+  //
+  // No repo column, strictly speaking — the repo is on the row, but as
+  // a word beside the id rather than a column, because it is the same
+  // word all the way down.
+  const sessionRow = (s) => {
     const selected = !!open && open.sessionId === s.sessionId;
     return (
       <button key={s.sessionId} type="button"
@@ -1763,7 +1802,7 @@ export function ResearchPanel({ boardName, repoURL }) {
         onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
         // Double-click renames. The box it opens is the one in the
         // header, not a second editor down here: there is one rename
-        // and one PATCH, and the rail is a list of rows rather than a
+        // and one PATCH, and the list is a list of rows rather than a
         // place things get edited. What the gesture buys is that the
         // row you want to rename is the row you are looking at — the
         // header's title has been clickable all along and nothing about
@@ -1778,111 +1817,112 @@ export function ResearchPanel({ boardName, repoURL }) {
         }))}
         title={[
           `session ${s.sessionId}`,
-          'double-click to rename',
+          'click to open · double-click to rename',
           s.sandbox ? `sandbox ${s.sandbox}` : '',
         ].filter(Boolean).join('\n')}
         style={{
-          display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
-          padding: '7px 8px', cursor: 'pointer', borderRadius: '0 6px 6px 0',
-          border: 'none', borderLeft: `3px solid ${selected ? 'var(--link-color, #0969da)' : 'transparent'}`,
-          background: selected ? 'var(--bg-hover, rgba(127,127,127,0.12))' : 'none',
+          display: 'flex', alignItems: 'center', gap: '10px',
+          width: '100%', textAlign: 'left', font: 'inherit',
+          padding: '9px 12px', marginBottom: '6px', cursor: 'pointer', borderRadius: '8px',
+          border: `1px solid ${selected ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
+          background: 'var(--bg-card)',
           color: 'var(--text-primary)',
         }}>
-        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {/* The title has the width now, and the width is the whole
+            point of the change: it gets as much of the row as the small
+            print leaves, and only then does it ellipsise. */}
+        <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}
-        </div>
-        <div style={{
-          marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px',
-          color: 'var(--text-secondary)', fontSize: 'x-small',
-        }}>
-          <span title={s.createdAt}>{ageOf(s.createdAt)}</span>
-          {stateOf(s)}
-        </div>
+        </span>
+        <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }}>{s.repo}</span>
+        <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+          {shortSession(s.sessionId)}
+        </span>
+        <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }} title={s.createdAt}>
+          {ageOf(s.createdAt)}
+        </span>
+        {stateOf(s)}
       </button>
     );
   };
 
-  // The landing pane: what fills the right-hand side when no
-  // conversation is selected. Starting one is not a mode you enter and
-  // leave — it is what the tab is for — so it lives where the answers
-  // do, selected by a row like any other, rather than in a strip above
-  // everything that is still there long after you have stopped needing
-  // it.
-  const landing = (
-    <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex' }}>
-      {/* margin auto rather than justifyContent: centred, but when the
-          content is taller than the pane it scrolls from the top
-          instead of having its head cut off. */}
-      <div style={{ margin: 'auto', width: '100%', maxWidth: '560px', padding: '16px 8px' }}>
-        {/* No heading over the box. It said "Ask anything about
-            substrate" directly above a box whose placeholder said "Ask
-            anything about this repo" — the same sentence twice, one of
-            them in a voice nothing else on the pane uses. The
-            placeholder carries it now, repo name and all. */}
-        <div style={{
-          border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '10px 12px',
-        }}>
-          {/* Starts at two lines rather than one. Unlike the composer
-              this box is the only thing on an otherwise empty pane, and
-              a single line there reads as a search field — which is not
-              what is being asked for. */}
-          <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2}
-            inputRef={askBoxRef}
-            aria-label="Research question"
-            placeholder={`Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
-            style={{
-              width: '100%', border: 'none', outline: 'none', resize: 'none',
-              background: 'transparent', color: 'var(--text-primary)',
-              font: 'inherit', boxSizing: 'border-box',
-            }} />
-          {/* No name box. It was optional and everybody left it empty,
-              which is the right answer: the server names the session
-              after what was asked, and the header renames it in place
-              the moment that turns out to be wrong. What it cost was a
-              second box between a typed question and sending it, on the
-              one screen whose whole job is to get out of the way. */}
-          {/* The canned reads, in the box rather than beside it: they
-              fill this box with a prompt instead of starting a session
-              behind one. Small, and left of the button that sends,
-              because that is the order it happens in — and small
-              because they are ways to start typing, not second ways to
-              ask.
-              Neither carries an option any more. The overview never had
-              one, and the activity window was a dropdown of three fixed
-              spans in front of the one people wanted; it is a word in
-              the first line of the prompt now, and the prompt is in
-              front of you. Change "last month" to "last week", or to
-              "since the 1.4 release", which the dropdown could not
-              offer at all. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
-            {[
-              ['onboard', 'overview', 'Puts the overview prompt in the box — read it, edit it, send it'],
-              ['activity', 'recent changes', 'Puts the recent-changes prompt in the box. The window is the first line: edit it'],
-            ].map(([kind, label, hint]) => (
-              <button key={kind} type="button" disabled={!prompts[kind] || !!busy}
-                title={prompts[kind] ? hint : 'Loading the canned prompts…'}
-                onClick={() => fill(kind)}
-                style={{
-                  border: 'none', background: 'none', padding: 0, font: 'inherit',
-                  fontSize: 'x-small', color: 'var(--link-color, #0969da)',
-                  cursor: prompts[kind] ? 'pointer' : 'default',
-                  opacity: prompts[kind] ? 1 : 0.5,
-                }}>
-                {label}
-              </button>
-            ))}
-            <span style={{ flex: 1 }} />
-            <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
-              {busy ? 'Requesting…' : 'Research'}
+  // The ask box, at the top of the list and always there. It used to
+  // be a pane you selected — the right-hand side when no conversation
+  // was open — which was the rail's doing: with the conversation living
+  // beside the list, a box for a new one had nowhere to be except in
+  // its place. A conversation opens over the whole window now, so the
+  // box can just be the top of the list, and `+ New conversation`
+  // stops having a job: it was a row standing in for a box one pane
+  // away.
+  const askBox = (
+    <div style={{ marginBottom: '14px' }}>
+      {/* No heading over the box. It said "Ask anything about
+          substrate" directly above a box whose placeholder said "Ask
+          anything about this repo" — the same sentence twice, one of
+          them in a voice nothing else on the pane uses. The
+          placeholder carries it now, repo name and all. */}
+      <div style={{
+        border: '1px solid var(--border-color)', borderRadius: '10px',
+        background: 'var(--bg-secondary)', padding: '10px 12px',
+      }}>
+        {/* Starts at two lines rather than one. A single line at the
+            top of a list reads as a filter over it, which is not what
+            is being asked for. */}
+        <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2}
+          inputRef={askBoxRef}
+          aria-label="Research question"
+          placeholder={`Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          style={{
+            width: '100%', border: 'none', outline: 'none', resize: 'none',
+            background: 'transparent', color: 'var(--text-primary)',
+            font: 'inherit', boxSizing: 'border-box',
+          }} />
+        {/* No name box. It was optional and everybody left it empty,
+            which is the right answer: the server names the session
+            after what was asked, and the header renames it in place
+            the moment that turns out to be wrong. What it cost was a
+            second box between a typed question and sending it, on the
+            one screen whose whole job is to get out of the way. */}
+        {/* The canned reads, in the box rather than beside it: they
+            fill this box with a prompt instead of starting a session
+            behind one. Small, and left of the button that sends,
+            because that is the order it happens in — and small
+            because they are ways to start typing, not second ways to
+            ask.
+            Neither carries an option any more. The overview never had
+            one, and the activity window was a dropdown of three fixed
+            spans in front of the one people wanted; it is a word in
+            the first line of the prompt now, and the prompt is in
+            front of you. Change "last month" to "last week", or to
+            "since the 1.4 release", which the dropdown could not
+            offer at all. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+          {[
+            ['onboard', 'overview', 'Puts the overview prompt in the box — read it, edit it, send it'],
+            ['activity', 'recent changes', 'Puts the recent-changes prompt in the box. The window is the first line: edit it'],
+          ].map(([kind, label, hint]) => (
+            <button key={kind} type="button" disabled={!prompts[kind] || !!busy}
+              title={prompts[kind] ? hint : 'Loading the canned prompts…'}
+              onClick={() => fill(kind)}
+              style={{
+                border: 'none', background: 'none', padding: 0, font: 'inherit',
+                fontSize: 'x-small', color: 'var(--link-color, #0969da)',
+                cursor: prompts[kind] ? 'pointer' : 'default',
+                opacity: prompts[kind] ? 1 : 0.5,
+              }}>
+              {label}
             </button>
-          </div>
+          ))}
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
+            {busy ? 'Requesting…' : 'Research'}
+          </button>
         </div>
+      </div>
 
-        <div style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: 'x-small' }}>
-          Session creation could take a few minutes.
-        </div>
+      <div style={{ color: 'var(--text-secondary)', marginTop: '6px', fontSize: 'x-small' }}>
+        Session creation could take a few minutes.
       </div>
     </div>
   );
@@ -1896,94 +1936,72 @@ export function ResearchPanel({ boardName, repoURL }) {
         </div>
       )}
 
-      {/* Master and detail, side by side. The conversation used to
-          replace the whole tab and then to cover it with a sheet; both
-          made reading two of them a navigation each way, and a sheet
-          had the additional problem that the list it was covering was
-          the thing you wanted to aim at next. Here the list never
-          leaves, and switching conversations is one click from inside
-          the one you are reading. */}
-      <div style={{
-        display: 'flex', alignItems: 'stretch', gap: '12px',
-        height: '72vh', minHeight: '420px',
-      }}>
-        <div style={{
-          flex: '0 0 260px', minWidth: 0, overflowY: 'auto', paddingRight: '8px',
-          borderRight: '1px solid var(--border-color)',
-        }}>
-          {/* The way back to the ask box, and where the tab lands. It
-              is a row rather than a button off to one side because
-              that is what it is: one more thing the rail can be
-              showing on the right. */}
-          <button type="button" aria-current={open ? undefined : 'true'}
-            onClick={() => setOpen(null)}
-            title="Ask a new question about this repository"
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
-              padding: '7px 8px', cursor: 'pointer', borderRadius: '0 6px 6px 0',
-              marginBottom: '6px', border: 'none',
-              borderLeft: `3px solid ${open ? 'transparent' : 'var(--link-color, #0969da)'}`,
-              background: open ? 'none' : 'var(--bg-hover, rgba(127,127,127,0.12))',
-              color: 'var(--link-color, #0969da)',
-            }}>
-            + New conversation
-          </button>
+      {/* The box, then the conversations, all the way across. It was a
+          260px rail beside a pane, which was itself an answer to the
+          conversation replacing the whole tab — the rail kept the list
+          from going away while you read. A conversation opens over the
+          window now, so the list does not have to hold a place beside
+          it, and stops paying 272px for the privilege.
 
-          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '6px' }}>
-            {sessions === null ? (
-              <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 8px' }}>
-                loading…
-              </div>
-            ) : !mine.length ? (
-              <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 8px' }}>
-                No conversations for {repo || 'this board'} yet.
-              </div>
-            ) : mine.map(s => railRow(s))}
+          No columns, on purpose. A table of three columns in which one
+          is the same word on every row is a table pretending to be
+          sortable; what is actually scanned is the title, and the rest
+          is caption. */}
+      {askBox}
+
+      <div>
+        {sessions === null ? (
+          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 2px' }}>
+            loading…
           </div>
-
-          {/* The notes branch on the member's fork. Research does not
-              write there yet — runs still do, and the old explore notes
-              are still on it — so this is a plain link out rather than
-              anything the page reads back. */}
-          {forkOwner && repo && (
-            <div style={{
-              marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-color)',
-              color: 'var(--text-secondary)', fontSize: 'x-small', padding: '8px 8px 0',
-            }}>
-              Earlier notes and run artifacts live on{' '}
-              <a href={`https://github.com/${forkOwner}/${repo}/tree/${notesBranch}`}
-                target="_blank" rel="noopener noreferrer">
-                {forkOwner}/{repo} @ {notesBranch} ↗
-              </a>
-            </div>
-          )}
-        </div>
-
-        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {open ? (
-            // Keyed on the session. Switching straight from one
-            // conversation to another is new with the rail — before
-            // this you always went back to the list first, which
-            // unmounted it — and the conversation resets the things it
-            // knows are per-session (transcript, cursor, mode) but not
-            // the composer. A half-typed question following you into
-            // someone else's conversation and being sent there is the
-            // failure that matters; remounting takes the draft with it.
-            //
-            // No onBack: the rail is right there and never left.
-            <ResearchConversation
-              key={open.sessionId}
-              sessionId={open.sessionId}
-              pending={open.pending}
-              title={open.title}
-              renameAt={open.renameAt}
-              fill
-              onDeleted={() => { setOpen(null); load(); }}
-              onRenamed={load}
-            />
-          ) : landing}
-        </div>
+        ) : !mine.length ? (
+          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 2px' }}>
+            No conversations for {repo || 'this board'} yet.
+          </div>
+        ) : mine.map(s => sessionRow(s))}
       </div>
+
+      {/* The notes branch on the member's fork. Research does not
+          write there yet — runs still do, and the old explore notes
+          are still on it — so this is a plain link out rather than
+          anything the page reads back. */}
+      {forkOwner && repo && (
+        <div style={{
+          marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-color)',
+          color: 'var(--text-secondary)', fontSize: 'x-small',
+        }}>
+          Earlier notes and run artifacts live on{' '}
+          <a href={`https://github.com/${forkOwner}/${repo}/tree/${notesBranch}`}
+            target="_blank" rel="noopener noreferrer">
+            {forkOwner}/{repo} @ {notesBranch} ↗
+          </a>
+        </div>
+      )}
+
+      {/* Opened, a conversation is the window: a fixed pane over the
+          board, Escape back to the row it came from. The list stays
+          mounted underneath — switching is Escape and a click, one
+          more than the rail cost, which is what buys every conversation
+          the full width to be read in.
+
+          Keyed on the session so switching resets what is per-session
+          (transcript, cursor, mode) and does not carry a half-typed
+          question into someone else's conversation.
+
+          onClose replaced onBack, which had been dead since the rail:
+          a `← Sessions` button for a list that was never left. */}
+      {open && (
+        <ResearchConversation
+          key={open.sessionId}
+          sessionId={open.sessionId}
+          pending={open.pending}
+          title={open.title}
+          renameAt={open.renameAt}
+          onClose={() => setOpen(null)}
+          onDeleted={() => { setOpen(null); load(); }}
+          onRenamed={load}
+        />
+      )}
     </div>
   );
 }
