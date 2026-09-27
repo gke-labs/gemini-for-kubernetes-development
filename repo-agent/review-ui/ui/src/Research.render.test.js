@@ -863,28 +863,19 @@ describe('ResearchConversation', () => {
     });
 
     // Saving notes: the conversation's one way of outliving the disk it
-    // is written on. The click asks the agent to write the note; the
-    // push happens minutes later, in the controller, which is why
-    // everything this pane shows about it comes back off the probe.
-    const savedNotes = {
-        sessionId: 's1', forkOwner: 'barney-s', branch: 'research/notes',
-        dir: 'docs-exploration/research/s1', defaultNote: 'notes.md',
-        notes: [
-            { name: 'notes.md', path: 'docs-exploration/research/s1/notes.md', size: 400, htmlUrl: 'https://github.com/barney-s/repo-agent/blob/research/notes/docs-exploration/research/s1/notes.md' },
-            { name: 'retry-loop.md', path: 'docs-exploration/research/s1/retry-loop.md', size: 900, htmlUrl: '' },
-        ],
-    };
+    // is written on. One click, no answers — what to write is the
+    // conversation and where it goes is the session, and the server
+    // knows both. The click asks the agent to write the note; the push
+    // happens minutes later, in the controller, which is why everything
+    // this pane shows about it comes back off the probe.
 
-    // openSaveForm gets a live session to the point where the form is up
-    // and the notes list has answered. `status` overrides the probe and
-    // `notes` the listing, so a test can vary one without restating
-    // either.
-    const openSaveForm = async ({ status = {}, notes = savedNotes, posts = [] } = {}) => {
+    // liveSession gets a conversation to the point where the save
+    // button is live, and collects what the button posts.
+    const liveSession = async ({ status = {}, posts = [] } = {}) => {
         global.fetch = jest.fn((url, opts) => {
-            if (url === '/api/research/s1/notes') return reply(200, notes);
             if (url === '/api/research/s1/capture') {
-                posts.push(JSON.parse(opts.body));
-                return reply(202, { sessionId: 's1', note: JSON.parse(opts.body).note, path: 'x', offset: 10 });
+                posts.push({ body: opts && opts.body, method: opts && opts.method });
+                return reply(202, { sessionId: 's1', note: 'notes.md', path: 'x', offset: 10 });
             }
             return reply(200, { sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'ns', ...status });
         });
@@ -893,182 +884,58 @@ describe('ResearchConversation', () => {
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: !!status.busyTurn, offset: 0 } });
         });
-        const more = container.querySelector('[aria-label="More actions"]');
-        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        const item = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save notes…');
-        await act(async () => { item.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
         return posts;
     };
 
-    const captureButton = () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Save notes');
+    const saveButton = () => container.querySelector('[aria-label="Save notes"]');
 
-    test('the save-notes form offers the notes already on the branch', async () => {
-        await openSaveForm();
+    test('saving takes one click and sends nothing to fill in', async () => {
+        const posts = await liveSession();
 
-        expect(global.fetch).toHaveBeenCalledWith('/api/research/s1/notes');
-        const picker = container.querySelector('select[aria-label="Which note"]');
-        expect([...picker.options].map(o => o.textContent)).toEqual(['notes.md', 'retry-loop.md', 'New note…']);
-        // The session's own document is what a capture goes into unless
-        // the member says otherwise — the point of the picker is adding
-        // to a note, not starting one every time.
-        expect(picker.value).toBe('notes.md');
-        // And the branch it lands on is said, because the fork is where
-        // the member goes looking for it.
-        expect(container.textContent).toContain('research/notes');
-    });
-
-    test('a capture carries what to write up and which note it belongs in', async () => {
-        const posts = await openSaveForm();
-
-        const picker = container.querySelector('select[aria-label="Which note"]');
-        await act(async () => {
-            nativeSet(picker, 'retry-loop.md');
-            picker.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        const what = container.querySelector('textarea[aria-label="What to capture"]');
-        await act(async () => {
-            nativeSet(what, 'how the backoff terminates, and the two cases where it does not');
-            what.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        await act(async () => { captureButton().dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await act(async () => { saveButton().dispatchEvent(new MouseEvent('click', { bubbles: true })); });
         await flush();
 
-        expect(posts).toEqual([{
-            what: 'how the backoff terminates, and the two cases where it does not',
-            note: 'retry-loop.md',
-        }]);
-        // The form closes: what happens next takes minutes and none of
-        // it happens here, so leaving it open would read as something
-        // still being filled in.
+        // No body at all. Every answer the old form asked for — which
+        // part, which file — is derivable at the other end, and a
+        // second answer here is a second way for two captures to
+        // disagree about the file they are both writing.
+        expect(posts).toEqual([{ method: 'POST', body: undefined }]);
+        // And nothing opened: what happens next takes minutes and none
+        // of it happens here.
         expect(container.querySelector('textarea[aria-label="What to capture"]')).toBeNull();
     });
 
-    test('a new note is named in the member\'s own words', async () => {
-        // Sent raw. NormaliseNote on the server is what a note name
-        // means — lower case, dashes, .md — and a second answer to that
-        // here would be a second way for two captures to disagree about
-        // which file they are both writing.
-        const posts = await openSaveForm();
+    test('the save control is on the bar, not behind the ⋯ menu', async () => {
+        // Saving is something you do *while* reading, at the moment the
+        // answer lands. The menu is for what you do to a session once,
+        // and it is closed while you read.
+        await liveSession();
+        expect(saveButton()).toBeTruthy();
 
-        const picker = container.querySelector('select[aria-label="Which note"]');
-        await act(async () => {
-            nativeSet(picker, '+new');
-            picker.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        const name = container.querySelector('input[aria-label="New note name"]');
-        expect(name).toBeTruthy();
-        await act(async () => {
-            nativeSet(name, 'Retry loop findings');
-            name.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        const what = container.querySelector('textarea[aria-label="What to capture"]');
-        await act(async () => {
-            nativeSet(what, 'what we traced this afternoon');
-            what.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        await act(async () => { captureButton().dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-
-        expect(posts).toEqual([{ what: 'what we traced this afternoon', note: 'Retry loop findings' }]);
-    });
-
-    test('the note just asked for is still the note, before the branch has it', async () => {
-        // A push lands minutes after the click, so the listing does not
-        // know about the note yet. A picker that forgot it in between
-        // would make the second write-up of an afternoon look like a
-        // file that does not exist — and the member would name it again,
-        // slightly differently, and get two.
-        global.fetch = jest.fn((url, opts) => {
-            if (url === '/api/research/s1/notes') {
-                return reply(200, { ...savedNotes, notes: [savedNotes.notes[0]] });
-            }
-            if (url === '/api/research/s1/capture') {
-                // What comes back is the server's name for it, which is
-                // the one both sides have to agree on.
-                return reply(202, { sessionId: 's1', note: 'retry-loop-findings.md', path: 'x', offset: 10 });
-            }
-            return reply(200, { sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'ns' });
-        });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
-        await flush();
-        await act(async () => { FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } }); });
-
-        const openForm = async () => {
-            const more = container.querySelector('[aria-label="More actions"]');
-            await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-            const item = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save notes…');
-            await act(async () => { item.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-            await flush();
-        };
-
-        await openForm();
-        const picker = container.querySelector('select[aria-label="Which note"]');
-        await act(async () => {
-            nativeSet(picker, '+new');
-            picker.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        const name = container.querySelector('input[aria-label="New note name"]');
-        await act(async () => {
-            nativeSet(name, 'Retry loop findings');
-            name.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        const what = container.querySelector('textarea[aria-label="What to capture"]');
-        await act(async () => {
-            nativeSet(what, 'what we traced this afternoon');
-            what.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        await act(async () => { captureButton().dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-
-        await openForm();
-        const again = container.querySelector('select[aria-label="Which note"]');
-        expect([...again.options].map(o => o.textContent)).toContain('retry-loop-findings.md');
-        expect(again.value).toBe('retry-loop-findings.md');
-        // And the name box is gone: the choice is a note now, not a name
-        // half typed.
-        expect(container.querySelector('input[aria-label="New note name"]')).toBeNull();
+        const more = container.querySelector('[aria-label="More actions"]');
+        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        const items = [...container.querySelectorAll('[role="menuitem"]')].map(b => b.textContent);
+        expect(items.join(' ')).not.toContain('Save notes');
     });
 
     test('a capture will not go while the agent is working, and says so', async () => {
         // A capture is a prompt, and acpd refuses a second one mid-turn.
-        // Saying it beside the button is the difference between a
-        // control that is broken and one that is waiting.
-        await openSaveForm({ status: { busyTurn: true } });
+        await liveSession({ status: { busyTurn: true } });
 
-        const what = container.querySelector('textarea[aria-label="What to capture"]');
-        await act(async () => {
-            nativeSet(what, 'the part about the lease');
-            what.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-
-        expect(captureButton().disabled).toBe(true);
-        expect(container.textContent).toContain('The agent is working');
-    });
-
-    test('nothing is sent until there is something to say', async () => {
-        await openSaveForm();
-        expect(captureButton().disabled).toBe(true);
-
-        const what = container.querySelector('textarea[aria-label="What to capture"]');
-        await act(async () => {
-            nativeSet(what, '   ');
-            what.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        expect(captureButton().disabled).toBe(true);
+        expect(saveButton().disabled).toBe(true);
+        expect(saveButton().title).toContain('The agent is working');
     });
 
     test('an owed save is read off the sandbox, not remembered here', async () => {
         // Which is what makes it survive a reload, show up in the second
         // tab, and outlive the API replica that took the click.
         global.fetch = jest.fn(() => reply(200, {
-            sessionId: 's1', repo: 'repo-agent', capturing: 'retry-loop.md',
+            sessionId: 's1', repo: 'repo-agent', capturing: 'notes.md',
         }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
 
-        expect(container.textContent).toContain('Writing up');
-        expect(container.textContent).toContain('retry-loop.md');
+        expect(container.textContent).toContain('Writing this conversation up');
         expect(container.textContent).toContain('pushed to your fork when this turn finishes');
     });
 
@@ -1087,22 +954,6 @@ describe('ResearchConversation', () => {
         expect(banner.textContent).toContain('Ask for it again to retry');
     });
 
-    test('a notes list that cannot be read still lets you write one', async () => {
-        // Which is every session until the first save lands: there is no
-        // notes branch on the fork yet, and refusing to open the form
-        // over that would make the first note the one you cannot write.
-        await openSaveForm({
-            notes: {
-                sessionId: 's1', forkOwner: 'barney-s', branch: 'research/notes',
-                defaultNote: 'notes.md', notes: [], unreadable: 'no such branch',
-            },
-        });
-
-        expect(container.textContent).toContain('no such branch');
-        const picker = container.querySelector('select[aria-label="Which note"]');
-        expect([...picker.options].map(o => o.textContent)).toEqual(['notes.md', 'New note…']);
-        expect(captureButton()).toBeTruthy();
-    });
 });
 
 describe('ResearchPanel', () => {

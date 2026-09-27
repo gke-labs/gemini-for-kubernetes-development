@@ -131,6 +131,11 @@ type researchSandboxView struct {
 	Capturing string `json:"capturing,omitempty"`
 	// CaptureError is why an owed save was given up on.
 	CaptureError string `json:"captureError,omitempty"`
+	// Note is the file on the notes branch this session writes to,
+	// fixed at its first capture. Empty until then. Internal: the
+	// browser never picks it, and a name the member has not been shown
+	// is not one they can be surprised by.
+	Note string `json:"-"`
 	// Requested marks a session that has been asked for but has no
 	// sandbox yet: a standing claim on the board, not an object.
 	Requested bool `json:"requested,omitempty"`
@@ -194,6 +199,7 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		Opening:      annotations[research.KickoffAnnotation] != "",
 		OpeningError: annotations[research.KickoffErrorAnnotation],
 		CaptureError: annotations[research.CaptureErrorAnnotation],
+		Note:         annotations[research.NoteAnnotation],
 	}
 	if pending, ok := research.DecodePending(annotations[research.CaptureAnnotation]); ok {
 		view.Capturing = pending.Note

@@ -131,8 +131,8 @@ func (r *Reconciler) completeResearchSave(ctx context.Context, work *workState, 
 			log.FromContext(ctx).Info("saved research notes", "sandbox", sb.GetName(), "note", pending.Note)
 		}
 		// The save is no longer owed either way. A push that failed is
-		// not retried: whatever refused it — no fork, no permission, an
-		// empty directory — will refuse the next one too, and the error
+		// not retried: whatever refused it — no fork, no permission, no
+		// file written — will refuse the next one too, and the error
 		// annotation is what turns that into something the member can
 		// act on.
 		if err := r.recordResearchSaveResult(ctx, sb, cause); err != nil {
@@ -162,6 +162,10 @@ func (r *Reconciler) completeResearchSave(ctx context.Context, work *workState, 
 		Namespace: member,
 		RepoURL:   fmt.Sprintf("https://github.com/%s/%s", work.owner, repo),
 		SessionID: sessionID,
+		// What the prompt was told to write, not what the session is
+		// called now: a rename between the ask and the push must not
+		// send the save looking for a file nothing wrote to.
+		Note: pending.Note,
 		// The whole point of the separate verb: the token is held for
 		// one exec by a command the conversation cannot see, rather than
 		// written onto a PVC an auto-approving agent can read.
@@ -202,9 +206,9 @@ func (r *Reconciler) researchTurnFinished(ctx context.Context, sb *unstructured.
 		// The engine is gone — acpd restarted, or the pod did. Whatever
 		// the turn managed to write is on the PVC and is the only copy
 		// there will ever be, so push it rather than wait for a session
-		// that is not coming back. An empty directory is not silently
-		// accepted: save-notes fails loudly on one, which surfaces here
-		// as the save's error.
+		// that is not coming back. A note that was never written is not
+		// silently accepted: save-notes fails loudly on a missing file,
+		// which surfaces here as the save's error.
 		return nil
 	default:
 		return err

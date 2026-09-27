@@ -94,11 +94,11 @@ func NewResearchCommand(ctx context.Context) *cobra.Command {
 	start.Flags().StringVar(&sessionID, "session", "", "Session identifier; determines the sandbox name")
 	cmd.AddCommand(start)
 
-	var saveURL, saveSession string
+	var saveURL, saveSession, saveNote string
 	saveNotes := &cobra.Command{
 		Use:   "save-notes",
 		Short: "Push a research conversation's notes to the member's fork",
-		Long: "Push what the conversation wrote under docs-exploration/research/<session>/\n" +
+		Long: "Push what the conversation wrote to docs-exploration/research/<note>.md\n" +
 			"to the " + tasks.ResearchNotesBranch + " branch of the member's fork.\n\n" +
 			"Authoring is the conversation's job and pushing is this command's. The\n" +
 			"session may be running with approvals turned off, so the credential is\n" +
@@ -119,27 +119,38 @@ func NewResearchCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runResearchSaveNotes(ctx, saveURL, saveSession)
+			return runResearchSaveNotes(ctx, saveURL, saveSession, saveNote)
 		},
 	}
 	saveNotes.Flags().StringVar(&saveURL, "url", "", "Repository URL (https://github.com/owner/repo)")
-	saveNotes.Flags().StringVar(&saveSession, "session", "", "Session identifier; names the sandbox and the notes directory")
+	saveNotes.Flags().StringVar(&saveSession, "session", "", "Session identifier; names the sandbox to attach to")
+	saveNotes.Flags().StringVar(&saveNote, "note", "", "File the notes were written to, under "+tasks.ResearchNotesDir+" (default: <session identifier>.md)")
 	cmd.AddCommand(saveNotes)
 
 	return cmd
 }
 
-func runResearchSaveNotes(ctx context.Context, repoURL, sessionID string) error {
+func runResearchSaveNotes(ctx context.Context, repoURL, sessionID, note string) error {
 	owner, repo, err := parseGitHubRepoURL(repoURL)
 	if err != nil {
 		return err
 	}
-	// The session id names a directory on the notes branch, so it is
-	// held to the same character set as an owner or a repository —
-	// which also rules out "." and ".." walking out of the directory
-	// the notes are meant to be scoped to.
 	if !validRepoPart(sessionID) {
 		return fmt.Errorf("unsupported --session %q: expected letters, digits, dash, underscore or dot", sessionID)
+	}
+	// A session's note is a file named after the session, not after its
+	// identifier: the branch is read by people, months later, and an id
+	// is not a name. The id remains the fallback for a conversation
+	// nobody has named yet.
+	if note == "" {
+		note = sessionID + ".md"
+	}
+	// It names a file on the notes branch, so it is held to the same
+	// character set as an owner or a repository — which also rules out
+	// "." and ".." walking out of the directory the notes are meant to
+	// be scoped to.
+	if !validRepoPart(note) {
+		return fmt.Errorf("unsupported --note %q: expected letters, digits, dash, underscore or dot", note)
 	}
 
 	kubeClient, err := clients.NewKubernetesClient()
@@ -175,6 +186,7 @@ func runResearchSaveNotes(ctx context.Context, repoURL, sessionID string) error 
 		"REPO_NAME":         repo,
 		"UPSTREAM_REPO":     owner + "/" + repo,
 		"SESSION_ID":        sessionID,
+		"NOTES_FILE":        note,
 		"GITHUB_USER_NAME":  login,
 		"GITHUB_USER_EMAIL": string(secret.Data[constants.KeyGithubEmail]),
 	}

@@ -201,9 +201,12 @@ func researchArgs(opts ResearchOptions, timeout time.Duration) []string {
 type SaveNotesOptions struct {
 	Namespace string
 	RepoURL   string
-	// SessionID names both the sandbox to attach to and the directory
-	// within it that gets pushed.
+	// SessionID names the sandbox to attach to.
 	SessionID string
+	// Note is the file under the notes root that gets pushed. Empty
+	// means <session id>.md, which is what `factory research
+	// save-notes` falls back to on its own.
+	Note string
 	// GithubToken is what the push is made with. It reaches the sandbox
 	// as an environment variable on a single exec and is never written
 	// down there — which is the whole reason this is a separate verb
@@ -240,11 +243,17 @@ func saveNotesTimeout(opts SaveNotesOptions) time.Duration {
 // saveNotesArgs is the command line, split out so the contract with
 // factory can be asserted without spawning anything.
 func saveNotesArgs(opts SaveNotesOptions, timeout time.Duration) []string {
-	return []string{
+	args := []string{
 		"research", "save-notes",
 		"--url", opts.RepoURL,
 		"--session", opts.SessionID,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 	}
+	// Omitted rather than passed empty, so the CLI's own default is the
+	// one that applies and there is one rule about it, not two.
+	if opts.Note != "" {
+		args = append(args, "--note", opts.Note)
+	}
+	return args
 }

@@ -23,6 +23,6 @@ func GetSaveNotesScript() ([]byte, error) {
 // approving its own tool calls.
 const ResearchNotesBranch = "research/notes"
 
-// ResearchNotesDir is where one session's notes live on that branch,
-// with the session id filled in.
+// ResearchNotesDir is where the notes live on that branch: one file
+// per conversation, named after it.
 const ResearchNotesDir = "docs-exploration/research"

@@ -53,7 +53,10 @@ func saveLaunches(fake *fakeLauncher) []fakeLaunch {
 func TestResearchNotesArePushedOnceTheTurnEnds(t *testing.T) {
 	g := gomega.NewWithT(t)
 	name := factorycli.ResearchSandboxName("repo", testSession)
-	pending := research.Pending{Note: "scheduling.md", At: time.Now().Add(-2 * time.Minute).UTC()}
+	pending := research.Pending{
+		Note: "how-the-scheduler-picks-a-node.md",
+		At:   time.Now().Add(-2 * time.Minute).UTC(),
+	}
 	acp := &fakeACPD{exists: true, offset: 4}
 	acp.server(t)
 	fake := newFakeLauncher()
@@ -69,6 +72,11 @@ func TestResearchNotesArePushedOnceTheTurnEnds(t *testing.T) {
 	g.Expect(opts.SessionID).To(gomega.Equal(testSession))
 	g.Expect(opts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(opts.RepoURL).To(gomega.Equal("https://github.com/test/repo"))
+	// The file travels on the pending save rather than being re-derived
+	// here: what gets pushed has to be what the prompt was told to
+	// write, whatever the session has been renamed to in the minutes
+	// since.
+	g.Expect(opts.Note).To(gomega.Equal("how-the-scheduler-picks-a-node.md"))
 	g.Expect(opts.GithubToken).NotTo(gomega.BeEmpty(),
 		"the push is the one place the member's token is used; without it there is nothing to authenticate with")
 	// A distinct single-flight key from the sandbox create's. Sharing

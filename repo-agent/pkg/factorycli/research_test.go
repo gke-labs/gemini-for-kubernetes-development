@@ -269,6 +269,27 @@ func TestSaveNotesArgs(t *testing.T) {
 	if strings.Contains(joined, "--secret") {
 		t.Error("save-notes mounts nothing into the sandbox")
 	}
+	// Not passed at all when there is none. The CLI names the file
+	// after the session when nothing else does, and two defaults for
+	// one thing is how they drift apart.
+	if strings.Contains(joined, "--note") {
+		t.Errorf("args %q pass an empty note", joined)
+	}
+}
+
+// The note is a file named after the conversation, and the name
+// travels from the capture that asked for it — not re-derived here,
+// where a session renamed since would produce a different one.
+func TestSaveNotesArgsCarryTheNote(t *testing.T) {
+	args := saveNotesArgs(SaveNotesOptions{
+		Namespace: "barney-s",
+		RepoURL:   "https://github.com/kubernetes-sigs/agent-sandbox",
+		SessionID: "s1",
+		Note:      "where-the-retry-loop-terminates.md",
+	}, 5*time.Minute)
+	if joined := strings.Join(args, " "); !strings.Contains(joined, "--note where-the-retry-loop-terminates.md") {
+		t.Errorf("args %q do not name the note", joined)
+	}
 }
 
 func TestSaveNotesTimeoutDefaults(t *testing.T) {

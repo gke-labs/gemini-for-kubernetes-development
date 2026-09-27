@@ -62,8 +62,14 @@ func TestSaveNotesWritesWhereRepoAgentLooks(t *testing.T) {
 	if !strings.Contains(s, `NOTES_BRANCH="`+ResearchNotesBranch+`"`) {
 		t.Errorf("the script does not write to %s", ResearchNotesBranch)
 	}
-	if !strings.Contains(s, `NOTES_DIR="`+ResearchNotesDir+`/${SESSION_ID}"`) {
-		t.Errorf("the script does not write under %s/<session>", ResearchNotesDir)
+	if !strings.Contains(s, `NOTES_PATH="`+ResearchNotesDir+`/${NOTES_FILE}"`) {
+		t.Errorf("the script does not write under %s", ResearchNotesDir)
+	}
+	// The note is named after the conversation, and the caller is the
+	// half that knows what it is called. The id is what is left when
+	// nothing does — including for anyone running this by hand.
+	if !strings.Contains(s, `NOTES_FILE="${NOTES_FILE:-${SESSION_ID}.md}"`) {
+		t.Errorf("the script does not fall back to the session id for its note")
 	}
 	// Runs are pruned when a run is removed, and carry live teardown
 	// scripts. Notes are archival and written by a session that may be
@@ -87,12 +93,14 @@ func withoutComments(s string) string {
 }
 
 // saveNotesEnv is one fully wired sandbox: a checkout holding a
-// session's notes, a bare repository standing in for the member's
-// fork, and a gh that answers without a network.
+// session's note, a bare repository standing in for the member's fork,
+// and a gh that answers without a network.
 type saveNotesEnv struct {
 	root, fork, notesDir string
-	env                  []string
-	script               string
+	// note is the file this session writes, relative to notesDir.
+	note   string
+	env    []string
+	script string
 }
 
 func newSaveNotesEnv(t *testing.T, session string) *saveNotesEnv {
@@ -121,7 +129,8 @@ func newSaveNotesEnv(t *testing.T, session string) *saveNotesEnv {
 	e := &saveNotesEnv{
 		root:     root,
 		fork:     filepath.Join(root, "remotes", "alice", "repo.git"),
-		notesDir: filepath.Join(root, "workspaces", "repo", "docs-exploration", "research", session),
+		notesDir: filepath.Join(root, "workspaces", "repo", "docs-exploration", "research"),
+		note:     session + ".md",
 		script:   script,
 	}
 	for _, d := range []string{e.notesDir, filepath.Join(root, "bin"), filepath.Join(root, "home")} {
@@ -172,18 +181,32 @@ func newSaveNotesEnv(t *testing.T, session string) *saveNotesEnv {
 
 // forSession is a second conversation in the same sandbox, pushing to
 // the same fork.
-func (e *saveNotesEnv) forSession(t *testing.T, session string) *saveNotesEnv {
-	t.Helper()
+func (e *saveNotesEnv) forSession(session string) *saveNotesEnv {
 	other := *e
-	other.notesDir = filepath.Join(e.root, "workspaces", "repo", "docs-exploration", "research", session)
-	if err := os.MkdirAll(other.notesDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	other.note = session + ".md"
 	other.env = replaceEnv(e.env, "SESSION_ID="+session)
 	return &other
 }
 
-func (e *saveNotesEnv) write(t *testing.T, name, content string) {
+// named is the same conversation saving to a file named after it
+// rather than after its id — which is what repo-agent asks for, the id
+// being the fallback for a session nobody has named.
+func (e *saveNotesEnv) named(note string) *saveNotesEnv {
+	other := *e
+	other.note = note
+	other.env = replaceEnv(e.env, "NOTES_FILE="+note)
+	return &other
+}
+
+// write is the conversation writing its note in the checkout.
+func (e *saveNotesEnv) write(t *testing.T, content string) {
+	t.Helper()
+	e.writeFile(t, e.note, content)
+}
+
+// writeFile is anything else the conversation leaves in the notes
+// directory of its checkout.
+func (e *saveNotesEnv) writeFile(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(e.notesDir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -227,13 +250,13 @@ func mustRun(t *testing.T, dir string, env []string, name string, args ...string
 // conversations can never save anything.
 func TestSaveNotesStartsTheBranchOnTheFirstSave(t *testing.T) {
 	e := newSaveNotesEnv(t, "s1")
-	e.write(t, "notes.md", "# what the retry loop does\n")
+	e.write(t, "# what the retry loop does\n")
 
 	out, err := e.save(t)
 	if err != nil {
 		t.Fatalf("save: %v\n%s", err, out)
 	}
-	got, gerr := e.onBranch(t, "docs-exploration/research/s1/notes.md")
+	got, gerr := e.onBranch(t, "docs-exploration/research/s1.md")
 	if gerr != nil {
 		t.Fatalf("reading the branch: %v\n%s", gerr, got)
 	}
@@ -253,41 +276,75 @@ func TestSaveNotesStartsTheBranchOnTheFirstSave(t *testing.T) {
 	}
 }
 
-// A second save has to add to the branch rather than replace it, and
-// has to replace its OWN directory wholesale — a file the conversation
-// deleted must not survive as a stale note.
-func TestSaveNotesReplacesTheSessionAndKeepsTheRest(t *testing.T) {
+// A second save has to update its own note and add to the branch
+// rather than replace it — every other conversation's note is on there
+// too, and none of them is this session's business.
+func TestSaveNotesUpdatesItsOwnNoteAndKeepsTheRest(t *testing.T) {
 	e := newSaveNotesEnv(t, "s1")
-	e.write(t, "notes.md", "first\n")
-	e.write(t, "scratch.md", "a thought that did not survive\n")
+	e.write(t, "first\n")
 	if out, err := e.save(t); err != nil {
 		t.Fatalf("first save: %v\n%s", err, out)
 	}
 
-	// Another session's notes, already on the branch.
-	other := e.forSession(t, "s2")
-	other.write(t, "notes.md", "someone else's reading\n")
+	// Another session's note, already on the branch.
+	other := e.forSession("s2")
+	other.write(t, "someone else's reading\n")
 	if out, err := other.save(t); err != nil {
 		t.Fatalf("second session: %v\n%s", err, out)
 	}
 
-	if err := os.Remove(filepath.Join(e.notesDir, "scratch.md")); err != nil {
-		t.Fatal(err)
-	}
-	e.write(t, "notes.md", "second\n")
+	e.write(t, "second\n")
 	if out, err := e.save(t); err != nil {
 		t.Fatalf("re-save: %v\n%s", err, out)
 	}
 
-	if got, _ := e.onBranch(t, "docs-exploration/research/s1/notes.md"); got != "second\n" {
-		t.Errorf("notes.md = %q, want the re-saved text", got)
+	if got, _ := e.onBranch(t, "docs-exploration/research/s1.md"); got != "second\n" {
+		t.Errorf("s1.md = %q, want the re-saved text", got)
 	}
-	if _, err := e.onBranch(t, "docs-exploration/research/s1/scratch.md"); err == nil {
-		t.Error("a file the conversation deleted is still on the branch")
+	if got, _ := e.onBranch(t, "docs-exploration/research/s2.md"); got != "someone else's reading\n" {
+		t.Errorf("another session's note was disturbed: %q", got)
 	}
-	// The other session is not this one's business.
-	if got, _ := e.onBranch(t, "docs-exploration/research/s2/notes.md"); got != "someone else's reading\n" {
-		t.Errorf("another session's notes were disturbed: %q", got)
+}
+
+// One file is saved, and it is the one the caller named. A session that
+// scribbled something else into the notes directory of its checkout —
+// or that wandered into another conversation's note there — does not
+// get it pushed.
+func TestSaveNotesPushesNothingButTheNoteItWasGiven(t *testing.T) {
+	e := newSaveNotesEnv(t, "s1")
+	e.write(t, "ours\n")
+	e.writeFile(t, "scratch.md", "a thought that did not survive\n")
+	e.writeFile(t, "s2.md", "another conversation's note\n")
+
+	if out, err := e.save(t); err != nil {
+		t.Fatalf("save: %v\n%s", err, out)
+	}
+	for _, stray := range []string{"scratch.md", "s2.md"} {
+		if _, err := e.onBranch(t, "docs-exploration/research/"+stray); err == nil {
+			t.Errorf("%s rode along onto the branch", stray)
+		}
+	}
+}
+
+// The file the note lands in is the caller's to name: it is the note's
+// address on a branch someone reads months later, and a session id is
+// not an address.
+func TestSaveNotesUsesTheNameItIsGiven(t *testing.T) {
+	e := newSaveNotesEnv(t, "s1").named("where-the-retry-loop-terminates.md")
+	e.write(t, "# what the retry loop does\n")
+
+	if out, err := e.save(t); err != nil {
+		t.Fatalf("save: %v\n%s", err, out)
+	}
+	got, gerr := e.onBranch(t, "docs-exploration/research/where-the-retry-loop-terminates.md")
+	if gerr != nil {
+		t.Fatalf("reading the branch: %v\n%s", gerr, got)
+	}
+	if got != "# what the retry loop does\n" {
+		t.Errorf("the note on the branch = %q", got)
+	}
+	if _, err := e.onBranch(t, "docs-exploration/research/s1.md"); err == nil {
+		t.Error("the note also landed under the session id")
 	}
 }
 
@@ -296,7 +353,7 @@ func TestSaveNotesReplacesTheSessionAndKeepsTheRest(t *testing.T) {
 // nothing changing is a fine outcome.
 func TestSaveNotesIsQuietWhenNothingChanged(t *testing.T) {
 	e := newSaveNotesEnv(t, "s1")
-	e.write(t, "notes.md", "unchanged\n")
+	e.write(t, "unchanged\n")
 	if out, err := e.save(t); err != nil {
 		t.Fatalf("first save: %v\n%s", err, out)
 	}
@@ -315,17 +372,23 @@ func TestSaveNotesIsQuietWhenNothingChanged(t *testing.T) {
 }
 
 // Nothing to save is a failure, not a quiet success. The caller asked
-// the conversation to write notes and then asked for them to be saved;
+// the conversation to write the note and then asked for it to be saved;
 // reporting success would send a member to a branch with nothing on it.
 func TestSaveNotesFailsWhenTheConversationWroteNothing(t *testing.T) {
 	e := newSaveNotesEnv(t, "s1")
 
 	out, err := e.save(t)
 	if err == nil {
-		t.Fatalf("save of an empty directory succeeded:\n%s", out)
+		t.Fatalf("save of a missing note succeeded:\n%s", out)
 	}
-	if !strings.Contains(out, "has not written its notes") {
+	if !strings.Contains(out, "has not written its note") {
 		t.Errorf("the failure does not say what went wrong:\n%s", out)
+	}
+	// An empty file is the same nothing: a turn that opened the note and
+	// wrote no prose into it has not written the note.
+	e.write(t, "")
+	if out, err := e.save(t); err == nil {
+		t.Fatalf("save of an empty note succeeded:\n%s", out)
 	}
 	// And it must not have created the branch on the way to finding out.
 	if err := exec.Command("git", "-C", e.fork, "rev-parse", ResearchNotesBranch).Run(); err == nil {
@@ -337,7 +400,7 @@ func TestSaveNotesFailsWhenTheConversationWroteNothing(t *testing.T) {
 // us the summary the member waited for.
 func TestSaveNotesReplaysOntoAConcurrentPush(t *testing.T) {
 	e := newSaveNotesEnv(t, "s1")
-	e.write(t, "notes.md", "ours\n")
+	e.write(t, "ours\n")
 	if out, err := e.save(t); err != nil {
 		t.Fatalf("seed save: %v\n%s", err, out)
 	}
@@ -350,10 +413,10 @@ func TestSaveNotesReplaysOntoAConcurrentPush(t *testing.T) {
 	mustRun(t, e.root, e.env, "git", "clone", "--quiet", "--branch", ResearchNotesBranch, e.fork, side)
 	mustRun(t, side, e.env, "git", "config", "user.name", "bob")
 	mustRun(t, side, e.env, "git", "config", "user.email", "bob@example.com")
-	if err := os.MkdirAll(filepath.Join(side, "docs-exploration", "research", "s3"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(side, "docs-exploration", "research"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(side, "docs-exploration", "research", "s3", "notes.md"), []byte("theirs\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(side, "docs-exploration", "research", "s3.md"), []byte("theirs\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, side, e.env, "git", "add", "-A")
@@ -374,7 +437,7 @@ func TestSaveNotesReplaysOntoAConcurrentPush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e.write(t, "notes.md", "ours, revised\n")
+	e.write(t, "ours, revised\n")
 	out, err := e.save(t)
 	if err != nil {
 		t.Fatalf("save after a concurrent push: %v\n%s", err, out)
@@ -382,11 +445,11 @@ func TestSaveNotesReplaysOntoAConcurrentPush(t *testing.T) {
 	if !strings.Contains(out, "replayed onto it") {
 		t.Errorf("the save did not go through the replay path:\n%s", out)
 	}
-	if got, _ := e.onBranch(t, "docs-exploration/research/s1/notes.md"); got != "ours, revised\n" {
-		t.Errorf("our notes = %q, want the revision", got)
+	if got, _ := e.onBranch(t, "docs-exploration/research/s1.md"); got != "ours, revised\n" {
+		t.Errorf("our note = %q, want the revision", got)
 	}
-	if got, _ := e.onBranch(t, "docs-exploration/research/s3/notes.md"); got != "theirs\n" {
-		t.Errorf("the concurrent session's notes were lost: %q", got)
+	if got, _ := e.onBranch(t, "docs-exploration/research/s3.md"); got != "theirs\n" {
+		t.Errorf("the concurrent session's note was lost: %q", got)
 	}
 }
 
