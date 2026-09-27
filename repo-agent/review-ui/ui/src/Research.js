@@ -612,7 +612,9 @@ export function normaliseView(stored) {
 // knows which; this component cannot.
 // `fill` stretches the conversation to its container instead of
 // capping it at 72vh; `standalone` says this *is* the popped-out
-// window, which is the only place that should not offer to pop out.
+// window, which is the one place with nothing to offer more room —
+// it already has the whole window, so neither full screen nor a
+// second tab of itself means anything there.
 // They were one prop, which stopped being true the moment the panel
 // opened the conversation in a slide-over: that wants the full height
 // and the pop-out both.
@@ -667,6 +669,11 @@ export function ResearchConversation({
   // would do it in a stylesheet, but every style in this file is
   // inline and one rule in App.css for one box is worse than a bool.
   const [composerFocused, setComposerFocused] = useState(false);
+  // Whether the conversation has taken over the window. Not remembered:
+  // full screen is something you do to read one long answer, not a way
+  // you like the page to be, and a board that came back full screen
+  // after a refresh would be a board you had lost the rest of.
+  const [expanded, setExpanded] = useState(false);
   // rich | mono | raw. A reading preference, not session state, so it
   // is remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
@@ -687,6 +694,29 @@ export function ResearchConversation({
     try { localStorage.setItem(RESEARCH_VIEW_KEY, next); } catch (e) { /* private mode */ }
   };
 
+  // Escape leaves full screen, and while we are in it the page behind
+  // does not scroll — an overlay you can scroll the board underneath is
+  // an overlay that reads as a bug.
+  //
+  // defaultPrevented is the whole contract with everything else on the
+  // page that answers Escape: the rename box cancels an edit with it and
+  // calls preventDefault, so typing a name and hitting Escape puts the
+  // name back without also throwing away the screen you were reading it
+  // on. Only the outermost unhandled Escape gets here.
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    const wasOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = wasOverflow;
+    };
+  }, [expanded]);
 
   // The resume cursor. A ref, not state: the socket's onmessage handler
   // closes over it, and it must never be a render behind.
@@ -1044,9 +1074,19 @@ export function ResearchConversation({
     : modeState.auto;
 
   return (
-    <div style={fill
-      ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
-      : { display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '72vh' }}>
+    // Full screen is the same conversation in a fixed pane over the
+    // page, not a second copy of it somewhere else: the socket, the
+    // transcript and the draft are all still this component's, so
+    // expanding mid-answer does not drop the answer.
+    <div style={expanded
+      ? {
+        position: 'fixed', inset: 0, zIndex: 50,
+        display: 'flex', flexDirection: 'column', minHeight: 0,
+        background: 'var(--bg-color)', padding: '0 24px 16px',
+      }
+      : fill
+        ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
+        : { display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '72vh' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
         padding: '8px 0', fontSize: 'small', flex: '0 0 auto',
@@ -1160,6 +1200,29 @@ export function ResearchConversation({
         {phase === 'live' && busy && (
           <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
         )}
+        {/* Two ways to get more room, and they are different enough to
+            both be here rather than one behind the other. Full screen
+            keeps the conversation you are in — same socket, same draft,
+            Escape puts it back — and is what you want for the answer in
+            front of you. The tab is a second place to leave it, which is
+            what you want when you are going to keep the board.
+
+            Out of the ⋯ menu, where pop out used to live: these are read
+            *while* reading, and a menu is for things you do to a session
+            once. An icon each, because they are a pair. */}
+        {!standalone && (
+          <>
+            <button className="btn btn-sm" onClick={() => setExpanded(e => !e)}
+              aria-pressed={expanded}
+              aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+              title={expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
+              {expanded ? '⤢' : '⛶'}
+            </button>
+            <a className="btn btn-sm" href={`#/research/${sessionId}`}
+              target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
+              title="Open this conversation in its own tab">↗</a>
+          </>
+        )}
         {/* Everything you do to a session rather than in it, folded
             behind one button. These are once-a-session actions and one
             of them is destructive; they were sitting permanently beside
@@ -1189,12 +1252,6 @@ export function ResearchConversation({
                     style={{ fontSize: 'x-small', padding: '4px 6px' }}
                     title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                 )}
-                {!standalone && (
-                  <a role="menuitem" href={`#/research/${sessionId}`}
-                    target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
-                    style={{ fontSize: 'x-small', padding: '4px 6px' }}
-                    title="Open this conversation in its own window">pop out ↗</a>
-                )}
                 <button role="menuitem" className="btn btn-delete btn-sm"
                   onClick={() => { setMenuOpen(false); destroy(); }}
                   title="Delete the sandbox — the transcript lives on its disk and goes with it">
@@ -1218,7 +1275,7 @@ export function ResearchConversation({
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
         style={{
-          flex: '1 1 auto', minHeight: fill ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
+          flex: '1 1 auto', minHeight: fill || expanded ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
           border: '1px solid var(--border-color)', borderRadius: '10px',
           // The terminal canvas is its own colour, and an inline
           // background would win over the class that sets it.

@@ -832,10 +832,10 @@ describe('ResearchPanel', () => {
         expect(container.querySelector('textarea').value).toBe('');
     });
 
-    test('a conversation in the detail pane still offers to pop out', async () => {
+    test('a conversation in the detail pane offers both ways to get more room', async () => {
         // fill and standalone used to be one prop. The detail pane
-        // wants the full height and the pop-out both; only the
-        // popped-out window itself should be without it.
+        // wants the full height and these both; only the popped-out
+        // window itself, which already has the window, is without them.
         global.fetch = jest.fn(() => reply(200, sessions));
         await act(async () => {
             root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
@@ -844,9 +844,58 @@ describe('ResearchPanel', () => {
 
         await selectRow('the retry loop');
 
-        const more = container.querySelector('[aria-label="More actions"]');
-        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        expect([...container.querySelectorAll('a')].map(a => a.textContent)).toContain('pop out ↗');
+        const tab = container.querySelector('[aria-label="Open in a new tab"]');
+        expect(tab.getAttribute('href')).toBe('#/research/aaaaaaaa-1111');
+        expect(tab.getAttribute('target')).toBe('_blank');
+
+        // Full screen keeps the conversation — same component, so the
+        // rail goes away and the transcript does not.
+        const full = container.querySelector('[aria-label="Full screen"]');
+        await act(async () => { full.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        expect(container.textContent).toContain('the retry loop');
+        expect(container.querySelector('[aria-label="Exit full screen"]')).toBeTruthy();
+        expect(document.body.style.overflow).toBe('hidden');
+
+        // Escape puts it back, and gives the page its scrollbar with it.
+        await act(async () => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        expect(container.querySelector('[aria-label="Full screen"]')).toBeTruthy();
+        expect(document.body.style.overflow).not.toBe('hidden');
+    });
+
+    test('Escape that something else already answered does not also close full screen', async () => {
+        // The rename box cancels an edit with Escape and calls
+        // preventDefault. Typing a name and thinking better of it should
+        // not also throw away the screen you were reading it on.
+        global.fetch = jest.fn(() => reply(200, sessions));
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+        await selectRow('the retry loop');
+
+        const full = container.querySelector('[aria-label="Full screen"]');
+        await act(async () => { full.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+        const title = [...container.querySelectorAll('strong')].find(s => s.textContent === 'the retry loop');
+        await act(async () => { title.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        const box = container.querySelector('[aria-label="Session title"]');
+        await act(async () => {
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+
+        // The edit is off, and we are still full screen.
+        expect(container.querySelector('[aria-label="Exit full screen"]')).toBeTruthy();
+    });
+
+    test('the popped-out window does not offer to pop itself out again', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" standalone />); });
+        await flush();
+
+        expect(container.querySelector('[aria-label="Open in a new tab"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Full screen"]')).toBeNull();
     });
 
     test('the other-repositories list keeps the repo, which is why it is separate', async () => {
