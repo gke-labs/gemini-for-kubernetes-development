@@ -154,6 +154,7 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
 	r.POST("/board/:board/research", server.startResearchSession)
+	r.GET("/board/:board/research/prompts", server.getResearchPrompts)
 	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
 	r.POST("/board/:board/prs/:id/iterate", server.iterateBoardPR)

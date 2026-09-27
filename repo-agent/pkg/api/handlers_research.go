@@ -254,8 +254,8 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 	// controller in the pass that first notices it exists. Those are
 	// different moments, and between them the row has a sandbox (so the
 	// claim is hidden as served) and no annotation (so it has no name) —
-	// which is how a session that was just called "what happened · 2
-	// weeks" turns into "untitled" and back again a minute later.
+	// which is how a session that was just called "Changes in the last
+	// 2 weeks" turns into "untitled" and back again a minute later.
 	for i := range views {
 		if views[i].Title == "" {
 			views[i].Title = claimed[views[i].SessionID]

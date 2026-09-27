@@ -73,6 +73,9 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/board/:board/prs/:id/investigate", s.investigateBoardPR)
 		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
 		api.POST("/board/:board/research", s.startResearchSession)
+		// The canned openings as text, for a pane that puts one in the
+		// member's box to edit rather than running it behind a button.
+		api.GET("/board/:board/research/prompts", s.getResearchPrompts)
 		// Addressed by session id alone, with no board in the path: the
 		// board is only the mailbox that got the sandbox made, and
 		// nothing after that click goes through it.

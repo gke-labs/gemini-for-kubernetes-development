@@ -515,7 +515,7 @@ func TestResearchKickoffIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "a sandbox that exists must not be launched again")
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff))
-	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("what happened · 2 weeks"))
+	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("Changes in the last 2 weeks"))
 }
 
 // Once the pod is up the controller opens the conversation itself: the

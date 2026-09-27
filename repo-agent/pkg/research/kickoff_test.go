@@ -39,6 +39,44 @@ func TestPromptRendersTheRepositoryIn(t *testing.T) {
 	}
 }
 
+// The canned reads reach the engine through the member's own box now —
+// the landing pane fills it with this text rather than starting a
+// session behind it — so what runs is an ordinary typed session, and its
+// name is Truncate of what was sent. That makes the first line of each
+// prompt the name in the rail, which is why it is a title and not the
+// first sentence of the instruction.
+func TestCannedPromptsOpenWithTheirTitle(t *testing.T) {
+	for _, tc := range []struct{ kind, want string }{
+		{KindOnboard, "Overview of the repo"},
+		{KindActivity, "Changes in the last month"},
+	} {
+		got, err := Kickoff{Kind: tc.kind}.Prompt("repo-agent", "https://github.com/gke-labs/repo-agent")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.kind, err)
+		}
+		if title := Truncate(got); title != tc.want {
+			t.Errorf("sent as a question, %s names its session %q, want %q", tc.kind, title, tc.want)
+		}
+	}
+}
+
+// The window is named once, in the line that is also the title.
+//
+// That single mention is what lets the box replace the window picker:
+// change "last month" to "last week" — or to "since the 1.4 release" —
+// and the prompt and the name it will be listed under change together,
+// because everything after the first line says "that window". A second
+// mention would sit there contradicting the edit.
+func TestActivityNamesItsWindowOnce(t *testing.T) {
+	got, err := Kickoff{Kind: KindActivity}.Prompt("repo-agent", "https://github.com/gke-labs/repo-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(got, DefaultSince); n != 1 {
+		t.Errorf("the activity prompt says %q %d times, want once:\n%s", DefaultSince, n, got)
+	}
+}
+
 func TestPromptIsEmptyForATypedSession(t *testing.T) {
 	got, err := Kickoff{}.Prompt("repo-agent", "https://example.com")
 	if err != nil {
@@ -84,8 +122,8 @@ func TestResolvedTitle(t *testing.T) {
 		want string
 	}{
 		{Kickoff{Kind: KindOnboard}, "overview"},
-		{Kickoff{Kind: KindActivity}, "what happened · 2 weeks"},
-		{Kickoff{Kind: KindActivity, Since: "1 month"}, "what happened · 1 month"},
+		{Kickoff{Kind: KindActivity}, "Changes in the last month"},
+		{Kickoff{Kind: KindActivity, Since: "3 months"}, "Changes in the last 3 months"},
 		{Kickoff{Kind: KindTopic, Topic: "compare with Envoy"}, "compare with Envoy"},
 		// An explicit name beats the derivation, whatever the kind.
 		{Kickoff{Kind: KindOnboard, Title: "first read"}, "first read"},

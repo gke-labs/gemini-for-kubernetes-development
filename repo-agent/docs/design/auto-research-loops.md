@@ -222,7 +222,7 @@ load harness under `benchmarking/`).
 
 ### 0. Understand — what is even measurable here?
 
-Generate Overview, then ask the repo directly: *"what benchmarks,
+Send the overview prompt, then ask the repo directly: *"what benchmarks,
 load tests, and perf CI exist, how are they run, what do they
 output?"* No loop, no infrastructure — one exploration run whose
 answer lands in the docs.

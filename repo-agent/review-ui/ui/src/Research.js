@@ -452,7 +452,11 @@ export function grownHeight(scrollHeight, lineHeight, minRows, maxRows) {
 // Measured rather than counted. A line that wraps is two lines tall and
 // counting "\n" cannot see that, which is exactly the case — a pasted
 // paragraph — where getting it wrong is most obvious.
-function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, ...rest }) {
+// inputRef, when given, is handed the textarea itself. For the one
+// caller that has to reach it — filling the ask box with a canned prompt
+// and then putting the caret at the end of it — rather than a forwarded
+// ref, because this component's own ref is what measures the box.
+function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, inputRef, ...rest }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -468,7 +472,12 @@ function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, ...rest }) {
     el.style.height = `${height}px`;
     el.style.overflowY = scroll ? 'auto' : 'hidden';
   }, [value, minRows, maxRows]);
-  return <textarea ref={ref} rows={minRows} value={value}
+  return <textarea
+    ref={el => {
+      ref.current = el;
+      if (inputRef) inputRef.current = el;
+    }}
+    rows={minRows} value={value}
     style={{ resize: 'none', ...style }} {...rest} />;
 }
 
@@ -1568,10 +1577,8 @@ export function ResearchConversation({
 export function ResearchPanel({ boardName, repoURL }) {
   const [sessions, setSessions] = useState(null);
   const [open, setOpen] = useState(null); // { sessionId, pending, title }
-  const [busy, setBusy] = useState(''); // which starter is in flight
+  const [busy, setBusy] = useState(false); // a claim is in flight
   const [topic, setTopic] = useState('');
-  const [title, setTitle] = useState('');
-  const [sinceOpen, setSinceOpen] = useState(false);
   const [error, setError] = useState('');
   const [forkOwner, setForkOwner] = useState('');
   // The branch notes are written to, as the server names it. Held in
@@ -1579,6 +1586,13 @@ export function ResearchPanel({ boardName, repoURL }) {
   // on the Go side the write path also reads; the initial value is only
   // what to show for the frame before the first response lands.
   const [notesBranch, setNotesBranch] = useState('research/notes');
+  // The canned openings as text, keyed by kind, fetched once. They are
+  // what the box gets filled with — see the landing pane — so they are
+  // loaded before the click rather than on it: a control that puts text
+  // in front of you should do it at once, not after a round trip that
+  // can fail while you watch.
+  const [prompts, setPrompts] = useState({});
+  const askBoxRef = useRef(null);
 
   const load = useCallback(() => {
     fetch('/api/research')
@@ -1600,48 +1614,73 @@ export function ResearchPanel({ boardName, repoURL }) {
     return () => clearInterval(t);
   }, [load]);
 
+  // The canned prompts, rendered for this board's repository. Failing is
+  // quiet: it costs the two fill controls, and the box they would have
+  // filled still works.
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/board/${boardName}/research/prompts`)
+      .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
+      .then(data => { if (live) setPrompts(data.prompts || {}); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [boardName]);
+
   const repo = repoFromURL(repoURL);
 
-  // start files a claim. `enter` opens the conversation straight away:
-  // right for a question you just typed and want the answer to, wrong
-  // for a canned read you fire and come back to — that one leaves you on
-  // the list, where its row appears immediately so nobody clicks twice
-  // and pays for a second sandbox.
-  const start = (kickoff, enter) => {
-    setBusy(kickoff.kind);
+  // fill puts a canned read in the box instead of running it. The prompt
+  // stops being something that happens behind a button and becomes the
+  // first thing you can edit: narrow it to one subsystem, strike the
+  // Mermaid diagram, add "and compare it with the one in envd". What
+  // then gets sent is an ordinary question, named after its own first
+  // line — which is why those prompts open with a title.
+  const fill = (kind) => {
+    const text = prompts[kind];
+    if (!text) return;
+    setTopic(text);
+    // The caret goes to the end of what just appeared, so the box is
+    // ready to be typed into rather than merely full.
+    const box = askBoxRef.current;
+    if (box) {
+      box.focus();
+      window.requestAnimationFrame(() => {
+        box.selectionStart = box.selectionEnd = box.value.length;
+        box.scrollTop = box.scrollHeight;
+      });
+    }
+  };
+
+  // ask files a claim for what is in the box, and opens the conversation
+  // on the way: it is a question you want the answer to, and the pending
+  // view is what fills the pane until the sandbox exists.
+  //
+  // One shape of request, since the canned reads became text in this
+  // same box. There used to be a second — fire a kind and stay on the
+  // list, with an optimistic row inserted so nobody clicked twice and
+  // paid for a second sandbox — and no kind is sent from here any more.
+  //
+  // No title travels with it either: the server derives one from the
+  // first line, and the conversation's header renames it in place.
+  const ask = () => {
+    if (!topic.trim() || busy) return;
+    setBusy(true);
     setError('');
     fetch(`/api/board/${boardName}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(kickoff),
+      body: JSON.stringify({ kind: 'topic', topic: topic.trim() }),
     })
       .then(async res => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setError(body.error || `could not start a session: HTTP ${res.status}`); return; }
-        if (enter) {
-          // `pending` is what stops the 404 in the meantime reading as
-          // "this session does not exist".
-          setOpen({ sessionId: body.sessionId, pending: true, title: body.title || '' });
-        } else {
-          setSessions(prev => [{
-            sessionId: body.sessionId,
-            title: body.title || '',
-            repo,
-            requested: true,
-            createdAt: new Date().toISOString(),
-          }, ...(prev || [])]);
-        }
+        setTopic('');
+        // `pending` is what stops the 404 in the meantime reading as
+        // "this session does not exist".
+        setOpen({ sessionId: body.sessionId, pending: true, title: body.title || '' });
         setTimeout(load, 3000);
       })
       .catch(err => setError(`could not start a session: ${err}`))
-      .finally(() => setBusy(''));
-  };
-
-  const ask = () => {
-    if (!topic.trim() || busy) return;
-    start({ kind: 'topic', topic: topic.trim(), title: title.trim() }, true);
-    setTopic('');
-    setTitle('');
+      .finally(() => setBusy(false));
   };
 
   const all = sessions || [];
@@ -1775,10 +1814,11 @@ export function ResearchPanel({ boardName, repoURL }) {
           content is taller than the pane it scrolls from the top
           instead of having its head cut off. */}
       <div style={{ margin: 'auto', width: '100%', maxWidth: '560px', padding: '16px 8px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '12px', color: 'var(--text-secondary)' }}>
-          Ask anything about {repo || 'this repository'}
-        </div>
-
+        {/* No heading over the box. It said "Ask anything about
+            substrate" directly above a box whose placeholder said "Ask
+            anything about this repo" — the same sentence twice, one of
+            them in a voice nothing else on the pane uses. The
+            placeholder carries it now, repo name and all. */}
         <div style={{
           border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '10px 12px',
@@ -1788,82 +1828,60 @@ export function ResearchPanel({ boardName, repoURL }) {
               a single line there reads as a search field — which is not
               what is being asked for. */}
           <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2}
+            inputRef={askBoxRef}
             aria-label="Research question"
-            placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+            placeholder={`Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
             style={{
               width: '100%', border: 'none', outline: 'none', resize: 'none',
               background: 'transparent', color: 'var(--text-primary)',
               font: 'inherit', boxSizing: 'border-box',
             }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-            {/* Optional: the question makes a perfectly good name, and
-                nobody should have to invent one to ask something. */}
-            {/* "session name", not "name": next to a box you have just
-                typed a question into, "name" reads as though it wants
-                one for the question. Optional because leaving it empty
-                is the normal thing — the question becomes the name. */}
-            <input value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="session name (optional)" aria-label="Session name"
-              title="Left empty, the session is named after your question"
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
-              style={{
-                flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
-                border: '1px solid var(--border-color)', borderRadius: '6px',
-                background: 'var(--bg-card)', color: 'var(--text-primary)',
-              }} />
+          {/* No name box. It was optional and everybody left it empty,
+              which is the right answer: the server names the session
+              after what was asked, and the header renames it in place
+              the moment that turns out to be wrong. What it cost was a
+              second box between a typed question and sending it, on the
+              one screen whose whole job is to get out of the way. */}
+          {/* The canned reads, in the box rather than beside it: they
+              fill this box with a prompt instead of starting a session
+              behind one. Small, and left of the button that sends,
+              because that is the order it happens in — and small
+              because they are ways to start typing, not second ways to
+              ask.
+              Neither carries an option any more. The overview never had
+              one, and the activity window was a dropdown of three fixed
+              spans in front of the one people wanted; it is a word in
+              the first line of the prompt now, and the prompt is in
+              front of you. Change "last month" to "last week", or to
+              "since the 1.4 release", which the dropdown could not
+              offer at all. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+            {[
+              ['onboard', 'overview', 'Puts the overview prompt in the box — read it, edit it, send it'],
+              ['activity', 'recent changes', 'Puts the recent-changes prompt in the box. The window is the first line: edit it'],
+            ].map(([kind, label, hint]) => (
+              <button key={kind} type="button" disabled={!prompts[kind] || !!busy}
+                title={prompts[kind] ? hint : 'Loading the canned prompts…'}
+                onClick={() => fill(kind)}
+                style={{
+                  border: 'none', background: 'none', padding: 0, font: 'inherit',
+                  fontSize: 'x-small', color: 'var(--link-color, #0969da)',
+                  cursor: prompts[kind] ? 'pointer' : 'default',
+                  opacity: prompts[kind] ? 1 : 0.5,
+                }}>
+                {label}
+              </button>
+            ))}
             <span style={{ flex: 1 }} />
             <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
-              {busy === 'topic' ? 'Requesting…' : 'Research'}
+              {busy ? 'Requesting…' : 'Research'}
             </button>
           </div>
         </div>
 
-        {/* The canned reads, under the box rather than over it. A kind
-            is only a prompt somebody else typed for you, so it belongs
-            beside the one you would type yourself — and second, because
-            the open question is the common case. */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px',
-          margin: '16px 0 10px', color: 'var(--text-secondary)', fontSize: 'x-small',
-        }}>
-          <span style={{ flex: 1, borderTop: '1px solid var(--border-color)' }} />
-          or start from a canned read
-          <span style={{ flex: 1, borderTop: '1px solid var(--border-color)' }} />
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn" disabled={!!busy}
-            title="Starts a conversation that reads the repo end to end: what it is, how it is put together, where the code lives"
-            onClick={() => start({ kind: 'onboard' }, false)}>
-            {busy === 'onboard' ? 'Requesting…' : 'Generate Overview'}
-          </button>
-          <span style={{ position: 'relative' }}>
-            <button className="btn" disabled={!!busy}
-              title="Starts a conversation that digests a recent window: themes, churn, notable merges, and maintainer asks"
-              onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
-            {sinceOpen && (
-              <div style={{
-                position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-                background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px',
-              }}>
-                {['2 weeks', '1 month', '3 months'].map(win => (
-                  <div key={win}
-                    onClick={() => { setSinceOpen(false); start({ kind: 'activity', since: win }, false); }}
-                    style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                    last {win}
-                  </div>
-                ))}
-              </div>
-            )}
-          </span>
-        </div>
-
         <div style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: 'x-small' }}>
-          Each one is a sandbox with this repo checked out. It takes a few minutes to appear.
+          Session creation could take a few minutes.
         </div>
       </div>
     </div>

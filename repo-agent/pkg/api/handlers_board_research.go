@@ -18,6 +18,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -29,6 +30,55 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
+
+// getResearchPrompts hands back the canned openings, rendered for this
+// board's repository.
+//
+// For a caller that wants to put one in front of the member rather than
+// run it: the landing pane's `overview` fills the ask box with this
+// text, which you then read, edit and send like anything else you would
+// have typed. A canned read used to be a button that started a session
+// around a prompt nobody was shown — which is a strange thing to pay
+// minutes of sandbox for sight unseen, and left "why did it answer in
+// that shape?" unanswerable from the UI.
+//
+// The text stays where it was, in pkg/research's embedded templates, and
+// is rendered by the same Kickoff.Prompt the controller calls. A copy in
+// the UI would be the copy that drifts, and the drift would show up as
+// an answer that came back shaped oddly with nothing on screen to
+// explain it.
+//
+// Read-only and derived from the board, so it needs nothing but the
+// access check every other board route makes.
+func (s *Server) getResearchPrompts(c *gin.Context) {
+	ctx := c.Request.Context()
+	namespace := s.Auth.GetNamespaceFromContext(c)
+	sessionUser := s.Auth.GetUserFromContext(c)
+	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
+		return
+	}
+	// The same URL the controller builds when it sends a kickoff itself.
+	htmlURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+
+	prompts := map[string]string{}
+	for _, kind := range []string{research.KindOnboard, research.KindActivity} {
+		text, err := (research.Kickoff{Kind: kind}).Prompt(repo, htmlURL)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not render the canned prompts", "details": err.Error()})
+			return
+		}
+		prompts[kind] = text
+	}
+	c.JSON(http.StatusOK, gin.H{"prompts": prompts})
+}
 
 // startResearchSession opens a deep-research conversation about the
 // board's repository: a sandbox running the agent under acpd, which the

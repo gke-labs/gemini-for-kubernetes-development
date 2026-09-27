@@ -1,5 +1,6 @@
-Give me an overview of the repository {{.Repo}} ({{.HTMLURL}}), which
-is checked out in front of you.
+Overview of the repo
+
+{{.Repo}} ({{.HTMLURL}}) is checked out in front of you.
 
 Read it the way a senior engineer would on day one: manifests and build
 files first, then entry points, then the core packages. Do not read
