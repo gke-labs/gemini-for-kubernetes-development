@@ -629,6 +629,10 @@ export function ResearchConversation({
   // it are the three things you reach for once a session and never
   // while reading one, and they were costing header width all the time.
   const [menuOpen, setMenuOpen] = useState(false);
+  // Only so the composer can lift when it has the caret. :focus-within
+  // would do it in a stylesheet, but every style in this file is
+  // inline and one rule in App.css for one box is worse than a bool.
+  const [composerFocused, setComposerFocused] = useState(false);
   // rich | terminal. A reading preference, not session state, so it is
   // remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
@@ -1254,9 +1258,24 @@ export function ResearchConversation({
 
       <div style={{ flex: '0 0 auto', marginTop: '8px' }}>
         <PlanPanel entries={transcript.plan} />
+        {/* The composer floats: narrower than the transcript, lifted
+            off it, and brighter than the page behind it.
+
+            Flush to the edges and sharing the transcript's background
+            it read as the last thing in the scroll rather than the one
+            thing on this screen you are meant to type into — which is
+            the whole point of a conversation. Pulling the sides in and
+            putting a shadow under it is what says "this is not more
+            transcript". */}
         <div style={{
-          border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '10px 12px',
+          maxWidth: '760px', margin: '0 auto', width: 'calc(100% - 32px)',
+          border: `1px solid ${composerFocused ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
+          borderRadius: '14px', background: 'var(--bg-card)', padding: '10px 14px',
+          // Dimmer when there is nothing to type into, so the lift is a
+          // promise the box can keep.
+          boxShadow: composerDisabled ? '0 1px 4px rgba(0,0,0,0.10)'
+            : composerFocused ? '0 6px 20px rgba(0,0,0,0.20)' : '0 3px 12px rgba(0,0,0,0.16)',
+          transition: 'box-shadow 120ms ease, border-color 120ms ease',
         }}>
           {/* Not "ask a question about this repository" — that is what
               the landing pane says, and repeating it here made the
@@ -1267,6 +1286,8 @@ export function ResearchConversation({
           <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)}
             disabled={phase !== 'live'}
             placeholder="Continue the research — ask a follow-up…"
+            onFocus={() => setComposerFocused(true)}
+            onBlur={() => setComposerFocused(false)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             style={{
               width: '100%', border: 'none', outline: 'none', resize: 'none',
