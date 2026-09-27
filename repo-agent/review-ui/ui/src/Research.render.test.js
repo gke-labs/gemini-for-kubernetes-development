@@ -243,6 +243,53 @@ describe('ResearchConversation', () => {
         }));
     });
 
+    // A turn blocked on a permission is a busy turn, so the pill used to
+    // read "agent working" — true, and the opposite of useful: it reads as
+    // progress to the one person who could unblock it. The pill is what
+    // you can see without scrolling, so it is where the ask belongs.
+    test('a turn blocked on a permission says so in the status pill', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const pill = () => [...container.querySelectorAll('span')]
+            .find(s => /agent working|needs permission|^ready$/.test(s.textContent));
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({ type: 'event', offset: 30, event: { seq: 1, kind: 'user_prompt', data: { text: 'go' } } });
+        });
+        expect(pill().textContent).toBe('agent working');
+
+        await act(async () => {
+            ws.deliver({
+                type: 'event', offset: 60,
+                event: {
+                    seq: 2, kind: 'permission_request',
+                    data: {
+                        requestId: 'r1',
+                        toolCall: { title: 'git show d1254bd', kind: 'execute' },
+                        options: [{ optionId: 'o1', name: 'Allow', kind: 'allow_once' }],
+                    },
+                },
+            });
+        });
+        expect(pill().textContent).toContain('needs permission');
+        // And names the call, so the pill answers "permission for what?"
+        // without a scroll.
+        expect(pill().getAttribute('title')).toContain('git show d1254bd');
+
+        // Answered, it goes back to reporting the turn it is in.
+        await act(async () => {
+            ws.deliver({
+                type: 'event', offset: 90,
+                event: { seq: 3, kind: 'permission_resolved', data: { requestId: 'r1', outcome: 'selected', optionId: 'o1' } },
+            });
+        });
+        expect(pill().textContent).toBe('agent working');
+    });
+
     test('the header carries the title and renames it in place', async () => {
         global.fetch = jest.fn((url, opts) => {
             if (opts && opts.method === 'PATCH') return reply(200, { sessionId: 's1', title: 'retry loop' });

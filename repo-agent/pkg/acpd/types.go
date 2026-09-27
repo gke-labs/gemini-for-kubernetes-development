@@ -57,6 +57,23 @@ const (
 // radius is one sandbox's disk, which is deleted with the conversation.
 const ResearchMode = ModeYolo
 
+// ResearchAutoApprove has acpd answer permission requests for research
+// sessions rather than wait for a user.
+//
+// ResearchMode ought to cover this and does not: gemini's shell tool
+// screens a command for tokens it lifted from earlier tool output — a
+// prompt-injection guard — before it consults the approval mode, so a
+// yolo session still stops on `git show <sha-it-just-read>` or `cat
+// <path-it-just-listed>`. That is the ordinary shape of research. No
+// setting disables the check and no answer to it is remembered, so the
+// only place left to decide is here, where we already decided that a
+// throwaway checkout is not worth a prompt.
+//
+// True for browser-started sessions too, and for the same reason the
+// mode is: which of the two paths created the session is an accident of
+// timing, and it must not be what determines whether the agent stalls.
+const ResearchAutoApprove = true
+
 // Session is the server's view of one conversation.
 type Session struct {
 	ID        string    `json:"id"`
@@ -80,6 +97,10 @@ type Session struct {
 	// with. The session runs anyway — it just asks before it acts — so
 	// this is the only account anybody gets of why it keeps stopping.
 	ModeError string `json:"modeError,omitempty"`
+	// AutoApprove reports that acpd answers this session's permission
+	// requests itself, so the ones in the transcript arrive already
+	// resolved and there is nothing for a reader to click.
+	AutoApprove bool `json:"autoApprove,omitempty"`
 }
 
 // SessionMode is one approval mode the engine will accept.
@@ -107,6 +128,10 @@ type CreateSessionRequest struct {
 	// own, which for gemini means prompting on every tool call. A mode
 	// the engine does not offer fails the create.
 	Mode string `json:"mode,omitempty"`
+	// AutoApprove tells acpd that no human is reading this conversation,
+	// so it should answer permission requests itself instead of letting
+	// each one wait out its timeout. See ResearchAutoApprove.
+	AutoApprove bool `json:"autoApprove,omitempty"`
 }
 
 // Event is one line of the NDJSON transcript.

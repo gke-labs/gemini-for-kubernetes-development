@@ -102,6 +102,12 @@ type createSessionRequest struct {
 	// Mode is the approval mode to start in. Empty leaves the engine's
 	// own default, which for gemini means prompting on every tool call.
 	Mode string `json:"mode,omitempty"`
+	// AutoApprove says no human will be reading this conversation, so
+	// acpd should answer permission requests itself rather than let a
+	// tool call wait out the timeout. Set it for sessions started by a
+	// controller; see SessionConfig.AutoApprove for why a permissive Mode
+	// is not enough on its own.
+	AutoApprove bool `json:"autoApprove,omitempty"`
 }
 
 type sessionResponse struct {
@@ -120,6 +126,10 @@ type sessionResponse struct {
 	// The session runs anyway; this is what a client shows instead of
 	// letting it look like nobody asked.
 	ModeError string `json:"modeError,omitempty"`
+	// AutoApprove reports that acpd answers this session's permission
+	// requests itself. A browser that attaches to one of these is a
+	// spectator: it will see requests in the transcript, already resolved.
+	AutoApprove bool `json:"autoApprove,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +174,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		AuthMethodID: req.AuthMethodID,
 		CWD:          cwd,
 		Mode:         req.Mode,
+		AutoApprove:  req.AutoApprove,
 		Dir:          filepath.Join(s.stateDir, req.ID),
 	})
 	if err != nil {
@@ -429,6 +440,7 @@ func describe(sess *Session) sessionResponse {
 		Mode:           mode,
 		AvailableModes: available,
 		ModeError:      sess.ModeError(),
+		AutoApprove:    sess.AutoApprove,
 	}
 }
 

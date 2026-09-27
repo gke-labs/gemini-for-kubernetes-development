@@ -471,9 +471,10 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 		// Set here as well as on the controller's create because either
 		// side can be the one that gets there first: a member who opens
 		// the tab before the kickoff is delivered creates the session
-		// through this path. The mode has to be the same either way, or
+		// through this path. These have to be the same either way, or
 		// whether you are prompted would depend on who was quicker.
-		Mode: acpd.ResearchMode,
+		Mode:        acpd.ResearchMode,
+		AutoApprove: acpd.ResearchAutoApprove,
 	}, apiKey)
 }
 
