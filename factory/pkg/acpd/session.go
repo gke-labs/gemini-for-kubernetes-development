@@ -734,6 +734,24 @@ func (s *Session) Busy() bool {
 	return s.busy
 }
 
+// Waiting reports whether a tool call is blocked on a permission answer
+// nobody has given yet.
+//
+// Separate from Busy because they are the same bit to a client that can
+// only see Busy, and they mean opposite things to whoever is reading the
+// list: a busy session is working and wants to be left alone, a waiting
+// one has stopped and wants you. Left indistinguishable, the second one
+// sits there until PermissionTimeout and then loses the turn — the one
+// state where not knowing costs something.
+//
+// Always false on an auto-approving session: onRequest answers before
+// anything is made pending, so there is never a request outstanding.
+func (s *Session) Waiting() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pending) > 0
+}
+
 // Transcript is the session's event log.
 func (s *Session) Transcript() *Transcript { return s.transcript }
 
