@@ -1028,7 +1028,15 @@ export function ResearchConversation({
               background: 'var(--bg-card)', color: 'var(--text-primary)',
             }} />
         )}
-        {name && repo && <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>}
+        {/* The repo, as a way to get to it. It has been a piece of grey
+            text here since the header existed, which is the one place
+            the name is not also a link — the rail links it, and a
+            conversation opened from a link never saw the rail. */}
+        {/* repo is read off info, so info is here whenever repo is. */}
+        {name && repo && (info.htmlUrl
+          ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
+            title={`Open ${repo} on GitHub`}>{repo}</a>
+          : <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>)}
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
         <Pill {...statusPill} title={phase === 'live' && waiting
           ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`

@@ -609,6 +609,31 @@ describe('ResearchConversation', () => {
         await flush();
         expect(container.textContent).toContain('Preparing the sandbox');
     });
+
+    test('the repo in the header is a way to get to it', async () => {
+        const status = {
+            sessionId: 's1', sandbox: 'rsch-open-rl-1', namespace: 'ns',
+            repo: 'open-rl', title: 'the retry loop', live: false,
+        };
+        global.fetch = jest.fn(() => reply(200, {
+            ...status, htmlUrl: 'https://github.com/gke-labs/open-rl',
+        }));
+
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const link = [...container.querySelectorAll('a')].find(a => a.textContent === 'open-rl');
+        expect(link).toBeTruthy();
+        expect(link.getAttribute('href')).toBe('https://github.com/gke-labs/open-rl');
+
+        // A sandbox annotated with no URL still says which repo it is;
+        // it just does not pretend to be a link to nowhere.
+        global.fetch = jest.fn(() => reply(200, status));
+        await act(async () => { root.render(<ResearchConversation sessionId="s3" />); });
+        await flush();
+        expect(container.textContent).toContain('open-rl');
+        expect([...container.querySelectorAll('a')].map(a => a.textContent)).not.toContain('open-rl');
+    });
 });
 
 describe('ResearchPanel', () => {
