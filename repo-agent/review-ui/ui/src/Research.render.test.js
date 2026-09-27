@@ -147,8 +147,9 @@ describe('ResearchConversation', () => {
         expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
     });
 
-    test('the terminal view shows the source unparsed and remembers itself', async () => {
-        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+    // A conversation with one prompt and one table in it, which is the
+    // shape the three views actually differ over.
+    const withATable = async (table) => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
@@ -163,11 +164,20 @@ describe('ResearchConversation', () => {
             });
             ws.deliver({ type: 'event', offset: 100, event: { seq: 3, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
         });
+    };
+
+    const chooseView = async (label) => {
+        const seg = [...container.querySelectorAll('button')].find(b => b.textContent === label);
+        await act(async () => { seg.click(); });
+    };
+
+    test('the raw view shows the source unparsed and remembers itself', async () => {
+        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+        await withATable(table);
         expect(container.querySelector('.research-terminal')).toBeNull();
 
         const rendersBefore = mockMarkdownCalls.length;
-        const flip = [...container.querySelectorAll('button')].find(b => b.textContent === 'terminal');
-        await act(async () => { flip.click(); });
+        await chooseView('raw');
 
         // No markdown pass at all in this view: the agent's own line
         // breaks are what make the table line up.
@@ -176,12 +186,40 @@ describe('ResearchConversation', () => {
         expect(pane).toBeTruthy();
         expect(pane.querySelector('.term-agent').textContent).toBe(table);
         expect(pane.querySelector('.term-user').textContent).toContain('compare them');
-        expect(localStorage.getItem('repoboard.research.view')).toBe('terminal');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('raw');
 
         // And the next conversation opened comes up in it.
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
         expect(container.querySelector('.research-terminal')).toBeTruthy();
+    });
+
+    test('the mono view is the terminal canvas with the markdown parsed', async () => {
+        // The other reading of "as a terminal would render it": still
+        // the flat fixed-width log, but the table gets real borders
+        // instead of pipes that happen to line up.
+        const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
+        await withATable(table);
+
+        const rendersBefore = mockMarkdownCalls.length;
+        await chooseView('mono');
+
+        const pane = container.querySelector('.research-terminal');
+        expect(pane).toBeTruthy();
+        expect(mockMarkdownCalls.length).toBeGreaterThan(rendersBefore);
+        expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
+        // Parsed, so it is not a pre-wrap log line any more.
+        expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('mono');
+
+        // Your own prompt is a line you typed, not a document: it keeps
+        // its sigil and does not go through markdown in either view.
+        expect(pane.querySelector('.term-user').className).toContain('term-line');
+
+        // And raw is still raw — the two are not the same segment.
+        await chooseView('raw');
+        expect(container.querySelector('.term-rendered')).toBeNull();
+        expect(container.querySelector('.term-agent').textContent).toBe(table);
     });
 
     test('a live turn disables the composer and offers Stop', async () => {
@@ -317,6 +355,83 @@ describe('ResearchConversation', () => {
             body: JSON.stringify({ title: 'retry loop' }),
         }));
         expect(container.querySelector('strong').textContent).toBe('retry loop');
+    });
+
+    test('an unnamed session rests in the box that asks for a name', async () => {
+        // It used to fall back to the repo, so the one session that
+        // needed naming was the one that looked like it had a name —
+        // and the repo is a link two inches to the right anyway.
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        expect(container.querySelector('strong')).toBeNull();
+        const field = container.querySelector('input[aria-label="Session title"]');
+        expect(field.value).toBe('');
+        expect(field.placeholder).toBe('Name this conversation…');
+    });
+
+    test('an unnamed session names itself from its first question', async () => {
+        // TitleAnnotation has promised this fallback since it existed.
+        // The list cannot do it — it is built from annotations and will
+        // not read N transcripts to draw a sidebar — but the
+        // conversation has the transcript open already, so one PATCH
+        // makes the name durable for the list too.
+        const patched = [];
+        global.fetch = jest.fn((url, opts) => {
+            if (opts && opts.method === 'PATCH') {
+                patched.push(JSON.parse(opts.body));
+                return reply(200, { sessionId: 's1', title: 'where does the retry loop live' });
+            }
+            return reply(200, { sessionId: 's1', repo: 'repo-agent' });
+        });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: {
+                    seq: 1, kind: 'user_prompt',
+                    data: { text: 'where does the retry loop live, and what backs it off?' },
+                },
+            });
+            ws.deliver({ type: 'event', offset: 60, event: { seq: 2, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
+        });
+        await flush();
+
+        // Sent raw: Truncate on the server is what a title means, and
+        // duplicating that rule here would be a second answer to it.
+        expect(patched).toEqual([{ title: 'where does the retry loop live, and what backs it off?' }]);
+        // And what comes back is what appears — never the paragraph.
+        expect(container.querySelector('strong').textContent).toBe('where does the retry loop live');
+    });
+
+    test('a session the server has already named does not rename itself', async () => {
+        // name is seeded from the row that was clicked, so the guard has
+        // to be the server's title. A canned or topic session is named
+        // at creation, which is what keeps the rendered brief in
+        // topic.txt from ever becoming somebody's session name.
+        global.fetch = jest.fn((url, opts) => {
+            if (opts && opts.method === 'PATCH') throw new Error('should not rename a named session');
+            return reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview' });
+        });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: { seq: 1, kind: 'user_prompt', data: { text: 'You are researching the repository…' } },
+            });
+        });
+        await flush();
+
+        expect(container.querySelector('strong').textContent).toBe('overview');
     });
 
     test('an opening turn still owed is said rather than left blank', async () => {
@@ -538,6 +653,13 @@ describe('ResearchConversation', () => {
         const state = () => container.querySelector('[aria-label="Composer state"]').textContent;
         expect(state()).toContain('Waiting for you');
 
+        // The composer invites a follow-up, not a fresh question: the
+        // landing pane is where you start one, and a composer wearing
+        // the same words reads as a second place to do that rather
+        // than the place you carry on.
+        expect(container.querySelector('textarea').placeholder)
+            .toBe('Continue the research — ask a follow-up…');
+
         // The placeholder used to carry this, and a placeholder is gone
         // the moment anybody types into the box it was in.
         const box = container.querySelector('textarea');
@@ -608,6 +730,31 @@ describe('ResearchConversation', () => {
         await act(async () => { root.render(<ResearchConversation sessionId="s2" pending />); });
         await flush();
         expect(container.textContent).toContain('Preparing the sandbox');
+    });
+
+    test('the repo in the header is a way to get to it', async () => {
+        const status = {
+            sessionId: 's1', sandbox: 'rsch-open-rl-1', namespace: 'ns',
+            repo: 'open-rl', title: 'the retry loop', live: false,
+        };
+        global.fetch = jest.fn(() => reply(200, {
+            ...status, htmlUrl: 'https://github.com/gke-labs/open-rl',
+        }));
+
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const link = [...container.querySelectorAll('a')].find(a => a.textContent === 'open-rl');
+        expect(link).toBeTruthy();
+        expect(link.getAttribute('href')).toBe('https://github.com/gke-labs/open-rl');
+
+        // A sandbox annotated with no URL still says which repo it is;
+        // it just does not pretend to be a link to nowhere.
+        global.fetch = jest.fn(() => reply(200, status));
+        await act(async () => { root.render(<ResearchConversation sessionId="s3" />); });
+        await flush();
+        expect(container.textContent).toContain('open-rl');
+        expect([...container.querySelectorAll('a')].map(a => a.textContent)).not.toContain('open-rl');
     });
 });
 
@@ -762,10 +909,10 @@ describe('ResearchPanel', () => {
         expect(container.querySelector('textarea').value).toBe('');
     });
 
-    test('a conversation in the detail pane still offers to pop out', async () => {
+    test('a conversation in the detail pane offers both ways to get more room', async () => {
         // fill and standalone used to be one prop. The detail pane
-        // wants the full height and the pop-out both; only the
-        // popped-out window itself should be without it.
+        // wants the full height and these both; only the popped-out
+        // window itself, which already has the window, is without them.
         global.fetch = jest.fn(() => reply(200, sessions));
         await act(async () => {
             root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
@@ -774,9 +921,83 @@ describe('ResearchPanel', () => {
 
         await selectRow('the retry loop');
 
-        const more = container.querySelector('[aria-label="More actions"]');
-        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        expect([...container.querySelectorAll('a')].map(a => a.textContent)).toContain('pop out ↗');
+        const tab = container.querySelector('[aria-label="Open in a new tab"]');
+        expect(tab.getAttribute('href')).toBe('#/research/aaaaaaaa-1111');
+        expect(tab.getAttribute('target')).toBe('_blank');
+
+        // Full screen keeps the conversation — same component, so the
+        // rail goes away and the transcript does not.
+        const full = container.querySelector('[aria-label="Full screen"]');
+        await act(async () => { full.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        expect(container.textContent).toContain('the retry loop');
+        expect(container.querySelector('[aria-label="Exit full screen"]')).toBeTruthy();
+        expect(document.body.style.overflow).toBe('hidden');
+
+        // Escape puts it back, and gives the page its scrollbar with it.
+        await act(async () => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        expect(container.querySelector('[aria-label="Full screen"]')).toBeTruthy();
+        expect(document.body.style.overflow).not.toBe('hidden');
+    });
+
+    test('Escape that something else already answered does not also close full screen', async () => {
+        // The rename box cancels an edit with Escape and calls
+        // preventDefault. Typing a name and thinking better of it should
+        // not also throw away the screen you were reading it on.
+        global.fetch = jest.fn(() => reply(200, sessions));
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+        await selectRow('the retry loop');
+
+        const full = container.querySelector('[aria-label="Full screen"]');
+        await act(async () => { full.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+        const title = [...container.querySelectorAll('strong')].find(s => s.textContent === 'the retry loop');
+        await act(async () => { title.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        const box = container.querySelector('[aria-label="Session title"]');
+        await act(async () => {
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+
+        // The edit is off, and we are still full screen.
+        expect(container.querySelector('[aria-label="Exit full screen"]')).toBeTruthy();
+    });
+
+    test('the popped-out window does not offer to pop itself out again', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" standalone />); });
+        await flush();
+
+        expect(container.querySelector('[aria-label="Open in a new tab"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Full screen"]')).toBeNull();
+    });
+
+    test('double-clicking a row renames it, in the box the header already had', async () => {
+        // One rename and one PATCH: the rail sends you to the header's
+        // box rather than growing an editor of its own. What the gesture
+        // buys is discoverability — bold text gives no sign it is
+        // clickable, and a row does.
+        global.fetch = jest.fn(() => reply(200, sessions));
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        const row = [...container.querySelectorAll('button')]
+            .find(b => b.textContent.startsWith('the retry loop'));
+        await act(async () => { row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); });
+        await flush();
+
+        const field = container.querySelector('input[aria-label="Session title"]');
+        expect(field).toBeTruthy();
+        expect(field.value).toBe('the retry loop');
+        // autoFocus is a mount-time prop and would not have covered the
+        // unnamed case, where the box is already on screen.
+        expect(document.activeElement).toBe(field);
+        expect(row.title).toContain('double-click to rename');
     });
 
     test('the other-repositories list keeps the repo, which is why it is separate', async () => {
@@ -820,19 +1041,17 @@ describe('ResearchPanel', () => {
         await flush();
     };
 
-    test('an empty conversation claims nothing in particular and opens it', async () => {
-        const claimed = [];
-        global.fetch = claimFetch(claimed);
+    test('an empty rail says so, and offers no way to start an empty session', async () => {
+        // Every session now starts with something said to the agent.
+        // The ask box was already the empty conversation with a first
+        // message in it, and a second control for the same gesture,
+        // three inches under a box that was already empty, read as the
+        // same button twice.
+        global.fetch = claimFetch([]);
 
         await renderPanel();
         expect(container.textContent).toContain('No conversations for repo-agent yet');
-        await clickButton('Empty conversation');
-
-        expect(claimed).toEqual([{}]);
-        // Straight into the conversation, which reports the wait rather
-        // than a 404 — the sandbox is minutes away.
-        await flush();
-        expect(container.textContent).toContain('Preparing the sandbox');
+        expect(container.textContent).not.toContain('Empty conversation');
     });
 
     test('Generate Overview claims the canned read and shows the row at once', async () => {

@@ -499,6 +499,12 @@ func TestResearchStatusDoesNotCreateASession(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"cwd":"/workspaces/`+researchRepo+`"`) {
 		t.Errorf("cwd missing from the status: %s", w.Body.String())
 	}
+	// And where that repo is, so the conversation header can link the
+	// name it has always shown. A conversation reached by a link rather
+	// than through the list never sees the list's copy of this.
+	if !strings.Contains(w.Body.String(), `"htmlUrl":"https://github.com/kubernetes/`+researchRepo+`"`) {
+		t.Errorf("htmlUrl missing from the status: %s", w.Body.String())
+	}
 	if acp.sawCall("POST /sessions") {
 		t.Error("a status call spawned an engine")
 	}

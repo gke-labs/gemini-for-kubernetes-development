@@ -8,6 +8,7 @@ import {
     applyResearchEvent,
     buildResearchTranscript,
     pendingPermission,
+    normaliseView,
 } from './Research';
 
 // react-markdown ships as ESM and jest does not transform node_modules,
@@ -391,5 +392,28 @@ describe('pendingPermission', () => {
     test('is null for an empty or absent transcript', () => {
         expect(pendingPermission(emptyTranscript)).toBeNull();
         expect(pendingPermission(null)).toBeNull();
+    });
+});
+
+describe('normaliseView', () => {
+    test('keeps a view it knows', () => {
+        expect(normaliseView('rich')).toBe('rich');
+        expect(normaliseView('mono')).toBe('mono');
+        expect(normaliseView('raw')).toBe('raw');
+    });
+
+    test('carries the old terminal choice over to raw', () => {
+        // `terminal` was the one segment beside rich, and it meant
+        // unparsed source. mono is now the other thing that word could
+        // have meant, so someone who picked terminal must land on raw —
+        // moving them to a view they have never seen would read as the
+        // setting having been thrown away.
+        expect(normaliseView('terminal')).toBe('raw');
+    });
+
+    test('falls back to rich for nothing and for nonsense', () => {
+        expect(normaliseView(null)).toBe('rich');
+        expect(normaliseView('')).toBe('rich');
+        expect(normaliseView('solarized')).toBe('rich');
     });
 });

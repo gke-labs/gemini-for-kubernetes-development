@@ -478,7 +478,19 @@ function TranscriptItem({ item, onResolve, resolving }) {
 // Permission prompts keep their rich form. They are the one part of a
 // transcript that is a control and not a record, and a misread
 // permission is a worse outcome than a seam in the styling.
-function TerminalItem({ item, onResolve, resolving }) {
+//
+// `rendered` is the mono view: the same flat log on the same canvas,
+// but the agent's prose goes through markdown, so a table gets real
+// borders instead of pipes that happen to line up. Everything else —
+// the sigils, the collapsed tool lines, the fixed-width face — is
+// identical, because the two views differ over one question only.
+//
+// Only the agent's prose is affected. Your own prompt keeps its `❯ `
+// and stays verbatim — it is a line you typed, not a document — and
+// tool output and expanded thinking stay verbatim too: they are program
+// output, not markdown, and a JSON blob with an asterisk in it should
+// not come back italic.
+function TerminalItem({ item, onResolve, resolving, rendered }) {
   const [open, setOpen] = useState(false);
 
   switch (item.role) {
@@ -487,7 +499,13 @@ function TerminalItem({ item, onResolve, resolving }) {
         <div className="term-line term-user"><span className="term-sigil">❯ </span>{item.text}</div>
       );
     case 'agent':
-      return <div className="term-line term-agent">{item.text}</div>;
+      return rendered
+        ? (
+          <div className="term-agent term-rendered md-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+          </div>
+        )
+        : <div className="term-line term-agent">{item.text}</div>;
     case 'thought':
       return (
         <div className="term-line term-dim" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }}>
@@ -566,8 +584,24 @@ function PlanPanel({ entries }) {
 // that the conversation opens on its own when the pod lands.
 const PROBE_INTERVAL_MS = 5000;
 
-// Where the rich/terminal choice is remembered.
+// Where the reading choice is remembered.
 const RESEARCH_VIEW_KEY = 'repoboard.research.view';
+
+// normaliseView reads a stored choice, including the one this tab used
+// to write. `terminal` meant unparsed source, which is now `raw` — so
+// anyone who picked it keeps what they picked rather than being moved
+// to a view they have never seen.
+export function normaliseView(stored) {
+  switch (stored) {
+    case 'mono':
+    case 'raw':
+      return stored;
+    case 'terminal':
+      return 'raw';
+    default:
+      return 'rich';
+  }
+}
 
 // ResearchConversation is one conversation: the transcript, the
 // composer, and the machinery that keeps a websocket attached to it.
@@ -578,12 +612,14 @@ const RESEARCH_VIEW_KEY = 'repoboard.research.view';
 // knows which; this component cannot.
 // `fill` stretches the conversation to its container instead of
 // capping it at 72vh; `standalone` says this *is* the popped-out
-// window, which is the only place that should not offer to pop out.
+// window, which is the one place with nothing to offer more room —
+// it already has the whole window, so neither full screen nor a
+// second tab of itself means anything there.
 // They were one prop, which stopped being true the moment the panel
 // opened the conversation in a slide-over: that wants the full height
 // and the pop-out both.
 export function ResearchConversation({
-  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone,
+  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone, renameAt,
 }) {
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
@@ -604,6 +640,14 @@ export function ResearchConversation({
   // making itself depend on the draft.
   const renamingRef = useRef(null);
   const editName = (draftName) => { renamingRef.current = draftName; setRenaming(draftName); };
+  // The title box, and whether the next render owes it the caret.
+  // autoFocus is not enough: it is a mount-time thing, and an unnamed
+  // session already rests in the box, so the render that starts an edit
+  // there mounts nothing. One mechanism for both, rather than a prop
+  // that works for half the cases.
+  const titleBoxRef = useRef(null);
+  const focusTitleRef = useRef(false);
+  const beginRename = (seed) => { focusTitleRef.current = true; editName(seed); };
   const [transcript, setTranscript] = useState(emptyTranscript);
   const [openBusy, setOpenBusy] = useState(false);
   const [caughtUp, setCaughtUp] = useState(false);
@@ -629,18 +673,58 @@ export function ResearchConversation({
   // it are the three things you reach for once a session and never
   // while reading one, and they were costing header width all the time.
   const [menuOpen, setMenuOpen] = useState(false);
-  // rich | terminal. A reading preference, not session state, so it is
-  // remembered across conversations and across the pop-out window —
+  // Only so the composer can lift when it has the caret. :focus-within
+  // would do it in a stylesheet, but every style in this file is
+  // inline and one rule in App.css for one box is worse than a bool.
+  const [composerFocused, setComposerFocused] = useState(false);
+  // Whether the conversation has taken over the window. Not remembered:
+  // full screen is something you do to read one long answer, not a way
+  // you like the page to be, and a board that came back full screen
+  // after a refresh would be a board you had lost the rest of.
+  const [expanded, setExpanded] = useState(false);
+  // rich | mono | raw. A reading preference, not session state, so it
+  // is remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
+  //
+  // mono and raw share the terminal canvas and differ only in whether
+  // the markdown is parsed. They are both here because "as a terminal
+  // would render it" turned out to mean two things: the bytes the agent
+  // actually sent, and a table with real borders in a fixed-width face.
+  // The first is what you want when you are going to copy it out; the
+  // second when you are going to read it.
   const [view, setView] = useState(() => {
-    try { return localStorage.getItem(RESEARCH_VIEW_KEY) === 'terminal' ? 'terminal' : 'rich'; }
+    try { return normaliseView(localStorage.getItem(RESEARCH_VIEW_KEY)); }
     catch (e) { return 'rich'; } // private mode
   });
-  const terminal = view === 'terminal';
+  const terminal = view === 'mono' || view === 'raw';
   const chooseView = (next) => {
     setView(next);
     try { localStorage.setItem(RESEARCH_VIEW_KEY, next); } catch (e) { /* private mode */ }
   };
+
+  // Escape leaves full screen, and while we are in it the page behind
+  // does not scroll — an overlay you can scroll the board underneath is
+  // an overlay that reads as a bug.
+  //
+  // defaultPrevented is the whole contract with everything else on the
+  // page that answers Escape: the rename box cancels an edit with it and
+  // calls preventDefault, so typing a name and hitting Escape puts the
+  // name back without also throwing away the screen you were reading it
+  // on. Only the outermost unhandled Escape gets here.
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    const wasOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = wasOverflow;
+    };
+  }, [expanded]);
 
   // The resume cursor. A ref, not state: the socket's onmessage handler
   // closes over it, and it must never be a render behind.
@@ -830,6 +914,36 @@ export function ResearchConversation({
     if (info && info.title && renamingRef.current === null) setName(info.title);
   }, [info]);
 
+  // The rail asking for a rename. It is a counter and not a boolean
+  // because double-clicking the row you are already on has to work too,
+  // and that does not remount anything — the only thing that changes is
+  // that you asked again.
+  //
+  // Declared after the seed effect above so that on the mount which
+  // brings a new session in, the seed's editName(null) runs first and
+  // this has the last word.
+  useEffect(() => {
+    if (renameAt) beginRename(name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameAt]);
+
+  // Hands the caret to the title box on the render that owes it one,
+  // and selects what is there so typing replaces the old name rather
+  // than appending to it — a rename is usually a different name.
+  useEffect(() => {
+    if (!focusTitleRef.current) return;
+    // Held, not consumed, until the box is actually there. Starting an
+    // edit on a named session sets the flag and the state in the same
+    // commit, and the effects of that commit run before the render that
+    // swaps the bold text for the input — so the first time through
+    // there is nothing to focus yet.
+    const el = titleBoxRef.current;
+    if (!el) return;
+    focusTitleRef.current = false;
+    el.focus();
+    el.select();
+  });
+
   const send = () => {
     const text = draft.trim();
     if (!text || sending || busy || phase !== 'live') return;
@@ -856,13 +970,19 @@ export function ResearchConversation({
       .finally(() => setSending(false));
   };
 
-  const commitRename = () => {
-    const next = (renaming || '').trim();
-    editName(null);
+  // applyRename is the PATCH, shared by the member typing a name and by
+  // a session naming itself.
+  //
+  // `optimistic` is whether to show the text before the server answers.
+  // A typed name is already a title, so showing it immediately is right.
+  // An auto-name is a whole first question, and the point of sending it
+  // raw is that the server's Truncate is what a title means — flashing
+  // the untruncated paragraph first would be showing a name that was
+  // never going to be the name.
+  const applyRename = (raw, optimistic) => {
+    const next = (raw || '').trim();
     if (!next || next === name) return;
-    // Shown immediately and corrected by the answer: the server
-    // truncates, so what comes back is what the name actually is.
-    setName(next);
+    if (optimistic) setName(next);
     fetch(`/api/research/${encodeURIComponent(sessionId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -876,6 +996,44 @@ export function ResearchConversation({
       })
       .catch(err => setError(`rename failed: ${err}`));
   };
+
+  const commitRename = () => {
+    const typed = renaming;
+    editName(null);
+    applyRename(typed, true);
+  };
+
+  // An unnamed session names itself from its first question.
+  //
+  // TitleAnnotation has documented this since it existed — "absent means
+  // the list should fall back to the first line of the transcript" — and
+  // nothing ever delivered it, because the list is built from sandbox
+  // annotations and making it read N transcripts to draw a sidebar is
+  // not a trade worth making. This side already has the transcript open.
+  // One PATCH the first time an unnamed session is read, and the name is
+  // durable: the list sees it, the next tab sees it, and it survives
+  // everything except deleting the sandbox it is written on.
+  //
+  // Guarded on info.title, which is what the server has, and not on
+  // `name`, which is seeded from the row that was clicked — a session
+  // the list already has a title for must never be renamed by whatever
+  // it happens to open with. And skipped outright while the member is
+  // typing a name, because they are answering the same question better.
+  //
+  // Only sessions with no kickoff reach this. A canned or topic session
+  // is named at creation by Kickoff.ResolvedTitle, so info.title is set
+  // long before the transcript is, which is what keeps the rendered
+  // brief in topic.txt from ever becoming somebody's session name.
+  const namedRef = useRef(false);
+  useEffect(() => {
+    if (namedRef.current || !caughtUp) return;
+    if (!info || info.title || renamingRef.current !== null) return;
+    const first = transcript.items.find(i => i.role === 'user' && (i.text || '').trim());
+    if (!first) return;
+    namedRef.current = true;
+    applyRename(first.text, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info, caughtUp, transcript]);
 
   const resolve = (resolution) => {
     setResolving(true);
@@ -998,9 +1156,19 @@ export function ResearchConversation({
     : modeState.auto;
 
   return (
-    <div style={fill
-      ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
-      : { display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '72vh' }}>
+    // Full screen is the same conversation in a fixed pane over the
+    // page, not a second copy of it somewhere else: the socket, the
+    // transcript and the draft are all still this component's, so
+    // expanding mid-answer does not drop the answer.
+    <div style={expanded
+      ? {
+        position: 'fixed', inset: 0, zIndex: 50,
+        display: 'flex', flexDirection: 'column', minHeight: 0,
+        background: 'var(--bg-color)', padding: '0 24px 16px',
+      }
+      : fill
+        ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
+        : { display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '72vh' }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
         padding: '8px 0', fontSize: 'small', flex: '0 0 auto',
@@ -1008,14 +1176,29 @@ export function ResearchConversation({
         {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
         {/* The name, editable in place. A session is found again by what
             it was about, so the title is the one thing here worth the
-            width — the repo and the id follow it, quietly. */}
-        {renaming === null ? (
-          <strong onClick={() => editName(name)} style={{ cursor: 'text' }}
+            width — the repo and the id follow it, quietly.
+
+            An unnamed session rests *in* the box rather than beside it.
+            It used to fall back to the repo, which read as a name, so
+            the one session that needs naming was the one that looked
+            like it already had one — and the way to fix that was to
+            click a word that gave no sign it was clickable. The repo is
+            a link two inches to the right; saying it twice bought
+            nothing and cost the empty box that asks for a name. */}
+        {renaming === null && name ? (
+          <strong onClick={() => beginRename(name)} style={{ cursor: 'text' }}
             title="Click to rename this conversation">
-            {name || repo || 'research'}
+            {name}
           </strong>
         ) : (
-          <input autoFocus value={renaming} aria-label="Session title"
+          <input ref={titleBoxRef} aria-label="Session title"
+            value={renaming === null ? '' : renaming}
+            placeholder="Name this conversation…"
+            // Clicking into the resting box is the edit starting. Until
+            // it does, renamingRef is null and the probe is free to put
+            // a title it finds straight into the header — which would
+            // swap the box out from under a caret already in it.
+            onFocus={() => { if (renaming === null) editName(''); }}
             onChange={e => editName(e.target.value)}
             onBlur={commitRename}
             onKeyDown={e => {
@@ -1028,7 +1211,15 @@ export function ResearchConversation({
               background: 'var(--bg-card)', color: 'var(--text-primary)',
             }} />
         )}
-        {name && repo && <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>}
+        {/* The repo, as a way to get to it. It has been a piece of grey
+            text here since the header existed, which is the one place
+            the name is not also a link — the rail links it, and a
+            conversation opened from a link never saw the rail. */}
+        {/* repo is read off info, so info is here whenever repo is. */}
+        {name && repo && (info.htmlUrl
+          ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
+            title={`Open ${repo} on GitHub`}>{repo}</a>
+          : <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>)}
         <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
         <Pill {...statusPill} title={phase === 'live' && waiting
           ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
@@ -1081,16 +1272,18 @@ export function ResearchConversation({
             ⚠ not applied
           </span>
         )}
-        {/* Two segments rather than one flip button: which view you are
-            in should be readable without knowing whether the label names
-            the state or the action. */}
+        {/* Segments rather than a flip button: which view you are in
+            should be readable without knowing whether the label names
+            the state or the action — and with three of them a flip
+            button is not an option anyway. */}
         <span style={{
           display: 'inline-flex', border: '1px solid var(--border-color)',
           borderRadius: '6px', overflow: 'hidden',
         }}>
           {[
-            ['rich', 'Rendered markdown'],
-            ['terminal', 'The transcript as a terminal would print it — fixed-width, unrendered source'],
+            ['rich', 'Rendered markdown, in the page\'s own type'],
+            ['mono', 'Rendered markdown in a fixed-width face on the terminal canvas — tables get real borders'],
+            ['raw', 'The bytes the agent sent, unparsed, as a terminal would print them'],
           ].map(([v, hint]) => (
             <button key={v} onClick={() => chooseView(v)} title={hint}
               style={{
@@ -1103,6 +1296,29 @@ export function ResearchConversation({
         </span>
         {phase === 'live' && busy && (
           <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
+        )}
+        {/* Two ways to get more room, and they are different enough to
+            both be here rather than one behind the other. Full screen
+            keeps the conversation you are in — same socket, same draft,
+            Escape puts it back — and is what you want for the answer in
+            front of you. The tab is a second place to leave it, which is
+            what you want when you are going to keep the board.
+
+            Out of the ⋯ menu, where pop out used to live: these are read
+            *while* reading, and a menu is for things you do to a session
+            once. An icon each, because they are a pair. */}
+        {!standalone && (
+          <>
+            <button className="btn btn-sm" onClick={() => setExpanded(e => !e)}
+              aria-pressed={expanded}
+              aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+              title={expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
+              {expanded ? '⤢' : '⛶'}
+            </button>
+            <a className="btn btn-sm" href={`#/research/${sessionId}`}
+              target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
+              title="Open this conversation in its own tab">↗</a>
+          </>
         )}
         {/* Everything you do to a session rather than in it, folded
             behind one button. These are once-a-session actions and one
@@ -1133,12 +1349,6 @@ export function ResearchConversation({
                     style={{ fontSize: 'x-small', padding: '4px 6px' }}
                     title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                 )}
-                {!standalone && (
-                  <a role="menuitem" href={`#/research/${sessionId}`}
-                    target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
-                    style={{ fontSize: 'x-small', padding: '4px 6px' }}
-                    title="Open this conversation in its own window">pop out ↗</a>
-                )}
                 <button role="menuitem" className="btn btn-delete btn-sm"
                   onClick={() => { setMenuOpen(false); destroy(); }}
                   title="Delete the sandbox — the transcript lives on its disk and goes with it">
@@ -1162,7 +1372,7 @@ export function ResearchConversation({
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
         style={{
-          flex: '1 1 auto', minHeight: fill ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
+          flex: '1 1 auto', minHeight: fill || expanded ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
           border: '1px solid var(--border-color)', borderRadius: '10px',
           // The terminal canvas is its own colour, and an inline
           // background would win over the class that sets it.
@@ -1234,7 +1444,8 @@ export function ResearchConversation({
           )
         )}
         {transcript.items.map(item => (terminal
-          ? <TerminalItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
+          ? <TerminalItem key={item.key} item={item} rendered={view === 'mono'}
+            onResolve={resolve} resolving={resolving} />
           : <TranscriptItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
         ))}
         {busy && !waiting && (
@@ -1246,13 +1457,36 @@ export function ResearchConversation({
 
       <div style={{ flex: '0 0 auto', marginTop: '8px' }}>
         <PlanPanel entries={transcript.plan} />
+        {/* The composer floats: narrower than the transcript, lifted
+            off it, and brighter than the page behind it.
+
+            Flush to the edges and sharing the transcript's background
+            it read as the last thing in the scroll rather than the one
+            thing on this screen you are meant to type into — which is
+            the whole point of a conversation. Pulling the sides in and
+            putting a shadow under it is what says "this is not more
+            transcript". */}
         <div style={{
-          border: '1px solid var(--border-color)', borderRadius: '10px',
-          background: 'var(--bg-secondary)', padding: '10px 12px',
+          maxWidth: '760px', margin: '0 auto', width: 'calc(100% - 32px)',
+          border: `1px solid ${composerFocused ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
+          borderRadius: '14px', background: 'var(--bg-card)', padding: '10px 14px',
+          // Dimmer when there is nothing to type into, so the lift is a
+          // promise the box can keep.
+          boxShadow: composerDisabled ? '0 1px 4px rgba(0,0,0,0.10)'
+            : composerFocused ? '0 6px 20px rgba(0,0,0,0.20)' : '0 3px 12px rgba(0,0,0,0.16)',
+          transition: 'box-shadow 120ms ease, border-color 120ms ease',
         }}>
+          {/* Not "ask a question about this repository" — that is what
+              the landing pane says, and repeating it here made the
+              composer read like a second place to start rather than
+              the place you carry on. The answer above is the point of
+              a research conversation; the follow-up is what it is
+              for. */}
           <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)}
             disabled={phase !== 'live'}
-            placeholder="Ask a question about this repository…"
+            placeholder="Continue the research — ask a follow-up…"
+            onFocus={() => setComposerFocused(true)}
+            onBlur={() => setComposerFocused(false)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             style={{
               width: '100%', border: 'none', outline: 'none', resize: 'none',
@@ -1333,8 +1567,7 @@ export function ResearchPanel({ boardName, repoURL }) {
   // the list, where its row appears immediately so nobody clicks twice
   // and pays for a second sandbox.
   const start = (kickoff, enter) => {
-    const what = kickoff.kind || 'new';
-    setBusy(what);
+    setBusy(kickoff.kind);
     setError('');
     fetch(`/api/board/${boardName}/research`, {
       method: 'POST',
@@ -1422,8 +1655,24 @@ export function ResearchPanel({ boardName, repoURL }) {
       <button key={s.sessionId} type="button"
         aria-current={selected ? 'true' : undefined}
         onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
+        // Double-click renames. The box it opens is the one in the
+        // header, not a second editor down here: there is one rename
+        // and one PATCH, and the rail is a list of rows rather than a
+        // place things get edited. What the gesture buys is that the
+        // row you want to rename is the row you are looking at — the
+        // header's title has been clickable all along and nothing about
+        // a piece of bold text says so.
+        onDoubleClick={() => setOpen(o => ({
+          sessionId: s.sessionId,
+          pending: !!s.requested,
+          title: s.title || '',
+          // A counter, so asking twice in the same millisecond — or
+          // twice for the session already open — is still two asks.
+          renameAt: ((o && o.renameAt) || 0) + 1,
+        }))}
         title={[
           `session ${s.sessionId}`,
+          'double-click to rename',
           s.sandbox ? `sandbox ${s.sandbox}` : '',
           showRepo && s.htmlUrl ? s.htmlUrl : '',
         ].filter(Boolean).join('\n')}
@@ -1480,8 +1729,13 @@ export function ResearchPanel({ boardName, repoURL }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
             {/* Optional: the question makes a perfectly good name, and
                 nobody should have to invent one to ask something. */}
+            {/* "session name", not "name": next to a box you have just
+                typed a question into, "name" reads as though it wants
+                one for the question. Optional because leaving it empty
+                is the normal thing — the question becomes the name. */}
             <input value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="name (optional)" aria-label="Session name"
+              placeholder="session name (optional)" aria-label="Session name"
+              title="Left empty, the session is named after your question"
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
               style={{
                 flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
@@ -1536,12 +1790,6 @@ export function ResearchPanel({ boardName, repoURL }) {
               </div>
             )}
           </span>
-          <span style={{ flex: 1 }} />
-          <button className="btn btn-sm" disabled={!!busy}
-            title="Start an empty conversation and type the first message yourself"
-            onClick={() => start({}, true)}>
-            {busy === 'new' ? 'Requesting…' : 'Empty conversation'}
-          </button>
         </div>
 
         <div style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: 'x-small' }}>
@@ -1651,6 +1899,7 @@ export function ResearchPanel({ boardName, repoURL }) {
               sessionId={open.sessionId}
               pending={open.pending}
               title={open.title}
+              renameAt={open.renameAt}
               fill
               onDeleted={() => { setOpen(null); load(); }}
               onRenamed={load}

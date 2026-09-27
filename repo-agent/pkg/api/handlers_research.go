@@ -508,8 +508,14 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		"sandbox":   conn.view.Sandbox,
 		"namespace": conn.view.Namespace,
 		"repo":      conn.view.Repo,
-		"cwd":       conn.view.cwd(),
-		"live":      false,
+		// Where that repo actually is. The conversation header has shown
+		// the repo name since it existed, and a name is not a way to get
+		// to the thing — the list has linked it all along, and a
+		// conversation opened straight from a click should not be the one
+		// place you have to go back to the list to reach the code.
+		"htmlUrl": conn.view.HTMLURL,
+		"cwd":     conn.view.cwd(),
+		"live":    false,
 		// The title and the state of any owed opening turn, so a
 		// conversation opened straight from a click can name itself and
 		// say what it is waiting for without also fetching the list.
