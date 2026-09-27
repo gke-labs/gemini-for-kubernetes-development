@@ -1408,34 +1408,45 @@ export function ResearchPanel({ boardName, repoURL }) {
     return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />;
   };
 
-  const row = (s) => (
+  // row is name, age, state — and on the board's own table, nothing
+  // else. The repo is the board you are standing on, the sandbox name
+  // and the session id are two spellings of "which pod", and Open was a
+  // button next to a title that should have been the button all along.
+  // Four columns of that on every row buried the one thing anybody
+  // scans for, which is what the conversation was about.
+  //
+  // showRepo is for the other-repositories disclosure below, where the
+  // repo is the whole reason the row is listed separately.
+  const row = (s, showRepo) => (
     <tr key={s.sessionId} style={{ borderBottom: '1px solid var(--border-color)' }}>
       <td style={{ padding: '6px 8px' }}>
-        {/* The title carries the row: it is what someone scanning for
-            "the one about the retry loop" is actually reading. */}
-        <div>{s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}</div>
-        {/* One id per row, not two. The sandbox name is the same
-            information a second time — you would only ever want it to
-            go and look at the pod — so it hangs off this one instead
-            of buying a column of its own on every row. */}
-        <div title={s.sandbox ? `sandbox ${s.sandbox}` : undefined}
-          style={{ fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-          {shortSession(s.sessionId)}
-        </div>
-      </td>
-      <td style={{ padding: '6px 8px' }}>
-        {s.htmlUrl
-          ? <a href={s.htmlUrl} target="_blank" rel="noopener noreferrer">{s.repo}</a>
-          : s.repo}
-      </td>
-      <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }} title={s.createdAt}>{ageOf(s.createdAt)}</td>
-      <td style={{ padding: '6px 8px' }}>{stateOf(s)}</td>
-      <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-        <button className="btn btn-sm"
-          onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}>
-          Open
+        {/* The title is the control. It is what someone scanning for
+            "the one about the retry loop" is already reading, and
+            aiming at it is a bigger target than a button at the far
+            end of the row. The ids follow it into the tooltip: you
+            want them when you are going to look at the pod, which is
+            rare, and never while you are choosing a conversation. */}
+        <button onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
+          title={[
+            `session ${s.sessionId}`,
+            s.sandbox ? `sandbox ${s.sandbox}` : '',
+          ].filter(Boolean).join('\n')}
+          style={{
+            border: 'none', background: 'none', padding: 0, font: 'inherit', textAlign: 'left',
+            cursor: 'pointer', color: 'var(--link-color, #0969da)',
+          }}>
+          {s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}
         </button>
       </td>
+      {showRepo && (
+        <td style={{ padding: '6px 8px' }}>
+          {s.htmlUrl
+            ? <a href={s.htmlUrl} target="_blank" rel="noopener noreferrer">{s.repo}</a>
+            : s.repo}
+        </td>
+      )}
+      <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }} title={s.createdAt}>{ageOf(s.createdAt)}</td>
+      <td style={{ padding: '6px 8px' }}>{stateOf(s)}</td>
     </tr>
   );
 
@@ -1530,13 +1541,15 @@ export function ResearchPanel({ boardName, repoURL }) {
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
               <th style={{ padding: '6px 8px' }}>Conversation</th>
-              <th style={{ padding: '6px 8px' }}>Repo</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
-              <th style={{ padding: '6px 8px' }}>State</th>
-              <th style={{ padding: '6px 8px' }}></th>
+              {/* Whether there is a sandbox and whether it can be
+                  reached — not what the agent is doing inside it. */}
+              <th style={{ padding: '6px 8px' }} title="The sandbox: whether it exists yet, and whether it is reachable">
+                Sandbox
+              </th>
             </tr>
           </thead>
-          <tbody>{mine.map(row)}</tbody>
+          <tbody>{mine.map(s => row(s, false))}</tbody>
         </table>
       )}
 
@@ -1549,7 +1562,7 @@ export function ResearchPanel({ boardName, repoURL }) {
           </div>
           {showOthers && (
             <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '6px' }}>
-              <tbody>{others.map(row)}</tbody>
+              <tbody>{others.map(s => row(s, true))}</tbody>
             </table>
           )}
         </div>

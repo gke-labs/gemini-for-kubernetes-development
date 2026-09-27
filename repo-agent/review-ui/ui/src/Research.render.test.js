@@ -614,8 +614,8 @@ describe('ResearchConversation', () => {
 describe('ResearchPanel', () => {
     const sessions = {
         sessions: [
-            { sessionId: 'aaaaaaaa-1111', sandbox: 'rsch-repo-agent-1', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z', paused: false },
-            { sessionId: 'bbbbbbbb-2222', sandbox: 'rsch-kubectl-2', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z', paused: true },
+            { sessionId: 'aaaaaaaa-1111', title: 'the retry loop', sandbox: 'rsch-repo-agent-1', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z', paused: false },
+            { sessionId: 'bbbbbbbb-2222', title: 'rollout flags', sandbox: 'rsch-kubectl-2', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z', paused: true },
         ],
     };
 
@@ -628,15 +628,66 @@ describe('ResearchPanel', () => {
         await flush();
 
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
-        expect(container.textContent).toContain('aaaaaaaa');
-        // The sandbox has no column of its own — it is the same row's
-        // identity a second time, so it hangs off the short id.
+
+        // Name, age, sandbox state. On the board's own table the repo
+        // is the board you are standing on, and both ids are two
+        // spellings of "which pod" — none of the three is what anyone
+        // is scanning the list for.
+        const name = [...container.querySelectorAll('button')]
+            .find(b => b.textContent === 'the retry loop');
+        expect(name).toBeTruthy();
+        expect(container.textContent).not.toContain('aaaaaaaa');
         expect(container.textContent).not.toContain('rsch-repo-agent-1');
-        expect([...container.querySelectorAll('[title]')].some(
-            e => e.title === 'sandbox rsch-repo-agent-1')).toBe(true);
+        // Three columns and no more. Counted rather than read off the
+        // text, because the board's own repo name appears all over this
+        // panel and would make a text check pass with the column back.
+        expect([...container.querySelectorAll('thead th')].map(th => th.textContent))
+            .toEqual(['Conversation', 'Age', 'Sandbox']);
+        expect(container.querySelectorAll('tbody tr')[0].querySelectorAll('td')).toHaveLength(3);
+
+        // Both are still one hover away, for the times you are going to
+        // go and look at the pod.
+        expect(name.title).toContain('session aaaaaaaa-1111');
+        expect(name.title).toContain('sandbox rsch-repo-agent-1');
+
         // The other repo's session is accounted for but not in the table.
-        expect(container.textContent).not.toContain('rsch-kubectl-2');
+        expect(container.textContent).not.toContain('rollout flags');
         expect(container.textContent).toContain('1 conversation for other repositories');
+    });
+
+    test('the name is the control — there is no Open button beside it', async () => {
+        global.fetch = jest.fn(() => reply(404, { error: 'not found' }));
+        global.fetch.mockImplementationOnce(() => reply(200, sessions));
+
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        expect([...container.querySelectorAll('button')].map(b => b.textContent)).not.toContain('Open');
+
+        const name = [...container.querySelectorAll('button')]
+            .find(b => b.textContent === 'the retry loop');
+        await act(async () => { name.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await flush();
+
+        // The conversation took over the panel: the list is behind it.
+        expect(container.textContent).toContain('← Sessions');
+    });
+
+    test('the other-repositories list keeps the repo, which is why it is separate', async () => {
+        global.fetch = jest.fn(() => reply(200, sessions));
+
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        const disclosure = container.querySelector('[title^="Sessions you own for other repositories"]');
+        await act(async () => { disclosure.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+        expect(container.textContent).toContain('rollout flags');
+        expect(container.textContent).toContain('kubectl');
     });
 
     // claimFetch answers the list and the claim; everything else 404s,
