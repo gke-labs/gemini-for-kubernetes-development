@@ -4,7 +4,6 @@ import ReactMarkdown from 'react-markdown';
 // above all — and without this a table parses as one paragraph, its
 // newlines collapsing to spaces into a wall of pipes.
 import remarkGfm from 'remark-gfm';
-import { SlideOver } from './SlideOver';
 
 // Research: conversation-based deep research, the third mode alongside
 // doc-based Explore and deploy-based Runs.
@@ -1402,208 +1401,263 @@ export function ResearchPanel({ boardName, repoURL }) {
     return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />;
   };
 
-  // row is name, age, state — and on the board's own table, nothing
-  // else. The repo is the board you are standing on, the sandbox name
-  // and the session id are two spellings of "which pod", and Open was a
-  // button next to a title that should have been the button all along.
-  // Four columns of that on every row buried the one thing anybody
-  // scans for, which is what the conversation was about.
+  // railRow is one conversation in the left rail: what it was about on
+  // the first line, how old it is and whether there is an agent on the
+  // second. The rail is ~260px, which a three-column table does not
+  // survive — and the columns were never the point. What someone scans
+  // for is the title, and the rest is the answer to "is this one worth
+  // opening", which is small print by definition.
+  //
+  // The whole row is the control, not just the title: in a master pane
+  // the row is the selection, and a click that lands two pixels off the
+  // text should not do nothing.
   //
   // showRepo is for the other-repositories disclosure below, where the
-  // repo is the whole reason the row is listed separately.
-  const row = (s, showRepo) => (
-    <tr key={s.sessionId} style={{ borderBottom: '1px solid var(--border-color)' }}>
-      <td style={{ padding: '6px 8px' }}>
-        {/* The title is the control. It is what someone scanning for
-            "the one about the retry loop" is already reading, and
-            aiming at it is a bigger target than a button at the far
-            end of the row. The ids follow it into the tooltip: you
-            want them when you are going to look at the pod, which is
-            rare, and never while you are choosing a conversation. */}
-        <button onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
-          title={[
-            `session ${s.sessionId}`,
-            s.sandbox ? `sandbox ${s.sandbox}` : '',
-          ].filter(Boolean).join('\n')}
-          style={{
-            border: 'none', background: 'none', padding: 0, font: 'inherit', textAlign: 'left',
-            cursor: 'pointer', color: 'var(--link-color, #0969da)',
-          }}>
+  // repo is the whole reason the row is listed separately. It is text
+  // rather than a link here — a link inside a button is not a thing —
+  // and the URL keeps its place in the tooltip.
+  const railRow = (s, showRepo) => {
+    const selected = !!open && open.sessionId === s.sessionId;
+    return (
+      <button key={s.sessionId} type="button"
+        aria-current={selected ? 'true' : undefined}
+        onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
+        title={[
+          `session ${s.sessionId}`,
+          s.sandbox ? `sandbox ${s.sandbox}` : '',
+          showRepo && s.htmlUrl ? s.htmlUrl : '',
+        ].filter(Boolean).join('\n')}
+        style={{
+          display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
+          padding: '7px 8px', cursor: 'pointer', borderRadius: '0 6px 6px 0',
+          border: 'none', borderLeft: `3px solid ${selected ? 'var(--link-color, #0969da)' : 'transparent'}`,
+          background: selected ? 'var(--bg-hover, rgba(127,127,127,0.12))' : 'none',
+          color: 'var(--text-primary)',
+        }}>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}
-        </button>
-      </td>
-      {showRepo && (
-        <td style={{ padding: '6px 8px' }}>
-          {s.htmlUrl
-            ? <a href={s.htmlUrl} target="_blank" rel="noopener noreferrer">{s.repo}</a>
-            : s.repo}
-        </td>
-      )}
-      <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }} title={s.createdAt}>{ageOf(s.createdAt)}</td>
-      <td style={{ padding: '6px 8px' }}>{stateOf(s)}</td>
-    </tr>
+        </div>
+        <div style={{
+          marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px',
+          color: 'var(--text-secondary)', fontSize: 'x-small',
+        }}>
+          <span title={s.createdAt}>{ageOf(s.createdAt)}</span>
+          {showRepo && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.repo}</span>}
+          {stateOf(s)}
+        </div>
+      </button>
+    );
+  };
+
+  // The landing pane: what fills the right-hand side when no
+  // conversation is selected. Starting one is not a mode you enter and
+  // leave — it is what the tab is for — so it lives where the answers
+  // do, selected by a row like any other, rather than in a strip above
+  // everything that is still there long after you have stopped needing
+  // it.
+  const landing = (
+    <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex' }}>
+      {/* margin auto rather than justifyContent: centred, but when the
+          content is taller than the pane it scrolls from the top
+          instead of having its head cut off. */}
+      <div style={{ margin: 'auto', width: '100%', maxWidth: '560px', padding: '16px 8px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '12px', color: 'var(--text-secondary)' }}>
+          Ask anything about {repo || 'this repository'}
+        </div>
+
+        <div style={{
+          border: '1px solid var(--border-color)', borderRadius: '10px',
+          background: 'var(--bg-secondary)', padding: '10px 12px',
+        }}>
+          <textarea rows={4} value={topic} onChange={e => setTopic(e.target.value)}
+            placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
+            style={{
+              width: '100%', border: 'none', outline: 'none', resize: 'none',
+              background: 'transparent', color: 'var(--text-primary)',
+              font: 'inherit', boxSizing: 'border-box',
+            }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+            {/* Optional: the question makes a perfectly good name, and
+                nobody should have to invent one to ask something. */}
+            <input value={title} onChange={e => setTitle(e.target.value)}
+              placeholder="name (optional)" aria-label="Session name"
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
+              style={{
+                flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
+                border: '1px solid var(--border-color)', borderRadius: '6px',
+                background: 'var(--bg-card)', color: 'var(--text-primary)',
+              }} />
+            <span style={{ flex: 1 }} />
+            <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
+              {busy === 'topic' ? 'Requesting…' : 'Research'}
+            </button>
+          </div>
+        </div>
+
+        {/* The canned reads, under the box rather than over it. A kind
+            is only a prompt somebody else typed for you, so it belongs
+            beside the one you would type yourself — and second, because
+            the open question is the common case. */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          margin: '16px 0 10px', color: 'var(--text-secondary)', fontSize: 'x-small',
+        }}>
+          <span style={{ flex: 1, borderTop: '1px solid var(--border-color)' }} />
+          or start from a canned read
+          <span style={{ flex: 1, borderTop: '1px solid var(--border-color)' }} />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={!!busy}
+            title="Starts a conversation that reads the repo end to end: what it is, how it is put together, where the code lives"
+            onClick={() => start({ kind: 'onboard' }, false)}>
+            {busy === 'onboard' ? 'Requesting…' : 'Generate Overview'}
+          </button>
+          <span style={{ position: 'relative' }}>
+            <button className="btn" disabled={!!busy}
+              title="Starts a conversation that digests a recent window: themes, churn, notable merges, and maintainer asks"
+              onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
+            {sinceOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
+                background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px',
+              }}>
+                {['2 weeks', '1 month', '3 months'].map(win => (
+                  <div key={win}
+                    onClick={() => { setSinceOpen(false); start({ kind: 'activity', since: win }, false); }}
+                    style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                    last {win}
+                  </div>
+                ))}
+              </div>
+            )}
+          </span>
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-sm" disabled={!!busy}
+            title="Start an empty conversation and type the first message yourself"
+            onClick={() => start({}, true)}>
+            {busy === 'new' ? 'Requesting…' : 'Empty conversation'}
+          </button>
+        </div>
+
+        <div style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: 'x-small' }}>
+          Each one is a sandbox with this repo checked out. It takes a few minutes to appear.
+        </div>
+      </div>
+    </div>
   );
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {/* The canned reads, then the ask box: the same shape the Explore
-          tab had, now producing sessions rather than a separate thing. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-        <button className="btn" disabled={!!busy}
-          title="Starts a conversation that reads the repo end to end: what it is, how it is put together, where the code lives"
-          onClick={() => start({ kind: 'onboard' }, false)}>
-          {busy === 'onboard' ? 'Requesting…' : 'Generate Overview'}
-        </button>
-        <span style={{ position: 'relative' }}>
-          <button className="btn" disabled={!!busy}
-            title="Starts a conversation that digests a recent window: themes, churn, notable merges, and maintainer asks"
-            onClick={() => setSinceOpen(o => !o)}>What happened ▾</button>
-          {sinceOpen && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, marginTop: '4px', zIndex: 20,
-              background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-              borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: '140px',
-            }}>
-              {['2 weeks', '1 month', '3 months'].map(win => (
-                <div key={win}
-                  onClick={() => { setSinceOpen(false); start({ kind: 'activity', since: win }, false); }}
-                  style={{ padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
-                  last {win}
-                </div>
-              ))}
-            </div>
-          )}
-        </span>
-        <span style={{ flex: 1 }} />
-        <button className="btn btn-sm" disabled={!!busy}
-          title="Start an empty conversation and type the first message yourself"
-          onClick={() => start({}, true)}>
-          {busy === 'new' ? 'Requesting…' : 'Empty conversation'}
-        </button>
-      </div>
-
-      <div style={{
-        border: '1px solid var(--border-color)', borderRadius: '10px',
-        background: 'var(--bg-secondary)', padding: '10px 12px',
-      }}>
-        <textarea rows={3} value={topic} onChange={e => setTopic(e.target.value)}
-          placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
-          style={{
-            width: '100%', border: 'none', outline: 'none', resize: 'none',
-            background: 'transparent', color: 'var(--text-primary)',
-            font: 'inherit', boxSizing: 'border-box',
-          }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-          {/* Optional: the question makes a perfectly good name, and
-              nobody should have to invent one to ask something. */}
-          <input value={title} onChange={e => setTitle(e.target.value)}
-            placeholder="name (optional)" aria-label="Session name"
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
-            style={{
-              flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
-              border: '1px solid var(--border-color)', borderRadius: '6px',
-              background: 'var(--bg-card)', color: 'var(--text-primary)',
-            }} />
-          <span style={{ flex: 1 }} />
-          <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
-            {busy === 'topic' ? 'Requesting…' : 'Research'}
-          </button>
-        </div>
-      </div>
-
-      <div style={{ color: 'var(--text-secondary)', margin: '8px 0 10px' }}>
-        Each one is a sandbox with this repo checked out. It takes a few minutes to appear.
-      </div>
-
       {error && (
-        <div className="warning-banner" style={{ cursor: 'pointer' }} onClick={() => setError('')} title="Dismiss">
+        <div className="warning-banner" style={{ cursor: 'pointer', marginBottom: '10px' }}
+          onClick={() => setError('')} title="Dismiss">
           {error}
         </div>
       )}
 
-      {sessions === null ? (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>loading…</div>
-      ) : !mine.length ? (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No research conversations for {repo || 'this board'} yet.
-        </div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-              <th style={{ padding: '6px 8px' }}>Conversation</th>
-              <th style={{ padding: '6px 8px' }}>Age</th>
-              {/* Whether there is an agent to talk to. What it says
-                  underneath is really about the sandbox — whether one
-                  exists yet and whether it can be reached — but that
-                  is plumbing, and naming the column after it asks the
-                  member to care about a thing they did not ask for.
-                  The honest reading of every pill in this column is
-                  "can I open this and get an answer", so the header
-                  says the agent and the tooltip owns the caveat. */}
-              <th style={{ padding: '6px 8px' }}
-                title="Whether there is an agent to talk to. Open a conversation to see what it is doing.">
-                Agent
-              </th>
-            </tr>
-          </thead>
-          <tbody>{mine.map(s => row(s, false))}</tbody>
-        </table>
-      )}
+      {/* Master and detail, side by side. The conversation used to
+          replace the whole tab and then to cover it with a sheet; both
+          made reading two of them a navigation each way, and a sheet
+          had the additional problem that the list it was covering was
+          the thing you wanted to aim at next. Here the list never
+          leaves, and switching conversations is one click from inside
+          the one you are reading. */}
+      <div style={{
+        display: 'flex', alignItems: 'stretch', gap: '12px',
+        height: '72vh', minHeight: '420px',
+      }}>
+        <div style={{
+          flex: '0 0 260px', minWidth: 0, overflowY: 'auto', paddingRight: '8px',
+          borderRight: '1px solid var(--border-color)',
+        }}>
+          {/* The way back to the ask box, and where the tab lands. It
+              is a row rather than a button off to one side because
+              that is what it is: one more thing the rail can be
+              showing on the right. */}
+          <button type="button" aria-current={open ? undefined : 'true'}
+            onClick={() => setOpen(null)}
+            title="Ask a new question about this repository"
+            style={{
+              display: 'block', width: '100%', textAlign: 'left', font: 'inherit',
+              padding: '7px 8px', cursor: 'pointer', borderRadius: '0 6px 6px 0',
+              marginBottom: '6px', border: 'none',
+              borderLeft: `3px solid ${open ? 'transparent' : 'var(--link-color, #0969da)'}`,
+              background: open ? 'none' : 'var(--bg-hover, rgba(127,127,127,0.12))',
+              color: 'var(--link-color, #0969da)',
+            }}>
+            + New conversation
+          </button>
 
-      {others.length > 0 && (
-        <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
-          <div onClick={() => setShowOthers(o => !o)}
-            style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}
-            title="Sessions you own for other repositories — listed here so one whose board is gone is still reachable">
-            {showOthers ? '▾' : '▸'} {others.length} conversation{others.length === 1 ? '' : 's'} for other repositories
+          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '6px' }}>
+            {sessions === null ? (
+              <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 8px' }}>
+                loading…
+              </div>
+            ) : !mine.length ? (
+              <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 8px' }}>
+                No conversations for {repo || 'this board'} yet.
+              </div>
+            ) : mine.map(s => railRow(s, false))}
           </div>
-          {showOthers && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '6px' }}>
-              <tbody>{others.map(s => row(s, true))}</tbody>
-            </table>
+
+          {others.length > 0 && (
+            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--border-color)' }}>
+              <div onClick={() => setShowOthers(o => !o)}
+                style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'x-small', padding: '0 8px' }}
+                title="Sessions you own for other repositories — listed here so one whose board is gone is still reachable">
+                {showOthers ? '▾' : '▸'} {others.length} conversation{others.length === 1 ? '' : 's'} for other repositories
+              </div>
+              {showOthers && <div style={{ marginTop: '4px' }}>{others.map(s => railRow(s, true))}</div>}
+            </div>
+          )}
+
+          {/* The notes branch on the member's fork. Research does not
+              write there yet — runs still do, and the old explore notes
+              are still on it — so this is a plain link out rather than
+              anything the page reads back. */}
+          {forkOwner && repo && (
+            <div style={{
+              marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-color)',
+              color: 'var(--text-secondary)', fontSize: 'x-small', padding: '8px 8px 0',
+            }}>
+              Earlier notes and run artifacts live on{' '}
+              <a href={`https://github.com/${forkOwner}/${repo}/tree/exploration/notes`}
+                target="_blank" rel="noopener noreferrer">
+                {forkOwner}/{repo} @ exploration/notes ↗
+              </a>
+            </div>
           )}
         </div>
-      )}
 
-      {/* The notes branch on the member's fork. Research does not write
-          there yet — runs still do, and the old explore notes are still
-          on it — so this is a plain link out rather than anything the
-          page reads back. */}
-      {forkOwner && repo && (
-        <div style={{ marginTop: '14px', paddingTop: '8px', borderTop: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
-          Earlier notes and run artifacts live on{' '}
-          <a href={`https://github.com/${forkOwner}/${repo}/tree/exploration/notes`}
-            target="_blank" rel="noopener noreferrer">
-            {forkOwner}/{repo} @ exploration/notes ↗
-          </a>
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {open ? (
+            // Keyed on the session. Switching straight from one
+            // conversation to another is new with the rail — before
+            // this you always went back to the list first, which
+            // unmounted it — and the conversation resets the things it
+            // knows are per-session (transcript, cursor, mode) but not
+            // the composer. A half-typed question following you into
+            // someone else's conversation and being sent there is the
+            // failure that matters; remounting takes the draft with it.
+            //
+            // No onBack: the rail is right there and never left.
+            <ResearchConversation
+              key={open.sessionId}
+              sessionId={open.sessionId}
+              pending={open.pending}
+              title={open.title}
+              fill
+              onDeleted={() => { setOpen(null); load(); }}
+              onRenamed={load}
+            />
+          ) : landing}
         </div>
-      )}
-
-      {/* The conversation opens over the list rather than instead of
-          it. Opening one used to replace the whole tab, which made
-          reading two of them a navigation each way; the list is still
-          there behind the sheet, and closing is a click on the page
-          you were already looking at.
-
-          No onBack: ✕ and Escape are the way out of a sheet, and a
-          "← Sessions" button beside them would be a third. */}
-      {open && (
-        <SlideOver label="Research conversation"
-          onClose={() => { setOpen(null); load(); }}>
-          <ResearchConversation
-            sessionId={open.sessionId}
-            pending={open.pending}
-            title={open.title}
-            fill
-            onDeleted={() => { setOpen(null); load(); }}
-            onRenamed={load}
-          />
-        </SlideOver>
-      )}
+      </div>
     </div>
   );
 }
