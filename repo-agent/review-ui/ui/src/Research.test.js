@@ -264,6 +264,45 @@ describe('applyResearchEvent', () => {
         expect(t.items[0].mode).toBe('yolo');
     });
 
+    test('the mode entry carries whether the prompts are being answered', () => {
+        // The name of the mode is not the answer to "will it ask me".
+        // acpd answering underneath is the other half, and it rides the
+        // same entry so that a reader gets both at one point in time.
+        const t = buildResearchTranscript([
+            ev(1, 'mode_changed', { currentModeId: 'yolo', autoApprove: true }),
+        ]);
+        expect(t.auto).toBe(true);
+        expect(t.items[0].auto).toBe(true);
+
+        const tightened = applyResearchEvent(t, ev(2, 'mode_changed', {
+            currentModeId: 'default', autoApprove: false,
+        }));
+        expect(tightened.auto).toBe(false);
+        expect(tightened.items[1].auto).toBe(false);
+    });
+
+    test('an engine-reported mode change says nothing about the answering', () => {
+        // current_mode_update comes from the engine, which knows nothing
+        // about acpd answering underneath it. Reading its silence as
+        // "no" would tell the reader the reassuring story on no
+        // evidence, so the last thing acpd said stands.
+        const t = buildResearchTranscript([
+            ev(1, 'mode_changed', { currentModeId: 'yolo', autoApprove: true }),
+            ev(2, 'current_mode_update', { currentModeId: 'plan' }),
+        ]);
+        expect(t.mode).toBe('plan');
+        expect(t.auto).toBe(true);
+    });
+
+    test('a transcript written before acpd recorded the answering says so', () => {
+        // null, not false: an old mode_changed does not know, and the
+        // renderer has to be able to tell that from a no.
+        expect(emptyTranscript.auto).toBeNull();
+        const t = buildResearchTranscript([ev(1, 'mode_changed', { currentModeId: 'yolo' })]);
+        expect(t.auto).toBeNull();
+        expect(t.items[0].auto).toBeNull();
+    });
+
     test('a mode event with no mode in it changes nothing', () => {
         const before = buildResearchTranscript([ev(1, 'mode_changed', { currentModeId: 'yolo' })]);
         expect(applyResearchEvent(before, ev(2, 'mode_changed', {}))).toBe(before);

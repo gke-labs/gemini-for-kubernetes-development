@@ -90,7 +90,11 @@ export function ageOf(ts) {
 //
 // mode carries the same caveat for the same reason: it is the last mode
 // the transcript saw, which is the live one only once replay is done.
-export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '', mode: '' };
+//
+// auto is the other half of "will it ask me": null means the transcript
+// has not said either way, which is not the same as no — see the
+// mode_changed fold.
+export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '', mode: '', auto: null };
 
 // applyResearchEvent folds one transcript event into the render model.
 //
@@ -187,7 +191,12 @@ export function applyResearchEvent(state, event) {
     case 'current_mode_update': {
       const next = data.currentModeId || '';
       if (!next) return state;
-      return { ...push({ role: 'mode', mode: next }), mode: next };
+      // autoApprove rides acpd's own entry only: current_mode_update is
+      // the engine's, and the engine knows nothing about acpd answering
+      // underneath it. Absent therefore means "this event says nothing
+      // about that", not "no", so the last known answer stands.
+      const auto = data.autoApprove === undefined ? state.auto : !!data.autoApprove;
+      return { ...push({ role: 'mode', mode: next, auto }), mode: next, auto };
     }
 
     // A plan update supersedes the last one rather than adding to the
@@ -378,6 +387,19 @@ function PermissionRow({ item, onResolve, busy }) {
   );
 }
 
+// modeSuffix says what a mode entry means for the reader.
+//
+// The name of the mode does not answer the question anyone is asking of
+// it. "yolo" tells you nothing about whether a prompt is still coming,
+// because two layers decide that — the engine's mode and acpd answering
+// underneath — and only the pair of them is an answer. null is an entry
+// written before acpd recorded the second layer; saying nothing there
+// beats guessing, since the guess would be the reassuring one.
+export function modeSuffix(auto) {
+  if (auto === null || auto === undefined) return '';
+  return auto ? ' — prompts answered for you' : ' — you will be asked';
+}
+
 function TranscriptItem({ item, onResolve, resolving }) {
   switch (item.role) {
     case 'user':
@@ -407,7 +429,7 @@ function TranscriptItem({ item, onResolve, resolving }) {
     case 'mode':
       return (
         <div style={{ margin: '8px 0', fontSize: 'x-small', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          approval mode: {item.mode}
+          approval mode: {item.mode}{modeSuffix(item.auto)}
         </div>
       );
     case 'stop':
@@ -493,7 +515,7 @@ function TerminalItem({ item, onResolve, resolving }) {
     case 'permission':
       return <PermissionRow item={item} onResolve={onResolve} busy={resolving} />;
     case 'mode':
-      return <div className="term-line term-dim">— approval mode: {item.mode} —</div>;
+      return <div className="term-line term-dim">— approval mode: {item.mode}{modeSuffix(item.auto)} —</div>;
     case 'stop':
       return <div className="term-line term-dim">— turn ended: {item.stopReason} —</div>;
     case 'error':
@@ -589,8 +611,16 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   // problem is acpd's account of why current is not the mode the
   // session was created with — the session runs anyway, it just asks
   // before it acts, and this is the only place that says why.
-  const [modeState, setModeState] = useState({ current: '', available: [], problem: '' });
+  // auto is whether acpd answers the prompts itself. Carried alongside
+  // current rather than derived from it: the rule that ties the two is
+  // the server's, and a UI that re-derived it would go on claiming the
+  // session asks first the moment the server's rule changed.
+  const [modeState, setModeState] = useState({ current: '', available: [], problem: '', auto: false });
   const [switching, setSwitching] = useState(false);
+  // The overflow menu behind ⋯. Open state and nothing else: what is in
+  // it are the three things you reach for once a session and never
+  // while reading one, and they were costing header width all the time.
+  const [menuOpen, setMenuOpen] = useState(false);
   // rich | terminal. A reading preference, not session state, so it is
   // remembered across conversations and across the pop-out window —
   // whoever wants the terminal wants it for all of them.
@@ -660,6 +690,9 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
             // session that is in the mode it was asked for says nothing
             // here, and that silence is the good news.
             problem: session.modeError || '',
+            // Nor here, and for the same reason: the field is omitted
+            // when false, so absent is the answer and not a gap.
+            auto: !!session.autoApprove,
           }));
           return;
         }
@@ -705,6 +738,11 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
               current: body.mode || m.current,
               available: body.availableModes || m.available,
               problem: body.modeError || '',
+              // Only a live probe has been to the session. A probe that
+              // could not reach acpd reports nothing about it, and
+              // reading that silence as "asks first" would tell the
+              // member the calmer of the two stories on no evidence.
+              auto: body.live ? !!body.autoApprove : m.auto,
             }));
             if (body.unreachable) {
               // The sandbox is up but acpd is not answering. Said
@@ -755,7 +793,7 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
     everLiveRef.current = false;
     setTranscript(emptyTranscript);
     setCaughtUp(false);
-    setModeState({ current: '', available: [], problem: '' });
+    setModeState({ current: '', available: [], problem: '', auto: false });
     setPhase('probing');
     setDetail('');
     probe();
@@ -869,6 +907,11 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
           // behind: the member has just been told what the session is
           // in, by putting it there themselves.
           problem: '',
+          // Read back rather than assumed. The whole point of the
+          // switch is that acpd stops answering underneath a tightened
+          // mode; taking the server's word for it is what makes the
+          // control's new label true instead of hopeful.
+          auto: !!body.autoApprove,
         }));
       })
       .catch(err => setError(`mode change failed: ${err}`))
@@ -917,6 +960,18 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   const repo = (info && info.repo) || '';
   const composerDisabled = phase !== 'live' || busy || sending;
 
+  // Why the composer will not send, as a line beside the Send button.
+  // It used to be the textarea's placeholder, which is the one place it
+  // could not stay: a placeholder is gone the instant anybody types,
+  // and "the agent is waiting on a permission above" starts mattering
+  // precisely when someone is typing into a box that will not send.
+  // null is the ordinary case, where the placeholder's invitation is
+  // the whole story and a second line would only be noise.
+  const composerState = phase !== 'live' ? { text: 'Not connected', urgent: false }
+    : waiting ? { text: 'Waiting for you to answer the permission above', urgent: true }
+      : busy ? { text: 'The agent is working — Stop to interrupt', urgent: false }
+        : null;
+
   // Same split as `busy`: the fold is the truthful source only once
   // replay is behind us, and until then the session we attached to is.
   const mode = (caughtUp && transcript.mode) || modeState.current;
@@ -926,6 +981,13 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
   const modeOptions = !mode || modeState.available.some(m => m.id === mode)
     ? modeState.available
     : modeState.available.concat([{ id: mode, name: mode }]);
+  // Same precedence as mode, for the same reason — a switch made in
+  // another tab reaches this one as an entry and never as a reply to
+  // us — with the extra step that null means the transcript did not
+  // say, which falls back rather than counting as no.
+  const autoApproving = caughtUp && transcript.auto !== null && transcript.auto !== undefined
+    ? transcript.auto
+    : modeState.auto;
 
   return (
     <div style={fill
@@ -969,18 +1031,25 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
             and a prompt nobody answers stalls the turn until acpd
             cancels it — so this is here to tighten that, not to loosen
             it. Hidden entirely for an engine that offers no modes:
-            there is nothing to choose between. */}
+            there is nothing to choose between.
+
+            Labelled by its consequence rather than by the mode's name.
+            "approvals: yolo" names a setting; what the member wants to
+            know at a glance is whether anything is going to stop and
+            ask them, and the mode alone does not say — acpd answering
+            underneath is the other half. The amber is the point: the
+            state worth noticing is the one where nobody is asked. */}
         {modeOptions.length > 0 && (
-          <label style={{
-            display: 'inline-flex', alignItems: 'center', gap: '4px',
-            fontSize: 'x-small', color: 'var(--text-secondary)',
-          }}>
-            approvals
+          <label title={(modeOptions.find(m => m.id === mode) || {}).description
+            || 'How much the engine asks before it acts'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'x-small',
+              color: autoApproving ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
+            }}>
+            {autoApproving ? '⚡ auto-approving' : 'asks first'}
             <select value={mode} aria-label="Approval mode"
               disabled={phase !== 'live' || switching}
               onChange={e => chooseMode(e.target.value)}
-              title={(modeOptions.find(m => m.id === mode) || {}).description
-                || 'How much the engine asks before it acts'}
               style={{
                 font: 'inherit', padding: '1px 4px', borderRadius: '6px',
                 border: '1px solid var(--border-color)',
@@ -990,18 +1059,19 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
                 <option key={m.id} value={m.id} title={m.description || ''}>{m.name || m.id}</option>
               ))}
             </select>
-            {/* The session asked for a mode and did not get it. It is in
-                the transcript too, where it belongs chronologically, but
-                that scrolls away and this does not — and the question it
-                answers ("why is it asking me again?") is asked long
-                after the first screen. */}
-            {modeState.problem && (
-              <span role="status" title={modeState.problem}
-                style={{ color: 'var(--status-red, #c62828)', cursor: 'help' }}>
-                ⚠ not applied
-              </span>
-            )}
           </label>
+        )}
+        {/* The session asked for a mode and did not get it. It is in the
+            transcript too, where it belongs chronologically, but that
+            scrolls away and this does not — and the question it answers
+            ("why is it asking me again?") is asked long after the first
+            screen. Outside the label rather than in it: clicking a
+            warning should not open the picker it is warning about. */}
+        {modeState.problem && (
+          <span role="status" aria-label="Approval mode warning" title={modeState.problem}
+            style={{ fontSize: 'x-small', color: 'var(--status-red, #c62828)', cursor: 'help' }}>
+            ⚠ not applied
+          </span>
         )}
         {/* Two segments rather than one flip button: which view you are
             in should be readable without knowing whether the label names
@@ -1026,16 +1096,50 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
         {phase === 'live' && busy && (
           <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
         )}
-        {info && info.sandbox && info.namespace && (
-          <a href={`#/terminal/${info.namespace}/${info.sandbox}`} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 'x-small' }} title={`Shell into ${info.sandbox}`}>terminal ↗</a>
-        )}
-        {!fill && (
-          <a href={`#/research/${sessionId}`} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 'x-small' }} title="Open this conversation in its own window">pop out ↗</a>
-        )}
-        <button className="btn btn-delete btn-sm" onClick={destroy}
-          title="Delete the sandbox — the transcript lives on its disk and goes with it">Delete</button>
+        {/* Everything you do to a session rather than in it, folded
+            behind one button. These are once-a-session actions and one
+            of them is destructive; they were sitting permanently beside
+            the controls used every turn, which both crowded those and
+            put Delete a stray click from Stop. */}
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+          <button className="btn btn-sm" aria-label="More actions" aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)} title="More actions">⋯</button>
+          {menuOpen && (
+            <>
+              {/* Catches the click that should dismiss the menu. A
+                  backdrop rather than a blur handler, so that the click
+                  which closes the menu does not also press whatever it
+                  landed on. */}
+              <div onClick={() => setMenuOpen(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+              <div role="menu" style={{
+                position: 'absolute', top: '100%', right: 0, zIndex: 11, marginTop: '4px',
+                display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '2px',
+                padding: '6px', minWidth: '160px', textAlign: 'left',
+                border: '1px solid var(--border-color)', borderRadius: '8px',
+                background: 'var(--bg-card)', boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+              }}>
+                {info && info.sandbox && info.namespace && (
+                  <a role="menuitem" href={`#/terminal/${info.namespace}/${info.sandbox}`}
+                    target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
+                    style={{ fontSize: 'x-small', padding: '4px 6px' }}
+                    title={`Shell into ${info.sandbox}`}>terminal ↗</a>
+                )}
+                {!fill && (
+                  <a role="menuitem" href={`#/research/${sessionId}`}
+                    target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
+                    style={{ fontSize: 'x-small', padding: '4px 6px' }}
+                    title="Open this conversation in its own window">pop out ↗</a>
+                )}
+                <button role="menuitem" className="btn btn-delete btn-sm"
+                  onClick={() => { setMenuOpen(false); destroy(); }}
+                  title="Delete the sandbox — the transcript lives on its disk and goes with it">
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
+        </span>
       </div>
 
       {error && (
@@ -1057,6 +1161,27 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
           background: terminal ? undefined : 'var(--bg-card)',
           padding: '10px 14px',
         }}>
+        {/* How this conversation runs, said once at the top of what it
+            said. The transcript only records a mode when one changes,
+            so a session that started auto-approving and never switched
+            — which is every research session — went its whole life
+            without the transcript mentioning it anywhere. Someone
+            reading back through a command they did not approve should
+            find the answer in the thing they are reading, not have to
+            infer it from a control in the header. */}
+        {mode && (
+          <div style={{
+            margin: '0 0 10px', paddingBottom: '8px', fontSize: 'x-small',
+            borderBottom: '1px solid var(--border-color)',
+            color: autoApproving ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
+          }}>
+            This conversation runs in <strong>{(modeOptions.find(m => m.id === mode) || {}).name || mode}</strong>
+            {autoApproving
+              ? ' — tool calls are approved for you, including ones the engine would otherwise stop and ask about.'
+              : ' — you are asked before tool calls that need approval.'}
+            {' '}Change that with the approvals control above.
+          </div>
+        )}
         {phase === 'gone' && (
           <p style={{ color: 'var(--text-secondary)' }}>
             This session no longer exists — the sandbox that held its transcript has been deleted.
@@ -1119,19 +1244,22 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
         }}>
           <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)}
             disabled={phase !== 'live'}
-            placeholder={
-              phase !== 'live' ? 'Not connected yet…'
-                : waiting ? 'The agent is waiting on a permission above…'
-                  : busy ? 'The agent is working — Stop to interrupt…'
-                    : 'Ask a question about this repository…'
-            }
+            placeholder="Ask a question about this repository…"
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             style={{
               width: '100%', border: 'none', outline: 'none', resize: 'none',
               background: 'transparent', color: 'var(--text-primary)',
               font: 'inherit', boxSizing: 'border-box',
             }} />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            gap: '8px', marginTop: '6px',
+          }}>
+            <span role="status" aria-label="Composer state" style={{
+              fontSize: 'x-small',
+              color: composerState && composerState.urgent
+                ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
+            }}>{composerState ? composerState.text : ''}</span>
             <button className="btn btn-sm" disabled={!draft.trim() || composerDisabled} onClick={send}>
               {sending ? 'Sending…' : 'Send'}
             </button>
@@ -1286,7 +1414,12 @@ export function ResearchPanel({ boardName, repoURL }) {
         {/* The title carries the row: it is what someone scanning for
             "the one about the retry loop" is actually reading. */}
         <div>{s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}</div>
-        <div style={{ fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
+        {/* One id per row, not two. The sandbox name is the same
+            information a second time — you would only ever want it to
+            go and look at the pod — so it hangs off this one instead
+            of buying a column of its own on every row. */}
+        <div title={s.sandbox ? `sandbox ${s.sandbox}` : undefined}
+          style={{ fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
           {shortSession(s.sessionId)}
         </div>
       </td>
@@ -1297,9 +1430,6 @@ export function ResearchPanel({ boardName, repoURL }) {
       </td>
       <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }} title={s.createdAt}>{ageOf(s.createdAt)}</td>
       <td style={{ padding: '6px 8px' }}>{stateOf(s)}</td>
-      <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-        {s.sandbox}
-      </td>
       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
         <button className="btn btn-sm"
           onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}>
@@ -1403,7 +1533,6 @@ export function ResearchPanel({ boardName, repoURL }) {
               <th style={{ padding: '6px 8px' }}>Repo</th>
               <th style={{ padding: '6px 8px' }}>Age</th>
               <th style={{ padding: '6px 8px' }}>State</th>
-              <th style={{ padding: '6px 8px' }}>Sandbox</th>
               <th style={{ padding: '6px 8px' }}></th>
             </tr>
           </thead>

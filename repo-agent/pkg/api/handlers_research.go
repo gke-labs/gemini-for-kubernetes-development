@@ -528,6 +528,11 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		body["mode"] = session.Mode
 		body["availableModes"] = session.AvailableModes
 		body["modeError"] = session.ModeError
+		// Whether acpd is answering for the member. The mode alone does
+		// not say — a permissive mode does not stop gemini asking, which
+		// is why this exists — so the UI has to be told rather than infer
+		// it, or the header ends up claiming the opposite of what happens.
+		body["autoApprove"] = session.AutoApprove
 	case errors.Is(err, acpd.ErrNotFound):
 		// The sandbox is up but no engine is running in it: the normal
 		// state of a session nobody has opened yet, and of one whose
@@ -719,6 +724,7 @@ func (s *Server) setResearchSessionMode(c *gin.Context) {
 		"sessionId":      conn.view.SessionID,
 		"mode":           session.Mode,
 		"availableModes": session.AvailableModes,
+		"autoApprove":    session.AutoApprove,
 	})
 }
 

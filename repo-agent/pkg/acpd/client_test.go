@@ -365,6 +365,46 @@ func TestSetMode(t *testing.T) {
 	}
 }
 
+// The mode carries acpd's own answering with it. Tightening the mode
+// and leaving acpd auto-answering underneath made the approvals picker
+// a lie: the member took the wheel and nothing changed.
+func TestSetModeCarriesTheAutoAnswering(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{ModeYolo, `"autoApprove":true`},
+		// omitempty: absent is false, which is what acpd reads it as.
+		{ModeDefault, `"mode":"default"}`},
+		{ModeAutoEdit, `"mode":"autoEdit"}`},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			client, rec := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(Session{ID: "s1", Mode: tc.mode})
+			})
+			if _, err := client.SetMode(context.Background(), "s1", tc.mode); err != nil {
+				t.Fatalf("SetMode: %v", err)
+			}
+			if !strings.Contains(string(rec.body), tc.want) {
+				t.Errorf("body = %s, want %s in it", rec.body, tc.want)
+			}
+		})
+	}
+}
+
+// The two constants have to agree, or a research session created
+// auto-approving would stop being so the first time anyone touched the
+// picker and put it back where it already was.
+func TestResearchModeAndAutoApproveAgree(t *testing.T) {
+	if AutoApproveForMode(ResearchMode) != ResearchAutoApprove {
+		t.Errorf("AutoApproveForMode(%q) = %v, want %v",
+			ResearchMode, AutoApproveForMode(ResearchMode), ResearchAutoApprove)
+	}
+	if AutoApproveForMode(ModeDefault) {
+		t.Error("the prompting mode must not auto-approve")
+	}
+}
+
 // An empty mode is caught before the request: acpd would answer 400, but
 // a caller that meant "leave it alone" should not be making the call.
 func TestSetModeRejectsAnEmptyMode(t *testing.T) {
