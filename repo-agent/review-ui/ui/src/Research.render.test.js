@@ -871,7 +871,7 @@ describe('ResearchPanel', () => {
         ],
     };
 
-    test('lists this board\'s sessions and hides other repos behind a disclosure', async () => {
+    test('lists this board\'s sessions and nobody else\'s', async () => {
         global.fetch = jest.fn(() => reply(200, sessions));
 
         await act(async () => {
@@ -903,9 +903,15 @@ describe('ResearchPanel', () => {
         expect(row.title).toContain('session aaaaaaaa-1111');
         expect(row.title).toContain('sandbox rsch-repo-agent-1');
 
-        // The other repo's session is accounted for but not in the table.
+        // A session for another repository is not this board's business
+        // — not as a row, and not as a count in a disclosure either. It
+        // is somebody's rail; it is not this one.
         expect(container.textContent).not.toContain('rollout flags');
-        expect(container.textContent).toContain('1 conversation for other repositories');
+        expect(container.textContent).not.toContain('kubectl');
+        expect(container.textContent).not.toContain('other repositories');
+        // And the repo is not written on the rows that are here: it is
+        // the board they are on, said once at the top of the page.
+        expect(row.textContent).not.toContain('repo-agent');
     });
 
     // selectRow clicks a rail row by the title on its first line.
@@ -1048,8 +1054,19 @@ describe('ResearchPanel', () => {
         // draft carried across and sent into the wrong session is the
         // failure that matters.
         const seen = [];
+        // Both on this board: switching conversations is a rail click,
+        // and the rail only holds this repository's now.
+        const two = {
+            sessions: [
+                sessions.sessions[0],
+                {
+                    sessionId: 'cccccccc-3333', title: 'the lease', sandbox: 'rsch-repo-agent-3',
+                    repo: 'repo-agent', createdAt: '2026-09-26T08:00:00Z',
+                },
+            ],
+        };
         global.fetch = jest.fn((url) => {
-            if (url === '/api/research') return reply(200, sessions);
+            if (url === '/api/research') return reply(200, two);
             const m = /^\/api\/research\/([^/?]+)$/.exec(url);
             if (m) {
                 seen.push(m[1]);
@@ -1080,12 +1097,9 @@ describe('ResearchPanel', () => {
         });
         expect(container.querySelector('textarea').value).toBe('half a question about retries');
 
-        // The other repo's session, reached through the disclosure.
-        const disclosure = container.querySelector('[title^="Sessions you own for other repositories"]');
-        await act(async () => { disclosure.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await selectRow('rollout flags');
-        expect(seen).toContain('bbbbbbbb-2222');
-        await goLive('bbbbbbbb-2222');
+        await selectRow('the lease');
+        expect(seen).toContain('cccccccc-3333');
+        await goLive('cccccccc-3333');
 
         expect(container.querySelector('textarea').value).toBe('');
     });
@@ -1181,19 +1195,21 @@ describe('ResearchPanel', () => {
         expect(row.title).toContain('double-click to rename');
     });
 
-    test('the other-repositories list keeps the repo, which is why it is separate', async () => {
+    test('a board with only other repositories\' sessions is an empty rail', async () => {
+        // Not "no sessions found" hedged with a disclosure holding four
+        // of somebody else's: an empty rail is the truthful answer to
+        // "what has been asked about this repository", and the invitation
+        // to ask something is what should be filling the pane.
         global.fetch = jest.fn(() => reply(200, sessions));
 
         await act(async () => {
-            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+            root.render(<ResearchPanel boardName="open-rl" repoURL="https://github.com/gke-labs/open-rl" />);
         });
         await flush();
 
-        const disclosure = container.querySelector('[title^="Sessions you own for other repositories"]');
-        await act(async () => { disclosure.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-
-        expect(container.textContent).toContain('rollout flags');
-        expect(container.textContent).toContain('kubectl');
+        expect(container.textContent).toContain('No conversations for open-rl yet');
+        expect(container.textContent).not.toContain('the retry loop');
+        expect(container.textContent).not.toContain('rollout flags');
     });
 
     // claimFetch answers the list and the claim; everything else 404s,
