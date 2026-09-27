@@ -1391,10 +1391,10 @@ export function ResearchConversation({
               needs no separating from it, but this log scrolls under a
               prompt that does not, and unmarked that reads as a bug. */}
           <div className="term-prompt" style={{
-            flex: '0 0 auto', padding: '6px 14px 4px',
+            flex: '0 0 auto', padding: '6px 14px 2px',
             borderTop: `1px solid ${composerFocused ? 'var(--term-accent)' : 'var(--term-rule)'}`,
           }}>
-            <span className="term-sigil term-user" aria-hidden="true">❯ </span>
+            <span className="term-sigil" aria-hidden="true">❯ </span>
             {/* Not "ask a question about this repository" — that is what
                 the landing pane says, and repeating it here made the
                 composer read like a second place to start rather than
@@ -1414,7 +1414,9 @@ export function ResearchConversation({
               prompt: what the session is doing, how to send, and how you
               are reading it. Dim, because none of it is the conversation —
               it is the line you glance at, not the one you read. */}
-          <div className="term-statusbar" style={{ flex: '0 0 auto', padding: '2px 14px 6px' }}>
+          {/* Tight under the prompt rather than floating between it and
+              the frame: a status line belongs to the line above it. */}
+          <div className="term-statusbar" style={{ flex: '0 0 auto', padding: '0 14px 6px' }}>
             {/* With nothing to report, the key hints have the space. They
                 are a separate element from the status below rather than a
                 fallback inside it, because that one is a live region: a
