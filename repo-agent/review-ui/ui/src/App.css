@@ -1095,6 +1095,9 @@ body.dark-mode .warning-banner {
   --term-yellow: #b06000;
   --term-red: #c5221f;
   --term-quote: rgba(60, 64, 67, 0.07);
+  /* Rules drawn on the canvas, not on the page: --border-color is set
+     against the page's white and disappears into this grey. */
+  --term-rule: #d8dbde;
 
   background: var(--term-bg);
   color: var(--term-fg);
@@ -1112,6 +1115,7 @@ body.dark-mode .research-terminal {
   --term-yellow: #ffab70;
   --term-red: #f97583;
   --term-quote: rgba(139, 148, 158, 0.16);
+  --term-rule: #3a4046;
 }
 
 /* The whole point of the view: the agent's source, unparsed, with its
@@ -1189,3 +1193,67 @@ body.dark-mode .research-terminal {
   border: none;
   border-top: 1px solid var(--term-dim);
 }
+
+/* The prompt line. The textarea is the canvas with a caret in it: no
+   border, no background, no chrome of its own — the `❯ ` beside it is
+   the only thing that says a box is there, which is the whole idiom.
+   Its height is set from JS as you type; see GrowingTextarea. */
+.research-terminal .term-prompt {
+  display: flex;
+  align-items: flex-start;
+}
+
+.research-terminal .term-prompt textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  line-height: inherit;
+  box-sizing: border-box;
+}
+
+.research-terminal .term-prompt textarea::placeholder { color: var(--term-dim); }
+/* A prompt you cannot type at is still a prompt — it dims, it does not
+   grey out into something that looks broken. */
+.research-terminal .term-prompt textarea:disabled { color: var(--term-dim); }
+
+.research-terminal .term-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--term-dim);
+}
+
+.research-terminal .term-urgent { color: var(--term-yellow); }
+
+/* The reading choice and the send affordance, as status-line text
+   rather than as buttons. They are still buttons — a terminal has no
+   equivalent of a pointer or a screen reader, and this one has both —
+   but nothing about them should look like the page's chrome. */
+.research-terminal .term-statusbar button {
+  border: none;
+  background: transparent;
+  font: inherit;
+  padding: 0 4px;
+  cursor: pointer;
+  color: var(--term-dim);
+}
+
+.research-terminal .term-statusbar button:disabled {
+  cursor: default;
+  color: var(--term-dim);
+  opacity: 0.6;
+}
+
+.research-terminal .term-views button[aria-pressed="true"] {
+  color: var(--term-accent);
+  font-weight: 600;
+}
+
+.research-terminal .term-send:not(:disabled) { color: var(--term-accent); }

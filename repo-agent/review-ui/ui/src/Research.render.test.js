@@ -118,7 +118,7 @@ describe('ResearchConversation', () => {
         // frame said the engine is idle — so the composer stays usable
         // rather than waiting forever on a turn that is not running.
         expect(container.textContent).toContain('ready');
-        const send = [...container.querySelectorAll('button')].find(b => b.textContent === 'Send');
+        const send = container.querySelector('.term-send');
         expect(send.disabled).toBe(true); // nothing typed yet
         expect(container.querySelector('textarea').disabled).toBe(false);
     });
@@ -148,7 +148,7 @@ describe('ResearchConversation', () => {
     });
 
     // A conversation with one prompt and one table in it, which is the
-    // shape the three views actually differ over.
+    // shape the two views actually differ over.
     const withATable = async (table) => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
@@ -171,10 +171,27 @@ describe('ResearchConversation', () => {
         await act(async () => { seg.click(); });
     };
 
+    test('the conversation is a terminal before anybody chooses anything', async () => {
+        // There is no page-typeset view to fall back to any more, so
+        // the canvas is not something you switch on — it is what a
+        // conversation is. A fresh browser with nothing in localStorage
+        // is the case that used to land on `rich`.
+        await withATable('| a | b |\n| :-- | :-- |\n| 1 | 2 |');
+
+        const pane = container.querySelector('.research-terminal');
+        expect(pane).toBeTruthy();
+        // Prompt and status line are inside it, not floating below it:
+        // one window, not a terminal with a web form stapled under it.
+        expect(pane.querySelector('.term-prompt textarea')).toBeTruthy();
+        expect(pane.querySelector('.term-statusbar')).toBeTruthy();
+        // And the default is still parsed markdown, which is what both
+        // retired views did.
+        expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
+    });
+
     test('the raw view shows the source unparsed and remembers itself', async () => {
         const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
         await withATable(table);
-        expect(container.querySelector('.research-terminal')).toBeNull();
 
         const rendersBefore = mockMarkdownCalls.length;
         await chooseView('raw');
@@ -183,7 +200,6 @@ describe('ResearchConversation', () => {
         // breaks are what make the table line up.
         expect(mockMarkdownCalls.length).toBe(rendersBefore);
         const pane = container.querySelector('.research-terminal');
-        expect(pane).toBeTruthy();
         expect(pane.querySelector('.term-agent').textContent).toBe(table);
         expect(pane.querySelector('.term-user').textContent).toContain('compare them');
         expect(localStorage.getItem('repoboard.research.view')).toBe('raw');
@@ -191,26 +207,26 @@ describe('ResearchConversation', () => {
         // And the next conversation opened comes up in it.
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
-        expect(container.querySelector('.research-terminal')).toBeTruthy();
+        expect(container.querySelector('.term-rendered')).toBeNull();
     });
 
-    test('the mono view is the terminal canvas with the markdown parsed', async () => {
-        // The other reading of "as a terminal would render it": still
-        // the flat fixed-width log, but the table gets real borders
-        // instead of pipes that happen to line up.
+    test('the rendered view parses the markdown on the same canvas', async () => {
+        // The one thing the two views differ over: the table gets real
+        // borders instead of pipes that happen to line up. Everything
+        // else — the face, the canvas, the sigils — is shared.
         const table = '| a | b |\n| :-- | :-- |\n| 1 | 2 |';
         await withATable(table);
+        await chooseView('raw');
 
         const rendersBefore = mockMarkdownCalls.length;
-        await chooseView('mono');
+        await chooseView('rendered');
 
         const pane = container.querySelector('.research-terminal');
-        expect(pane).toBeTruthy();
         expect(mockMarkdownCalls.length).toBeGreaterThan(rendersBefore);
         expect(mockMarkdownCalls.at(-1).remarkPlugins).toContain('gfm-plugin-stub');
         // Parsed, so it is not a pre-wrap log line any more.
         expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
-        expect(localStorage.getItem('repoboard.research.view')).toBe('mono');
+        expect(localStorage.getItem('repoboard.research.view')).toBe('rendered');
 
         // Your own prompt is a line you typed, not a document: it keeps
         // its sigil and does not go through markdown in either view.
@@ -668,6 +684,75 @@ describe('ResearchConversation', () => {
             box.dispatchEvent(new Event('input', { bubbles: true }));
         });
         expect(state()).toContain('Waiting for you');
+    });
+
+    test('the composer grows with what you type, and stops before it eats the transcript', async () => {
+        // jsdom has no layout, so every element it renders reports a
+        // scrollHeight of zero and the component would measure nothing.
+        // Standing in for the browser here is what makes the wiring —
+        // collapse, measure, set — observable at all; the arithmetic
+        // itself is grownHeight's own test.
+        let contentHeight = 0;
+        const real = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'scrollHeight');
+        Object.defineProperty(window.HTMLTextAreaElement.prototype, 'scrollHeight', {
+            configurable: true,
+            // Not just the content: a browser's scrollHeight is the
+            // content's height *or* the height already set, whichever
+            // is larger. Modelling that is the point — it is the only
+            // reason the component has to collapse the box before it
+            // measures, and a stub that returned the content alone
+            // would let that step be deleted without a test noticing.
+            // 'auto' parses to NaN, which is the collapsed case.
+            get() { return Math.max(contentHeight, parseFloat(this.style.height) || 0); },
+        });
+
+        try {
+            global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+            await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+            await flush();
+            await act(async () => {
+                FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            });
+
+            const box = container.querySelector('.term-prompt textarea');
+            // rows, not a height, is what the box falls back to before
+            // anything has been measured — and it is one line, not the
+            // three the floating card used to reserve.
+            expect(box.rows).toBe(1);
+
+            const type = async (text, height) => {
+                contentHeight = height;
+                await act(async () => {
+                    nativeSet(box, text);
+                    box.dispatchEvent(new Event('input', { bubbles: true }));
+                });
+            };
+
+            // jsdom reports no line-height, so the component falls back
+            // to 16px a line: ten rows is a 160px ceiling.
+            await type('one line', 16);
+            expect(box.style.height).toBe('16px');
+            expect(box.style.overflowY).toBe('hidden');
+
+            await type('four\nlines\nof\nit', 64);
+            expect(box.style.height).toBe('64px');
+
+            // Back down again. Without the collapse-before-measure step
+            // scrollHeight would still report the height already set,
+            // and a box that had once been tall would stay tall.
+            await type('one line', 16);
+            expect(box.style.height).toBe('16px');
+
+            // A pasted stack trace stops at the cap and scrolls, rather
+            // than pushing the conversation it is a follow-up to off
+            // the screen.
+            await type('a hundred lines of goroutine dump', 1600);
+            expect(box.style.height).toBe('160px');
+            expect(box.style.overflowY).toBe('auto');
+        } finally {
+            delete window.HTMLTextAreaElement.prototype.scrollHeight;
+            if (real) Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', real);
+        }
     });
 
     test('a mode the session did not get is flagged beside the picker', async () => {

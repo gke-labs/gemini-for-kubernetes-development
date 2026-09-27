@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 // react-markdown is CommonMark only. Agents answer with GFM — tables
 // above all — and without this a table parses as one paragraph, its
@@ -282,62 +282,6 @@ function Pill({ text, color, bg, title }) {
   );
 }
 
-const TOOL_STATUS_COLOR = {
-  completed: 'var(--status-green)',
-  failed: 'var(--text-danger)',
-  in_progress: '#b08800',
-  pending: 'var(--text-secondary)',
-};
-
-function ToolRow({ item }) {
-  const [open, setOpen] = useState(false);
-  const detail = [
-    item.rawInput === undefined ? '' : JSON.stringify(item.rawInput, null, 2),
-    item.content || '',
-  ].filter(Boolean).join('\n\n');
-  return (
-    <div style={{
-      border: '1px solid var(--border-color)', borderRadius: '8px',
-      padding: '6px 10px', margin: '6px 0', background: 'var(--bg-secondary)',
-      fontSize: 'small',
-    }}>
-      <div onClick={() => detail && setOpen(o => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: detail ? 'pointer' : 'default' }}>
-        {detail && <span style={{ fontSize: 'x-small', color: 'var(--text-secondary)' }}>{open ? '▾' : '▸'}</span>}
-        <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{item.toolKind || 'tool'}</span>
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {item.title || item.toolCallId}
-        </span>
-        <Pill text={item.status} color={TOOL_STATUS_COLOR[item.status] || 'var(--text-secondary)'} bg="transparent" />
-      </div>
-      {open && detail && (
-        <pre style={{
-          margin: '6px 0 0', maxHeight: '240px', overflow: 'auto', fontSize: 'x-small',
-          background: 'var(--bg-card)', padding: '8px', borderRadius: '6px', whiteSpace: 'pre-wrap',
-        }}>{detail}</pre>
-      )}
-    </div>
-  );
-}
-
-function ThoughtRow({ item }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ margin: '4px 0', fontSize: 'small' }}>
-      <span onClick={() => setOpen(o => !o)}
-        style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-        {open ? '▾' : '▸'} thinking
-      </span>
-      {open && (
-        <div style={{
-          color: 'var(--text-muted)', fontStyle: 'italic', whiteSpace: 'pre-wrap',
-          borderLeft: '2px solid var(--border-color)', paddingLeft: '10px', marginTop: '4px',
-        }}>{item.text}</div>
-      )}
-    </div>
-  );
-}
-
 function PermissionRow({ item, onResolve, busy }) {
   const toolCall = item.toolCall || {};
   const resolved = !!item.outcome;
@@ -400,90 +344,20 @@ export function modeSuffix(auto) {
   return auto ? ' — prompts answered for you' : ' — you will be asked';
 }
 
-function TranscriptItem({ item, onResolve, resolving }) {
-  switch (item.role) {
-    case 'user':
-      return (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '10px 0' }}>
-          <div style={{
-            maxWidth: '78%', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
-            borderRadius: '12px', padding: '8px 12px', whiteSpace: 'pre-wrap', textAlign: 'left',
-          }}>{item.text}</div>
-        </div>
-      );
-    case 'agent':
-      return (
-        <div className="research-markdown md-body" style={{ margin: '10px 0', lineHeight: 1.5 }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
-        </div>
-      );
-    case 'thought':
-      return <ThoughtRow item={item} />;
-    case 'tool':
-      return <ToolRow item={item} />;
-    case 'permission':
-      return <PermissionRow item={item} onResolve={onResolve} busy={resolving} />;
-    // Marked in the body of the transcript, not only in the header,
-    // because it is the answer to "why was nothing asked before that
-    // command ran" — and the answer depends on when it changed.
-    case 'mode':
-      return (
-        <div style={{ margin: '8px 0', fontSize: 'x-small', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          approval mode: {item.mode}{modeSuffix(item.auto)}
-        </div>
-      );
-    case 'stop':
-      return (
-        <div style={{ margin: '8px 0', fontSize: 'x-small', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          turn ended: {item.stopReason}
-        </div>
-      );
-    case 'error':
-      return (
-        <div style={{
-          margin: '8px 0', padding: '8px 10px', borderRadius: '8px', fontSize: 'small',
-          border: '1px solid var(--border-danger)', background: 'var(--bg-danger-light)', color: 'var(--text-danger)',
-        }}>
-          {item.message}
-          {item.log && (
-            <div style={{ fontSize: 'x-small', marginTop: '4px', fontFamily: 'monospace' }}>
-              engine stderr in the sandbox: {item.log}
-            </div>
-          )}
-        </div>
-      );
-    default:
-      // A session update this build has never heard of. It reached the
-      // browser on purpose; showing it raw beats pretending it did not
-      // happen.
-      return (
-        <details style={{ margin: '6px 0', fontSize: 'x-small', color: 'var(--text-secondary)' }}>
-          <summary style={{ cursor: 'pointer' }}>{item.kind}</summary>
-          <pre style={{ whiteSpace: 'pre-wrap', overflow: 'auto' }}>{JSON.stringify(item.data, null, 2)}</pre>
-        </details>
-      );
-  }
-}
-
-// TerminalItem is the same transcript rendered the way a terminal would
-// render it: no markdown parsing at all, the agent's source shown as it
-// was written, in a fixed-width font on a flat log rather than bubbles.
+// TerminalItem is one line of the transcript: a flat fixed-width log
+// with a sigil in front of each entry, rather than a page of bubbles.
+// It is the only way the transcript is drawn — see the `view` state for
+// why the page-typeset alternative is gone.
 //
-// It exists because the rich view is lossy in one direction. Markdown is
-// a rendering *of* something, and a research answer often wants reading
-// as the thing itself — a table's exact columns, a diff, a command to
-// copy out unchanged. The rich view is better for prose; this one is
-// better for anything you intend to use.
+// Permission prompts are the exception, and keep their page styling.
+// They are the one part of a transcript that is a control and not a
+// record, and a misread permission is a worse outcome than a seam.
 //
-// Permission prompts keep their rich form. They are the one part of a
-// transcript that is a control and not a record, and a misread
-// permission is a worse outcome than a seam in the styling.
-//
-// `rendered` is the mono view: the same flat log on the same canvas,
-// but the agent's prose goes through markdown, so a table gets real
-// borders instead of pipes that happen to line up. Everything else —
-// the sigils, the collapsed tool lines, the fixed-width face — is
-// identical, because the two views differ over one question only.
+// `rendered` is the one thing the two surviving views differ over: the
+// agent's prose goes through markdown, so a table gets real borders
+// instead of pipes that happen to line up. Everything else — the
+// sigils, the collapsed tool lines, the fixed-width face — is identical
+// either way.
 //
 // Only the agent's prose is affected. Your own prompt keeps its `❯ `
 // and stays verbatim — it is a line you typed, not a document — and
@@ -553,25 +427,73 @@ function TerminalItem({ item, onResolve, resolving, rendered }) {
   }
 }
 
+// How tall a box holding `scrollHeight` of text should be, and whether
+// it has to start scrolling to stay that tall.
+//
+// Its own function because it is the only arithmetic in GrowingTextarea
+// and the only part of it a test can see: jsdom has no layout, so every
+// element it renders reports a scrollHeight of zero.
+export function grownHeight(scrollHeight, lineHeight, minRows, maxRows) {
+  const max = lineHeight * maxRows;
+  return {
+    height: Math.max(lineHeight * minRows, Math.min(scrollHeight, max)),
+    scroll: scrollHeight > max,
+  };
+}
+
+// GrowingTextarea is as tall as what has been typed into it, between one
+// line and maxRows, and scrolls past that.
+//
+// A fixed `rows` is wrong in both directions at once: three empty lines
+// under a one-line question, and a scrollbar the instant anybody pastes
+// a stack trace. The cap is there because the composer must not be able
+// to eat the transcript it is a follow-up to.
+//
+// Measured rather than counted. A line that wraps is two lines tall and
+// counting "\n" cannot see that, which is exactly the case — a pasted
+// paragraph — where getting it wrong is most obvious.
+function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, ...rest }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Collapse before measuring. scrollHeight is the content's height
+    // *or* the height already set, whichever is larger, so a box that
+    // has once been tall never shrinks again without this.
+    el.style.height = 'auto';
+    // 'normal' is not a number, and is what jsdom and an unstyled
+    // element both report.
+    const line = parseFloat(window.getComputedStyle(el).lineHeight) || 16;
+    const { height, scroll } = grownHeight(el.scrollHeight, line, minRows, maxRows);
+    el.style.height = `${height}px`;
+    el.style.overflowY = scroll ? 'auto' : 'hidden';
+  }, [value, minRows, maxRows]);
+  return <textarea ref={ref} rows={minRows} value={value}
+    style={{ resize: 'none', ...style }} {...rest} />;
+}
+
 function PlanPanel({ entries }) {
   const [open, setOpen] = useState(true);
   if (!entries || !entries.length) return null;
   const mark = { completed: '✓', in_progress: '◐', pending: '○' };
   return (
+    // Terminal colours, because the plan only ever sits on the terminal
+    // canvas now — the page's greys read as a hole against it.
     <div style={{
-      border: '1px solid var(--border-color)', borderRadius: '8px',
-      background: 'var(--bg-secondary)', padding: '6px 10px', marginBottom: '8px', fontSize: 'small',
+      borderTop: '1px solid var(--term-rule)',
+      padding: '6px 14px', color: 'var(--term-fg)',
     }}>
-      <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
-        {open ? '▾' : '▸'} plan ({entries.filter(e => e.status === 'completed').length}/{entries.length})
+      <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', color: 'var(--term-dim)' }}>
+        <span className="term-sigil">{open ? '▾ ' : '▸ '}</span>
+        plan ({entries.filter(e => e.status === 'completed').length}/{entries.length})
       </div>
       {open && entries.map((e, i) => (
         <div key={i} style={{
-          padding: '2px 0 2px 14px',
-          color: e.status === 'completed' ? 'var(--text-muted)' : 'var(--text-primary)',
+          padding: '1px 0 1px 14px',
+          color: e.status === 'completed' ? 'var(--term-dim)' : 'var(--term-fg)',
           textDecoration: e.status === 'completed' ? 'line-through' : 'none',
         }}>
-          <span style={{ marginRight: '6px' }}>{mark[e.status] || '○'}</span>{e.content}
+          <span className="term-sigil" style={{ marginRight: '6px' }}>{mark[e.status] || '○'}</span>{e.content}
         </div>
       ))}
     </div>
@@ -587,19 +509,24 @@ const PROBE_INTERVAL_MS = 5000;
 // Where the reading choice is remembered.
 const RESEARCH_VIEW_KEY = 'repoboard.research.view';
 
-// normaliseView reads a stored choice, including the one this tab used
-// to write. `terminal` meant unparsed source, which is now `raw` — so
-// anyone who picked it keeps what they picked rather than being moved
-// to a view they have never seen.
+// normaliseView reads a stored choice, including the two this tab used
+// to write before the conversation became a terminal outright.
+//
+// Every migration preserves the one thing the member actually chose —
+// whether the agent's prose is parsed — and drops the part that is no
+// longer theirs to pick. `rich` and `mono` were both parsed markdown
+// differing only in the canvas, and there is one canvas now, so both
+// land on `rendered`. `terminal` and `raw` were both unparsed source.
+//
+// Nobody is moved to a view they have never seen: the two survivors are
+// the two halves of a choice that always existed.
 export function normaliseView(stored) {
   switch (stored) {
-    case 'mono':
     case 'raw':
-      return stored;
     case 'terminal':
       return 'raw';
     default:
-      return 'rich';
+      return 'rendered';
   }
 }
 
@@ -682,21 +609,24 @@ export function ResearchConversation({
   // you like the page to be, and a board that came back full screen
   // after a refresh would be a board you had lost the rest of.
   const [expanded, setExpanded] = useState(false);
-  // rich | mono | raw. A reading preference, not session state, so it
-  // is remembered across conversations and across the pop-out window —
-  // whoever wants the terminal wants it for all of them.
+  // rendered | raw: whether the agent's prose is parsed as markdown.
+  // A reading preference, not session state, so it is remembered across
+  // conversations and across the pop-out window.
   //
-  // mono and raw share the terminal canvas and differ only in whether
-  // the markdown is parsed. They are both here because "as a terminal
-  // would render it" turned out to mean two things: the bytes the agent
-  // actually sent, and a table with real borders in a fixed-width face.
-  // The first is what you want when you are going to copy it out; the
+  // There used to be a third, `rich`, which was the same parsed
+  // markdown set in the page's own type on a card. It is gone because
+  // the conversation is a terminal now and `rich` was the only part of
+  // it that was not — keeping it would have meant two entirely
+  // different shells for one pane, which is more UI and not less.
+  //
+  // What is left is the question that was always the real one: the
+  // bytes the agent actually sent, or a table with real borders. The
+  // first is what you want when you are going to copy it out; the
   // second when you are going to read it.
   const [view, setView] = useState(() => {
     try { return normaliseView(localStorage.getItem(RESEARCH_VIEW_KEY)); }
-    catch (e) { return 'rich'; } // private mode
+    catch (e) { return 'rendered'; } // private mode
   });
-  const terminal = view === 'mono' || view === 'raw';
   const chooseView = (next) => {
     setView(next);
     try { localStorage.setItem(RESEARCH_VIEW_KEY, next); } catch (e) { /* private mode */ }
@@ -1169,341 +1099,350 @@ export function ResearchConversation({
       : fill
         ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0 14px 12px' }
         : { display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: '72vh' }}>
+      {/* One frame around the whole conversation, so it reads as a
+          terminal window and not as three cards that happen to be
+          stacked. Inside it: a title bar the page styles like any other
+          chrome, and under that a canvas that is nothing but text.
+          Terminal.app is the shape being copied — the title bar is the
+          window's, the black is the program's. */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
-        padding: '8px 0', fontSize: 'small', flex: '0 0 auto',
+        flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0,
+        marginTop: '8px',
+        border: '1px solid var(--border-color)', borderRadius: '10px', overflow: 'hidden',
       }}>
-        {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
-        {/* The name, editable in place. A session is found again by what
-            it was about, so the title is the one thing here worth the
-            width — the repo and the id follow it, quietly.
-
-            An unnamed session rests *in* the box rather than beside it.
-            It used to fall back to the repo, which read as a name, so
-            the one session that needs naming was the one that looked
-            like it already had one — and the way to fix that was to
-            click a word that gave no sign it was clickable. The repo is
-            a link two inches to the right; saying it twice bought
-            nothing and cost the empty box that asks for a name. */}
-        {renaming === null && name ? (
-          <strong onClick={() => beginRename(name)} style={{ cursor: 'text' }}
-            title="Click to rename this conversation">
-            {name}
-          </strong>
-        ) : (
-          <input ref={titleBoxRef} aria-label="Session title"
-            value={renaming === null ? '' : renaming}
-            placeholder="Name this conversation…"
-            // Clicking into the resting box is the edit starting. Until
-            // it does, renamingRef is null and the probe is free to put
-            // a title it finds straight into the header — which would
-            // swap the box out from under a caret already in it.
-            onFocus={() => { if (renaming === null) editName(''); }}
-            onChange={e => editName(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={e => {
-              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-              if (e.key === 'Escape') { e.preventDefault(); editName(null); }
-            }}
-            style={{
-              font: 'inherit', fontWeight: 600, padding: '1px 6px', minWidth: '220px',
-              border: '1px solid var(--border-color)', borderRadius: '6px',
-              background: 'var(--bg-card)', color: 'var(--text-primary)',
-            }} />
-        )}
-        {/* The repo, as a way to get to it. It has been a piece of grey
-            text here since the header existed, which is the one place
-            the name is not also a link — the rail links it, and a
-            conversation opened from a link never saw the rail. */}
-        {/* repo is read off info, so info is here whenever repo is. */}
-        {name && repo && (info.htmlUrl
-          ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
-            title={`Open ${repo} on GitHub`}>{repo}</a>
-          : <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>)}
-        <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
-        <Pill {...statusPill} title={phase === 'live' && waiting
-          ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
-          : detail} />
-        <span style={{ flex: 1 }} />
-        {/* How much the engine asks before it acts. A research session
-            starts auto-approving — nobody is necessarily watching one,
-            and a prompt nobody answers stalls the turn until acpd
-            cancels it — so this is here to tighten that, not to loosen
-            it. Hidden entirely for an engine that offers no modes:
-            there is nothing to choose between.
-
-            Labelled by its consequence rather than by the mode's name.
-            "approvals: yolo" names a setting; what the member wants to
-            know at a glance is whether anything is going to stop and
-            ask them, and the mode alone does not say — acpd answering
-            underneath is the other half. The amber is the point: the
-            state worth noticing is the one where nobody is asked. */}
-        {modeOptions.length > 0 && (
-          <label title={(modeOptions.find(m => m.id === mode) || {}).description
-            || 'How much the engine asks before it acts'}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'x-small',
-              color: autoApproving ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
-            }}>
-            {autoApproving ? '⚡ auto-approving' : 'asks first'}
-            <select value={mode} aria-label="Approval mode"
-              disabled={phase !== 'live' || switching}
-              onChange={e => chooseMode(e.target.value)}
-              style={{
-                font: 'inherit', padding: '1px 4px', borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                background: 'var(--bg-card)', color: 'var(--text-primary)',
-              }}>
-              {modeOptions.map(m => (
-                <option key={m.id} value={m.id} title={m.description || ''}>{m.name || m.id}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        {/* The session asked for a mode and did not get it. It is in the
-            transcript too, where it belongs chronologically, but that
-            scrolls away and this does not — and the question it answers
-            ("why is it asking me again?") is asked long after the first
-            screen. Outside the label rather than in it: clicking a
-            warning should not open the picker it is warning about. */}
-        {modeState.problem && (
-          <span role="status" aria-label="Approval mode warning" title={modeState.problem}
-            style={{ fontSize: 'x-small', color: 'var(--status-red, #c62828)', cursor: 'help' }}>
-            ⚠ not applied
-          </span>
-        )}
-        {/* Segments rather than a flip button: which view you are in
-            should be readable without knowing whether the label names
-            the state or the action — and with three of them a flip
-            button is not an option anyway. */}
-        <span style={{
-          display: 'inline-flex', border: '1px solid var(--border-color)',
-          borderRadius: '6px', overflow: 'hidden',
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+          padding: '6px 10px', fontSize: 'small', flex: '0 0 auto',
+          background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)',
         }}>
-          {[
-            ['rich', 'Rendered markdown, in the page\'s own type'],
-            ['mono', 'Rendered markdown in a fixed-width face on the terminal canvas — tables get real borders'],
-            ['raw', 'The bytes the agent sent, unparsed, as a terminal would print them'],
-          ].map(([v, hint]) => (
-            <button key={v} onClick={() => chooseView(v)} title={hint}
-              style={{
-                border: 'none', padding: '2px 8px', fontSize: 'x-small', cursor: 'pointer',
-                background: view === v ? 'var(--bg-hover)' : 'transparent',
-                color: view === v ? 'var(--text-primary)' : 'var(--text-secondary)',
-                fontWeight: view === v ? 600 : 400,
-              }}>{v}</button>
-          ))}
-        </span>
-        {phase === 'live' && busy && (
-          <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
-        )}
-        {/* Two ways to get more room, and they are different enough to
-            both be here rather than one behind the other. Full screen
-            keeps the conversation you are in — same socket, same draft,
-            Escape puts it back — and is what you want for the answer in
-            front of you. The tab is a second place to leave it, which is
-            what you want when you are going to keep the board.
+          {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
+          {/* The name, editable in place. A session is found again by what
+              it was about, so the title is the one thing here worth the
+              width — the repo and the id follow it, quietly.
 
-            Out of the ⋯ menu, where pop out used to live: these are read
-            *while* reading, and a menu is for things you do to a session
-            once. An icon each, because they are a pair. */}
-        {!standalone && (
-          <>
-            <button className="btn btn-sm" onClick={() => setExpanded(e => !e)}
-              aria-pressed={expanded}
-              aria-label={expanded ? 'Exit full screen' : 'Full screen'}
-              title={expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
-              {expanded ? '⤢' : '⛶'}
-            </button>
-            <a className="btn btn-sm" href={`#/research/${sessionId}`}
-              target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
-              title="Open this conversation in its own tab">↗</a>
-          </>
-        )}
-        {/* Everything you do to a session rather than in it, folded
-            behind one button. These are once-a-session actions and one
-            of them is destructive; they were sitting permanently beside
-            the controls used every turn, which both crowded those and
-            put Delete a stray click from Stop. */}
-        <span style={{ position: 'relative', display: 'inline-flex' }}>
-          <button className="btn btn-sm" aria-label="More actions" aria-expanded={menuOpen}
-            onClick={() => setMenuOpen(o => !o)} title="More actions">⋯</button>
-          {menuOpen && (
-            <>
-              {/* Catches the click that should dismiss the menu. A
-                  backdrop rather than a blur handler, so that the click
-                  which closes the menu does not also press whatever it
-                  landed on. */}
-              <div onClick={() => setMenuOpen(false)}
-                style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
-              <div role="menu" style={{
-                position: 'absolute', top: '100%', right: 0, zIndex: 11, marginTop: '4px',
-                display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '2px',
-                padding: '6px', minWidth: '160px', textAlign: 'left',
-                border: '1px solid var(--border-color)', borderRadius: '8px',
-                background: 'var(--bg-card)', boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+              An unnamed session rests *in* the box rather than beside it.
+              It used to fall back to the repo, which read as a name, so
+              the one session that needs naming was the one that looked
+              like it already had one — and the way to fix that was to
+              click a word that gave no sign it was clickable. The repo is
+              a link two inches to the right; saying it twice bought
+              nothing and cost the empty box that asks for a name. */}
+          {renaming === null && name ? (
+            <strong onClick={() => beginRename(name)} style={{ cursor: 'text' }}
+              title="Click to rename this conversation">
+              {name}
+            </strong>
+          ) : (
+            <input ref={titleBoxRef} aria-label="Session title"
+              value={renaming === null ? '' : renaming}
+              placeholder="Name this conversation…"
+              // Clicking into the resting box is the edit starting. Until
+              // it does, renamingRef is null and the probe is free to put
+              // a title it finds straight into the header — which would
+              // swap the box out from under a caret already in it.
+              onFocus={() => { if (renaming === null) editName(''); }}
+              onChange={e => editName(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                if (e.key === 'Escape') { e.preventDefault(); editName(null); }
+              }}
+              style={{
+                font: 'inherit', fontWeight: 600, padding: '1px 6px', minWidth: '220px',
+                border: '1px solid var(--border-color)', borderRadius: '6px',
+                background: 'var(--bg-card)', color: 'var(--text-primary)',
+              }} />
+          )}
+          {/* The repo, as a way to get to it. It has been a piece of grey
+              text here since the header existed, which is the one place
+              the name is not also a link — the rail links it, and a
+              conversation opened from a link never saw the rail. */}
+          {/* repo is read off info, so info is here whenever repo is. */}
+          {name && repo && (info.htmlUrl
+            ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
+              title={`Open ${repo} on GitHub`}>{repo}</a>
+            : <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>)}
+          <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
+          <Pill {...statusPill} title={phase === 'live' && waiting
+            ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
+            : detail} />
+          <span style={{ flex: 1 }} />
+          {/* How much the engine asks before it acts. A research session
+              starts auto-approving — nobody is necessarily watching one,
+              and a prompt nobody answers stalls the turn until acpd
+              cancels it — so this is here to tighten that, not to loosen
+              it. Hidden entirely for an engine that offers no modes:
+              there is nothing to choose between.
+
+              Labelled by its consequence rather than by the mode's name.
+              "approvals: yolo" names a setting; what the member wants to
+              know at a glance is whether anything is going to stop and
+              ask them, and the mode alone does not say — acpd answering
+              underneath is the other half. The amber is the point: the
+              state worth noticing is the one where nobody is asked. */}
+          {modeOptions.length > 0 && (
+            <label title={(modeOptions.find(m => m.id === mode) || {}).description
+              || 'How much the engine asks before it acts'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'x-small',
+                color: autoApproving ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
               }}>
-                {info && info.sandbox && info.namespace && (
-                  <a role="menuitem" href={`#/terminal/${info.namespace}/${info.sandbox}`}
-                    target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
-                    style={{ fontSize: 'x-small', padding: '4px 6px' }}
-                    title={`Shell into ${info.sandbox}`}>terminal ↗</a>
-                )}
-                <button role="menuitem" className="btn btn-delete btn-sm"
-                  onClick={() => { setMenuOpen(false); destroy(); }}
-                  title="Delete the sandbox — the transcript lives on its disk and goes with it">
-                  Delete
-                </button>
-              </div>
+              {autoApproving ? '⚡ auto-approving' : 'asks first'}
+              <select value={mode} aria-label="Approval mode"
+                disabled={phase !== 'live' || switching}
+                onChange={e => chooseMode(e.target.value)}
+                style={{
+                  font: 'inherit', padding: '1px 4px', borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  background: 'var(--bg-card)', color: 'var(--text-primary)',
+                }}>
+                {modeOptions.map(m => (
+                  <option key={m.id} value={m.id} title={m.description || ''}>{m.name || m.id}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {/* The session asked for a mode and did not get it. It is in the
+              transcript too, where it belongs chronologically, but that
+              scrolls away and this does not — and the question it answers
+              ("why is it asking me again?") is asked long after the first
+              screen. Outside the label rather than in it: clicking a
+              warning should not open the picker it is warning about. */}
+          {modeState.problem && (
+            <span role="status" aria-label="Approval mode warning" title={modeState.problem}
+              style={{ fontSize: 'x-small', color: 'var(--status-red, #c62828)', cursor: 'help' }}>
+              ⚠ not applied
+            </span>
+          )}
+          {phase === 'live' && busy && (
+            <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
+          )}
+          {/* Two ways to get more room, and they are different enough to
+              both be here rather than one behind the other. Full screen
+              keeps the conversation you are in — same socket, same draft,
+              Escape puts it back — and is what you want for the answer in
+              front of you. The tab is a second place to leave it, which is
+              what you want when you are going to keep the board.
+
+              Out of the ⋯ menu, where pop out used to live: these are read
+              *while* reading, and a menu is for things you do to a session
+              once. An icon each, because they are a pair. */}
+          {!standalone && (
+            <>
+              <button className="btn btn-sm" onClick={() => setExpanded(e => !e)}
+                aria-pressed={expanded}
+                aria-label={expanded ? 'Exit full screen' : 'Full screen'}
+                title={expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
+                {expanded ? '⤢' : '⛶'}
+              </button>
+              <a className="btn btn-sm" href={`#/research/${sessionId}`}
+                target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
+                title="Open this conversation in its own tab">↗</a>
             </>
           )}
-        </span>
-      </div>
+          {/* Everything you do to a session rather than in it, folded
+              behind one button. These are once-a-session actions and one
+              of them is destructive; they were sitting permanently beside
+              the controls used every turn, which both crowded those and
+              put Delete a stray click from Stop. */}
+          <span style={{ position: 'relative', display: 'inline-flex' }}>
+            <button className="btn btn-sm" aria-label="More actions" aria-expanded={menuOpen}
+              onClick={() => setMenuOpen(o => !o)} title="More actions">⋯</button>
+            {menuOpen && (
+              <>
+                {/* Catches the click that should dismiss the menu. A
+                    backdrop rather than a blur handler, so that the click
+                    which closes the menu does not also press whatever it
+                    landed on. */}
+                <div onClick={() => setMenuOpen(false)}
+                  style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+                <div role="menu" style={{
+                  position: 'absolute', top: '100%', right: 0, zIndex: 11, marginTop: '4px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '2px',
+                  padding: '6px', minWidth: '160px', textAlign: 'left',
+                  border: '1px solid var(--border-color)', borderRadius: '8px',
+                  background: 'var(--bg-card)', boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+                }}>
+                  {info && info.sandbox && info.namespace && (
+                    <a role="menuitem" href={`#/terminal/${info.namespace}/${info.sandbox}`}
+                      target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
+                      style={{ fontSize: 'x-small', padding: '4px 6px' }}
+                      title={`Shell into ${info.sandbox}`}>terminal ↗</a>
+                  )}
+                  <button role="menuitem" className="btn btn-delete btn-sm"
+                    onClick={() => { setMenuOpen(false); destroy(); }}
+                    title="Delete the sandbox — the transcript lives on its disk and goes with it">
+                    Delete
+                  </button>
+                </div>
+              </>
+            )}
+          </span>
+        </div>
 
-      {error && (
-        <div className="warning-banner" style={{ cursor: 'pointer', flex: '0 0 auto' }}
-          onClick={() => setError('')} title="Dismiss">{error}</div>
-      )}
+        {error && (
+          <div className="warning-banner" style={{ cursor: 'pointer', flex: '0 0 auto' }}
+            onClick={() => setError('')} title="Dismiss">{error}</div>
+        )}
 
-      <div ref={scrollRef}
-        className={terminal ? 'research-terminal' : undefined}
-        onScroll={e => {
-          const el = e.currentTarget;
-          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-        }}
-        style={{
-          flex: '1 1 auto', minHeight: fill || expanded ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
-          border: '1px solid var(--border-color)', borderRadius: '10px',
-          // The terminal canvas is its own colour, and an inline
-          // background would win over the class that sets it.
-          background: terminal ? undefined : 'var(--bg-card)',
-          padding: '10px 14px',
+        {/* The canvas: log, prompt and status line, all one colour and one
+            face. The class carries the palette, so nothing in here may set
+            a background inline — an inline one would win over it. */}
+        <div className="research-terminal" style={{
+          flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: 0,
         }}>
-        {/* How this conversation runs, said once at the top of what it
-            said. The transcript only records a mode when one changes,
-            so a session that started auto-approving and never switched
-            — which is every research session — went its whole life
-            without the transcript mentioning it anywhere. Someone
-            reading back through a command they did not approve should
-            find the answer in the thing they are reading, not have to
-            infer it from a control in the header. */}
-        {mode && (
-          <div style={{
-            margin: '0 0 10px', paddingBottom: '8px', fontSize: 'x-small',
-            borderBottom: '1px solid var(--border-color)',
-            color: autoApproving ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
-          }}>
-            This conversation runs in <strong>{(modeOptions.find(m => m.id === mode) || {}).name || mode}</strong>
-            {autoApproving
-              ? ' — tool calls are approved for you, including ones the engine would otherwise stop and ask about.'
-              : ' — you are asked before tool calls that need approval.'}
-            {' '}Change that with the approvals control above.
-          </div>
-        )}
-        {phase === 'gone' && (
-          <p style={{ color: 'var(--text-secondary)' }}>
-            This session no longer exists — the sandbox that held its transcript has been deleted.
-          </p>
-        )}
-        {phase === 'paused' && (
-          <p style={{ color: 'var(--text-secondary)' }}>
-            This session is paused: the sandbox is scaled to zero. Its transcript survives on the
-            sandbox's disk, but nothing is running to answer. {detail}
-          </p>
-        )}
-        {(phase === 'starting' || phase === 'probing') && !transcript.items.length && (
-          <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            {phase === 'starting'
-              ? `Preparing the sandbox — image pull, disk and clone take a few minutes.${detail ? ` (${detail})` : ''}`
-              : 'Connecting…'}
-          </p>
-        )}
-        {phase === 'unreachable' && (
-          <p style={{ color: 'var(--text-danger)' }}>
-            The sandbox is running but its conversation server is not answering: {detail}
-          </p>
-        )}
-        {phase === 'failed' && (
-          <p style={{ color: 'var(--text-danger)' }}>Cannot reach this session: {detail}</p>
-        )}
-        {phase === 'live' && !transcript.items.length && (
-          info && info.openingError ? (
-            <p style={{ color: 'var(--text-danger)' }}>
-              The opening question was never delivered: {info.openingError}. Ask it yourself below —
-              the sandbox itself is fine.
-            </p>
-          ) : info && info.opening ? (
-            <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-              Sending the opening question…
-            </p>
-          ) : (
-            <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-              Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
-              checkout in front of it.
-            </p>
-          )
-        )}
-        {transcript.items.map(item => (terminal
-          ? <TerminalItem key={item.key} item={item} rendered={view === 'mono'}
-            onResolve={resolve} resolving={resolving} />
-          : <TranscriptItem key={item.key} item={item} onResolve={resolve} resolving={resolving} />
-        ))}
-        {busy && !waiting && (
-          <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', fontSize: 'small', margin: '8px 0' }}>
-            working…
-          </div>
-        )}
-      </div>
-
-      <div style={{ flex: '0 0 auto', marginTop: '8px' }}>
-        <PlanPanel entries={transcript.plan} />
-        {/* The composer floats: narrower than the transcript, lifted
-            off it, and brighter than the page behind it.
-
-            Flush to the edges and sharing the transcript's background
-            it read as the last thing in the scroll rather than the one
-            thing on this screen you are meant to type into — which is
-            the whole point of a conversation. Pulling the sides in and
-            putting a shadow under it is what says "this is not more
-            transcript". */}
-        <div style={{
-          maxWidth: '760px', margin: '0 auto', width: 'calc(100% - 32px)',
-          border: `1px solid ${composerFocused ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
-          borderRadius: '14px', background: 'var(--bg-card)', padding: '10px 14px',
-          // Dimmer when there is nothing to type into, so the lift is a
-          // promise the box can keep.
-          boxShadow: composerDisabled ? '0 1px 4px rgba(0,0,0,0.10)'
-            : composerFocused ? '0 6px 20px rgba(0,0,0,0.20)' : '0 3px 12px rgba(0,0,0,0.16)',
-          transition: 'box-shadow 120ms ease, border-color 120ms ease',
-        }}>
-          {/* Not "ask a question about this repository" — that is what
-              the landing pane says, and repeating it here made the
-              composer read like a second place to start rather than
-              the place you carry on. The answer above is the point of
-              a research conversation; the follow-up is what it is
-              for. */}
-          <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)}
-            disabled={phase !== 'live'}
-            placeholder="Continue the research — ask a follow-up…"
-            onFocus={() => setComposerFocused(true)}
-            onBlur={() => setComposerFocused(false)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          <div ref={scrollRef}
+            onScroll={e => {
+              const el = e.currentTarget;
+              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+            }}
             style={{
-              width: '100%', border: 'none', outline: 'none', resize: 'none',
-              background: 'transparent', color: 'var(--text-primary)',
-              font: 'inherit', boxSizing: 'border-box',
-            }} />
-          <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            gap: '8px', marginTop: '6px',
+              flex: '1 1 auto', minHeight: fill || expanded ? 0 : '240px', overflowY: 'auto', textAlign: 'left',
+              padding: '10px 14px',
+            }}>
+            {/* How this conversation runs, said once at the top of what it
+                said. The transcript only records a mode when one changes,
+                so a session that started auto-approving and never switched
+                — which is every research session — went its whole life
+                without the transcript mentioning it anywhere. Someone
+                reading back through a command they did not approve should
+                find the answer in the thing they are reading, not have to
+                infer it from a control in the header. */}
+            {mode && (
+              <div style={{
+                margin: '0 0 10px', paddingBottom: '8px', fontSize: 'x-small',
+                borderBottom: '1px solid var(--term-rule)',
+                color: autoApproving ? 'var(--term-yellow)' : 'var(--term-dim)',
+              }}>
+                This conversation runs in <strong>{(modeOptions.find(m => m.id === mode) || {}).name || mode}</strong>
+                {autoApproving
+                  ? ' — tool calls are approved for you, including ones the engine would otherwise stop and ask about.'
+                  : ' — you are asked before tool calls that need approval.'}
+                {' '}Change that with the approvals control above.
+              </div>
+            )}
+            {phase === 'gone' && (
+              <p style={{ color: 'var(--term-dim)' }}>
+                This session no longer exists — the sandbox that held its transcript has been deleted.
+              </p>
+            )}
+            {phase === 'paused' && (
+              <p style={{ color: 'var(--term-dim)' }}>
+                This session is paused: the sandbox is scaled to zero. Its transcript survives on the
+                sandbox's disk, but nothing is running to answer. {detail}
+              </p>
+            )}
+            {(phase === 'starting' || phase === 'probing') && !transcript.items.length && (
+              <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
+                {phase === 'starting'
+                  ? `Preparing the sandbox — image pull, disk and clone take a few minutes.${detail ? ` (${detail})` : ''}`
+                  : 'Connecting…'}
+              </p>
+            )}
+            {phase === 'unreachable' && (
+              <p style={{ color: 'var(--term-red)' }}>
+                The sandbox is running but its conversation server is not answering: {detail}
+              </p>
+            )}
+            {phase === 'failed' && (
+              <p style={{ color: 'var(--term-red)' }}>Cannot reach this session: {detail}</p>
+            )}
+            {phase === 'live' && !transcript.items.length && (
+              info && info.openingError ? (
+                <p style={{ color: 'var(--term-red)' }}>
+                  The opening question was never delivered: {info.openingError}. Ask it yourself below —
+                  the sandbox itself is fine.
+                </p>
+              ) : info && info.opening ? (
+                <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
+                  Sending the opening question…
+                </p>
+              ) : (
+                <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
+                  Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
+                  checkout in front of it.
+                </p>
+              )
+            )}
+            {transcript.items.map(item => (
+              <TerminalItem key={item.key} item={item} rendered={view === 'rendered'}
+                onResolve={resolve} resolving={resolving} />
+            ))}
+            {busy && !waiting && (
+              <div className="term-line term-dim" style={{ margin: '8px 0' }}>working…</div>
+            )}
+          </div>
+
+          <PlanPanel entries={transcript.plan} />
+
+          {/* The prompt, as a terminal draws one: the same `❯ ` the
+              transcript puts in front of every question you have already
+              asked, and the same face, on the same canvas.
+
+              This used to be a rounded card floating clear of the
+              transcript on a drop shadow, because flush and unmarked it
+              read as the last thing in the scroll rather than the one
+              thing you are meant to type into. The sigil is what does that
+              job now, and does it better: it is the mark a prompt has, and
+              it says the same thing before and after you press Enter.
+
+              The rule above it is the one liberty taken with the idiom. A
+              real terminal's prompt is the last line of the scrollback and
+              needs no separating from it, but this log scrolls under a
+              prompt that does not, and unmarked that reads as a bug. */}
+          <div className="term-prompt" style={{
+            flex: '0 0 auto', padding: '6px 14px 4px',
+            borderTop: `1px solid ${composerFocused ? 'var(--term-accent)' : 'var(--term-rule)'}`,
           }}>
-            <span role="status" aria-label="Composer state" style={{
-              fontSize: 'x-small',
-              color: composerState && composerState.urgent
-                ? 'var(--status-amber, #b08800)' : 'var(--text-secondary)',
-            }}>{composerState ? composerState.text : ''}</span>
-            <button className="btn btn-sm" disabled={!draft.trim() || composerDisabled} onClick={send}>
-              {sending ? 'Sending…' : 'Send'}
+            <span className="term-sigil term-user" aria-hidden="true">❯ </span>
+            {/* Not "ask a question about this repository" — that is what
+                the landing pane says, and repeating it here made the
+                composer read like a second place to start rather than
+                the place you carry on. The answer above is the point of
+                a research conversation; the follow-up is what it is
+                for. */}
+            <GrowingTextarea value={draft} onChange={e => setDraft(e.target.value)}
+              disabled={phase !== 'live'}
+              aria-label="Continue the research"
+              placeholder="Continue the research — ask a follow-up…"
+              onFocus={() => setComposerFocused(true)}
+              onBlur={() => setComposerFocused(false)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+          </div>
+
+          {/* The status line, which is what a terminal puts under its
+              prompt: what the session is doing, how to send, and how you
+              are reading it. Dim, because none of it is the conversation —
+              it is the line you glance at, not the one you read. */}
+          <div className="term-statusbar" style={{ flex: '0 0 auto', padding: '2px 14px 6px' }}>
+            {/* With nothing to report, the key hints have the space. They
+                are a separate element from the status below rather than a
+                fallback inside it, because that one is a live region: a
+                screen reader would read these out afresh every time the
+                turn ended, which is the moment it should be saying that
+                the turn ended. */}
+            {!composerState && <span className="term-dim">⏎ send · ⇧⏎ newline</span>}
+            {/* Why it will not send, beside the button rather than in the
+                placeholder: a placeholder is gone the instant anybody
+                types, and "the agent is waiting on a permission above"
+                starts mattering precisely then. Mounted even when empty,
+                so the region exists before it has anything to announce. */}
+            <span role="status" aria-label="Composer state"
+              className={composerState && composerState.urgent ? 'term-urgent' : 'term-dim'}>
+              {composerState ? composerState.text : ''}
+            </span>
+            <span style={{ flex: 1 }} />
+            <span className="term-views">
+              {[
+                ['rendered', 'The agent\'s markdown parsed — tables get real borders'],
+                ['raw', 'The bytes the agent sent, unparsed, as a terminal would print them'],
+              ].map(([v, hint]) => (
+                <button key={v} onClick={() => chooseView(v)} title={hint}
+                  aria-pressed={view === v}>{v}</button>
+              ))}
+            </span>
+            <button className="term-send" disabled={!draft.trim() || composerDisabled} onClick={send}>
+              {sending ? 'sending…' : 'send'}
             </button>
           </div>
         </div>
@@ -1746,7 +1685,12 @@ export function ResearchPanel({ boardName, repoURL }) {
           border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '10px 12px',
         }}>
-          <textarea rows={4} value={topic} onChange={e => setTopic(e.target.value)}
+          {/* Starts at two lines rather than one. Unlike the composer
+              this box is the only thing on an otherwise empty pane, and
+              a single line there reads as a search field — which is not
+              what is being asked for. */}
+          <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2}
+            aria-label="Research question"
             placeholder="Ask anything about this repo — a question, a subsystem, or 'compare with …'"
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } }}
             style={{

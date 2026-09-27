@@ -9,6 +9,7 @@ import {
     buildResearchTranscript,
     pendingPermission,
     normaliseView,
+    grownHeight,
 } from './Research';
 
 // react-markdown ships as ESM and jest does not transform node_modules,
@@ -397,23 +398,60 @@ describe('pendingPermission', () => {
 
 describe('normaliseView', () => {
     test('keeps a view it knows', () => {
-        expect(normaliseView('rich')).toBe('rich');
-        expect(normaliseView('mono')).toBe('mono');
+        expect(normaliseView('rendered')).toBe('rendered');
         expect(normaliseView('raw')).toBe('raw');
     });
 
-    test('carries the old terminal choice over to raw', () => {
-        // `terminal` was the one segment beside rich, and it meant
-        // unparsed source. mono is now the other thing that word could
-        // have meant, so someone who picked terminal must land on raw —
-        // moving them to a view they have never seen would read as the
-        // setting having been thrown away.
+    test('every retired view lands on the half of it that still exists', () => {
+        // The stored value is not the setting — whether the agent's
+        // prose is parsed is. Both retired views said something about
+        // that and something about a canvas there is now only one of,
+        // so each keeps the half that is still a choice.
+        //
+        // `rich` was parsed markdown on the page's own type, and `mono`
+        // was the same parsed markdown on the terminal canvas: the
+        // canvas is gone as a question, the parsing is not.
+        expect(normaliseView('rich')).toBe('rendered');
+        expect(normaliseView('mono')).toBe('rendered');
+        // `terminal` was this tab's first name for unparsed source, and
+        // it has already been migrated once, to `raw`. Both spellings
+        // are still out there in localStorage.
         expect(normaliseView('terminal')).toBe('raw');
     });
 
-    test('falls back to rich for nothing and for nonsense', () => {
-        expect(normaliseView(null)).toBe('rich');
-        expect(normaliseView('')).toBe('rich');
-        expect(normaliseView('solarized')).toBe('rich');
+    test('falls back to rendered for nothing and for nonsense', () => {
+        expect(normaliseView(null)).toBe('rendered');
+        expect(normaliseView('')).toBe('rendered');
+        expect(normaliseView('solarized')).toBe('rendered');
+    });
+});
+
+describe('grownHeight', () => {
+    test('is as tall as what has been typed, between the two bounds', () => {
+        // One line of content in a box allowed one to ten.
+        expect(grownHeight(20, 20, 1, 10)).toEqual({ height: 20, scroll: false });
+        // Four lines of it.
+        expect(grownHeight(80, 20, 1, 10)).toEqual({ height: 80, scroll: false });
+    });
+
+    test('stops growing at maxRows and scrolls instead', () => {
+        // The cap is what stops a pasted stack trace eating the
+        // transcript the composer is a follow-up to. Past it the text
+        // has to go somewhere, so the box scrolls.
+        expect(grownHeight(600, 20, 1, 10)).toEqual({ height: 200, scroll: true });
+        // Exactly full is not yet overfull: a tenth line fits in ten
+        // rows, and turning the scrollbar on there would be a scrollbar
+        // over nothing.
+        expect(grownHeight(200, 20, 1, 10)).toEqual({ height: 200, scroll: false });
+    });
+
+    test('never shrinks below minRows', () => {
+        // The landing box asks for two lines even when empty — it is
+        // the only thing on that pane, and one line reads as a search
+        // field rather than as somewhere to ask a question.
+        expect(grownHeight(20, 20, 2, 10)).toEqual({ height: 40, scroll: false });
+        // Including the degenerate case: an element that has not been
+        // laid out yet reports nothing, and must not collapse to zero.
+        expect(grownHeight(0, 20, 1, 10)).toEqual({ height: 20, scroll: false });
     });
 });
