@@ -81,6 +81,11 @@ type fakeACPD struct {
 	// sessionExists controls whether GET /sessions/<id> answers or 404s,
 	// which is the difference between reusing a session and creating one.
 	sessionExists bool
+	// live, when non-nil, answers GET by session id and is authoritative:
+	// an id that is not in it 404s. For the list, where several sessions
+	// are asked about in one request and the whole point is that they can
+	// be in different states. nil leaves the single-session behaviour.
+	live map[string]acpd.Session
 	// promptStatus overrides the prompt reply, for the busy case.
 	promptStatus int
 	// transcript is what the event stream serves.
@@ -111,7 +116,17 @@ func (f *fakeACPD) handler() http.Handler {
 		f.mu.Lock()
 		exists := f.sessionExists
 		mode, modeError := f.mode, f.modeError
+		live, byID := f.live, f.live[r.PathValue("id")]
 		f.mu.Unlock()
+		if live != nil {
+			if byID.ID == "" {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"no such session"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(byID)
+			return
+		}
 		if !exists {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"no such session"}`))
@@ -263,13 +278,20 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	manager := &k8s.Manager{Client: dynamicClient, Clientset: clientset}
 	server := &Server{K8sManager: manager, Auth: &auth.Authenticator{K8sManager: manager}}
 
-	if acp != nil {
-		srv := httptest.NewServer(acp.handler())
-		t.Cleanup(srv.Close)
-		prev := acpdClientForPodIP
-		acpdClientForPodIP = func(string) *acpd.Client { return acpd.New(srv.URL) }
-		t.Cleanup(func() { acpdClientForPodIP = prev })
+	// Always stood up, even for a test that passes no fake: the list now
+	// asks every running pod what its engine is doing, so leaving the seam
+	// pointed at the real dialer sends a unit test at whatever 10.0.0.9
+	// happens to be and waits out the timeout when nothing answers. An
+	// empty fake 404s every session, which is the truthful stand-in — a
+	// pod that is up with no engine in it.
+	if acp == nil {
+		acp = &fakeACPD{}
 	}
+	srv := httptest.NewServer(acp.handler())
+	t.Cleanup(srv.Close)
+	prev := acpdClientForPodIP
+	acpdClientForPodIP = func(string) *acpd.Client { return acpd.New(srv.URL) }
+	t.Cleanup(func() { acpdClientForPodIP = prev })
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -370,6 +392,143 @@ func TestResearchSessionListSaysStartingUntilThePodRuns(t *testing.T) {
 	// not a wait, and calling it starting would promise it is coming back.
 	if starting["3c2f9a71-0000-4000-8000-000000000003"] {
 		t.Errorf("a paused sandbox should not be starting: %s", w.Body.String())
+	}
+}
+
+// The rail's whole job is telling you which conversation to open. A list
+// that says "up" for all of them says the pods are running, which is not
+// a question anyone has — so each row carries what its engine is actually
+// doing, and the three states have to be told apart in one request.
+func TestResearchListReportsWhatEachEngineIsDoing(t *testing.T) {
+	const (
+		thinking = "3c2f9a71-0000-4000-8000-00000000000a"
+		asking   = "3c2f9a71-0000-4000-8000-00000000000b"
+	)
+	idle := researchSandboxCR("alice", researchSession, researchRepo, false)
+	working := researchSandboxCR("alice", thinking, researchRepo, false)
+	blocked := researchSandboxCR("alice", asking, researchRepo, false)
+
+	acp := &fakeACPD{live: map[string]acpd.Session{
+		researchSession: {ID: researchSession},
+		thinking:        {ID: thinking, Busy: true},
+		// Waiting comes with Busy, because it is a turn in flight that has
+		// stopped — not a third thing instead of being busy.
+		asking: {ID: asking, Busy: true, Waiting: true},
+	}}
+	r, _ := researchTestServer(t, acp,
+		[]*unstructured.Unstructured{idle, working, blocked},
+		researchPod("alice", idle.GetName(), "10.0.0.1", corev1.PodRunning),
+		researchPod("alice", working.GetName(), "10.0.0.2", corev1.PodRunning),
+		researchPod("alice", blocked.GetName(), "10.0.0.3", corev1.PodRunning))
+
+	byID := map[string]researchSandboxView{}
+	for _, s := range listResearch(t, r) {
+		byID[s.SessionID] = s
+	}
+	if len(byID) != 3 {
+		t.Fatalf("got %d sessions, want 3", len(byID))
+	}
+
+	for id, view := range byID {
+		if !view.Live {
+			t.Errorf("session %s has an engine but the row does not say live", id)
+		}
+		if view.Unreachable != "" {
+			t.Errorf("session %s reported unreachable: %s", id, view.Unreachable)
+		}
+	}
+	if byID[researchSession].Busy || byID[researchSession].Waiting {
+		t.Error("a session sitting idle was reported as doing something")
+	}
+	if !byID[thinking].Busy {
+		t.Error("a session with a turn in flight was not reported busy")
+	}
+	if byID[thinking].Waiting {
+		t.Error("a session that is merely thinking was reported as waiting on a human")
+	}
+	if !byID[asking].Waiting {
+		t.Error("a session blocked on a permission request was not reported waiting")
+	}
+	if !byID[asking].Busy {
+		t.Error("a waiting session stopped being busy, which would hide it from a busy check")
+	}
+}
+
+// A pod with no engine in it is the resting state of every session
+// nobody has opened, and of every one whose acpd restarted. It is not an
+// error and must not read as one.
+func TestResearchListSeparatesNoEngineFromNoAnswer(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, _ := researchTestServer(t, &fakeACPD{sessionExists: false},
+		[]*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
+
+	got := listResearch(t, r)
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if got[0].Live {
+		t.Error("a pod whose acpd has no session for this id was reported live")
+	}
+	if got[0].Unreachable != "" {
+		t.Errorf("acpd answered, so the row should not claim it is unreachable: %q", got[0].Unreachable)
+	}
+	if got[0].Starting {
+		t.Error("the pod is running; only the engine is missing")
+	}
+}
+
+// A pod that cannot be reached must not be reported as an idle session.
+// The row still renders — the sandbox is the durable thing — but the
+// live fields are absent and the reason is on the row, because "quiet"
+// and "broken" are not the same answer.
+func TestResearchListSaysWhenAPodCouldNotBeAsked(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, _ := researchTestServer(t, &fakeACPD{},
+		[]*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
+
+	// Port 1 refuses immediately, which is what a pod with no acpd
+	// listening does — and unlike an unroutable address it does not make
+	// the test wait out the timeout to prove it.
+	prev := acpdClientForPodIP
+	acpdClientForPodIP = func(string) *acpd.Client { return acpd.New("http://127.0.0.1:1") }
+	t.Cleanup(func() { acpdClientForPodIP = prev })
+
+	got := listResearch(t, r)
+	if len(got) != 1 {
+		t.Fatalf("a pod that cannot be reached should not cost the row: got %d", len(got))
+	}
+	if got[0].Unreachable == "" {
+		t.Error("the row did not say why its engine could not be asked")
+	}
+	if got[0].Live || got[0].Busy || got[0].Waiting {
+		t.Error("a row we failed to reach reported live state anyway")
+	}
+	// The name and the sandbox still come from Kubernetes, which is the
+	// half of the answer that never depended on the pod.
+	if got[0].Sandbox != sb.GetName() {
+		t.Errorf("sandbox = %q, want %q", got[0].Sandbox, sb.GetName())
+	}
+}
+
+// Nothing without a running pod gets dialled. A paused session has no
+// engine by definition and a requested one has no sandbox yet; asking
+// about them would be one doomed connection per row, every ten seconds.
+func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
+	paused := researchSandboxCR("alice", researchSession, researchRepo, true)
+	acp := &fakeACPD{live: map[string]acpd.Session{}}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{paused})
+
+	got := listResearch(t, r)
+	if len(got) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(got))
+	}
+	if got[0].Live || got[0].Unreachable != "" {
+		t.Errorf("a paused row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
+	}
+	if acp.sawCall("GET /sessions/" + researchSession) {
+		t.Error("the list dialled a paused session's pod, which does not exist")
 	}
 }
 
@@ -1044,6 +1203,28 @@ func TestResearchStatusReportsTheMode(t *testing.T) {
 	// have to hardcode one engine's vocabulary to offer the control.
 	if !strings.Contains(w.Body.String(), `"availableModes"`) {
 		t.Errorf("availableModes missing from the status: %s", w.Body.String())
+	}
+}
+
+// The status carries waiting as well as the list does, so the two cannot
+// disagree about one session. It matters most on the first paint: the
+// conversation learns this from the event stream, which only tells it
+// what happens after it attached — a session that stopped to ask
+// something before anybody opened it has no event left to send.
+func TestResearchStatusReportsAWaitingSession(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{live: map[string]acpd.Session{
+		researchSession: {ID: researchSession, Busy: true, Waiting: true},
+	}}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"waiting":true`) {
+		t.Errorf("a session blocked on a permission request did not say so: %s", w.Body.String())
 	}
 }
 

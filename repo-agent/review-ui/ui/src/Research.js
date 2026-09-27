@@ -1627,11 +1627,39 @@ export function ResearchPanel({ boardName, repoURL }) {
       return <Pill text="starting…" color="#b08800" bg="rgba(176,136,0,0.12)"
         title="The sandbox exists; its pod is still coming up — image, disk, clone" />;
     }
+    // Above `opening…` deliberately. A first turn that stopped to ask
+    // something is still an unanswered question with your name on it, and
+    // "opening…" reads as "wait" — which is how a session sits there until
+    // the permission timeout takes the turn away.
+    if (s.waiting) {
+      return <Pill text="needs you" color="var(--text-danger)" bg="var(--bg-danger-light)"
+        title="Stopped on a permission request. Open it and answer, or the turn is cancelled after ten minutes." />;
+    }
     if (s.opening) {
       return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
         title="The first question has not reached the agent yet" />;
     }
-    return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)" />;
+    if (s.busy) {
+      return <Pill text="working…" color="var(--link-color, #0969da)" bg="rgba(9,105,218,0.12)"
+        title="A turn is in flight — the agent is thinking, and nothing is being asked of you" />;
+    }
+    // Not a failure: the sandbox is fine and the conversation is intact,
+    // we just could not ask its engine anything this time round. Said out
+    // loud rather than shown as idle, because a wedged pod reported as
+    // quiet is the one lie this whole change exists to stop telling.
+    if (s.unreachable) {
+      return <Pill text="no answer" color="var(--text-secondary)" bg="var(--bg-secondary)"
+        title={`The sandbox is up but its conversation server did not answer:\n${s.unreachable}`} />;
+    }
+    if (s.live) {
+      return <Pill text="idle" color="var(--text-secondary)" bg="var(--bg-secondary)"
+        title="The agent is up with nothing in flight — waiting on your next question" />;
+    }
+    // No engine in the pod: the resting state of a session nobody has
+    // opened, and of one whose daemon restarted. Green because nothing is
+    // wrong — the conversation starts when you open it.
+    return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)"
+      title="The sandbox is ready. Nothing is running in it until you open the conversation." />;
   };
 
   // railRow is one conversation in the left rail: what it was about on

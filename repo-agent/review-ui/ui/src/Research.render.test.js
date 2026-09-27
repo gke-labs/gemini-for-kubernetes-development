@@ -813,6 +813,82 @@ describe('ResearchPanel', () => {
         return row;
     };
 
+    // rowFor is the rail row whose first line is this title.
+    const rowFor = (title) => {
+        const row = [...container.querySelectorAll('button')]
+            .find(b => b.textContent.startsWith(title));
+        expect(row).toBeTruthy();
+        return row;
+    };
+
+    const liveRail = async (rows) => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessions: rows.map((r, i) => ({
+                sessionId: `live-${i}`, repo: 'repo-agent',
+                createdAt: '2026-09-26T10:00:00Z', ...r,
+            })),
+        }));
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+    };
+
+    // The rail exists to tell you which conversation to open. "up" answers
+    // a question about the pod, which is not one anybody asked.
+    test('the rail says what each agent is doing, not that its pod is running', async () => {
+        await liveRail([
+            { title: 'thinking one', live: true, busy: true },
+            { title: 'blocked one', live: true, busy: true, waiting: true },
+            { title: 'quiet one', live: true },
+            { title: 'cold one' },
+            { title: 'silent one', unreachable: 'dial tcp 10.0.0.1:49984: connection refused' },
+        ]);
+
+        expect(rowFor('thinking one').textContent).toContain('working…');
+        expect(rowFor('quiet one').textContent).toContain('idle');
+        // No engine in the pod yet: nothing is wrong, and the conversation
+        // starts when you open it.
+        expect(rowFor('cold one').textContent).toContain('up');
+
+        // The one that has stopped to ask something is the one worth
+        // finding, and it is busy too — so busy must not be what it says.
+        const blocked = rowFor('blocked one');
+        expect(blocked.textContent).toContain('needs you');
+        expect(blocked.textContent).not.toContain('working');
+
+        // A pod we could not ask is not a quiet one. The reason is a
+        // hover away rather than in the rail, which is 260px wide.
+        const silent = rowFor('silent one');
+        expect(silent.textContent).toContain('no answer');
+        expect(silent.textContent).not.toContain('idle');
+        expect(silent.textContent).not.toContain('connection refused');
+        expect(silent.querySelector('[title*="connection refused"]')).toBeTruthy();
+    });
+
+    // A canned first turn that stopped to ask something is still an
+    // unanswered question with your name on it. "opening…" reads as
+    // "wait", which is how a session sits there until the permission
+    // timeout takes its turn away.
+    test('a first turn that stopped to ask something says so, not that it is opening', async () => {
+        await liveRail([{ title: 'the overview', opening: true, live: true, busy: true, waiting: true }]);
+
+        const row = rowFor('the overview');
+        expect(row.textContent).toContain('needs you');
+        expect(row.textContent).not.toContain('opening');
+    });
+
+    // Live state is the last thing the row is allowed to say. A sandbox
+    // with no pod cannot be busy, and a stale flag on a paused row would
+    // send someone to a conversation with no engine in it.
+    test('a paused session is paused, whatever else the row is carrying', async () => {
+        await liveRail([{ title: 'the old one', paused: true, busy: true, waiting: true }]);
+
+        const row = rowFor('the old one');
+        expect(row.textContent).toContain('paused');
+        expect(row.textContent).not.toContain('needs you');
+    });
+
     test('the row is the selection, and the rail it came from stays put', async () => {
         global.fetch = jest.fn(() => reply(404, { error: 'not found' }));
         global.fetch.mockImplementationOnce(() => reply(200, sessions));
