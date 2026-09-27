@@ -357,6 +357,83 @@ describe('ResearchConversation', () => {
         expect(container.querySelector('strong').textContent).toBe('retry loop');
     });
 
+    test('an unnamed session rests in the box that asks for a name', async () => {
+        // It used to fall back to the repo, so the one session that
+        // needed naming was the one that looked like it had a name —
+        // and the repo is a link two inches to the right anyway.
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        expect(container.querySelector('strong')).toBeNull();
+        const field = container.querySelector('input[aria-label="Session title"]');
+        expect(field.value).toBe('');
+        expect(field.placeholder).toBe('Name this conversation…');
+    });
+
+    test('an unnamed session names itself from its first question', async () => {
+        // TitleAnnotation has promised this fallback since it existed.
+        // The list cannot do it — it is built from annotations and will
+        // not read N transcripts to draw a sidebar — but the
+        // conversation has the transcript open already, so one PATCH
+        // makes the name durable for the list too.
+        const patched = [];
+        global.fetch = jest.fn((url, opts) => {
+            if (opts && opts.method === 'PATCH') {
+                patched.push(JSON.parse(opts.body));
+                return reply(200, { sessionId: 's1', title: 'where does the retry loop live' });
+            }
+            return reply(200, { sessionId: 's1', repo: 'repo-agent' });
+        });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: {
+                    seq: 1, kind: 'user_prompt',
+                    data: { text: 'where does the retry loop live, and what backs it off?' },
+                },
+            });
+            ws.deliver({ type: 'event', offset: 60, event: { seq: 2, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
+        });
+        await flush();
+
+        // Sent raw: Truncate on the server is what a title means, and
+        // duplicating that rule here would be a second answer to it.
+        expect(patched).toEqual([{ title: 'where does the retry loop live, and what backs it off?' }]);
+        // And what comes back is what appears — never the paragraph.
+        expect(container.querySelector('strong').textContent).toBe('where does the retry loop live');
+    });
+
+    test('a session the server has already named does not rename itself', async () => {
+        // name is seeded from the row that was clicked, so the guard has
+        // to be the server's title. A canned or topic session is named
+        // at creation, which is what keeps the rendered brief in
+        // topic.txt from ever becoming somebody's session name.
+        global.fetch = jest.fn((url, opts) => {
+            if (opts && opts.method === 'PATCH') throw new Error('should not rename a named session');
+            return reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview' });
+        });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 40,
+                event: { seq: 1, kind: 'user_prompt', data: { text: 'You are researching the repository…' } },
+            });
+        });
+        await flush();
+
+        expect(container.querySelector('strong').textContent).toBe('overview');
+    });
+
     test('an opening turn still owed is said rather than left blank', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview', opening: true }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
@@ -896,6 +973,31 @@ describe('ResearchPanel', () => {
 
         expect(container.querySelector('[aria-label="Open in a new tab"]')).toBeNull();
         expect(container.querySelector('[aria-label="Full screen"]')).toBeNull();
+    });
+
+    test('double-clicking a row renames it, in the box the header already had', async () => {
+        // One rename and one PATCH: the rail sends you to the header's
+        // box rather than growing an editor of its own. What the gesture
+        // buys is discoverability — bold text gives no sign it is
+        // clickable, and a row does.
+        global.fetch = jest.fn(() => reply(200, sessions));
+        await act(async () => {
+            root.render(<ResearchPanel boardName="repo-agent" repoURL="https://github.com/gke-labs/repo-agent" />);
+        });
+        await flush();
+
+        const row = [...container.querySelectorAll('button')]
+            .find(b => b.textContent.startsWith('the retry loop'));
+        await act(async () => { row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); });
+        await flush();
+
+        const field = container.querySelector('input[aria-label="Session title"]');
+        expect(field).toBeTruthy();
+        expect(field.value).toBe('the retry loop');
+        // autoFocus is a mount-time prop and would not have covered the
+        // unnamed case, where the box is already on screen.
+        expect(document.activeElement).toBe(field);
+        expect(row.title).toContain('double-click to rename');
     });
 
     test('the other-repositories list keeps the repo, which is why it is separate', async () => {

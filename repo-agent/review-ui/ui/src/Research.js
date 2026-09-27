@@ -619,7 +619,7 @@ export function normaliseView(stored) {
 // opened the conversation in a slide-over: that wants the full height
 // and the pop-out both.
 export function ResearchConversation({
-  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone,
+  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone, renameAt,
 }) {
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
@@ -640,6 +640,14 @@ export function ResearchConversation({
   // making itself depend on the draft.
   const renamingRef = useRef(null);
   const editName = (draftName) => { renamingRef.current = draftName; setRenaming(draftName); };
+  // The title box, and whether the next render owes it the caret.
+  // autoFocus is not enough: it is a mount-time thing, and an unnamed
+  // session already rests in the box, so the render that starts an edit
+  // there mounts nothing. One mechanism for both, rather than a prop
+  // that works for half the cases.
+  const titleBoxRef = useRef(null);
+  const focusTitleRef = useRef(false);
+  const beginRename = (seed) => { focusTitleRef.current = true; editName(seed); };
   const [transcript, setTranscript] = useState(emptyTranscript);
   const [openBusy, setOpenBusy] = useState(false);
   const [caughtUp, setCaughtUp] = useState(false);
@@ -906,6 +914,36 @@ export function ResearchConversation({
     if (info && info.title && renamingRef.current === null) setName(info.title);
   }, [info]);
 
+  // The rail asking for a rename. It is a counter and not a boolean
+  // because double-clicking the row you are already on has to work too,
+  // and that does not remount anything — the only thing that changes is
+  // that you asked again.
+  //
+  // Declared after the seed effect above so that on the mount which
+  // brings a new session in, the seed's editName(null) runs first and
+  // this has the last word.
+  useEffect(() => {
+    if (renameAt) beginRename(name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renameAt]);
+
+  // Hands the caret to the title box on the render that owes it one,
+  // and selects what is there so typing replaces the old name rather
+  // than appending to it — a rename is usually a different name.
+  useEffect(() => {
+    if (!focusTitleRef.current) return;
+    // Held, not consumed, until the box is actually there. Starting an
+    // edit on a named session sets the flag and the state in the same
+    // commit, and the effects of that commit run before the render that
+    // swaps the bold text for the input — so the first time through
+    // there is nothing to focus yet.
+    const el = titleBoxRef.current;
+    if (!el) return;
+    focusTitleRef.current = false;
+    el.focus();
+    el.select();
+  });
+
   const send = () => {
     const text = draft.trim();
     if (!text || sending || busy || phase !== 'live') return;
@@ -932,13 +970,19 @@ export function ResearchConversation({
       .finally(() => setSending(false));
   };
 
-  const commitRename = () => {
-    const next = (renaming || '').trim();
-    editName(null);
+  // applyRename is the PATCH, shared by the member typing a name and by
+  // a session naming itself.
+  //
+  // `optimistic` is whether to show the text before the server answers.
+  // A typed name is already a title, so showing it immediately is right.
+  // An auto-name is a whole first question, and the point of sending it
+  // raw is that the server's Truncate is what a title means — flashing
+  // the untruncated paragraph first would be showing a name that was
+  // never going to be the name.
+  const applyRename = (raw, optimistic) => {
+    const next = (raw || '').trim();
     if (!next || next === name) return;
-    // Shown immediately and corrected by the answer: the server
-    // truncates, so what comes back is what the name actually is.
-    setName(next);
+    if (optimistic) setName(next);
     fetch(`/api/research/${encodeURIComponent(sessionId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -952,6 +996,44 @@ export function ResearchConversation({
       })
       .catch(err => setError(`rename failed: ${err}`));
   };
+
+  const commitRename = () => {
+    const typed = renaming;
+    editName(null);
+    applyRename(typed, true);
+  };
+
+  // An unnamed session names itself from its first question.
+  //
+  // TitleAnnotation has documented this since it existed — "absent means
+  // the list should fall back to the first line of the transcript" — and
+  // nothing ever delivered it, because the list is built from sandbox
+  // annotations and making it read N transcripts to draw a sidebar is
+  // not a trade worth making. This side already has the transcript open.
+  // One PATCH the first time an unnamed session is read, and the name is
+  // durable: the list sees it, the next tab sees it, and it survives
+  // everything except deleting the sandbox it is written on.
+  //
+  // Guarded on info.title, which is what the server has, and not on
+  // `name`, which is seeded from the row that was clicked — a session
+  // the list already has a title for must never be renamed by whatever
+  // it happens to open with. And skipped outright while the member is
+  // typing a name, because they are answering the same question better.
+  //
+  // Only sessions with no kickoff reach this. A canned or topic session
+  // is named at creation by Kickoff.ResolvedTitle, so info.title is set
+  // long before the transcript is, which is what keeps the rendered
+  // brief in topic.txt from ever becoming somebody's session name.
+  const namedRef = useRef(false);
+  useEffect(() => {
+    if (namedRef.current || !caughtUp) return;
+    if (!info || info.title || renamingRef.current !== null) return;
+    const first = transcript.items.find(i => i.role === 'user' && (i.text || '').trim());
+    if (!first) return;
+    namedRef.current = true;
+    applyRename(first.text, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info, caughtUp, transcript]);
 
   const resolve = (resolution) => {
     setResolving(true);
@@ -1094,14 +1176,29 @@ export function ResearchConversation({
         {onBack && <button className="btn btn-sm" onClick={onBack}>← Sessions</button>}
         {/* The name, editable in place. A session is found again by what
             it was about, so the title is the one thing here worth the
-            width — the repo and the id follow it, quietly. */}
-        {renaming === null ? (
-          <strong onClick={() => editName(name)} style={{ cursor: 'text' }}
+            width — the repo and the id follow it, quietly.
+
+            An unnamed session rests *in* the box rather than beside it.
+            It used to fall back to the repo, which read as a name, so
+            the one session that needs naming was the one that looked
+            like it already had one — and the way to fix that was to
+            click a word that gave no sign it was clickable. The repo is
+            a link two inches to the right; saying it twice bought
+            nothing and cost the empty box that asks for a name. */}
+        {renaming === null && name ? (
+          <strong onClick={() => beginRename(name)} style={{ cursor: 'text' }}
             title="Click to rename this conversation">
-            {name || repo || 'research'}
+            {name}
           </strong>
         ) : (
-          <input autoFocus value={renaming} aria-label="Session title"
+          <input ref={titleBoxRef} aria-label="Session title"
+            value={renaming === null ? '' : renaming}
+            placeholder="Name this conversation…"
+            // Clicking into the resting box is the edit starting. Until
+            // it does, renamingRef is null and the probe is free to put
+            // a title it finds straight into the header — which would
+            // swap the box out from under a caret already in it.
+            onFocus={() => { if (renaming === null) editName(''); }}
             onChange={e => editName(e.target.value)}
             onBlur={commitRename}
             onKeyDown={e => {
@@ -1558,8 +1655,24 @@ export function ResearchPanel({ boardName, repoURL }) {
       <button key={s.sessionId} type="button"
         aria-current={selected ? 'true' : undefined}
         onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
+        // Double-click renames. The box it opens is the one in the
+        // header, not a second editor down here: there is one rename
+        // and one PATCH, and the rail is a list of rows rather than a
+        // place things get edited. What the gesture buys is that the
+        // row you want to rename is the row you are looking at — the
+        // header's title has been clickable all along and nothing about
+        // a piece of bold text says so.
+        onDoubleClick={() => setOpen(o => ({
+          sessionId: s.sessionId,
+          pending: !!s.requested,
+          title: s.title || '',
+          // A counter, so asking twice in the same millisecond — or
+          // twice for the session already open — is still two asks.
+          renameAt: ((o && o.renameAt) || 0) + 1,
+        }))}
         title={[
           `session ${s.sessionId}`,
+          'double-click to rename',
           s.sandbox ? `sandbox ${s.sandbox}` : '',
           showRepo && s.htmlUrl ? s.htmlUrl : '',
         ].filter(Boolean).join('\n')}
@@ -1616,8 +1729,13 @@ export function ResearchPanel({ boardName, repoURL }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
             {/* Optional: the question makes a perfectly good name, and
                 nobody should have to invent one to ask something. */}
+            {/* "session name", not "name": next to a box you have just
+                typed a question into, "name" reads as though it wants
+                one for the question. Optional because leaving it empty
+                is the normal thing — the question becomes the name. */}
             <input value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="name (optional)" aria-label="Session name"
+              placeholder="session name (optional)" aria-label="Session name"
+              title="Left empty, the session is named after your question"
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
               style={{
                 flex: '0 1 220px', font: 'inherit', padding: '2px 8px',
@@ -1781,6 +1899,7 @@ export function ResearchPanel({ boardName, repoURL }) {
               sessionId={open.sessionId}
               pending={open.pending}
               title={open.title}
+              renameAt={open.renameAt}
               fill
               onDeleted={() => { setOpen(null); load(); }}
               onRenamed={load}
