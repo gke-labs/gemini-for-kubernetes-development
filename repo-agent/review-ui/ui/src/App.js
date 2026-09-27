@@ -42,6 +42,7 @@ function ResearchPage({ route }) {
       <ResearchConversation
         sessionId={route.sessionId}
         fill
+        standalone
         onDeleted={() => { window.location.href = '/'; }}
       />
     </div>

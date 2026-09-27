@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 // above all — and without this a table parses as one paragraph, its
 // newlines collapsing to spaces into a wall of pipes.
 import remarkGfm from 'remark-gfm';
+import { SlideOver } from './SlideOver';
 
 // Research: conversation-based deep research, the third mode alongside
 // doc-based Explore and deploy-based Runs.
@@ -576,7 +577,15 @@ const RESEARCH_VIEW_KEY = 'repoboard.research.view';
 // ago, "not found" means the controller has not made the sandbox yet,
 // while for any other session it means the sandbox is gone. The caller
 // knows which; this component cannot.
-export function ResearchConversation({ sessionId, pending, title, onBack, onDeleted, onRenamed, fill }) {
+// `fill` stretches the conversation to its container instead of
+// capping it at 72vh; `standalone` says this *is* the popped-out
+// window, which is the only place that should not offer to pop out.
+// They were one prop, which stopped being true the moment the panel
+// opened the conversation in a slide-over: that wants the full height
+// and the pop-out both.
+export function ResearchConversation({
+  sessionId, pending, title, onBack, onDeleted, onRenamed, fill, standalone,
+}) {
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
   //   starting — it exists but has no running pod yet
@@ -1125,7 +1134,7 @@ export function ResearchConversation({ sessionId, pending, title, onBack, onDele
                     style={{ fontSize: 'x-small', padding: '4px 6px' }}
                     title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                 )}
-                {!fill && (
+                {!standalone && (
                   <a role="menuitem" href={`#/research/${sessionId}`}
                     target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
                     style={{ fontSize: 'x-small', padding: '4px 6px' }}
@@ -1362,21 +1371,6 @@ export function ResearchPanel({ boardName, repoURL }) {
     setTitle('');
   };
 
-  if (open) {
-    return (
-      <div className="work-card" style={{ padding: '0 14px 14px', textAlign: 'left', fontSize: 'small' }}>
-        <ResearchConversation
-          sessionId={open.sessionId}
-          pending={open.pending}
-          title={open.title}
-          onBack={() => { setOpen(null); load(); }}
-          onDeleted={() => { setOpen(null); load(); }}
-          onRenamed={load}
-        />
-      </div>
-    );
-  }
-
   const all = sessions || [];
   const mine = repo ? all.filter(s => s.repo === repo) : all;
   const others = repo ? all.filter(s => s.repo !== repo) : [];
@@ -1587,6 +1581,28 @@ export function ResearchPanel({ boardName, repoURL }) {
             {forkOwner}/{repo} @ exploration/notes ↗
           </a>
         </div>
+      )}
+
+      {/* The conversation opens over the list rather than instead of
+          it. Opening one used to replace the whole tab, which made
+          reading two of them a navigation each way; the list is still
+          there behind the sheet, and closing is a click on the page
+          you were already looking at.
+
+          No onBack: ✕ and Escape are the way out of a sheet, and a
+          "← Sessions" button beside them would be a third. */}
+      {open && (
+        <SlideOver label="Research conversation"
+          onClose={() => { setOpen(null); load(); }}>
+          <ResearchConversation
+            sessionId={open.sessionId}
+            pending={open.pending}
+            title={open.title}
+            fill
+            onDeleted={() => { setOpen(null); load(); }}
+            onRenamed={load}
+          />
+        </SlideOver>
       )}
     </div>
   );
