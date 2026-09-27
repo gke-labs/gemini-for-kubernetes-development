@@ -820,19 +820,17 @@ describe('ResearchPanel', () => {
         await flush();
     };
 
-    test('an empty conversation claims nothing in particular and opens it', async () => {
-        const claimed = [];
-        global.fetch = claimFetch(claimed);
+    test('an empty rail says so, and offers no way to start an empty session', async () => {
+        // Every session now starts with something said to the agent.
+        // The ask box was already the empty conversation with a first
+        // message in it, and a second control for the same gesture,
+        // three inches under a box that was already empty, read as the
+        // same button twice.
+        global.fetch = claimFetch([]);
 
         await renderPanel();
         expect(container.textContent).toContain('No conversations for repo-agent yet');
-        await clickButton('Empty conversation');
-
-        expect(claimed).toEqual([{}]);
-        // Straight into the conversation, which reports the wait rather
-        // than a 404 — the sandbox is minutes away.
-        await flush();
-        expect(container.textContent).toContain('Preparing the sandbox');
+        expect(container.textContent).not.toContain('Empty conversation');
     });
 
     test('Generate Overview claims the canned read and shows the row at once', async () => {

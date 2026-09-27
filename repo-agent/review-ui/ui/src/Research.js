@@ -1333,8 +1333,7 @@ export function ResearchPanel({ boardName, repoURL }) {
   // the list, where its row appears immediately so nobody clicks twice
   // and pays for a second sandbox.
   const start = (kickoff, enter) => {
-    const what = kickoff.kind || 'new';
-    setBusy(what);
+    setBusy(kickoff.kind);
     setError('');
     fetch(`/api/board/${boardName}/research`, {
       method: 'POST',
@@ -1536,12 +1535,6 @@ export function ResearchPanel({ boardName, repoURL }) {
               </div>
             )}
           </span>
-          <span style={{ flex: 1 }} />
-          <button className="btn btn-sm" disabled={!!busy}
-            title="Start an empty conversation and type the first message yourself"
-            onClick={() => start({}, true)}>
-            {busy === 'new' ? 'Requesting…' : 'Empty conversation'}
-          </button>
         </div>
 
         <div style={{ color: 'var(--text-secondary)', marginTop: '12px', fontSize: 'x-small' }}>
