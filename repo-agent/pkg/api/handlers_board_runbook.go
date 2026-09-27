@@ -50,26 +50,64 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 	}
 	gh := githubClientForToken(ctx, token)
 	ref := "exploration/notes"
-	dir := "docs-exploration/runbook-deployments/" + instance
-	_, entries, _, derr := gh.Repositories.GetContents(ctx, member, repo, dir, &github.RepositoryContentGetOptions{Ref: ref})
-	if derr != nil {
+	opts := &github.RepositoryContentGetOptions{Ref: ref}
+	// Every layout the list reads, not the one this handler was written
+	// against. Runs moved to agent-runs/ and a legacy run is adopted
+	// into it only when something touches it, so the row on screen may
+	// have come from any of the three — removing from a guessed path
+	// deletes nothing and the run stays listed.
+	var files []*github.RepositoryContent
+	found := false
+	for _, base := range append([]string{runsPath}, legacyRunPaths...) {
+		inBase, ok := runFilePaths(ctx, gh, member, repo, base+"/"+instance, opts)
+		if !ok {
+			continue
+		}
+		found = true
+		files = append(files, inBase...)
+	}
+	if !found {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instance records not found"})
 		return
 	}
 	msg := "remove records for retired instance " + instance
-	for _, e := range entries {
-		if e.GetType() != "file" {
-			continue
-		}
-		sha := e.GetSHA()
-		if _, _, ferr := gh.Repositories.DeleteFile(ctx, member, repo, e.GetPath(), &github.RepositoryContentFileOptions{
+	for _, f := range files {
+		sha := f.GetSHA()
+		if _, _, ferr := gh.Repositories.DeleteFile(ctx, member, repo, f.GetPath(), &github.RepositoryContentFileOptions{
 			Message: &msg, SHA: &sha, Branch: &ref,
 		}); ferr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting " + e.GetName(), "details": ferr.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting " + f.GetName(), "details": ferr.Error()})
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance})
+	c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance, "files": len(files)})
+}
+
+// runFilePaths lists every file under dir, descending into
+// subdirectories, and reports whether dir exists at all.
+//
+// The Contents API deletes one file at a time and will not remove a
+// directory, so a run that has grown a subtree has to be enumerated in
+// full: one file left behind keeps the directory alive, and a live
+// directory keeps the run in the list — the same silent half-removal
+// the caller is trying to fix.
+func runFilePaths(ctx context.Context, gh *github.Client, member, repo, dir string, opts *github.RepositoryContentGetOptions) ([]*github.RepositoryContent, bool) {
+	_, entries, _, err := gh.Repositories.GetContents(ctx, member, repo, dir, opts)
+	if err != nil {
+		return nil, false
+	}
+	var files []*github.RepositoryContent
+	for _, e := range entries {
+		switch e.GetType() {
+		case "file":
+			files = append(files, e)
+		case "dir":
+			if sub, ok := runFilePaths(ctx, gh, member, repo, e.GetPath(), opts); ok {
+				files = append(files, sub...)
+			}
+		}
+	}
+	return files, true
 }
 
 // repoShortName mirrors factory's shortName: initials of hyphenated

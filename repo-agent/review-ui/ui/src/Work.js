@@ -1115,6 +1115,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const [refining, setRefining] = useState('');
   const [refineText, setRefineText] = useState('');
   const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     fetch(`/api/board/${boardName}/runbook`)
@@ -1163,6 +1164,20 @@ function TryPanel({ boardName, onOpenSandbox }) {
     setRefineText('');
   };
 
+  // Deleting the receipts is the one thing here that cannot be undone
+  // — and it used to report nothing at all, so a removal that failed
+  // looked exactly like one that worked on a row that never went away.
+  const removeRun = (runName) => {
+    if (!window.confirm(`Remove "${runName}"? Its runbook and receipts are deleted from the branch. Cloud resources are not touched.`)) return;
+    setError('');
+    fetch(`/api/board/${boardName}/runbook/instance/${runName}`, { method: 'DELETE' })
+      .then(res => {
+        if (res.ok) { setTimeout(load, 1500); }
+        else { res.text().then(t => setError(`Remove ${runName} failed: ${t}`)); }
+      })
+      .catch(err => setError(`Remove ${runName} failed: ${err}`));
+  };
+
   const composerName = slug(name);
   const taken = composerName && runs.some(r => r.name === composerName);
   const cell = { padding: '5px 8px', verticalAlign: 'middle' };
@@ -1184,6 +1199,14 @@ function TryPanel({ boardName, onOpenSandbox }) {
           marginBottom: '10px', color: '#b08800', background: 'rgba(176,136,0,0.08)' }}>
           ⚠ No GCP project configured — a plan will stop at the procedure and tell you what it
           needs. Set one in <a href="#/settings" style={{ color: 'inherit' }}>Settings</a>.
+        </div>
+      )}
+
+      {error && (
+        <div style={{ border: '1px solid #d73a49', borderRadius: '10px', padding: '8px 12px',
+          marginBottom: '10px', color: '#d73a49', background: 'rgba(215,58,73,0.08)' }}>
+          {error}
+          <button className="btn btn-sm" style={{ marginLeft: '8px' }} onClick={() => setError('')}>dismiss</button>
         </div>
       )}
 
@@ -1293,10 +1316,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                         {!deployed && !run.provisional && idle && (
                           <button className="btn btn-sm" style={{ marginLeft: '6px' }}
                             title="Remove this run's records from the branch (receipts included) — never touches cloud resources"
-                            onClick={() => {
-                              fetch(`/api/board/${boardName}/runbook/instance/${run.name}`, { method: 'DELETE' })
-                                .then(() => setTimeout(load, 1500));
-                            }}>✕ Remove</button>
+                            onClick={() => removeRun(run.name)}>✕ Remove</button>
                         )}
                       </td>
                     </tr>
@@ -1936,4 +1956,5 @@ function Work({ onBack, namespace }) {
   );
 }
 
+export { TryPanel };
 export default Work;
