@@ -44,16 +44,17 @@ import (
 )
 
 type fakeLaunch struct {
-	Key          string
-	FixOpts      *factorycli.FixOptions
-	ReviewOpts   *factorycli.ReviewOptions
-	PRWatchOpts  *factorycli.PRWatchOptions
-	TriageOpts   *factorycli.TriageOptions
-	PlanOpts     *factorycli.PlanOptions
-	PRTaskOpts   *factorycli.PRTaskOptions
-	PRTaskKind   string
-	RunOpts      *factorycli.RunOptions
-	ResearchOpts *factorycli.ResearchOptions
+	Key           string
+	FixOpts       *factorycli.FixOptions
+	ReviewOpts    *factorycli.ReviewOptions
+	PRWatchOpts   *factorycli.PRWatchOptions
+	TriageOpts    *factorycli.TriageOptions
+	PlanOpts      *factorycli.PlanOptions
+	PRTaskOpts    *factorycli.PRTaskOptions
+	PRTaskKind    string
+	RunOpts       *factorycli.RunOptions
+	ResearchOpts  *factorycli.ResearchOptions
+	SaveNotesOpts *factorycli.SaveNotesOptions
 }
 
 type fakeLauncher struct {
@@ -143,6 +144,13 @@ func (f *fakeLauncher) StartResearch(key string, opts factorycli.ResearchOptions
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, ResearchOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartSaveNotes(key string, opts factorycli.SaveNotesOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeLaunch{Key: key, SaveNotesOpts: &opts})
 	return true
 }
 

@@ -195,3 +195,56 @@ func researchArgs(opts ResearchOptions, timeout time.Duration) []string {
 	// instead.
 	return args
 }
+
+// SaveNotesOptions are the inputs for a `factory research save-notes`
+// invocation: push what one conversation wrote to the member's fork.
+type SaveNotesOptions struct {
+	Namespace string
+	RepoURL   string
+	// SessionID names both the sandbox to attach to and the directory
+	// within it that gets pushed.
+	SessionID string
+	// GithubToken is what the push is made with. It reaches the sandbox
+	// as an environment variable on a single exec and is never written
+	// down there — which is the whole reason this is a separate verb
+	// rather than something the conversation does for itself.
+	GithubToken string
+	Timeout     time.Duration
+}
+
+// StartSaveNotes launches `factory research save-notes` for key unless
+// one is already running.
+//
+// Asynchronous like the rest, and for once that costs nothing: the
+// member asked for the note in the conversation and is watching the
+// conversation, not this. A caller harvests the outcome via LastResult.
+//
+// No preflight probe, for the same reason as StartResearch: this runs a
+// shell script over an exec, not a factory task with an annotation to
+// probe.
+func (r *Runner) StartSaveNotes(key string, opts SaveNotesOptions) bool {
+	timeout := saveNotesTimeout(opts)
+	return r.start(key, saveNotesArgs(opts, timeout), opts.GithubToken, timeout)
+}
+
+// saveNotesTimeout bounds a clone of one prose branch, a copy and a
+// push. Minutes rather than the twenty a sandbox create gets: there is
+// no image pull and no checkout here, so anything this slow is stuck.
+func saveNotesTimeout(opts SaveNotesOptions) time.Duration {
+	if opts.Timeout > 0 {
+		return opts.Timeout
+	}
+	return 5 * time.Minute
+}
+
+// saveNotesArgs is the command line, split out so the contract with
+// factory can be asserted without spawning anything.
+func saveNotesArgs(opts SaveNotesOptions, timeout time.Duration) []string {
+	return []string{
+		"research", "save-notes",
+		"--url", opts.RepoURL,
+		"--session", opts.SessionID,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+	}
+}

@@ -123,6 +123,14 @@ type researchSandboxView struct {
 	Opening bool `json:"opening,omitempty"`
 	// OpeningError is why an owed first turn was given up on.
 	OpeningError string `json:"openingError,omitempty"`
+	// Capturing names the note the conversation has been asked to write
+	// and the controller has not yet pushed to the fork. The wait spans
+	// a turn, so this can be true for minutes, and a member who asked
+	// for a note and sees nothing on the branch should be able to tell
+	// "still working" from "never happened".
+	Capturing string `json:"capturing,omitempty"`
+	// CaptureError is why an owed save was given up on.
+	CaptureError string `json:"captureError,omitempty"`
 	// Requested marks a session that has been asked for but has no
 	// sandbox yet: a standing claim on the board, not an object.
 	Requested bool `json:"requested,omitempty"`
@@ -185,6 +193,10 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		Title:        annotations[research.TitleAnnotation],
 		Opening:      annotations[research.KickoffAnnotation] != "",
 		OpeningError: annotations[research.KickoffErrorAnnotation],
+		CaptureError: annotations[research.CaptureErrorAnnotation],
+	}
+	if pending, ok := research.DecodePending(annotations[research.CaptureAnnotation]); ok {
+		view.Capturing = pending.Note
 	}
 	if ts := sb.GetCreationTimestamp(); !ts.IsZero() {
 		view.CreatedAt = ts.UTC().Format(time.RFC3339)
@@ -618,6 +630,11 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		"title":        conn.view.Title,
 		"opening":      conn.view.Opening,
 		"openingError": conn.view.OpeningError,
+		// And the state of any owed note, for the same reason: the
+		// conversation is where the member asked for it, so it is where
+		// they look to find out whether it happened.
+		"capturing":    conn.view.Capturing,
+		"captureError": conn.view.CaptureError,
 	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.view.SessionID)
 	switch {

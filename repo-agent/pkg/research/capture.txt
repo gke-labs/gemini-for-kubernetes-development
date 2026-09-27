@@ -1,0 +1,24 @@
+Write up part of this conversation as a note, in the file
+`{{.Path}}` inside the checkout.
+
+What to capture:
+
+{{.What}}
+
+If that file already exists, update it in place: fold the new material
+in where it belongs, revise anything this conversation has since
+corrected, and leave the rest alone. Do not append a second copy of a
+section that is already there. If it does not exist, create it, opening
+with a `#` heading that names what it is about.
+
+Write it for someone who was not here. Markdown prose, self-contained:
+no "as discussed above", no reference to turns or to this instruction.
+Keep the file:line references, command lines and concrete names — they
+are the part worth saving. Say plainly what is still unresolved rather
+than rounding it off into a conclusion.
+
+Write nothing outside `{{.Dir}}`, and put no tokens, keys or other
+credentials into the file: this note is pushed to a branch on the
+member's fork on GitHub.
+
+When the file is written, say in one line what you put in it, and stop.
