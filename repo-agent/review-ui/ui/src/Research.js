@@ -1258,9 +1258,15 @@ export function ResearchConversation({
           border: '1px solid var(--border-color)', borderRadius: '10px',
           background: 'var(--bg-secondary)', padding: '10px 12px',
         }}>
+          {/* Not "ask a question about this repository" — that is what
+              the landing pane says, and repeating it here made the
+              composer read like a second place to start rather than
+              the place you carry on. The answer above is the point of
+              a research conversation; the follow-up is what it is
+              for. */}
           <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)}
             disabled={phase !== 'live'}
-            placeholder="Ask a question about this repository…"
+            placeholder="Continue the research — ask a follow-up…"
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             style={{
               width: '100%', border: 'none', outline: 'none', resize: 'none',

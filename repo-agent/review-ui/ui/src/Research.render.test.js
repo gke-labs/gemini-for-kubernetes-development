@@ -538,6 +538,13 @@ describe('ResearchConversation', () => {
         const state = () => container.querySelector('[aria-label="Composer state"]').textContent;
         expect(state()).toContain('Waiting for you');
 
+        // The composer invites a follow-up, not a fresh question: the
+        // landing pane is where you start one, and a composer wearing
+        // the same words reads as a second place to do that rather
+        // than the place you carry on.
+        expect(container.querySelector('textarea').placeholder)
+            .toBe('Continue the research — ask a follow-up…');
+
         // The placeholder used to carry this, and a placeholder is gone
         // the moment anybody types into the box it was in.
         const box = container.querySelector('textarea');
