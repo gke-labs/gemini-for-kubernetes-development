@@ -1480,6 +1480,11 @@ export function ResearchPanel({ boardName, repoURL }) {
   const [error, setError] = useState('');
   const [showOthers, setShowOthers] = useState(false);
   const [forkOwner, setForkOwner] = useState('');
+  // The branch notes are written to, as the server names it. Held in
+  // state rather than written here so there is one copy of the string,
+  // on the Go side the write path also reads; the initial value is only
+  // what to show for the frame before the first response lands.
+  const [notesBranch, setNotesBranch] = useState('research/notes');
 
   const load = useCallback(() => {
     fetch('/api/research')
@@ -1487,6 +1492,7 @@ export function ResearchPanel({ boardName, repoURL }) {
       .then(data => {
         setSessions(Array.isArray(data.sessions) ? data.sessions : []);
         setForkOwner(data.forkOwner || '');
+        if (data.notesBranch) setNotesBranch(data.notesBranch);
       })
       .catch(err => { setSessions([]); setError(`Could not list research sessions: ${err}`); });
   }, []);
@@ -1848,9 +1854,9 @@ export function ResearchPanel({ boardName, repoURL }) {
               color: 'var(--text-secondary)', fontSize: 'x-small', padding: '8px 8px 0',
             }}>
               Earlier notes and run artifacts live on{' '}
-              <a href={`https://github.com/${forkOwner}/${repo}/tree/exploration/notes`}
+              <a href={`https://github.com/${forkOwner}/${repo}/tree/${notesBranch}`}
                 target="_blank" rel="noopener noreferrer">
-                {forkOwner}/{repo} @ exploration/notes ↗
+                {forkOwner}/{repo} @ {notesBranch} ↗
               </a>
             </div>
           )}

@@ -6,7 +6,7 @@ set -o pipefail
 # sandbox. A run owns everything it needs — runbook.md is the
 # procedure, the scripts are generated from it, the receipts are the
 # test results — all under docs-exploration/agent-runs/<name>/ on the
-# exploration/notes branch of the member's fork.
+# research/runs branch of the member's fork.
 #
 # The difference from the runbook task this replaces is that nothing is
 # shared. One run reads and writes one directory, so there are no
@@ -28,16 +28,16 @@ set -o pipefail
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
-NOTES_BRANCH="exploration/notes"
+RUNS_BRANCH="research/runs"
 RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
 
-function ensureNotesBranch {
-    echo "Ensuring notes branch ${NOTES_BRANCH}..."
+function ensureRunsBranch {
+    echo "Ensuring runs branch ${RUNS_BRANCH}..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    if git fetch origin "${NOTES_BRANCH}" 2>/dev/null; then
-        git checkout -B "${NOTES_BRANCH}" "origin/${NOTES_BRANCH}"
+    if git fetch origin "${RUNS_BRANCH}" 2>/dev/null; then
+        git checkout -B "${RUNS_BRANCH}" "origin/${RUNS_BRANCH}"
     else
-        git checkout -B "${NOTES_BRANCH}"
+        git checkout -B "${RUNS_BRANCH}"
     fi
     # Runs must execute against LATEST code.
     SRC_REMOTE="upstream"
@@ -159,23 +159,23 @@ function commitAndPushRun {
         # A dropped connection after a successful server-side push makes
         # the retry fail with 'cannot lock ref … is at <our sha>'. If the
         # remote is already at our commit, the push succeeded.
-        if ! git push origin "${NOTES_BRANCH}"; then
-            git fetch origin "${NOTES_BRANCH}"
-            if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${NOTES_BRANCH}")" ]; then
+        if ! git push origin "${RUNS_BRANCH}"; then
+            git fetch origin "${RUNS_BRANCH}"
+            if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${RUNS_BRANCH}")" ]; then
                 echo "Remote already at our commit; push had succeeded."
             # The remote moved: another run pushed to this branch while
             # we worked. Replay onto it rather than dying — losing a
             # completed plan to a race is how a run silently vanishes.
-            elif git rebase --autostash "origin/${NOTES_BRANCH}"; then
+            elif git rebase --autostash "origin/${RUNS_BRANCH}"; then
                 echo "Remote had moved; replayed onto it."
-                git push origin "${NOTES_BRANCH}"
+                git push origin "${RUNS_BRANCH}"
             else
                 git rebase --abort 2>/dev/null || true
                 echo "ERROR: push failed and the branch could not be replayed." >&2
                 exit 1
             fi
         fi
-        echo "Pushed ${what} to origin/${NOTES_BRANCH}"
+        echo "Pushed ${what} to origin/${RUNS_BRANCH}"
     else
         echo "No changes to commit for ${what}."
     fi
@@ -188,7 +188,7 @@ setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
 checkoutDefaultBranch
-ensureNotesBranch
+ensureRunsBranch
 configureGemini
 
 case "${RUN_MODE}" in

@@ -49,7 +49,7 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 		return
 	}
 	gh := githubClientForToken(ctx, token)
-	ref := "exploration/notes"
+	ref := runsBranch
 	opts := &github.RepositoryContentGetOptions{Ref: ref}
 	// Every layout the list reads, not the one this handler was written
 	// against. Runs moved to agent-runs/ and a legacy run is adopted
@@ -238,7 +238,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		return
 	}
 
-	out := gin.H{"forkOwner": member, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
+	out := gin.H{"forkOwner": member, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo), "runsBranch": runsBranch}
 	// The banner signal: with no deploy project, generation cannot
 	// verify feasibility and -gcp plans are BLOCKED by contract.
 	if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr == nil {
@@ -250,7 +250,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	token, terr := s.memberToken(ctx, namespace)
 	if terr == nil {
 		gh := githubClientForToken(ctx, token)
-		ref := &github.RepositoryContentGetOptions{Ref: "exploration/notes"}
+		ref := &github.RepositoryContentGetOptions{Ref: runsBranch}
 
 		// Runs: one directory per run, holding its own runbook.md, the
 		// scripts generated from it, and the receipts. The legacy
@@ -387,6 +387,29 @@ var legacyRunPaths = []string{
 	"docs-exploration/runbook-deployments",
 	"docs-exploration/runs",
 }
+
+// The two branches on the member's fork that agents write to. They are
+// deliberately not one branch.
+//
+// runsBranch carries live deployment state: the scripts that tear a
+// cluster down, and the receipts that say whether it is still up. The
+// runs read path prunes it — removing a run deletes files from it — and
+// it is written only by `factory run`, which no member's conversation
+// steers directly.
+//
+// notesBranch carries prose, is archival, and is written by the
+// research path, where the agent may be running with approvals turned
+// off. Keeping the two apart means an auto-approving session cannot
+// push next to a teardown script, and the pruning that clears runs is
+// never pointed at the branch that is supposed to keep everything.
+//
+// runsBranch must match RUNS_BRANCH in factory's run.sh. Nothing links
+// the two, so changing one alone leaves the runs on a branch no one
+// reads.
+const (
+	runsBranch  = "research/runs"
+	notesBranch = "research/notes"
+)
 
 // deployedVerdicts are the receipt verdicts that settle whether
 // infrastructure exists. PLANNED is absent on purpose: planning does

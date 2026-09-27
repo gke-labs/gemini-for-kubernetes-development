@@ -3,14 +3,17 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
 
-// contentsURL is the fake GitHub's key for reading a directory on the
-// notes branch.
+// contentsURL is the fake GitHub's key for reading a directory of runs.
+// Runs live on runsBranch, and naming it here rather than repeating the
+// string keeps these fixtures honest if it ever moves again.
 func contentsURL(path string) string {
-	return "https://api.github.com/repos/alice/repo/contents/" + path + "?ref=exploration%2Fnotes"
+	return "https://api.github.com/repos/alice/repo/contents/" + path +
+		"?ref=" + url.QueryEscape(runsBranch)
 }
 
 // Remove has to find the run wherever it is. Runs moved from
