@@ -98,6 +98,14 @@ type Session struct {
 	// Busy reports whether a turn is in flight. A prompt sent while busy
 	// is rejected rather than queued.
 	Busy bool `json:"busy"`
+	// Waiting narrows Busy: the turn is in flight but stopped on a
+	// permission request nobody has answered. Both bits are set, because
+	// waiting is a kind of busy, not the end of it.
+	//
+	// Absent from an older acpd, which reads as false — the honest answer
+	// there, since a daemon that does not publish it has told us nothing
+	// about whether anyone is being asked for something.
+	Waiting bool `json:"waiting,omitempty"`
 	// Offset is the transcript length in bytes at the time of the reply,
 	// which is where a follower should resume from to see only what
 	// happens next.

@@ -97,11 +97,15 @@ var safeResearchSessionID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127
 var acpdClientForPodIP = func(ip string) *acpd.Client { return acpd.NewForPodIP(ip) }
 
 // researchSandboxView is one session as the board sees it: what the
-// sandbox object says, with no call to acpd.
+// sandbox object says, and — for the ones with a pod to ask — what the
+// engine inside it is doing.
 //
-// Deliberately answerable from the Kubernetes API alone, because the
-// list has to render for paused and still-booting sessions too — the
-// ones acpd cannot answer for.
+// The Kubernetes half comes first and stands alone, because the list has
+// to render for paused, requested and still-booting sessions too, which
+// are exactly the ones acpd cannot answer for. The live half is layered
+// on afterwards and every field of it is optional: anything acpd does
+// not say leaves the row as Kubernetes described it, which is a complete
+// answer to "what sessions do I have" even when no pod is reachable.
 type researchSandboxView struct {
 	SessionID string `json:"sessionId"`
 	Sandbox   string `json:"sandbox"`
@@ -131,6 +135,21 @@ type researchSandboxView struct {
 	// pull, a PVC to bind, a repo to clone — and reporting that as up
 	// sends people to a session that cannot answer.
 	Starting bool `json:"starting,omitempty"`
+	// Live says acpd has a session for this row: an engine is running and
+	// the conversation can be had right now. False for a running pod
+	// nobody has opened yet, which is the ordinary resting state.
+	Live bool `json:"live,omitempty"`
+	// Busy is a turn in flight, and Waiting narrows it to a turn that has
+	// stopped on a permission request. Waiting implies Busy.
+	Busy    bool `json:"busy,omitempty"`
+	Waiting bool `json:"waiting,omitempty"`
+	// Unreachable is why the pod's acpd could not be asked. The row still
+	// renders from what Kubernetes said — the sandbox is the durable
+	// thing and the conversation survives a daemon that is briefly not
+	// answering — but the live fields above mean nothing when this is set,
+	// and a list that quietly showed them as false would be reporting an
+	// idle session when what it found was a broken one.
+	Unreachable string `json:"unreachable,omitempty"`
 	// PodIP is empty until the pod is running. Its presence is what
 	// "reachable" means for every other call here.
 	PodIP string `json:"-"`
@@ -201,11 +220,13 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 	exists := map[string]bool{}
 	for i := range list.Items {
 		if view, ok := researchViewFromSandbox(&list.Items[i]); ok {
-			view.Starting = !view.Paused && !running[view.Sandbox]
+			view.PodIP = running[view.Sandbox]
+			view.Starting = !view.Paused && view.PodIP == ""
 			views = append(views, view)
 			exists[view.SessionID] = true
 		}
 	}
+	attachResearchLiveState(ctx, views)
 	requested, claimed := s.requestedResearchSessions(ctx, namespace, exists)
 	views = append(views, requested...)
 	// Fill an untitled sandbox from the claim that asked for it.
@@ -329,16 +350,20 @@ func (s *Server) findResearchSandbox(ctx context.Context, namespace, sessionID s
 	return researchSandboxView{}, false, nil
 }
 
-// runningSandboxPods names the sandboxes in the namespace that have a
-// running pod behind them.
+// runningSandboxPods maps the sandboxes in the namespace that have a
+// running pod behind them to that pod's IP.
 //
-// One list for the whole page rather than a lookup per row: the answer
-// is only used to colour a state pill, and a member with a dozen
-// sessions should not cost a dozen pod lists every ten seconds. A
-// failure is reported as "nothing is running", which reads as starting
-// — the honest answer when the pods cannot be seen at all.
-func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]bool {
-	running := map[string]bool{}
+// One list for the whole page rather than a lookup per row: a member
+// with a dozen sessions should not cost a dozen pod lists every ten
+// seconds. A failure is reported as "nothing is running", which reads as
+// starting — the honest answer when the pods cannot be seen at all.
+//
+// The IP comes back rather than a bare yes, because the caller's next
+// question is always "so what is it doing", and that is asked of the pod.
+// Re-deriving it per row would be researchPodIP once per session — the
+// list this function exists to avoid.
+func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]string {
+	running := map[string]string{}
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox"})
 	if err != nil {
 		klog.V(2).Infof("research: cannot list sandbox pods in %s: %v", namespace, err)
@@ -347,10 +372,73 @@ func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[s
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			running[pod.Labels["sandbox"]] = true
+			running[pod.Labels["sandbox"]] = pod.Status.PodIP
 		}
 	}
 	return running
+}
+
+// researchLiveTimeout bounds the whole fan-out below.
+//
+// Short because this is a poll, not a page load: the list refreshes every
+// ten seconds, so a pod that cannot answer in a couple of seconds has
+// nothing to say that will not still be true next time. The cost of
+// waiting longer is paid by every other row, which is the wrong trade —
+// a member with nine healthy sessions and one wedged pod should not have
+// the whole rail stall on the wedged one.
+const researchLiveTimeout = 2 * time.Second
+
+// attachResearchLiveState fills in what each session's engine is doing,
+// for the rows that have a running pod to ask.
+//
+// This is the one place the list leaves Kubernetes. It is worth it
+// because the alternative is a rail that says "up" for everything, where
+// "up" means the pod is running — which is not a question anybody has.
+// What they want to know is which conversation is working, which has
+// stopped to ask them something, and which is simply sitting there.
+//
+// Asked in parallel and bounded as a whole. One request per running pod
+// sounds like a lot until you count them: it is one small HTTP call
+// inside the cluster per session the member actually has open, every ten
+// seconds, and they are concurrent, so the list costs the slowest pod
+// rather than the sum of all of them.
+//
+// Nothing here can fail the list. A pod that does not answer gets its
+// reason recorded on its own row and the rest of the page renders — the
+// sandboxes are the durable thing, and they are still there whether or
+// not a daemon inside one is talking.
+func attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
+	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := range views {
+		if views[i].PodIP == "" {
+			continue
+		}
+		wg.Add(1)
+		// By pointer into the slice: these are distinct elements, so the
+		// writes do not race, and the alternative — collecting into a map
+		// and merging — is a second pass for nothing.
+		go func(view *researchSandboxView) {
+			defer wg.Done()
+			session, err := acpdClientForPodIP(view.PodIP).GetSession(ctx, view.SessionID)
+			switch {
+			case err == nil:
+				view.Live = true
+				view.Busy = session.Busy
+				view.Waiting = session.Waiting
+			case errors.Is(err, acpd.ErrNotFound):
+				// A running pod with no engine in it: the resting state of
+				// every session nobody has opened yet, and of every one
+				// whose acpd has restarted. Not an error, and not
+				// unreachable either — acpd answered.
+			default:
+				view.Unreachable = err.Error()
+			}
+		}(&views[i])
+	}
+	wg.Wait()
 }
 
 // researchPodIP returns the sandbox pod's IP, or "" when there is no
@@ -528,6 +616,12 @@ func (s *Server) getResearchSession(c *gin.Context) {
 	case err == nil:
 		body["live"] = true
 		body["busy"] = session.Busy
+		// Reported here as well as on the list so the two cannot disagree
+		// about the same session. The conversation itself learns this from
+		// the event stream, which is better than polling — but it learns it
+		// from the moment it attached, and a session that stopped to ask
+		// something before anyone opened it has no event left to send.
+		body["waiting"] = session.Waiting
 		body["offset"] = session.Offset
 		body["engine"] = session.Engine
 		body["createdAt"] = session.CreatedAt
