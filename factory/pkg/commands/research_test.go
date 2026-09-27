@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // The marker line is the whole machine-readable contract of `factory
@@ -93,6 +96,68 @@ func TestValidRepoPart(t *testing.T) {
 	for _, tc := range cases {
 		if got := validRepoPart(tc.in); got != tc.want {
 			t.Errorf("validRepoPart(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// save-notes attaches to the sandbox `research start` created; it does
+// not make one. Both subcommands therefore have to be addressable the
+// same way, since the pair of flags is what names that sandbox.
+func TestResearchSubcommandsTakeTheSameAddress(t *testing.T) {
+	root := NewResearchCommand(context.Background())
+	for _, name := range []string{"start", "save-notes"} {
+		var sub *cobra.Command
+		for _, c := range root.Commands() {
+			if c.Name() == name {
+				sub = c
+			}
+		}
+		if sub == nil {
+			t.Errorf("factory research has no %q subcommand", name)
+			continue
+		}
+		for _, flag := range []string{"url", "session"} {
+			if sub.Flags().Lookup(flag) == nil {
+				t.Errorf("%s does not take --%s", name, flag)
+			}
+		}
+	}
+}
+
+// Both halves of the URL reach a shell — as a path under /workspaces
+// and as part of the clone URL the notes are pushed to — so the parse
+// is also the gate.
+func TestParseGitHubRepoURL(t *testing.T) {
+	cases := []struct {
+		in          string
+		owner, repo string
+		wantErr     bool
+	}{
+		{in: "https://github.com/gke-labs/repo-agent", owner: "gke-labs", repo: "repo-agent"},
+		{in: "https://github.com/gke-labs/repo-agent.git", owner: "gke-labs", repo: "repo-agent"},
+		{in: "https://github.com/gke-labs/repo-agent/", owner: "gke-labs", repo: "repo-agent"},
+		{in: "https://github.com/gke-labs", wantErr: true},
+		{in: "", wantErr: true},
+		// A path that walks out of the checkout, and a name that would
+		// end the shell word it lands in.
+		{in: "https://github.com/../../etc/repo", wantErr: true},
+		{in: "https://github.com/owner/repo;id", wantErr: true},
+		{in: "https://github.com/owner/$(id)", wantErr: true},
+	}
+	for _, tc := range cases {
+		owner, repo, err := parseGitHubRepoURL(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseGitHubRepoURL(%q) = %q/%q, want an error", tc.in, owner, repo)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseGitHubRepoURL(%q): %v", tc.in, err)
+			continue
+		}
+		if owner != tc.owner || repo != tc.repo {
+			t.Errorf("parseGitHubRepoURL(%q) = %q/%q, want %q/%q", tc.in, owner, repo, tc.owner, tc.repo)
 		}
 	}
 }
