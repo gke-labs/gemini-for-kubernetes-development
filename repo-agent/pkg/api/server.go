@@ -84,6 +84,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/research/:session/permission", s.resolveResearchPermission)
 		api.POST("/research/:session/cancel", s.cancelResearchSession)
 		api.POST("/research/:session/mode", s.setResearchSessionMode)
+		// Writing a conversation down. The POST sends the turn that
+		// writes the note; the push to the fork is the controller's, and
+		// happens once that turn ends.
+		api.POST("/research/:session/capture", s.captureResearchNotes)
+		api.GET("/research/:session/notes", s.getResearchNotes)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)

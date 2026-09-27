@@ -345,6 +345,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// part of the claim pass: by the time a pod is running the claim is
 	// long trimmed, and the sandbox is what carries the request.
 	r.sendResearchKickoffs(ctx, work)
+	// And push the notes of any conversation that was asked to write one
+	// and has since finished the turn. Same shape as the kickoff pass:
+	// the request rides on the sandbox, and this loop is the wait.
+	r.completeResearchSaves(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.

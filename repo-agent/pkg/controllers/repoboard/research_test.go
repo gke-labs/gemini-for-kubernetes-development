@@ -341,6 +341,7 @@ type fakeACPD struct {
 	mu       sync.Mutex
 	exists   bool  // a session is already live
 	offset   int64 // its transcript length, when it is
+	busy     bool  // a turn is in flight in it
 	created  []acpd.CreateSessionRequest
 	apiKeys  []string
 	prompts  []string
@@ -367,7 +368,7 @@ func (f *fakeACPD) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(`{"error":"no such session"}`))
 				return
 			}
-			_ = json.NewEncoder(w).Encode(acpd.Session{ID: testSession, Offset: f.offset})
+			_ = json.NewEncoder(w).Encode(acpd.Session{ID: testSession, Offset: f.offset, Busy: f.busy})
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/prompt"):
 			var in struct {
 				Text string `json:"text"`

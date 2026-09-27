@@ -238,3 +238,47 @@ func TestResearchTimeoutDefaults(t *testing.T) {
 		t.Errorf("negative timeout = %v, want the 20m default", got)
 	}
 }
+
+// save-notes attaches to the sandbox `research start` made, so it is
+// addressed the same way. It takes no secret either — the GitHub token
+// it pushes with goes in the child's environment, never on the command
+// line, where it would be visible in a process listing.
+func TestSaveNotesArgs(t *testing.T) {
+	args := saveNotesArgs(SaveNotesOptions{
+		Namespace:   "barney-s",
+		RepoURL:     "https://github.com/kubernetes-sigs/agent-sandbox",
+		SessionID:   "s1",
+		GithubToken: "ghp_not_a_real_token",
+	}, 5*time.Minute)
+
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"research save-notes",
+		"--url https://github.com/kubernetes-sigs/agent-sandbox",
+		"--session s1",
+		"--namespace barney-s",
+		"--timeout 5m0s",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args %q missing %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, "ghp_not_a_real_token") {
+		t.Error("the token must not reach the command line")
+	}
+	if strings.Contains(joined, "--secret") {
+		t.Error("save-notes mounts nothing into the sandbox")
+	}
+}
+
+func TestSaveNotesTimeoutDefaults(t *testing.T) {
+	if got := saveNotesTimeout(SaveNotesOptions{}); got != 5*time.Minute {
+		t.Errorf("default timeout = %v, want 5m", got)
+	}
+	if got := saveNotesTimeout(SaveNotesOptions{Timeout: 90 * time.Second}); got != 90*time.Second {
+		t.Errorf("caller timeout = %v, want 90s", got)
+	}
+	if got := saveNotesTimeout(SaveNotesOptions{Timeout: -1}); got != 5*time.Minute {
+		t.Errorf("negative timeout = %v, want the 5m default", got)
+	}
+}

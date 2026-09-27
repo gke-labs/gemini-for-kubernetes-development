@@ -360,6 +360,10 @@ type Launcher interface {
 	// runs no agent task: it makes a sandbox and clones into it, and
 	// the conversation happens afterwards over acpd's HTTP port.
 	StartResearch(key string, opts ResearchOptions) bool
+	// StartSaveNotes launches `factory research save-notes`: it attaches
+	// to a conversation's existing sandbox and pushes the notes that
+	// conversation wrote to the member's fork.
+	StartSaveNotes(key string, opts SaveNotesOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
