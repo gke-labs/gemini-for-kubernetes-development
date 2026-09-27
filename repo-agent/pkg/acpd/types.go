@@ -74,6 +74,21 @@ const ResearchMode = ModeYolo
 // timing, and it must not be what determines whether the agent stalls.
 const ResearchAutoApprove = true
 
+// AutoApproveForMode says whether acpd should answer permission requests
+// itself for a session running in mode.
+//
+// One control, one meaning. What the member asks at the approvals picker
+// is "will this ask me before it acts?", and the answer has two layers —
+// the engine's mode, and acpd answering underneath it. Deriving the
+// second from the first is what keeps the control honest: a picker that
+// moved only the engine's half left acpd auto-answering under a mode the
+// member had just tightened, which is worse than having no picker.
+//
+// gemini's vocabulary, like ResearchMode, and matched the same way: an
+// engine that renames its auto-approving mode gets prompts, which is the
+// safe direction to be wrong in.
+func AutoApproveForMode(mode string) bool { return mode == ModeYolo }
+
 // Session is the server's view of one conversation.
 type Session struct {
 	ID        string    `json:"id"`

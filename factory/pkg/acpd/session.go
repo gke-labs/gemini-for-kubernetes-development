@@ -127,10 +127,13 @@ type SessionConfig struct {
 	// entry, so the next command asks again. A session nobody is watching
 	// then burns PermissionTimeout per tool call and gets cancelled.
 	//
-	// So this is a property of the session, not of the mode: the caller
-	// states up front that no human will be reading, and acpd stops
-	// pretending one might. Every request is still written to the
-	// transcript, with its resolution, so the record is unchanged.
+	// So this is a property of the session rather than something read out
+	// of the mode: the caller states that no human will be reading, and
+	// acpd stops pretending one might. Every request is still written to
+	// the transcript, with its resolution, so the record is unchanged.
+	//
+	// It is the starting value only — SetMode carries it too, so a member
+	// who tightens the mode to take the wheel gets the prompts back.
 	AutoApprove bool
 	// PermissionTimeout bounds how long a tool call waits on a user who
 	// may have closed the tab. Zero means DefaultPermissionTimeout.
@@ -150,10 +153,6 @@ type Session struct {
 	CWD       string
 	Engine    string
 	CreatedAt time.Time
-	// AutoApprove is SessionConfig.AutoApprove, fixed for the life of the
-	// session: a client that attaches later needs to know whether this
-	// conversation will ever ask it anything.
-	AutoApprove bool
 
 	transcript *Transcript
 	client     *acp.Client
@@ -173,6 +172,13 @@ type Session struct {
 
 	mu          sync.Mutex
 	currentMode string
+	// autoApprove says acpd answers this session's permission requests
+	// itself. Under the lock and not fixed at create, because the member
+	// can take the wheel: SetMode carries it, so tightening the approval
+	// mode really does bring the prompts back. It used not to, and the
+	// picker was quietly lying — a session created auto-approving stayed
+	// auto-approving whatever the header said.
+	autoApprove bool
 	// modeError is why the session is not in the mode it was created
 	// with, kept because the create call that would have reported it is
 	// long over by the time anybody attaches.
@@ -220,7 +226,7 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 		CWD:               cfg.CWD,
 		Engine:            cfg.Engine,
 		CreatedAt:         time.Now().UTC(),
-		AutoApprove:       cfg.AutoApprove,
+		autoApprove:       cfg.AutoApprove,
 		transcript:        transcript,
 		permissionTimeout: timeout,
 		pending:           make(map[string]chan permissionResolution),
@@ -354,7 +360,7 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 	// transcript, where it sits above the first prompt as the reason this
 	// conversation keeps stopping, and the session itself, where it
 	// outlives a reload and a tab opened later.
-	if err := s.SetMode(ctx, cfg.Mode); err != nil {
+	if err := s.SetMode(ctx, cfg.Mode, cfg.AutoApprove); err != nil {
 		klog.FromContext(ctx).Error(err, "session did not start in the requested mode",
 			"session", s.ID, "engine", cfg.Engine, "mode", cfg.Mode)
 		s.mu.Lock()
@@ -384,14 +390,30 @@ func (s *Session) ModeError() string {
 	return s.modeError
 }
 
-// SetMode switches the session's approval mode.
+// AutoApprove reports whether acpd answers this session's permission
+// requests itself rather than waiting for a client.
+func (s *Session) AutoApprove() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.autoApprove
+}
+
+// SetMode switches the session's approval mode, and with it whether acpd
+// answers permission requests on the session's behalf.
+//
+// The two move together because they are one question to whoever is
+// looking at the session — "will this ask me before it acts?" — answered
+// in two layers, and a control that changed only the engine's half was
+// worse than none: a member who tightened the mode to take the wheel
+// still had acpd auto-answering underneath. autoApprove is the caller's
+// to state; acpd does not read per-engine meaning into mode ids.
 //
 // Checked against what the engine advertised before it goes on the wire,
 // so a typo fails here with the list rather than as an opaque engine
 // error. Recorded in the transcript because a mode is the answer to "why
 // was nothing asked before that command ran" — a session that stops
 // prompting must say when it started doing so, and who asked.
-func (s *Session) SetMode(ctx context.Context, modeID string) error {
+func (s *Session) SetMode(ctx context.Context, modeID string, autoApprove bool) error {
 	if modeID == "" {
 		return fmt.Errorf("mode is required")
 	}
@@ -407,13 +429,19 @@ func (s *Session) SetMode(ctx context.Context, modeID string) error {
 
 	s.mu.Lock()
 	s.currentMode = modeID
+	s.autoApprove = autoApprove
 	// A switch that worked answers the complaint the create left behind,
 	// whether or not it is the mode that was refused: the member has just
 	// been told what the session is in, by the session doing it.
 	s.modeError = ""
 	s.mu.Unlock()
 
-	_ = s.transcript.AppendValue(KindModeChanged, map[string]string{"currentModeId": modeID})
+	// autoApprove rides the same entry: a reader asking why a command ran
+	// unasked needs both halves of the answer, at the same point in time.
+	_ = s.transcript.AppendValue(KindModeChanged, map[string]any{
+		"currentModeId": modeID,
+		"autoApprove":   autoApprove,
+	})
 	return nil
 }
 
@@ -554,11 +582,11 @@ func (s *Session) onRequest(method string, params json.RawMessage) (any, *acp.RP
 	// Not when every option denies: approving is then not on offer, so the
 	// request falls through to a human, or to the timeout.
 	autoOption, autoOK := "", false
-	if s.AutoApprove {
-		autoOption, autoOK = allowOnceOption(req.Options)
-	}
 
 	s.mu.Lock()
+	if s.autoApprove {
+		autoOption, autoOK = allowOnceOption(req.Options)
+	}
 	s.nextReq++
 	requestID := fmt.Sprintf("perm-%d", s.nextReq)
 	ch := make(chan permissionResolution, 1)
@@ -580,7 +608,7 @@ func (s *Session) onRequest(method string, params json.RawMessage) (any, *acp.RP
 			"requestId": requestID,
 			"outcome":   acp.PermissionSelected,
 			"optionId":  autoOption,
-			"reason":    "auto-approved: session was created with autoApprove",
+			"reason":    "auto-approved: the session is running with autoApprove",
 		})
 		return acp.RequestPermissionResult{Outcome: acp.PermissionOutcome{
 			Outcome:  acp.PermissionSelected,

@@ -188,6 +188,11 @@ func (c *Client) ResolvePermission(ctx context.Context, id string, res Permissio
 // SetMode switches the session's approval mode and returns the session
 // as it now stands.
 //
+// It carries whether acpd should keep answering permission requests
+// itself, because that is the other half of the same question and a
+// caller that changed only the mode would leave the two disagreeing —
+// see AutoApproveForMode, which is where the rule lives.
+//
 // Allowed mid-turn: the reason to reach for this is usually a permission
 // prompt that has just appeared, and making the caller stop the turn
 // first would throw away the work that produced it.
@@ -196,8 +201,9 @@ func (c *Client) SetMode(ctx context.Context, id, mode string) (*Session, error)
 		return nil, errors.New("acpd: mode is required")
 	}
 	body := struct {
-		Mode string `json:"mode"`
-	}{Mode: mode}
+		Mode        string `json:"mode"`
+		AutoApprove bool   `json:"autoApprove,omitempty"`
+	}{Mode: mode, AutoApprove: AutoApproveForMode(mode)}
 	var out Session
 	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/mode", body, &out, ""); err != nil {
 		return nil, err

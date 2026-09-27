@@ -375,6 +375,12 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Mode string `json:"mode"`
+		// AutoApprove goes with the mode rather than having its own call:
+		// they answer the same question in two layers, and leaving acpd
+		// auto-answering under a mode the member just tightened is the
+		// bug this field exists to close. Absent means false — a caller
+		// switching modes without saying so wants to be asked.
+		AutoApprove bool `json:"autoApprove,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("decoding body: %v", err))
@@ -384,7 +390,7 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mode is required")
 		return
 	}
-	if err := sess.SetMode(r.Context(), body.Mode); err != nil {
+	if err := sess.SetMode(r.Context(), body.Mode, body.AutoApprove); err != nil {
 		// A mode the engine does not offer is the caller's mistake, and
 		// the message names what it does offer. Anything else is the
 		// engine failing to answer.
@@ -440,7 +446,7 @@ func describe(sess *Session) sessionResponse {
 		Mode:           mode,
 		AvailableModes: available,
 		ModeError:      sess.ModeError(),
-		AutoApprove:    sess.AutoApprove,
+		AutoApprove:    sess.AutoApprove(),
 	}
 }
 

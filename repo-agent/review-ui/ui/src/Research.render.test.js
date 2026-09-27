@@ -196,7 +196,10 @@ describe('ResearchConversation', () => {
         });
 
         expect(container.textContent).toContain('agent working');
-        expect(container.querySelector('textarea').placeholder).toContain('Stop to interrupt');
+        // Beside Send, not in the placeholder: a placeholder vanishes
+        // the moment anyone types, which is when it matters most.
+        expect(container.querySelector('[aria-label="Composer state"]').textContent)
+            .toContain('Stop to interrupt');
         expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Stop')).toBe(true);
 
         await act(async () => {
@@ -402,6 +405,149 @@ describe('ResearchConversation', () => {
         expect(container.textContent).toContain('approval mode: default');
     });
 
+    test('the picker is labelled by what it means, not by the mode name', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({
+                type: 'open',
+                session: { busy: false, offset: 0, mode: 'yolo', availableModes: modes, autoApprove: true },
+            });
+        });
+
+        expect(container.textContent).toContain('auto-approving');
+
+        // Tightening it flips the label — and the label follows the
+        // server's answer, not the mode's name, because the mode is
+        // only half of what decides whether anything stops to ask.
+        global.fetch.mockImplementation(() => reply(200, {
+            sessionId: 's1', mode: 'default', availableModes: modes, autoApprove: false,
+        }));
+        const picker = container.querySelector('select[aria-label="Approval mode"]');
+        await act(async () => {
+            nativeSet(picker, 'default');
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.textContent).not.toContain('auto-approving');
+        expect(container.textContent).toContain('asks first');
+    });
+
+    test('the body says how the session runs even when nothing switched it', async () => {
+        // A research session is born auto-approving and usually never
+        // switches, so mode_changed never fires and the transcript used
+        // to go its whole life without mentioning it.
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({
+                type: 'open',
+                session: { busy: false, offset: 0, mode: 'yolo', availableModes: modes, autoApprove: true },
+            });
+        });
+
+        expect(container.textContent).toContain('This conversation runs in');
+        expect(container.textContent).toContain('tool calls are approved for you');
+    });
+
+    test('a probe that could not reach acpd does not claim the session asks first', async () => {
+        // A probe that reports live:false never got to the session, so
+        // it says nothing about the answering. Reading that silence as
+        // "no" would tell the member the calm story — this paused
+        // session will ask you first — on no evidence at all.
+        jest.useFakeTimers();
+        try {
+            global.fetch = jest.fn(() => reply(200, {
+                sessionId: 's1', repo: 'repo-agent', live: true,
+                mode: 'yolo', availableModes: modes, autoApprove: true,
+            }));
+            await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+            await flush();
+            await act(async () => {
+                FakeSocket.instances[0].deliver({
+                    type: 'open',
+                    session: { busy: false, offset: 0, mode: 'yolo', availableModes: modes, autoApprove: true },
+                });
+            });
+            expect(container.textContent).toContain('auto-approving');
+
+            // The sandbox is scaled to zero: the socket drops and the
+            // probe that follows can no longer see the session.
+            global.fetch.mockImplementation(() => reply(200, {
+                sessionId: 's1', repo: 'repo-agent', live: false, paused: 'scaled to zero',
+            }));
+            await act(async () => { FakeSocket.instances[0].onclose(); });
+            await act(async () => { jest.advanceTimersByTime(6000); });
+            await flush();
+
+            expect(global.fetch).toHaveBeenCalledTimes(2);
+            expect(container.textContent).toContain('auto-approving');
+            expect(container.textContent).not.toContain('asks first');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('the once-a-session actions live behind the overflow, not in the header', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'barney-s',
+        }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const labels = () => [...container.querySelectorAll('button, a')].map(e => e.textContent);
+        expect(labels()).not.toContain('Delete');
+        expect(labels()).not.toContain('terminal ↗');
+
+        const more = container.querySelector('[aria-label="More actions"]');
+        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+        expect(labels()).toContain('Delete');
+        expect(labels()).toContain('terminal ↗');
+
+        // And it closes again, so Delete is never one stray click away
+        // from the controls used every turn.
+        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        expect(labels()).not.toContain('Delete');
+    });
+
+    test('the composer says why it will not send, and keeps saying it while you type', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({
+                type: 'event', offset: 50,
+                event: {
+                    seq: 1, kind: 'permission_request',
+                    data: { requestId: 'p1', toolCall: { title: 'rm -rf /' }, options: [] },
+                },
+            });
+        });
+
+        const state = () => container.querySelector('[aria-label="Composer state"]').textContent;
+        expect(state()).toContain('Waiting for you');
+
+        // The placeholder used to carry this, and a placeholder is gone
+        // the moment anybody types into the box it was in.
+        const box = container.querySelector('textarea');
+        await act(async () => {
+            nativeSet(box, 'never mind, do something else');
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(state()).toContain('Waiting for you');
+    });
+
     test('a mode the session did not get is flagged beside the picker', async () => {
         const refused = 'session/set_mode "yolo": Cannot enable privileged approval modes in an untrusted folder.';
         global.fetch = jest.fn(() => reply(200, {
@@ -420,7 +566,7 @@ describe('ResearchConversation', () => {
         // shows what it is really in, with the reason it is not what was
         // asked for hanging off it.
         expect(container.querySelector('select[aria-label="Approval mode"]').value).toBe('default');
-        const warning = container.querySelector('[role="status"]');
+        const warning = container.querySelector('[aria-label="Approval mode warning"]');
         expect(warning).toBeTruthy();
         expect(warning.title).toContain('untrusted folder');
 
@@ -436,7 +582,7 @@ describe('ResearchConversation', () => {
         });
         await flush();
 
-        expect(container.querySelector('[role="status"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Approval mode warning"]')).toBeNull();
     });
 
     test('an engine that offers no modes gets no control', async () => {
@@ -483,7 +629,11 @@ describe('ResearchPanel', () => {
 
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
         expect(container.textContent).toContain('aaaaaaaa');
-        expect(container.textContent).toContain('rsch-repo-agent-1');
+        // The sandbox has no column of its own — it is the same row's
+        // identity a second time, so it hangs off the short id.
+        expect(container.textContent).not.toContain('rsch-repo-agent-1');
+        expect([...container.querySelectorAll('[title]')].some(
+            e => e.title === 'sandbox rsch-repo-agent-1')).toBe(true);
         // The other repo's session is accounted for but not in the table.
         expect(container.textContent).not.toContain('rsch-kubectl-2');
         expect(container.textContent).toContain('1 conversation for other repositories');

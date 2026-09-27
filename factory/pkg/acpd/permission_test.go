@@ -240,6 +240,134 @@ func TestAutoApproveLeavesARequestItCannotAllowToTheUser(t *testing.T) {
 	}
 }
 
+// setMode drives the endpoint the header's approvals picker is wired to.
+func setMode(t *testing.T, ts *httptest.Server, id, body string) sessionResponse {
+	t.Helper()
+	resp, err := ts.Client().Post(fmt.Sprintf("%s/sessions/%s/mode", ts.URL, id),
+		"application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST mode: %v", err)
+	}
+	return decodeSession(t, resp, http.StatusOK)
+}
+
+// createFull posts a session with a body the test writes itself.
+func createFull(t *testing.T, ts *httptest.Server, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/sessions", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set(APIKeyHeader, "k")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST /sessions: %v", err)
+	}
+	return resp
+}
+
+// Tightening the mode has to bring the prompts back. It did not: a
+// session created auto-approving kept auto-approving whatever the
+// picker said, so the one control that claims to hand the member the
+// wheel handed them nothing, silently.
+func TestTighteningTheModeBringsThePromptsBack(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	created := decodeSession(t, createFull(t, ts,
+		`{"id":"s1","engine":"fake-modes","mode":"yolo","autoApprove":true}`), http.StatusCreated)
+	if !created.AutoApprove {
+		t.Fatal("session did not start auto-approving")
+	}
+
+	after := setMode(t, ts, "s1", `{"mode":"default"}`)
+	if after.Mode != "default" {
+		t.Errorf("mode = %q, want default", after.Mode)
+	}
+	if after.AutoApprove {
+		t.Fatal("tightening the mode left acpd answering for the member")
+	}
+
+	stream := promptForPermission(t, ts, "s1", "!ask")
+	req := decodeInto[PermissionRequest](t, stream.next(KindPermissionRequest))
+	// Pending, which a 204 proves: an already-answered request is a 409.
+	if got := answerPermission(t, ts, "s1", `{"requestId":"`+req.RequestID+`","optionId":"proceed_once"}`); got != http.StatusNoContent {
+		t.Fatalf("answering returned %d, want 204 — the request should have waited for the member", got)
+	}
+	res := decodeInto[resolvedEvent](t, stream.next(KindPermissionResolved))
+	if res.Reason != "" {
+		t.Errorf("resolution reason = %q, want none: a member answered this one", res.Reason)
+	}
+}
+
+// And back again, so walking away is not a one-way door.
+func TestLooseningTheModeHandsTheAnsweringBack(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, createFull(t, ts,
+		`{"id":"s1","engine":"fake-modes","mode":"default"}`), http.StatusCreated)
+
+	after := setMode(t, ts, "s1", `{"mode":"yolo","autoApprove":true}`)
+	if !after.AutoApprove {
+		t.Fatal("the session did not take autoApprove from the mode switch")
+	}
+
+	stream := promptForPermission(t, ts, "s1", "!ask")
+	req := decodeInto[PermissionRequest](t, stream.next(KindPermissionRequest))
+	res := decodeInto[resolvedEvent](t, stream.next(KindPermissionResolved))
+	if res.RequestID != req.RequestID || res.OptionID != "proceed_once" {
+		t.Errorf("resolved %+v, want acpd answering perm request %q with proceed_once", res, req.RequestID)
+	}
+	if !strings.Contains(res.Reason, "auto-approved") {
+		t.Errorf("resolution reason = %q, want it to say who answered", res.Reason)
+	}
+}
+
+// The transcript has to carry both halves: a reader asking why a command
+// ran unasked needs the mode and the auto-answering together, at one
+// point in time.
+func TestTheModeEntryRecordsTheAutoAnswering(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, createFull(t, ts,
+		`{"id":"s1","engine":"fake-modes","mode":"default"}`), http.StatusCreated)
+
+	head, err := ts.Client().Get(ts.URL + "/sessions/s1")
+	if err != nil {
+		t.Fatalf("GET session: %v", err)
+	}
+	from := decodeSession(t, head, http.StatusOK).Offset
+
+	setMode(t, ts, "s1", `{"mode":"yolo","autoApprove":true}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/sessions/s1/events?offset=%d", ts.URL, from), nil)
+	if err != nil {
+		t.Fatalf("building stream request: %v", err)
+	}
+	stream, err := ts.Client().Do(streamReq)
+	if err != nil {
+		t.Fatalf("GET events: %v", err)
+	}
+	defer stream.Body.Close()
+
+	ev := (&permissionStream{t: t, scanner: bufio.NewScanner(stream.Body)}).next(KindModeChanged)
+	var entry struct {
+		CurrentModeID string `json:"currentModeId"`
+		AutoApprove   bool   `json:"autoApprove"`
+	}
+	if err := json.Unmarshal(ev.Data, &entry); err != nil {
+		t.Fatalf("decoding mode entry: %v (%s)", err, ev.Data)
+	}
+	if entry.CurrentModeID != "yolo" || !entry.AutoApprove {
+		t.Errorf("mode entry = %+v, want yolo with autoApprove", entry)
+	}
+}
+
 func TestAllowOnceOptionPrefersTheNarrowestAllow(t *testing.T) {
 	once := acp.PermissionOption{OptionID: "a", Kind: acp.PermissionAllowOnce}
 	always := acp.PermissionOption{OptionID: "b", Kind: acp.PermissionAllowAlways}
