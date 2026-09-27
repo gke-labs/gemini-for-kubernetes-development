@@ -139,6 +139,40 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 	}
 }
 
+// Runs live on research/runs, and the repo-agent read path hardcodes
+// the same string. Nothing links the two, so a change on either side
+// that is not made on both empties the Runs tab of a member whose runs
+// are perfectly intact on a branch nobody looks at.
+func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `RUNS_BRANCH="research/runs"`) {
+		t.Error(`run.sh does not set RUNS_BRANCH="research/runs"; repo-agent reads that name`)
+	}
+	// Checkout and push have to name the same variable. A literal
+	// anywhere in the pair is how the two drift apart.
+	for _, want := range []string{
+		`git checkout -B "${RUNS_BRANCH}"`,
+		`git push origin "${RUNS_BRANCH}"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("run.sh missing %q", want)
+		}
+	}
+	// research/notes belongs to the research write path, which is a
+	// different writer with a different lifetime: notes are archival and
+	// the runs read path prunes what it finds. A run reaching that
+	// branch would put live teardown scripts behind the delete path that
+	// clears runs, and hand an auto-approving research session a push
+	// that lands next to deployment state.
+	if strings.Contains(s, "research/notes") {
+		t.Error("run.sh touches the notes branch; runs and notes are kept apart on purpose")
+	}
+}
+
 // A re-plan is the same command with the same flag, so the prompt has
 // to tell the model how to read a terse refinement. "5 nodes" is an
 // amendment to an existing plan, not a brief that silently drops the

@@ -83,6 +83,28 @@ func TestEveryRunLayoutIsRead(t *testing.T) {
 	}
 }
 
+// The branch runs live on is a string agreed with factory's run.sh and
+// linked by nothing. Reading a name the write path does not use finds
+// no runs at all and empties the Runs tab, with every run intact on a
+// branch the page never asks about.
+//
+// Notes are deliberately somewhere else. Runs carry teardown scripts
+// for live infrastructure and are pruned by the remove path; notes are
+// prose, archival, and written by a session that may be approving its
+// own tool calls. One branch would point the pruning at the archive and
+// put an auto-approving writer next to deployment state.
+func TestRunsAndNotesAreSeparateBranches(t *testing.T) {
+	if runsBranch != "research/runs" {
+		t.Errorf("runsBranch = %q; factory's run.sh writes runs to research/runs", runsBranch)
+	}
+	if notesBranch != "research/notes" {
+		t.Errorf("notesBranch = %q", notesBranch)
+	}
+	if runsBranch == notesBranch {
+		t.Error("runs and notes share a branch; the run remove path would be pointed at the notes archive")
+	}
+}
+
 // The intent rides the claim so it dies when the claim is consumed. A
 // board-level field is shared by every run and outlives all of them,
 // which is how a brief typed for one deployment came to steer the

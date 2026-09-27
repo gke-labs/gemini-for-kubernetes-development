@@ -1325,20 +1325,40 @@ describe('ResearchPanel', () => {
     });
 
     test('the notes branch is a footnote link to the member\'s fork', async () => {
-        global.fetch = jest.fn(() => reply(200, { ...sessions, forkOwner: 'barney-s' }));
+        global.fetch = jest.fn(() => reply(200, {
+            ...sessions, forkOwner: 'barney-s', notesBranch: 'research/notes',
+        }));
 
         await renderPanel();
         const link = [...container.querySelectorAll('a')]
-            .find(a => a.textContent.includes('exploration/notes'));
+            .find(a => a.textContent.includes('research/notes'));
         expect(link).toBeTruthy();
         expect(link.getAttribute('href'))
-            .toBe('https://github.com/barney-s/repo-agent/tree/exploration/notes');
+            .toBe('https://github.com/barney-s/repo-agent/tree/research/notes');
+    });
+
+    // The branch is whatever the server says it is. Writing the name
+    // into the page instead would put a second copy of it here, free to
+    // drift from the Go constant the write path pushes to — and a
+    // footnote pointing at a branch nothing writes is a 404 that looks
+    // like the notes were lost.
+    test('the link follows the branch the server named', async () => {
+        global.fetch = jest.fn(() => reply(200, {
+            ...sessions, forkOwner: 'barney-s', notesBranch: 'somewhere/else',
+        }));
+
+        await renderPanel();
+        const link = [...container.querySelectorAll('a')]
+            .find(a => a.textContent.includes('somewhere/else'));
+        expect(link).toBeTruthy();
+        expect(link.getAttribute('href'))
+            .toBe('https://github.com/barney-s/repo-agent/tree/somewhere/else');
     });
 
     test('with no fork owner there is no footnote to click', async () => {
         global.fetch = jest.fn(() => reply(200, sessions));
 
         await renderPanel();
-        expect(container.textContent).not.toContain('exploration/notes');
+        expect(container.textContent).not.toContain('research/notes');
     });
 });

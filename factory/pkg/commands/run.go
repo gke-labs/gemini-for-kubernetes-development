@@ -54,7 +54,7 @@ func slugifyScenario(s string) string {
 // separate, earlier stopping point.
 //
 // A run owns everything it needs, in one directory on the fork's
-// exploration/notes branch: runbook.md is the procedure, the scripts
+// research/runs branch: runbook.md is the procedure, the scripts
 // are generated from it, the receipts are the test results. Nothing is
 // shared between runs, which is what lets a deploy correct the
 // procedure in place instead of filing recommendations against a
@@ -252,7 +252,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, from string) error
 		Sandbox:  sandboxName,
 	})
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Completed")
-	fmt.Printf("Run %s %s finished for %s/%s; pushed to the exploration/notes branch.\n", name, mode, owner, repo)
+	fmt.Printf("Run %s %s finished for %s/%s; pushed to the research/runs branch.\n", name, mode, owner, repo)
 	return nil
 }
 

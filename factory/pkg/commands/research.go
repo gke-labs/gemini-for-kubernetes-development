@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
 
 // ResearchReadyMarker prefixes the one machine-readable line `factory
@@ -91,24 +94,125 @@ func NewResearchCommand(ctx context.Context) *cobra.Command {
 	start.Flags().StringVar(&sessionID, "session", "", "Session identifier; determines the sandbox name")
 	cmd.AddCommand(start)
 
+	var saveURL, saveSession string
+	saveNotes := &cobra.Command{
+		Use:   "save-notes",
+		Short: "Push a research conversation's notes to the member's fork",
+		Long: "Push what the conversation wrote under docs-exploration/research/<session>/\n" +
+			"to the " + tasks.ResearchNotesBranch + " branch of the member's fork.\n\n" +
+			"Authoring is the conversation's job and pushing is this command's. The\n" +
+			"session may be running with approvals turned off, so the credential is\n" +
+			"held here for one command rather than left on the sandbox's disk where\n" +
+			"the agent could reach it.",
+		RunE: func(c *cobra.Command, _ []string) error {
+			if _, err := ResolveRootFlags(c); err != nil {
+				return err
+			}
+			if saveURL == "" {
+				return fmt.Errorf("--url is required")
+			}
+			if strings.TrimSpace(saveSession) == "" {
+				return fmt.Errorf("--session is required")
+			}
+			if rootFlags.Timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
+				defer cancel()
+			}
+			return runResearchSaveNotes(ctx, saveURL, saveSession)
+		},
+	}
+	saveNotes.Flags().StringVar(&saveURL, "url", "", "Repository URL (https://github.com/owner/repo)")
+	saveNotes.Flags().StringVar(&saveSession, "session", "", "Session identifier; names the sandbox and the notes directory")
+	cmd.AddCommand(saveNotes)
+
 	return cmd
 }
 
-func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
-	u, err := url.Parse(repoURL)
+func runResearchSaveNotes(ctx context.Context, repoURL, sessionID string) error {
+	owner, repo, err := parseGitHubRepoURL(repoURL)
 	if err != nil {
-		return fmt.Errorf("invalid repository URL: %w", err)
+		return err
+	}
+	// The session id names a directory on the notes branch, so it is
+	// held to the same character set as an owner or a repository —
+	// which also rules out "." and ".." walking out of the directory
+	// the notes are meant to be scoped to.
+	if !validRepoPart(sessionID) {
+		return fmt.Errorf("unsupported --session %q: expected letters, digits, dash, underscore or dot", sessionID)
+	}
+
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	script, err := tasks.GetSaveNotesScript()
+	if err != nil {
+		return fmt.Errorf("loading the save-notes script: %w", err)
+	}
+
+	// The sandbox has to already exist: this saves what a conversation
+	// wrote, and there is no conversation without one.
+	sandboxName := factorysandbox.ResearchSandboxName(repo, sessionID)
+	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
+	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
+	if err != nil {
+		return fmt.Errorf("connecting to sandbox %s: %w", sandboxName, err)
+	}
+	defer client.Close()
+
+	login := string(secret.Data[constants.KeyGithubLogin])
+	env := map[string]string{
+		"HOME": "/workspaces/.home",
+		// GH_TOKEN, not GITHUB_TOKEN: gh reads either, and the narrower
+		// name keeps this from looking like the ambient credential the
+		// rest of a sandbox's tooling picks up.
+		"GH_TOKEN":          string(secret.Data[constants.KeyGithubToken]),
+		"REPO_NAME":         repo,
+		"UPSTREAM_REPO":     owner + "/" + repo,
+		"SESSION_ID":        sessionID,
+		"GITHUB_USER_NAME":  login,
+		"GITHUB_USER_EMAIL": string(secret.Data[constants.KeyGithubEmail]),
+	}
+
+	// Streamed rather than buffered: the fork can take a moment to
+	// exist and the push is the slow part, so the narration is worth
+	// having while it happens.
+	var stderr bytes.Buffer
+	if err := client.Exec(ctx, string(script), "/workspaces", env, nil, os.Stdout, io.MultiWriter(os.Stderr, &stderr)); err != nil {
+		return fmt.Errorf("saving notes: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+// parseGitHubRepoURL splits https://github.com/owner/repo[.git] and
+// rejects anything whose owner or repository name is not GitHub's own
+// character set — both halves reach a shell as a path and as part of a
+// clone URL.
+func parseGitHubRepoURL(repoURL string) (owner, repo string, err error) {
+	u, perr := url.Parse(repoURL)
+	if perr != nil {
+		return "", "", fmt.Errorf("invalid repository URL: %w", perr)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 {
-		return fmt.Errorf("expected URL format https://github.com/owner/repo, got %s", repoURL)
+		return "", "", fmt.Errorf("expected URL format https://github.com/owner/repo, got %s", repoURL)
 	}
-	owner, repo := parts[0], strings.TrimSuffix(parts[1], ".git")
-	// The pair ends up in a path inside the sandbox and in a clone URL.
-	// Rejecting anything but GitHub's own character set here means
-	// neither has to be defended against further down.
+	owner, repo = parts[0], strings.TrimSuffix(parts[1], ".git")
 	if !validRepoPart(owner) || !validRepoPart(repo) {
-		return fmt.Errorf("unsupported owner/repo in %s: expected GitHub-style names", repoURL)
+		return "", "", fmt.Errorf("unsupported owner/repo in %s: expected GitHub-style names", repoURL)
+	}
+	return owner, repo, nil
+}
+
+func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
+	owner, repo, err := parseGitHubRepoURL(repoURL)
+	if err != nil {
+		return err
 	}
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 	htmlURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
