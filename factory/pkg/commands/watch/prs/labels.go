@@ -35,8 +35,9 @@ func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.P
 }
 
 // getMissingLabelsForPR returns the labels present on the referenced issues but
-// not yet on the pull request. Once the pull request carries ready-for-human,
-// review labels on the parent issues are not re-copied onto the pull request.
+// not yet on the pull request. Pull requests and the ready-for-human label are
+// never inherited, and once the pull request carries ready-for-human, review
+// labels on the parent issues are not re-copied onto the pull request.
 func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.Issue, triggerLabel string) []string {
 	prLabelsSet := make(map[string]bool)
 	for _, label := range prLabels {
@@ -51,13 +52,17 @@ func getMissingLabelsForPR(prLabels []*githubv39.Label, refIssues []*githubv39.I
 	missingLabelsSet := make(map[string]bool)
 
 	for _, refIssue := range refIssues {
-		if refIssue == nil {
+		if refIssue == nil || refIssue.IsPullRequest() {
 			continue
 		}
 
 		for _, label := range refIssue.Labels {
 			labelName := label.GetName()
 			if labelName == "" {
+				continue
+			}
+			// Never inherit the ready-for-human label
+			if isReadyForHumanLabel(labelName, triggerLabel) {
 				continue
 			}
 			if skipReview && isReviewLabel(labelName, triggerLabel) {
@@ -170,18 +175,25 @@ func readyForHumanLabel(triggerLabel string) string {
 	return "overseer/ready-for-human"
 }
 
+// isReadyForHumanLabel reports whether labelName is a ready-for-human label.
+func isReadyForHumanLabel(labelName, triggerLabel string) bool {
+	if strings.EqualFold(labelName, "overseer/ready-for-human") {
+		return true
+	}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
+		if strings.EqualFold(labelName, triggerLabel+"/ready-for-human") {
+			return true
+		}
+	}
+	return false
+}
+
 // hasReadyForHumanLabel reports whether the pull request already carries the
 // ready-for-human label under either spelling.
 func hasReadyForHumanLabel(labels []*githubv39.Label, triggerLabel string) bool {
-	readyLabels := []string{"overseer/ready-for-human"}
-	if triggerLabel != "" && !strings.EqualFold(triggerLabel, "overseer") {
-		readyLabels = append(readyLabels, triggerLabel+"/ready-for-human")
-	}
 	for _, label := range labels {
-		for _, ready := range readyLabels {
-			if strings.EqualFold(label.GetName(), ready) {
-				return true
-			}
+		if isReadyForHumanLabel(label.GetName(), triggerLabel) {
+			return true
 		}
 	}
 	return false
@@ -242,7 +254,7 @@ func (s *Scanner) getMissingHumanAssigneesForPR(prAssignees []*githubv39.User, r
 	var missing []string
 	seen := make(map[string]bool)
 	for _, refIssue := range refIssues {
-		if refIssue == nil {
+		if refIssue == nil || refIssue.PullRequestLinks != nil {
 			continue
 		}
 		for _, u := range refIssue.Assignees {
