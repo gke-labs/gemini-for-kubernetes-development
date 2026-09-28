@@ -60,10 +60,24 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 				// dropped every real research sandbox on the floor.
 				"htmlURL": "https://github.com/test/repo",
 				"sandbox.gemini.google.com/research-session-id": testSession,
+				// A finished sandbox, which is what nearly every test in
+				// this package means by one: the receipt factory writes
+				// after the checkout lands. researchSandboxUnfinished
+				// takes it back off for the tests about the gap.
+				researchReadyAnnotation: "2026-01-01T00:00:00Z",
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
 	}}
+}
+
+// researchSandboxUnfinished is a sandbox factory created and never came
+// back to finish: the object is there, the receipt is not.
+func researchSandboxUnfinished(sb *unstructured.Unstructured) *unstructured.Unstructured {
+	ann := sb.GetAnnotations()
+	delete(ann, researchReadyAnnotation)
+	sb.SetAnnotations(ann)
+	return sb
 }
 
 // researchRequest files a research click, aged so the TTL tests can
@@ -204,7 +218,7 @@ func TestResearchClaimLaunches(t *testing.T) {
 		"an unserved click must stand until the sandbox exists")
 }
 
-// The sandbox existing is the receipt. This is the anti-loop property:
+// The finished sandbox is the receipt. This is the anti-loop property:
 // without it every reconcile would start another engine for a
 // conversation that already has one.
 func TestResearchClaimServedBySandbox(t *testing.T) {
@@ -221,6 +235,45 @@ func TestResearchClaimServedBySandbox(t *testing.T) {
 	status := requestStatus(t, r, req)
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded), "a served click must settle")
 	g.Expect(status.Sandbox).To(gomega.Equal(factorycli.ResearchSandboxName("repo", testSession)))
+}
+
+// The object without the receipt is not a session. factory creates the
+// Sandbox in the first second and then pulls, waits and clones for
+// minutes, so a launch killed in between leaves exactly this: a pod
+// with an empty workspace and an engine that cannot chdir into a
+// checkout nobody made. Settling on it is what stranded a conversation
+// on "opening…" for good.
+func TestResearchClaimNotServedByAnUnfinishedSandbox(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	fake := newFakeLauncher()
+	sb := researchSandboxUnfinished(researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession)))
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Expect(researchLaunches(fake)).To(gomega.HaveLen(1),
+		"an unfinished sandbox must be relaunched, not handed over")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty(),
+		"the click must stand until the setup finishes")
+}
+
+// The relaunch is not forever. A sandbox that never gets its receipt
+// runs out the claim's TTL like any other unserved click, and the
+// member is told to start another rather than left watching a spinner.
+func TestResearchClaimWithAnUnfinishedSandboxStillExpires(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), research.Kickoff{})
+	fake := newFakeLauncher()
+	sb := researchSandboxUnfinished(researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession)))
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
+	g.Expect(status.Reason).To(gomega.Equal("Expired"))
 }
 
 // A sandbox for a DIFFERENT session must not serve this claim: the

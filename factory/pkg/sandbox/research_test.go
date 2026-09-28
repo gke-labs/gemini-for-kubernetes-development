@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // dns1123Label is what a Sandbox name — and so the -lb Service name
@@ -201,5 +204,69 @@ func TestResearchEnvWinsOverCallerOverride(t *testing.T) {
 	last := got[len(got)-1]
 	if last.Name != EnvACPDEnable || last.Value != "1" {
 		t.Errorf("last var = %+v, want %s=1", last, EnvACPDEnable)
+	}
+}
+
+// researchSB is a sandbox of a given age, with or without the receipt
+// that says its setup finished.
+func researchSB(age time.Duration, ready bool) *unstructured.Unstructured {
+	meta := map[string]interface{}{
+		"name":              "rsch-repo-deadbeef",
+		"namespace":         "alice",
+		"creationTimestamp": time.Now().Add(-age).UTC().Format(time.RFC3339),
+	}
+	if ready {
+		meta["annotations"] = map[string]interface{}{
+			AnnotationResearchReady: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata":   meta,
+	}}
+}
+
+// The receipt is the only protection from replacement, and it is
+// absolute: a conversation someone comes back to after a week is not a
+// husk, and deleting it would take the transcript with it.
+func TestFinishedResearchSandboxIsNeverReplaced(t *testing.T) {
+	old := researchSB(30*24*time.Hour, true)
+	if got := researchDisposition(old, time.Now()); got != researchAdopt {
+		t.Errorf("disposition of a ready month-old sandbox = %v, want adopt", got)
+	}
+}
+
+// An unfinished sandbox from a launch that is still running, or was
+// killed moments ago, is finished by the relaunch rather than rebuilt.
+// Replacing on every relaunch would tear down and remake a pod that
+// each new controller was about to complete — and repeated restarts are
+// exactly when interrupted launches happen, so that policy would never
+// converge.
+func TestYoungUnfinishedResearchSandboxIsAdopted(t *testing.T) {
+	young := researchSB(researchSetupGrace/2, false)
+	if got := researchDisposition(young, time.Now()); got != researchAdopt {
+		t.Errorf("disposition of a young unfinished sandbox = %v, want adopt", got)
+	}
+}
+
+// Past the grace there is no launch left to finish it: a launch cannot
+// outlive its own timeout. What remains is a pod with an empty
+// workspace, which an engine cannot chdir into — so it is replaced
+// rather than handed to the session as if it worked.
+func TestOldUnfinishedResearchSandboxIsReplaced(t *testing.T) {
+	stale := researchSB(researchSetupGrace+time.Minute, false)
+	if got := researchDisposition(stale, time.Now()); got != researchReplace {
+		t.Errorf("disposition of a stale unfinished sandbox = %v, want replace", got)
+	}
+}
+
+// An empty annotation value is not a receipt. The receipt is written as
+// a timestamp, and a blank one would mean a patch that half-landed.
+func TestBlankReadyAnnotationIsNotAReceipt(t *testing.T) {
+	sb := researchSB(time.Hour, false)
+	sb.SetAnnotations(map[string]string{AnnotationResearchReady: ""})
+	if researchSandboxReady(sb) {
+		t.Error("a blank ready annotation was read as a finished setup")
 	}
 }

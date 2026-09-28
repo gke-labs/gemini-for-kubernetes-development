@@ -382,7 +382,12 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 				message: "the session id is not a name a sandbox can carry",
 			}
 		}
-		if sb := work.findSandbox(claim.member, factorycli.ResearchSandboxName(work.repo, claim.sessionID)); sb != nil {
+		// Not "the sandbox exists" — "the sandbox finished being built".
+		// factory creates the object first and works on it for minutes,
+		// so settling on existence retires the click while the session is
+		// still a pod with an empty disk, and an interrupted launch then
+		// has nothing standing to make anyone go back and finish it.
+		if sb := researchSandboxDone(work, claim.member, claim.sessionID); sb != nil {
 			return served(sb.GetName())
 		}
 		if researchClaimExpired(claim, now) {
