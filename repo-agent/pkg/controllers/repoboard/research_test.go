@@ -94,15 +94,6 @@ func researchLaunches(fake *fakeLauncher) []fakeLaunch {
 	return out
 }
 
-func boardAnnotations(t *testing.T, r *Reconciler) map[string]string {
-	t.Helper()
-	got := &boardv1alpha1.RepoBoard{}
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "test-board"}, got); err != nil {
-		t.Fatalf("reading the board back: %v", err)
-	}
-	return got.GetAnnotations()
-}
-
 // The typed spec removed most of what could go wrong — the member and
 // the click time are fields now, not segments of a string — but the
 // session id still has to be checked. It becomes an argument to the
