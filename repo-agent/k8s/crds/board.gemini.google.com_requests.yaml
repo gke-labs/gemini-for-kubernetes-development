@@ -85,6 +85,9 @@ spec:
                     type: string
                   scenario:
                     type: string
+                  target:
+                    minimum: 1
+                    type: integer
                 required:
                 - mode
                 - name

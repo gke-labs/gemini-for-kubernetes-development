@@ -1078,6 +1078,8 @@ type runbookClaim struct {
 	intent string
 	// runbook is what a new run is copied from before it is planned.
 	runbook string
+	// target is the pull request a plan pins the run to.
+	target int
 	// request is the click this claim came from. Run is the only verb
 	// that keeps it: its "already done this" receipt is the runner's
 	// in-memory result, so it is the only one that has to write down
@@ -1152,6 +1154,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			Name:        instance,
 			Intent:      runIntent(claim.scenario, instance, claim.intent),
 			Runbook:     claim.runbook,
+			Target:      claim.target,
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),

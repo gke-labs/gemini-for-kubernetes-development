@@ -363,3 +363,35 @@ func TestARunbookThatIsNotANameIsNeverLaunched(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
+
+// The pull request a plan is pinned to reaches factory the same way,
+// as `--target`: a hop that dropped it would deploy the default branch
+// under a run named for the pull request.
+func TestARunClickCarriesItsPullRequestToTheLaunch(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("plan", "gke-pr42")
+	req.Spec.Run.Target = 42
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RunOpts.Target).To(gomega.Equal(42))
+}
+
+// A Request is writable by anything with access to the namespace, and
+// the CRD's minimum is not the only gate: a negative pull request is
+// never launched.
+func TestANegativePullRequestIsNeverLaunched(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("plan", "gke-pr42")
+	req.Spec.Run.Target = -1
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}

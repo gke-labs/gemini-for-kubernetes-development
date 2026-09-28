@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +110,10 @@ type RunOptions struct {
 	Intent string
 	// Runbook is what a new run is copied from before it is planned:
 	// .agents/runbooks/<name> in the repository, or another run.
-	Runbook     string
+	Runbook string
+	// Target is the pull request a plan pins this run to; 0 is the
+	// default branch.
+	Target      int
 	RepoURL     string
 	GithubToken string
 	Timeout     time.Duration
@@ -139,6 +143,11 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		// Only a plan starts from a runbook; factory refuses it anywhere
 		// else, and a refusal there would strand the click.
 		args = append(args, "--runbook", opts.Runbook)
+	}
+	if opts.Target > 0 && opts.Mode == "plan" {
+		// Plan only, for the same reason: deploy and teardown execute
+		// the commit the plan pinned.
+		args = append(args, "--target", strconv.Itoa(opts.Target))
 	}
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)

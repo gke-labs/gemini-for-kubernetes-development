@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel } = require('./Work');
+const { TryPanel, WorkRow, prRunName } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -370,5 +370,101 @@ describe('Work, an unattended window', () => {
         expect(feedCalls()).toBeGreaterThan(0);
 
         focus.mockRestore();
+    });
+});
+
+// Deploy ▾ on a pull request row: the repository's runbooks, each a
+// plan of a run named for the runbook and the pull request, pinned to
+// it. The runs pinned to a pull request show on its row.
+describe('WorkRow Deploy', () => {
+    const pr = {
+        type: 'pull', number: 42, stage: 'open', group: 'review', title: 'retry the fetch',
+        htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-09-28T10:00:00Z',
+    };
+    const accepted = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'requested' }) }));
+    const renderRow = async (runState, item = pr) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}} runState={runState} />
+            </tbody></table>);
+        });
+    };
+    const posted = () => global.fetch.mock.calls
+        .filter(([, opts]) => opts && opts.method === 'POST')
+        .map(([url, opts]) => [url, JSON.parse(opts.body)]);
+
+    test('the -in-pod suffix stays last', () => {
+        expect(prRunName('gke', 42)).toBe('gke-pr42');
+        expect(prRunName('gke-in-pod', 42)).toBe('gke-pr42-in-pod');
+    });
+
+    test('with no runbooks there is nothing to deploy with', async () => {
+        await renderRow({ repoRunbooks: [], instances: [] });
+        expect(findButton('Deploy')).toBeUndefined();
+    });
+
+    test('an issue is not deployed', async () => {
+        await renderRow({ repoRunbooks: ['gke'], instances: [] }, { ...pr, type: 'issue', group: 'issues' });
+        expect(findButton('Deploy')).toBeUndefined();
+    });
+
+    test('the first pick plans a new run from the runbook, pinned to the pull request', async () => {
+        global.fetch = accepted;
+        accepted.mockClear();
+        await renderRow({ repoRunbooks: ['gke'], instances: [] });
+
+        await act(async () => { findButton('Deploy ▾').click(); });
+        await act(async () => { findButton('gke').click(); });
+        await flush();
+
+        expect(posted()).toEqual([['/api/board/myboard/runbook',
+            { mode: 'plan', name: 'gke-pr42', intent: '', target: 42, runbook: 'gke' }]]);
+    });
+
+    test('picking it again re-plans that run, which moves the pin', async () => {
+        global.fetch = accepted;
+        accepted.mockClear();
+        await renderRow({ repoRunbooks: ['gke'], instances: [{ name: 'gke-pr42', target: 42 }] });
+
+        await act(async () => { findButton('Deploy ▾').click(); });
+        await act(async () => { findButton('gke').click(); });
+        await flush();
+
+        expect(posted()).toEqual([['/api/board/myboard/runbook',
+            { mode: 'plan', name: 'gke-pr42', intent: '', target: 42 }]]);
+    });
+
+    test('a name too long for the sandbox cannot be picked', async () => {
+        const long = 'a'.repeat(38);
+        await renderRow({ repoRunbooks: [long], instances: [] });
+        await act(async () => { findButton('Deploy ▾').click(); });
+        expect(findButton(long).disabled).toBe(true);
+    });
+
+    test('a refused plan says why', async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve('no GCP project configured') }));
+        await renderRow({ repoRunbooks: ['gke'], instances: [] });
+
+        await act(async () => { findButton('Deploy ▾').click(); });
+        await act(async () => { findButton('gke').click(); });
+        await flush();
+        await flush();
+
+        expect(container.textContent).toContain('plan gke-pr42 failed: no GCP project configured');
+    });
+
+    test('the runs pinned to this pull request show on its row, and no others', async () => {
+        await renderRow({
+            repoRunbooks: [],
+            instances: [
+                { name: 'gke-pr42', target: 42, htmlURL: 'https://github.com/alice/r/tree/research/runs/docs-exploration/agent-runs/gke-pr42', latestReceipt: { verdict: 'PLANNED (3 steps)' } },
+                { name: 'gke-pr7', target: 7 },
+                { name: 'gke' },
+            ],
+        });
+        expect(container.textContent).toContain('gke-pr42 · planned');
+        expect(container.textContent).not.toContain('gke-pr7');
+        const link = Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes('gke-pr42'));
+        expect(link.getAttribute('href')).toContain('agent-runs/gke-pr42');
     });
 });

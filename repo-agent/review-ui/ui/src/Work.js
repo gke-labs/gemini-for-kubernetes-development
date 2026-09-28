@@ -92,6 +92,9 @@ const ALL_BOARDS = '__all__';
 // refetching every repo you watch all day. Five minutes is long enough to
 // read a row and come back to it without the board ever going quiet.
 const IDLE_AFTER = 5 * 60 * 1000;
+// How often the pull request rows re-read the board's runs. Runs change
+// on the scale of a plan, which is minutes.
+const RUN_STATE_EVERY = 2 * 60 * 1000;
 
 const UP_NEXT = 'up-next';
 const GROUPS = [
@@ -139,7 +142,81 @@ function Chip({ text, color, bg, title }) {
   );
 }
 
-function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly }) {
+// A pull request's run is named for the runbook and the pull request,
+// so picking the same runbook again finds the same run. The -in-pod
+// suffix stays last: it is what lets a run go without a GCP project.
+const MAX_TARGET_RUN_NAME = 40;
+const prRunName = (runbook, number) => (runbook.endsWith('-in-pod')
+  ? `${runbook.slice(0, -'-in-pod'.length)}-pr${number}-in-pod`
+  : `${runbook}-pr${number}`);
+
+// PRDeploy: Deploy ▾ on a pull request row. The first pick plans a new
+// run from the runbook, pinned to the pull request; picking it again
+// re-plans that run, which moves the pin to the pull request's head.
+// It stops at the plan — the Runs tab is where a plan is read and
+// deployed.
+function PRDeploy({ boardName, number, runbooks, runs, onStarted }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const start = (runbook) => {
+    const name = prRunName(runbook, number);
+    const exists = (runs || []).some(r => r.name === name);
+    setBusy(name);
+    setError('');
+    fetch(`/api/board/${boardName}/runbook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'plan', name, intent: '', target: number, ...(exists ? {} : { runbook }) }),
+    }).then(res => {
+      if (res.ok) {
+        if (onStarted) onStarted();
+      } else {
+        res.text().then(t => setError(`plan ${name} failed: ${t}`));
+      }
+    }).catch(err => setError(`plan ${name} failed: ${err}`))
+      .finally(() => setBusy(''));
+  };
+  return (
+    <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--text-secondary)' }}>Plan a run of PR #{number} from:</span>
+        {runbooks.map(rb => {
+          const name = prRunName(rb, number);
+          const exists = (runs || []).some(r => r.name === name);
+          const tooLong = name.length > MAX_TARGET_RUN_NAME;
+          return (
+            <button key={rb} className="btn btn-sm" disabled={!!busy || tooLong} onClick={() => start(rb)}
+              title={tooLong ? `${name} is longer than ${MAX_TARGET_RUN_NAME} characters`
+                : exists ? `Re-plan ${name} at the pull request's current head`
+                  : `Plan a new run, ${name}, from ${rb}, pinned to this pull request`}>
+              {busy === name ? `${rb}…` : rb}
+            </button>
+          );
+        })}
+      </div>
+      {error && (
+        <div style={{
+          marginTop: '6px', padding: '6px 10px', borderRadius: '6px',
+          backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)', whiteSpace: 'pre-wrap',
+        }}>{error}</div>
+      )}
+    </div>
+  );
+}
+
+// prRunChip: a run pinned to this pull request, by name and the first
+// word of its newest verdict.
+function prRunChip(run) {
+  const word = (((run.latestReceipt || {}).verdict || '').trim().split(/\s+/)[0] || '').toLowerCase();
+  const text = word ? `${run.name} · ${word}` : run.name;
+  const link = (run.runbook && run.runbook.htmlURL) || run.htmlURL;
+  const chip = <Chip text={text} color="var(--text-secondary)" bg="var(--bg-secondary)"
+    title={`Run pinned to this pull request${run.targetSHA ? ` at ${run.targetSHA.slice(0, 7)}` : ''}`} />;
+  return link ? (
+    <a key={run.name} href={link} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '6px' }}>{chip}</a>
+  ) : <span key={run.name} style={{ marginLeft: '6px' }}>{chip}</span>;
+}
+
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly, runState, onRunStarted }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -169,6 +246,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const [showPlan, setShowPlan] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showIterate, setShowIterate] = useState(false);
+  const [showDeploy, setShowDeploy] = useState(false);
   const [iterateText, setIterateText] = useState('');
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
@@ -275,6 +353,15 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     }
   }
 
+  // Runbooks deploy pull requests too. runState is the board's Runs
+  // state, present only on a single board's view.
+  const isPR = item.type !== 'issue';
+  const runbooks = (runState && runState.repoRunbooks) || [];
+  const prRuns = isPR ? ((runState && runState.instances) || []).filter(r => r.target === item.number) : [];
+  if (!stageBtn && isPR && runbooks.length) {
+    actions.push({ label: showDeploy ? 'Deploy ▴' : 'Deploy ▾', onClick: () => setShowDeploy(v => !v), title: 'Plan a run of this pull request from one of the repository\'s runbooks' });
+  }
+
   // Receipts: done verbs turned green. Click = view the artifact.
   const receipts = [];
   if (item.type === 'issue') {
@@ -352,6 +439,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         {(item.labels || []).length > 4 && (
           <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
         )}
+        {prRuns.map(prRunChip)}
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right:
           Agent (machine facts, incl. run outcomes), then the one-action
@@ -600,6 +688,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 }}>Abandon</button>
             </span>
           </div>
+        </td>
+      </tr>
+    )}
+    {showDeploy && isPR && runbooks.length > 0 && (
+      <tr>
+        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
+          <PRDeploy boardName={boardName} number={item.number} runbooks={runbooks}
+            runs={runState.instances} onStarted={() => { setShowDeploy(false); if (onRunStarted) onRunStarted(); }} />
         </td>
       </tr>
     )}
@@ -1490,6 +1586,31 @@ function Work({ onBack, namespace }) {
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
 
+  // The board's Runs state, for Deploy ▾ and the run chips on pull
+  // request rows. Reading it costs a GitHub call per run, so it is one
+  // board's, never ALL's, and refreshed on a slow clock or after a
+  // deploy rather than with every tick of the feed.
+  const [runState, setRunState] = useState(null);
+  const fetchRunState = useCallback(() => {
+    const board = activeBoard;
+    if (!board || board === ALL_BOARDS) return;
+    fetch(`/api/board/${board}/runbook`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (board !== activeBoardRef.current) return;
+        setRunState(data && !Array.isArray(data) ? data : null);
+      })
+      .catch(() => {});
+  }, [activeBoard]);
+  useEffect(() => {
+    setRunState(null);
+    fetchRunState();
+    const t = setInterval(() => { if (!document.hidden && !idle.current) fetchRunState(); }, RUN_STATE_EVERY);
+    return () => clearInterval(t);
+  }, [fetchRunState]);
+  // A plan just filed shows as a run only once factory has written it.
+  const onRunStarted = () => { setTimeout(fetchRunState, 5000); };
+
   // Prefetch onboarding suggestions in the background so the add-repo box
   // has them ready by the first click (server caches per user).
   useEffect(() => {
@@ -1932,7 +2053,8 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
                       onOpenSandbox={setCardSandbox}
                       onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
-                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly} />
+                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly}
+                      runState={runState} onRunStarted={onRunStarted} />
                   ))}
                   {!loadingWork && !rows.length && (
                     shown === UP_NEXT ? (
@@ -2069,5 +2191,5 @@ function Work({ onBack, namespace }) {
   );
 }
 
-export { TryPanel };
+export { TryPanel, WorkRow, PRDeploy, prRunName };
 export default Work;
