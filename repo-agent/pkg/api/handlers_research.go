@@ -804,6 +804,13 @@ func (s *Server) setResearchTitle(ctx context.Context, namespace, sandboxName, t
 		return nil
 	}
 	annotations[research.TitleAnnotation] = title
+	// A rename unpins the note. The name is what the note is saved as,
+	// so a member who renames a session and then saves expects the file
+	// to be called what the session is now called — the pin exists to
+	// keep repeated saves landing on one file, not to outlive the name
+	// it was derived from. Whatever was already pushed under the old
+	// name stays on the branch.
+	delete(annotations, research.NoteAnnotation)
 	sb.SetAnnotations(annotations)
 	_, err = sandboxes.Update(ctx, sb, v1.UpdateOptions{})
 	return err

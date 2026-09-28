@@ -57,13 +57,13 @@ const (
 	// than going to look for it on the fork.
 	CaptureErrorAnnotation = "sandbox.gemini.google.com/research-capture-error"
 	// NoteAnnotation is the file this session writes to, decided at the
-	// first capture and never again.
+	// first capture and kept until the session is renamed.
 	//
-	// Pinned rather than derived each time, because it is derived from
-	// the title and the title can change. A session renamed between two
-	// captures would otherwise push its second note under a second name
-	// and leave the first one orphaned under one nothing refers to any
-	// more.
+	// Pinned rather than derived each time so that saving twice in a row
+	// updates one file instead of writing a second copy of it. A rename
+	// drops the pin: the name the member just chose is the name they
+	// expect the note to be saved under, and the note already on the
+	// branch under the old name stays there.
 	NoteAnnotation = "sandbox.gemini.google.com/research-note"
 )
 
