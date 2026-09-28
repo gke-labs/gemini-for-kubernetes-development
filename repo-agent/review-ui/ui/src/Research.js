@@ -344,6 +344,84 @@ export function modeSuffix(auto) {
   return auto ? ' — prompts answered for you' : ' — you will be asked';
 }
 
+// MermaidBlock draws a ```mermaid fence as the diagram it describes.
+// The research prompt asks the agent for Mermaid when structure is the
+// answer, and a flowchart read as source is a puzzle, not a picture.
+//
+// mermaid is large, so it loads on the first diagram and not before —
+// a conversation without one never pays for it.
+//
+// The agent's text streams, so the fence arrives a chunk at a time and
+// is invalid for most of its life. Until it draws it stays what it
+// would have been without this: its source, in a code block. A fence
+// that never draws — bad syntax, or a layout mermaid gives up on —
+// stays its source for good; mermaid's own error graphic is never
+// shown. Re-renders wait for the chunks to pause, so a diagram is not
+// redrawn once per token.
+let mermaidSeq = 0;
+let mermaidTheme = '';
+const MERMAID_SETTLE_MS = 250;
+
+export function MermaidBlock({ code }) {
+  const [svg, setSvg] = useState({ code: '', svg: '' });
+  const first = useRef(true);
+  const dark = document.body.className.indexOf('dark-mode') !== -1;
+
+  useEffect(() => {
+    let alive = true;
+    const draw = async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        const theme = dark ? 'dark' : 'neutral';
+        if (mermaidTheme !== theme) {
+          // suppressErrorRendering: a diagram that parses and then fails
+          // to lay out otherwise gets mermaid's "Syntax error" bomb drawn
+          // into a scratch element on document.body, left there, before
+          // it throws. With it set, mermaid cleans up and just throws,
+          // and the catch below leaves the source showing.
+          mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, suppressErrorRendering: true });
+          mermaidTheme = theme;
+        }
+        if (!(await mermaid.parse(code, { suppressErrors: true }))) return;
+        const res = await mermaid.render(`research-mmd-${++mermaidSeq}`, code);
+        if (alive) setSvg({ code, svg: res.svg });
+      } catch (e) {
+        // Parsed and still would not draw: the source below is the answer.
+      }
+    };
+    // A finished message, or one reopened from history, draws at once.
+    if (first.current) {
+      first.current = false;
+      draw();
+      return () => { alive = false; };
+    }
+    const timer = setTimeout(draw, MERMAID_SETTLE_MS);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [code, dark]);
+
+  // A diagram drawn from an earlier state of the fence is stale the
+  // moment the text moves on; the source is never wrong.
+  if (svg.code !== code || !svg.svg) {
+    return <pre><code className="language-mermaid">{code}</code></pre>;
+  }
+  return <div className="term-diagram" dangerouslySetInnerHTML={{ __html: svg.svg }} />;
+}
+
+// markdownComponents hands a mermaid fence to MermaidBlock and leaves
+// every other block to react-markdown. It hooks <pre> rather than
+// <code> so the diagram is not drawn inside a monospace code box.
+export const markdownComponents = {
+  pre({ node, children, ...props }) {
+    const code = node && node.children && node.children[0];
+    const classes = (code && code.tagName === 'code' && code.properties && code.properties.className) || [];
+    if (classes.includes('language-mermaid')) {
+      const text = code.children.map(c => c.value || '').join('').replace(/\n$/, '');
+      return <MermaidBlock code={text} />;
+    }
+    return <pre {...props}>{children}</pre>;
+  },
+};
+
 // TerminalItem is one line of the transcript: a flat fixed-width log
 // with a sigil in front of each entry, rather than a page of bubbles.
 // It is the only way the transcript is drawn — see the `view` state for
@@ -376,7 +454,7 @@ function TerminalItem({ item, onResolve, resolving, rendered }) {
       return rendered
         ? (
           <div className="term-agent term-rendered md-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{item.text}</ReactMarkdown>
           </div>
         )
         : <div className="term-line term-agent">{item.text}</div>;

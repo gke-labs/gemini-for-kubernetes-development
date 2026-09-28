@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act as domAct } from 'react-dom/test-utils';
 
-import { ResearchPanel, ResearchConversation, AllResearchPanel } from './Research';
+import { ResearchPanel, ResearchConversation, AllResearchPanel, markdownComponents } from './Research';
 
 // React.act landed in 18.3 and deprecated the react-dom copy; the
 // package range still admits 18.2, so take whichever this install has.
@@ -19,6 +19,15 @@ jest.mock('react-markdown', () => ({ children, remarkPlugins }) => {
 });
 // remark-gfm is ESM too; the identity of the stub is all we assert on.
 jest.mock('remark-gfm', () => 'gfm-plugin-stub');
+// mermaid is ESM and far too big to lay out in jsdom anyway. The stub
+// accepts anything that starts like a flowchart and draws it as an svg
+// carrying its own source, so a test can tell which text was drawn.
+const mockMermaid = {
+    initialize: jest.fn(),
+    parse: jest.fn(async (code) => /^flowchart /.test(code)),
+    render: jest.fn(async (id, code) => ({ svg: `<svg data-src="${code.length}"></svg>` })),
+};
+jest.mock('mermaid', () => ({ __esModule: true, default: mockMermaid }));
 
 // Rendering tests for the parts the pure reducer tests cannot reach: the
 // probe-then-attach state machine, and the board filter on the session
@@ -1717,5 +1726,95 @@ describe('AllResearchPanel', () => {
 
         expect(global.fetch).toHaveBeenCalledWith('/api/research/aaaaaaaa-1111');
         expect(row.getAttribute('aria-current')).toBe('true');
+    });
+});
+
+describe('mermaid fences', () => {
+    // What react-markdown hands a `pre` for a fenced block: a hast node
+    // with the code element inside it, source text and all.
+    const fence = (lang, text) => ({
+        type: 'element', tagName: 'pre', properties: {},
+        children: [{
+            type: 'element', tagName: 'code',
+            properties: { className: lang ? [`language-${lang}`] : [] },
+            children: [{ type: 'text', value: text + '\n' }],
+        }],
+    });
+    const Pre = markdownComponents.pre;
+    const settle = async () => {
+        for (let i = 0; i < 5; i++) await flush();
+    };
+
+    beforeEach(() => {
+        mockMermaid.parse.mockClear();
+        mockMermaid.render.mockClear();
+    });
+
+    test('a mermaid fence is drawn as a diagram', async () => {
+        const src = 'flowchart TB\n  A --> B';
+        await act(async () => { root.render(<Pre node={fence('mermaid', src)}><code>{src}</code></Pre>); });
+        await settle();
+
+        const svg = container.querySelector('.term-diagram svg');
+        expect(svg).toBeTruthy();
+        // The trailing newline the fence carries is not part of the diagram.
+        expect(mockMermaid.render).toHaveBeenCalledWith(expect.any(String), src);
+        expect(container.querySelector('pre')).toBeNull();
+    });
+
+    test('a fence that does not parse yet stays its source', async () => {
+        // Which is every mermaid fence for most of the time it streams.
+        const src = 'flow';
+        await act(async () => { root.render(<Pre node={fence('mermaid', src)}><code>{src}</code></Pre>); });
+        await settle();
+
+        expect(mockMermaid.parse).toHaveBeenCalled();
+        expect(mockMermaid.render).not.toHaveBeenCalled();
+        expect(container.querySelector('.term-diagram')).toBeNull();
+        expect(container.querySelector('pre code.language-mermaid').textContent).toBe(src);
+    });
+
+    test('a fence that parses but will not draw falls back to its source', async () => {
+        // Layout can fail after parsing succeeds. Mermaid's answer to
+        // that is an error graphic; ours is the text the agent wrote.
+        mockMermaid.render.mockImplementationOnce(async () => { throw new Error('layout failed'); });
+        const src = 'flowchart TB\n  A --> B';
+        await act(async () => { root.render(<Pre node={fence('mermaid', src)}><code /></Pre>); });
+        await settle();
+
+        expect(mockMermaid.render).toHaveBeenCalled();
+        expect(container.querySelector('.term-diagram')).toBeNull();
+        expect(container.querySelector('pre code.language-mermaid').textContent).toBe(src);
+        // And mermaid was told not to draw its own error graphic, which
+        // it would otherwise leave behind on document.body.
+        expect(mockMermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ suppressErrorRendering: true }));
+    });
+
+    test('a diagram of an older state of the fence is not shown', async () => {
+        const drawn = 'flowchart TB\n  A --> B';
+        await act(async () => { root.render(<Pre node={fence('mermaid', drawn)}><code /></Pre>); });
+        await settle();
+        expect(container.querySelector('.term-diagram')).toBeTruthy();
+
+        // More text arrives; until it settles and redraws, the page
+        // shows the new source rather than the old picture.
+        const grown = drawn + '\n  B --> C';
+        await act(async () => { root.render(<Pre node={fence('mermaid', grown)}><code /></Pre>); });
+        expect(container.querySelector('.term-diagram')).toBeNull();
+        expect(container.querySelector('pre code').textContent).toBe(grown);
+
+        // Real time, not fake timers: the redraw waits out the stream.
+        await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+        await settle();
+        expect(mockMermaid.render).toHaveBeenLastCalledWith(expect.any(String), grown);
+        expect(container.querySelector('.term-diagram')).toBeTruthy();
+    });
+
+    test('every other fence is left to react-markdown', async () => {
+        await act(async () => { root.render(<Pre node={fence('go', 'x := 1')}><code>x := 1</code></Pre>); });
+        await settle();
+
+        expect(container.querySelector('pre code').textContent).toBe('x := 1');
+        expect(mockMermaid.parse).not.toHaveBeenCalled();
     });
 });
