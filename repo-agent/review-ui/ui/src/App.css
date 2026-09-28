@@ -1133,6 +1133,13 @@ body.dark-mode .research-terminal {
 }
 
 .research-terminal .term-agent { margin-bottom: 8px; }
+/* A mermaid fence drawn as its diagram. It scrolls sideways rather than
+   shrinking: a wide flowchart scaled to fit is unreadably small type. */
+.research-terminal .term-diagram {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.research-terminal .term-diagram svg { height: auto; }
 .research-terminal .term-dim { color: var(--term-dim); }
 .research-terminal .term-error { color: var(--term-red); }
 /* A sigil is decoration, not content — leave it out of a copied block. */
