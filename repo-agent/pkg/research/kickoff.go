@@ -16,8 +16,8 @@ limitations under the License.
 
 // Package research holds what the API and the controller both need to
 // know about a research conversation before it exists: the canned
-// opening prompts, the title rules, and how a kickoff rides on a
-// mailbox claim.
+// opening prompts, the title rules, and how a kickoff rides from the
+// click to the sandbox that owes it.
 //
 // The prompts live here rather than in factory because factory cannot
 // send them. Creating an acpd session takes the engine credential, and
@@ -36,7 +36,6 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
-	"time"
 	"unicode"
 
 	_ "embed"
@@ -56,9 +55,9 @@ const (
 )
 
 // Annotations on the research sandbox. The sandbox is where a session's
-// state lives once the mailbox claim is gone, so it is also where the
-// two halves of this feature meet: the controller writes these, the API
-// reads them, and the member never sees either.
+// state lives once the Request that started it is settled, so it is
+// also where the two halves of this feature meet: the controller writes
+// these, the API reads them, and the member never sees either.
 const (
 	// TitleAnnotation is what the session is called. Absent means the
 	// list should fall back to the first line of the transcript.
@@ -235,58 +234,17 @@ func Truncate(text string) string {
 	})
 }
 
-// Claim is a request for a session, as it rides in the board's mailbox
-// annotation: `<member>|<RFC3339>|<encoded kickoff>`, the third field
-// present only for a canned exploration.
+// Encode renders the kickoff for the sandbox annotation that owes it.
 //
-// Three readers now — the handler that files it, the controller that
-// serves it, and the list that shows it as a pending row — so the format
-// lives here rather than being spelled out in each.
-type Claim struct {
-	Member  string
-	At      time.Time
-	Kickoff Kickoff
-}
-
-// Encode renders the claim as a mailbox value.
-func (c Claim) Encode() string {
-	value := c.Member + "|" + c.At.UTC().Format(time.RFC3339)
-	if encoded := c.Kickoff.Encode(); encoded != "" {
-		value += "|" + encoded
-	}
-	return value
-}
-
-// DecodeClaim reads a mailbox value, reporting false for anything that
-// is not one.
+// Base64 of JSON rather than the fields spelled out: a topic is free
+// text from a textarea, so it can hold a newline or anything else a
+// person can type, and an annotation is one string. The request that
+// starts a session carries the same four fields as typed fields on a
+// Request — this encoding is only for the handoff to the sandbox, which
+// is where the opening turn waits for a pod to come up.
 //
-// A malformed entry is rejected rather than repaired. The timestamp in
-// particular is required, not defaulted: it is what the claim's TTL
-// measures, and a claim with no clock on it could never expire. The
-// kickoff is the exception — a third field that will not decode costs
-// the session its opening prompt, not its existence.
-func DecodeClaim(value string) (Claim, bool) {
-	member, rest, _ := strings.Cut(value, "|")
-	if member == "" {
-		return Claim{}, false
-	}
-	at, encoded, _ := strings.Cut(rest, "|")
-	when, err := time.Parse(time.RFC3339, at)
-	if err != nil {
-		return Claim{}, false
-	}
-	return Claim{Member: member, At: when, Kickoff: DecodeKickoff(encoded)}, true
-}
-
-// Encode renders the kickoff for the third field of a mailbox claim.
-//
-// Base64 of JSON rather than a delimited string: a topic is free text
-// from a textarea, so it can hold the "|" the claim is split on, a
-// newline, or anything else a person can type. Encoding sidesteps the
-// question entirely, and an annotation value has room for it.
-//
-// The zero kickoff encodes to "", so a plain "new conversation" claim
-// is byte-identical to what this code shipped with.
+// The zero kickoff encodes to "", so a session the member will type into
+// themselves is annotated with nothing at all.
 func (k Kickoff) Encode() string {
 	if k == (Kickoff{}) {
 		return ""
@@ -298,8 +256,8 @@ func (k Kickoff) Encode() string {
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
-// DecodeKickoff reads the third claim field. A field that is missing or
-// malformed yields the zero kickoff: a hand-edited annotation should
+// DecodeKickoff reads back what Encode wrote. A value that is missing
+// or malformed yields the zero kickoff: a hand-edited annotation should
 // cost the session its opening prompt, not stop it being created.
 func DecodeKickoff(field string) Kickoff {
 	if field == "" {

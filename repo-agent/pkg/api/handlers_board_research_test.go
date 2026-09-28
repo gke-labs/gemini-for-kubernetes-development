@@ -17,25 +17,22 @@ limitations under the License.
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// The click writes a claim the controller will act on, and answers with
-// the identity of the session and the sandbox that will host it — both
-// derivable before anything exists, which is what lets the UI start
-// polling straight away.
-func TestStartResearchSessionWritesClaim(t *testing.T) {
+// The click files a Request the controller will act on, and answers
+// with the identity of the session and the sandbox that will host it —
+// both derivable before anything exists, which is what lets the UI
+// start polling straight away.
+func TestStartResearchSessionFilesRequest(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 
 	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{}`))
@@ -66,26 +63,22 @@ func TestStartResearchSessionWritesClaim(t *testing.T) {
 		t.Errorf("sandbox = %q, want %q", got.Sandbox, want)
 	}
 
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	filed := theRequest(t, dyn, "alice")
+	if filed.Spec.Verb != boardv1alpha1.VerbResearch || filed.Spec.Board != "myboard" {
+		t.Errorf("filed %+v, want a research click on myboard", filed.Spec)
 	}
-	requests := map[string]string{}
-	if err := json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests); err != nil {
-		t.Fatalf("bad mailbox: %q", board.GetAnnotations()[annoBoardRequests])
+	if filed.Spec.Research == nil || filed.Spec.Research.SessionID != got.SessionID {
+		t.Errorf("request is not for the session that was returned: %+v", filed.Spec.Research)
 	}
-	value, ok := requests["research-"+got.SessionID]
-	if !ok {
-		t.Fatalf("no claim for the session that was returned: %v", requests)
+	// The executor namespace, never a token: the controller fetches the
+	// member's credential from this namespace at launch time.
+	if filed.Spec.Member != "alice" {
+		t.Errorf("member = %q, want alice", filed.Spec.Member)
 	}
-	member, at, found := strings.Cut(value, "|")
-	if !found || member != "alice" {
-		t.Errorf("claim value = %q, want alice|<RFC3339>", value)
-	}
-	if _, err := time.Parse(time.RFC3339, at); err != nil {
-		// The controller refuses a claim it cannot date: the timestamp
-		// is what bounds how long an unserved claim stands.
-		t.Errorf("claim timestamp %q does not parse: %v", at, err)
+	// The click time is the object's own creation stamp, which is what
+	// bounds how long an unserved click stands.
+	if filed.Status.Phase != "" {
+		t.Errorf("a fresh click must have no phase, got %q", filed.Status.Phase)
 	}
 }
 
@@ -168,19 +161,13 @@ func TestStartResearchSessionMintsADistinctSessionEachTime(t *testing.T) {
 		ids[got.SessionID] = true
 	}
 
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	requests := map[string]string{}
-	_ = json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests)
-	if len(requests) != 2 {
-		t.Errorf("mailbox holds %d claims, want both sessions: %v", len(requests), requests)
+	if filed := filedRequests(t, dyn, "alice"); len(filed) != 2 {
+		t.Errorf("filed %d requests, want one per session: %+v", len(filed), filed)
 	}
 }
 
 // Same rule as every other kickoff: a board outside the session's
-// namespace does not resolve, so no claim is written.
+// namespace does not resolve, so no Request is filed.
 func TestStartResearchSessionForbiddenForNonMember(t *testing.T) {
 	board := boardCR()
 	board.SetNamespace("board-kcc")
@@ -195,7 +182,7 @@ func TestStartResearchSessionForbiddenForNonMember(t *testing.T) {
 }
 
 // A canned exploration is an ordinary session whose first prompt
-// someone else typed. The click files it on the claim, because the
+// someone else typed. The click files it on the Request, because the
 // sandbox that will answer it does not exist yet.
 func TestStartResearchSessionCarriesTheKickoff(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
@@ -220,23 +207,18 @@ func TestStartResearchSessionCarriesTheKickoff(t *testing.T) {
 		t.Errorf("title = %q", got.Title)
 	}
 
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	kickoff := theRequest(t, dyn, "alice").Spec.Research
+	if kickoff == nil || kickoff.SessionID != got.SessionID {
+		t.Fatalf("no request for the session that was returned: %+v", kickoff)
 	}
-	requests := map[string]string{}
-	_ = json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests)
-	claim, ok := research.DecodeClaim(requests["research-"+got.SessionID])
-	if !ok {
-		t.Fatalf("claim %q does not decode", requests["research-"+got.SessionID])
-	}
-	if claim.Kickoff.Kind != research.KindTopic || claim.Kickoff.Topic != "how does the mailbox get trimmed?" {
-		t.Errorf("kickoff = %+v", claim.Kickoff)
+	if kickoff.Kind != research.KindTopic || kickoff.Topic != "how does the mailbox get trimmed?" {
+		t.Errorf("kickoff = %+v", kickoff)
 	}
 }
 
-// The plain "new conversation" click still files exactly the claim it
-// always did: no third field, nothing to send.
+// The plain "new conversation" click carries no opening turn: the
+// kickoff fields stay empty rather than being defaulted to a canned
+// prompt nobody asked for.
 func TestStartResearchSessionWithoutAKickoff(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 
@@ -246,13 +228,12 @@ func TestStartResearchSessionWithoutAKickoff(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
 	}
-	board, _ := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	requests := map[string]string{}
-	_ = json.Unmarshal([]byte(board.GetAnnotations()[annoBoardRequests]), &requests)
-	for _, value := range requests {
-		if strings.Count(value, "|") != 1 {
-			t.Errorf("claim %q carries a kickoff nobody asked for", value)
-		}
+	spec := theRequest(t, dyn, "alice").Spec.Research
+	if spec == nil {
+		t.Fatal("no research request was filed")
+	}
+	if spec.Kind != "" || spec.Topic != "" || spec.Since != "" || spec.Title != "" {
+		t.Errorf("request carries a kickoff nobody asked for: %+v", spec)
 	}
 }
 
@@ -267,9 +248,8 @@ func TestStartResearchSessionRejectsAnUnknownKickoff(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400: %s", body, w.Code, w.Body.String())
 		}
-		board, _ := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-		if raw := board.GetAnnotations()[annoBoardRequests]; strings.Contains(raw, "research-") {
-			t.Errorf("%s: a refused click must file no claim, got %q", body, raw)
+		if filed := filedRequests(t, dyn, "alice"); len(filed) != 0 {
+			t.Errorf("%s: a refused click must file nothing, got %+v", body, filed)
 		}
 	}
 }

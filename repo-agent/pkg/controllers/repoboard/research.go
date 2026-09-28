@@ -21,17 +21,16 @@ package repoboard
 //
 // The split mirrors the chat terminal's. Creating a sandbox needs the
 // factory CLI, which only this controller's image carries, so creation
-// comes through the mailbox like every other click. Talking to the
+// comes through a Request like every other click. Talking to the
 // conversation needs nothing but HTTP to the sandbox's acpd port, which
 // the API can already reach — so none of the conversation passes
-// through the board. The board's only involvement is this one claim.
+// through the board. The board's only involvement is this one Request.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -59,18 +58,18 @@ const (
 //
 // Every other claim kind is either one-shot or retried forever against
 // an idempotent target. Research is neither: the sandbox is per
-// conversation, so a claim that never produces one would otherwise sit
-// in the annotation permanently, and a member waiting on a session that
-// cannot be created is better told to start a new one. With the 30m
-// relaunch backoff this allows two attempts.
+// conversation, so a claim that never produces one would otherwise stand
+// for the full day a Request gets, and a member waiting on a session
+// that cannot be created is better told within the hour to start
+// another. With the 30m relaunch backoff this allows two attempts.
 const researchClaimTTL = time.Hour
 
-// researchSessionIDRE is what may follow "research-" in a claim key.
+// researchSessionIDRE is what a session id may look like.
 //
-// The id is minted by the API, but it arrives here as text in an
-// annotation that anything with write access to the board can set, and
-// it leaves as an argument to the factory CLI. Checking the shape keeps
-// the blast radius of a hand-edited annotation at "claim ignored".
+// The id is minted by the API, but it arrives here as a field on a
+// Request that anything with write access to the namespace can create,
+// and it leaves as an argument to the factory CLI. Checking the shape
+// keeps the blast radius of a hand-written Request at "claim ignored".
 var researchSessionIDRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 
 // researchClaim is a click on New research session.
@@ -86,29 +85,6 @@ type researchClaim struct {
 	// member is minutes and probably a closed tab away by the time
 	// anything can be said to the engine.
 	kickoff research.Kickoff
-}
-
-// parseResearchClaim reads one `research-<session id>` mailbox entry.
-//
-// The key is checked here and the value by the shared decoder: the
-// session id is this package's concern because it becomes an argument
-// to the factory CLI, while the value's shape is also the API's, which
-// writes it and lists the sessions still waiting on it.
-func parseResearchClaim(key, value string) (researchClaim, bool) {
-	sessionID := strings.TrimPrefix(key, "research-")
-	if !researchSessionIDRE.MatchString(sessionID) {
-		return researchClaim{}, false
-	}
-	claim, ok := research.DecodeClaim(value)
-	if !ok {
-		return researchClaim{}, false
-	}
-	return researchClaim{
-		sessionID: sessionID,
-		member:    claim.Member,
-		claimedAt: claim.At,
-		kickoff:   claim.Kickoff,
-	}, true
 }
 
 // researchKey is the runner's single-flight key. The sandbox name
@@ -243,10 +219,10 @@ func (r *Reconciler) stampResearchKickoff(ctx context.Context, work *workState, 
 // sendResearchKickoffs delivers the opening turn of every session that
 // is still owed one.
 //
-// Driven from the sandboxes rather than the mailbox because the claim is
-// long gone by the time this can succeed. It runs on the reconcile loop,
-// so a sandbox that is still pulling its image is simply retried a
-// minute later; nothing here waits.
+// Driven from the sandboxes rather than the Requests because the
+// Request is settled by the time this can succeed. It runs on the
+// reconcile loop, so a sandbox that is still pulling its image is
+// simply retried a minute later; nothing here waits.
 func (r *Reconciler) sendResearchKickoffs(ctx context.Context, work *workState) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {

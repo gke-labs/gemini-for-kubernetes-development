@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
@@ -258,7 +259,9 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox:   "SandboxList",
 		repoBoardGVR: "RepoBoardList",
+		requestGVR:   "RequestList",
 	})
+	generateNames(dynamicClient)
 	for _, sb := range sandboxes {
 		if _, err := dynamicClient.Resource(gvrSandbox).Namespace(sb.GetNamespace()).Create(context.Background(), sb, v1.CreateOptions{}); err != nil {
 			t.Fatalf("seed sandbox %s: %v", sb.GetName(), err)
@@ -1014,17 +1017,42 @@ func TestAttachStillCreatesTheSessionOnceNoOpeningTurnIsOwed(t *testing.T) {
 
 // --- titles and pending rows ------------------------------------------
 
-func researchBoardCR(requests map[string]string) *unstructured.Unstructured {
-	raw, _ := json.Marshal(requests)
+func researchBoardCR() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "board.gemini.google.com/v1alpha1",
 		"kind":       "RepoBoard",
-		"metadata": map[string]interface{}{
-			"name": "myboard", "namespace": "alice",
-			"annotations": map[string]interface{}{annoBoardRequests: string(raw)},
-		},
-		"spec": map[string]interface{}{"repoURL": "https://github.com/kubernetes/" + researchRepo},
+		"metadata":   map[string]interface{}{"name": "myboard", "namespace": "alice"},
+		"spec":       map[string]interface{}{"repoURL": "https://github.com/kubernetes/" + researchRepo},
 	}}
+}
+
+// seedResearchClick files a standing research click and the board it
+// was clicked on. The pair is what the list reads to show a session
+// that has been asked for and does not exist yet: the Request carries
+// the member and the opening turn, the board carries the repository.
+func seedResearchClick(t *testing.T, dyn *fake.FakeDynamicClient, member, sessionID string, kickoff research.Kickoff) {
+	t.Helper()
+	ctx := context.Background()
+	boards := dyn.Resource(repoBoardGVR).Namespace("alice")
+	if _, err := boards.Get(ctx, "myboard", v1.GetOptions{}); err != nil {
+		if _, err := boards.Create(ctx, researchBoardCR(), v1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	click := requestCR(boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbResearch,
+		Member: member,
+		Research: &boardv1alpha1.ResearchRequest{
+			SessionID: sessionID,
+			Kind:      kickoff.Kind,
+			Topic:     kickoff.Topic,
+			Since:     kickoff.Since,
+			Title:     kickoff.Title,
+		},
+	})
+	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, click, v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func listResearch(t *testing.T, r *gin.Engine) []researchSandboxView {
@@ -1069,16 +1097,9 @@ func TestResearchListCarriesTheTitle(t *testing.T) {
 // sandbox and a second engine.
 func TestResearchListShowsRequestedSessions(t *testing.T) {
 	pending := "9f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
-	claim := research.Claim{
-		Member:  "alice",
-		At:      time.Now().UTC(),
-		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "1 month"},
-	}
 	r, dyn := researchTestServer(t, nil, nil)
-	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
-		researchBoardCR(map[string]string{"research-" + pending: claim.Encode()}), v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	seedResearchClick(t, dyn, "alice", pending,
+		research.Kickoff{Kind: research.KindActivity, Since: "1 month"})
 
 	sessions := listResearch(t, r)
 	if len(sessions) != 1 {
@@ -1092,21 +1113,17 @@ func TestResearchListShowsRequestedSessions(t *testing.T) {
 		t.Errorf("title = %q", got.Title)
 	}
 	if got.Repo != researchRepo {
-		t.Errorf("repo = %q, want %q — taken from the board that holds the claim", got.Repo, researchRepo)
+		t.Errorf("repo = %q, want %q — taken from the board the click names", got.Repo, researchRepo)
 	}
 }
 
-// The controller trims a claim as soon as the sandbox exists, but the
-// two states overlap for one reconcile. Showing both would double the
-// row under the member's cursor.
+// The controller settles a click as soon as the sandbox exists, but
+// the two states overlap for one reconcile. Showing both would double
+// the row under the member's cursor.
 func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
-	claim := research.Claim{Member: "alice", At: time.Now().UTC()}
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
-	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
-		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	seedResearchClick(t, dyn, "alice", researchSession, research.Kickoff{})
 
 	sessions := listResearch(t, r)
 	if len(sessions) != 1 {
@@ -1119,23 +1136,16 @@ func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
 
 // The sandbox object exists minutes before the controller stamps a
 // title on it — `factory research start` creates it and then clones —
-// and the claim is hidden as served for that whole window. Reading the
+// and the click is hidden as served for that whole window. Reading the
 // row's name off the sandbox alone is what made a session flip from
 // "Changes in the last 2 weeks" to "untitled" and back a minute later.
 func TestAServedClaimStillNamesItsUntitledSandbox(t *testing.T) {
-	claim := research.Claim{
-		Member:  "alice",
-		At:      time.Now().UTC(),
-		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"},
-	}
 	// No title annotation: the controller has not run since the sandbox
 	// appeared, which is the whole of the window under test.
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
-	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
-		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	seedResearchClick(t, dyn, "alice", researchSession,
+		research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"})
 
 	sessions := listResearch(t, r)
 	if len(sessions) != 1 {
@@ -1145,28 +1155,21 @@ func TestAServedClaimStillNamesItsUntitledSandbox(t *testing.T) {
 		t.Error("the sandbox exists; the row must be the real one")
 	}
 	if sessions[0].Title != "Changes in the last 2 weeks" {
-		t.Errorf("title = %q, want the claim's — the sandbox has none yet", sessions[0].Title)
+		t.Errorf("title = %q, want the click's — the sandbox has none yet", sessions[0].Title)
 	}
 }
 
 // ...and the sandbox wins once it has one. A rename writes the
-// annotation and leaves the claim alone, so a claim that outlives the
+// annotation and leaves the click alone, so a click that outlives the
 // rename must not drag the old name back.
 func TestASandboxTitleBeatsTheClaimItCameFrom(t *testing.T) {
-	claim := research.Claim{
-		Member:  "alice",
-		At:      time.Now().UTC(),
-		Kickoff: research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"},
-	}
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	annotations := sb.GetAnnotations()
 	annotations[research.TitleAnnotation] = "the retry loop"
 	sb.SetAnnotations(annotations)
 	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
-	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
-		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	seedResearchClick(t, dyn, "alice", researchSession,
+		research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"})
 
 	sessions := listResearch(t, r)
 	if len(sessions) != 1 {
@@ -1177,15 +1180,11 @@ func TestASandboxTitleBeatsTheClaimItCameFrom(t *testing.T) {
 	}
 }
 
-// A claim filed by someone else, sitting on a board this member can
-// read, is not this member's session.
+// A click filed by someone else, sitting where this member can read
+// it, is not this member's session.
 func TestResearchListIgnoresAnotherMembersClaim(t *testing.T) {
-	claim := research.Claim{Member: "bob", At: time.Now().UTC()}
 	r, dyn := researchTestServer(t, nil, nil)
-	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(),
-		researchBoardCR(map[string]string{"research-" + researchSession: claim.Encode()}), v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	seedResearchClick(t, dyn, "bob", researchSession, research.Kickoff{})
 	if sessions := listResearch(t, r); len(sessions) != 0 {
 		t.Errorf("got %+v, want nothing", sessions)
 	}

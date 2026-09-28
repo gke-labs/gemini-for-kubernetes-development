@@ -132,8 +132,8 @@ func planResultStale(annotations map[string]string, finishedAt time.Time) bool {
 }
 
 // resumePlans re-drives refinement rounds after restarts: the feedback
-// stamp survives on the sandbox while the mailbox entry (which only covers
-// the fresh-plan bootstrap) is long gone.
+// stamp survives on the sandbox while the Request (which only covers the
+// fresh-plan bootstrap) is long settled.
 func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 	prefix := "fix-" + work.repo + "-"
 	for _, sb := range work.sandboxes {

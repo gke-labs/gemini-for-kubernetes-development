@@ -17,16 +17,14 @@ limitations under the License.
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -84,7 +82,7 @@ func (s *Server) getResearchPrompts(c *gin.Context) {
 // board's repository: a sandbox running the agent under acpd, which the
 // member then talks to.
 //
-// Creation goes through the mailbox because making a sandbox means
+// Creation goes through a Request because making a sandbox means
 // running the factory CLI, and only the controller's image carries it —
 // this API server is distroless with nothing in it but itself. The
 // conversation that follows does not: acpd is plain HTTP on the pod,
@@ -100,7 +98,7 @@ func (s *Server) getResearchPrompts(c *gin.Context) {
 // session is an ordinary session whose first prompt someone else typed.
 // The prompt itself is not sent from this handler — the sandbox will not
 // exist for minutes, and by then the click is long over. It rides on the
-// claim and the controller sends it.
+// Request and the controller sends it.
 func (s *Server) startResearchSession(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -137,26 +135,20 @@ func (s *Server) startResearchSession(c *gin.Context) {
 	// silently join an existing conversation.
 	sessionID := uuid.NewString()
 
-	annotations := board.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	requests := map[string]string{}
-	if raw := annotations[annoBoardRequests]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &requests)
-	}
-	// Member namespace, click time, and the opening turn when there is
-	// one. The controller drops this once the sandbox exists, and drops
-	// it unserved after its TTL.
-	requests["research-"+sessionID] = research.Claim{
-		Member:  namespace,
-		At:      time.Now().UTC(),
-		Kickoff: kickoff,
-	}.Encode()
-	buf, _ := json.Marshal(requests)
-	annotations[annoBoardRequests] = string(buf)
-	board.SetAnnotations(annotations)
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+	// Member namespace, click time (the Request's own creation stamp),
+	// and the opening turn when there is one. The controller settles
+	// this once the sandbox exists, and fails it after its TTL.
+	if _, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbResearch,
+		Member: namespace,
+		Research: &boardv1alpha1.ResearchRequest{
+			SessionID: sessionID,
+			Kind:      kickoff.Kind,
+			Topic:     kickoff.Topic,
+			Since:     kickoff.Since,
+			Title:     kickoff.Title,
+		},
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record research request", "details": err.Error()})
 		return
 	}

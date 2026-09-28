@@ -80,7 +80,19 @@ rules:
   - board.gemini.google.com
   resources:
   - repoboards/status
+  - requests/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - board.gemini.google.com
+  resources:
+  - requests
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

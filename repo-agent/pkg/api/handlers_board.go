@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -55,8 +56,6 @@ var repoBoardGVR = schema.GroupVersionResource{
 }
 
 const (
-	annoBoardRequests = "board.gemini.google.com/requests"
-
 	attentionNeedsYou = "needs-you"
 	attentionWorking  = "working"
 	attentionWaiting  = "waiting"
@@ -615,63 +614,61 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 	}
 
-	// A mailbox entry is a click the controller hasn't materialized yet
-	// (launch window is up to a reconcile): render those items as
+	// A standing Request is a click the controller hasn't materialized
+	// yet (launch window is up to a reconcile): render those items as
 	// starting so the member sees immediate feedback and no second
 	// kickoff is invited.
-	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
-		requests := map[string]string{}
-		if err := json.Unmarshal([]byte(raw), &requests); err == nil {
-			// Clicks beyond the launch limits are honestly "queued", not
-			// "starting": the controller defers them until a slot frees
-			// (which includes the finished-but-idle hour today).
-			running := 0
-			for _, sb := range sandboxes {
-				if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
-					running++
-				}
+	if requests := s.boardRequests(ctx, board); len(requests) > 0 {
+		// Clicks beyond the launch limits are honestly "queued", not
+		// "starting": the controller defers them until a slot frees
+		// (which includes the finished-but-idle hour today).
+		running := 0
+		for _, sb := range sandboxes {
+			if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
+				running++
 			}
-			atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
-			preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
-			preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
-			mark := func(item *models.WorkItem, startingStage string) {
-				// A sandbox-backed row is already launched (its stage came
-				// from the sandbox, not this pre-run map); only truly
-				// pre-sandbox clicks can be queued.
-				if atCapacity && item.Sandbox == nil {
-					item.Stage, item.Attention = "queued", attentionWaiting
-					return
-				}
-				item.Stage, item.Attention = startingStage, attentionWorking
+		}
+		atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
+		preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
+		preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
+		mark := func(item *models.WorkItem, startingStage string) {
+			// A sandbox-backed row is already launched (its stage came
+			// from the sandbox, not this pre-run map); only truly
+			// pre-sandbox clicks can be queued.
+			if atCapacity && item.Sandbox == nil {
+				item.Stage, item.Attention = "queued", attentionWaiting
+				return
 			}
-			for key := range requests {
-				if n, ok := strings.CutPrefix(key, "review-"); ok {
-					if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
-						mark(item, "review-starting")
-					}
+			item.Stage, item.Attention = startingStage, attentionWorking
+		}
+		for _, req := range requests {
+			n := strconv.Itoa(req.Spec.Number)
+			switch req.Spec.Verb {
+			case boardv1alpha1.VerbReview:
+				if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
+					mark(item, "review-starting")
 				}
-				if n, ok := strings.CutPrefix(key, "fix-"); ok {
-					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-						mark(item, "fix-starting")
-					}
+			case boardv1alpha1.VerbFix:
+				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
+					mark(item, "fix-starting")
 				}
-				if n, ok := strings.CutPrefix(key, "triage-"); ok {
-					if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
-						// Triage is only board-capacity gated, not per-user.
-						item.Stage, item.Attention = "triaging", attentionWorking
-					}
+			case boardv1alpha1.VerbTriage:
+				if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
+					// Triage is only board-capacity gated, not per-user.
+					item.Stage, item.Attention = "triaging", attentionWorking
 				}
-				for prefix, stageName := range map[string]string{"iterate-": "iterating", "address-": "addressing", "investigate-": "investigating"} {
-					if n, ok := strings.CutPrefix(key, prefix); ok {
-						if item, found := items["pr-"+n]; found {
-							item.Stage, item.Attention = stageName, attentionWorking
-						}
-					}
+			case boardv1alpha1.VerbPlan:
+				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
+					mark(item, "planning")
 				}
-				if n, ok := strings.CutPrefix(key, "plan-"); ok {
-					if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-						mark(item, "planning")
-					}
+			case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
+				stageName := map[string]string{
+					boardv1alpha1.VerbIterate:     "iterating",
+					boardv1alpha1.VerbAddress:     "addressing",
+					boardv1alpha1.VerbInvestigate: "investigating",
+				}[req.Spec.Verb]
+				if item, found := items["pr-"+n]; found {
+					item.Stage, item.Attention = stageName, attentionWorking
 				}
 			}
 		}
@@ -882,7 +879,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	case taskType == "plan" && planDraft != "" && !planApproved:
 		stage, attention = "plan-ready", attentionNeedsYou
 	case taskType == "plan" && planApproved:
-		// Approved: the fix mailbox request is in flight.
+		// Approved: the fix Request is in flight.
 		stage, attention = "fix-starting", attentionWorking
 	case state == "Completed" && taskType != "plan":
 		stage, attention = "fix-done", attentionNeedsYou
@@ -1167,7 +1164,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 }
 
 // kickoffFix handles the Fix click: best-effort GitHub-native claim
-// (assignment) and trigger label, plus the authoritative mailbox request the
+// (assignment) and trigger label, plus the authoritative Request the
 // controller consumes. Consent is the click — the session user is the
 // executor.
 func (s *Server) kickoffFix(c *gin.Context) {
@@ -1175,14 +1172,14 @@ func (s *Server) kickoffFix(c *gin.Context) {
 }
 
 // kickoffReview handles the Review click: best-effort self-requested review
-// and trigger label, plus the mailbox request.
+// and trigger label, plus the Request.
 func (s *Server) kickoffReview(c *gin.Context) {
 	s.kickoff(c, "pr")
 }
 
-// kickoffTriage handles the Triage click: mailbox only — triage is
+// kickoffTriage handles the Triage click: a Request only — triage is
 // draft-only, so there is no GitHub-side claim to make.
-// kickoffPlan handles the Plan click: mailbox only — planning is
+// kickoffPlan handles the Plan click: a Request only — planning is
 // draft-only (nothing written to GitHub) and claims happen at fix time.
 func (s *Server) kickoffPlan(c *gin.Context) {
 	s.kickoff(c, "plan")
@@ -1215,7 +1212,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		return
 	}
 	// GitHub-native claim, best-effort under the clicker's token: kickoff
-	// proceeds via the mailbox even when the token lacks triage rights.
+	// proceeds via the Request even when the token lacks triage rights.
 	// The trigger label is deliberately NOT written: a click is a one-time
 	// consent, while a label is a standing trigger that would relaunch the
 	// item forever after cleanup.
@@ -1231,7 +1228,7 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 			}
 		}
 	} else {
-		log.Info("member token unavailable; mailbox-only kickoff", "err", err)
+		log.Info("member token unavailable; request-only kickoff", "err", err)
 	}
 
 	// A fresh review consent also stamps the re-review marker on any
@@ -1252,30 +1249,23 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		}
 	}
 
-	// Authoritative mailbox request; the controller consumes and clears it
-	// once the sandbox exists.
-	reqKey := fmt.Sprintf("fix-%d", number)
-	switch kind {
-	case "pr":
-		reqKey = fmt.Sprintf("review-%d", number)
-	case "triage":
-		reqKey = fmt.Sprintf("triage-%d", number)
-	case "plan":
-		reqKey = fmt.Sprintf("plan-%d", number)
+	// Authoritative record of the click; the controller serves it and
+	// writes back what came of it.
+	verb := map[string]string{
+		"issue":  boardv1alpha1.VerbFix,
+		"pr":     boardv1alpha1.VerbReview,
+		"triage": boardv1alpha1.VerbTriage,
+		"plan":   boardv1alpha1.VerbPlan,
+	}[kind]
+	if verb == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown kickoff kind"})
+		return
 	}
-	annotations := board.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	requests := map[string]string{}
-	if raw := annotations[annoBoardRequests]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &requests)
-	}
-	requests[reqKey] = member
-	b, _ := json.Marshal(requests)
-	annotations[annoBoardRequests] = string(b)
-	board.SetAnnotations(annotations)
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+	if _, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
+		Verb:   verb,
+		Member: member,
+		Number: number,
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record request", "details": err.Error()})
 		return
 	}
@@ -1729,10 +1719,11 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 
 // kickoffPRTask stamps a follow-up request (Iterate / Address comments /
 // Fix CI) on the PR's fix sandbox. The annotation is the durable consent
-// the controller drives from — no mailbox claim to strand on a restart.
+// the controller drives from, so there is no Request left standing to
+// strand on a restart.
 func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
 	// boardWriteContext's fifth return is the member TOKEN, not the member
-	// — the mailbox records the executor namespace (a credential in a CR
+	// — the Request records the executor namespace (a credential in a CR
 	// annotation was the failure mode this comment guards against).
 	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
 	if !ok {
@@ -1745,32 +1736,27 @@ func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
 	_ = c.ShouldBindJSON(&req) // body optional
 	sb, ns := s.findPRFixSandbox(c, board, owner, repo, number)
 	if sb == nil {
-		// Hand-made PR: no sandbox yet. Bridge via the mailbox — the
+		// Hand-made PR: no sandbox yet. Bridge with a Request — the
 		// controller launches the factory verb, factory ensures the
 		// factory-pr sandbox itself (gh pr checkout attaches the branch),
 		// and the claim converts to the durable sandbox annotation once
 		// the sandbox exists.
-		kind := map[string]string{
-			"board.gemini.google.com/iterate-requested-at":     "iterate",
-			"board.gemini.google.com/address-requested-at":     "address",
-			"board.gemini.google.com/investigate-requested-at": "investigate",
+		//
+		// The instruction rides on the Request rather than a per-PR
+		// board annotation. That annotation was written on the click and
+		// deleted by nothing: it outlived the iteration it was typed for
+		// and steered the next one.
+		verb := map[string]string{
+			"board.gemini.google.com/iterate-requested-at":     boardv1alpha1.VerbIterate,
+			"board.gemini.google.com/address-requested-at":     boardv1alpha1.VerbAddress,
+			"board.gemini.google.com/investigate-requested-at": boardv1alpha1.VerbInvestigate,
 		}[reqKey]
-		annotations := board.GetAnnotations()
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-		if kind == "iterate" && strings.TrimSpace(req.Instruction) != "" {
-			annotations[fmt.Sprintf("board.gemini.google.com/iterate-instruction-%d", number)] = strings.TrimSpace(req.Instruction)
-		}
-		requests := map[string]string{}
-		if raw := annotations[annoBoardRequests]; raw != "" {
-			_ = json.Unmarshal([]byte(raw), &requests)
-		}
-		requests[fmt.Sprintf("%s-%d", kind, number)] = member
-		b, _ := json.Marshal(requests)
-		annotations[annoBoardRequests] = string(b)
-		board.SetAnnotations(annotations)
-		if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+		if _, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
+			Verb:        verb,
+			Member:      member,
+			Number:      number,
+			Instruction: strings.TrimSpace(req.Instruction),
+		}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record request", "details": err.Error()})
 			return
 		}
@@ -1875,7 +1861,7 @@ func (s *Server) planBoardApprove(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve plan", "details": err.Error()})
 		return
 	}
-	// The fix kickoff does the rest: GitHub claim (assignment) + mailbox.
+	// The fix kickoff does the rest: GitHub claim (assignment) + the Request.
 	s.kickoff(c, "issue")
 }
 

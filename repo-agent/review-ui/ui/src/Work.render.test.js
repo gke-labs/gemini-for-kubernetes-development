@@ -60,6 +60,51 @@ const runbookReply = (removeStatus, removeBody) => (url, opts) => {
 const findButton = (text) =>
     Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes(text));
 
+// clickReply serves the panel's poll with one standing click and no
+// runs at all: the state right after a click, before anything exists.
+const clickReply = (pending) => () => Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+        repoShort: 'orl', gcpProject: 'p', sandboxes: [], instances: [], pending,
+    }),
+});
+
+describe('TryPanel standing clicks', () => {
+    test('a click that failed says so, and lets you click again', async () => {
+        global.fetch = jest.fn(clickReply([{
+            mode: 'plan', scenario: 'gcevm', instance: 'gcevm',
+            phase: 'Failed', reason: 'LaunchInterrupted',
+            message: 'the controller restarted mid-launch; check the run before clicking again',
+        }]));
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        // The whole point of keeping a failed click for a week: the tab
+        // used to look exactly as empty as it did before the click.
+        expect(container.textContent).toContain('plan failed');
+        const replan = findButton('Re-plan');
+        expect(replan).toBeTruthy();
+        expect(replan.disabled).toBe(false);
+    });
+
+    test('a click still in flight holds the buttons down', async () => {
+        global.fetch = jest.fn(clickReply([{
+            mode: 'plan', scenario: 'gcevm', instance: 'gcevm', phase: 'Running',
+        }]));
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        // Provisional (no run on the branch yet), so the row says what
+        // it is waiting for rather than "queued" — either way it is the
+        // same click, and it holds the buttons.
+        expect(container.textContent).toContain('preparing the sandbox');
+        expect(findButton('Re-plan').disabled).toBe(true);
+    });
+});
+
 describe('TryPanel Remove', () => {
     test('says so when the removal fails instead of pretending it worked', async () => {
         global.fetch = jest.fn(runbookReply(404, '{"error":"instance records not found"}'));

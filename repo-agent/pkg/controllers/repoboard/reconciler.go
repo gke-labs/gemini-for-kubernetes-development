@@ -16,16 +16,15 @@ limitations under the License.
 
 // Package repoboard reconciles RepoBoard boards (docs/design/repoboard.md):
 // work is discovered from GitHub (trigger label + assignee, under the
-// executor-consent rule) and from the transient request mailbox; attributed
-// execution runs through the factory CLI in the consenting member's own
-// namespace; reviews always run attributed and land as the member's
-// pending review on GitHub. GitHub and factory sandboxes are the state,
-// the CR is near-static config.
+// executor-consent rule) and from the Requests members file by clicking;
+// attributed execution runs through the factory CLI in the consenting
+// member's own namespace; reviews always run attributed and land as the
+// member's pending review on GitHub. GitHub and factory sandboxes are
+// the state, the CR is near-static config.
 package repoboard
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,12 +46,6 @@ import (
 )
 
 const (
-	// AnnotationRequests is the transient kickoff mailbox written by the
-	// API on a member's click and consumed (cleared) by the controller
-	// once the corresponding sandbox exists. JSON map, e.g.
-	// {"fix-123": "alice", "review-45": "alice"}.
-	AnnotationRequests = "board.gemini.google.com/requests"
-
 	// Draft/claim annotations on factory sandboxes; same wire contract the
 	// PR-review flow established (legacy names kept so the API/UI read one
 	// shape).
@@ -65,7 +58,7 @@ const (
 	AnnotationUnpausedAt        = "sandbox.gemini.google.com/unpaused-at"
 	AnnotationBoard             = "board.gemini.google.com/board"
 	// AnnotationExecutor records which member's click consented a review;
-	// stamped when the mailbox entry is consumed so resume-after-restart
+	// stamped as the review Request is served so resume-after-restart
 	// keeps the executor identity even when the sandbox lives in the board
 	// namespace (personal boards).
 	AnnotationExecutor = "board.gemini.google.com/executor"
@@ -96,7 +89,7 @@ const (
 	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
 	// PR follow-up verbs (Iterate / Address comments / Fix CI): the API
 	// stamps the request on the fix sandbox — durable consent the
-	// controller drives from. No mailbox claim to strand (the #1529
+	// controller drives from. No Request left standing to strand (the #1529
 	// lesson): rerunRequested keeps a request standing until a completion
 	// newer than it lands.
 	AnnotationIterateRequested     = "board.gemini.google.com/iterate-requested-at"
@@ -142,6 +135,10 @@ type Reconciler struct {
 
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
+// Requests are the clicks. The controller reads them, writes their phase,
+// and deletes them once they have been terminal long enough to be read.
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests,verbs=get;list;watch;update;patch;delete
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // The factory CLI runs under this ServiceAccount: it creates each sandbox's
@@ -227,9 +224,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
 
 	// Build the work plan: standing automation (spec.auto — deliberate,
-	// recency-bounded, verb scopes named by their values) plus the mailbox
-	// (clicks). Nothing else launches anything; what the member VIEWS is
-	// client-side state the controller never reads.
+	// recency-bounded, verb scopes named by their values) plus the
+	// standing Requests (clicks). Nothing else launches anything; what
+	// the member VIEWS is client-side state the controller never reads.
 	var fixes []fixPlan
 	var reviews []reviewPlan
 	switch board.Spec.Auto.Review {
@@ -261,7 +258,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		fixes = append(fixes, f...)
 	}
-	mail := r.mailboxPlans(work)
+	// The clicks. Requests are objects in this namespace, so a failure to
+	// list them is a failure to reconcile: carrying on would read as
+	// "nobody clicked anything" and quietly settle nothing.
+	if err := r.loadRequests(ctx, work); err != nil {
+		return ctrl.Result{}, err
+	}
+	mail := r.requestMailbox(work)
 	fixes = append(fixes, mail.fixes...)
 	reviews = append(reviews, mail.reviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
@@ -357,8 +360,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.resumePlans(ctx, work)
 	r.settleSubmittedReviews(ctx, work)
 
-	if err := r.trimMailbox(ctx, work); err != nil {
-		logger.Error(err, "mailbox cleanup failed")
+	// Settle every standing click against what the passes above left
+	// behind, and collect the ones that have been settled long enough.
+	if err := r.reapRequests(ctx, work); err != nil {
+		logger.Error(err, "request cleanup failed")
 	}
 
 	// Explicit PR follow-up clicks run regardless of the auto policy —
@@ -387,6 +392,10 @@ type workState struct {
 	repo      string
 	discToken string // discovery-identity token (reads only)
 	sandboxes []*unstructured.Unstructured
+	// requests are every click filed against this board, settled and
+	// not, oldest first. The standing ones drive the launch passes; the
+	// settled ones are receipts waiting to be collected.
+	requests []*boardv1alpha1.Request
 }
 
 func (w *workState) fixSandboxName(issue int) string {
@@ -561,10 +570,14 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 	}
 }
 
-// mailbox is one parse of the kickoff annotation: a slice per verb the
-// UI can click. A struct rather than a return list because there are
-// eight of them now, and a reader had to count commas to tell which was
-// which.
+// mailbox is the standing Requests, sorted into a slice per verb the UI
+// can click. A struct rather than a return list because there are seven
+// of them, and a reader had to count commas to tell which was which.
+//
+// The name is older than the Requests: this used to be one parse of a
+// JSON map in a board annotation. Everything downstream of here still
+// sees exactly what it saw then — requestMailbox in requests.go is the
+// only thing that knows a click is now an object.
 type mailbox struct {
 	fixes    []fixPlan
 	reviews  []reviewPlan
@@ -575,94 +588,19 @@ type mailbox struct {
 	research []researchClaim
 }
 
-// mailboxPlans turns pending UI requests into plans; consent is the click,
-// recorded as the requesting member.
-func (r *Reconciler) mailboxPlans(work *workState) mailbox {
-	raw := work.board.GetAnnotations()[AnnotationRequests]
-	if raw == "" {
-		return mailbox{}
-	}
-	requests := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return mailbox{}
-	}
-	var fixes []fixPlan
-	var reviews []reviewPlan
-	var triages []int
-	var plans []planRequest
-	var prTasks []prTaskClaim
-	var runbookClaims []runbookClaim
-	var research []researchClaim
-	for key, member := range requests {
-		switch {
-		case strings.HasPrefix(key, "fix-"):
-			if n, err := strconv.Atoi(strings.TrimPrefix(key, "fix-")); err == nil {
-				fixes = append(fixes, fixPlan{issue: n, executor: member})
-			}
-		case strings.HasPrefix(key, "review-"):
-			if n, err := strconv.Atoi(strings.TrimPrefix(key, "review-")); err == nil {
-				reviews = append(reviews, reviewPlan{pr: n, executor: member})
-			}
-		case strings.HasPrefix(key, "triage-"):
-			if n, err := strconv.Atoi(strings.TrimPrefix(key, "triage-")); err == nil {
-				triages = append(triages, n)
-			}
-		case strings.HasPrefix(key, "plan-"):
-			if n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-")); err == nil {
-				plans = append(plans, planRequest{issue: n, member: member})
-			}
-		case strings.HasPrefix(key, "runbook-"):
-			// runbook-run-<runbook>[:<instance>] / runbook-teardown-<runbook>[:<instance>]
-			rest := strings.TrimPrefix(key, "runbook-")
-			mode, spec, modeOK := strings.Cut(rest, "-")
-			if !modeOK || (mode != "run" && mode != "teardown" && mode != "plan" && mode != "deploy") {
-				continue
-			}
-			scenario, rbInstance, _ := strings.Cut(spec, ":")
-			if scenario == "" {
-				continue
-			}
-			tryMember, tryRest, _ := strings.Cut(member, "|")
-			tryAt, tryIntent, _ := strings.Cut(tryRest, "|")
-			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
-			if tryErr != nil {
-				runbookClaimedAt = time.Time{}
-			}
-			runbookClaims = append(runbookClaims, runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt, intent: tryIntent})
-		case strings.HasPrefix(key, "research-"):
-			// research-<session id>: one deep-research conversation, and
-			// the sandbox that hosts it. Not board work — the board is
-			// only the mailbox that reaches the controller's factory
-			// binary.
-			if claim, ok := parseResearchClaim(key, member); ok {
-				research = append(research, claim)
-			}
-		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
-			kind, numStr, _ := strings.Cut(key, "-")
-			if n, err := strconv.Atoi(numStr); err == nil {
-				prTasks = append(prTasks, prTaskClaim{pr: n, member: member, kind: kind})
-			}
-		}
-	}
-	return mailbox{
-		fixes:    fixes,
-		reviews:  reviews,
-		triages:  triages,
-		plans:    plans,
-		prTasks:  prTasks,
-		runbooks: runbookClaims,
-		research: research,
-	}
-}
-
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
-// (hand-made PRs): the mailbox bridges until factory creates the
+// (hand-made PRs): the Request bridges until factory creates the
 // factory-pr sandbox, then the claim converts to the durable sandbox
 // annotation the normal click pass drives.
 type prTaskClaim struct {
 	pr     int
 	member string
 	kind   string
+	// instruction is the member's own words for an Iterate. It rides on
+	// the Request because the sandbox it belongs on does not exist yet;
+	// it used to ride on a per-PR board annotation, which outlived the
+	// click and had nothing to clean it up.
+	instruction string
 }
 
 // dedupeReviews keeps one plan per PR, preferring a member's click over a
@@ -736,13 +674,14 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 	return nil
 }
 
-// resumeFixes re-drives approved plans whose fix never started. The
-// mailbox claim is consumed at kickoff, so a controller restart between
-// consumption and the task landing in the sandbox — or a launch that
+// resumeFixes re-drives approved plans whose fix never started. The fix
+// Request settles as soon as the sandbox exists, so a controller restart
+// between that and the task landing in the sandbox — or a launch that
 // bailed — would otherwise strand the row at "starting" forever. The
 // approval annotation is the durable consent, and the runner's
-// preflight/single-flight make relaunching idempotent (duplicates from
-// the mailbox in the same pass are skipped by IsRunning).
+// preflight/single-flight make relaunching idempotent (a standing
+// Request planning the same fix in the same pass is skipped by
+// IsRunning).
 func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 	var out []fixPlan
 	prefix := "fix-" + work.repo + "-"
@@ -1127,132 +1066,6 @@ func clipMessage(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// trimMailbox clears request entries whose sandbox now exists.
-func (r *Reconciler) trimMailbox(ctx context.Context, work *workState) error {
-	raw := work.board.GetAnnotations()[AnnotationRequests]
-	if raw == "" {
-		return nil
-	}
-	requests := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		return fmt.Errorf("invalid mailbox annotation: %w", err)
-	}
-
-	remaining := map[string]string{}
-	for key, member := range requests {
-		switch {
-		case strings.HasPrefix(key, "fix-"):
-			n, err := strconv.Atoi(strings.TrimPrefix(key, "fix-"))
-			if err != nil {
-				continue
-			}
-			if work.findSandbox(member, work.fixSandboxName(n)) != nil {
-				continue
-			}
-		case strings.HasPrefix(key, "review-"):
-			n, err := strconv.Atoi(strings.TrimPrefix(key, "review-"))
-			if err != nil {
-				continue
-			}
-			if sb := work.findPRSandbox(n); sb != nil {
-				// Persist the consenting executor on the sandbox before
-				// dropping the mailbox entry: it is the only durable record
-				// that this review was a member's click (draft-publish).
-				if sb.GetAnnotations()[AnnotationExecutor] != member {
-					annotations := sb.GetAnnotations()
-					if annotations == nil {
-						annotations = map[string]string{}
-					}
-					annotations[AnnotationExecutor] = member
-					sb.SetAnnotations(annotations)
-					if err := r.Update(ctx, sb); err != nil {
-						return fmt.Errorf("stamping executor on %s: %w", sb.GetName(), err)
-					}
-				}
-				continue
-			}
-		case strings.HasPrefix(key, "triage-"):
-			n, err := strconv.Atoi(strings.TrimPrefix(key, "triage-"))
-			if err != nil {
-				continue
-			}
-			// The click stands until a draft is stored: the sandbox may be
-			// a rejected leftover whose tombstone the click overrides.
-			if sb := work.findSandbox(work.board.Namespace, factorycli.TriageSandboxName(work.repo, n)); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
-				continue
-			}
-		case strings.HasPrefix(key, "runbook-"):
-			rest := strings.TrimPrefix(key, "runbook-")
-			mode, spec, modeOK := strings.Cut(rest, "-")
-			if !modeOK {
-				continue
-			}
-			scenario, rbInstance, _ := strings.Cut(spec, ":")
-			tryMember, tryAt, _ := strings.Cut(member, "|")
-			runbookClaimedAt, tryErr := time.Parse(time.RFC3339, tryAt)
-			if tryErr != nil {
-				runbookClaimedAt = time.Time{}
-			}
-			if r.runbookClaimConsumed(runbookClaim{mode: mode, scenario: scenario, instance: rbInstance, member: tryMember, claimedAt: runbookClaimedAt}, work) {
-				continue
-			}
-		case strings.HasPrefix(key, "research-"):
-			claim, ok := parseResearchClaim(key, member)
-			if !ok {
-				continue // malformed: nothing will ever serve it
-			}
-			// Dropped once the session's sandbox exists, and dropped
-			// unserved once the claim outlives its TTL — so a session
-			// that cannot be created does not sit here forever.
-			if r.researchClaimServed(claim, work) || researchClaimExpired(claim, time.Now()) {
-				continue
-			}
-		case strings.HasPrefix(key, "iterate-"), strings.HasPrefix(key, "address-"), strings.HasPrefix(key, "investigate-"):
-			kind, numStr, _ := strings.Cut(key, "-")
-			n, err := strconv.Atoi(numStr)
-			if err != nil {
-				continue
-			}
-			reqKey := map[string]string{
-				"iterate":     AnnotationIterateRequested,
-				"address":     AnnotationAddressRequested,
-				"investigate": AnnotationInvestigateRequested,
-			}[kind]
-			// Consumed once the claim converted to the sandbox annotation.
-			if sb := work.findPRSandbox(n); sb != nil && sb.GetAnnotations()[reqKey] != "" {
-				continue
-			}
-		case strings.HasPrefix(key, "plan-"):
-			n, err := strconv.Atoi(strings.TrimPrefix(key, "plan-"))
-			if err != nil {
-				continue
-			}
-			// The plan request stands until a draft is stored: the fix
-			// sandbox may predate the click, so existence alone proves
-			// nothing.
-			if sb := work.findSandbox(member, work.fixSandboxName(n)); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
-				continue
-			}
-		default:
-			continue
-		}
-		remaining[key] = member
-	}
-
-	if len(remaining) == len(requests) {
-		return nil
-	}
-	annotations := work.board.GetAnnotations()
-	if len(remaining) == 0 {
-		delete(annotations, AnnotationRequests)
-	} else {
-		b, _ := json.Marshal(remaining)
-		annotations[AnnotationRequests] = string(b)
-	}
-	work.board.SetAnnotations(annotations)
-	return r.Update(ctx, work.board)
-}
-
 // runbookClaim is a runbook execution click from the Try tab.
 type runbookClaim struct {
 	mode      string // run | teardown
@@ -1263,6 +1076,11 @@ type runbookClaim struct {
 	// intent is this run's brief, carried on the claim so it dies with
 	// it rather than outliving every other run on the board.
 	intent string
+	// request is the click this claim came from. Run is the only verb
+	// that keeps it: its "already done this" receipt is the runner's
+	// in-memory result, so it is the only one that has to write down
+	// that it is about to spend money. See markLaunching.
+	request *boardv1alpha1.Request
 }
 
 func runbookKey(member, repo string, c runbookClaim) string {
@@ -1281,15 +1099,22 @@ func (r *Reconciler) runbookClaimConsumed(claim runbookClaim, work *workState) b
 	return ok && res.FinishedAt.After(claim.claimedAt)
 }
 
-// ensureRunbookClaims: the timestamped mailbox claim is the request,
-// the runner result is the receipt, and
-// factory ensures the run sandbox itself. run and teardown for the same
-// path share a sandbox, so the sandbox-wide preflight serializes them.
+// ensureRunbookClaims: the Request is the click, the runner result is
+// the receipt, and factory ensures the run sandbox itself. run and
+// teardown for the same path share a sandbox, so the sandbox-wide
+// preflight serializes them.
 func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, claims []runbookClaim) {
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
 		key := runbookKey(claim.member, work.repo, claim)
 		if r.Factory.IsRunning(key) {
+			continue
+		}
+		// Marked as launching by a process that is not running it any
+		// more: this controller restarted mid-launch, and the deploy it
+		// started may well have landed. Never a second attempt — the
+		// reap pass strands the click instead, and the member decides.
+		if claim.request != nil && claim.request.Status.Phase == boardv1alpha1.RequestLaunching {
 			continue
 		}
 		if r.runbookClaimConsumed(claim, work) {
@@ -1306,6 +1131,10 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			r.stampEngine(ctx, sb, boardEngine(work.board))
 		}
 		mode := runMode(claim.mode)
+		// Before, not after. A controller killed between here and the
+		// result has no memory that it deployed; the Request does, and
+		// the reap pass strands it rather than deploying twice.
+		r.markLaunching(ctx, claim.request, name)
 		if r.Factory.StartRun(key, factorycli.RunOptions{
 			Namespace:   claim.member,
 			SandboxName: name,
@@ -1375,7 +1204,6 @@ func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, cl
 		if reqKey == "" {
 			continue
 		}
-		boardInstrKey := fmt.Sprintf("board.gemini.google.com/iterate-instruction-%d", claim.pr)
 		if sb := work.findPRSandbox(claim.pr); sb != nil {
 			// Convert: the annotation is the durable consent from here on.
 			annotations := sb.GetAnnotations()
@@ -1383,14 +1211,12 @@ func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, cl
 				annotations = map[string]string{}
 			}
 			if annotations[reqKey] != "" {
-				continue // already converted; trim drops the claim
+				continue // already converted; the reap pass settles the Request
 			}
 			annotations[reqKey] = time.Now().UTC().Format(time.RFC3339)
 			annotations[AnnotationExecutor] = claim.member
-			if claim.kind == "iterate" {
-				if instr := work.board.GetAnnotations()[boardInstrKey]; instr != "" {
-					annotations[AnnotationIterateInstruction] = instr
-				}
+			if claim.kind == "iterate" && claim.instruction != "" {
+				annotations[AnnotationIterateInstruction] = claim.instruction
 			}
 			sb.SetAnnotations(annotations)
 			if err := r.Update(ctx, sb); err != nil {
@@ -1417,7 +1243,7 @@ func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, cl
 		}
 		instruction := ""
 		if claim.kind == "iterate" {
-			instruction = work.board.GetAnnotations()[boardInstrKey]
+			instruction = claim.instruction
 		}
 		starters := map[string]func(string, factorycli.PRTaskOptions) bool{
 			"iterate":     r.Factory.StartIterate,
@@ -1826,6 +1652,11 @@ func (r *Reconciler) setCondition(ctx context.Context, board *boardv1alpha1.Repo
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&boardv1alpha1.RepoBoard{}).
+		// A click used to be an annotation on the board, so filing one
+		// woke this loop for free. A Request is its own object, and
+		// owned by the board — so this is what keeps the launch latency
+		// where it was instead of up to a requeue interval behind.
+		Owns(&boardv1alpha1.Request{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: concurrency}).
 		Complete(r)
 }
