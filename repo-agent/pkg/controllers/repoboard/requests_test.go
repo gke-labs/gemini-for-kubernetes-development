@@ -331,3 +331,35 @@ func TestDuplicateClicksLaunchOnce(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1), "a doubled click is one fix, not two")
 }
+
+// The runbook a run starts from reaches factory: it rides the Request,
+// the claim and the launch options, and a hop that dropped it would
+// plan the run from nothing with no error anywhere.
+func TestARunClickCarriesItsRunbookToTheLaunch(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("plan", "pr-42")
+	req.Spec.Run.Runbook = "gke"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RunOpts.Runbook).To(gomega.Equal("gke"))
+}
+
+// The runbook becomes a factory CLI argument, and a Request is writable
+// by anything with access to the namespace: one that is not a name is
+// never launched.
+func TestARunbookThatIsNotANameIsNeverLaunched(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("plan", "pr-42")
+	req.Spec.Run.Runbook = "--intent=rm"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}

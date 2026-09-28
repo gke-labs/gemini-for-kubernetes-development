@@ -1141,14 +1141,17 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
 // TryPanel is the Runs tab: every run for this repo, and the composer
 // that starts a new one.
 //
-// There is no runbook picker any more. A run owns its own runbook.md —
-// the procedure, authored at plan time and corrected by each deploy —
-// so starting one means naming it and saying what it should do, not
-// choosing from a library of shared documents.
+// A run owns its own runbook.md — the procedure, authored at plan time
+// and corrected by each deploy. Starting one means naming it and either
+// saying what it should do, or picking a runbook to start from: one of
+// the repository's (.agents/runbooks/) or another of your runs. The
+// runbook is copied into the new run and planned for it, so nothing is
+// shared afterwards; what you type then is only what to change.
 function TryPanel({ boardName, onOpenSandbox }) {
   const [state, setState] = useState(null);
   const [name, setName] = useState('');
   const [intent, setIntent] = useState('');
+  const [runbook, setRunbook] = useState('');
   const [refining, setRefining] = useState('');
   const [refineText, setRefineText] = useState('');
   const [busy, setBusy] = useState('');
@@ -1169,18 +1172,22 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const sandboxes = (state && state.sandboxes) || [];
   const pending = (state && state.pending) || [];
   const runs = (state && state.instances) || [];
+  const repoRunbooks = (state && state.repoRunbooks) || [];
   const findSb = (n) => sandboxes.find(s => (s.instance || s.scenario) === n);
   const findPending = (n) => pendingFor(pending, n);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
-  const kickoff = (mode, runName, text) => {
+  const kickoff = (mode, runName, text, from) => {
     setBusy(`${mode}:${runName}`);
     fetch(`/api/board/${boardName}/runbook`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, name: runName, intent: (text || '').trim() }),
+      body: JSON.stringify({ mode, name: runName, intent: (text || '').trim(), ...(from ? { runbook: from } : {}) }),
     }).then(res => {
       if (res.ok) {
         setState(prev => prev ? { ...prev, pending: [...(prev.pending || []), { mode, instance: runName }] } : prev);
+      } else {
+        // A refused start used to vanish: the row appeared, then went.
+        res.text().then(t => setError(`${mode} ${runName} failed: ${t}`));
       }
       setTimeout(load, 2000);
       setTimeout(() => setBusy(''), 2000);
@@ -1190,9 +1197,10 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const startNew = () => {
     const n = slug(name);
     if (!n) return;
-    kickoff('plan', n, intent);
+    kickoff('plan', n, intent, runbook);
     setName('');
     setIntent('');
+    setRunbook('');
   };
 
   const replan = (runName) => {
@@ -1217,6 +1225,10 @@ function TryPanel({ boardName, onOpenSandbox }) {
 
   const composerName = slug(name);
   const taken = composerName && runs.some(r => r.name === composerName);
+  // The value is the runbook's name; the repository's and your runs'
+  // are one namespace to factory, which looks in the repository first.
+  const fromItself = runbook && runbook === composerName;
+  const runRunbooks = runs.map(r => r.name).filter(n => !repoRunbooks.includes(n));
   const cell = { padding: '5px 8px', verticalAlign: 'middle' };
 
   // A run just clicked has no directory on the branch yet — the first
@@ -1261,14 +1273,37 @@ function TryPanel({ boardName, onOpenSandbox }) {
                 background: 'transparent', color: 'var(--text-primary)', font: 'inherit' }} />
           </span>
           {taken && <Chip text="name already used" color="#d73a49" bg="rgba(215,58,73,0.12)" />}
+          <span style={{ color: 'var(--text-secondary)' }}>from:</span>
+          <select value={runbook} onChange={e => setRunbook(e.target.value)}
+            aria-label="runbook to start from"
+            title="Start from an existing runbook: it is copied into the new run and planned for it — its prefix, project and region become this run's"
+            style={{ padding: '3px 6px', border: '1px solid var(--border-color)', borderRadius: '4px',
+              background: 'var(--bg-primary)', color: 'var(--text-primary)', font: 'inherit' }}>
+            <option value="">nothing — describe it</option>
+            {repoRunbooks.length > 0 && (
+              <optgroup label="repository (.agents/runbooks)">
+                {repoRunbooks.map(n => <option key={`repo:${n}`} value={n}>{n}</option>)}
+              </optgroup>
+            )}
+            {runRunbooks.length > 0 && (
+              <optgroup label="your runs">
+                {runRunbooks.map(n => <option key={`run:${n}`} value={n}>{n}</option>)}
+              </optgroup>
+            )}
+          </select>
+          {fromItself && <Chip text="a run cannot start from itself" color="#d73a49" bg="rgba(215,58,73,0.12)" />}
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', marginTop: '6px' }}>
           <textarea rows={2} value={intent} onChange={e => setIntent(e.target.value)}
-            placeholder="what should this run do? e.g. deploy this repo on GKE with 3 ubuntu nodes and the streams flag on"
+            placeholder={runbook
+              ? `anything to change from ${runbook}? (optional) e.g. 5 nodes, us-east1`
+              : 'what should this run do? e.g. deploy this repo on GKE with 3 ubuntu nodes and the streams flag on'}
             style={{ flex: 1, border: 'none', outline: 'none', resize: 'vertical',
               background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
-          <button className="btn btn-sm" disabled={!composerName || taken || !!busy}
-            title="Writes the procedure and its scripts, pushed for review. Nothing executes until you approve."
+          <button className="btn btn-sm" disabled={!composerName || taken || fromItself || !!busy}
+            title={runbook
+              ? `Copies ${runbook} into this run and plans it here, pushed for review. Nothing executes until you approve.`
+              : 'Writes the procedure and its scripts, pushed for review. Nothing executes until you approve.'}
             onClick={startNew}>▶ Plan</button>
         </div>
       </div>

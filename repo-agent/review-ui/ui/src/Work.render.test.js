@@ -178,6 +178,106 @@ describe('TryPanel Remove', () => {
     });
 });
 
+// React listens for the native setter, not a plain assignment.
+const setValue = (el, value) => {
+    const proto = el.tagName === 'SELECT' ? window.HTMLSelectElement.prototype
+        : el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+    el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+};
+
+// pickerReply serves the poll with a repository runbook and one run —
+// both things a new run can start from — and accepts the plan.
+const pickerReply = (url, opts) => {
+    if (opts && opts.method === 'POST') {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'requested' }) });
+    }
+    return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+            repoShort: 'orl', gcpProject: 'p', sandboxes: [], pending: [],
+            instances: [{ name: 'gke1', deployed: false }],
+            repoRunbooks: ['gke'],
+        }),
+    });
+};
+
+describe('TryPanel runbook picker', () => {
+    test('offers the repository\'s runbooks and your runs, and plans from the one picked', async () => {
+        global.fetch = jest.fn(pickerReply);
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        const select = container.querySelector('select[aria-label="runbook to start from"]');
+        expect(select).toBeTruthy();
+        const groups = Array.from(select.querySelectorAll('optgroup')).map(g =>
+            [g.label, Array.from(g.querySelectorAll('option')).map(o => o.value)]);
+        expect(groups).toEqual([
+            ['repository (.agents/runbooks)', ['gke']],
+            ['your runs', ['gke1']],
+        ]);
+
+        await act(async () => { setValue(container.querySelector('input[type="text"]'), 'pr-42'); });
+        await act(async () => { setValue(select, 'gke1'); });
+        // With a runbook, what you type is only what to change.
+        expect(container.querySelector('textarea').placeholder).toContain('anything to change from gke1');
+
+        await act(async () => { findButton('▶ Plan').click(); });
+        await flush();
+
+        const posts = global.fetch.mock.calls.filter(([, opts]) => opts && opts.method === 'POST');
+        expect(posts).toHaveLength(1);
+        expect(JSON.parse(posts[0][1].body)).toEqual({ mode: 'plan', name: 'pr-42', intent: '', runbook: 'gke1' });
+    });
+
+    test('a run cannot be started from itself', async () => {
+        global.fetch = jest.fn(pickerReply);
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        await act(async () => { setValue(container.querySelector('input[type="text"]'), 'gke'); });
+        await act(async () => { setValue(container.querySelector('select[aria-label="runbook to start from"]'), 'gke'); });
+
+        expect(container.textContent).toContain('a run cannot start from itself');
+        expect(findButton('▶ Plan').disabled).toBe(true);
+    });
+
+    test('with nothing picked, a plan carries no runbook', async () => {
+        global.fetch = jest.fn(pickerReply);
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        await act(async () => { setValue(container.querySelector('input[type="text"]'), 'fresh'); });
+        await act(async () => { findButton('▶ Plan').click(); });
+        await flush();
+
+        const posts = global.fetch.mock.calls.filter(([, opts]) => opts && opts.method === 'POST');
+        expect(JSON.parse(posts[0][1].body)).toEqual({ mode: 'plan', name: 'fresh', intent: '' });
+    });
+
+    test('a refused start says why instead of vanishing', async () => {
+        global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST')
+            ? Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve('a runbook can only be planned from') })
+            : pickerReply(url, opts));
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        await act(async () => { setValue(container.querySelector('input[type="text"]'), 'pr-42'); });
+        await act(async () => { setValue(container.querySelector('select[aria-label="runbook to start from"]'), 'gke'); });
+        await act(async () => { findButton('▶ Plan').click(); });
+        await flush();
+        await flush();
+
+        expect(container.textContent).toContain('plan pr-42 failed: a runbook can only be planned from');
+    });
+});
+
 // The All tab is the cross-board view: Up Next, Research, Runs. Research
 // is there because a conversation lives on a board and is remembered
 // without one — "the one about the retry loop", not "the one on

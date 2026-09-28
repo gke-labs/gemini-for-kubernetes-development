@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -165,6 +167,10 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		// Guidance is its older name.
 		Intent   string `json:"intent"`
 		Guidance string `json:"guidance"`
+		// Runbook starts a new run from an existing one: a runbook
+		// under the repository's .agents/runbooks/, or another run.
+		// It is copied in and planned for this run. Plan only.
+		Runbook string `json:"runbook"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -182,6 +188,20 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 	if req.Mode != "run" && req.Mode != "teardown" && req.Mode != "plan" && req.Mode != "deploy" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be plan, deploy, run, or teardown"})
 		return
+	}
+	runbook := strings.TrimSpace(req.Runbook)
+	if runbook != "" {
+		switch {
+		case req.Mode != "plan":
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a runbook starts a plan; it cannot be deployed or torn down directly"})
+			return
+		case !runbookNameRE.MatchString(runbook):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "runbook must be lowercase letters, digits and dashes"})
+			return
+		case runbook == name:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "a run cannot be started from itself; pick a different name"})
+			return
+		}
 	}
 	// Multi-tenant policy (factory itself only discloses): a member
 	// with no configured deploy project must not launch infrastructure
@@ -207,6 +227,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 			Name:     name,
 			Scenario: req.Scenario,
 			Intent:   clampIntent(intent),
+			Runbook:  runbook,
 		},
 	})
 	if err != nil {
@@ -230,7 +251,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		return
 	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	_, repo, err := parseRepoURL(repoURL)
+	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
 		return
@@ -259,6 +280,8 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		instances := s.scanRunDirectories(ctx, gh, member, repo, ref)
 		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
 		out["instances"] = instances
+		// What a new run can start from, besides the runs above.
+		out["repoRunbooks"] = repoRunbooks(ctx, gh, owner, repo)
 	}
 
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
@@ -608,4 +631,65 @@ func runLivenessScript() string {
 		`want=$(cat $d/start_time 2>/dev/null | xargs); got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs); ` +
 		`if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; fi; fi; ` +
 		`echo "$alive|$code|$(stat -c %Y $d/pid 2>/dev/null)"`
+}
+
+// runbookNameRE is the shape factory slugs a runbook name to, and the
+// Request CRD's pattern for it.
+var runbookNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// repoRunbooksPath is where a repository keeps runbooks for its runs to
+// start from: one directory each, in whatever shape — the plan makes a
+// run out of it.
+const repoRunbooksPath = ".agents/runbooks"
+
+// repoRunbookCache holds each repository's runbook list. The Runs tab
+// polls every ten seconds, and the list changes when a PR merges: a
+// directory listing per poll would be most of the tab's GitHub budget
+// for an answer that is almost always the same.
+var repoRunbookCache = struct {
+	sync.Mutex
+	entries map[string]repoRunbookEntry
+}{entries: map[string]repoRunbookEntry{}}
+
+type repoRunbookEntry struct {
+	names   []string
+	expires time.Time
+}
+
+// repoRunbooks lists the runbooks on the repository's default branch —
+// what factory reads — as names, sorted. None is an answer, not an
+// error: most repositories have no .agents/runbooks/ at all. A failed
+// read keeps whatever was known and retries soon rather than parking an
+// empty list for the full TTL.
+func repoRunbooks(ctx context.Context, gh *github.Client, owner, repo string) []string {
+	key := owner + "/" + repo
+	repoRunbookCache.Lock()
+	e, ok := repoRunbookCache.entries[key]
+	repoRunbookCache.Unlock()
+	if ok && time.Now().Before(e.expires) {
+		return e.names
+	}
+	names := []string{}
+	ttl := 10 * time.Minute
+	_, dir, resp, err := gh.Repositories.GetContents(ctx, owner, repo, repoRunbooksPath, nil)
+	switch {
+	case err == nil:
+		for _, entry := range dir {
+			if entry.GetType() == "dir" && runbookNameRE.MatchString(entry.GetName()) {
+				names = append(names, entry.GetName())
+			}
+		}
+		sort.Strings(names)
+	case resp != nil && resp.StatusCode == http.StatusNotFound:
+	default:
+		names = e.names
+		if names == nil {
+			names = []string{}
+		}
+		ttl = time.Minute
+	}
+	repoRunbookCache.Lock()
+	repoRunbookCache.entries[key] = repoRunbookEntry{names: names, expires: time.Now().Add(ttl)}
+	repoRunbookCache.Unlock()
+	return names
 }

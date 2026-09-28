@@ -333,6 +333,7 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
 	r.GET("/board/:board/runbook", server.getBoardRunbooks)
+	r.POST("/board/:board/runbook", server.kickoffRunbook)
 	r.DELETE("/board/:board/runbook/instance/:instance", server.removeRunbookInstance)
 	return server, r, dynamicClient, rt
 }
