@@ -140,7 +140,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 }
 
 // resumeTriages re-drives triage sandboxes whose suggestions have not been
-// harvested: a clicked triage's mailbox entry is consumed when the sandbox
+// harvested: a clicked triage's Request settles when the sandbox
 // appears, minutes before the run completes, so without this pass the
 // finished invocation's output would never be stored (and the row would
 // show Triaging… forever).

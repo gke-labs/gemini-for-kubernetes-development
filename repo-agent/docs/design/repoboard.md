@@ -302,13 +302,46 @@ Notes on the tiers:
 - **Review-request twin (free):** a review request to an opted-in member
   pre-drafts a review. No consent ceremony needed — drafts write nothing.
 - **Discreet mode** (`triggers.label: ""` or per-click): kickoff flows
-  through a **mailbox** — a transient annotation on the board CR
-  (`board.gemini.google.com/requests`), consumed and cleared by the
-  controller the moment the sandbox exists. It is a self-emptying queue for
-  the seconds between click and sandbox, not a ledger. Claims remain via
+  through a **Request** — a namespaced CR in the member's namespace,
+  owned by the board, holding the verb, the subject, the executor
+  namespace and the parameters of one click. Claims remain via
   assignment; only the agent-branded label is omitted. Tradeoff (accepted):
   assignment says *alice took it*, not *an agent is helping* — disclosure,
   where required, is `policy.disclose` on the PR body.
+
+**The Request lifecycle** (`Request`, `board.gemini.google.com/v1alpha1`):
+
+- The API creates one per click (`generateName`), and returns the
+  existing one if the same `(verb, subject)` is already standing — a
+  double-click is one launch. It never updates or deletes one; the
+  phase is the controller's to write.
+- `Pending → Launching → Running → Succeeded | Failed`. The controller
+  settles a click as soon as its **durable** receipt exists — usually a
+  named sandbox, or an annotation on one — so everything after that is
+  driven from the sandbox, not from the Request.
+- `Launching` is written *before* launching, and only for verbs whose
+  receipt is not durable (`run`). A controller killed inside that window
+  strands the click (`Failed`/`LaunchInterrupted`) rather than repeating
+  it: stranding a deploy costs a second click, repeating one costs a
+  second cloud footprint.
+- Nothing is retried automatically. A retry is a new click.
+- A click that can never be served fails with a reason the member can
+  read (`Expired`, `Malformed`) instead of vanishing.
+- Terminal Requests linger so the outcome is readable — `Succeeded` 1h,
+  `Failed` 7d, unserved `Pending` 24h — then the board's reconcile loop
+  collects them, keeping at most 5 per `(verb, subject)`. Deleting the
+  board takes its clicks with it (ownerRef).
+- **The Request is the click and its outcome, not the working state.**
+  Durable working state belongs on the sandbox.
+- No credential ever goes in a Request. It carries `member` — a
+  namespace — and the controller fetches that namespace's secret at
+  launch time.
+
+  *This replaced a `board.gemini.google.com/requests` JSON-map
+  annotation on the board CR. Four handlers doing read-modify-write on
+  one object with no conflict retry meant two clicks in the same second
+  silently lost one; an entry deleted the moment it was served could
+  never report a failure.*
 
 **Dedup:** machine claim = sandbox existence (`fix-<repo>-<n>` in the
 executor's namespace). The controller checks the board's member namespaces

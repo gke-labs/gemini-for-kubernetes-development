@@ -941,6 +941,33 @@ function elapsedSince(iso) {
 // "running" alone leaves you guessing whether a teardown took.
 const RUNBOOK_VERB = { plan: 'planning', deploy: 'deploying', run: 'deploying', teardown: 'tearing down' };
 
+// A click that failed before anything ran is still a click: the server
+// keeps it for a week precisely so the tab can say so. Everything else
+// about a pending row means "in flight".
+const clickFailed = (pend) => !!pend && pend.phase === 'Failed';
+
+// pendingFor: the one standing click a run's row speaks for.
+//
+// There can be more than one — a deploy that failed is kept for a week
+// while a fresh plan on the same run is in flight — and a live click
+// always outranks a dead one. Taking whichever came first in the list
+// would leave last week's failure on the row and, worse, leave the
+// buttons enabled underneath a run that is already working.
+const pendingFor = (pending, name) => {
+  const mine = (pending || []).filter(p => (p.instance || p.scenario) === name);
+  return mine.find(p => !clickFailed(p)) || mine[0];
+};
+
+// pendingChipFor: what the standing click says while there is no
+// sandbox task to read — queued, or dead with the reason attached.
+function pendingChipFor(pend, provisionalText) {
+  if (clickFailed(pend)) {
+    return <Chip text={`${pend.mode} failed`} title={pend.message || pend.reason}
+      color="#d73a49" bg="rgba(215,58,73,0.12)" />;
+  }
+  return <Chip text={provisionalText || `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
+}
+
 // runningChipFor: the truth about a Running sandbox — alive (with verb
 // and elapsed), finished-but-unstamped, or interrupted (pid gone, no
 // exit code).
@@ -1002,7 +1029,7 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
     }
     for (const inst of merged) {
       const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
-      const pend = pending.find(p => (p.instance || p.scenario) === inst.name);
+      const pend = pendingFor(pending, inst.name);
       rows.push({ board, inst, sb, pend });
     }
   }
@@ -1041,6 +1068,9 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
               // The annotation can be stale (a dead watcher never stamped
               // the final state); the probe is the truth when it speaks.
               const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
+              // A dead click must not hold the buttons down: clicking
+              // again is the only retry there is.
+              const inFlight = !!pend && !clickFailed(pend);
               const receipt = inst.latestReceipt;
               const v = ((receipt || {}).verdict || '').toUpperCase();
               return (
@@ -1061,9 +1091,9 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                         title={`${sb.name} — tasks & logs`}>
                         {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
                         {running && runningChipFor(sb, pend)}
-                        {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                        {pend && !running && pendingChipFor(pend)}
                       </span>
-                    ) : (pend ? <Chip text={inst.provisional ? 'preparing…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                    ) : (pend ? pendingChipFor(pend, inst.provisional ? 'preparing…' : '') : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
                   </td>
                   <td style={cell}>
                     {inst.runbook
@@ -1077,16 +1107,16 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                   </td>
                   <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {v.startsWith('PLANNED') ? (
-                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`}
                         title="Execute the reviewed plan"
                         onClick={() => kickoff(board, 'deploy', inst.name)}>▶ Deploy</button>
                     ) : (
-                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`}
+                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`}
                         title="Plan this run again"
                         onClick={() => kickoff(board, 'plan', inst.name)}>▶ Re-plan</button>
                     )}
                     {inst.deployed === true && (
-                      <button className="btn btn-sm" disabled={running || !!pend || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
+                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
                         title="Remove what this run created"
                         onClick={() => kickoff(board, 'teardown', inst.name)}>Tear down</button>
                     )}
@@ -1133,7 +1163,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const pending = (state && state.pending) || [];
   const runs = (state && state.instances) || [];
   const findSb = (n) => sandboxes.find(s => (s.instance || s.scenario) === n);
-  const findPending = (n) => pending.find(p => (p.instance || p.scenario) === n);
+  const findPending = (n) => pendingFor(pending, n);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
   const kickoff = (mode, runName, text) => {
@@ -1258,7 +1288,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                 // from the newest receipt that settles it — a re-plan
                 // of a live run must not hide its teardown.
                 const deployed = run.deployed === true;
-                const idle = !running && !pend;
+                const idle = !running && (!pend || clickFailed(pend));
                 return (
                   <React.Fragment key={run.name}>
                     <tr style={{ borderTop: '1px solid var(--border-color)' }}>
@@ -1278,9 +1308,9 @@ function TryPanel({ boardName, onOpenSandbox }) {
                             title={`${sb.name} — tasks & logs`}>
                             {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
                             {running && runningChipFor(sb, pend)}
-                            {pend && !running && <Chip text={`${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" />}
+                            {pend && !running && pendingChipFor(pend)}
                           </span>
-                        ) : (pend ? <Chip text={run.provisional ? 'preparing the sandbox…' : `${pend.mode} queued…`} color="#b08800" bg="rgba(176,136,0,0.12)" /> : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
+                        ) : (pend ? pendingChipFor(pend, run.provisional ? 'preparing the sandbox…' : '') : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
                       </td>
                       <td style={cell}>{verdictBadge(receipt)}</td>
                       <td style={cell}>

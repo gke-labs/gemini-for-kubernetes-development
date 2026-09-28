@@ -16,10 +16,16 @@ rules:
 - apiGroups: [""]
   resources: ["services"]
   verbs: ["get", "list", "delete", "patch", "update", "create"]
-# Can read boards and record kickoff requests (mailbox annotation)
+# Can read boards
 - apiGroups: ["board.gemini.google.com"]
   resources: ["repoboards"]
   verbs: ["get", "list", "create", "delete", "update", "patch"]
+# Can file a click and read back what became of it. No update and no
+# delete: the phase is the controller's to write and the controller's to
+# collect, so a second click cannot rewrite the first one's outcome.
+- apiGroups: ["board.gemini.google.com"]
+  resources: ["requests"]
+  verbs: ["get", "list", "create"]
 # Can manage overseers
 - apiGroups: ["overseer.gemini.google.com"]
   resources: ["overseers"]

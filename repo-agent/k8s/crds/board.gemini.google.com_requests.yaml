@@ -1,0 +1,133 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: requests.board.gemini.google.com
+spec:
+  group: board.gemini.google.com
+  names:
+    kind: Request
+    listKind: RequestList
+    plural: requests
+    shortNames:
+    - req
+    singular: request
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.verb
+      name: Verb
+      type: string
+    - jsonPath: .metadata.annotations.board\.gemini\.google\.com/subject
+      name: Subject
+      type: string
+    - jsonPath: .spec.member
+      name: Member
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              board:
+                type: string
+              instruction:
+                type: string
+              member:
+                type: string
+              number:
+                type: integer
+              research:
+                properties:
+                  kind:
+                    type: string
+                  sessionId:
+                    type: string
+                  since:
+                    type: string
+                  title:
+                    type: string
+                  topic:
+                    type: string
+                required:
+                - sessionId
+                type: object
+              run:
+                properties:
+                  intent:
+                    type: string
+                  mode:
+                    enum:
+                    - plan
+                    - deploy
+                    - run
+                    - teardown
+                    type: string
+                  name:
+                    type: string
+                  scenario:
+                    type: string
+                required:
+                - mode
+                - name
+                type: object
+              verb:
+                enum:
+                - fix
+                - review
+                - triage
+                - plan
+                - iterate
+                - address
+                - investigate
+                - run
+                - research
+                type: string
+            required:
+            - board
+            - member
+            - verb
+            type: object
+          status:
+            properties:
+              completedAt:
+                format: date-time
+                type: string
+              launchedAt:
+                format: date-time
+                type: string
+              message:
+                type: string
+              phase:
+                enum:
+                - Pending
+                - Launching
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              reason:
+                type: string
+              sandbox:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

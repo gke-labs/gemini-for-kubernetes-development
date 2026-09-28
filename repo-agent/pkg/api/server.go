@@ -77,8 +77,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// member's box to edit rather than running it behind a button.
 		api.GET("/board/:board/research/prompts", s.getResearchPrompts)
 		// Addressed by session id alone, with no board in the path: the
-		// board is only the mailbox that got the sandbox made, and
-		// nothing after that click goes through it.
+		// board is only where the Request that made the sandbox was
+		// filed, and nothing after that click goes through it.
 		api.GET("/research", s.getResearchSessions)
 		api.GET("/research/:session", s.getResearchSession)
 		api.PATCH("/research/:session", s.renameResearchSession)

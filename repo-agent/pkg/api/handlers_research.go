@@ -19,7 +19,7 @@ package api
 // The research conversation proxy: everything that happens after the
 // sandbox exists.
 //
-// Creating one goes through the board's mailbox, because only the
+// Creating one goes through a Request on the board, because only the
 // controller's image carries the factory CLI (see
 // handlers_board_research.go). Talking to one does not: acpd is plain
 // HTTP on the sandbox pod, so this process dials it directly and the
@@ -35,14 +35,12 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +51,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -298,59 +297,63 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 // sandbox, and the caller needs them to keep a name on the row in the
 // meantime.
 func (s *Server) requestedResearchSessions(ctx context.Context, namespace string, exists map[string]bool) ([]researchSandboxView, map[string]string) {
-	boards, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).List(ctx, v1.ListOptions{})
+	requests, err := s.listRequests(ctx, namespace, v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbResearch,
+	})
 	if err != nil {
-		klog.V(2).Infof("research: cannot list boards for pending sessions in %s: %v", namespace, err)
+		klog.V(2).Infof("research: cannot list requests for pending sessions in %s: %v", namespace, err)
 		return nil, nil
 	}
+	// The repo a session belongs to is the board's, so the boards still
+	// have to be read — but only the ones something was actually asked
+	// of, and only once each.
+	repos := map[string][2]string{}
+	repoOf := func(boardName string) (repo, repoURL string) {
+		if cached, ok := repos[boardName]; ok {
+			return cached[0], cached[1]
+		}
+		board, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Get(ctx, boardName, v1.GetOptions{})
+		if err != nil {
+			repos[boardName] = [2]string{}
+			return "", ""
+		}
+		repoURL, _, _ = unstructured.NestedString(board.Object, "spec", "repoURL")
+		_, repo, _ = parseRepoURL(repoURL)
+		repos[boardName] = [2]string{repo, repoURL}
+		return repo, repoURL
+	}
+
 	var out []researchSandboxView
 	titles := map[string]string{}
-	for i := range boards.Items {
-		board := &boards.Items[i]
-		raw := board.GetAnnotations()[annoBoardRequests]
-		if raw == "" {
+	for i := range requests {
+		req := &requests[i]
+		spec := req.Spec.Research
+		if spec == nil || req.Spec.Member != namespace || !safeResearchSessionID.MatchString(spec.SessionID) {
 			continue
 		}
-		requests := map[string]string{}
-		if err := json.Unmarshal([]byte(raw), &requests); err != nil {
+		kickoff := research.Kickoff{Kind: spec.Kind, Topic: spec.Topic, Since: spec.Since, Title: spec.Title}
+		if title := kickoff.ResolvedTitle(); title != "" {
+			titles[spec.SessionID] = title
+		}
+		// A request whose sandbox has arrived is settled, or about to
+		// be; showing both would double the row. Its title is taken
+		// first, above: the sandbox it was served by does not
+		// necessarily carry one yet.
+		if exists[spec.SessionID] || !req.Active() {
 			continue
 		}
-		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-		_, repo, _ := parseRepoURL(repoURL)
-		for key, value := range requests {
-			if !strings.HasPrefix(key, "research-") {
-				continue
-			}
-			sessionID := strings.TrimPrefix(key, "research-")
-			if !safeResearchSessionID.MatchString(sessionID) {
-				continue
-			}
-			claim, ok := research.DecodeClaim(value)
-			if !ok || claim.Member != namespace {
-				continue
-			}
-			if title := claim.Kickoff.ResolvedTitle(); title != "" {
-				titles[sessionID] = title
-			}
-			// A claim whose sandbox has arrived is about to be trimmed
-			// by the controller; showing both would double the row. Its
-			// title is taken first, above: the sandbox it was served by
-			// does not necessarily carry one yet.
-			if exists[sessionID] {
-				continue
-			}
-			out = append(out, researchSandboxView{
-				SessionID: sessionID,
-				Sandbox:   factorycli.ResearchSandboxName(repo, sessionID),
-				Namespace: namespace,
-				Repo:      repo,
-				HTMLURL:   repoURL,
-				CreatedAt: claim.At.UTC().Format(time.RFC3339),
-				Title:     claim.Kickoff.ResolvedTitle(),
-				Opening:   claim.Kickoff != research.Kickoff{},
-				Requested: true,
-			})
-		}
+		repo, repoURL := repoOf(req.Spec.Board)
+		out = append(out, researchSandboxView{
+			SessionID: spec.SessionID,
+			Sandbox:   factorycli.ResearchSandboxName(repo, spec.SessionID),
+			Namespace: namespace,
+			Repo:      repo,
+			HTMLURL:   repoURL,
+			CreatedAt: req.CreationTimestamp.UTC().Format(time.RFC3339),
+			Title:     kickoff.ResolvedTitle(),
+			Opening:   kickoff != research.Kickoff{},
+			Requested: true,
+		})
 	}
 	return out, titles
 }

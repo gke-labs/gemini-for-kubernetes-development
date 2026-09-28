@@ -3,7 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -194,28 +195,25 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		}
 	}
 
-	annotations := board.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	requests := map[string]string{}
-	if raw := annotations[annoBoardRequests]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &requests)
-	}
-	key := "runbook-" + req.Mode + "-" + name
-	// The intent rides the claim rather than a board annotation. A
+	// The intent rides the Request rather than a board annotation. A
 	// board-level field is shared by every run and outlives all of
 	// them — which is how a question typed for one deployment ended up
-	// steering the next. This dies when the claim is consumed.
-	requests[key] = namespace + "|" + nowRFC3339() + "|" + clampIntent(intent)
-	buf, _ := json.Marshal(requests)
-	annotations[annoBoardRequests] = string(buf)
-	board.SetAnnotations(annotations)
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+	// steering the next. This dies with the click it was typed for.
+	filed, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbRun,
+		Member: namespace,
+		Run: &boardv1alpha1.RunRequest{
+			Mode:     req.Mode,
+			Name:     name,
+			Scenario: req.Scenario,
+			Intent:   clampIntent(intent),
+		},
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record runbook request", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "requested", "key": key})
+	c.JSON(http.StatusOK, gin.H{"status": "requested", "key": filed.Spec.Key(), "request": filed.Name})
 }
 
 // getBoardRunbooks reads the Try tab's world: the runbooks on the fork
@@ -342,31 +340,52 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		out["sandboxes"] = sandboxes
 	}
 
-	// Standing runbook claims are the queued/running states; ones already
-	// served (a completion newer than the click) are the trim's business.
-	if raw := board.GetAnnotations()[annoBoardRequests]; raw != "" {
-		requests := map[string]string{}
-		_ = json.Unmarshal([]byte(raw), &requests)
-		keys := make([]string, 0, len(requests))
-		for key := range requests {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		pending := []gin.H{}
-		for _, key := range keys {
-			rest, ok := strings.CutPrefix(key, "runbook-")
-			if !ok {
-				continue
-			}
-			mode, spec, modeOK := strings.Cut(rest, "-")
-			if !modeOK {
-				continue
-			}
-			scenario, inst, _ := strings.Cut(spec, ":")
-			pending = append(pending, gin.H{"mode": mode, "scenario": scenario, "instance": inst})
-		}
-		out["pending"] = pending
+	// The run clicks: queued and running ones, and the failures.
+	//
+	// A failure belongs here for the same reason it outlives a success
+	// by a week. A click that never launched used to leave this tab
+	// exactly as empty as it was before the click — no receipt on the
+	// branch, no row, nothing to read — which is the twenty minutes of
+	// staring at nothing that started all this. Successes are dropped:
+	// the run itself is the row by then.
+	//
+	// Newest first, and only the newest of each (mode, run): the claim
+	// is taken before the success filter below, so last week's failure
+	// cannot come back out from under this morning's success on the
+	// same thing. Different modes of one run DO coexist here — a failed
+	// deploy and a live re-plan are two facts — and the tab is what
+	// decides which of them a row speaks for.
+	clicks, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," +
+			boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRun,
+	})
+	if err != nil {
+		// The runs themselves are the more important half of the answer.
+		clicks = nil
 	}
+	pending := []gin.H{}
+	seen := map[string]bool{}
+	for _, req := range clicks {
+		if req.Spec.Run == nil || seen[req.Spec.Key()] {
+			continue
+		}
+		seen[req.Spec.Key()] = true
+		if !req.Active() && req.Status.Phase != boardv1alpha1.RequestFailed {
+			continue
+		}
+		pending = append(pending, gin.H{
+			"mode":     req.Spec.Run.Mode,
+			"scenario": firstNonEmpty(req.Spec.Run.Scenario, req.Spec.Run.Name),
+			"instance": req.Spec.Run.Name,
+			"phase":    req.Status.Phase,
+			"reason":   req.Status.Reason,
+			"message":  req.Status.Message,
+		})
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		return fmt.Sprint(pending[i]["instance"], pending[i]["mode"]) < fmt.Sprint(pending[j]["instance"], pending[j]["mode"])
+	})
+	out["pending"] = pending
 
 	c.JSON(http.StatusOK, out)
 }

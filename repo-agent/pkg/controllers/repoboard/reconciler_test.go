@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,6 +64,14 @@ type fakeLauncher struct {
 	calls   []fakeLaunch
 	running map[string]bool
 	results map[string]factorycli.Result
+	// onStartRun runs inside StartRun, before it returns: the only place
+	// a test can see the world as it was at the moment money was spent.
+	onStartRun func(key string)
+	// refuseRun makes StartRun return false without recording anything,
+	// which is what the real one does when the sandbox is busy with a
+	// task this process did not start. Nothing is spent, so nothing about
+	// the click has changed.
+	refuseRun bool
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -131,9 +141,18 @@ func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) b
 }
 
 func (f *fakeLauncher) StartRun(key string, opts factorycli.RunOptions) bool {
+	if f.onStartRun != nil {
+		f.onStartRun(key)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.refuseRun {
+		return false
+	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, RunOpts: &opts})
+	// The real runner holds the key for the length of the run, which is
+	// what tells the reap pass the click is in flight rather than lost.
+	f.running[key] = true
 	return true
 }
 
@@ -222,6 +241,57 @@ func testBoard(annotations map[string]string) *boardv1alpha1.RepoBoard {
 	}
 }
 
+// nonName is everything a metadata.name may not hold. Test subjects
+// include deliberately malformed ones (a session id with a space), and
+// the fake client validates names like the apiserver does.
+var nonName = regexp.MustCompile(`[^a-z0-9.-]+`)
+
+// testRequest files a standing click on the fixture board the way the
+// API does: in the board's namespace, labelled with the board and the
+// verb, named after its subject.
+func testRequest(spec boardv1alpha1.RequestSpec) *boardv1alpha1.Request {
+	spec.Board = "test-board"
+	if spec.Member == "" {
+		spec.Member = "alice"
+	}
+	name := nonName.ReplaceAllString(strings.ToLower(spec.Key()), "-")
+	return &boardv1alpha1.Request{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      strings.Trim(name, "-."),
+			Namespace: "alice",
+			// Just clicked, unless a test ages it: the creation stamp is
+			// the click time, so a zero one would read as expired.
+			CreationTimestamp: metav1.Now(),
+			Labels: map[string]string{
+				boardv1alpha1.LabelBoard: "test-board",
+				boardv1alpha1.LabelVerb:  spec.Verb,
+			},
+		},
+		Spec: spec,
+	}
+}
+
+// click is the common case: a verb on an issue or PR number, from alice.
+func click(verb string, number int) *boardv1alpha1.Request {
+	return testRequest(boardv1alpha1.RequestSpec{Verb: verb, Number: number})
+}
+
+// requestStatus reads back what the reap pass decided. A Request that
+// was collected rather than settled reads as the zero status, which is
+// what a caller asserting "gone" wants to see.
+func requestStatus(t *testing.T, r *Reconciler, req *boardv1alpha1.Request) boardv1alpha1.RequestStatus {
+	t.Helper()
+	fetched := &boardv1alpha1.Request{}
+	err := r.Get(context.Background(), types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, fetched)
+	if apierrors.IsNotFound(err) {
+		return boardv1alpha1.RequestStatus{}
+	}
+	if err != nil {
+		t.Fatalf("get request %s: %v", req.Name, err)
+	}
+	return fetched.Status
+}
+
 func githubSecret() *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-pat", Namespace: "alice"},
@@ -249,7 +319,8 @@ func newTestReconciler(fake *fakeLauncher, ghClient *github.Client, objs ...runt
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{suffix: "/reviews", body: `[]`}})
 	}
-	builder := clientfake.NewClientBuilder().WithScheme(testScheme()).WithStatusSubresource(&boardv1alpha1.RepoBoard{})
+	builder := clientfake.NewClientBuilder().WithScheme(testScheme()).
+		WithStatusSubresource(&boardv1alpha1.RepoBoard{}, &boardv1alpha1.Request{})
 	for _, o := range objs {
 		builder = builder.WithRuntimeObjects(o)
 	}
@@ -366,9 +437,9 @@ func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	// The invocation ran with --publish draft: the pending review is already
 	// on GitHub; no banner output to harvest.
 	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "Posting review as a draft (pending) review to GitHub PR...\n"}
-	// Mailbox holds the review request so ensureReview runs for PR 42.
-	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
-	r := newTestReconciler(fake, ghClient, board, githubSecret(), prSandbox)
+	// A standing review click, so ensureReview runs for PR 42.
+	req := click(boardv1alpha1.VerbReview, 42)
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), prSandbox, req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -380,18 +451,19 @@ func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationReviewedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
 
-	// No launch happened (completion short-circuits), and the mailbox entry
-	// is cleared because the sandbox exists — after persisting the executor
+	// No launch happened (completion short-circuits), and the click is
+	// settled because the sandbox exists — after persisting the executor
 	// on the sandbox so resumes keep the draft-publish identity.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 	g.Expect(updated.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
-	fetched := &boardv1alpha1.RepoBoard{}
-	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, fetched)).To(gomega.Succeed())
-	g.Expect(fetched.GetAnnotations()).NotTo(gomega.HaveKey(AnnotationRequests))
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+	g.Expect(status.Sandbox).To(gomega.Equal("factory-pr-42"))
+	g.Expect(status.CompletedAt).NotTo(gomega.BeNil())
 }
 
 // The production loop: a clicked review finished (pending posted on GitHub)
-// but the mailbox was gone and the sandbox carried no executor stamp — the
+// but the Request was settled and the sandbox carried no executor stamp — the
 // resume path reprocessed it as a draft-harvest, found no banner, and
 // relaunched forever. The invocation output's draft-posted marker must win.
 func TestResumeRecognizesPostedDraftWithoutExecutor(t *testing.T) {
@@ -429,16 +501,15 @@ func TestResumeRecognizesPostedDraftWithoutExecutor(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
-// A mailbox review click launches in the clicker's namespace under their
+// A review click launches in the clicker's namespace under their
 // identity with --publish draft (the pending review must be authored by
 // them to be visible to them).
-func TestMailboxReviewLaunchAsExecutor(t *testing.T) {
+func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -452,13 +523,13 @@ func TestMailboxReviewLaunchAsExecutor(t *testing.T) {
 	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
 
-// Mailbox fix requests launch and stay queued until the sandbox exists.
-func TestMailboxFix(t *testing.T) {
+// Fix Requests launch and stay pending until the sandbox exists.
+func TestRequestFix(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"fix-77": "alice"}`})
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	req := click(boardv1alpha1.VerbFix, 77)
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -468,10 +539,8 @@ func TestMailboxFix(t *testing.T) {
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-77"))
 	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/77"))
 
-	// No sandbox yet: the request stays queued for the next reconcile.
-	fetched := &boardv1alpha1.RepoBoard{}
-	g.Expect(r.Get(context.Background(), boardRequest().NamespacedName, fetched)).To(gomega.Succeed())
-	g.Expect(fetched.GetAnnotations()[AnnotationRequests]).To(gomega.ContainSubstring("fix-77"))
+	// No sandbox yet: the click stays standing for the next reconcile.
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty())
 }
 
 // A fix sandbox aliased to a PR gets a pr-watch follow-up.
@@ -690,15 +759,15 @@ func TestDiscoveryIdentityFallbackFromSecret(t *testing.T) {
 // A board created without a limits block (API-server defaulting does not
 // reach absent parent objects) must not silently block every launch: zero
 // limits mean the CRD defaults.
-func TestMailboxReviewLaunchesWithoutLimitsBlock(t *testing.T) {
+func TestReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	board := testBoard(map[string]string{AnnotationRequests: `{"review-1163": "alice"}`})
+	board := testBoard(nil)
 	board.Spec.Limits = boardv1alpha1.LimitsSpec{} // UI-created boards omit limits entirely
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	r := newTestReconciler(fake, ghClient, board, githubSecret(), click(boardv1alpha1.VerbReview, 1163))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -793,7 +862,7 @@ func TestSettleSubmittedReview(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
-// A clicked triage's mailbox entry is consumed at sandbox creation, minutes
+// A clicked triage's Request settles at sandbox creation, minutes
 // before completion — the resume pass must harvest the finished result.
 func TestResumeTriageHarvest(t *testing.T) {
 	g := gomega.NewWithT(t)
@@ -818,7 +887,7 @@ func TestResumeTriageHarvest(t *testing.T) {
 		FinishedAt: time.Now(),
 		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
 	}
-	// No mailbox, no intake: only the resume pass can harvest this.
+	// No click, no intake: only the resume pass can harvest this.
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), triageSandbox)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -909,8 +978,7 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
 			suffix: "/reviews",
@@ -944,10 +1012,9 @@ func TestPlanLifecycle(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	// 1. Click: mailbox plan-42, no sandbox yet -> fresh plan launch.
+	// 1. Click: a plan Request for 42, no sandbox yet -> fresh plan launch.
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"plan-42": "alice"}`})
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbPlan, 42))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	launches := fake.launches()
@@ -958,8 +1025,8 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(launches[0].PlanOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
 	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.BeEmpty())
 
-	// 2. Harvest: finished run + fix sandbox -> draft stored, mailbox kept
-	// until stored, then trimmed.
+	// 2. Harvest: finished run + fix sandbox -> draft stored, the click
+	// stands until it is, then settles.
 	fixSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
@@ -980,8 +1047,8 @@ func TestPlanLifecycle(t *testing.T) {
 		FinishedAt: time.Now(),
 		Output:     "banner\n================== ISSUE PLAN ==================\n## Summary\nDo the thing.\n================================================\ntrailer",
 	}
-	board2 := testBoard(map[string]string{AnnotationRequests: `{"plan-42": "alice"}`})
-	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), fixSandbox)
+	planReq := click(boardv1alpha1.VerbPlan, 42)
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.BeEmpty())
@@ -992,17 +1059,15 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationPlanDraft]).To(gomega.ContainSubstring("Do the thing."))
 	g.Expect(updated.GetAnnotations()[AnnotationPlannedAt]).NotTo(gomega.BeEmpty())
 
-	// Draft stored: the next reconcile trims the mailbox entry and does
-	// not relaunch.
+	// Draft stored: the click is settled and the next reconcile does not
+	// relaunch.
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.BeEmpty())
-	fetched := &boardv1alpha1.RepoBoard{}
-	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "test-board", Namespace: "alice"}, fetched)).To(gomega.Succeed())
-	g.Expect(fetched.GetAnnotations()[AnnotationRequests]).NotTo(gomega.ContainSubstring("plan-42"))
+	g.Expect(requestStatus(t, r2, planReq).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 
 	// 3. Refine: feedback newer than the draft relaunches with --feedback,
-	// even with no mailbox entry (resume pass drives it).
+	// with no standing click at all (the resume pass drives it).
 	annotations := updated.GetAnnotations()
 	annotations[AnnotationPlanFeedback] = "merge steps 2 and 3"
 	annotations[AnnotationPlanFeedbackAt] = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
@@ -1047,8 +1112,7 @@ func TestFixWithApprovedPlan(t *testing.T) {
 
 	for _, approved := range []bool{true, false} {
 		fake := newFakeLauncher()
-		board := testBoard(map[string]string{AnnotationRequests: `{"fix-7": "alice"}`})
-		r := newTestReconciler(fake, ghClient, board, githubSecret(), sbWithPlan(approved))
+		r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sbWithPlan(approved), click(boardv1alpha1.VerbFix, 7))
 		_, err := r.Reconcile(context.Background(), boardRequest())
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		launches := fake.launches()
@@ -1061,9 +1125,9 @@ func TestFixWithApprovedPlan(t *testing.T) {
 // The live #1529 regression, both halves. (1) Type-blind terminal: the
 // plan's Completed stamp on the shared fix sandbox must not read as "the
 // fix already ran" — that bailed every Approve & Fix after a plan. (2)
-// resumeFixes: the mailbox claim is consumed at kickoff, so with no
-// request standing, an approved-but-never-fixed sandbox must still
-// launch (controller restarts between consumption and task start).
+// resumeFixes: the fix Request settles as soon as the sandbox exists, so
+// with no click standing, an approved-but-never-fixed sandbox must still
+// launch (controller restarts between settling and task start).
 func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
@@ -1091,15 +1155,19 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 		}}
 	}
 
-	// (1) with the mailbox claim standing, (2) with it already consumed.
-	for _, requests := range []map[string]string{{AnnotationRequests: `{"fix-7": "alice"}`}, {}} {
+	// (1) with the click standing, (2) with it already settled.
+	for _, standing := range []bool{true, false} {
 		fake := newFakeLauncher()
-		r := newTestReconciler(fake, ghClient, testBoard(requests), githubSecret(), sb())
+		objs := []runtime.Object{testBoard(nil), githubSecret(), sb()}
+		if standing {
+			objs = append(objs, click(boardv1alpha1.VerbFix, 7))
+		}
+		r := newTestReconciler(fake, ghClient, objs...)
 		_, err := r.Reconcile(context.Background(), boardRequest())
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		launches := fake.launches()
-		g.Expect(launches).To(gomega.HaveLen(1), "requests=%v", requests)
-		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil(), "requests=%v", requests)
+		g.Expect(launches).To(gomega.HaveLen(1), "standing=%v", standing)
+		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil(), "standing=%v", standing)
 		g.Expect(launches[0].FixOpts.WithPlan).To(gomega.BeTrue())
 	}
 }
@@ -1150,11 +1218,11 @@ func TestAutoReviewDefersToSubmitted(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 
-	// A click (mailbox) deliberately reviews again despite it.
-	board2 := testBoard(map[string]string{AnnotationRequests: `{"review-42": "alice"}`})
+	// A click deliberately reviews again despite it.
+	board2 := testBoard(nil)
 	board2.Spec.Auto.Fix = "off"
 	fake2 := newFakeLauncher()
-	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret())
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), click(boardv1alpha1.VerbReview, 42))
 	submittedReviews()
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1187,9 +1255,9 @@ func TestWakeStampsUnpaused(t *testing.T) {
 	}}
 
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"triage-30": "alice"}`})
+	board := testBoard(nil)
 	board.Spec.Auto.Fix = "off"
-	r := newTestReconciler(fake, ghClient, board, githubSecret(), paused)
+	r := newTestReconciler(fake, ghClient, board, githubSecret(), paused, click(boardv1alpha1.VerbTriage, 30))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
@@ -1321,21 +1389,25 @@ func TestPRTaskClickDefersToRunningFix(t *testing.T) {
 	}
 }
 
-// Hand-made PR attach: a mailbox claim with no sandbox launches factory
-// directly (it creates the factory-pr sandbox and checks out the
-// branch); once a sandbox carries the PR label, the claim converts to
+// Hand-made PR attach: an iterate Request with no sandbox launches
+// factory directly (it creates the factory-pr sandbox and checks out the
+// branch); once a sandbox carries the PR label, the click converts to
 // the durable request annotation instead.
 func TestPRTaskClaims(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
+	iterate := func() *boardv1alpha1.Request {
+		return testRequest(boardv1alpha1.RequestSpec{
+			Verb:        boardv1alpha1.VerbIterate,
+			Number:      77,
+			Instruction: "tighten the docs",
+		})
+	}
+
 	// No sandbox: direct launch with constructed PR URL and PRSandboxName.
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{
-		AnnotationRequests: `{"iterate-77": "alice"}`,
-		"board.gemini.google.com/iterate-instruction-77": "tighten the docs",
-	})
-	r := newTestReconciler(fake, ghClient, board, githubSecret())
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), iterate())
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	var prTasks []fakeLaunch
@@ -1350,7 +1422,7 @@ func TestPRTaskClaims(t *testing.T) {
 	g.Expect(prTasks[0].PRTaskOpts.SandboxName).To(gomega.Equal("factory-pr-repo-77"))
 	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the docs"))
 
-	// Sandbox exists (factory created it): the claim converts to the
+	// Sandbox exists (factory created it): the click converts to the
 	// annotation, no duplicate direct launch.
 	prSB := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -1371,16 +1443,16 @@ func TestPRTaskClaims(t *testing.T) {
 		"spec": map[string]interface{}{"replicas": int64(1)},
 	}}
 	fake2 := newFakeLauncher()
-	board2 := testBoard(map[string]string{
-		AnnotationRequests: `{"iterate-77": "alice"}`,
-		"board.gemini.google.com/iterate-instruction-77": "tighten the docs",
-	})
-	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), prSB)
+	converting := iterate()
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), prSB, converting)
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	for _, l := range fake2.launches() {
-		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "claim must convert, not double-launch")
+		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "the click must convert, not double-launch")
 	}
+	// Converted: the sandbox annotation is the durable consent now, so
+	// the receipt settles.
+	g.Expect(requestStatus(t, r2, converting).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "factory-pr-repo-77"}, got)).To(gomega.Succeed())

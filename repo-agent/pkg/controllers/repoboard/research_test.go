@@ -66,8 +66,22 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 	}}
 }
 
-func researchClaimAnnotation(sessionID, value string) map[string]string {
-	return map[string]string{AnnotationRequests: `{"research-` + sessionID + `": "` + value + `"}`}
+// researchRequest files a research click, aged so the TTL tests can
+// reach back past it. The click time is the Request's own creation
+// stamp, which is why nothing here carries a timestamp field.
+func researchRequest(sessionID string, claimedAt time.Time, kickoff research.Kickoff) *boardv1alpha1.Request {
+	req := testRequest(boardv1alpha1.RequestSpec{
+		Verb: boardv1alpha1.VerbResearch,
+		Research: &boardv1alpha1.ResearchRequest{
+			SessionID: sessionID,
+			Kind:      kickoff.Kind,
+			Topic:     kickoff.Topic,
+			Since:     kickoff.Since,
+			Title:     kickoff.Title,
+		},
+	})
+	req.CreationTimestamp = metav1.NewTime(claimedAt)
+	return req
 }
 
 func researchLaunches(fake *fakeLauncher) []fakeLaunch {
@@ -80,30 +94,18 @@ func researchLaunches(fake *fakeLauncher) []fakeLaunch {
 	return out
 }
 
-func boardAnnotations(t *testing.T, r *Reconciler) map[string]string {
-	t.Helper()
-	got := &boardv1alpha1.RepoBoard{}
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "test-board"}, got); err != nil {
-		t.Fatalf("reading the board back: %v", err)
-	}
-	return got.GetAnnotations()
-}
+// The typed spec removed most of what could go wrong — the member and
+// the click time are fields now, not segments of a string — but the
+// session id still has to be checked. It becomes an argument to the
+// factory CLI and the name of a sandbox, and a Request is writable by
+// anything with access to the namespace.
+func TestResearchClaimFrom(t *testing.T) {
+	at := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 
-// The value is a claim, not free text: anything that does not parse as
-// one names no member and carries no clock, so nothing could ever serve
-// or expire it. Repairing such an entry would mean guessing whose
-// GitHub token to run a clone under.
-func TestParseResearchClaim(t *testing.T) {
-	at := "2026-09-26T12:00:00Z"
-	when, err := time.Parse(time.RFC3339, at)
-	if err != nil {
-		t.Fatalf("fixture timestamp: %v", err)
-	}
-
-	t.Run("accepts a well-formed claim", func(t *testing.T) {
-		got, ok := parseResearchClaim("research-"+testSession, "alice|"+at)
+	t.Run("accepts a well-formed request", func(t *testing.T) {
+		got, ok := researchClaimFrom(researchRequest(testSession, at, research.Kickoff{}))
 		if !ok {
-			t.Fatal("rejected a well-formed claim")
+			t.Fatal("rejected a well-formed request")
 		}
 		if got.sessionID != testSession {
 			t.Errorf("sessionID = %q, want %q", got.sessionID, testSession)
@@ -111,48 +113,46 @@ func TestParseResearchClaim(t *testing.T) {
 		if got.member != "alice" {
 			t.Errorf("member = %q, want alice", got.member)
 		}
-		if !got.claimedAt.Equal(when) {
-			t.Errorf("claimedAt = %v, want %v", got.claimedAt, when)
+		if !got.claimedAt.Equal(at) {
+			t.Errorf("claimedAt = %v, want %v", got.claimedAt, at)
 		}
 	})
 
-	// A trailing field must not break the parse: runbook claims already
-	// carry a third segment, and the shape should stay extensible.
-	t.Run("ignores extra segments", func(t *testing.T) {
-		got, ok := parseResearchClaim("research-"+testSession, "alice|"+at+"|something-later")
-		if !ok || got.member != "alice" || !got.claimedAt.Equal(when) {
-			t.Errorf("extra segment broke the parse: %+v ok=%v", got, ok)
+	// The opening turn rides along as typed fields rather than an
+	// encoded blob, which is the point of the spec.
+	t.Run("carries the kickoff", func(t *testing.T) {
+		kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
+		got, ok := researchClaimFrom(researchRequest(testSession, at, kickoff))
+		if !ok || got.kickoff != kickoff {
+			t.Errorf("kickoff = %+v, want %+v (ok=%v)", got.kickoff, kickoff, ok)
 		}
 	})
 
-	bad := []struct {
-		name  string
-		key   string
-		value string
-	}{
-		{"no session id", "research-", "alice|" + at},
-		{"no member", "research-" + testSession, "|" + at},
-		{"empty value", "research-" + testSession, ""},
-		// The timestamp is required rather than defaulted: it is what
-		// the TTL measures, and a claim with no clock never expires.
-		{"no timestamp", "research-" + testSession, "alice"},
-		{"unparseable timestamp", "research-" + testSession, "alice|yesterday"},
-		// The id becomes an argument to the factory CLI and a lookup
-		// key; these shapes are refused before they get that far.
-		{"shell metacharacters", "research-a;rm -rf /", "alice|" + at},
-		{"path traversal", "research-../../etc", "alice|" + at},
-		{"leading dash", "research--x", "alice|" + at},
-		{"spaces", "research-a b", "alice|" + at},
-		{"slashes", "research-org/team", "alice|" + at},
-		{"too long", "research-" + strings.Repeat("x", 200), "alice|" + at},
+	bad := []struct{ name, sessionID string }{
+		{"no session id", ""},
+		{"shell metacharacters", "a;rm -rf /"},
+		{"path traversal", "../../etc"},
+		{"leading dash", "-x"},
+		{"spaces", "a b"},
+		{"slashes", "org/team"},
+		{"too long", strings.Repeat("x", 200)},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, ok := parseResearchClaim(tc.key, tc.value); ok {
-				t.Errorf("accepted %q = %q", tc.key, tc.value)
+			if _, ok := researchClaimFrom(researchRequest(tc.sessionID, at, research.Kickoff{})); ok {
+				t.Errorf("accepted session id %q", tc.sessionID)
 			}
 		})
 	}
+
+	// A research verb with no research block at all: the CRD makes this
+	// hard to file, and nothing serves it if someone manages to.
+	t.Run("no research block", func(t *testing.T) {
+		req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbResearch})
+		if _, ok := researchClaimFrom(req); ok {
+			t.Error("accepted a research request with no session")
+		}
+	})
 }
 
 func TestResearchClaimExpiry(t *testing.T) {
@@ -178,14 +178,13 @@ func TestResearchClaimExpiry(t *testing.T) {
 	}
 }
 
-// A standing claim launches `factory research start` with the session
-// it names, and the claim survives the trim until a sandbox exists.
+// A standing click launches `factory research start` with the session
+// it names, and stays standing until a sandbox exists.
 func TestResearchClaimLaunches(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
 	fake := newFakeLauncher()
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -201,8 +200,8 @@ func TestResearchClaimLaunches(t *testing.T) {
 	// second claim for the same session would launch a second engine.
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/" + factorycli.ResearchSandboxName("repo", testSession)))
 
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).To(gomega.ContainSubstring("research-"),
-		"an unserved claim must stand until the sandbox exists")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty(),
+		"an unserved click must stand until the sandbox exists")
 }
 
 // The sandbox existing is the receipt. This is the anti-loop property:
@@ -210,18 +209,18 @@ func TestResearchClaimLaunches(t *testing.T) {
 // conversation that already has one.
 func TestResearchClaimServedBySandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
 	fake := newFakeLauncher()
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
 	sb := researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), sb)
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
-	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "served claim must not relaunch")
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).NotTo(gomega.ContainSubstring("research-"),
-		"served claim must be trimmed")
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "a served click must not relaunch")
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded), "a served click must settle")
+	g.Expect(status.Sandbox).To(gomega.Equal(factorycli.ResearchSandboxName("repo", testSession)))
 }
 
 // A sandbox for a DIFFERENT session must not serve this claim: the
@@ -229,108 +228,112 @@ func TestResearchClaimServedBySandbox(t *testing.T) {
 // sandboxes.
 func TestResearchClaimNotServedByAnotherSession(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	fake := newFakeLauncher()
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
 	other := researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", "some-other-session"))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), other)
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), other, req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake)).To(gomega.HaveLen(1))
 }
 
-// An expired claim is dropped without launching. Nothing else bounds a
-// claim that can never be served, and a member waiting on a session
-// that cannot be created is better off starting a new one.
+// An expired click stops launching, and says so. Nothing else bounds a
+// click that can never be served, and a member waiting on a session
+// that cannot be created is better off being told than left waiting —
+// which is the half the annotation could not do, because trimming the
+// entry left no record that anything had been asked for.
 func TestResearchClaimExpires(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-researchClaimTTL - time.Minute).UTC().Format(time.RFC3339)
+	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), research.Kickoff{})
 	fake := newFakeLauncher()
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "an expired claim must not launch")
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).NotTo(gomega.ContainSubstring("research-"),
-		"an expired claim must be trimmed")
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "an expired click must not launch")
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
+	g.Expect(status.Reason).To(gomega.Equal("Expired"))
+	g.Expect(status.Message).NotTo(gomega.BeEmpty(), "a failure must say why")
 }
 
-// Creation takes minutes; the claim has to wait rather than pile up
-// invocations, and it must not be trimmed while one is in flight.
+// Creation takes minutes; the click has to wait rather than pile up
+// invocations, and it must not settle while one is in flight.
 func TestResearchClaimWaitsWhileRunning(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
 	fake := newFakeLauncher()
 	fake.running["alice/"+factorycli.ResearchSandboxName("repo", testSession)] = true
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).To(gomega.ContainSubstring("research-"),
-		"the claim must survive while the runner is busy")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty(),
+		"the click must stand while the runner is busy")
 }
 
-// A failed invocation leaves no sandbox, so the claim stands — but the
+// A failed invocation leaves no sandbox, so the click stands — but the
 // relaunch waits out the backoff rather than retrying every minute.
 func TestResearchClaimBacksOffAfterFailure(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	claimAt := time.Now().Add(-time.Minute)
 	key := "alice/" + factorycli.ResearchSandboxName("repo", testSession)
 
 	fake := newFakeLauncher()
 	fake.results[key] = factorycli.Result{Err: context.DeadlineExceeded, FinishedAt: time.Now()}
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	req := researchRequest(testSession, claimAt, research.Kickoff{})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "a fresh failure must not relaunch immediately")
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).To(gomega.ContainSubstring("research-"),
-		"an unserved claim must survive its failure")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty(),
+		"an unserved click must survive its failure")
 
-	// Past the backoff, the same claim tries again: the create is
+	// Past the backoff, the same click tries again: the create is
 	// idempotent, so a retry costs one lookup when it already worked.
 	fake2 := newFakeLauncher()
 	fake2.results[key] = factorycli.Result{Err: context.DeadlineExceeded, FinishedAt: time.Now().Add(-launchRetryBackoff - time.Minute)}
-	board2 := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r2 := newTestReconciler(fake2, testGithubClient(`[]`), board2, githubSecret())
+	r2 := newTestReconciler(fake2, testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchRequest(testSession, claimAt, research.Kickoff{}))
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(researchLaunches(fake2)).To(gomega.HaveLen(1), "past the backoff the claim must retry")
+	g.Expect(researchLaunches(fake2)).To(gomega.HaveLen(1), "past the backoff the click must retry")
 }
 
-// A claim the parser refuses must not survive in the annotation, or it
-// would be re-examined on every reconcile forever.
-func TestResearchClaimMalformedIsDropped(t *testing.T) {
+// A session id nothing can serve fails the click rather than sitting
+// Pending forever. The annotation dropped such an entry silently, which
+// left the member watching a list that would never fill.
+func TestResearchClaimMalformedFails(t *testing.T) {
 	g := gomega.NewWithT(t)
 	fake := newFakeLauncher()
-	board := testBoard(map[string]string{AnnotationRequests: `{"research-x y": "alice"}`})
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	req := researchRequest("x y", time.Now(), research.Kickoff{})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).NotTo(gomega.ContainSubstring("research-"))
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
+	g.Expect(status.Reason).To(gomega.Equal("Malformed"))
 }
 
-// "research-" and "review-" share three letters, and the mailbox
-// dispatches on prefixes. A research claim parsed as a review would
-// launch an agent against a pull request that does not exist.
+// The verbs used to be prefixes of one key string, and "research-" and
+// "review-" share three letters. A research click read as a review
+// would launch an agent against a pull request that does not exist.
+// The verb is its own field now; this keeps the property nailed down.
 func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	fake := newFakeLauncher()
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret())
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	for _, l := range fake.launches() {
-		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "a research claim must not launch a review")
-		g.Expect(l.FixOpts).To(gomega.BeNil(), "a research claim must not launch a fix")
+		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "a research click must not launch a review")
+		g.Expect(l.FixOpts).To(gomega.BeNil(), "a research click must not launch a fix")
 	}
 }
 
@@ -433,27 +436,27 @@ func sandboxAnnotations(t *testing.T, r *Reconciler, name string) map[string]str
 	return sb.GetAnnotations()
 }
 
-// The claim carries the kickoff only until the sandbox exists; the
-// handoff has to happen in the same reconcile that trims the claim, or
-// the opening prompt is lost with it.
+// The Request carries the kickoff only until the sandbox exists; the
+// handoff has to happen in the same reconcile that settles the click,
+// or the opening prompt is lost with it.
 func TestResearchKickoffMovesFromClaimToSandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	kickoff := research.Kickoff{Kind: research.KindOnboard}
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt+"|"+kickoff.Encode()))
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
 	name := factorycli.ResearchSandboxName("repo", testSession)
 	// No pod: the sandbox exists but is still booting, which is the
 	// state this handoff is for.
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), board, githubSecret(), researchSandboxObj("alice", name))
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchSandboxObj("alice", name), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
-	g.Expect(boardAnnotations(t, r)[AnnotationRequests]).NotTo(gomega.ContainSubstring("research-"),
-		"the claim is served and must be trimmed")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded),
+		"the click is served and must settle")
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff),
-		"the kickoff must survive the claim on the sandbox")
+		"the kickoff must outlive the click, on the sandbox")
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
 }
 
@@ -501,13 +504,13 @@ func TestSandboxesOfAPrefixSharingRepoAreStillFilteredOut(t *testing.T) {
 // session came up untitled with nothing ever asked.
 func TestResearchKickoffIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	kickoff := research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"}
 	name := factorycli.ResearchSandboxName("repo", testSession)
 	fake := newFakeLauncher()
 	fake.running["alice/"+name] = true
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt+"|"+kickoff.Encode()))
-	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), researchSandboxObj("alice", name))
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchSandboxObj("alice", name),
+		researchRequest(testSession, time.Now().Add(-time.Minute), kickoff))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -652,17 +655,16 @@ func TestResearchKickoffGivesUpAndSaysWhy(t *testing.T) {
 	g.Expect(acp.sent()).To(gomega.BeEmpty())
 }
 
-// A plain "new conversation" claim files no kickoff, and the sandbox it
+// A plain "new conversation" click files no kickoff, and the sandbox it
 // produces must be left exactly as factory made it.
 func TestResearchWithoutAKickoffStampsNothing(t *testing.T) {
 	g := gomega.NewWithT(t)
-	claimAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
-	board := testBoard(researchClaimAnnotation(testSession, "alice|"+claimAt))
 	name := factorycli.ResearchSandboxName("repo", testSession)
 	acp := &fakeACPD{}
 	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), board, githubSecret(),
-		engineSecret(), researchSandboxObj("alice", name), researchPod(name))
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), researchSandboxObj("alice", name), researchPod(name),
+		researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{}))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())

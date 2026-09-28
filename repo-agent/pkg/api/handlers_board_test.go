@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -39,8 +40,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/dynamic/fake"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 type boardMockRT struct {
@@ -113,15 +116,20 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox:   "SandboxList",
 		repoBoardGVR: "RepoBoardList",
+		requestGVR:   "RequestList",
 	})
+	generateNames(dynamicClient)
 	// Seed via explicit Create: the fake's kind->resource guesser pluralizes
 	// Sandbox as "sandboxs", so initial-object seeding lands in the wrong
 	// resource.
 	for _, o := range objs {
 		u := o.(*unstructured.Unstructured)
 		gvr := gvrSandbox
-		if u.GetKind() == "RepoBoard" {
+		switch u.GetKind() {
+		case "RepoBoard":
 			gvr = repoBoardGVR
+		case "Request":
+			gvr = requestGVR
 		}
 		if _, err := dynamicClient.Resource(gvr).Namespace(u.GetNamespace()).Create(context.Background(), u, v1.CreateOptions{}); err != nil {
 			t.Fatalf("seed %s: %v", u.GetName(), err)
@@ -166,8 +174,89 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
+	r.GET("/board/:board/runbook", server.getBoardRunbooks)
 	r.DELETE("/board/:board/runbook/instance/:instance", server.removeRunbookInstance)
 	return server, r, dynamicClient, rt
+}
+
+// generateNames makes the fake client mint names from generateName the
+// way the API server does. Clicks are filed with a prefix and no name,
+// so without this two of them collide on the empty string — and every
+// handler that files one would look broken the second time it is used.
+func generateNames(dyn *fake.FakeDynamicClient) {
+	dyn.PrependReactor("create", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create, ok := action.(k8stesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		obj, ok := create.GetObject().(*unstructured.Unstructured)
+		if !ok || obj.GetName() != "" || obj.GetGenerateName() == "" {
+			return false, nil, nil
+		}
+		obj.SetName(obj.GetGenerateName() + utilrand.String(5))
+		// Not handled: the object is mutated in place and the tracker
+		// stores it.
+		return false, nil, nil
+	})
+}
+
+// requestCR is a standing click on the fixture board, seeded the way
+// the API files one.
+func requestCR(spec boardv1alpha1.RequestSpec) *unstructured.Unstructured {
+	spec.Board = "myboard"
+	if spec.Member == "" {
+		spec.Member = "alice"
+	}
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&boardv1alpha1.Request{
+		ObjectMeta: v1.ObjectMeta{
+			Name:              strings.ReplaceAll(spec.Key(), "/", "-"),
+			Namespace:         "alice",
+			CreationTimestamp: v1.Now(),
+			Labels: map[string]string{
+				boardv1alpha1.LabelBoard: "myboard",
+				boardv1alpha1.LabelVerb:  spec.Verb,
+			},
+		},
+		Spec: spec,
+	})
+	if err != nil {
+		panic(err)
+	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetAPIVersion("board.gemini.google.com/v1alpha1")
+	u.SetKind("Request")
+	return u
+}
+
+// filedRequests reads back the clicks the handlers filed, decoded the
+// way the controller will read them. The click used to be a key in a
+// JSON map on the board, which is why so many tests once asserted on
+// substrings of an annotation.
+func filedRequests(t *testing.T, dyn *fake.FakeDynamicClient, namespace string) []boardv1alpha1.Request {
+	t.Helper()
+	list, err := dyn.Resource(requestGVR).Namespace(namespace).List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		t.Fatalf("listing requests: %v", err)
+	}
+	out := make([]boardv1alpha1.Request, 0, len(list.Items))
+	for i := range list.Items {
+		var req boardv1alpha1.Request
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(list.Items[i].Object, &req); err != nil {
+			t.Fatalf("decoding request %s: %v", list.Items[i].GetName(), err)
+		}
+		out = append(out, req)
+	}
+	return out
+}
+
+// theRequest is filedRequests for the common case: exactly one click.
+func theRequest(t *testing.T, dyn *fake.FakeDynamicClient, namespace string) boardv1alpha1.Request {
+	t.Helper()
+	reqs := filedRequests(t, dyn, namespace)
+	if len(reqs) != 1 {
+		t.Fatalf("filed %d requests, want exactly one: %+v", len(reqs), reqs)
+	}
+	return reqs[0]
 }
 
 func boardCR() *unstructured.Unstructured {
@@ -247,7 +336,7 @@ func TestGetBoardWork(t *testing.T) {
 	}
 }
 
-func TestKickoffFixWritesMailbox(t *testing.T) {
+func TestKickoffFixFilesARequest(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{
 		// Best-effort assignment + label calls; served happily.
 		"https://api.github.com/repos/test/repo/issues/77/assignees": `{}`,
@@ -261,17 +350,81 @@ func TestKickoffFixWritesMailbox(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
+	filed := theRequest(t, dyn, "alice")
+	if filed.Spec.Verb != boardv1alpha1.VerbFix || filed.Spec.Number != 77 || filed.Spec.Member != "alice" {
+		t.Errorf("filed %+v, want alice's fix on 77", filed.Spec)
+	}
+	// The controller lists by these, so a click that carries neither is
+	// a click no board ever sees.
+	if filed.Labels[boardv1alpha1.LabelBoard] != "myboard" || filed.Labels[boardv1alpha1.LabelVerb] != boardv1alpha1.VerbFix {
+		t.Errorf("labels = %v, want the board and the verb", filed.Labels)
+	}
+	// Owned by the board: deleting the board takes its clicks with it.
+	if len(filed.OwnerReferences) != 1 || filed.OwnerReferences[0].Name != "myboard" {
+		t.Fatalf("ownerReferences = %+v, want the board", filed.OwnerReferences)
+	}
+	// And owned as the CONTROLLER, because that is the only reference
+	// Owns() enqueues on. A plain owner still gets garbage-collected,
+	// but the click sits there until the next resync — which is the
+	// wait the mailbox never had.
+	if ctrl := filed.OwnerReferences[0].Controller; ctrl == nil || !*ctrl {
+		t.Error("the board owns the click but does not control it, so nothing wakes the reconciler")
+	}
+}
+
+// A second click on the same thing is the same click. The map the
+// mailbox was collapsed them for free; objects do not, so the handler
+// looks for a standing one first — otherwise an impatient double-click
+// is two sandboxes.
+func TestKickoffFixTwiceIsOneRequest(t *testing.T) {
+	_, r, dyn := boardTestServer(t, map[string]string{
+		"https://api.github.com/repos/test/repo/issues/77/assignees": `{}`,
+		"https://api.github.com/repos/test/repo/issues/77/labels":    `[]`,
+	}, boardCR())
+
+	fix := func(issue string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", "/board/myboard/issues/"+issue+"/fix", strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("issue %s: expected 200, got %d: %s", issue, w.Code, w.Body.String())
+		}
+	}
+	fix("77")
+	fix("77")
+	first := theRequest(t, dyn, "alice")
+
+	// ...and a click on something else is its own click, so the dedup is
+	// on the subject and not on "has this board been clicked".
+	fix("78")
+	if filed := filedRequests(t, dyn, "alice"); len(filed) != 2 {
+		t.Fatalf("filed %d requests, want one per issue: %+v", len(filed), filed)
+	}
+
+	// Once it is settled, the same click is a new one: a retry has to be
+	// able to happen, it just must not happen by accident.
+	settle(t, dyn, first, boardv1alpha1.RequestSucceeded)
+	fix("77")
+	if filed := filedRequests(t, dyn, "alice"); len(filed) != 3 {
+		t.Errorf("a click after the last one finished must file a new request, got %d", len(filed))
+	}
+}
+
+// settle marks a filed Request terminal, the way the controller does
+// once the sandbox it asked for exists.
+func settle(t *testing.T, dyn *fake.FakeDynamicClient, req boardv1alpha1.Request, phase string) {
+	t.Helper()
+	ctx := context.Background()
+	obj, err := dyn.Resource(requestGVR).Namespace(req.Namespace).Get(ctx, req.Name, v1.GetOptions{})
 	if err != nil {
+		t.Fatalf("get request %s: %v", req.Name, err)
+	}
+	if err := unstructured.SetNestedField(obj.Object, phase, "status", "phase"); err != nil {
 		t.Fatal(err)
 	}
-	raw := board.GetAnnotations()[annoBoardRequests]
-	requests := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &requests); err != nil {
-		t.Fatalf("bad mailbox: %q", raw)
-	}
-	if requests["fix-77"] != "alice" {
-		t.Errorf("expected fix-77=alice in mailbox, got %v", requests)
+	if _, err := dyn.Resource(requestGVR).Namespace(req.Namespace).Update(ctx, obj, v1.UpdateOptions{}); err != nil {
+		t.Fatalf("settle request %s: %v", req.Name, err)
 	}
 }
 
@@ -717,7 +870,7 @@ func TestSubmittedThenReRequested(t *testing.T) {
 	t.Fatal("pr-90 row missing")
 }
 
-// Between a click and the run: a mailbox entry renders the row as
+// Between a click and the run: a standing Request renders the row as
 // Starting… (no needs-you, no second kickoff invited), and a sandbox
 // without a task state (provisioning) does the same.
 func TestKickoffFeedbackStages(t *testing.T) {
@@ -730,13 +883,12 @@ func TestKickoffFeedbackStages(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	board := boardCR()
-	board.SetAnnotations(map[string]string{"board.gemini.google.com/requests": `{"review-5": "alice"}`})
+	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbReview, Number: 5})
 	provisioning := sandboxCR("factory-pr-6",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "6"},
 		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6"}, 1)
 
-	_, r, _ := boardTestServer(t, ghResponses, board, provisioning)
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), provisioning, clicked)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -747,7 +899,7 @@ func TestKickoffFeedbackStages(t *testing.T) {
 		stages[item.Number] = [2]string{item.Stage, item.Attention}
 	}
 	if s := stages[5]; s[0] != "review-starting" || s[1] != "working" {
-		t.Errorf("mailboxed PR: want review-starting/working, got %v", s)
+		t.Errorf("clicked PR: want review-starting/working, got %v", s)
 	}
 	if s := stages[6]; s[0] != "review-starting" || s[1] != "working" {
 		t.Errorf("provisioning PR: want review-starting/working, got %v", s)
@@ -994,12 +1146,9 @@ func TestPlanEndpoints(t *testing.T) {
 	if getAnnotations()["board.gemini.google.com/plan-approved-at"] == "" {
 		t.Error("approval not stamped")
 	}
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get board: %v", err)
-	}
-	if !strings.Contains(board.GetAnnotations()["board.gemini.google.com/requests"], "fix-42") {
-		t.Errorf("approve did not file the fix request: %v", board.GetAnnotations())
+	filed := theRequest(t, dyn, "alice")
+	if filed.Spec.Verb != boardv1alpha1.VerbFix || filed.Spec.Number != 42 {
+		t.Errorf("approve filed %+v, want a fix click on 42", filed.Spec)
 	}
 
 	// Reject: draft cleared, reject stamped.
@@ -1066,7 +1215,7 @@ func TestGetRepoSuggestions(t *testing.T) {
 // Clicks beyond the launch limits render "queued", not "starting": with
 // two active sandboxes (the per-user default), a third review click has
 // no capacity until a slot frees.
-func TestMailboxQueuedAtCapacity(t *testing.T) {
+func TestRequestQueuedAtCapacity(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 90, "title": "reviewing a", "html_url": "https://github.com/test/repo/pull/90", "updated_at": "2026-09-16T12:00:00Z",
@@ -1083,11 +1232,12 @@ func TestMailboxQueuedAtCapacity(t *testing.T) {
 			map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/pull/" + pr}, 1)
 	}
 	board := boardCR()
-	board.SetAnnotations(map[string]string{"board.gemini.google.com/requests": `{"review-92": "alice"}`})
 	// Single limit knob: capacity for this test is the board's maxActive.
 	_ = unstructured.SetNestedField(board.Object, int64(2), "spec", "limits", "maxActive")
+	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbReview, Number: 92})
 
-	_, r, _ := boardTestServer(t, ghResponses, board, running("factory-pr-repo-90", "90"), running("factory-pr-repo-91", "91"))
+	_, r, _ := boardTestServer(t, ghResponses, board, clicked,
+		running("factory-pr-repo-90", "90"), running("factory-pr-repo-91", "91"))
 
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
 	w := httptest.NewRecorder()
@@ -1421,10 +1571,11 @@ func TestBoardBadgeCountsFeedAttention(t *testing.T) {
 	}
 }
 
-// The mailbox records the executor NAMESPACE — boardWriteContext's fifth
-// return is the member token, and writing it into a CR annotation was a
-// live credential leak (iterate-1324 → ghp_…).
-func TestPRTaskKickoffMailboxValueIsMember(t *testing.T) {
+// The click records the executor NAMESPACE — boardWriteContext's fifth
+// return is the member token, and writing it into a CR was a live
+// credential leak (iterate-1324 → ghp_…). The controller fetches the
+// credential from that namespace itself, at launch time.
+func TestPRTaskKickoffRecordsTheMemberNotTheToken(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 	req, _ := http.NewRequest("POST", "/board/myboard/prs/1324/iterate", strings.NewReader(`{"instruction":"x"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1433,15 +1584,14 @@ func TestPRTaskKickoffMailboxValueIsMember(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("kickoff = %d: %s", w.Code, w.Body.String())
 	}
-	board, err := dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	filed := theRequest(t, dyn, "alice")
+	if filed.Spec.Member != "alice" {
+		t.Errorf("member = %q, want the namespace 'alice'", filed.Spec.Member)
 	}
-	raw := board.GetAnnotations()["board.gemini.google.com/requests"]
-	var requests map[string]string
-	_ = json.Unmarshal([]byte(raw), &requests)
-	got := requests["iterate-1324"]
-	if got != "alice" || strings.HasPrefix(got, "gh") {
-		t.Fatalf("mailbox value = %q, want the member namespace 'alice'\nraw=%s", got, raw)
+	// Nothing anywhere in the object, not just the one field that used
+	// to hold it: the secret the fixture hands the handler is gho_alice.
+	raw, _ := json.Marshal(filed)
+	if strings.Contains(string(raw), "gho_") {
+		t.Fatalf("the click carries a token: %s", raw)
 	}
 }
