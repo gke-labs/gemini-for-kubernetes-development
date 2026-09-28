@@ -1110,11 +1110,16 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 		if r.Factory.IsRunning(key) {
 			continue
 		}
-		// Marked as launching by a process that is not running it any
-		// more: this controller restarted mid-launch, and the deploy it
-		// started may well have landed. Never a second attempt — the
-		// reap pass strands the click instead, and the member decides.
-		if claim.request != nil && claim.request.Status.Phase == boardv1alpha1.RequestLaunching {
+		// Launched once already by a process that is not running it any
+		// more: this controller restarted, and the deploy it started may
+		// well have landed — or may still be going, in the pod, which
+		// outlives us. Never a second attempt. The reap pass reads the
+		// outcome off the sandbox, and strands the click if it cannot.
+		//
+		// The test is launchedAt and not the phase: the phase is Running
+		// for the whole length of the run, which is where a restart
+		// actually lands.
+		if claim.request != nil && claim.request.Status.LaunchedAt != nil {
 			continue
 		}
 		if r.runbookClaimConsumed(claim, work) {
@@ -1135,7 +1140,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 		// result has no memory that it deployed; the Request does, and
 		// the reap pass strands it rather than deploying twice.
 		r.markLaunching(ctx, claim.request, name)
-		if r.Factory.StartRun(key, factorycli.RunOptions{
+		launched := r.Factory.StartRun(key, factorycli.RunOptions{
 			Namespace:   claim.member,
 			SandboxName: name,
 			Mode:        mode,
@@ -1147,9 +1152,17 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
-		}) {
+		})
+		if launched {
 			logger.Info("launched factory run", "mode", mode, "name", instance, "board", work.board.Name)
+			continue
 		}
+		// Refused, not spent: the sandbox is busy with a task this
+		// process did not start, or the slot was taken between the
+		// check above and here. Take the stamp back so the click is
+		// still a click, and try again next reconcile.
+		logger.V(1).Info("run launch refused; sandbox busy", "mode", mode, "name", instance, "board", work.board.Name)
+		r.unmarkLaunching(ctx, claim.request)
 	}
 }
 

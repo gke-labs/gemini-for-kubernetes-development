@@ -67,6 +67,11 @@ type fakeLauncher struct {
 	// onStartRun runs inside StartRun, before it returns: the only place
 	// a test can see the world as it was at the moment money was spent.
 	onStartRun func(key string)
+	// refuseRun makes StartRun return false without recording anything,
+	// which is what the real one does when the sandbox is busy with a
+	// task this process did not start. Nothing is spent, so nothing about
+	// the click has changed.
+	refuseRun bool
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -141,6 +146,9 @@ func (f *fakeLauncher) StartRun(key string, opts factorycli.RunOptions) bool {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.refuseRun {
+		return false
+	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, RunOpts: &opts})
 	// The real runner holds the key for the length of the run, which is
 	// what tells the reap pass the click is in flight rather than lost.

@@ -349,8 +349,12 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	// staring at nothing that started all this. Successes are dropped:
 	// the run itself is the row by then.
 	//
-	// Newest first, one per (mode, run), so last week's failure cannot
-	// sit next to this morning's click on the same thing.
+	// Newest first, and only the newest of each (mode, run): the claim
+	// is taken before the success filter below, so last week's failure
+	// cannot come back out from under this morning's success on the
+	// same thing. Different modes of one run DO coexist here — a failed
+	// deploy and a live re-plan are two facts — and the tab is what
+	// decides which of them a row speaks for.
 	clicks, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
 		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," +
 			boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRun,
@@ -365,10 +369,10 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		if req.Spec.Run == nil || seen[req.Spec.Key()] {
 			continue
 		}
+		seen[req.Spec.Key()] = true
 		if !req.Active() && req.Status.Phase != boardv1alpha1.RequestFailed {
 			continue
 		}
-		seen[req.Spec.Key()] = true
 		pending = append(pending, gin.H{
 			"mode":     req.Spec.Run.Mode,
 			"scenario": firstNonEmpty(req.Spec.Run.Scenario, req.Spec.Run.Name),

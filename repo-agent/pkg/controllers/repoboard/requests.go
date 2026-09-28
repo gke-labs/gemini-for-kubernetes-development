@@ -215,8 +215,13 @@ func researchClaimFrom(req *boardv1alpha1.Request) (researchClaim, bool) {
 // served when the runner reports a result, and the runner's memory dies
 // with the process — so a controller killed between StartRun and the
 // result has no way to know it already deployed. It knows now.
+//
+// The flag that survives is launchedAt, not the phase. The phase moves
+// on to Running within the same reconcile, which would leave the whole
+// length of the run — an hour, and the part a restart is actually likely
+// to land in — looking exactly like a click nobody had acted on yet.
 func (r *Reconciler) markLaunching(ctx context.Context, req *boardv1alpha1.Request, sandbox string) {
-	if req == nil || req.Status.Phase == boardv1alpha1.RequestLaunching {
+	if req == nil || req.Status.LaunchedAt != nil {
 		return
 	}
 	now := metav1.Now()
@@ -225,6 +230,27 @@ func (r *Reconciler) markLaunching(ctx context.Context, req *boardv1alpha1.Reque
 	req.Status.LaunchedAt = &now
 	if err := r.Status().Update(ctx, req); err != nil {
 		log.FromContext(ctx).Error(err, "unable to mark request launching", "request", req.Name)
+	}
+}
+
+// unmarkLaunching takes the stamp back when the launch it announced did
+// not happen.
+//
+// StartRun returns false without spending anything — the sandbox is busy
+// with a task this process did not start, or the single-flight slot is
+// taken. Leaving launchedAt behind in that case would strand a click
+// that never launched, and tell the member their controller restarted
+// mid-launch when it did no such thing. The window where the stamp is
+// wrong is the width of one refused launch, and it errs toward stranding
+// rather than spending, which is the side to be wrong on.
+func (r *Reconciler) unmarkLaunching(ctx context.Context, req *boardv1alpha1.Request) {
+	if req == nil || req.Status.LaunchedAt == nil {
+		return
+	}
+	req.Status.Phase = boardv1alpha1.RequestPending
+	req.Status.LaunchedAt = nil
+	if err := r.Status().Update(ctx, req); err != nil {
+		log.FromContext(ctx).Error(err, "unable to clear a refused launch", "request", req.Name)
 	}
 }
 
@@ -437,15 +463,25 @@ func (r *Reconciler) settleRun(work *workState, req *boardv1alpha1.Request, now 
 		return requestOutcome{phase: boardv1alpha1.RequestRunning, sandbox: sandbox}
 	}
 
-	// Not running, no result, and we said we were launching: the process
-	// that said so is gone. The task itself may well have run — the pod
+	// Not running, no result, and we launched it once: the process that
+	// did is gone. The task itself may well be running still — the pod
 	// outlives the controller — so ask the sandbox, which is the only
 	// thing that watched.
-	if req.Status.Phase == boardv1alpha1.RequestLaunching && req.Status.LaunchedAt != nil {
-		return interruptedRun(work.findSandbox(claim.member, sandbox), req.Status.LaunchedAt.Time, sandbox)
+	if req.Status.LaunchedAt != nil {
+		return interruptedRun(work.findSandbox(claim.member, sandbox), req.Status.LaunchedAt.Time, sandbox, now)
 	}
 	return pendingOutcome(req, now)
 }
+
+// runInFlightGrace bounds how long a sandbox saying "Running" is taken
+// at its word after the controller that launched the task died.
+//
+// The annotation is stamped at dispatch and only corrected at the end,
+// so a task whose watcher was killed leaves it saying Running forever.
+// The CLI's own ceiling is an hour; twice that is long enough that no
+// honest run is cut off and short enough that a stuck one is eventually
+// reported rather than shown as working.
+const runInFlightGrace = 2 * time.Hour
 
 // interruptedRun reads a restarted controller's unfinished business off
 // the sandbox the run happened in.
@@ -453,9 +489,17 @@ func (r *Reconciler) settleRun(work *workState, req *boardv1alpha1.Request, now 
 // It deliberately never relaunches. Stranding a deploy costs a second
 // click; repeating one costs a second cloud footprint, and the member
 // finds out from the bill.
-func interruptedRun(sb *unstructured.Unstructured, launchedAt time.Time, sandbox string) requestOutcome {
+func interruptedRun(sb *unstructured.Unstructured, launchedAt time.Time, sandbox string, now time.Time) requestOutcome {
 	if sb != nil {
 		annotations := sb.GetAnnotations()
+		// last-task-time is stamped when a task ENDS, so a sandbox still
+		// working carries the previous task's stamp and nothing else.
+		// Reading that as "the launch left no trace" is how a healthy
+		// forty-minute deploy gets declared dead at minute five.
+		if annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning &&
+			now.Sub(launchedAt) < runInFlightGrace {
+			return requestOutcome{phase: boardv1alpha1.RequestRunning, sandbox: sandbox}
+		}
 		at, err := time.Parse(time.RFC3339, annotations["sandbox.gemini.google.com/last-task-time"])
 		if err == nil && at.After(launchedAt) {
 			switch annotations[factorycli.AnnotationTaskState] {

@@ -103,6 +103,27 @@ describe('TryPanel standing clicks', () => {
         expect(container.textContent).toContain('preparing the sandbox');
         expect(findButton('Re-plan').disabled).toBe(true);
     });
+
+    // A run can have two standing clicks at once: a deploy that failed
+    // is kept for a week, and the re-plan you started this morning is
+    // live. The row speaks for one of them, and it has to be the live
+    // one — otherwise the row shows last week's failure and, worse,
+    // leaves the buttons enabled underneath work already in flight.
+    test('a live click outranks a week-old failure on the same run', async () => {
+        global.fetch = jest.fn(clickReply([
+            {
+                mode: 'deploy', scenario: 'gcevm', instance: 'gcevm',
+                phase: 'Failed', reason: 'LaunchInterrupted', message: 'the controller restarted mid-launch',
+            },
+            { mode: 'plan', scenario: 'gcevm', instance: 'gcevm', phase: 'Running' },
+        ]));
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        expect(container.textContent).not.toContain('deploy failed');
+        expect(findButton('Re-plan').disabled).toBe(true);
+    });
 });
 
 describe('TryPanel Remove', () => {

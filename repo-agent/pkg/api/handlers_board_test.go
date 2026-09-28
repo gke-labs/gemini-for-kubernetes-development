@@ -174,6 +174,7 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
+	r.GET("/board/:board/runbook", server.getBoardRunbooks)
 	r.DELETE("/board/:board/runbook/instance/:instance", server.removeRunbookInstance)
 	return server, r, dynamicClient, rt
 }
@@ -360,7 +361,14 @@ func TestKickoffFixFilesARequest(t *testing.T) {
 	}
 	// Owned by the board: deleting the board takes its clicks with it.
 	if len(filed.OwnerReferences) != 1 || filed.OwnerReferences[0].Name != "myboard" {
-		t.Errorf("ownerReferences = %+v, want the board", filed.OwnerReferences)
+		t.Fatalf("ownerReferences = %+v, want the board", filed.OwnerReferences)
+	}
+	// And owned as the CONTROLLER, because that is the only reference
+	// Owns() enqueues on. A plain owner still gets garbage-collected,
+	// but the click sits there until the next resync — which is the
+	// wait the mailbox never had.
+	if ctrl := filed.OwnerReferences[0].Controller; ctrl == nil || !*ctrl {
+		t.Error("the board owns the click but does not control it, so nothing wakes the reconciler")
 	}
 }
 

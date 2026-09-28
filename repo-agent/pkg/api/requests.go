@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/utils/ptr"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 )
@@ -75,11 +76,20 @@ func (s *Server) fileRequest(ctx context.Context, board *unstructured.Unstructur
 			// Owned by the board, so deleting a board takes its
 			// outstanding clicks with it rather than leaving the
 			// controller launching work for a queue that is gone.
+			//
+			// Controller, not a bare owner: the board's reconciler
+			// watches Requests through Owns(), which enqueues on the
+			// CONTROLLER reference only. Without this flag the click
+			// still lands, but nothing wakes the loop and it waits out
+			// the requeue interval — the annotation it replaced woke
+			// the loop for free, and a minute of nothing happening is
+			// exactly the complaint this all started from.
 			OwnerReferences: []v1.OwnerReference{{
 				APIVersion: boardv1alpha1.GroupVersion.String(),
 				Kind:       "RepoBoard",
 				Name:       board.GetName(),
 				UID:        board.GetUID(),
+				Controller: ptr.To(true),
 			}},
 		},
 		Spec: spec,

@@ -946,6 +946,18 @@ const RUNBOOK_VERB = { plan: 'planning', deploy: 'deploying', run: 'deploying', 
 // about a pending row means "in flight".
 const clickFailed = (pend) => !!pend && pend.phase === 'Failed';
 
+// pendingFor: the one standing click a run's row speaks for.
+//
+// There can be more than one — a deploy that failed is kept for a week
+// while a fresh plan on the same run is in flight — and a live click
+// always outranks a dead one. Taking whichever came first in the list
+// would leave last week's failure on the row and, worse, leave the
+// buttons enabled underneath a run that is already working.
+const pendingFor = (pending, name) => {
+  const mine = (pending || []).filter(p => (p.instance || p.scenario) === name);
+  return mine.find(p => !clickFailed(p)) || mine[0];
+};
+
 // pendingChipFor: what the standing click says while there is no
 // sandbox task to read — queued, or dead with the reason attached.
 function pendingChipFor(pend, provisionalText) {
@@ -1017,7 +1029,7 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
     }
     for (const inst of merged) {
       const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
-      const pend = pending.find(p => (p.instance || p.scenario) === inst.name);
+      const pend = pendingFor(pending, inst.name);
       rows.push({ board, inst, sb, pend });
     }
   }
@@ -1151,7 +1163,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
   const pending = (state && state.pending) || [];
   const runs = (state && state.instances) || [];
   const findSb = (n) => sandboxes.find(s => (s.instance || s.scenario) === n);
-  const findPending = (n) => pending.find(p => (p.instance || p.scenario) === n);
+  const findPending = (n) => pendingFor(pending, n);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
 
   const kickoff = (mode, runName, text) => {

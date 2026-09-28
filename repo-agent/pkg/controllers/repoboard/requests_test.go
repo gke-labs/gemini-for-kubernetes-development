@@ -146,6 +146,81 @@ func TestAnInterruptedRunReadsItsOutcomeOffTheSandbox(t *testing.T) {
 	}
 }
 
+// The window a restart actually lands in is the run itself, not the
+// half-second of launching: the phase moves to Running within the same
+// reconcile that launched. So the guard cannot be the phase. A click
+// that says it was launched is never launched again, however long ago
+// that was and whatever phase the last process left it in.
+func TestARestartDuringARunDoesNotRelaunchIt(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("deploy", "gcevm")
+	launchedAt := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	req.Status.Phase = boardv1alpha1.RequestRunning
+	req.Status.LaunchedAt = &launchedAt
+	req.Status.Sandbox = runSandboxName("gcevm")
+
+	// The pod outlived the controller and is still working: the stamp it
+	// carries is the PREVIOUS task's, because last-task-time is written
+	// when a task ends.
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req,
+		runSandbox("gcevm", time.Now().Add(-3*time.Hour), factorycli.TaskStateRunning))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty(), "a deploy already in flight must not be started a second time")
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestRunning),
+		"a healthy long deploy must not be declared dead for outliving its controller")
+}
+
+// The sandbox is taken at its word, but not forever: a pod wedged in
+// Running would otherwise hold a click open with no end.
+func TestARunInFlightIsOnlyBelievedForSoLong(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("deploy", "gcevm")
+	launchedAt := metav1.NewTime(time.Now().Add(-runInFlightGrace - time.Minute))
+	req.Status.Phase = boardv1alpha1.RequestRunning
+	req.Status.LaunchedAt = &launchedAt
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req,
+		runSandbox("gcevm", time.Now().Add(-4*time.Hour), factorycli.TaskStateRunning))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
+	g.Expect(status.Reason).To(gomega.Equal("LaunchInterrupted"))
+}
+
+// Saying "launching" before spending is only safe if the word is taken
+// back when nothing was spent. A run refused because the sandbox is
+// busy has not started: leave the stamp on and the click is stranded at
+// the next pass, reporting an interruption that never happened.
+func TestARefusedRunLaunchIsStillAClick(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := runClick("deploy", "gcevm")
+	fake := newFakeLauncher()
+	fake.refuseRun = true
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestPending), "a refusal is not a launch")
+	g.Expect(status.LaunchedAt).To(gomega.BeNil())
+
+	// And when the sandbox frees up, the same click launches.
+	fake.refuseRun = false
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.HaveLen(1), "the click survived the refusal and was served")
+}
+
 // settled builds a terminal Request of a given age. Name and subject
 // are the caller's because the whole point of the collection rules is
 // which of several receipts for the same subject survive.
