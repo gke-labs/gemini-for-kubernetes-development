@@ -20,7 +20,7 @@ type RunParams struct {
 	RepoName string
 	HTMLURL  string
 	// Name is the run's identity and its directory under
-	// docs-exploration/runs/.
+	// docs-exploration/agent-runs/.
 	Name string
 	// Mode is plan | deploy | teardown. Each is one engine invocation.
 	Mode string

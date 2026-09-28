@@ -1,7 +1,10 @@
 package tasks
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -273,4 +276,138 @@ func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
 	if !strings.Contains(s, `git rebase --autostash`) {
 		t.Error("the push-race replay is not autostashing; an unstaged file will block it")
 	}
+}
+
+// seedFromRun is executed, not grepped. It shipped reading a path runs
+// had already moved away from, and every string test above passed; and
+// because the source was never found, the copy under it had never run
+// either — with two set -e traps in it that the path fix alone would
+// have sprung on the next plan.
+func TestSeedFromRunCopiesTheProcedure(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	legacy := regexp.MustCompile(`(?m)^LEGACY_RUN_DIRS=.*$`).FindString(s)
+	start := strings.Index(s, "function seedFromRun {")
+	if legacy == "" || start < 0 {
+		t.Fatal("run.sh has no LEGACY_RUN_DIRS or seedFromRun")
+	}
+	fn := s[start : start+strings.Index(s[start:], "\n}\n")+3]
+
+	const current, old = "docs-exploration/agent-runs", "docs-exploration/runs"
+	write := func(t *testing.T, root, rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// seed runs the function the way run.sh does — under set -e — and
+	// reports whether the script lived past it.
+	seed := func(t *testing.T, root, from string) (string, bool) {
+		t.Helper()
+		script := "set -e\nset -o pipefail\n" + legacy + "\n" +
+			strings.ReplaceAll(fn, "/workspaces/${REPO_NAME}", root) +
+			"seedFromRun\necho SURVIVED\n"
+		cmd := exec.Command(bash, "-c", script)
+		cmd.Env = append(os.Environ(), "RUN_NAME=pr-42", "RUN_DIR="+current+"/pr-42", "RUN_FROM="+from)
+		out, _ := cmd.CombinedOutput()
+		return string(out), strings.Contains(string(out), "SURVIVED")
+	}
+	read := func(root, rel string) string {
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+
+	t.Run("from a current run, receipts left behind", func(t *testing.T) {
+		root := t.TempDir()
+		for _, f := range []string{"runbook.md", "params.env", "deploy.sh", "teardown.sh", "receipt-20260928-1200.md"} {
+			write(t, root, current+"/gke/"+f, "gke "+f)
+		}
+		out, ok := seed(t, root, "gke")
+		if !ok {
+			t.Fatalf("seedFromRun killed the script:\n%s", out)
+		}
+		for _, f := range []string{"runbook.md", "params.env", "deploy.sh", "teardown.sh"} {
+			if got := read(root, current+"/pr-42/"+f); got != "gke "+f {
+				t.Errorf("%s = %q, want the source's", f, got)
+			}
+		}
+		if read(root, current+"/pr-42/receipt-20260928-1200.md") != "" {
+			t.Error("a receipt was copied; it belongs to the source run's executions")
+		}
+	})
+
+	t.Run("from a run still under a legacy path", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, old+"/gke/runbook.md", "legacy")
+		if out, ok := seed(t, root, "gke"); !ok {
+			t.Fatalf("seedFromRun killed the script:\n%s", out)
+		}
+		if got := read(root, current+"/pr-42/runbook.md"); got != "legacy" {
+			t.Errorf("runbook.md = %q, want the legacy run's", got)
+		}
+	})
+
+	t.Run("the current path wins over a legacy copy", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, current+"/gke/runbook.md", "current")
+		write(t, root, old+"/gke/runbook.md", "legacy")
+		seed(t, root, "gke")
+		if got := read(root, current+"/pr-42/runbook.md"); got != "current" {
+			t.Errorf("runbook.md = %q, want the current run's", got)
+		}
+	})
+
+	t.Run("a source without every file does not kill the plan", func(t *testing.T) {
+		// No teardown.sh: the last file tested is missing, which ends
+		// the copy loop — and so the function — on a false test.
+		root := t.TempDir()
+		write(t, root, current+"/gke/runbook.md", "gke")
+		out, ok := seed(t, root, "gke")
+		if !ok {
+			t.Fatalf("seedFromRun killed the script:\n%s", out)
+		}
+		if read(root, current+"/pr-42/runbook.md") != "gke" {
+			t.Error("runbook.md was not copied")
+		}
+	})
+
+	t.Run("a run with its own runbook is left alone", func(t *testing.T) {
+		root := t.TempDir()
+		write(t, root, current+"/gke/runbook.md", "gke")
+		write(t, root, current+"/pr-42/runbook.md", "mine")
+		if out, ok := seed(t, root, "gke"); !ok {
+			t.Fatalf("seedFromRun killed the script:\n%s", out)
+		}
+		if got := read(root, current+"/pr-42/runbook.md"); got != "mine" {
+			t.Errorf("runbook.md = %q; a re-plan's own procedure was overwritten", got)
+		}
+	})
+
+	t.Run("an unknown source plans from the intent", func(t *testing.T) {
+		root := t.TempDir()
+		out, ok := seed(t, root, "nope")
+		if !ok {
+			t.Fatalf("seedFromRun killed the script:\n%s", out)
+		}
+		if !strings.Contains(out, "not found") {
+			t.Errorf("no warning for a missing source:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(root, current, "pr-42")); err == nil {
+			t.Error("a directory was created for a seed that never happened")
+		}
+	})
 }

@@ -126,11 +126,30 @@ function adoptLegacyInstance {
 # is the whole reason deriving beats starting from the intent again.
 # The receipts are deliberately left behind: they belong to that run's
 # executions, not this one's.
+#
+# The source is looked for where runs live now and then where they used
+# to: a run nobody has touched since a move is still under its legacy
+# path, because adoption only happens to the run being worked on. This
+# function once read only docs-exploration/runs/, so `--from` any
+# current run quietly planned from the intent instead.
+#
+# Every step is written to survive set -e. A new run's directory does
+# not exist yet, and a source without a teardown.sh ends the copy loop
+# on a false test — either one used to be enough to kill the plan.
 function seedFromRun {
-    [ -n "${RUN_FROM}" ] || return 0
-    local src="/workspaces/${REPO_NAME}/docs-exploration/runs/${RUN_FROM}"
-    local dst="/workspaces/${REPO_NAME}/${RUN_DIR}"
-    if [ ! -d "${src}" ]; then
+    if [ -z "${RUN_FROM}" ]; then
+        return 0
+    fi
+    local root="/workspaces/${REPO_NAME}"
+    local dst="${root}/${RUN_DIR}"
+    local src="" base
+    for base in "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
+        if [ -d "${root}/${base}/${RUN_FROM}" ]; then
+            src="${root}/${base}/${RUN_FROM}"
+            break
+        fi
+    done
+    if [ -z "${src}" ]; then
         echo "WARN: --from run '${RUN_FROM}' not found on the branch; planning from the intent instead."
         return 0
     fi
@@ -138,9 +157,13 @@ function seedFromRun {
         echo "Run already has a runbook.md; ignoring --from ${RUN_FROM}."
         return 0
     fi
-    echo "Seeding ${RUN_NAME} from ${RUN_FROM}..."
+    echo "Seeding ${RUN_NAME} from ${src#"${root}/"}..."
+    mkdir -p "${dst}"
+    local f
     for f in runbook.md params.env deploy.sh teardown.sh; do
-        [ -f "${src}/${f}" ] && cp "${src}/${f}" "${dst}/${f}"
+        if [ -f "${src}/${f}" ]; then
+            cp "${src}/${f}" "${dst}/${f}"
+        fi
     done
 }
 
