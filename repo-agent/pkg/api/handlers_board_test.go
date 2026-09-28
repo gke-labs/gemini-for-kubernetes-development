@@ -57,6 +57,21 @@ type boardMockRT struct {
 }
 
 func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The feed is one GraphQL request now, but tests describe the world in
+	// REST fixtures — that is the readable form and it is what every board
+	// test here is already written in. So the fake assembles the answer out
+	// of those same fixtures. The GraphQL keys below are spelled out as
+	// literals rather than marshalled through the decoder's own structs, so
+	// a wrong json tag on either side fails a test instead of cancelling
+	// itself out.
+	if body, ok := m.graphqlAnswer(req); ok {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Request:    req,
+		}, nil
+	}
 	if req.Method != http.MethodGet {
 		m.mu.Lock()
 		m.writes = append(m.writes, req.Method+" "+req.URL.Path)
@@ -88,6 +103,145 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// fixture returns the body registered for a REST URL, or an empty list.
+func (m *boardMockRT) fixture(url string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if body, ok := m.responses[url]; ok {
+		return body
+	}
+	return "[]"
+}
+
+func (m *boardMockRT) graphqlAnswer(req *http.Request) (string, bool) {
+	if !strings.HasSuffix(req.URL.Path, "/graphql") {
+		return "", false
+	}
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return "", false
+	}
+	var q struct {
+		Variables struct {
+			Owner string `json:"owner"`
+			Name  string `json:"name"`
+			Me    string `json:"me"`
+		} `json:"variables"`
+	}
+	if err := json.Unmarshal(raw, &q); err != nil {
+		return "", false
+	}
+	base := "https://api.github.com/repos/" + q.Variables.Owner + "/" + q.Variables.Name
+	const listing = "direction=desc&per_page=100&sort=updated&state=open"
+
+	issueNodes := func(query string) []any {
+		var rest []map[string]any
+		_ = json.Unmarshal([]byte(m.fixture(base+query)), &rest)
+		out := []any{}
+		for _, it := range rest {
+			// repository.issues never returns pull requests; the REST
+			// listing did, which is why the feed had to skip them.
+			if _, isPR := it["pull_request"]; isPR {
+				continue
+			}
+			out = append(out, map[string]any{
+				"number":    it["number"],
+				"title":     it["title"],
+				"body":      it["body"],
+				"url":       it["html_url"],
+				"updatedAt": it["updated_at"],
+				"author":    gqlLoginObj(it["user"]),
+				"labels":    map[string]any{"nodes": gqlNameList(it["labels"])},
+				"assignees": map[string]any{"nodes": gqlLoginList(it["assignees"])},
+			})
+		}
+		return out
+	}
+
+	var restPRs []map[string]any
+	_ = json.Unmarshal([]byte(m.fixture(base+"/pulls?"+listing)), &restPRs)
+	prNodes := []any{}
+	for _, pr := range restPRs {
+		num, _ := pr["number"].(float64)
+		var restReviews []map[string]any
+		_ = json.Unmarshal([]byte(m.fixture(base+"/pulls/"+strconv.Itoa(int(num))+"/reviews?per_page=100")), &restReviews)
+		// The query asks for reviews(author:$me), so only the member's own
+		// come back — the login filter lives in GitHub, not in the caller.
+		mine := []any{}
+		for _, rv := range restReviews {
+			if user, _ := rv["user"].(map[string]any); user != nil {
+				if login, _ := user["login"].(string); strings.EqualFold(login, q.Variables.Me) {
+					mine = append(mine, map[string]any{"state": rv["state"]})
+				}
+			}
+		}
+		requested := []any{}
+		for _, r := range gqlSlice(pr["requested_reviewers"]) {
+			requested = append(requested, map[string]any{"requestedReviewer": gqlLoginObj(r)})
+		}
+		prNodes = append(prNodes, map[string]any{
+			"id":             pr["node_id"],
+			"number":         pr["number"],
+			"title":          pr["title"],
+			"body":           pr["body"],
+			"url":            pr["html_url"],
+			"updatedAt":      pr["updated_at"],
+			"isDraft":        pr["draft"],
+			"author":         gqlLoginObj(pr["user"]),
+			"labels":         map[string]any{"nodes": gqlNameList(pr["labels"])},
+			"reviewRequests": map[string]any{"nodes": requested},
+			"reviews":        map[string]any{"nodes": mine},
+		})
+	}
+
+	answer := map[string]any{"data": map[string]any{
+		"rateLimit": map[string]any{"cost": 9, "remaining": 4991, "resetAt": time.Now().Add(time.Hour).Format(time.RFC3339)},
+		"repository": map[string]any{
+			"pullRequests": map[string]any{"nodes": prNodes},
+			"assigned":     map[string]any{"nodes": issueNodes("/issues?assignee=" + q.Variables.Me + "&" + listing)},
+			"created":      map[string]any{"nodes": issueNodes("/issues?creator=" + q.Variables.Me + "&" + listing)},
+			"triage":       map[string]any{"nodes": issueNodes("/issues?" + listing)},
+		},
+	}}
+	out, err := json.Marshal(answer)
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+func gqlSlice(v any) []any {
+	s, _ := v.([]any)
+	return s
+}
+
+// gqlLoginObj is nil for a missing user, which is how GitHub reports a
+// ghost account — and the decoder has to survive it.
+func gqlLoginObj(v any) any {
+	m, _ := v.(map[string]any)
+	if m == nil {
+		return nil
+	}
+	return map[string]any{"login": m["login"]}
+}
+
+func gqlLoginList(v any) []any {
+	out := []any{}
+	for _, e := range gqlSlice(v) {
+		out = append(out, gqlLoginObj(e))
+	}
+	return out
+}
+
+func gqlNameList(v any) []any {
+	out := []any{}
+	for _, e := range gqlSlice(v) {
+		m, _ := e.(map[string]any)
+		out = append(out, map[string]any{"name": m["name"]})
+	}
+	return out
+}
+
 func boardTestServer(t *testing.T, ghResponses map[string]string, objs ...runtime.Object) (*Server, *gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	server, r, dyn, _ := boardTestServerWithRT(t, ghResponses, objs...)
@@ -106,9 +260,6 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	repoSuggestionCache.Lock()
 	repoSuggestionCache.entries = map[string]repoSuggestionEntry{}
 	repoSuggestionCache.Unlock()
-	pendingReviewCache.Lock()
-	pendingReviewCache.entries = map[string]pendingReviewEntry{}
-	pendingReviewCache.Unlock()
 	repoPermCache.Lock()
 	repoPermCache.entries = map[string]repoPermEntry{}
 	repoPermCache.Unlock()
@@ -145,7 +296,14 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	githubClientForToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: rt})
 	}
-	t.Cleanup(func() { githubClientForToken = prev })
+	prevHTTP := githubHTTPForToken
+	githubHTTPForToken = func(_ string) *http.Client {
+		return &http.Client{Transport: rt}
+	}
+	t.Cleanup(func() {
+		githubClientForToken = prev
+		githubHTTPForToken = prevHTTP
+	})
 
 	manager := &k8s.Manager{Client: dynamicClient, Clientset: k8sClient}
 	server := &Server{K8sManager: manager, Auth: &auth.Authenticator{K8sManager: manager}}

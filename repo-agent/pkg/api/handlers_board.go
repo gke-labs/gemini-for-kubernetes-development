@@ -94,10 +94,17 @@ const reviewRequestFreshWindow = 14 * 24 * time.Hour
 // githubClientForToken is injectable for tests. ghquota owns the transport
 // stack: conditional requests, where a 304 costs ZERO rate-limit quota,
 // and a gate that stops calling once GitHub says the member's budget is
-// spent. Cache entries key per token — critical here, where ListReviews
+// spent. Cache entries key per token — critical here, where review
 // responses carry viewer-private pending reviews.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
 	return github.NewClient(ghquota.HTTPClient(token))
+}
+
+// githubHTTPForToken is the same transport without go-github on top, for
+// the GraphQL feed query. Injectable alongside githubClientForToken so a
+// test answers both through one RoundTripper.
+var githubHTTPForToken = func(token string) *http.Client {
+	return ghquota.HTTPClient(token)
 }
 
 // memberToken resolves the session member's GitHub token (manual_pat >
@@ -139,57 +146,10 @@ type repoPermEntry struct {
 	expires time.Time
 }
 
-// pendingReviewCache caches "does the viewer have a pending review parked
-// on that PR". GitHub is the only storage for pending reviews, so the board
-// rediscovers them even when no sandbox breadcrumb survives (restart,
-// cleanup). Short TTL: a finalize/discard on GitHub reflects within a
-// minute.
-var pendingReviewCache = struct {
-	sync.Mutex
-	entries map[string]pendingReviewEntry
-}{entries: map[string]pendingReviewEntry{}}
-
-type pendingReviewEntry struct {
-	pending  bool
-	reviewed bool
-	expires  time.Time
-}
-
-// viewerReviewStates runs under the viewer's own token — GitHub shows
-// pending reviews only to their author. One ListReviews yields both
-// verdicts: a parked pending review ("Pending on GitHub" with no sandbox
-// breadcrumb) and a submitted one ("Reviewed ✓" that survives clean
-// slates). Errors are not definitive: render without the states rather
-// than caching a wrong verdict.
-func (s *Server) viewerReviewStates(ctx context.Context, gh *github.Client, owner, repo string, pr int, member string) (pending, reviewed bool) {
-	key := fmt.Sprintf("%s|%s/%s#%d", member, owner, repo, pr)
-	pendingReviewCache.Lock()
-	if e, ok := pendingReviewCache.entries[key]; ok && time.Now().Before(e.expires) {
-		pendingReviewCache.Unlock()
-		return e.pending, e.reviewed
-	}
-	pendingReviewCache.Unlock()
-
-	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
-	if err != nil {
-		return false, false
-	}
-	for _, rv := range reviews {
-		if !strings.EqualFold(rv.GetUser().GetLogin(), member) {
-			continue
-		}
-		switch strings.ToUpper(rv.GetState()) {
-		case "PENDING":
-			pending = true
-		case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
-			reviewed = true
-		}
-	}
-	pendingReviewCache.Lock()
-	pendingReviewCache.entries[key] = pendingReviewEntry{pending: pending, reviewed: reviewed, expires: time.Now().Add(time.Minute)}
-	pendingReviewCache.Unlock()
-	return pending, reviewed
-}
+// The viewer's review states used to live in a 60s cache here, refilled by
+// one ListReviews per open PR. They now arrive nested in the board's single
+// GraphQL query (see board_graphql.go), fresh on every rebuild, so there is
+// nothing left to cache and nothing left to invalidate.
 
 func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, repoURL string) bool {
 	key := sessionUser + "|" + repoURL
@@ -456,10 +416,10 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-// buildBoardWork assembles the feed universe. The independent GitHub
-// listings run concurrently and are page-capped, newest first: the board
-// is a work queue, not an archive — on huge repos the tail belongs on
-// GitHub search, not in every 20-second poll.
+// buildBoardWork assembles the feed universe from one GraphQL request
+// (board_graphql.go), capped at 100 per surface and newest first: the
+// board is a work queue, not an archive — on huge repos the tail belongs
+// on GitHub search, not in every poll.
 func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstructured, member, namespace string) ([]models.WorkItem, error) {
 	log := klog.FromContext(ctx)
 
@@ -472,7 +432,6 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	if err != nil {
 		return nil, fmt.Errorf("github token unavailable: %w", err)
 	}
-	gh := githubClientForToken(ctx, token)
 	// Sandboxes live where claims point: the board namespace plus every
 	// namespace named by an assignee claim on this repo's items.
 	sandboxNamespaces := map[string]bool{}
@@ -513,61 +472,18 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 		}
 	}
-	var assigned, created, allIssues []*github.Issue
-	var prs []*github.PullRequest
-	var wg sync.WaitGroup
-	concurrently := func(f func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			f()
-		}()
+	// One request for the whole board. A hole in the universe would show
+	// fewer rows than exist — "nothing needs you" is the one wrong answer
+	// a work queue must not give — so anything short of a complete answer
+	// fails the rebuild and the previous feed keeps standing.
+	snap, err := fetchBoardSnapshot(ctx, githubHTTPForToken(token), owner, repo, member)
+	if err != nil {
+		if ghquota.IsRateLimited(err) {
+			return nil, fmt.Errorf("github budget spent while building the feed: %w", err)
+		}
+		return nil, fmt.Errorf("failed to read the board from github: %w", err)
 	}
-	// A listing lost to the rate limit leaves a hole in the universe, and
-	// a feed built around the hole shows fewer rows than exist — "nothing
-	// needs you" is the one wrong answer a work queue must not give. Any
-	// other failure degrades as before: partial is better than nothing.
-	var starvedMu sync.Mutex
-	var starved error
-	listingFailed := func(what string, err error) {
-		log.Info("failed to "+what, "err", err)
-		if !ghquota.IsRateLimited(err) {
-			return
-		}
-		starvedMu.Lock()
-		defer starvedMu.Unlock()
-		if starved == nil {
-			starved = err
-		}
-	}
-	concurrently(func() {
-		var err error
-		if assigned, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member, Sort: "updated", Direction: "desc"}); err != nil {
-			listingFailed("list assigned issues", err)
-		}
-	})
-	concurrently(func() {
-		var err error
-		if created, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member, Sort: "updated", Direction: "desc"}); err != nil {
-			listingFailed("list created issues", err)
-		}
-	})
-	concurrently(func() {
-		var err error
-		if allIssues, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Sort: "updated", Direction: "desc"}); err != nil {
-			listingFailed("list issues for triage", err)
-		}
-	})
-	concurrently(func() {
-		var err error
-		if prs, _, err = gh.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open", Sort: "updated", Direction: "desc", ListOptions: github.ListOptions{PerPage: 100}}); err != nil {
-			listingFailed("list PRs", err)
-		}
-	})
-	wg.Wait()
-	if starved != nil {
-		return nil, fmt.Errorf("github budget spent while building the feed: %w", starved)
-	}
+	assigned, created, allIssues, prs := snap.assigned, snap.created, snap.triage, snap.prs
 	// Load claimed executors' namespaces before merging rows so their
 	// sandboxes surface on the shared board.
 	for _, issue := range assigned {
@@ -592,32 +508,15 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 	}
 
-	// Review-state rediscovery per non-authored PR, concurrently — GitHub
-	// is the only durable record of the member's reviews, so both a
+	// GitHub is the only durable record of the member's reviews, so both a
 	// parked pending review and a submitted one must survive lost sandbox
 	// breadcrumbs. (Requested-only gating could never see the submitted
-	// case: submitting clears the reviewer request.) Cached 60s per PR,
-	// ETag-backed underneath.
-	type reviewStates struct{ pending, reviewed bool }
-	statesByPR := map[int]reviewStates{}
-	{
-		var mu sync.Mutex
-		var pwg sync.WaitGroup
-		for _, pr := range prs {
-			if strings.EqualFold(pr.GetUser().GetLogin(), member) {
-				continue
-			}
-			pwg.Add(1)
-			go func(num int) {
-				defer pwg.Done()
-				pending, reviewed := s.viewerReviewStates(ctx, gh, owner, repo, num, member)
-				mu.Lock()
-				statesByPR[num] = reviewStates{pending: pending, reviewed: reviewed}
-				mu.Unlock()
-			}(pr.GetNumber())
-		}
-		pwg.Wait()
-	}
+	// case: submitting clears the reviewer request.) This used to be one
+	// ListReviews per non-authored PR, fanned out — up to a hundred calls
+	// a rebuild, and the single largest thing the board spent. It now
+	// arrives nested in the same query the PRs did, so it is free, fresh
+	// every rebuild, and needs no cache of its own.
+	statesByPR := snap.reviews
 	for _, pr := range prs {
 		st := statesByPR[pr.GetNumber()]
 		s.mergePRRow(items, sandboxes, pr, repo, member, st.pending, st.reviewed, viewLabels, autoIterateDefault(board))
@@ -755,27 +654,6 @@ func boardLimit(board *unstructured.Unstructured, field string, def int64) int64
 		return def
 	}
 	return v
-}
-
-// listIssues is page-capped: sorted newest-updated first by the callers,
-// so the cap keeps the live edge and drops the archive tail — unbounded
-// pagination on big repos was the feed's 20-second stall.
-func listIssues(ctx context.Context, gh *github.Client, owner, repo string, opts *github.IssueListByRepoOptions) ([]*github.Issue, error) {
-	const maxPages = 3
-	opts.ListOptions = github.ListOptions{PerPage: 100}
-	var all []*github.Issue
-	for page := 0; page < maxPages; page++ {
-		items, resp, err := gh.Issues.ListByRepo(ctx, owner, repo, opts)
-		if err != nil {
-			return all, err
-		}
-		all = append(all, items...)
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-	return all, nil
 }
 
 func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo string) (map[string]*unstructured.Unstructured, error) {
@@ -1497,15 +1375,9 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 		}
 	}
 
-	// The rediscovery cache must not keep announcing the deleted review.
-	suffix := fmt.Sprintf("|%s/%s#%d", owner, repo, number)
-	pendingReviewCache.Lock()
-	for key := range pendingReviewCache.entries {
-		if strings.HasSuffix(key, suffix) {
-			delete(pendingReviewCache.entries, key)
-		}
-	}
-	pendingReviewCache.Unlock()
+	// Nothing to invalidate: the next rebuild reads the member's review
+	// states from GitHub as part of the board query, so a discarded review
+	// stops being announced as soon as the feed refreshes.
 
 	// Clear the sandbox's review state so the row returns to its plain
 	// stage; the abandoned-at marker stops the controller from re-marking
