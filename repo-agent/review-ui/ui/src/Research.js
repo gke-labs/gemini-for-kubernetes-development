@@ -1915,6 +1915,15 @@ export function ResearchPanel({ boardName, repoURL }) {
             </button>
           ))}
           <span style={{ flex: 1 }} />
+          {/* Enter in this box spends a sandbox, which is a surprising
+              thing for a two-line textarea to do unannounced — the
+              conversation's own composer has said `⏎ send · ⇧⏎ newline`
+              on its status line all along, and this is the box where
+              getting it wrong costs minutes. Same words, same order,
+              next to the button it is an alternative to. */}
+          <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+            ⏎ research · ⇧⏎ newline
+          </span>
           <button className="btn btn-sm" disabled={!topic.trim() || !!busy} onClick={ask}>
             {busy ? 'Requesting…' : 'Research'}
           </button>
