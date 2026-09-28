@@ -1429,6 +1429,44 @@ describe('ResearchPanel', () => {
         expect(claimed[0].title).toBeUndefined();
     });
 
+    test('the box says Enter sends it, and how to get a newline instead', async () => {
+        // Enter here spends a sandbox and minutes of wall clock. The
+        // conversation's own composer has said `⏎ send · ⇧⏎ newline` on
+        // its status line since it became a terminal; the box that
+        // starts the conversation said nothing at all, so the way you
+        // found out was by losing a half-written question to it.
+        global.fetch = claimFetch([]);
+
+        await renderPanel();
+        expect(container.textContent).toContain('⏎ research');
+        expect(container.textContent).toContain('⇧⏎ newline');
+    });
+
+    test('Enter asks, and Shift+Enter does not', async () => {
+        const claimed = [];
+        global.fetch = claimFetch(claimed);
+
+        await renderPanel();
+        const box = container.querySelector('textarea[aria-label="Research question"]');
+        await act(async () => {
+            nativeSet(box, 'where does the retry loop live?');
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        await act(async () => {
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
+        });
+        await flush();
+        expect(claimed).toEqual([]);
+
+        await act(async () => {
+            box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        });
+        await flush();
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0].topic).toContain('retry loop');
+    });
+
     test('overview waits for the prompt it would fill the box with', async () => {
         // Nothing to put in the box until the prompts land, and a
         // control that silently does nothing is worse than one that
