@@ -1584,6 +1584,172 @@ export function ResearchConversation({
   );
 }
 
+// useResearchSessions is the member's conversations, polled while a
+// list of them is on screen.
+//
+// /api/research is namespace-wide and knows nothing about boards — a
+// session carries only the repo it was started on — so every list in
+// this file is this one list, narrowed or not. Polled because a newly
+// claimed session takes minutes to become a sandbox; until it does it
+// is a standing claim, which the list reports as a requested row.
+function useResearchSessions() {
+  const [sessions, setSessions] = useState(null);
+  const [forkOwner, setForkOwner] = useState('');
+  // The branch notes are written to, as the server names it. Held in
+  // state rather than written here so there is one copy of the string,
+  // on the Go side the write path also reads; the initial value is only
+  // what to show for the frame before the first response lands.
+  const [notesBranch, setNotesBranch] = useState('research/notes');
+  const [listError, setListError] = useState('');
+
+  const load = useCallback(() => {
+    fetch('/api/research')
+      .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
+      .then(data => {
+        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        setForkOwner(data.forkOwner || '');
+        if (data.notesBranch) setNotesBranch(data.notesBranch);
+      })
+      .catch(err => { setSessions([]); setListError(`Could not list research sessions: ${err}`); });
+  }, []);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, 10000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  return { sessions, forkOwner, notesBranch, listError, setListError, load };
+}
+
+// sessionState is the pill at the end of a row: what this conversation
+// is doing, in the words of someone deciding whether to open it.
+function sessionState(s) {
+  if (s.requested) {
+    return <Pill text="requested" color="#b08800" bg="rgba(176,136,0,0.12)"
+      title="Asked for — the controller has not built the sandbox yet. A few minutes." />;
+  }
+  if (s.paused) {
+    return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
+      title="Scaled to zero — the transcript survives, the engine does not" />;
+  }
+  if (s.openingError) {
+    return <Pill text="opening failed" color="var(--text-danger)" bg="var(--bg-danger-light)"
+      title={s.openingError} />;
+  }
+  // Before opening…: the sandbox object exists for minutes before its
+  // pod does, and "up" on a session nothing can reach yet is a lie
+  // that costs a click.
+  if (s.starting) {
+    return <Pill text="starting…" color="#b08800" bg="rgba(176,136,0,0.12)"
+      title="The sandbox exists; its pod is still coming up — image, disk, clone" />;
+  }
+  // Above `opening…` deliberately. A first turn that stopped to ask
+  // something is still an unanswered question with your name on it, and
+  // "opening…" reads as "wait" — which is how a session sits there until
+  // the permission timeout takes the turn away.
+  if (s.waiting) {
+    return <Pill text="needs you" color="var(--text-danger)" bg="var(--bg-danger-light)"
+      title="Stopped on a permission request. Open it and answer, or the turn is cancelled after ten minutes." />;
+  }
+  if (s.opening) {
+    return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
+      title="The first question has not reached the agent yet" />;
+  }
+  if (s.busy) {
+    return <Pill text="working…" color="var(--link-color, #0969da)" bg="rgba(9,105,218,0.12)"
+      title="A turn is in flight — the agent is thinking, and nothing is being asked of you" />;
+  }
+  // Not a failure: the sandbox is fine and the conversation is intact,
+  // we just could not ask its engine anything this time round. Said out
+  // loud rather than shown as idle, because a wedged pod reported as
+  // quiet is the one lie this whole change exists to stop telling.
+  if (s.unreachable) {
+    return <Pill text="no answer" color="var(--text-secondary)" bg="var(--bg-secondary)"
+      title={`The sandbox is up but its conversation server did not answer:\n${s.unreachable}`} />;
+  }
+  if (s.live) {
+    return <Pill text="idle" color="var(--text-secondary)" bg="var(--bg-secondary)"
+      title="The agent is up with nothing in flight — waiting on your next question" />;
+  }
+  // No engine in the pod: the resting state of a session nobody has
+  // opened, and of one whose daemon restarted. Green because nothing is
+  // wrong — the conversation starts when you open it.
+  return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)"
+    title="The sandbox is ready. Nothing is running in it until you open the conversation." />;
+}
+
+// SessionRow is one conversation, in either list: the title with the
+// room to be read, then the repo, the id, its age and what it is
+// doing. One line, because everything after the title is the answer to
+// "is this one worth opening" and that is small print by definition.
+//
+// It was a 260px rail beside the conversation, and the rail cost the
+// conversation 272px of width for the whole session while truncating
+// every title it held. Full width buys back both: the titles fit, and
+// what opens fills the window.
+//
+// The whole row is the control, not just the title: a click that
+// lands two pixels off the text should not do nothing.
+//
+// No repo column, strictly speaking — the repo is on the row, but as
+// a word beside the id rather than a column. On a board's tab it is
+// the same word all the way down; on the all-boards tab it is the one
+// thing that differs, and it reads the same either way.
+function SessionRow({ session: s, selected, onOpen, onRename }) {
+  return (
+    <button type="button"
+      aria-current={selected ? 'true' : undefined}
+      onClick={() => onOpen(s)}
+      // Double-click renames. The box it opens is the one in the
+      // header, not a second editor down here: there is one rename
+      // and one PATCH, and the list is a list of rows rather than a
+      // place things get edited. What the gesture buys is that the
+      // row you want to rename is the row you are looking at — the
+      // header's title has been clickable all along and nothing about
+      // a piece of bold text says so.
+      onDoubleClick={() => onRename(s)}
+      title={[
+        `session ${s.sessionId}`,
+        'click to open · double-click to rename',
+        s.sandbox ? `sandbox ${s.sandbox}` : '',
+      ].filter(Boolean).join('\n')}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '10px',
+        width: '100%', textAlign: 'left', font: 'inherit',
+        padding: '9px 12px', marginBottom: '6px', cursor: 'pointer', borderRadius: '8px',
+        border: `1px solid ${selected ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
+        background: 'var(--bg-card)',
+        color: 'var(--text-primary)',
+      }}>
+      {/* The title has the width now, and the width is the whole
+          point of the change: it gets as much of the row as the small
+          print leaves, and only then does it ellipsise. */}
+      <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}
+      </span>
+      <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }}>{s.repo}</span>
+      <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
+        {shortSession(s.sessionId)}
+      </span>
+      <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }} title={s.createdAt}>
+        {ageOf(s.createdAt)}
+      </span>
+      {sessionState(s)}
+    </button>
+  );
+}
+
+// openedBy turns a clicked row into what the conversation pane needs.
+// `pending` is what stops the 404 in the meantime reading as "this
+// session does not exist".
+const openedBy = (s) => ({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' });
+
+// renamedBy is the same, plus the ask to open the header's title box.
+// The counter is so that asking twice in the same millisecond — or
+// twice for the session already open — is still two asks.
+const renamedBy = (open, s) => ({ ...openedBy(s), renameAt: ((open && open.renameAt) || 0) + 1 });
+
 // ResearchPanel is the board's Research tab: the ways to start a
 // conversation about this repository, the conversations already
 // started, and the conversation itself once one is open.
@@ -1611,17 +1777,11 @@ export function ResearchConversation({
 // API, which is the thing that would have to change to make one truly
 // lost.
 export function ResearchPanel({ boardName, repoURL }) {
-  const [sessions, setSessions] = useState(null);
+  const { sessions, forkOwner, notesBranch, listError, setListError, load } = useResearchSessions();
   const [open, setOpen] = useState(null); // { sessionId, pending, title }
   const [busy, setBusy] = useState(false); // a claim is in flight
   const [topic, setTopic] = useState('');
   const [error, setError] = useState('');
-  const [forkOwner, setForkOwner] = useState('');
-  // The branch notes are written to, as the server names it. Held in
-  // state rather than written here so there is one copy of the string,
-  // on the Go side the write path also reads; the initial value is only
-  // what to show for the frame before the first response lands.
-  const [notesBranch, setNotesBranch] = useState('research/notes');
   // The canned openings as text, keyed by kind, fetched once. They are
   // what the box gets filled with — see the landing pane — so they are
   // loaded before the click rather than on it: a control that puts text
@@ -1629,26 +1789,6 @@ export function ResearchPanel({ boardName, repoURL }) {
   // can fail while you watch.
   const [prompts, setPrompts] = useState({});
   const askBoxRef = useRef(null);
-
-  const load = useCallback(() => {
-    fetch('/api/research')
-      .then(res => (res.ok ? res.json() : Promise.reject(res.statusText)))
-      .then(data => {
-        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
-        setForkOwner(data.forkOwner || '');
-        if (data.notesBranch) setNotesBranch(data.notesBranch);
-      })
-      .catch(err => { setSessions([]); setError(`Could not list research sessions: ${err}`); });
-  }, []);
-
-  // Poll while the tab is open. A newly claimed session takes minutes to
-  // become a sandbox; until it does it is a standing claim, which the
-  // list reports as a requested row.
-  useEffect(() => {
-    load();
-    const t = setInterval(() => { if (!document.hidden) load(); }, 10000);
-    return () => clearInterval(t);
-  }, [load]);
 
   // The canned prompts, rendered for this board's repository. Failing is
   // quiet: it costs the two fill controls, and the box they would have
@@ -1722,138 +1862,15 @@ export function ResearchPanel({ boardName, repoURL }) {
   const all = sessions || [];
   const mine = repo ? all.filter(s => s.repo === repo) : all;
 
-  const stateOf = (s) => {
-    if (s.requested) {
-      return <Pill text="requested" color="#b08800" bg="rgba(176,136,0,0.12)"
-        title="Asked for — the controller has not built the sandbox yet. A few minutes." />;
-    }
-    if (s.paused) {
-      return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
-        title="Scaled to zero — the transcript survives, the engine does not" />;
-    }
-    if (s.openingError) {
-      return <Pill text="opening failed" color="var(--text-danger)" bg="var(--bg-danger-light)"
-        title={s.openingError} />;
-    }
-    // Before opening…: the sandbox object exists for minutes before its
-    // pod does, and "up" on a session nothing can reach yet is a lie
-    // that costs a click.
-    if (s.starting) {
-      return <Pill text="starting…" color="#b08800" bg="rgba(176,136,0,0.12)"
-        title="The sandbox exists; its pod is still coming up — image, disk, clone" />;
-    }
-    // Above `opening…` deliberately. A first turn that stopped to ask
-    // something is still an unanswered question with your name on it, and
-    // "opening…" reads as "wait" — which is how a session sits there until
-    // the permission timeout takes the turn away.
-    if (s.waiting) {
-      return <Pill text="needs you" color="var(--text-danger)" bg="var(--bg-danger-light)"
-        title="Stopped on a permission request. Open it and answer, or the turn is cancelled after ten minutes." />;
-    }
-    if (s.opening) {
-      return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
-        title="The first question has not reached the agent yet" />;
-    }
-    if (s.busy) {
-      return <Pill text="working…" color="var(--link-color, #0969da)" bg="rgba(9,105,218,0.12)"
-        title="A turn is in flight — the agent is thinking, and nothing is being asked of you" />;
-    }
-    // Not a failure: the sandbox is fine and the conversation is intact,
-    // we just could not ask its engine anything this time round. Said out
-    // loud rather than shown as idle, because a wedged pod reported as
-    // quiet is the one lie this whole change exists to stop telling.
-    if (s.unreachable) {
-      return <Pill text="no answer" color="var(--text-secondary)" bg="var(--bg-secondary)"
-        title={`The sandbox is up but its conversation server did not answer:\n${s.unreachable}`} />;
-    }
-    if (s.live) {
-      return <Pill text="idle" color="var(--text-secondary)" bg="var(--bg-secondary)"
-        title="The agent is up with nothing in flight — waiting on your next question" />;
-    }
-    // No engine in the pod: the resting state of a session nobody has
-    // opened, and of one whose daemon restarted. Green because nothing is
-    // wrong — the conversation starts when you open it.
-    return <Pill text="up" color="var(--status-green)" bg="rgba(40,167,69,0.12)"
-      title="The sandbox is ready. Nothing is running in it until you open the conversation." />;
-  };
+  // The rows, shared with the all-boards tab: one conversation each,
+  // the title first and the small print after it.
+  const sessionRow = (s) => (
+    <SessionRow key={s.sessionId} session={s}
+      selected={!!open && open.sessionId === s.sessionId}
+      onOpen={x => setOpen(openedBy(x))}
+      onRename={x => setOpen(o => renamedBy(o, x))} />
+  );
 
-  // sessionRow is one conversation, across the whole tab: the title
-  // with the room to be read, then the repo, the id, its age and what
-  // it is doing. One line, because everything after the title is the
-  // answer to "is this one worth opening" and that is small print by
-  // definition.
-  //
-  // It was a 260px rail beside the conversation, and the rail cost the
-  // conversation 272px of width for the whole session while truncating
-  // every title it held. Full width buys back both: the titles fit, and
-  // what opens fills the window.
-  //
-  // The whole row is the control, not just the title: a click that
-  // lands two pixels off the text should not do nothing.
-  //
-  // No repo column, strictly speaking — the repo is on the row, but as
-  // a word beside the id rather than a column, because it is the same
-  // word all the way down.
-  const sessionRow = (s) => {
-    const selected = !!open && open.sessionId === s.sessionId;
-    return (
-      <button key={s.sessionId} type="button"
-        aria-current={selected ? 'true' : undefined}
-        onClick={() => setOpen({ sessionId: s.sessionId, pending: !!s.requested, title: s.title || '' })}
-        // Double-click renames. The box it opens is the one in the
-        // header, not a second editor down here: there is one rename
-        // and one PATCH, and the list is a list of rows rather than a
-        // place things get edited. What the gesture buys is that the
-        // row you want to rename is the row you are looking at — the
-        // header's title has been clickable all along and nothing about
-        // a piece of bold text says so.
-        onDoubleClick={() => setOpen(o => ({
-          sessionId: s.sessionId,
-          pending: !!s.requested,
-          title: s.title || '',
-          // A counter, so asking twice in the same millisecond — or
-          // twice for the session already open — is still two asks.
-          renameAt: ((o && o.renameAt) || 0) + 1,
-        }))}
-        title={[
-          `session ${s.sessionId}`,
-          'click to open · double-click to rename',
-          s.sandbox ? `sandbox ${s.sandbox}` : '',
-        ].filter(Boolean).join('\n')}
-        style={{
-          display: 'flex', alignItems: 'center', gap: '10px',
-          width: '100%', textAlign: 'left', font: 'inherit',
-          padding: '9px 12px', marginBottom: '6px', cursor: 'pointer', borderRadius: '8px',
-          border: `1px solid ${selected ? 'var(--link-color, #0969da)' : 'var(--border-color)'}`,
-          background: 'var(--bg-card)',
-          color: 'var(--text-primary)',
-        }}>
-        {/* The title has the width now, and the width is the whole
-            point of the change: it gets as much of the row as the small
-            print leaves, and only then does it ellipsise. */}
-        <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {s.title || <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>untitled</span>}
-        </span>
-        <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }}>{s.repo}</span>
-        <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
-          {shortSession(s.sessionId)}
-        </span>
-        <span style={{ color: 'var(--text-secondary)', fontSize: 'x-small' }} title={s.createdAt}>
-          {ageOf(s.createdAt)}
-        </span>
-        {stateOf(s)}
-      </button>
-    );
-  };
-
-  // The ask box, at the top of the list and always there. It used to
-  // be a pane you selected — the right-hand side when no conversation
-  // was open — which was the rail's doing: with the conversation living
-  // beside the list, a box for a new one had nowhere to be except in
-  // its place. A conversation opens over the whole window now, so the
-  // box can just be the top of the list, and `+ New conversation`
-  // stops having a job: it was a row standing in for a box one pane
-  // away.
   const askBox = (
     <div style={{ marginBottom: '14px' }}>
       {/* No heading over the box. It said "Ask anything about
@@ -1938,10 +1955,10 @@ export function ResearchPanel({ boardName, repoURL }) {
 
   return (
     <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {error && (
+      {(error || listError) && (
         <div className="warning-banner" style={{ cursor: 'pointer', marginBottom: '10px' }}
-          onClick={() => setError('')} title="Dismiss">
-          {error}
+          onClick={() => { setError(''); setListError(''); }} title="Dismiss">
+          {error || listError}
         </div>
       )}
 
@@ -1999,6 +2016,78 @@ export function ResearchPanel({ boardName, repoURL }) {
 
           onClose replaced onBack, which had been dead since the rail:
           a `← Sessions` button for a list that was never left. */}
+      {open && (
+        <ResearchConversation
+          key={open.sessionId}
+          sessionId={open.sessionId}
+          pending={open.pending}
+          title={open.title}
+          renameAt={open.renameAt}
+          onClose={() => setOpen(null)}
+          onDeleted={() => { setOpen(null); load(); }}
+          onRenamed={load}
+        />
+      )}
+    </div>
+  );
+}
+
+// AllResearchPanel is the Research tab under All: every conversation
+// the member has, whichever board it was started from.
+//
+// A board's own tab is deliberately about that repository — it shows
+// nothing else, because a member with five boards open does not want
+// four rails each describing four-fifths of their work as somewhere
+// else's. That leaves the question this tab answers: where is the
+// conversation I had on Tuesday? It was reachable only by its own link,
+// or by remembering which repo it was about and going there.
+//
+// No ask box. Starting a conversation means choosing the repository it
+// is checked out from — that is a board, and the board's tab is where
+// the canned openings and the composer already live. This one is for
+// finding a conversation, and finding one means opening it, which it
+// does over the whole window like everywhere else.
+//
+// It lists sessions for repositories with no board too. The API is
+// namespace-wide and the session carries its repo, so a conversation
+// whose board was deleted turns up here rather than being lost — which
+// is the case the per-board tab gave up on by design.
+export function AllResearchPanel() {
+  const { sessions, listError, setListError, load } = useResearchSessions();
+  const [open, setOpen] = useState(null); // { sessionId, pending, title }
+
+  // Server order is newest first, which is the right default for a list
+  // you are scanning for something you remember. The one thing that
+  // beats recency is a conversation stopped on a permission request:
+  // it is a question with the member's name on it, and the turn is
+  // cancelled if it goes unanswered for ten minutes. Everything else
+  // keeps the order it arrived in.
+  const all = [...(sessions || [])].sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0));
+
+  return (
+    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
+      {listError && (
+        <div className="warning-banner" style={{ cursor: 'pointer', marginBottom: '10px' }}
+          onClick={() => setListError('')} title="Dismiss">
+          {listError}
+        </div>
+      )}
+
+      {sessions === null ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 2px' }}>
+          loading…
+        </div>
+      ) : !all.length ? (
+        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '6px 2px' }}>
+          No conversations anywhere yet — ask something on a board's Research tab.
+        </div>
+      ) : all.map(s => (
+        <SessionRow key={s.sessionId} session={s}
+          selected={!!open && open.sessionId === s.sessionId}
+          onOpen={x => setOpen(openedBy(x))}
+          onRename={x => setOpen(o => renamedBy(o, x))} />
+      ))}
+
       {open && (
         <ResearchConversation
           key={open.sessionId}

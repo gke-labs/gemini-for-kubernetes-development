@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel } from './Research';
+import { ResearchPanel, AllResearchPanel } from './Research';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
 import { Terminal as XTerm } from 'xterm';
@@ -1671,7 +1671,7 @@ function Work({ onBack, namespace }) {
         const upNextAll = work
           .filter(i => i.attention === 'needs-you')
           .sort((x, y) => (stageDeferred(x) - stageDeferred(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
-        const allTab = activeGroup === 'all-runs' ? 'all-runs' : 'up-next';
+        const allTab = ['all-research', 'all-runs'].includes(activeGroup) ? activeGroup : 'up-next';
         return (
           <div>
             <nav className="group-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
@@ -1679,6 +1679,12 @@ function Work({ onBack, namespace }) {
                 onClick={() => setActiveGroup('')}
                 style={allTab === 'up-next' ? { color: '#d73a49' } : {}}
               >Up Next</button>
+              {/* Research and Runs in the same order as a board's own
+                  tabs, so the two rows of tabs read the same way. */}
+              <button className={`group-tab ${allTab === 'all-research' ? 'active' : ''}`}
+                title="Every research conversation, whichever board it was started from — including ones whose board is gone"
+                onClick={() => setActiveGroup('all-research')}
+              >Research</button>
               <button className={`group-tab ${allTab === 'all-runs' ? 'active' : ''}`}
                 title="Every deployment across every board — the fleet dashboard"
                 onClick={() => setActiveGroup('all-runs')}
@@ -1687,7 +1693,9 @@ function Work({ onBack, namespace }) {
                 across {boards.length} boards
               </span>
             </nav>
-            {allTab === 'all-runs' ? (
+            {allTab === 'all-research' ? (
+              <AllResearchPanel />
+            ) : allTab === 'all-runs' ? (
               <AllRunsPanel boards={boards}
                 onOpenSandbox={(name) => setCardSandbox(name)}
                 onGoBoard={(b) => { setActiveBoard(b); setWork([]); setActiveGroup('try'); }} />
