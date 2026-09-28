@@ -86,6 +86,13 @@ const RECEIPT_STYLE = { color: '#22863a', bg: 'rgba(34,134,58,0.14)' };
 // "what do I owe right now" is a question about you, not a repo.
 const ALL_BOARDS = '__all__';
 
+// How long a window nobody is using keeps polling before it gives up.
+// document.hidden does not cover the case that actually spends the GitHub
+// budget: a board left visible on a second monitor, unfocused and unread,
+// refetching every repo you watch all day. Five minutes is long enough to
+// read a row and come back to it without the board ever going quiet.
+const IDLE_AFTER = 5 * 60 * 1000;
+
 const UP_NEXT = 'up-next';
 const GROUPS = [
   { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
@@ -1386,6 +1393,11 @@ function Work({ onBack, namespace }) {
   // Guards against the stale-response race: a fetch launched for the
   // previous board must never overwrite the board you switched to.
   const activeBoardRef = useRef('');
+  // Attention, not focus. The poll gives up on an unattended window and
+  // every way back in — focus, a key, the pointer — restarts it with an
+  // immediate fetch, so the board you return to is never the one you left.
+  const lastActiveAt = useRef(Date.now());
+  const idle = useRef(false);
   const [activeGroup, setActiveGroup] = useState(''); // '' = auto-pick
   const [loading, setLoading] = useState(false);
   const [addURL, setAddURL] = useState('');
@@ -1479,19 +1491,41 @@ function Work({ onBack, namespace }) {
     // keeps the fast cadence; ALL settles for a minute, which is what
     // the server holds a feed fresh for anyway.
     const pollEvery = activeBoard === ALL_BOARDS ? 60000 : 20000;
+    const poll = () => { if (!document.hidden) { fetchWork(); fetchBoards(); } };
     const interval = setInterval(() => {
-      if (!document.hidden) { fetchWork(); fetchBoards(); }
+      if (document.hidden) return;
+      // A focused window is being read; keep its cadence. An unfocused one
+      // may still be sitting in plain sight on another screen, which the
+      // hidden check never catches — give it five quiet minutes and then
+      // stop. Nobody is reading it, and it is spending a budget shared
+      // with everything else that talks to GitHub.
+      if (!document.hasFocus() && Date.now() - lastActiveAt.current > IDLE_AFTER) {
+        idle.current = true;
+        return;
+      }
+      poll();
     }, pollEvery);
     // Polling skips hidden tabs (quota) and browsers throttle background
     // timers — so returning to the tab must refresh NOW, not at the next
     // tick: the wait reads as a frozen board.
-    const onReturn = () => { if (!document.hidden) { fetchWork(); fetchBoards(); } };
+    const onReturn = () => { lastActiveAt.current = Date.now(); idle.current = false; poll(); };
+    // Coming back without switching windows: the pointer or a key on a
+    // board that had gone quiet. Same promise — refresh on the way in.
+    const onActivity = () => {
+      lastActiveAt.current = Date.now();
+      if (!idle.current) return;
+      idle.current = false;
+      poll();
+    };
+    const activity = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'];
     document.addEventListener('visibilitychange', onReturn);
     window.addEventListener('focus', onReturn);
+    activity.forEach(e => document.addEventListener(e, onActivity, { passive: true }));
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
+      activity.forEach(e => document.removeEventListener(e, onActivity));
     };
   }, [fetchWork, fetchBoards, activeBoard]);
 
