@@ -158,11 +158,11 @@ func TestCaptureFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
 	}
 }
 
-// The name is pinned at the first save and does not move afterwards. A
-// session renamed between two captures would otherwise push its second
-// note somewhere new and leave the first one orphaned under a name
-// nothing refers to any more.
-func TestCaptureKeepsTheNameItPinned(t *testing.T) {
+// The name follows the session. Saving twice in a row updates one
+// file, but a rename in between makes the next save a new note under
+// the new name — which is what the member asked for by renaming it.
+// The old file stays on the branch.
+func TestCaptureFollowsARename(t *testing.T) {
 	sb := titled(researchSandboxCR("alice", researchSession, researchRepo, false), "first read")
 	acp := &fakeACPD{sessionExists: true}
 	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
@@ -171,21 +171,35 @@ func TestCaptureKeepsTheNameItPinned(t *testing.T) {
 	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
 		t.Fatalf("first capture: %d %s", w.Code, w.Body.String())
 	}
+	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
+		t.Fatalf("second capture: %d %s", w.Code, w.Body.String())
+	}
+	// Two saves, no rename: one file.
+	if got := captureAnnotations(t, dyn, researchSession)[research.NoteAnnotation]; got != "first-read.md" {
+		t.Fatalf("note = %q, want the file the first save wrote", got)
+	}
+
 	if w := doJSON(t, r, http.MethodPatch, "/api/research/"+researchSession,
 		`{"title":"how the scheduler picks a node"}`); w.Code != http.StatusOK {
 		t.Fatalf("rename: %d %s", w.Code, w.Body.String())
 	}
 	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
-		t.Fatalf("second capture: %d %s", w.Code, w.Body.String())
+		t.Fatalf("capture after the rename: %d %s", w.Code, w.Body.String())
 	}
 
 	annotations := captureAnnotations(t, dyn, researchSession)
-	if got := annotations[research.NoteAnnotation]; got != "first-read.md" {
-		t.Errorf("note = %q, want the one the first save pinned", got)
+	const want = "how-the-scheduler-picks-a-node.md"
+	if got := annotations[research.NoteAnnotation]; got != want {
+		t.Errorf("note = %q, want %q — the name the session now has", got, want)
 	}
+	// And the save that is owed is for that file: the prompt, the
+	// annotation and the push all have to name the same one.
 	pending, ok := research.DecodePending(annotations[research.CaptureAnnotation])
-	if !ok || pending.Note != "first-read.md" {
-		t.Errorf("pending = %+v, want the pinned note", pending)
+	if !ok || pending.Note != want {
+		t.Errorf("pending = %+v, want a save of %q", pending, want)
+	}
+	if !strings.Contains(acp.promptBody, research.NotesPath(want)) {
+		t.Errorf("the prompt still writes the old file: %s", acp.promptBody)
 	}
 }
 

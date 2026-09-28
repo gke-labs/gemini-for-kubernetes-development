@@ -1210,6 +1210,56 @@ func TestResearchRenameWorksOnAPausedSession(t *testing.T) {
 	}
 }
 
+// The note is named after the session, so renaming the session has to
+// let go of the file the old name picked — otherwise the member renames
+// it, saves, and the notes turn up under the name they just replaced.
+// The old file stays on the branch; a duplicate is the cheap half of
+// this.
+func TestResearchRenameUnpinsTheNote(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	annotations := sb.GetAnnotations()
+	annotations[research.TitleAnnotation] = "first read"
+	annotations[research.NoteAnnotation] = "first-read.md"
+	sb.SetAnnotations(annotations)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+
+	w := doJSON(t, r, http.MethodPatch, "/api/research/"+researchSession, `{"title":"deploy gcevm"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if note, ok := got.GetAnnotations()[research.NoteAnnotation]; ok {
+		t.Errorf("the rename kept the note pinned to %q", note)
+	}
+}
+
+// A rename to the name it already has is not a rename. The panel sends
+// one on every blur of the title field, and dropping the pin there
+// would split a session's notes in two for a member who clicked into
+// the field and back out again.
+func TestResearchRenameToTheSameTitleKeepsTheNote(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	annotations := sb.GetAnnotations()
+	annotations[research.TitleAnnotation] = "first read"
+	annotations[research.NoteAnnotation] = "first-read-2.md"
+	sb.SetAnnotations(annotations)
+	r, dyn := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+
+	if w := doJSON(t, r, http.MethodPatch, "/api/research/"+researchSession, `{"title":"first read"}`); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if note := got.GetAnnotations()[research.NoteAnnotation]; note != "first-read-2.md" {
+		t.Errorf("note = %q, want the file this session has been saving to", note)
+	}
+}
+
 func TestResearchRenameRejectsAnEmptyTitle(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})

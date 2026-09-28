@@ -128,16 +128,19 @@ func (s *Server) captureResearchNotes(c *gin.Context) {
 
 // researchNoteName is the file this session's notes go in.
 //
-// Decided once, at the first capture, and read off the sandbox every
-// time after that. The name is the member's — a session called "where
-// the retry loop terminates" saves to
+// Derived from the session's title at the first capture and read off
+// the sandbox every time after that, so saving twice updates one file
+// rather than writing a second copy of it. The name is the member's — a
+// session called "where the retry loop terminates" saves to
 // `where-the-retry-loop-terminates.md` — which is the whole point: the
 // file is the note's address on a branch someone will read months from
 // now, and a session id is not an address, it is a handle.
 //
-// Pinning is what makes that safe. A title can be changed, and a name
-// derived fresh each time would follow it, stranding the note already
-// pushed under the old one. So the first save fixes it.
+// Renaming the session clears the pin (see setResearchTitle), so the
+// next capture derives a fresh name from the new title. The note
+// already on the branch under the old name is left alone: a duplicate
+// is cheaper than a note saved under a name the member has moved on
+// from, and the branch is an archive.
 func (s *Server) researchNoteName(ctx context.Context, view researchSandboxView, member string) string {
 	if view.Note != "" {
 		return view.Note
