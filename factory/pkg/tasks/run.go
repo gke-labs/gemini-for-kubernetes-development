@@ -31,6 +31,11 @@ type RunParams struct {
 	// has already copied it into the run's directory by the time the
 	// engine reads this; the plan makes that copy this run's.
 	Runbook string
+	// Target is the pull request this run deploys instead of the
+	// default branch; 0 for the default branch. Plan only: the script
+	// pins the pull request's head commit, and deploy and teardown
+	// read the pin.
+	Target int
 }
 
 // RenderRunPrompt renders the prompt for one run mode.

@@ -35,6 +35,21 @@ Make it this run's, and do not redesign it:
     silently improves on it is one nobody reviewed.
 Then verify it here, exactly as for any plan: a procedure that worked
 in another project has not been shown to work in this one.
+{{end}}{{if .Target}}
+This run deploys pull request #{{.Target}} ({{.HTMLURL}}/pull/{{.Target}}),
+not the default branch. The checkout you are in is that pull request's
+head commit, and target.env in the run's directory pins it (TARGET_PR,
+TARGET_SHA): deploy and teardown execute exactly that commit, so what
+runs is what the owner reviewed, however far the pull request moves
+afterwards. The harness writes target.env; do not edit it.
+  - Build from this checkout. Where the procedure tags or names what
+    it builds by commit, use TARGET_SHA, so the deployment traces to
+    the commit under review.
+  - The pull request changes the code, not the procedure. Plan the
+    same steps a default-branch run would take, unless the owner asked
+    otherwise or the pull request itself changes how the code is built
+    or deployed — then say which change forced it.
+  - Name the pull request and the pinned commit in the receipt.
 {{end}}
 Write the files in this order. The order is the point: the procedure
 is the thinking and the scripts are a transcription of it. Writing
