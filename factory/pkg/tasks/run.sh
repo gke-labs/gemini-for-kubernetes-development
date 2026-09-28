@@ -26,6 +26,7 @@ set -o pipefail
 # - RUN_MODE (plan | deploy | teardown)
 # - RUN_RESOURCE_PREFIX (what this run may name and own in the cloud)
 # - RUN_RUNBOOK (plan only, optional: the runbook this run starts from)
+# - RUN_TARGET_PR (plan only, optional: the pull request to deploy)
 # - RUN_INTENT (plan only, optional: what to build, or what to change)
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
@@ -136,6 +137,10 @@ RUNBOOK_REF=""
 # the commit that records the plan.
 RUNBOOK_ORIGIN=""
 
+# TARGET_FILE is where a run pins the pull request it deploys; see
+# resolveTarget.
+TARGET_FILE="target.env"
+
 # resolveRunbook finds RUN_RUNBOOK and copies it into $1. It looks in
 # the repository's .agents/runbooks/ first, where a runbook is reviewed
 # like code, then among the member's own runs — any run is a runbook —
@@ -146,6 +151,8 @@ RUNBOOK_ORIGIN=""
 # files — the engine makes this run's files out of whatever is there.
 # So everything is copied, subdirectories included, except receipts:
 # they are the test results of the run they came from, not of this one.
+# Nor its target.env: that pins the pull request the other run deploys,
+# and a copy of it would have this run deploy that pull request too.
 #
 # Prints where it came from; prints nothing and copies nothing when
 # there is no such runbook.
@@ -156,6 +163,7 @@ function resolveRunbook {
         while IFS= read -r f; do
             rel="${f#"${repoPath}"/}"
             case "${rel##*/}" in receipt-*) continue ;; esac
+            [ "${rel}" != "${TARGET_FILE}" ] || continue
             mkdir -p "$(dirname "${out}/${rel}")"
             git -C "${root}" show "${RUNBOOK_REF}:${f}" > "${out}/${rel}"
         done < <(git -C "${root}" ls-tree -r --name-only "${RUNBOOK_REF}" -- "${repoPath}/")
@@ -172,6 +180,7 @@ function resolveRunbook {
         if [ -d "${src}" ] && [ -n "$(ls -A "${src}")" ]; then
             cp -R "${src}/." "${out}/"
             find "${out}" -name 'receipt-*' -type f -exec rm -f {} +
+            rm -f "${out}/${TARGET_FILE}"
             if [ "${base}" = "${repoPath%/*}" ]; then
                 echo "${repoPath} (working tree)"
             else
@@ -212,9 +221,95 @@ function instantiateRunbook {
     rm -rf "${stage}"
 }
 
+# TARGET_PR / TARGET_SHA are the pull request this run deploys instead
+# of the default branch, and the commit of it the plan was made
+# against. Empty for a run of the default branch.
+TARGET_PR=""
+TARGET_SHA=""
+
+# resolveTarget decides what code this invocation executes. `plan
+# --target N` pins pull request N's head commit in the run's
+# target.env; every later invocation — deploy, teardown, a re-plan
+# without --target — reads the pin back, so what executes is what the
+# owner reviewed, however far the pull request has moved since. A
+# re-plan with --target re-pins to the new head.
+#
+# The pull request's files are laid over the worktree, not merged:
+# research/runs is pushed, and a merge would carry the pull request's
+# commits into every later run on the branch. docs-exploration/ is
+# left alone — it is where the runs live. clearTarget puts the
+# worktree back before anything is committed.
+#
+# No target.env and no --target: the default branch, as always.
+function resolveTarget {
+    local root="/workspaces/${REPO_NAME}" pin
+    pin="${root}/${RUN_DIR}/${TARGET_FILE}"
+    if [ "${RUN_MODE}" = "plan" ] && [ -n "${RUN_TARGET_PR:-}" ]; then
+        if ! git -C "${root}" fetch -q "${SRC_REMOTE}" "pull/${RUN_TARGET_PR}/head"; then
+            echo "ERROR: could not fetch pull request #${RUN_TARGET_PR} from ${SRC_REMOTE}." >&2
+            exit 1
+        fi
+        TARGET_PR="${RUN_TARGET_PR}"
+        TARGET_SHA="$(git -C "${root}" rev-parse FETCH_HEAD)"
+        mkdir -p "$(dirname "${pin}")"
+        printf 'TARGET_PR=%s\nTARGET_SHA=%s\n' "${TARGET_PR}" "${TARGET_SHA}" > "${pin}"
+    elif [ -f "${pin}" ]; then
+        # Read, never sourced: it is a file on a branch, and all it may
+        # say is a number and a commit.
+        TARGET_PR="$(sed -n 's/^TARGET_PR=//p' "${pin}")"
+        TARGET_SHA="$(sed -n 's/^TARGET_SHA=//p' "${pin}")"
+        if ! [[ "${TARGET_PR}" =~ ^[0-9]+$ && "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: ${RUN_DIR}/${TARGET_FILE} does not pin a pull request and a commit." >&2
+            exit 1
+        fi
+        # The pinned commit is usually here already. A force-push can
+        # take it out of the pull request, so ask for it by name too.
+        if ! git -C "${root}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+            git -C "${root}" fetch -q "${SRC_REMOTE}" "pull/${TARGET_PR}/head" 2>/dev/null || true
+            git -C "${root}" fetch -q "${SRC_REMOTE}" "${TARGET_SHA}" 2>/dev/null || true
+        fi
+        if ! git -C "${root}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+            echo "ERROR: commit ${TARGET_SHA} of pull request #${TARGET_PR} is no longer available." >&2
+            echo "       Re-plan with --target ${TARGET_PR} to pin its current head." >&2
+            exit 1
+        fi
+    else
+        return 0
+    fi
+    # A runbook the pull request adds or changes is the one it is
+    # deployed with.
+    RUNBOOK_REF="${TARGET_SHA}"
+    echo "Target: pull request #${TARGET_PR} at ${TARGET_SHA}"
+    git -C "${root}" restore --source="${TARGET_SHA}" --worktree --no-overlay -- . ':(exclude)docs-exploration'
+}
+
+# clearTarget takes the pull request's files back off the worktree,
+# listing whatever the engine changed in them first: that is collateral,
+# exactly as it is on the default branch, and it is never committed.
+function clearTarget {
+    local root="/workspaces/${REPO_NAME}" changed idx
+    if [ -z "${TARGET_SHA}" ]; then
+        return 0
+    fi
+    # Against an index of the pull request's own tree: the real index
+    # does not know the files it adds, and diffing against the commit
+    # would list every one of them as changed.
+    idx="$(mktemp -d)"
+    GIT_INDEX_FILE="${idx}/index" git -C "${root}" read-tree "${TARGET_SHA}"
+    changed="$(GIT_INDEX_FILE="${idx}/index" git -C "${root}" diff --name-only -- . ':(exclude)docs-exploration')"
+    rm -rf "${idx}"
+    if [ -n "${changed}" ]; then
+        echo "Discarding changes to pull request #${TARGET_PR}'s files:"
+        echo "${changed}" | sed "s/^/  /"
+    fi
+    git -C "${root}" restore --source=HEAD --worktree --no-overlay -- . ':(exclude)docs-exploration'
+    git -C "${root}" clean -fdq -- . ':(exclude)docs-exploration'
+}
+
 function commitAndPushRun {
     local what="$1"
     echo "Committing and pushing ${what}..."
+    clearTarget
     pushd "/workspaces/${REPO_NAME}" > /dev/null
     # Stage only this run's directory. --ignore-removal keeps the
     # harness from recording a deletion as a side effect: whatever a
@@ -275,6 +370,7 @@ setupGitRepos
 sleep 5
 checkoutDefaultBranch
 ensureRunsBranch
+resolveTarget
 configureGemini
 
 case "${RUN_MODE}" in
@@ -288,11 +384,11 @@ plan)
     if [ -n "${RUN_RUNBOOK:-}" ]; then
         instantiateRunbook
         runEngine
-        commitAndPushRun "plan from runbook ${RUNBOOK_ORIGIN} (nothing executed)"
+        commitAndPushRun "plan from runbook ${RUNBOOK_ORIGIN}${TARGET_PR:+ for pull request #${TARGET_PR}} (nothing executed)"
         exit 0
     fi
     runEngine
-    commitAndPushRun "plan (runbook.md, scripts, PLANNED receipt — nothing executed)"
+    commitAndPushRun "plan${TARGET_PR:+ for pull request #${TARGET_PR}} (runbook.md, scripts, PLANNED receipt — nothing executed)"
     ;;
 deploy)
     # The owner reviewed the plan and clicked Deploy. The engine repairs

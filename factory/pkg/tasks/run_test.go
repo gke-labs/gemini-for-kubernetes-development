@@ -438,6 +438,22 @@ func TestInstantiateRunbook(t *testing.T) {
 		}
 	})
 
+	t.Run("another run's pull request pin stays behind", func(t *testing.T) {
+		// A copied target.env would have this run deploy that pull
+		// request, whatever it was started for.
+		root := repo(t)
+		write(t, root, "README", "x")
+		commit(t, root)
+		write(t, root, runs+"/gke-pr7/runbook.md", "my run")
+		write(t, root, runs+"/gke-pr7/target.env", "TARGET_PR=7")
+		if out, ok := instantiate(t, root, "gke-pr7", "main"); !ok {
+			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
+		}
+		if got := strings.Join(copied(t, root), " "); got != "runbook.md" {
+			t.Errorf("copied %q", got)
+		}
+	})
+
 	t.Run("a run still under a legacy path is found", func(t *testing.T) {
 		root := repo(t)
 		write(t, root, "README", "x")
@@ -530,5 +546,238 @@ func TestPlanPromptKnowsItStartedFromARunbook(t *testing.T) {
 	}
 	if without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42"}); strings.Contains(without, "started from the runbook") {
 		t.Error("the runbook paragraph renders for a run started from nothing")
+	}
+}
+
+// resolveTarget and clearTarget are executed against real repositories:
+// an upstream with a pull request ref, and a workspace cloned from it
+// with a run of its own, the way a sandbox has them.
+func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git required")
+	}
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	from := strings.Index(s, "TARGET_PR=\"\"\n")
+	to := strings.Index(s, "\nfunction commitAndPushRun {")
+	if from < 0 || to < from {
+		t.Fatal("run.sh is missing TARGET_PR or commitAndPushRun")
+	}
+	body := s[from:to]
+
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	git := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(gitBin, append([]string{"-C", dir}, args...)...)
+		cmd.Env = gitEnv
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(t *testing.T, root, rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(root, rel string) string {
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			return "<missing>"
+		}
+		return strings.TrimSpace(string(b))
+	}
+	const runDir = "docs-exploration/agent-runs/gke-pr42"
+
+	// setup returns the upstream (main, and pull request 42 changing
+	// app.txt, deleting old.txt, adding new.txt) and a workspace cloned
+	// from it with the run's own directory committed.
+	setup := func(t *testing.T) (up, ws, head string) {
+		up = t.TempDir()
+		git(t, up, "init", "-q", "-b", "main")
+		write(t, up, "app.txt", "base")
+		write(t, up, "old.txt", "old")
+		git(t, up, "add", "-A")
+		git(t, up, "commit", "-qm", "base")
+		git(t, up, "checkout", "-qb", "pr")
+		write(t, up, "app.txt", "pr")
+		write(t, up, "new.txt", "new")
+		git(t, up, "rm", "-q", "old.txt")
+		git(t, up, "add", "-A")
+		git(t, up, "commit", "-qm", "pr")
+		head = git(t, up, "rev-parse", "HEAD")
+		git(t, up, "update-ref", "refs/pull/42/head", head)
+		git(t, up, "checkout", "-q", "main")
+
+		ws = filepath.Join(t.TempDir(), "ws")
+		git(t, filepath.Dir(ws), "clone", "-q", up, ws)
+		git(t, ws, "remote", "rename", "origin", "upstream")
+		write(t, ws, runDir+"/runbook.md", "procedure")
+		git(t, ws, "add", "-A")
+		git(t, ws, "commit", "-qm", "run")
+		return up, ws, head
+	}
+	// run executes resolveTarget, then then, as run.sh would.
+	run := func(t *testing.T, ws, mode, pr, then string) (string, bool) {
+		t.Helper()
+		script := "set -e\nset -o pipefail\nSRC_REMOTE=upstream\nRUNBOOK_REF=main\nTARGET_FILE=target.env\n" +
+			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) +
+			"\nresolveTarget\n" + then + "\necho \"SURVIVED ${RUNBOOK_REF}\"\n"
+		cmd := exec.Command(bash, "-c", script)
+		cmd.Env = append(gitEnv, "RUN_DIR="+runDir, "RUN_MODE="+mode, "RUN_TARGET_PR="+pr)
+		out, _ := cmd.CombinedOutput()
+		return string(out), strings.Contains(string(out), "SURVIVED")
+	}
+
+	t.Run("a plan pins the head and checks the pull request out", func(t *testing.T) {
+		_, ws, head := setup(t)
+		out, ok := run(t, ws, "plan", "42", "")
+		if !ok {
+			t.Fatalf("resolveTarget killed the script:\n%s", out)
+		}
+		if got, want := read(ws, runDir+"/target.env"), "TARGET_PR=42\nTARGET_SHA="+head; got != want {
+			t.Errorf("target.env = %q, want %q", got, want)
+		}
+		if read(ws, "app.txt") != "pr" || read(ws, "new.txt") != "new" || read(ws, "old.txt") != "<missing>" {
+			t.Errorf("the worktree is not the pull request: app=%q new=%q old=%q", read(ws, "app.txt"), read(ws, "new.txt"), read(ws, "old.txt"))
+		}
+		if read(ws, runDir+"/runbook.md") != "procedure" {
+			t.Error("the run's own directory was touched")
+		}
+		// A runbook the pull request changes is the one it runs with.
+		if !strings.Contains(out, "SURVIVED "+head) {
+			t.Errorf("RUNBOOK_REF is not the pinned commit:\n%s", out)
+		}
+		// Nothing is staged: the pull request is never committed.
+		if staged := git(t, ws, "diff", "--cached", "--name-only"); staged != "" {
+			t.Errorf("staged %q", staged)
+		}
+	})
+
+	t.Run("a deploy executes the pin, not wherever the pull request is now", func(t *testing.T) {
+		up, ws, head := setup(t)
+		if out, ok := run(t, ws, "plan", "42", "clearTarget"); !ok {
+			t.Fatalf("plan: %s", out)
+		}
+		git(t, up, "checkout", "-q", "pr")
+		write(t, up, "app.txt", "moved")
+		git(t, up, "commit", "-qam", "moved")
+		git(t, up, "update-ref", "refs/pull/42/head", "HEAD")
+		out, ok := run(t, ws, "deploy", "", "")
+		if !ok {
+			t.Fatalf("resolveTarget killed the script:\n%s", out)
+		}
+		if got := read(ws, "app.txt"); got != "pr" {
+			t.Errorf("app.txt = %q; the deploy did not execute the commit the plan pinned", got)
+		}
+		if !strings.Contains(out, head) {
+			t.Errorf("the pinned commit is not named:\n%s", out)
+		}
+	})
+
+	t.Run("clearing puts the branch back and names what the engine changed", func(t *testing.T) {
+		_, ws, _ := setup(t)
+		out, ok := run(t, ws, "plan", "42", "echo edited >> "+ws+"/app.txt\nclearTarget")
+		if !ok {
+			t.Fatalf("killed:\n%s", out)
+		}
+		if !strings.Contains(out, "  app.txt") || strings.Contains(out, "  new.txt") {
+			t.Errorf("the collateral list is wrong — only app.txt was edited:\n%s", out)
+		}
+		if read(ws, "app.txt") != "base" || read(ws, "old.txt") != "old" || read(ws, "new.txt") != "<missing>" {
+			t.Error("the worktree is not back to the branch")
+		}
+		if got := git(t, ws, "status", "--porcelain"); got != "?? "+runDir+"/target.env" {
+			t.Errorf("status = %q; only the pin should be left to commit", got)
+		}
+	})
+
+	t.Run("no pin is the default branch, untouched", func(t *testing.T) {
+		_, ws, _ := setup(t)
+		out, ok := run(t, ws, "deploy", "", "clearTarget")
+		if !ok || !strings.Contains(out, "SURVIVED main") || read(ws, "app.txt") != "base" {
+			t.Errorf("a run with no target changed something:\n%s", out)
+		}
+	})
+
+	t.Run("a pin that is not a number and a commit is refused", func(t *testing.T) {
+		_, ws, _ := setup(t)
+		write(t, ws, runDir+"/target.env", "TARGET_PR=42; touch "+ws+"/pwned")
+		out, ok := run(t, ws, "deploy", "", "")
+		if ok || !strings.Contains(out, "does not pin a pull request and a commit") {
+			t.Errorf("a malformed pin was not refused:\n%s", out)
+		}
+		if read(ws, "pwned") != "<missing>" {
+			t.Error("target.env was executed")
+		}
+	})
+
+	t.Run("a pinned commit that is gone says to re-plan", func(t *testing.T) {
+		_, ws, _ := setup(t)
+		write(t, ws, runDir+"/target.env", "TARGET_PR=42\nTARGET_SHA="+strings.Repeat("0", 40))
+		out, ok := run(t, ws, "deploy", "", "")
+		if ok || !strings.Contains(out, "Re-plan with --target 42") {
+			t.Errorf("a missing commit was not explained:\n%s", out)
+		}
+	})
+
+	t.Run("a pull request that does not exist fails the plan", func(t *testing.T) {
+		_, ws, _ := setup(t)
+		out, ok := run(t, ws, "plan", "99", "")
+		if ok || !strings.Contains(out, "could not fetch pull request #99") {
+			t.Errorf("a missing pull request did not fail:\n%s", out)
+		}
+		if read(ws, runDir+"/target.env") != "<missing>" {
+			t.Error("a pin was written for a pull request that does not exist")
+		}
+	})
+}
+
+// Every commit goes through commitAndPushRun, so that is where the
+// pull request has to come off the worktree; and resolveTarget has to
+// run before anything reads the checkout.
+func TestTargetIsClearedBeforeEveryCommit(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	fn := s[strings.Index(s, "function commitAndPushRun {"):]
+	if c, a := strings.Index(fn, "clearTarget"), strings.Index(fn, "git add"); c < 0 || c > a {
+		t.Error("commitAndPushRun stages before clearing the target")
+	}
+	if !strings.Contains(s, "ensureRunsBranch\nresolveTarget\nconfigureGemini\n") {
+		t.Error("resolveTarget does not run right after the runs branch is ready")
+	}
+}
+
+func TestPlanPromptKnowsItsTarget(t *testing.T) {
+	with := renderRun(t, "plan", RunParams{RepoName: "r", HTMLURL: "https://github.com/o/r", Name: "gke-pr42", Target: 42})
+	for _, want := range []string{"deploys pull request #42 (https://github.com/o/r/pull/42)", "target.env", "do not edit it", "TARGET_SHA"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("plan prompt missing %q", want)
+		}
+	}
+	if without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "gke"}); strings.Contains(without, "pull request #") {
+		t.Error("the target paragraph renders for a default-branch run")
+	}
+	for _, mode := range []string{"deploy", "teardown"} {
+		if !strings.Contains(renderRun(t, mode, RunParams{RepoName: "r", Name: "gke-pr42"}), "target.env") {
+			t.Errorf("the %s prompt does not know a run can be pinned to a pull request", mode)
+		}
 	}
 }

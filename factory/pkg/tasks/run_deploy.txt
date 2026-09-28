@@ -4,6 +4,11 @@ You are DEPLOYING the run "{{.Name}}" for the repository {{.RepoName}}
 params.env holds the resolved parameters, and deploy.sh / teardown.sh
 were generated from runbook.md.
 
+If the directory has a target.env, this run deploys that pull request:
+the checkout is the commit it pins (TARGET_SHA), not the default
+branch. Build what is checked out; do not fetch or check out anything
+else. Name the pull request and the commit in the receipt.
+
 1. Execute deploy.sh. If a step fails, fix the script — not just the
    moment — so the next run is deterministic.
 

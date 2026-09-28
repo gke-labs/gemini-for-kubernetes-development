@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +43,7 @@ func slugifyScenario(s string) string {
 
 // NewRunCommand plans, deploys or tears down one run.
 //
-//	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--runbook …]
+//	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--runbook …] [--target <PR>]
 //	factory run deploy   --url <repo> --name deploy-gke-k8s1
 //	factory run teardown --url <repo> --name deploy-gke-k8s1
 //
@@ -67,6 +68,14 @@ func slugifyScenario(s string) string {
 // copy this run's — its prefix, project and region, plus whatever
 // --intent asks to change — and verifies it here. It replaces --from.
 //
+// --target deploys a pull request instead of the default branch. The
+// plan pins the pull request's head commit in the run's directory, and
+// deploy and teardown execute exactly that commit — what runs is what
+// was reviewed. A re-plan with --target moves the pin to the current
+// head. The resource prefix is still the run's: a run for a pull
+// request is a different run from the default branch's, with its own
+// name, so nothing it creates can collide with that deployment.
+//
 // This supersedes `factory runbook`, where a runbook was a separate
 // shared document and an instance only held the artifacts. That split
 // is what sibling-hiding, the read-only guard and the stash-restore
@@ -77,7 +86,7 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 		Short: "Plan, deploy or tear down a run",
 	}
 
-	var repoURL, name, intent, runbook, from string
+	var repoURL, name, intent, runbook, from, target string
 
 	exec := func(mode string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -101,6 +110,9 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 			if runbook == name {
 				return fmt.Errorf("--runbook %s names this run itself; a run is started from a different one", runbook)
 			}
+			if target != "" && mode != "plan" {
+				return fmt.Errorf("--target applies to plan only; deploy and teardown execute the commit the plan pinned")
+			}
 			// Runs build images; the 6Gi ephemeral default is sized for
 			// code tasks. 10Gi is the GKE Autopilot per-pod ceiling —
 			// only when nothing chose a value explicitly.
@@ -118,7 +130,7 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runRun(ctx, mode, repoURL, name, intent, runbook)
+			return runRun(ctx, mode, repoURL, name, intent, runbook, target)
 		}
 	}
 
@@ -147,12 +159,13 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 	planCmd.Flags().StringVar(&runbook, "runbook", "", "Start from an existing runbook: .agents/runbooks/<name> in the repo, else one of your runs")
 	planCmd.Flags().StringVar(&from, "from", "", "Deprecated: use --runbook")
 	_ = planCmd.Flags().MarkDeprecated("from", "use --runbook")
+	planCmd.Flags().StringVar(&target, "target", "", "Deploy a pull request instead of the default branch: its number or URL. The plan pins its head commit")
 	teardownCmd.Flags().StringVar(&intent, "intent", "", "Anything the owner wants watched during teardown")
 
 	return cmd
 }
 
-func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) error {
+func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repo URL: %w", err)
@@ -162,6 +175,10 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) er
 		return fmt.Errorf("expected URL format https://github.com/owner/repo, got %s", repoURL)
 	}
 	owner, repo := parts[0], strings.TrimSuffix(parts[1], ".git")
+	pr, err := parseTargetPR(target, owner, repo)
+	if err != nil {
+		return err
+	}
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 	htmlURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 
@@ -193,6 +210,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) er
 		Mode:     mode,
 		Intent:   intent,
 		Runbook:  runbook,
+		Target:   pr,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering run %s prompt: %w", mode, err)
@@ -240,6 +258,9 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) er
 	// means a --runbook run is finished once the copy is.
 	if mode == "plan" {
 		envMap["RUN_INTENT"] = intent
+		if pr > 0 {
+			envMap["RUN_TARGET_PR"] = strconv.Itoa(pr)
+		}
 	}
 	// BYO GCP project: Workload Identity supplies credentials via the
 	// pod's KSA; the secret only carries where to deploy.
@@ -274,6 +295,36 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) er
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Completed")
 	fmt.Printf("Run %s %s finished for %s/%s; pushed to the research/runs branch.\n", name, mode, owner, repo)
 	return nil
+}
+
+// parseTargetPR reads --target: a pull request number ("42", "#42") or
+// its URL. A URL must name the run's own repository — the sandbox has
+// that repository checked out, and a pull request number means nothing
+// in any other. Empty is the default branch, 0.
+func parseTargetPR(target, owner, repo string) (int, error) {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return 0, nil
+	}
+	if strings.Contains(t, "/") {
+		u, err := url.Parse(t)
+		if err != nil {
+			return 0, fmt.Errorf("--target %q: %w", target, err)
+		}
+		p := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(p) != 4 || p[2] != "pull" {
+			return 0, fmt.Errorf("--target %q is not a pull request URL (https://github.com/owner/repo/pull/N)", target)
+		}
+		if !strings.EqualFold(p[0], owner) || !strings.EqualFold(p[1], repo) {
+			return 0, fmt.Errorf("--target %q is a pull request in %s/%s, not in %s/%s", target, p[0], p[1], owner, repo)
+		}
+		t = p[3]
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(t, "#"))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("--target %q is not a pull request number or URL", target)
+	}
+	return n, nil
 }
 
 // shortName compresses a repo name for resource prefixes: initials of
