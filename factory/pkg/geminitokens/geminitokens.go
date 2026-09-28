@@ -507,10 +507,55 @@ type retryInterval struct {
 	end   int
 }
 
+var (
+	modelStartRegexp   = regexp.MustCompile(`(?i)Trying model:\s*([a-zA-Z0-9\-\._\/]+)`)
+	modelSuccessRegexp = regexp.MustCompile(`(?i)(?:Engine|Gemini)\s+execution\s+successful\s+with\s+model:\s*([a-zA-Z0-9\-\._\/]+)`)
+	modelFailureRegexp = regexp.MustCompile(`(?i)(?:Engine|Gemini)\s+execution\s+(?:failed|encountered\s+errors)\s+with\s+model:\s*([a-zA-Z0-9\-\._\/]+)`)
+
+	tryingModelMarkerBytes    = []byte("trying model:")
+	execSuccessMarkerBytes    = []byte("execution successful with model:")
+	execFailedMarkerBytes     = []byte("execution failed")
+	execEncounteredErrorBytes = []byte("execution encountered errors")
+)
+
+// bytesContainsIgnoreCase reports whether substr is within s, comparing ASCII characters
+// case-insensitively without allocations.
+// substr is defensively matched by lowercasing both s and substr characters during comparison.
+func bytesContainsIgnoreCase(s, substr []byte) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	if len(s) < len(substr) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			c := s[i+j]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			cSub := substr[j]
+			if cSub >= 'A' && cSub <= 'Z' {
+				cSub += 'a' - 'A'
+			}
+			if c != cSub {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // QuotaStreamTracker buffers streamed log chunks across polling intervals to
 // robustly detect fatal quota and key-suspension errors without false positives
 // when retry messages ("Retrying with backoff") and error payloads ("RESOURCE_EXHAUSTED" / "429")
-// are split across chunk boundaries or separate poll ticks.
+// are split across chunk boundaries or separate poll ticks, while tracking which
+// key/model tuples hit quota exhaustion during task execution.
 type QuotaStreamTracker struct {
 	window            []byte
 	windowStartOffset int64
@@ -519,18 +564,207 @@ type QuotaStreamTracker struct {
 
 	pendingAmbiguous       bool
 	pendingAmbiguousOffset int64
+
+	pendingLine               []byte
+	currentModel              string
+	currentModelHasQuotaError bool
+	currentModelSucceeded     bool
+	quotaExceededModels       map[string]bool
+	newlyQuotaExceededModels  []string
 }
 
 // NewQuotaStreamTracker creates a QuotaStreamTracker with the default sliding window size.
 func NewQuotaStreamTracker() *QuotaStreamTracker {
 	return &QuotaStreamTracker{
-		maxWindowSize: DefaultQuotaWindowSize,
+		maxWindowSize:       DefaultQuotaWindowSize,
+		quotaExceededModels: make(map[string]bool),
 	}
 }
 
 // Window returns the current rolling log buffer for extracting metadata such as API keys or models.
 func (t *QuotaStreamTracker) Window() []byte {
 	return t.window
+}
+
+// CurrentModel returns the model currently being executed in the log stream, if any.
+func (t *QuotaStreamTracker) CurrentModel() string {
+	return t.currentModel
+}
+
+// NewlyExceededModels returns a copy of models that were newly identified as quota-exceeded
+// and have not yet been acknowledged via AckExceededModels or ClearNewlyExceededModels.
+func (t *QuotaStreamTracker) NewlyExceededModels() []string {
+	if len(t.newlyQuotaExceededModels) == 0 {
+		return nil
+	}
+	res := make([]string, len(t.newlyQuotaExceededModels))
+	copy(res, t.newlyQuotaExceededModels)
+	return res
+}
+
+// AckExceededModels removes the specified models from the pending newly exceeded list.
+func (t *QuotaStreamTracker) AckExceededModels(models ...string) {
+	if len(models) == 0 || len(t.newlyQuotaExceededModels) == 0 {
+		return
+	}
+	acked := make(map[string]bool, len(models))
+	for _, m := range models {
+		acked[m] = true
+	}
+	var remaining []string
+	for _, m := range t.newlyQuotaExceededModels {
+		if !acked[m] {
+			remaining = append(remaining, m)
+		}
+	}
+	t.newlyQuotaExceededModels = remaining
+}
+
+// ClearNewlyExceededModels clears the pending list of newly exceeded models.
+func (t *QuotaStreamTracker) ClearNewlyExceededModels() {
+	t.newlyQuotaExceededModels = nil
+}
+
+// ExceededModels returns a sorted list of all models marked as quota-exceeded during the stream.
+func (t *QuotaStreamTracker) ExceededModels() []string {
+	var res []string
+	for m := range t.quotaExceededModels {
+		res = append(res, m)
+	}
+	sort.Strings(res)
+	return res
+}
+
+func (t *QuotaStreamTracker) markModelQuotaExceeded(model string) {
+	if model == "" {
+		return
+	}
+	if t.quotaExceededModels == nil {
+		t.quotaExceededModels = make(map[string]bool)
+	}
+	if !t.quotaExceededModels[model] {
+		t.quotaExceededModels[model] = true
+		t.newlyQuotaExceededModels = append(t.newlyQuotaExceededModels, model)
+	}
+}
+
+func cleanModelName(m string) string {
+	return strings.TrimRight(m, ".,:;\"'")
+}
+
+func extractModelFromSubmatch(match [][]byte) string {
+	for i := 1; i < len(match); i++ {
+		if len(match[i]) > 0 {
+			return cleanModelName(string(match[i]))
+		}
+	}
+	return ""
+}
+
+func (t *QuotaStreamTracker) processStreamEvents(newData []byte, isFinal bool) {
+	if len(newData) == 0 && !isFinal && len(t.pendingLine) == 0 {
+		return
+	}
+
+	maxPending := t.maxWindowSize
+	if maxPending <= 0 {
+		maxPending = DefaultQuotaWindowSize
+	}
+
+	var data []byte
+	if len(t.pendingLine) > 0 {
+		data = append(t.pendingLine, newData...)
+		t.pendingLine = nil
+	} else {
+		data = newData
+	}
+
+	if len(data) == 0 {
+		return
+	}
+
+	lastNL := bytes.LastIndexByte(data, '\n')
+	var linesToProcess []byte
+	if isFinal || lastNL == -1 {
+		if isFinal {
+			linesToProcess = data
+		} else {
+			if len(data) > maxPending {
+				data = data[len(data)-maxPending:]
+			}
+			t.pendingLine = append([]byte(nil), data...)
+			return
+		}
+	} else {
+		linesToProcess = data[:lastNL+1]
+		if lastNL+1 < len(data) {
+			pending := data[lastNL+1:]
+			if len(pending) > maxPending {
+				pending = pending[len(pending)-maxPending:]
+			}
+			t.pendingLine = append([]byte(nil), pending...)
+		}
+	}
+
+	for len(linesToProcess) > 0 {
+		idx := bytes.IndexByte(linesToProcess, '\n')
+		var line []byte
+		if idx >= 0 {
+			line = linesToProcess[:idx]
+			linesToProcess = linesToProcess[idx+1:]
+		} else {
+			line = linesToProcess
+			linesToProcess = nil
+		}
+		if len(line) == 0 {
+			continue
+		}
+
+		if bytesContainsIgnoreCase(line, tryingModelMarkerBytes) {
+			if match := modelStartRegexp.FindSubmatch(line); len(match) > 1 {
+				newModel := cleanModelName(string(match[1]))
+				if t.currentModel != "" && t.currentModel != newModel && t.currentModelHasQuotaError && !t.currentModelSucceeded {
+					t.markModelQuotaExceeded(t.currentModel)
+				}
+				if t.currentModel != newModel {
+					t.currentModel = newModel
+					t.currentModelHasQuotaError = false
+					t.currentModelSucceeded = false
+				} else {
+					t.currentModelSucceeded = false
+				}
+				t.pendingAmbiguous = false
+			}
+		}
+
+		if HasAmbiguousQuotaError(line) || IsUnambiguousFatalQuotaError(line) {
+			if t.currentModel != "" {
+				t.currentModelHasQuotaError = true
+			}
+		}
+
+		if bytesContainsIgnoreCase(line, execSuccessMarkerBytes) {
+			if match := modelSuccessRegexp.FindSubmatch(line); len(match) > 1 {
+				succModel := cleanModelName(string(match[1]))
+				if succModel == t.currentModel || t.currentModel == "" {
+					t.currentModel = succModel
+					t.currentModelSucceeded = true
+					t.currentModelHasQuotaError = false
+					t.pendingAmbiguous = false
+				}
+			}
+		}
+
+		if bytesContainsIgnoreCase(line, execFailedMarkerBytes) || bytesContainsIgnoreCase(line, execEncounteredErrorBytes) {
+			if match := modelFailureRegexp.FindSubmatch(line); len(match) > 1 {
+				failModel := extractModelFromSubmatch(match)
+				if failModel != "" && (failModel == t.currentModel || t.currentModel == "") && t.currentModelHasQuotaError {
+					t.markModelQuotaExceeded(failModel)
+				}
+				t.pendingAmbiguous = false
+			}
+		}
+	}
 }
 
 // trimWindow drops the oldest bytes once the window exceeds maxWindowSize.
@@ -576,13 +810,25 @@ func (t *QuotaStreamTracker) appendChunk(newData []byte) (analysisBuf []byte, ba
 
 // ObservePoll processes a delta chunk from a single poll interval while the task is running.
 // Returns (isFatal, isTransient).
-//   - Unambiguous fatal errors (e.g. billing RPD exhaustion, suspended keys, max retries exceeded)
-//     trigger isFatal immediately.
-//   - Ambiguous 429/RESOURCE_EXHAUSTED errors without a matching "Retrying with backoff" are held
-//     for 1 poll grace period so that retry messages flushed slightly later or across chunk boundaries
-//     are not falsely killed.
+//   - Key suspension errors (CONSUMER_SUSPENDED / key disabled) trigger isFatal immediately across all models.
+//   - When tracking model fallback attempts (t.currentModel != ""), per-model rate limit or quota errors
+//     (429, RESOURCE_EXHAUSTED, RPD, Max retries exceeded) cause the active model CLI to fail and exit so that
+//     the script (lib.sh) can fall back to the next model in MODELS_LIST. ObservePoll does not kill the process group;
+//     the failed model is recorded as quota-exceeded and fallback proceeds.
+//   - When not tracking model attempts (t.currentModel == ""), unambiguous fatal errors or unhandled 429s after
+//     a 1-poll grace period trigger isFatal.
 func (t *QuotaStreamTracker) ObservePoll(newData []byte) (bool, bool) {
 	buf, baseOffset := t.appendChunk(newData)
+	t.processStreamEvents(newData, false)
+
+	if IsSuspendedKeyError(buf) {
+		return true, false
+	}
+
+	if t.currentModel != "" {
+		hasTransient := len(newData) > 0 && (ContainsRetryBackoff(newData) || HasAmbiguousQuotaError(newData))
+		return false, hasTransient
+	}
 
 	if IsUnambiguousFatalQuotaError(buf) {
 		return true, false
@@ -609,19 +855,37 @@ func (t *QuotaStreamTracker) ObservePoll(newData []byte) (bool, bool) {
 
 // ObserveFinal processes any remaining log output when the task process exits.
 // Unlike ObservePoll, it does not wait an additional poll interval.
-// If processFailed is true (non-zero exit code or abnormal termination), any uncovered
-// ambiguous quota error in the window is treated as fatal.
+// If processFailed is true (non-zero exit code or abnormal termination), it checks
+// if the active model failed with quota errors or if uncovered quota errors exist in the window.
 func (t *QuotaStreamTracker) ObserveFinal(finalData []byte, processFailed bool) bool {
 	buf, baseOffset := t.appendChunk(finalData)
+	t.processStreamEvents(finalData, true)
 
-	if IsUnambiguousFatalQuotaError(buf) {
+	if processFailed {
+		if t.currentModel != "" && t.currentModelHasQuotaError && !t.currentModelSucceeded {
+			t.markModelQuotaExceeded(t.currentModel)
+		}
+	}
+
+	if IsSuspendedKeyError(buf) {
 		return true
 	}
 	if !processFailed {
 		return false
 	}
-	found, _, _ := findUncoveredAmbiguousError(buf, baseOffset)
-	return found
+	if t.currentModel != "" {
+		if t.currentModelSucceeded {
+			return false
+		}
+		return t.currentModelHasQuotaError
+	}
+	if IsUnambiguousFatalQuotaError(buf) {
+		return true
+	}
+	if found, _, _ := findUncoveredAmbiguousError(buf, baseOffset); found {
+		return true
+	}
+	return false
 }
 
 // findUncoveredAmbiguousError scans buf (operating directly on the bytes, without
