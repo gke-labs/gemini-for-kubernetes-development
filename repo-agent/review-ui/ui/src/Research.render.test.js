@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act as domAct } from 'react-dom/test-utils';
 
-import { ResearchPanel, ResearchConversation } from './Research';
+import { ResearchPanel, ResearchConversation, AllResearchPanel } from './Research';
 
 // React.act landed in 18.3 and deprecated the react-dom copy; the
 // package range still admits 18.2, so take whichever this install has.
@@ -1618,5 +1618,104 @@ describe('ResearchPanel', () => {
 
         await renderPanel();
         expect(container.textContent).not.toContain('research/notes');
+    });
+});
+
+describe('AllResearchPanel', () => {
+    const renderAll = async (body) => {
+        global.fetch = jest.fn(() => reply(200, body));
+        await act(async () => { root.render(<AllResearchPanel />); });
+        await flush();
+    };
+
+    const rowFor = (title) => [...container.querySelectorAll('button')]
+        .find(b => b.textContent.startsWith(title));
+
+    // The whole point of the tab: a board's own list is about that
+    // repository, so a conversation you remember having is only
+    // findable if you also remember which repo it was about.
+    test('lists every conversation, whichever board it came from', async () => {
+        await renderAll({
+            sessions: [
+                { sessionId: 'aaaaaaaa-1111', title: 'the retry loop', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z' },
+                { sessionId: 'bbbbbbbb-2222', title: 'rollout flags', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z' },
+                // No board for this one any more. It was reachable only
+                // by its own link before this tab existed.
+                { sessionId: 'cccccccc-3333', title: 'orphaned read', repo: 'deleted-board', createdAt: '2026-09-25T09:00:00Z' },
+            ],
+        });
+
+        expect(global.fetch).toHaveBeenCalledWith('/api/research');
+        for (const [title, repo] of [
+            ['the retry loop', 'repo-agent'],
+            ['rollout flags', 'kubectl'],
+            ['orphaned read', 'deleted-board'],
+        ]) {
+            const row = rowFor(title);
+            expect(row).toBeTruthy();
+            // The repo is the caption that tells two rows apart here —
+            // on a board's tab it is the same word all the way down.
+            expect(row.textContent).toContain(repo);
+        }
+    });
+
+    // Starting one means choosing a repository, and a repository is a
+    // board. This tab is for finding a conversation, not opening a
+    // second front door to making one.
+    test('there is no ask box on it', async () => {
+        await renderAll({ sessions: [] });
+
+        expect(container.querySelector('textarea')).toBeNull();
+        expect(container.textContent).toContain('No conversations anywhere yet');
+        expect(container.textContent).toContain("board's Research tab");
+    });
+
+    // A conversation stopped on a permission request is a question with
+    // your name on it, and the turn is cancelled if nobody answers. It
+    // outranks recency; nothing else does.
+    test('a conversation that needs you comes first', async () => {
+        await renderAll({
+            sessions: [
+                { sessionId: 'a', title: 'newest', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z', live: true },
+                { sessionId: 'b', title: 'older', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z', live: true },
+                { sessionId: 'c', title: 'blocked one', repo: 'kubectl', createdAt: '2026-09-25T09:00:00Z', live: true, busy: true, waiting: true },
+            ],
+        });
+
+        // The rows are the only buttons on the tab: no ask box, no
+        // filters, nothing but conversations.
+        const rows = [...container.querySelectorAll('button')];
+        expect(rows).toHaveLength(3);
+        expect(rows[0].textContent.startsWith('blocked one')).toBe(true);
+        expect(rows[0].textContent).toContain('needs you');
+        // Server order — newest first — for everything else.
+        expect(rows[1].textContent.startsWith('newest')).toBe(true);
+        expect(rows[2].textContent.startsWith('older')).toBe(true);
+    });
+
+    // Opening one is the reason to have found it, and it opens the same
+    // way it does from a board: over the whole window.
+    test('a row opens the conversation', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/research') {
+                return reply(200, {
+                    sessions: [{ sessionId: 'aaaaaaaa-1111', title: 'the retry loop', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z' }],
+                });
+            }
+            // The conversation's own probe, for the session just clicked.
+            return reply(200, {
+                sessionId: 'aaaaaaaa-1111', sandbox: 'rsch-repo-abcd1234',
+                namespace: 'ns', repo: 'repo-agent', live: false,
+            });
+        });
+        await act(async () => { root.render(<AllResearchPanel />); });
+        await flush();
+
+        const row = rowFor('the retry loop');
+        await act(async () => { row.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await flush();
+
+        expect(global.fetch).toHaveBeenCalledWith('/api/research/aaaaaaaa-1111');
+        expect(row.getAttribute('aria-current')).toBe('true');
     });
 });
