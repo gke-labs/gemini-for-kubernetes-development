@@ -1571,6 +1571,62 @@ func TestBoardBadgeCountsFeedAttention(t *testing.T) {
 	}
 }
 
+// The cache has to outlast the poll that reads it. Work.js polls a board
+// every 20s; any freshness window shorter than that puts every single
+// poll past fresh, which serves the cache and kicks a rebuild behind it —
+// dozens of GitHub calls per tick, for a cache that appears to be working.
+func TestFeedStaysFreshLongerThanTheUIPolls(t *testing.T) {
+	const uiPoll = 20 * time.Second
+	if workFeedFreshFor <= uiPoll {
+		t.Fatalf("workFeedFreshFor = %s, must exceed the %s UI poll or every poll rebuilds", workFeedFreshFor, uiPoll)
+	}
+}
+
+// ageFeedEntry backdates a cached feed so staleness can be tested without
+// waiting for it.
+func ageFeedEntry(t *testing.T, key string, age time.Duration, blockedUntil time.Time) {
+	t.Helper()
+	workFeedCache.Lock()
+	defer workFeedCache.Unlock()
+	e := workFeedCache.entries[key]
+	e.at = time.Now().Add(-age)
+	e.blockedUntil = blockedUntil
+	workFeedCache.entries[key] = e
+}
+
+// Out of budget, a rebuild cannot learn anything — it can only deepen the
+// hole and, if it half-succeeds, replace a good board with an empty one.
+// Serve what we have, at any age, until GitHub says the budget is back.
+func TestABlockedBoardServesWhatItHasInsteadOfRebuilding(t *testing.T) {
+	key := "alice/blocked"
+	workFeedPut(key, []models.WorkItem{{Number: 1, Attention: "needs-you"}})
+	defer invalidateWorkFeed("alice", "blocked")
+	ageFeedEntry(t, key, 10*workFeedServeStaleFor, time.Now().Add(30*time.Minute))
+
+	items, ok, needsRefresh := workFeedGet(key)
+	if !ok || len(items) != 1 {
+		t.Fatalf("a blocked board must keep serving its rows, got ok=%v items=%d", ok, len(items))
+	}
+	if needsRefresh {
+		t.Fatal("a blocked board must not kick a rebuild it cannot pay for")
+	}
+	if _, ok := workFeedPeek(key); !ok {
+		t.Fatal("the badge must count the same rows the board is showing")
+	}
+}
+
+// And when the budget comes back, the board does too.
+func TestTheBlockLiftsAndTheBoardRefreshesAgain(t *testing.T) {
+	key := "alice/unblocked"
+	workFeedPut(key, []models.WorkItem{{Number: 1}})
+	defer invalidateWorkFeed("alice", "unblocked")
+	ageFeedEntry(t, key, workFeedFreshFor+time.Second, time.Now().Add(-time.Minute))
+
+	if _, ok, needsRefresh := workFeedGet(key); !ok || !needsRefresh {
+		t.Fatalf("a stale board past its block must rebuild, got ok=%v needsRefresh=%v", ok, needsRefresh)
+	}
+}
+
 // The click records the executor NAMESPACE — boardWriteContext's fifth
 // return is the member token, and writing it into a CR was a live
 // credential leak (iterate-1324 → ghp_…). The controller fetches the

@@ -230,3 +230,45 @@ describe('Work, all boards', () => {
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
     });
 });
+
+// The poll costs a GitHub call per board per tick, out of a budget shared
+// with the controller, the factory and the member's own git. A hidden tab
+// already stops — but hidden is not the case that spends it. A board left
+// in plain sight on a second monitor, unfocused and unread, is.
+describe('Work, an unattended window', () => {
+    const boards = [
+        { name: 'repo-agent', repoURL: 'https://github.com/gke-labs/repo-agent', needsHuman: 0, active: 0 },
+    ];
+    const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const serve = () => jest.fn((url) => (url === '/api/boards' ? json(boards) : json([])));
+    const feedCalls = () => global.fetch.mock.calls.filter(([url]) => String(url).endsWith('/work')).length;
+    const settle = async () => { await flush(); await flush(); };
+    const wait = async (ms) => { await act(async () => { jest.advanceTimersByTime(ms); }); await settle(); };
+
+    test('stops polling after five quiet minutes, and the pointer brings it back', async () => {
+        global.fetch = serve();
+        const focus = jest.spyOn(document, 'hasFocus').mockReturnValue(false);
+
+        await act(async () => { root.render(<Work namespace="alice" />); });
+        await settle();
+
+        // Just arrived: unfocused is not yet unattended.
+        global.fetch.mockClear();
+        await wait(3 * 60 * 1000);
+        expect(feedCalls()).toBeGreaterThan(0);
+
+        // Nobody has touched it since. It should go quiet and stay quiet.
+        await wait(5 * 60 * 1000);
+        global.fetch.mockClear();
+        await wait(10 * 60 * 1000);
+        expect(feedCalls()).toBe(0);
+
+        // The pointer is someone coming back: refresh on the way in, not
+        // at the next tick — the wait is what reads as a frozen board.
+        await act(async () => { document.dispatchEvent(new Event('pointermove')); });
+        await settle();
+        expect(feedCalls()).toBeGreaterThan(0);
+
+        focus.mockRestore();
+    });
+});
