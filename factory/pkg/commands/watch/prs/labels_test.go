@@ -63,6 +63,13 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 			refIssues:    [][]string{{"overseer/review", "factory/review", "bug"}},
 			expected:     []string{"factory", "factory/ready-for-human", "bug"},
 		},
+		{
+			name:         "Ready-for-human label is never inherited",
+			triggerLabel: "factory",
+			prLabels:     []string{"factory"},
+			refIssues:    [][]string{{"overseer/ready-for-human", "factory/ready-for-human", "bug"}},
+			expected:     []string{"factory", "bug"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -108,6 +115,65 @@ func TestGetMissingLabelsForPR(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGetMissingLabelsForPR_SkipsPullRequests(t *testing.T) {
+	refItems := []*githubv39.Issue{
+		{
+			Number: githubv39.Int(10),
+			Labels: labelsOf("from-issue"),
+		},
+		{
+			Number:           githubv39.Int(20),
+			Labels:           labelsOf("from-pr", "overseer/stop"),
+			PullRequestLinks: &githubv39.PullRequestLinks{URL: stringPtr("https://api.github.com/repos/o/r/pulls/20")},
+		},
+	}
+
+	got := getMissingLabelsForPR(nil, refItems, "overseer")
+	if len(got) != 1 || got[0] != "from-issue" {
+		t.Fatalf("getMissingLabelsForPR() = %v, want [from-issue]", got)
+	}
+}
+
+func TestSyncReferencedIssueLabels_SkipsPullRequestsAndReadyForHuman(t *testing.T) {
+	gh, added := adoptionServer(t, map[int]*githubv39.Issue{
+		10: {
+			Number: githubv39.Int(10),
+			Labels: labelsOf("overseer", "kind/bug", "overseer/ready-for-human", "factory/ready-for-human"),
+		},
+		20: {
+			Number:           githubv39.Int(20),
+			Labels:           labelsOf("from-referenced-pr", "overseer/stop"),
+			PullRequestLinks: &githubv39.PullRequestLinks{URL: stringPtr("https://api.github.com/repos/o/r/pulls/20")},
+		},
+	})
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       gh,
+		TriggerLabel: "factory",
+	})
+
+	pr := &githubv39.PullRequest{
+		Number: githubv39.Int(100),
+		Body:   stringPtr("Fixes #10. Supersedes #20."),
+	}
+	prIssue := &githubv39.Issue{
+		Number: githubv39.Int(100),
+	}
+
+	refs := newRefIssues(s.gh, pr)
+	s.syncReferencedIssueLabels(context.Background(), pr, prIssue, refs)
+
+	got := added()[100]
+	want := map[string]bool{"overseer": true, "kind/bug": true}
+	if len(got) != len(want) {
+		t.Fatalf("labels added to PR #100 = %v, want %v", got, want)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected label %q added to PR #100", name)
+		}
 	}
 }
 

@@ -60,6 +60,10 @@ func (r *refIssues) all(ctx context.Context) []*githubv39.Issue {
 			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", num, r.pr.GetNumber(), err)
 			continue
 		}
+		// We only want referenced issues, not pull requests
+		if issue.IsPullRequest() {
+			continue
+		}
 		r.resolved = append(r.resolved, issue)
 	}
 	return r.resolved

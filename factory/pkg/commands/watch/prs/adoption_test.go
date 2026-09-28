@@ -252,3 +252,28 @@ func TestAdoptOrphanedBotPRs_ToleratesUnreadableReferences(t *testing.T) {
 		t.Errorf("labels added to PR #1523 = %v, want [overseer]", labels)
 	}
 }
+
+func TestAdoptOrphanedBotPRs_SkipsReferencedPullRequests(t *testing.T) {
+	gh, added := adoptionServer(t, map[int]*githubv39.Issue{
+		50: {
+			Number:           githubv39.Int(50),
+			Labels:           labelsOf("overseer", "overseer/ready-for-human"),
+			PullRequestLinks: &githubv39.PullRequestLinks{URL: stringPtr("https://api.github.com/repos/o/r/pulls/50")},
+		},
+	})
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       gh,
+		BotUsers:     []string{"ada-coder-bot"},
+		TriggerLabel: "overseer",
+	})
+
+	s.adoptOrphanedBotPRs(context.Background(), []*githubv39.PullRequest{{
+		Number: githubv39.Int(105),
+		User:   &githubv39.User{Login: stringPtr("ada-coder-bot")},
+		Body:   stringPtr("Supersedes #50"),
+	}})
+
+	if labels := added()[105]; len(labels) != 0 {
+		t.Errorf("adopted a PR referencing only another PR, adding %v", labels)
+	}
+}

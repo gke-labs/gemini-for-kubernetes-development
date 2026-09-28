@@ -103,6 +103,9 @@ func (s *Scanner) adoptOrphanedBotPR(ctx context.Context, pr *githubv39.PullRequ
 			}
 			continue
 		}
+		if refIssue.IsPullRequest() {
+			continue
+		}
 		refIssues = append(refIssues, refIssue)
 		if conventions.HasTriggerLabel(refIssue.Labels, s.cfg.TriggerLabel) {
 			triggered = true
