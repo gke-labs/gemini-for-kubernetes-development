@@ -60,15 +60,12 @@ func slugifyScenario(s string) string {
 // procedure in place instead of filing recommendations against a
 // document other runs also read.
 //
-// --runbook starts a new run from an existing procedure instead of an
-// intent: the repository's .agents/runbooks/<name>/ if it has one,
-// else one of the member's own runs (any run is a runbook — its
-// directory holds the same files). The files are copied, params.env is
-// rewritten for this run, and with no --intent the run lands PLANNED
-// without an engine being asked anything: the procedure was reviewed
-// where it came from. With --intent the engine plans the changes as an
-// amendment to the copy. It replaces --from, which seeded from a run
-// and then re-planned regardless.
+// --runbook starts a new run from an existing runbook instead of from
+// nothing: the repository's .agents/runbooks/<name>/ if it has one,
+// else one of the member's own runs (any run is a runbook). It is
+// copied into the new run's directory as is, and the plan makes the
+// copy this run's — its prefix, project and region, plus whatever
+// --intent asks to change — and verifies it here. It replaces --from.
 //
 // This supersedes `factory runbook`, where a runbook was a separate
 // shared document and an instance only held the artifacts. That split

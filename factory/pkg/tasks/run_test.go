@@ -335,15 +335,13 @@ func TestInstantiateRunbook(t *testing.T) {
 	}
 	// instantiate runs the function as run.sh does and reports whether
 	// the script lived past it. ref is RUNBOOK_REF: "" is a failed fetch.
-	instantiate := func(t *testing.T, root, runbook, ref, intent string) (string, bool) {
+	instantiate := func(t *testing.T, root, runbook, ref string) (string, bool) {
 		t.Helper()
 		script := "set -e\nset -o pipefail\nRUNS_BRANCH=research/runs\n" + legacy + "\n" +
 			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", root) +
-			"RUNBOOK_REF='" + ref + "'\ninstantiateRunbook\necho SURVIVED\n"
+			"RUNBOOK_REF='" + ref + "'\ninstantiateRunbook\necho \"SURVIVED ${RUNBOOK_ORIGIN}\"\n"
 		cmd := exec.Command(bash, "-c", script)
-		cmd.Env = append(os.Environ(),
-			"RUN_NAME=pr-42", "RUN_DIR="+runs+"/pr-42", "RUN_RUNBOOK="+runbook, "RUN_INTENT="+intent,
-			"RUN_RESOURCE_PREFIX=ab-pr-42", "GOOGLE_CLOUD_PROJECT=my-proj", "CLOUDSDK_COMPUTE_REGION=us-east1")
+		cmd.Env = append(os.Environ(), "RUN_NAME=pr-42", "RUN_DIR="+runs+"/pr-42", "RUN_RUNBOOK="+runbook)
 		out, _ := cmd.CombinedOutput()
 		return string(out), strings.Contains(string(out), "SURVIVED")
 	}
@@ -351,50 +349,40 @@ func TestInstantiateRunbook(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(root, rel))
 		return string(b)
 	}
-	receipt := func(t *testing.T, root string) string {
+	copied := func(t *testing.T, root string) []string {
 		t.Helper()
-		m, _ := filepath.Glob(filepath.Join(root, runs, "pr-42", "receipt-*.md"))
-		if len(m) != 1 {
-			t.Fatalf("want exactly one receipt, got %v", m)
-		}
-		return read(root, strings.TrimPrefix(m[0], root+"/"))
-	}
-	// gke writes a complete runbook under dir: the shape a plan leaves.
-	gke := func(t *testing.T, root, dir string) {
-		write(t, root, dir+"/runbook.md", "procedure")
-		write(t, root, dir+"/params.env", "PROJECT=\"their-proj\"  # theirs\nREGION=us-central1\nRESOURCE_PREFIX=\"ab-gke\"\nCLUSTER=\"ab-gke-cluster\"\nNODES=3")
-		write(t, root, dir+"/deploy.sh", "source params.env\ngcloud container clusters create ${CLUSTER}")
-		write(t, root, dir+"/teardown.sh", "source params.env\ngcloud container clusters delete ${CLUSTER}")
+		var got []string
+		dir := filepath.Join(root, runs, "pr-42")
+		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				got = append(got, strings.TrimPrefix(p, dir+"/"))
+			}
+			return nil
+		})
+		return got
 	}
 
-	t.Run("a repository runbook lands PLANNED, with this run's parameters", func(t *testing.T) {
+	t.Run("a repository runbook is copied whole, as it is", func(t *testing.T) {
+		// No required shape: prose alone, or with scripts and whatever
+		// they read — the plan makes the run's files out of it.
 		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
+		write(t, root, ".agents/runbooks/gke/README.md", "procedure")
+		write(t, root, ".agents/runbooks/gke/manifests/values.yaml", "nodes: 3")
+		write(t, root, ".agents/runbooks/gke/params.env", `RESOURCE_PREFIX="ab-gke"`)
 		commit(t, root)
-		out, ok := instantiate(t, root, "gke", "main", "")
+		out, ok := instantiate(t, root, "gke", "main")
 		if !ok {
 			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
 		}
-		params := read(root, runs+"/pr-42/params.env")
-		for _, want := range []string{`RESOURCE_PREFIX="ab-pr-42"`, `PROJECT="my-proj"`, `REGION="us-east1"`, `CLUSTER="ab-pr-42-cluster"`, "NODES=3"} {
-			if !strings.Contains(params, want) {
-				t.Errorf("params.env lacks %s:\n%s", want, params)
-			}
+		if got := strings.Join(copied(t, root), " "); got != "README.md manifests/values.yaml params.env" {
+			t.Errorf("copied %q", got)
 		}
-		// The source's prefix surviving anywhere in params.env is a
-		// deploy onto — and a teardown of — the source's resources.
-		if strings.Contains(params, "ab-gke") || strings.Contains(params, "their-proj") {
-			t.Errorf("params.env still names the source's resources:\n%s", params)
+		// Nothing is rewritten here; making it this run's is the plan's.
+		if got := read(root, runs+"/pr-42/params.env"); got != "RESOURCE_PREFIX=\"ab-gke\"\n" {
+			t.Errorf("params.env was changed by the copy: %q", got)
 		}
-		if got := read(root, runs+"/pr-42/deploy.sh"); !strings.Contains(got, "clusters create ${CLUSTER}") {
-			t.Errorf("deploy.sh was not copied unchanged: %q", got)
-		}
-		r := receipt(t, root)
-		if !strings.HasPrefix(r, "PLANNED") {
-			t.Errorf("receipt verdict is not PLANNED:\n%s", r)
-		}
-		if !strings.Contains(r, ".agents/runbooks/gke at main") {
-			t.Errorf("receipt does not say where the runbook came from:\n%s", r)
+		if !strings.Contains(out, "SURVIVED .agents/runbooks/gke at main") {
+			t.Errorf("the origin is not recorded:\n%s", out)
 		}
 	})
 
@@ -403,10 +391,10 @@ func TestInstantiateRunbook(t *testing.T) {
 		// worktree can hold the fork's copy of a runbook edited on both
 		// sides. The repository's is the one that was reviewed.
 		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
 		commit(t, root)
 		write(t, root, ".agents/runbooks/gke/runbook.md", "worktree edit")
-		instantiate(t, root, "gke", "main", "")
+		instantiate(t, root, "gke", "main")
 		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
 			t.Errorf("runbook.md = %q, want the committed one", got)
 		}
@@ -414,10 +402,10 @@ func TestInstantiateRunbook(t *testing.T) {
 
 	t.Run("the repository wins over a run of the same name", func(t *testing.T) {
 		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
 		commit(t, root)
 		write(t, root, runs+"/gke/runbook.md", "my run")
-		instantiate(t, root, "gke", "main", "")
+		instantiate(t, root, "gke", "main")
 		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
 			t.Errorf("runbook.md = %q, want the repository's", got)
 		}
@@ -427,14 +415,26 @@ func TestInstantiateRunbook(t *testing.T) {
 		root := repo(t)
 		write(t, root, "README", "x")
 		commit(t, root)
-		gke(t, root, runs+"/gke")
+		write(t, root, runs+"/gke/runbook.md", "my run")
+		write(t, root, runs+"/gke/deploy.sh", "create")
 		write(t, root, runs+"/gke/receipt-20260928-1200.md", "VERIFIED")
-		out, ok := instantiate(t, root, "gke", "main", "")
+		out, ok := instantiate(t, root, "gke", "main")
 		if !ok {
 			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
 		}
-		if !strings.HasPrefix(receipt(t, root), "PLANNED") {
-			t.Error("a run used as a runbook did not land PLANNED")
+		if got := strings.Join(copied(t, root), " "); got != "deploy.sh runbook.md" {
+			t.Errorf("copied %q; another run's receipts are not this run's", got)
+		}
+	})
+
+	t.Run("a repository runbook's receipts stay behind too", func(t *testing.T) {
+		root := repo(t)
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
+		write(t, root, ".agents/runbooks/gke/receipt-20260928-1200.md", "VERIFIED")
+		commit(t, root)
+		instantiate(t, root, "gke", "main")
+		if got := strings.Join(copied(t, root), " "); got != "runbook.md" {
+			t.Errorf("copied %q", got)
 		}
 	})
 
@@ -442,74 +442,24 @@ func TestInstantiateRunbook(t *testing.T) {
 		root := repo(t)
 		write(t, root, "README", "x")
 		commit(t, root)
-		gke(t, root, "docs-exploration/runs/gke")
-		if out, ok := instantiate(t, root, "gke", "main", ""); !ok {
+		write(t, root, "docs-exploration/runs/gke/runbook.md", "legacy")
+		if out, ok := instantiate(t, root, "gke", "main"); !ok {
 			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
 		}
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
+		if got := read(root, runs+"/pr-42/runbook.md"); got != "legacy\n" {
 			t.Errorf("runbook.md = %q, want the legacy run's", got)
-		}
-	})
-
-	t.Run("a script naming the source's resources BLOCKs the run", func(t *testing.T) {
-		// Scripts are copied, never rewritten: a substitution nobody
-		// reviewed is not something to trust with a teardown.
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		write(t, root, runs+"/gke/runbook.md", "procedure")
-		write(t, root, runs+"/gke/params.env", "PROJECT=\"their-proj\"\nRESOURCE_PREFIX=\"ab-gke\"")
-		write(t, root, runs+"/gke/deploy.sh", "gcloud --project their-proj compute instances create ab-gke-vm")
-		out, ok := instantiate(t, root, "gke", "main", "")
-		if !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		r := receipt(t, root)
-		if !strings.HasPrefix(r, "BLOCKED") {
-			t.Fatalf("receipt verdict is not BLOCKED:\n%s", r)
-		}
-		for _, want := range []string{"## Needs from owner", "`ab-gke`", "`their-proj`", "no teardown.sh"} {
-			if !strings.Contains(r, want) {
-				t.Errorf("receipt does not name %s:\n%s", want, r)
-			}
-		}
-	})
-
-	t.Run("a parameter nobody can fill BLOCKs the run", func(t *testing.T) {
-		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
-		write(t, root, ".agents/runbooks/gke/params.env", "RESOURCE_PREFIX=\"\"\nMACHINE_TYPE=\"\"")
-		commit(t, root)
-		instantiate(t, root, "gke", "main", "")
-		r := receipt(t, root)
-		if !strings.HasPrefix(r, "BLOCKED") || !strings.Contains(r, "MACHINE_TYPE is empty") {
-			t.Errorf("an empty parameter did not BLOCK the run:\n%s", r)
-		}
-	})
-
-	t.Run("with an intent the copy is made and the engine writes the receipt", func(t *testing.T) {
-		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
-		commit(t, root)
-		if out, ok := instantiate(t, root, "gke", "main", "5 nodes"); !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if !strings.Contains(read(root, runs+"/pr-42/params.env"), `RESOURCE_PREFIX="ab-pr-42"`) {
-			t.Error("params.env was not rewritten before the engine plans")
-		}
-		if m, _ := filepath.Glob(filepath.Join(root, runs, "pr-42", "receipt-*.md")); len(m) != 0 {
-			t.Errorf("a receipt was written though the engine is about to plan: %v", m)
 		}
 	})
 
 	t.Run("a failed fetch falls back to the worktree", func(t *testing.T) {
 		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
-		if out, ok := instantiate(t, root, "gke", "", ""); !ok {
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
+		out, ok := instantiate(t, root, "gke", "")
+		if !ok {
 			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
 		}
-		if r := receipt(t, root); !strings.Contains(r, "(working tree)") {
-			t.Errorf("receipt does not say the runbook came from the worktree:\n%s", r)
+		if !strings.Contains(out, "(working tree)") {
+			t.Errorf("the origin does not say it came from the worktree:\n%s", out)
 		}
 	})
 
@@ -517,7 +467,7 @@ func TestInstantiateRunbook(t *testing.T) {
 		root := repo(t)
 		write(t, root, "README", "x")
 		commit(t, root)
-		out, ok := instantiate(t, root, "nope", "main", "")
+		out, ok := instantiate(t, root, "nope", "main")
 		if ok {
 			t.Fatalf("an unknown runbook did not fail the run:\n%s", out)
 		}
@@ -531,10 +481,10 @@ func TestInstantiateRunbook(t *testing.T) {
 
 	t.Run("an existing run is never overwritten", func(t *testing.T) {
 		root := repo(t)
-		gke(t, root, ".agents/runbooks/gke")
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
 		commit(t, root)
 		write(t, root, runs+"/pr-42/runbook.md", "mine")
-		if _, ok := instantiate(t, root, "gke", "main", ""); ok {
+		if _, ok := instantiate(t, root, "gke", "main"); ok {
 			t.Error("instantiating over an existing run did not fail")
 		}
 		if got := read(root, runs+"/pr-42/runbook.md"); got != "mine\n" {
@@ -543,16 +493,42 @@ func TestInstantiateRunbook(t *testing.T) {
 	})
 }
 
-// With --intent the engine plans on top of the copy, so it has to know
-// the copy is there and that its prefix is not to be touched.
+// A run started from a runbook is always planned: the copy is the
+// plan's starting point, never a plan by itself.
+func TestRunbookIsAlwaysPlanned(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	at := strings.Index(s, "instantiateRunbook\n")
+	if at < 0 {
+		t.Fatal("the plan case does not instantiate the runbook")
+	}
+	next := s[at : at+200]
+	if !strings.Contains(next, "runEngine") || strings.Index(next, "runEngine") > strings.Index(next, "commitAndPushRun") {
+		t.Errorf("the copy is committed without the engine planning it:\n%s", next)
+	}
+	for _, gone := range []string{"rewriteParams", "RUNBOOK_FILES"} {
+		if strings.Contains(s, gone) {
+			t.Errorf("run.sh still has %s: making the copy this run's is the plan's job", gone)
+		}
+	}
+}
+
+// The engine has to know the copy is there, that it makes it this
+// run's, and that it is not to redesign it.
 func TestPlanPromptKnowsItStartedFromARunbook(t *testing.T) {
-	with := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42", Intent: "5 nodes", Runbook: "gke"})
-	for _, want := range []string{`started from the runbook "gke"`, "Keep RESOURCE_PREFIX exactly"} {
+	with := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42", Runbook: "gke"})
+	for _, want := range []string{`started from the runbook "gke"`, "RESOURCE_PREFIX is this run's", "Change nothing else.", "verify it here"} {
 		if !strings.Contains(with, want) {
 			t.Errorf("plan prompt missing %q", want)
 		}
 	}
+	if amended := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42", Intent: "5 nodes", Runbook: "gke"}); !strings.Contains(amended, "Change nothing else beyond what the owner asked for above.") {
+		t.Error("with an intent, the prompt does not allow the owner's changes")
+	}
 	if without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42"}); strings.Contains(without, "started from the runbook") {
-		t.Error("the runbook paragraph renders for a run started from an intent")
+		t.Error("the runbook paragraph renders for a run started from nothing")
 	}
 }

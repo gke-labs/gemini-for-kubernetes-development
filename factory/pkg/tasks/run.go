@@ -28,8 +28,8 @@ type RunParams struct {
 	// plan, what to change on a re-plan, what to watch on a teardown.
 	Intent string
 	// Runbook names the runbook this run was started from. The script
-	// has already copied it in by the time the engine reads this — the
-	// engine only runs at all when the owner also asked for changes.
+	// has already copied it into the run's directory by the time the
+	// engine reads this; the plan makes that copy this run's.
 	Runbook string
 }
 
