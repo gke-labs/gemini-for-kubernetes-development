@@ -259,6 +259,15 @@ func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
 		return err
 	}
 
+	// The checkout is in place, so the sandbox is now worth keeping even
+	// if the rest of this command fails. Write the receipt here rather
+	// than at the end: what follows only reads the pod, and a sandbox
+	// that is complete should not be torn down again because we could
+	// not look up its IP.
+	if err := factorysandbox.MarkResearchReady(ctx, kubeClient, rootFlags.Namespace, sandboxName); err != nil {
+		return err
+	}
+
 	podIP, err := researchPodIP(ctx, kubeClient, rootFlags.Namespace, sandboxName)
 	if err != nil {
 		return err

@@ -52,6 +52,12 @@ const (
 	// researchSessionIDAnnotation holds the full session id — the
 	// authoritative match, since the label carries only a digest of it.
 	researchSessionIDAnnotation = "sandbox.gemini.google.com/research-session-id"
+	// researchReadyAnnotation is written last by `factory research
+	// start`, once the checkout is on the disk. It is the only thing that
+	// says a sandbox finished being built: factory creates the object in
+	// the first second of a launch that runs for minutes, so existence
+	// says no more than that something began.
+	researchReadyAnnotation = "sandbox.gemini.google.com/research-ready"
 )
 
 // researchClaimTTL bounds how long an unserved claim stands.
@@ -94,22 +100,36 @@ func researchKey(member, repo, sessionID string) string {
 	return fmt.Sprintf("%s/%s", member, factorycli.ResearchSandboxName(repo, sessionID))
 }
 
-// researchClaimServed: the sandbox for this session exists.
+// researchSandboxDone returns the sandbox for a session once it is
+// finished being built, and nil until then.
 //
-// Existence is the receipt, rather than a runner result as explore and
-// runbook use, because the sandbox IS the session — one per
-// conversation, named from the session id. That makes served-ness
-// durable: a controller restart cannot forget it and create a second
-// engine for a conversation that already has one. It also means a
-// member who deletes their session is not handed it back by a claim
-// that outlived the trim pass.
+// The sandbox object, not a runner result as explore and runbook use,
+// because the sandbox IS the session — one per conversation, named from
+// the session id. That makes served-ness durable: a controller restart
+// cannot forget it and create a second engine for a conversation that
+// already has one. It also means a member who deletes their session is
+// not handed it back by a claim that outlived the reap pass.
 //
-// The cost is that a launch which fails AFTER creating the sandbox — a
-// clone that could not authenticate, an image that never pulls — is
-// read as served and not retried, leaving a sandbox with no checkout.
-// Recovery is to delete the session and start another.
+// But the object alone is not enough. `factory research start` creates
+// it in the first second and then pulls, waits and clones for minutes,
+// so for most of a launch the object exists and the session does not.
+// Reading that as served is what left a conversation stuck on
+// "opening…" behind a running pod with an empty workspace: the launch
+// died mid-setup, the claim was already retired, and nothing was ever
+// going to go back and finish it. So the receipt is the annotation
+// factory writes last, and an unfinished sandbox leaves the claim
+// standing for the relaunch to adopt or replace.
+func researchSandboxDone(work *workState, member, sessionID string) *unstructured.Unstructured {
+	sb := work.findSandbox(member, factorycli.ResearchSandboxName(work.repo, sessionID))
+	if sb == nil || sb.GetAnnotations()[researchReadyAnnotation] == "" {
+		return nil
+	}
+	return sb
+}
+
+// researchClaimServed: the sandbox for this session is built and ready.
 func (r *Reconciler) researchClaimServed(claim researchClaim, work *workState) bool {
-	return work.findSandbox(claim.member, factorycli.ResearchSandboxName(work.repo, claim.sessionID)) != nil
+	return researchSandboxDone(work, claim.member, claim.sessionID) != nil
 }
 
 // researchClaimExpired reports whether the claim has outlived its TTL.
@@ -128,13 +148,11 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 	for _, claim := range claims {
 		key := researchKey(claim.member, work.repo, claim.sessionID)
 		// Served is checked before running, and the order is load-bearing.
-		// `factory research start` creates the Sandbox early and then
-		// clones for minutes, so there is a long window where the launch
-		// is still running AND the sandbox already exists. trimMailbox
-		// reads that same existence as served and drops the claim later in
-		// this very reconcile — so skipping the stamp while the launch
-		// runs loses the opening turn, and the session comes up untitled
-		// with nothing ever asked.
+		// The pass that settles Requests reads the same receipt and runs
+		// later in this very reconcile, so the claim is gone by the next
+		// one. The stamp has to happen in the pass that first sees the
+		// receipt, or the session comes up untitled with nothing ever
+		// asked.
 		if r.researchClaimServed(claim, work) {
 			r.stampResearchKickoff(ctx, work, claim)
 			continue
@@ -183,11 +201,11 @@ var researchACPD = func(ip string) *acpd.Client { return acpd.NewForPodIP(ip) }
 // the sandbox that now exists for it.
 //
 // This is the handoff from the claim to the sandbox, and it has to
-// happen in the pass that notices the sandbox: trimMailbox runs later in
-// the same reconcile and drops a served claim, so anything still only on
-// the claim at that point is lost. The sandbox outlives the claim by as
-// long as the conversation does, which is exactly the lifetime the
-// opening prompt needs — the pod will not be up for minutes yet.
+// happen in the pass that notices the sandbox: the Request settles
+// later in the same reconcile and the claim goes with it, so anything
+// still only on the claim at that point is lost. The sandbox outlives
+// the claim by as long as the conversation does, which is exactly the
+// lifetime the opening prompt needs.
 func (r *Reconciler) stampResearchKickoff(ctx context.Context, work *workState, claim researchClaim) {
 	if claim.kickoff == (research.Kickoff{}) {
 		return // a session the member will type into themselves
