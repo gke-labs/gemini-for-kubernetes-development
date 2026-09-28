@@ -359,7 +359,6 @@ export function modeSuffix(auto) {
 // shown. Re-renders wait for the chunks to pause, so a diagram is not
 // redrawn once per token.
 let mermaidSeq = 0;
-let mermaidTheme = '';
 const MERMAID_SETTLE_MS = 250;
 
 export function MermaidBlock({ code }) {
@@ -372,16 +371,18 @@ export function MermaidBlock({ code }) {
     const draw = async () => {
       try {
         const mermaid = (await import('mermaid')).default;
-        const theme = dark ? 'dark' : 'neutral';
-        if (mermaidTheme !== theme) {
-          // suppressErrorRendering: a diagram that parses and then fails
-          // to lay out otherwise gets mermaid's "Syntax error" bomb drawn
-          // into a scratch element on document.body, left there, before
-          // it throws. With it set, mermaid cleans up and just throws,
-          // and the catch below leaves the source showing.
-          mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, suppressErrorRendering: true });
-          mermaidTheme = theme;
-        }
+        // Every draw, not once: it is only a config write, and the
+        // theme is whatever the page is at the moment of drawing.
+        //
+        // suppressErrorRendering: a diagram that parses and then fails
+        // to lay out otherwise gets mermaid's "Syntax error" bomb drawn
+        // into a scratch element on document.body, left there, before
+        // it throws. With it set, mermaid cleans up and just throws,
+        // and the catch below leaves the source showing.
+        mermaid.initialize({
+          startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true,
+          theme: dark ? 'dark' : 'neutral',
+        });
         if (!(await mermaid.parse(code, { suppressErrors: true }))) return;
         const res = await mermaid.render(`research-mmd-${++mermaidSeq}`, code);
         if (alive) setSvg({ code, svg: res.svg });

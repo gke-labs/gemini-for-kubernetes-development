@@ -20,13 +20,13 @@ jest.mock('react-markdown', () => ({ children, remarkPlugins }) => {
 // remark-gfm is ESM too; the identity of the stub is all we assert on.
 jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 // mermaid is ESM and far too big to lay out in jsdom anyway. The stub
-// accepts anything that starts like a flowchart and draws it as an svg
-// carrying its own source, so a test can tell which text was drawn.
-const mockMermaid = {
-    initialize: jest.fn(),
-    parse: jest.fn(async (code) => /^flowchart /.test(code)),
-    render: jest.fn(async (id, code) => ({ svg: `<svg data-src="${code.length}"></svg>` })),
-};
+// accepts anything that starts like a flowchart and draws it as an svg.
+// Its behaviour is installed in the suite's beforeEach, not here:
+// react-scripts runs jest with resetMocks, which strips a jest.fn's
+// implementation before every test, and a parse() stripped to
+// `undefined` rejects every diagram — so the one test expecting
+// nothing drawn passes for the wrong reason and the rest fail.
+const mockMermaid = { initialize: jest.fn(), parse: jest.fn(), render: jest.fn() };
 jest.mock('mermaid', () => ({ __esModule: true, default: mockMermaid }));
 
 // Rendering tests for the parts the pure reducer tests cannot reach: the
@@ -1741,13 +1741,18 @@ describe('mermaid fences', () => {
         }],
     });
     const Pre = markdownComponents.pre;
+    // The draw is a chain of awaits — the lazy import, parse, render —
+    // so a fixed count of microtask flushes is a guess. A few real
+    // macrotask turns are not.
     const settle = async () => {
-        for (let i = 0; i < 5; i++) await flush();
+        for (let i = 0; i < 3; i++) {
+            await act(async () => { await new Promise(r => setTimeout(r, 0)); });
+        }
     };
 
     beforeEach(() => {
-        mockMermaid.parse.mockClear();
-        mockMermaid.render.mockClear();
+        mockMermaid.parse.mockImplementation(async (code) => /^flowchart /.test(code));
+        mockMermaid.render.mockImplementation(async () => ({ svg: '<svg></svg>' }));
     });
 
     test('a mermaid fence is drawn as a diagram', async () => {
