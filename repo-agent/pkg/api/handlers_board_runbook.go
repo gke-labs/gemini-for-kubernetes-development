@@ -291,17 +291,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if annotations[annoTaskState] == factorycli.TaskStateRunning {
 				if podID, perr := sandbox.FindSandboxPodInNamespace(ctx, sb.GetName(), namespace); perr == nil && podID != nil {
 					var stdout bytes.Buffer
-					// Mirrors factory's own liveness check: an exit code
-					// ends the story, a zombie is not alive (kill -0
-					// succeeds on Z), and start_time guards against PID
-					// reuse.
-					script := `d=$(ls -dt /workspaces/tasks/runbook-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
-						`code=$(cat $d/exit_code 2>/dev/null); pid=$(cat $d/pid 2>/dev/null); alive=no; ` +
-						`if [ -z "$code" ] && [ -n "$pid" ]; then ` +
-						`stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1); ` +
-						`want=$(cat $d/start_time 2>/dev/null | xargs); got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs); ` +
-						`if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; fi; fi; ` +
-						`echo "$alive|$code|$(stat -c %Y $d/pid 2>/dev/null)"`
+					script := runLivenessScript()
 					if eerr := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
 						Command: []string{"sh", "-c", script},
 						Stdout:  &stdout,
@@ -599,4 +589,23 @@ func clampIntent(intent string) string {
 		return intent[:intentClaimLimit]
 	}
 	return intent
+}
+
+// runLivenessScript asks a run's sandbox whether its newest run task is
+// still alive, printing alive|exit_code|started. It mirrors factory's
+// own liveness check: an exit code ends the story, a zombie is not
+// alive (kill -0 succeeds on Z), and start_time guards against PID
+// reuse.
+//
+// It globbed runbook-* for as long as factory has written run-*, so it
+// found nothing, a stale Running was never healed, and the row stayed
+// disabled with its sandbox exempt from idle-pause.
+func runLivenessScript() string {
+	return `d=$(ls -dt /workspaces/tasks/` + factorycli.RunTaskPrefix + `-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
+		`code=$(cat $d/exit_code 2>/dev/null); pid=$(cat $d/pid 2>/dev/null); alive=no; ` +
+		`if [ -z "$code" ] && [ -n "$pid" ]; then ` +
+		`stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1); ` +
+		`want=$(cat $d/start_time 2>/dev/null | xargs); got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs); ` +
+		`if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; fi; fi; ` +
+		`echo "$alive|$code|$(stat -c %Y $d/pid 2>/dev/null)"`
 }
