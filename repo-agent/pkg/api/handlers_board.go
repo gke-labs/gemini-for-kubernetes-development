@@ -32,15 +32,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
-	"github.com/gregjones/httpcache"
 	yamlv3 "go.yaml.in/yaml/v3"
-	"golang.org/x/oauth2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/ghquota"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
@@ -92,27 +91,13 @@ func nowRFC3339() string {
 // needs-you; older requests stay listed but out of UP NEXT.
 const reviewRequestFreshWindow = 14 * 24 * time.Hour
 
-// ghConditionalCache backs conditional requests (ETags): GitHub answers
-// unchanged resources with 304, which costs ZERO rate-limit quota — the
-// difference between polling being a quota problem and being nearly free
-// at steady state. Responses carry Vary: Authorization, so entries are
-// keyed per token and never leak across members.
-var ghConditionalCache = httpcache.NewMemoryCache()
-
-// githubClientForToken is injectable for tests. The oauth2 transport runs
-// inside the cache transport so the Authorization header is set before
-// the conditional-request layer sees it.
+// githubClientForToken is injectable for tests. ghquota owns the transport
+// stack: conditional requests, where a 304 costs ZERO rate-limit quota,
+// and a gate that stops calling once GitHub says the member's budget is
+// spent. Cache entries key per token — critical here, where ListReviews
+// responses carry viewer-private pending reviews.
 var githubClientForToken = func(ctx context.Context, token string) *github.Client {
-	// oauth2 OUTSIDE, cache INSIDE: the cache layer must see the
-	// Authorization header for Vary: Authorization to partition entries
-	// per member — critical here, where ListReviews responses carry
-	// viewer-private pending reviews.
-	cached := httpcache.NewTransport(ghConditionalCache)
-	auth := &oauth2.Transport{
-		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
-		Base:   cached,
-	}
-	return github.NewClient(&http.Client{Transport: auth})
+	return github.NewClient(ghquota.HTTPClient(token))
 }
 
 // memberToken resolves the session member's GitHub token (manual_pat >
@@ -326,10 +311,20 @@ var workFeedCache = struct {
 type workFeedEntry struct {
 	items []models.WorkItem
 	at    time.Time
+	// blockedUntil is when GitHub said this board's token gets its budget
+	// back. Until then a rebuild cannot learn anything the entry does not
+	// already know, so the entry keeps being served however old it is.
+	blockedUntil time.Time
 }
 
 const (
-	workFeedFreshFor      = 15 * time.Second
+	// workFeedFreshFor must EXCEED the UI's poll interval (20s), or every
+	// poll lands past fresh, serves the cache and kicks a rebuild behind
+	// it — the cache buys latency and no quota at all. A minute of
+	// freshness costs the board nothing that matters: clicks invalidate
+	// the entry directly, so only changes made elsewhere wait, and the
+	// budget is shared with the member's own GitHub use.
+	workFeedFreshFor      = time.Minute
 	workFeedServeStaleFor = 3 * time.Minute
 )
 
@@ -345,6 +340,12 @@ func workFeedGet(key string) (items []models.WorkItem, ok, needsRefresh bool) {
 	}
 	age := time.Since(e.at)
 	if age <= workFeedFreshFor {
+		return e.items, true, false
+	}
+	if time.Now().Before(e.blockedUntil) {
+		// Out of budget: what we hold is the best there is until it comes
+		// back, and asking again only deepens the hole. Serve it at any
+		// age rather than rebuild into a wall or blank the board.
 		return e.items, true, false
 	}
 	if age <= workFeedServeStaleFor {
@@ -363,17 +364,33 @@ func workFeedPeek(key string) ([]models.WorkItem, bool) {
 	workFeedCache.Lock()
 	defer workFeedCache.Unlock()
 	e, found := workFeedCache.entries[key]
-	if !found || time.Since(e.at) > workFeedServeStaleFor {
+	if !found || (time.Since(e.at) > workFeedServeStaleFor && !time.Now().Before(e.blockedUntil)) {
 		return nil, false
 	}
 	return e.items, true
 }
 
+// workFeedPut stores a build that reached GitHub, which also clears any
+// block: the budget is demonstrably back.
 func workFeedPut(key string, items []models.WorkItem) {
 	workFeedCache.Lock()
 	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now()}
 	delete(workFeedCache.refreshing, key)
 	workFeedCache.Unlock()
+}
+
+// workFeedBlock records that a rebuild could not reach GitHub because the
+// budget was spent. The items and their age are left exactly as they were
+// — this says "do not come back before then", not "this is fresh".
+func workFeedBlock(key string, until time.Time) {
+	workFeedCache.Lock()
+	defer workFeedCache.Unlock()
+	e, found := workFeedCache.entries[key]
+	if !found {
+		return
+	}
+	e.blockedUntil = until
+	workFeedCache.entries[key] = e
 }
 
 func invalidateWorkFeed(namespace, boardName string) {
@@ -393,6 +410,9 @@ func (s *Server) refreshWorkFeed(ctx context.Context, key string, board *unstruc
 	items, err := s.buildBoardWork(ctx, board, member, namespace)
 	if err != nil {
 		klog.FromContext(ctx).Info("background feed refresh failed", "board", key, "err", err)
+		if until, ok := ghquota.ResetAt(err); ok {
+			workFeedBlock(key, until)
+		}
 		return
 	}
 	workFeedPut(key, items)
@@ -422,6 +442,13 @@ func (s *Server) getBoardWork(c *gin.Context) {
 
 	items, err := s.buildBoardWork(ctx, board, member, namespace)
 	if err != nil {
+		// Nothing cached and no budget to build with: say so. An empty
+		// feed would read as "no work", which is a lie the board cannot
+		// afford to tell.
+		if ghquota.IsRateLimited(err) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "GitHub rate limit reached", "details": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build board feed", "details": err.Error()})
 		return
 	}
@@ -496,31 +523,51 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 			f()
 		}()
 	}
+	// A listing lost to the rate limit leaves a hole in the universe, and
+	// a feed built around the hole shows fewer rows than exist — "nothing
+	// needs you" is the one wrong answer a work queue must not give. Any
+	// other failure degrades as before: partial is better than nothing.
+	var starvedMu sync.Mutex
+	var starved error
+	listingFailed := func(what string, err error) {
+		log.Info("failed to "+what, "err", err)
+		if !ghquota.IsRateLimited(err) {
+			return
+		}
+		starvedMu.Lock()
+		defer starvedMu.Unlock()
+		if starved == nil {
+			starved = err
+		}
+	}
 	concurrently(func() {
 		var err error
 		if assigned, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Assignee: member, Sort: "updated", Direction: "desc"}); err != nil {
-			log.Info("failed to list assigned issues", "err", err)
+			listingFailed("list assigned issues", err)
 		}
 	})
 	concurrently(func() {
 		var err error
 		if created, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Creator: member, Sort: "updated", Direction: "desc"}); err != nil {
-			log.Info("failed to list created issues", "err", err)
+			listingFailed("list created issues", err)
 		}
 	})
 	concurrently(func() {
 		var err error
 		if allIssues, err = listIssues(ctx, gh, owner, repo, &github.IssueListByRepoOptions{State: "open", Sort: "updated", Direction: "desc"}); err != nil {
-			log.Info("failed to list issues for triage", "err", err)
+			listingFailed("list issues for triage", err)
 		}
 	})
 	concurrently(func() {
 		var err error
 		if prs, _, err = gh.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{State: "open", Sort: "updated", Direction: "desc", ListOptions: github.ListOptions{PerPage: 100}}); err != nil {
-			log.Info("failed to list PRs", "err", err)
+			listingFailed("list PRs", err)
 		}
 	})
 	wg.Wait()
+	if starved != nil {
+		return nil, fmt.Errorf("github budget spent while building the feed: %w", starved)
+	}
 	// Load claimed executors' namespaces before merging rows so their
 	// sandboxes surface on the shared board.
 	for _, issue := range assigned {

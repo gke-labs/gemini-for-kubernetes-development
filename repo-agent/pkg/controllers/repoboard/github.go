@@ -19,20 +19,18 @@ package repoboard
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 
 	"github.com/google/go-github/v39/github"
-	"github.com/gregjones/httpcache"
-	"golang.org/x/oauth2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/ghquota"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -131,25 +129,15 @@ func (r *Reconciler) identityFromSecret(ctx context.Context, namespace string) (
 	return login, string(secret.Data["email"]), true
 }
 
-// ghConditionalCache backs conditional requests (ETags) for every
-// controller-side GitHub read: the reconcile loop polls each board about
-// once a minute, and GitHub answers unchanged resources with 304 — which
-// costs ZERO rate-limit quota. Steady-state reconciles of a quiet repo
-// become nearly free. Responses carry Vary: Authorization, so entries key
-// per token and never leak across members.
-var ghConditionalCache = httpcache.NewMemoryCache()
-
+// githubClientFromToken builds every controller-side GitHub client through
+// ghquota: the reconcile loop polls each board about once a minute, and a
+// conditional request for an unchanged resource comes back 304, which
+// costs ZERO rate-limit quota — steady-state reconciles of a quiet repo
+// are nearly free. The same budget belongs to the member's UI and their
+// own `gh`, so the gate ghquota installs is what keeps the controller from
+// spending a window somebody else was in the middle of.
 func githubClientFromToken(_ context.Context, token string) *github.Client {
-	// Transport order matters: oauth2 OUTSIDE, cache INSIDE, so the cache
-	// layer sees the Authorization header — that is what makes GitHub's
-	// Vary: Authorization actually partition entries per token. The
-	// inverted order silently shares cached bodies across members.
-	cached := httpcache.NewTransport(ghConditionalCache)
-	auth := &oauth2.Transport{
-		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
-		Base:   cached,
-	}
-	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: auth})
+	return clients.NewGitHubClientFromHTTP(ghquota.HTTPClient(token))
 }
 
 // ensureFactoryUserSecret materializes a member's identity as the

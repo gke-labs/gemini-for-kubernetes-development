@@ -1473,9 +1473,15 @@ function Work({ onBack, namespace }) {
   };
   useEffect(() => {
     fetchWork();
+    // One tick of the aggregate view is one request per board — every
+    // repo you watch, refetched, for a list nobody reads at
+    // twenty-second resolution. The board you are actually looking at
+    // keeps the fast cadence; ALL settles for a minute, which is what
+    // the server holds a feed fresh for anyway.
+    const pollEvery = activeBoard === ALL_BOARDS ? 60000 : 20000;
     const interval = setInterval(() => {
       if (!document.hidden) { fetchWork(); fetchBoards(); }
-    }, 20000);
+    }, pollEvery);
     // Polling skips hidden tabs (quota) and browsers throttle background
     // timers — so returning to the tab must refresh NOW, not at the next
     // tick: the wait reads as a frozen board.
@@ -1487,7 +1493,7 @@ function Work({ onBack, namespace }) {
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
     };
-  }, [fetchWork, fetchBoards]);
+  }, [fetchWork, fetchBoards, activeBoard]);
 
   const handleAction = (path, label, boardName) => {
     fetch(`/api/board/${boardName || activeBoard}/${path}`, {
