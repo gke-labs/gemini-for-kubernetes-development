@@ -25,6 +25,8 @@ set -o pipefail
 # - RUN_NAME (the run's identity, e.g. deploy-gke-k8s1)
 # - RUN_MODE (plan | deploy | teardown)
 # - RUN_RESOURCE_PREFIX (what this run may name and own in the cloud)
+# - RUN_RUNBOOK (plan only, optional: the runbook this run starts from)
+# - RUN_INTENT (plan only, optional: what to build, or what to change)
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
@@ -62,6 +64,7 @@ function ensureRunsBranch {
     git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE="origin"
     DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     if [ -n "${DEFAULT_BRANCH}" ] && git fetch "${SRC_REMOTE}" "${DEFAULT_BRANCH}"; then
+        RUNBOOK_REF="${SRC_REMOTE}/${DEFAULT_BRANCH}"
         git merge --no-edit -X ours "${SRC_REMOTE}/${DEFAULT_BRANCH}" || {
             git merge --abort 2>/dev/null || true
             echo "WARN: could not refresh the code base; running from the branch as-is."
@@ -121,50 +124,92 @@ function adoptLegacyInstance {
     done
 }
 
-# seedFromRun copies an existing run's procedure as the starting point.
-# It carries a runbook.md already corrected by a real deployment, which
-# is the whole reason deriving beats starting from the intent again.
-# The receipts are deliberately left behind: they belong to that run's
-# executions, not this one's.
+# RUNBOOK_REF is the commit a repository runbook is read at: the
+# default branch as ensureRunsBranch just fetched it. Read from the
+# commit, not the worktree — research/runs merges the default branch
+# with -X ours, so a runbook edited on both sides would come out as the
+# fork's copy, not the repository's. Empty when that fetch failed, and
+# then the worktree is the best there is.
+RUNBOOK_REF=""
+
+# RUNBOOK_ORIGIN says where instantiateRunbook found the runbook, for
+# the commit that records the plan.
+RUNBOOK_ORIGIN=""
+
+# resolveRunbook finds RUN_RUNBOOK and copies it into $1. It looks in
+# the repository's .agents/runbooks/ first, where a runbook is reviewed
+# like code, then among the member's own runs — any run is a runbook —
+# including runs still under a legacy path.
 #
-# The source is looked for where runs live now and then where they used
-# to: a run nobody has touched since a move is still under its legacy
-# path, because adoption only happens to the run being worked on. This
-# function once read only docs-exploration/runs/, so `--from` any
-# current run quietly planned from the intent instead.
+# A runbook has no required shape. It is the plan's starting point, not
+# something this script executes: prose, scripts, a run's full set of
+# files — the engine makes this run's files out of whatever is there.
+# So everything is copied, subdirectories included, except receipts:
+# they are the test results of the run they came from, not of this one.
 #
-# Every step is written to survive set -e. A new run's directory does
-# not exist yet, and a source without a teardown.sh ends the copy loop
-# on a false test — either one used to be enough to kill the plan.
-function seedFromRun {
-    if [ -z "${RUN_FROM}" ]; then
+# Prints where it came from; prints nothing and copies nothing when
+# there is no such runbook.
+function resolveRunbook {
+    local out="$1" root="/workspaces/${REPO_NAME}"
+    local repoPath=".agents/runbooks/${RUN_RUNBOOK}" f base rel src
+    if [ -n "${RUNBOOK_REF}" ] && [ -n "$(git -C "${root}" ls-tree -r --name-only "${RUNBOOK_REF}" -- "${repoPath}/" 2>/dev/null)" ]; then
+        while IFS= read -r f; do
+            rel="${f#"${repoPath}"/}"
+            case "${rel##*/}" in receipt-*) continue ;; esac
+            mkdir -p "$(dirname "${out}/${rel}")"
+            git -C "${root}" show "${RUNBOOK_REF}:${f}" > "${out}/${rel}"
+        done < <(git -C "${root}" ls-tree -r --name-only "${RUNBOOK_REF}" -- "${repoPath}/")
+        echo "${repoPath} at ${RUNBOOK_REF} $(git -C "${root}" rev-parse --short "${RUNBOOK_REF}")"
         return 0
     fi
+    for base in "${repoPath%/*}" "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
+        # The repository path again, from the worktree: only reached
+        # when the ref could not be read.
+        if [ "${base}" = "${repoPath%/*}" ] && [ -n "${RUNBOOK_REF}" ]; then
+            continue
+        fi
+        src="${root}/${base}/${RUN_RUNBOOK}"
+        if [ -d "${src}" ] && [ -n "$(ls -A "${src}")" ]; then
+            cp -R "${src}/." "${out}/"
+            find "${out}" -name 'receipt-*' -type f -exec rm -f {} +
+            if [ "${base}" = "${repoPath%/*}" ]; then
+                echo "${repoPath} (working tree)"
+            else
+                echo "run ${RUN_RUNBOOK} on ${RUNS_BRANCH} (${base}/${RUN_RUNBOOK})"
+            fi
+            return 0
+        fi
+    done
+    return 0
+}
+
+# instantiateRunbook starts this run from RUN_RUNBOOK by copying it into
+# RUN_DIR. That is all it does: the plan that follows makes the copy
+# this run's — its resource prefix, project and region, and whatever the
+# owner asked to change — and verifies it against this run's
+# environment. Nothing here rewrites a file; a text substitution is not
+# something to trust with what a teardown will delete.
+#
+# Every step is written to survive set -e: a false test that ends a
+# loop or a function is enough to kill the plan.
+function instantiateRunbook {
     local root="/workspaces/${REPO_NAME}"
-    local dst="${root}/${RUN_DIR}"
-    local src="" base
-    for base in "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
-        if [ -d "${root}/${base}/${RUN_FROM}" ]; then
-            src="${root}/${base}/${RUN_FROM}"
-            break
-        fi
-    done
-    if [ -z "${src}" ]; then
-        echo "WARN: --from run '${RUN_FROM}' not found on the branch; planning from the intent instead."
-        return 0
-    fi
+    local dst="${root}/${RUN_DIR}" stage
     if [ -e "${dst}/runbook.md" ]; then
-        echo "Run already has a runbook.md; ignoring --from ${RUN_FROM}."
-        return 0
+        echo "ERROR: run ${RUN_NAME} already has a runbook.md; --runbook starts a new run." >&2
+        echo "       Re-plan it to change it, or pick a new name." >&2
+        exit 1
     fi
-    echo "Seeding ${RUN_NAME} from ${src#"${root}/"}..."
+    stage="$(mktemp -d)"
+    RUNBOOK_ORIGIN="$(resolveRunbook "${stage}")"
+    if [ -z "${RUNBOOK_ORIGIN}" ]; then
+        echo "ERROR: no runbook named '${RUN_RUNBOOK}': looked in .agents/runbooks/ and among your runs on ${RUNS_BRANCH}." >&2
+        exit 1
+    fi
+    echo "Starting ${RUN_NAME} from ${RUNBOOK_ORIGIN}..."
     mkdir -p "${dst}"
-    local f
-    for f in runbook.md params.env deploy.sh teardown.sh; do
-        if [ -f "${src}/${f}" ]; then
-            cp "${src}/${f}" "${dst}/${f}"
-        fi
-    done
+    cp -R "${stage}/." "${dst}/"
+    rm -rf "${stage}"
 }
 
 function commitAndPushRun {
@@ -237,7 +282,15 @@ plan)
     # Authors (or revises) runbook.md, then generates the scripts from
     # it, then writes a PLANNED receipt. Nothing executes: the owner
     # reviews the prose before anything spends money.
-    seedFromRun
+    #
+    # From a runbook, the copy is what the engine plans from: it makes
+    # the runbook this run's, and verifies it here, like any plan.
+    if [ -n "${RUN_RUNBOOK:-}" ]; then
+        instantiateRunbook
+        runEngine
+        commitAndPushRun "plan from runbook ${RUNBOOK_ORIGIN} (nothing executed)"
+        exit 0
+    fi
     runEngine
     commitAndPushRun "plan (runbook.md, scripts, PLANNED receipt — nothing executed)"
     ;;

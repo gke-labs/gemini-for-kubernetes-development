@@ -14,6 +14,27 @@ How to read it depends on whether this run already has a plan:
     nodes, bucket in us-east1" — and says nothing about the cluster,
     the IAM grants or the build, because those are already decided.
     Change what it asks for and leave everything else standing.
+{{end}}{{if .Runbook}}
+This run was started from the runbook "{{.Runbook}}", and the directory
+holds a copy of it. That copy is your starting point: make it this
+run's plan, in the files described below. It may already be a full set
+of them (a runbook taken from another run), or only prose, or scripts
+without prose — keep what it decided and write what it lacks. Remove
+any copied file that has no place in this run.
+
+Make it this run's, and do not redesign it:
+  - RESOURCE_PREFIX is this run's (below), whatever the copy says.
+  - The project and region are the ones this environment is configured
+    with, not the copy's.
+  - Wherever a script or params.env names another run's prefix or
+    project literally, replace it with the params.env variable: that
+    literal points at someone else's resources, and teardown.sh would
+    delete them.
+  - Change nothing else{{if .Intent}} beyond what the owner asked for above{{end}}.
+    The procedure was reviewed where it came from; a copy that
+    silently improves on it is one nobody reviewed.
+Then verify it here, exactly as for any plan: a procedure that worked
+in another project has not been shown to work in this one.
 {{end}}
 Write the files in this order. The order is the point: the procedure
 is the thinking and the scripts are a transcription of it. Writing
