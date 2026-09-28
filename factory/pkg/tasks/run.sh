@@ -28,6 +28,24 @@ set -o pipefail
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
+# The caller passes the PAT as GITHUB_TOKEN; lib.sh's setupGit reads it
+# as GITHUB_USER_TOKEN. Every other task script bridges the two names
+# here, and this one did not — so setupGit wrote an empty oauth_token
+# into gh's hosts.yml and `https://<user>:@github.com/` as the git
+# credential, and every run since was unauthenticated.
+#
+# It failed a long way from the cause: gh treats a hosts.yml entry with
+# no token as a config it must migrate and cannot, so it exits 1 for
+# every subcommand — `gh --version` included — and the run died in
+# checkoutDefaultBranch's `gh repo view` with a message about dbus.
+# Refuse up front instead, where the name of the missing thing is still
+# in scope.
+export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
+if [ -z "${GITHUB_USER_TOKEN}" ]; then
+    echo "No GitHub token: set GITHUB_TOKEN (or GITHUB_USER_TOKEN)." >&2
+    exit 1
+fi
+
 RUNS_BRANCH="research/runs"
 RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
 

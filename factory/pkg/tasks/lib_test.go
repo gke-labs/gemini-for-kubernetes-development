@@ -7,10 +7,15 @@ import (
 	"testing"
 )
 
+// Every script rendered as lib.sh + task body. run.sh was written
+// without being added here, which is how it shipped for two days
+// missing the token bridge below — the contract this file exists to
+// enforce was never applied to it. A new task script belongs in this
+// list on the commit that adds it.
 var taskScripts = []string{
 	"address_feedback.sh", "adopt.sh", "fix_issue.sh",
 	"investigate_failures.sh", "iterate.sh", "plan_issue.sh", "review.sh",
-	"run_agent.sh", "triage_issue.sh",
+	"run.sh", "run_agent.sh", "triage_issue.sh",
 }
 
 // Functions that live only in lib.sh — every rendered script must define
@@ -75,6 +80,15 @@ func TestRenderedScripts(t *testing.T) {
 		}
 		if !strings.HasPrefix(script, "#!/bin/bash") {
 			t.Errorf("%s: rendered script must start with the lib shebang", name)
+		}
+		// The two names for one secret: callers pass GITHUB_TOKEN,
+		// setupGit reads GITHUB_USER_TOKEN, and lib.sh bridges
+		// neither. A script that skips the bridge still runs — it
+		// writes an empty oauth_token into gh's hosts.yml and a
+		// passwordless credential into git, and then dies somewhere
+		// unrelated, in gh's words, about dbus.
+		if strings.Contains(script, "\nsetupGit\n") && !strings.Contains(script, "GITHUB_USER_TOKEN:-${GITHUB_TOKEN}") {
+			t.Errorf("%s: calls setupGit without bridging GITHUB_TOKEN to GITHUB_USER_TOKEN", name)
 		}
 		if bashErr == nil {
 			cmd := exec.Command(bash, "-n", "/dev/stdin")
