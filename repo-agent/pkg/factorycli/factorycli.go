@@ -106,7 +106,10 @@ type RunOptions struct {
 	Name string
 	// Intent is the owner's free text — the brief on a first plan, the
 	// amendment on a re-plan.
-	Intent      string
+	Intent string
+	// Runbook is what a new run is copied from before it is planned:
+	// .agents/runbooks/<name> in the repository, or another run.
+	Runbook     string
 	RepoURL     string
 	GithubToken string
 	Timeout     time.Duration
@@ -131,6 +134,11 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		// Deploy executes a plan the owner already reviewed; taking
 		// fresh instructions there would change what was approved.
 		args = append(args, "--intent", opts.Intent)
+	}
+	if opts.Runbook != "" && opts.Mode == "plan" {
+		// Only a plan starts from a runbook; factory refuses it anywhere
+		// else, and a refusal there would strand the click.
+		args = append(args, "--runbook", opts.Runbook)
 	}
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)

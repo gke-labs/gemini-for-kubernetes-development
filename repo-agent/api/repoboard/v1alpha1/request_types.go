@@ -120,6 +120,13 @@ type RunRequest struct {
 	// question typed for one deployment ended up steering the next.
 	// +kubebuilder:validation:Optional
 	Intent string `json:"intent,omitempty"`
+
+	// Runbook is what a new run is started from: a runbook under the
+	// repository's .agents/runbooks/, or another of the member's runs.
+	// It is copied into the run and planned for it. Plan only.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	Runbook string `json:"runbook,omitempty"`
 }
 
 // ResearchRequest is one deep-research conversation: its identity, and

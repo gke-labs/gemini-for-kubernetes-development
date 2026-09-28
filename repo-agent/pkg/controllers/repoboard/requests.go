@@ -17,6 +17,7 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -160,9 +161,16 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 // done this" receipt lives in the controller's memory rather than on an
 // object, so it is the one verb that has to write down that it is about
 // to spend money — see markLaunching.
+//
+// The runbook is shape-checked for the reason the research session id
+// is: it becomes an argument to the factory CLI, and a Request is
+// writable by anything with access to the namespace.
 func runClaimFrom(req *boardv1alpha1.Request) (runbookClaim, bool) {
 	run := req.Spec.Run
 	if run == nil || run.Name == "" {
+		return runbookClaim{}, false
+	}
+	if run.Runbook != "" && !runbookNameRE.MatchString(run.Runbook) {
 		return runbookClaim{}, false
 	}
 	// scenario is the shape, instance is the run. They were one string
@@ -179,9 +187,14 @@ func runClaimFrom(req *boardv1alpha1.Request) (runbookClaim, bool) {
 		member:    req.Spec.Member,
 		claimedAt: req.CreationTimestamp.Time,
 		intent:    run.Intent,
+		runbook:   run.Runbook,
 		request:   req,
 	}, true
 }
+
+// runbookNameRE is the shape factory slugs a runbook name to, and the
+// Request CRD's pattern for it.
+var runbookNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // researchClaimFrom reads a research Request as the claim the launch
 // pass takes. The session id is still shape-checked: it becomes an
