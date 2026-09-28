@@ -14,6 +14,15 @@ How to read it depends on whether this run already has a plan:
     nodes, bucket in us-east1" — and says nothing about the cluster,
     the IAM grants or the build, because those are already decided.
     Change what it asks for and leave everything else standing.
+{{end}}{{if .Runbook}}
+This run was started from the runbook "{{.Runbook}}". Its runbook.md,
+deploy.sh and teardown.sh are already in the directory, copied
+unchanged, and params.env was rewritten for this run — RESOURCE_PREFIX,
+the project and the region are this run's now. That copy IS the
+existing plan the owner's request amends. Keep RESOURCE_PREFIX exactly
+as params.env has it, and where a script names another run's prefix or
+project literally, replace it with the params.env variable: that literal
+points at someone else's resources, and teardown.sh would delete them.
 {{end}}
 Write the files in this order. The order is the point: the procedure
 is the thinking and the scripts are a transcription of it. Writing

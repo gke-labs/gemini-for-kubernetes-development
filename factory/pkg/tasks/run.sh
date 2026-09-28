@@ -25,6 +25,8 @@ set -o pipefail
 # - RUN_NAME (the run's identity, e.g. deploy-gke-k8s1)
 # - RUN_MODE (plan | deploy | teardown)
 # - RUN_RESOURCE_PREFIX (what this run may name and own in the cloud)
+# - RUN_RUNBOOK (plan only, optional: the runbook this run starts from)
+# - RUN_INTENT (plan only, optional: set when the owner asked for changes)
 # - MODELS
 # - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
 
@@ -62,6 +64,7 @@ function ensureRunsBranch {
     git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE="origin"
     DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
     if [ -n "${DEFAULT_BRANCH}" ] && git fetch "${SRC_REMOTE}" "${DEFAULT_BRANCH}"; then
+        RUNBOOK_REF="${SRC_REMOTE}/${DEFAULT_BRANCH}"
         git merge --no-edit -X ours "${SRC_REMOTE}/${DEFAULT_BRANCH}" || {
             git merge --abort 2>/dev/null || true
             echo "WARN: could not refresh the code base; running from the branch as-is."
@@ -121,50 +124,223 @@ function adoptLegacyInstance {
     done
 }
 
-# seedFromRun copies an existing run's procedure as the starting point.
-# It carries a runbook.md already corrected by a real deployment, which
-# is the whole reason deriving beats starting from the intent again.
-# The receipts are deliberately left behind: they belong to that run's
-# executions, not this one's.
+# RUNBOOK_REF is the commit a repository runbook is read at: the
+# default branch as ensureRunsBranch just fetched it. Read from the
+# commit, not the worktree — research/runs merges the default branch
+# with -X ours, so a runbook edited on both sides would come out as the
+# fork's copy, not the repository's. Empty when that fetch failed, and
+# then the worktree is the best there is.
+RUNBOOK_REF=""
+
+# RUNBOOK_FILES are what a runbook is: the procedure and what it
+# transcribes to. Receipts are deliberately not among them — they are
+# the test results of the run they came from, not of this one.
+RUNBOOK_FILES="runbook.md params.env deploy.sh teardown.sh"
+
+# resolveRunbook finds RUN_RUNBOOK and copies its files into $1. It
+# looks in the repository's .agents/runbooks/ first, where a runbook is
+# reviewed like code, then among the member's own runs — any run is a
+# runbook, since its directory holds the same files — including runs
+# still under a legacy path. runbook.md is what makes a directory a
+# runbook: without the procedure there is nothing to review.
 #
-# The source is looked for where runs live now and then where they used
-# to: a run nobody has touched since a move is still under its legacy
-# path, because adoption only happens to the run being worked on. This
-# function once read only docs-exploration/runs/, so `--from` any
-# current run quietly planned from the intent instead.
-#
-# Every step is written to survive set -e. A new run's directory does
-# not exist yet, and a source without a teardown.sh ends the copy loop
-# on a false test — either one used to be enough to kill the plan.
-function seedFromRun {
-    if [ -z "${RUN_FROM}" ]; then
+# Prints where it came from, for the receipt; prints nothing and copies
+# nothing when there is no such runbook.
+function resolveRunbook {
+    local out="$1" root="/workspaces/${REPO_NAME}"
+    local repoPath=".agents/runbooks/${RUN_RUNBOOK}" f base
+    if [ -n "${RUNBOOK_REF}" ] && git -C "${root}" cat-file -e "${RUNBOOK_REF}:${repoPath}/runbook.md" 2>/dev/null; then
+        for f in ${RUNBOOK_FILES}; do
+            if git -C "${root}" cat-file -e "${RUNBOOK_REF}:${repoPath}/${f}" 2>/dev/null; then
+                git -C "${root}" show "${RUNBOOK_REF}:${repoPath}/${f}" > "${out}/${f}"
+            fi
+        done
+        echo "${repoPath} at ${RUNBOOK_REF} $(git -C "${root}" rev-parse --short "${RUNBOOK_REF}")"
         return 0
     fi
+    for base in "${repoPath%/*}" "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
+        # The repository path again, from the worktree: only reached
+        # when the ref could not be read.
+        if [ "${base}" = "${repoPath%/*}" ] && [ -n "${RUNBOOK_REF}" ]; then
+            continue
+        fi
+        if [ -f "${root}/${base}/${RUN_RUNBOOK}/runbook.md" ]; then
+            for f in ${RUNBOOK_FILES}; do
+                if [ -f "${root}/${base}/${RUN_RUNBOOK}/${f}" ]; then
+                    cp "${root}/${base}/${RUN_RUNBOOK}/${f}" "${out}/${f}"
+                fi
+            done
+            if [ "${base}" = "${repoPath%/*}" ]; then
+                echo "${repoPath} (working tree)"
+            else
+                echo "run ${RUN_RUNBOOK} on ${RUNS_BRANCH} (${base}/${RUN_RUNBOOK})"
+            fi
+            return 0
+        fi
+    done
+    return 0
+}
+
+# paramValue prints the value of KEY in a params.env line's right-hand
+# side: a quoted string up to its closing quote, or a bare word up to
+# the first blank. Enough for the literal-values-only files the plan
+# prompt writes; anything cleverer is shell, and shell is not rewritten.
+function paramValue {
+    local v="$1"
+    case "${v}" in
+    \"*) v="${v#\"}"; echo "${v%%\"*}" ;;
+    \'*) v="${v#\'}"; echo "${v%%\'*}" ;;
+    *) echo "${v%%[[:space:]]*}" ;;
+    esac
+}
+
+# rewriteParams makes a copied params.env this run's own. A params.env
+# holds literal values, and some of them belong to wherever it came
+# from: RESOURCE_PREFIX names the source run's cloud resources, so a
+# copy that kept it would deploy onto that run's resources — and its
+# teardown would delete them. The project and region are whoever wrote
+# the runbook's.
+#
+# So RESOURCE_PREFIX becomes RUN_RESOURCE_PREFIX, the project and region
+# keys become the member's settings, and the old prefix is replaced
+# wherever else it appears (CLUSTER="<prefix>-gke" and friends). A key
+# left empty is appended, one per line, to $2. The old prefix and
+# project are left in OLD_PREFIX / OLD_PROJECT for the script check —
+# which is why this is called directly and never as $(rewriteParams),
+# where they would die with the subshell.
+function rewriteParams {
+    local file="$1" missing="$2" tmp="$1.new" line key raw val re
+    re='^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
+    OLD_PREFIX="" OLD_PROJECT=""
+    while IFS= read -r line || [ -n "${line}" ]; do
+        if [[ "${line}" =~ ${re} ]]; then
+            case "${BASH_REMATCH[2]}" in
+            RESOURCE_PREFIX) OLD_PREFIX="$(paramValue "${BASH_REMATCH[3]}")" ;;
+            PROJECT | PROJECT_ID | GCP_PROJECT | GOOGLE_CLOUD_PROJECT | CLOUDSDK_CORE_PROJECT)
+                OLD_PROJECT="$(paramValue "${BASH_REMATCH[3]}")" ;;
+            esac
+        fi
+    done < "${file}"
+    : > "${tmp}"
+    while IFS= read -r line || [ -n "${line}" ]; do
+        if [[ ! "${line}" =~ ${re} ]]; then
+            printf '%s\n' "${line}" >> "${tmp}"
+            continue
+        fi
+        key="${BASH_REMATCH[2]}"
+        raw="${BASH_REMATCH[3]}"
+        val="$(paramValue "${raw}")"
+        case "${key}" in
+        RESOURCE_PREFIX) val="${RUN_RESOURCE_PREFIX}" ;;
+        PROJECT | PROJECT_ID | GCP_PROJECT | GOOGLE_CLOUD_PROJECT | CLOUDSDK_CORE_PROJECT)
+            val="${GOOGLE_CLOUD_PROJECT:-}" ;;
+        REGION | GCP_REGION | CLOUDSDK_COMPUTE_REGION) val="${CLOUDSDK_COMPUTE_REGION:-}" ;;
+        *)
+            if [ -n "${OLD_PREFIX}" ]; then
+                # The replacement is unquoted on purpose: quotes there
+                # are literal to bash 3.2 and read differently since
+                # 5.2's patsub_replacement. A prefix is [a-z0-9-] only,
+                # so there is nothing in it to protect.
+                val="${val//"${OLD_PREFIX}"/${RUN_RESOURCE_PREFIX}}"
+            fi
+            ;;
+        esac
+        if [ -z "${val}" ]; then
+            echo "${key}" >> "${missing}"
+        fi
+        if [ "${val}" = "$(paramValue "${raw}")" ]; then
+            printf '%s\n' "${line}" >> "${tmp}"
+        else
+            printf '%s%s="%s"  # rewritten for this run\n' "${BASH_REMATCH[1]}" "${key}" "${val}" >> "${tmp}"
+        fi
+    done < "${file}"
+    mv "${tmp}" "${file}"
+}
+
+# instantiateRunbook starts this run from RUN_RUNBOOK: the runbook's
+# files copied into RUN_DIR, params.env rewritten for this run, and —
+# when nobody asked for changes — a receipt, so the run lands PLANNED
+# (or BLOCKED, saying what is missing) without an engine being asked
+# anything. The procedure was reviewed where it came from; what is left
+# is the owner reading this run's parameters and clicking Deploy.
+#
+# The scripts are copied, never rewritten. One that names the source's
+# prefix or project literally cannot be made this run's by a text
+# substitution anyone should trust with a teardown, so it BLOCKs the
+# run instead, and Refine hands it to the engine.
+#
+# Every step is written to survive set -e: a false test that ends a
+# loop or a function is enough to kill the plan.
+function instantiateRunbook {
     local root="/workspaces/${REPO_NAME}"
-    local dst="${root}/${RUN_DIR}"
-    local src="" base
-    for base in "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
-        if [ -d "${root}/${base}/${RUN_FROM}" ]; then
-            src="${root}/${base}/${RUN_FROM}"
-            break
-        fi
-    done
-    if [ -z "${src}" ]; then
-        echo "WARN: --from run '${RUN_FROM}' not found on the branch; planning from the intent instead."
-        return 0
-    fi
+    local dst="${root}/${RUN_DIR}" stage origin needs="" f verdict
     if [ -e "${dst}/runbook.md" ]; then
-        echo "Run already has a runbook.md; ignoring --from ${RUN_FROM}."
-        return 0
+        echo "ERROR: run ${RUN_NAME} already has a runbook.md; --runbook starts a new run." >&2
+        echo "       Re-plan it to change it, or pick a new name." >&2
+        exit 1
     fi
-    echo "Seeding ${RUN_NAME} from ${src#"${root}/"}..."
+    stage="$(mktemp -d)"
+    origin="$(resolveRunbook "${stage}")"
+    if [ -z "${origin}" ]; then
+        echo "ERROR: no runbook named '${RUN_RUNBOOK}': looked in .agents/runbooks/ and among your runs on ${RUNS_BRANCH}." >&2
+        exit 1
+    fi
+    echo "Instantiating ${RUN_NAME} from ${origin}..."
     mkdir -p "${dst}"
-    local f
-    for f in runbook.md params.env deploy.sh teardown.sh; do
-        if [ -f "${src}/${f}" ]; then
-            cp "${src}/${f}" "${dst}/${f}"
+    cp "${stage}"/* "${dst}/"
+
+    if [ -f "${dst}/params.env" ]; then
+        : > "${stage}/missing"
+        rewriteParams "${dst}/params.env" "${stage}/missing"
+        for f in $(cat "${stage}/missing"); do
+            needs="${needs}- ${f} is empty in params.env. Set it in Settings if it is the GCP project or region; otherwise Refine with the value."$'\n'
+        done
+        for f in deploy.sh teardown.sh; do
+            if [ -n "${OLD_PREFIX}" ] && [ "${OLD_PREFIX}" != "${RUN_RESOURCE_PREFIX}" ] && [ -f "${dst}/${f}" ] && grep -qF -- "${OLD_PREFIX}" "${dst}/${f}"; then
+                needs="${needs}- ${f} names the source's resource prefix \`${OLD_PREFIX}\` literally instead of \${RESOURCE_PREFIX}. Refine to have it parameterised."$'\n'
+            fi
+            if [ -n "${OLD_PROJECT}" ] && [ "${OLD_PROJECT}" != "${GOOGLE_CLOUD_PROJECT:-}" ] && [ -f "${dst}/${f}" ] && grep -qF -- "${OLD_PROJECT}" "${dst}/${f}"; then
+                needs="${needs}- ${f} names the source's project \`${OLD_PROJECT}\` literally. Refine to have it parameterised."$'\n'
+            fi
+        done
+    else
+        needs="${needs}- The runbook has no params.env, so nothing says what makes this run this run. Refine to have the parameters resolved."$'\n'
+    fi
+    rm -rf "${stage}"
+    for f in deploy.sh teardown.sh; do
+        if [ ! -f "${dst}/${f}" ]; then
+            needs="${needs}- The runbook has no ${f}. Refine to have it written from runbook.md."$'\n'
         fi
     done
+
+    # Asked for changes: the engine plans them as an amendment to the
+    # procedure just copied, and writes the receipt itself.
+    if [ -n "${RUN_INTENT:-}" ]; then
+        return 0
+    fi
+    verdict="PLANNED"
+    if [ -n "${needs}" ]; then
+        verdict="BLOCKED"
+    fi
+    {
+        echo "${verdict} — instantiated from runbook ${RUN_RUNBOOK}"
+        echo
+        echo "Source: ${origin}"
+        echo
+        echo "Nothing was executed and no agent ran. runbook.md, deploy.sh and"
+        echo "teardown.sh are the source's, unchanged. params.env was rewritten"
+        echo "for this run: RESOURCE_PREFIX=${RUN_RESOURCE_PREFIX}, and the project"
+        echo "and region from Settings."
+        if [ -n "${needs}" ]; then
+            echo
+            echo "## Needs from owner"
+            echo
+            printf '%s' "${needs}"
+        else
+            echo
+            echo "Read params.env — it is what makes this run this run — then Deploy."
+        fi
+    } > "${dst}/receipt-$(date -u +%Y%m%d-%H%M).md"
 }
 
 function commitAndPushRun {
@@ -237,7 +413,17 @@ plan)
     # Authors (or revises) runbook.md, then generates the scripts from
     # it, then writes a PLANNED receipt. Nothing executes: the owner
     # reviews the prose before anything spends money.
-    seedFromRun
+    #
+    # From a runbook with nothing to change, there is nothing to plan:
+    # the procedure was reviewed where it came from, and the copy
+    # already wrote this run's receipt.
+    if [ -n "${RUN_RUNBOOK:-}" ]; then
+        instantiateRunbook
+        if [ -z "${RUN_INTENT:-}" ]; then
+            commitAndPushRun "plan (instantiated from runbook ${RUN_RUNBOOK} — nothing executed, no agent ran)"
+            exit 0
+        fi
+    fi
     runEngine
     commitAndPushRun "plan (runbook.md, scripts, PLANNED receipt — nothing executed)"
     ;;

@@ -27,9 +27,10 @@ type RunParams struct {
 	// Intent is the owner's free text: what to build on the first
 	// plan, what to change on a re-plan, what to watch on a teardown.
 	Intent string
-	// From names an existing run whose procedure seeds this one.
-	// Empty means plan from the intent alone.
-	From string
+	// Runbook names the runbook this run was started from. The script
+	// has already copied it in by the time the engine reads this — the
+	// engine only runs at all when the owner also asked for changes.
+	Runbook string
 }
 
 // RenderRunPrompt renders the prompt for one run mode.

@@ -42,7 +42,7 @@ func slugifyScenario(s string) string {
 
 // NewRunCommand plans, deploys or tears down one run.
 //
-//	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--from …]
+//	factory run plan     --url <repo> --name deploy-gke-k8s1 [--intent …] [--runbook …]
 //	factory run deploy   --url <repo> --name deploy-gke-k8s1
 //	factory run teardown --url <repo> --name deploy-gke-k8s1
 //
@@ -60,6 +60,16 @@ func slugifyScenario(s string) string {
 // procedure in place instead of filing recommendations against a
 // document other runs also read.
 //
+// --runbook starts a new run from an existing procedure instead of an
+// intent: the repository's .agents/runbooks/<name>/ if it has one,
+// else one of the member's own runs (any run is a runbook — its
+// directory holds the same files). The files are copied, params.env is
+// rewritten for this run, and with no --intent the run lands PLANNED
+// without an engine being asked anything: the procedure was reviewed
+// where it came from. With --intent the engine plans the changes as an
+// amendment to the copy. It replaces --from, which seeded from a run
+// and then re-planned regardless.
+//
 // This supersedes `factory runbook`, where a runbook was a separate
 // shared document and an instance only held the artifacts. That split
 // is what sibling-hiding, the read-only guard and the stash-restore
@@ -70,7 +80,7 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 		Short: "Plan, deploy or tear down a run",
 	}
 
-	var repoURL, name, intent, from string
+	var repoURL, name, intent, runbook, from string
 
 	exec := func(mode string) func(*cobra.Command, []string) error {
 		return func(c *cobra.Command, _ []string) error {
@@ -84,9 +94,15 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 			if name == "" {
 				return fmt.Errorf("--name is required (the run's identity, e.g. deploy-gke-k8s1)")
 			}
-			from = slugifyScenario(from)
-			if from != "" && mode != "plan" {
-				return fmt.Errorf("--from applies to plan only")
+			if runbook == "" {
+				runbook = from // deprecated spelling
+			}
+			runbook = slugifyScenario(runbook)
+			if runbook != "" && mode != "plan" {
+				return fmt.Errorf("--runbook applies to plan only")
+			}
+			if runbook == name {
+				return fmt.Errorf("--runbook %s names this run itself; a run is started from a different one", runbook)
 			}
 			// Runs build images; the 6Gi ephemeral default is sized for
 			// code tasks. 10Gi is the GKE Autopilot per-pod ceiling —
@@ -105,7 +121,7 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runRun(ctx, mode, repoURL, name, intent, from)
+			return runRun(ctx, mode, repoURL, name, intent, runbook)
 		}
 	}
 
@@ -131,13 +147,15 @@ func NewRunCommand(ctx context.Context) *cobra.Command {
 		cmd.AddCommand(sub)
 	}
 	planCmd.Flags().StringVar(&intent, "intent", "", "What this run should do, or what to change on a re-plan")
-	planCmd.Flags().StringVar(&from, "from", "", "Seed the procedure from an existing run's runbook.md")
+	planCmd.Flags().StringVar(&runbook, "runbook", "", "Start from an existing runbook: .agents/runbooks/<name> in the repo, else one of your runs")
+	planCmd.Flags().StringVar(&from, "from", "", "Deprecated: use --runbook")
+	_ = planCmd.Flags().MarkDeprecated("from", "use --runbook")
 	teardownCmd.Flags().StringVar(&intent, "intent", "", "Anything the owner wants watched during teardown")
 
 	return cmd
 }
 
-func runRun(ctx context.Context, mode, repoURL, name, intent, from string) error {
+func runRun(ctx context.Context, mode, repoURL, name, intent, runbook string) error {
 	u, err := url.Parse(repoURL)
 	if err != nil {
 		return fmt.Errorf("invalid repo URL: %w", err)
@@ -177,7 +195,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, from string) error
 		Name:     name,
 		Mode:     mode,
 		Intent:   intent,
-		From:     from,
+		Runbook:  runbook,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering run %s prompt: %w", mode, err)
@@ -218,8 +236,13 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, from string) error
 		"GITHUB_USER_NAME":           githubLogin,
 		"RUN_NAME":                   name,
 		"RUN_MODE":                   mode,
-		"RUN_FROM":                   from,
+		"RUN_RUNBOOK":                runbook,
 		"RUN_RESOURCE_PREFIX":        resourcePrefix(repo, name),
+	}
+	// The script only needs to know whether changes were asked for: none
+	// means a --runbook run is finished once the copy is.
+	if mode == "plan" {
+		envMap["RUN_INTENT"] = intent
 	}
 	// BYO GCP project: Workload Identity supplies credentials via the
 	// pod's KSA; the secret only carries where to deploy.
