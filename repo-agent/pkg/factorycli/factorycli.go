@@ -48,6 +48,13 @@ const (
 	TaskStateFailed    = "Failed"
 )
 
+// RunTaskPrefix is the task directory prefix `factory run` writes:
+// /workspaces/tasks/run-<ts>/. Everything that looks for a run's
+// in-flight work — the launch preflight, the Runs list's liveness probe
+// — reads it from here, so a rename cannot leave one of them looking
+// under a name nothing writes any more.
+const RunTaskPrefix = "run"
+
 // FixSandboxName returns the sandbox name `factory fix` uses for an issue
 // (EnsureFixSandbox in factory/pkg/sandbox: fix-<repo>-<issueNumber>).
 func FixSandboxName(repo string, issueNumber int) string {
@@ -129,12 +136,10 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		args = append(args, "--engine", opts.Engine)
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		// The task directory prefix follows the command: `factory run`
-		// writes /workspaces/tasks/run-<ts>. A stale "runbook" prefix
-		// here would make the preflight look for in-flight work under
-		// a name nothing writes any more, and every launch would think
-		// the sandbox was free.
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "run",
+		// A stale prefix here would make the preflight look for
+		// in-flight work under a name nothing writes any more, and every
+		// launch would think the sandbox was free.
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: RunTaskPrefix,
 	})
 }
 
