@@ -912,6 +912,106 @@ func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 	}
 }
 
+// --- the opening turn is the controller's to deliver -------------------
+
+// owingAnOpeningTurn marks a sandbox the way the controller does between
+// serving a claim and delivering the question that came with it.
+func owingAnOpeningTurn(sb *unstructured.Unstructured) *unstructured.Unstructured {
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{
+		Kind: research.KindTopic, Topic: "what does this repo do?",
+	}.Encode()
+	sb.SetAnnotations(annotations)
+	return sb
+}
+
+// Creating the session is what writes the mode banner into an empty
+// transcript, and the controller reads a non-zero offset as "already
+// prompted". So an attach that creates the session while the opening turn
+// is still owed does not just arrive early — it makes the controller drop
+// the question on the floor, and the member gets a conversation that
+// never asked what they typed.
+func TestAttachDoesNotCreateASessionThatIsOwedItsOpeningTurn(t *testing.T) {
+	sb := owingAnOpeningTurn(researchSandboxCR("alice", researchSession, researchRepo, false))
+	acp := &fakeACPD{sessionExists: false}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var frame researchFrame
+	if err := conn.ReadJSON(&frame); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if acp.sawCall("POST /sessions") {
+		t.Fatalf("the attach created the session the kickoff was waiting to create; calls: %v", acp.calls)
+	}
+	if frame.Type != researchFrameClosed {
+		t.Fatalf("first frame = %+v, want closed so the socket falls back to probing", frame)
+	}
+	// Quietly: the pane says "Sending the opening question…" off the
+	// probe, and an error here would put a banner over a session that is
+	// working exactly as intended.
+	if frame.Error != "" {
+		t.Errorf("closed frame carried an error %q, want none — this is not a failure", frame.Error)
+	}
+}
+
+// Same rule on the prompt route. 409 rather than 502: the UI already
+// reads that as "not yet" and keeps what was typed.
+func TestPromptDoesNotCreateASessionThatIsOwedItsOpeningTurn(t *testing.T) {
+	sb := owingAnOpeningTurn(researchSandboxCR("alice", researchSession, researchRepo, false))
+	acp := &fakeACPD{sessionExists: false}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
+	}
+	if acp.sawCall("POST /sessions") {
+		t.Errorf("the prompt created the session the kickoff was waiting to create; calls: %v", acp.calls)
+	}
+}
+
+// Once the kickoff is delivered the annotation is gone, and the attach
+// goes back to being the thing that starts an engine — including after an
+// acpd restart drops the session, which is the same code path.
+func TestAttachStillCreatesTheSessionOnceNoOpeningTurnIsOwed(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: false}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var frame researchFrame
+	if err := conn.ReadJSON(&frame); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if frame.Type != researchFrameOpen {
+		t.Fatalf("first frame = %+v, want open", frame)
+	}
+	if !acp.sawCall("POST /sessions") {
+		t.Errorf("the stream did not start an engine; calls: %v", acp.calls)
+	}
+}
+
 // --- titles and pending rows ------------------------------------------
 
 func researchBoardCR(requests map[string]string) *unstructured.Unstructured {

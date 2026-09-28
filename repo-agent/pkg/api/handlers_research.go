@@ -573,6 +573,19 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 	if !errors.Is(err, acpd.ErrNotFound) {
 		return nil, err
 	}
+	// An opening turn is still owed, so this is not the side that gets to
+	// create the session. Creating one writes the mode banner into the
+	// transcript, and the controller reads a non-zero offset as "already
+	// prompted" — so an attach that won this race did not merely arrive
+	// early, it threw away the question the member asked. Waiting costs a
+	// reconnect; not waiting costs the session's whole reason to exist.
+	//
+	// Nothing hangs on this forever: the controller clears Opening when it
+	// delivers, and the kickoff TTL and its error annotation clear it when
+	// it never can.
+	if conn.view.Opening {
+		return nil, errResearchOpening
+	}
 
 	apiKey, err := s.engineAPIKey(ctx, conn.view.Namespace)
 	if err != nil {
@@ -590,6 +603,15 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 		Mode:        acpd.ResearchMode,
 		AutoApprove: acpd.ResearchAutoApprove,
 	}, apiKey)
+}
+
+// errResearchOpening reports that the opening turn has not been
+// delivered yet. Shaped as an acpd error so it travels the same route
+// every other refusal here does: 409, the status the UI already reads as
+// "not yet" rather than "broken".
+var errResearchOpening = &acpd.Error{
+	StatusCode: http.StatusConflict,
+	Message:    "the opening question is still being delivered",
 }
 
 // researchError maps an acpd failure onto a status for the caller.
@@ -966,7 +988,16 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 
 	session, err := s.ensureResearchSession(ctx, conn)
 	if err != nil {
-		_ = out.send(researchFrame{Type: researchFrameClosed, Error: err.Error()})
+		// A session still waiting for its opening turn closes quietly. The
+		// socket's onclose falls back to probing, which reports `opening`,
+		// and the pane says so in its own words — an error frame here
+		// would put a red banner over a session doing exactly what it
+		// should.
+		frame := researchFrame{Type: researchFrameClosed}
+		if !errors.Is(err, errResearchOpening) {
+			frame.Error = err.Error()
+		}
+		_ = out.send(frame)
 		return
 	}
 	if err := out.send(researchFrame{Type: researchFrameOpen, Session: session, Offset: offset}); err != nil {
