@@ -133,6 +133,12 @@ function adoptLegacyInstance {
 # then the worktree is the best there is.
 RUNBOOK_REF=""
 
+# RUNBOOK_FALLBACK_REF is where a runbook is read when RUNBOOK_REF does
+# not have it: the default branch, once a pull request target has taken
+# RUNBOOK_REF over. A pull request opened before a runbook merged does
+# not carry it, and the runbooks offered are the default branch's.
+RUNBOOK_FALLBACK_REF=""
+
 # RUNBOOK_ORIGIN says where instantiateRunbook found the runbook, for
 # the commit that records the plan.
 RUNBOOK_ORIGIN=""
@@ -154,22 +160,29 @@ TARGET_FILE="target.env"
 # Nor its target.env: that pins the pull request the other run deploys,
 # and a copy of it would have this run deploy that pull request too.
 #
+# The repository's copy is read at RUNBOOK_REF — with a pull request
+# target, its head, so a runbook the pull request changes is the one it
+# is deployed with — and then at RUNBOOK_FALLBACK_REF.
+#
 # Prints where it came from; prints nothing and copies nothing when
 # there is no such runbook.
 function resolveRunbook {
     local out="$1" root="/workspaces/${REPO_NAME}"
-    local repoPath=".agents/runbooks/${RUN_RUNBOOK}" f base rel src
-    if [ -n "${RUNBOOK_REF}" ] && [ -n "$(git -C "${root}" ls-tree -r --name-only "${RUNBOOK_REF}" -- "${repoPath}/" 2>/dev/null)" ]; then
+    local repoPath=".agents/runbooks/${RUN_RUNBOOK}" f base rel src ref
+    for ref in "${RUNBOOK_REF}" "${RUNBOOK_FALLBACK_REF}"; do
+        if [ -z "${ref}" ] || [ -z "$(git -C "${root}" ls-tree -r --name-only "${ref}" -- "${repoPath}/" 2>/dev/null)" ]; then
+            continue
+        fi
         while IFS= read -r f; do
             rel="${f#"${repoPath}"/}"
             case "${rel##*/}" in receipt-*) continue ;; esac
             [ "${rel}" != "${TARGET_FILE}" ] || continue
             mkdir -p "$(dirname "${out}/${rel}")"
-            git -C "${root}" show "${RUNBOOK_REF}:${f}" > "${out}/${rel}"
-        done < <(git -C "${root}" ls-tree -r --name-only "${RUNBOOK_REF}" -- "${repoPath}/")
-        echo "${repoPath} at ${RUNBOOK_REF} $(git -C "${root}" rev-parse --short "${RUNBOOK_REF}")"
+            git -C "${root}" show "${ref}:${f}" > "${out}/${rel}"
+        done < <(git -C "${root}" ls-tree -r --name-only "${ref}" -- "${repoPath}/")
+        echo "${repoPath} at ${ref} $(git -C "${root}" rev-parse --short "${ref}")"
         return 0
-    fi
+    done
     for base in "${repoPath%/*}" "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
         # The repository path again, from the worktree: only reached
         # when the ref could not be read.
@@ -277,7 +290,9 @@ function resolveTarget {
         return 0
     fi
     # A runbook the pull request adds or changes is the one it is
-    # deployed with.
+    # deployed with; one it does not carry is read from the default
+    # branch, where the runbooks on offer come from.
+    RUNBOOK_FALLBACK_REF="${RUNBOOK_REF}"
     RUNBOOK_REF="${TARGET_SHA}"
     echo "Target: pull request #${TARGET_PR} at ${TARGET_SHA}"
     git -C "${root}" restore --source="${TARGET_SHA}" --worktree --no-overlay -- . ':(exclude)docs-exploration'
