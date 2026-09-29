@@ -38,6 +38,9 @@ func TestRunEngineContract(t *testing.T) {
 	}{
 		{"gemini", "GEMINI RESPONSE", "gemini-output.json", "gemini-test"},
 		{"claude", "CLAUDE RESPONSE", "claude-output.json", "claude-test"},
+		// agy names no model in its JSON; usage is booked under the one
+		// runEngine asked for.
+		{"antigravity", "AGY RESPONSE", "antigravity-output.json", "goodmodel"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.engine, func(t *testing.T) {
@@ -59,6 +62,15 @@ echo '{"response":"GEMINI RESPONSE","stats":{"models":{"gemini-test":{"api":{"to
 echo "sandbox=${IS_SANDBOX:-} $*" >> "$(dirname "$0")/claude.args"
 case "$*" in *badmodel*) exit 1 ;; esac
 echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"output_tokens":5},"modelUsage":{"claude-test":{"inputTokens":10,"outputTokens":5,"cacheReadInputTokens":2,"costUSD":0.01}},"num_turns":3,"duration_ms":1000,"session_id":"s"}'`)
+			// agy takes the prompt as an argument and must not be fed
+			// stdin; it only uses GEMINI_API_KEY when settings.json names
+			// the gemini provider. badmodel exits 0 with a WAITING status
+			// — a soft-denied permission — which must still fall back.
+			writeStub(bin, "agy", `if [ -t 0 ] || [ -n "$(cat)" ]; then echo "stdin was fed" >&2; exit 7; fi
+grep -q '"modelProvider": "gemini"' "$HOME/.gemini/antigravity-cli/settings.json" || exit 8
+echo "update=${AGY_CLI_DISABLE_AUTO_UPDATE:-} $*" >> "$(dirname "$0")/agy.args"
+case "$*" in *badmodel*) echo '{"status":"WAITING","response":""}'; exit 0 ;; esac
+echo '{"conversation_id":"c","status":"SUCCESS","response":"AGY RESPONSE","duration_seconds":2.5,"num_turns":2,"usage":{"input_tokens":10,"output_tokens":5,"thinking_tokens":3,"cache_read_tokens":4,"total_tokens":15}}'`)
 
 			libPath := filepath.Join(home, "lib.sh")
 			if err := os.WriteFile(libPath, lib, 0644); err != nil {
@@ -134,6 +146,12 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 				"claude": {
 					"sandbox=1 -p --dangerously-skip-permissions --model goodmodel --output-format json",
 					"sandbox=1 -p --dangerously-skip-permissions --model goodmodel --output-format json --continue",
+				},
+				// --print-timeout: agy's 5m default would kill every
+				// real task.
+				"antigravity": {
+					"update=true -p prompt --dangerously-skip-permissions --output-format json --print-timeout 24h --model goodmodel",
+					"update=true -p prompt --dangerously-skip-permissions --output-format json --print-timeout 24h --model goodmodel --continue",
 				},
 			}[tc.engine]
 			var succeeded []string

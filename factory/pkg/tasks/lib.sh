@@ -137,6 +137,40 @@ function configureGemini {
 EOF
 }
 
+# configureAntigravity: agy reads GEMINI_API_KEY only when settings.json
+# names the gemini provider — the key alone "has no effect", and without it
+# agy wants an interactive sign-in the pod cannot give. Merged, not
+# overwritten, so other agy settings survive.
+function configureAntigravity {
+    mkdir -p "${USER_HOME}/.gemini/antigravity-cli"
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except Exception:
+    cfg = {}
+cfg["modelProvider"] = "gemini"
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+' "${USER_HOME}/.gemini/antigravity-cli/settings.json"
+}
+
+# antigravitySucceeded: agy can exit 0 with a non-SUCCESS status in its
+# JSON (e.g. WAITING on a permission it soft-denied), which is a failed run.
+function antigravitySucceeded {
+    python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        status = json.load(f).get("status", "SUCCESS")
+except Exception:
+    sys.exit(1)
+sys.exit(0 if status == "SUCCESS" else 1)
+' "$1"
+}
+
 function installExtensions {
     echo "Installing extensions..."
     if [ -n "$EXTENSIONS" ]; then
@@ -437,11 +471,63 @@ except Exception:
     fi
 }
 
+# record_antigravity_usage: agy's -p JSON carries one usage block and no
+# model name, so it is booked under the model runEngine asked for ($MODEL,
+# "default" when agy chose), in the shape record_gemini_usage writes.
+function record_antigravity_usage {
+    local output_file="$1"
+    local task_dir="$(dirname "${PROMPT_FILE}")"
+    if [ -f "$output_file" ]; then
+        python3 -c '
+import json, os, sys
+
+output_file, task_dir, model = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(output_file) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+u = data.get("usage")
+if not u:
+    sys.exit(0)
+
+usage_path = os.path.join(task_dir, "llm-usage.json")
+existing = {"models": {}}
+for path in (usage_path, os.path.join(task_dir, "token-usage.json")):
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+        break
+
+cur = existing.setdefault("models", {}).setdefault(model, {
+    "api": {"totalRequests": 0, "totalErrors": 0, "totalLatencyMs": 0},
+    "tokens": {"input": 0, "output": 0, "total": 0, "cached": 0, "thoughts": 0},
+})
+cur["api"]["totalRequests"] += data.get("num_turns", 1)
+cur["api"]["totalErrors"] += 0 if data.get("status", "SUCCESS") == "SUCCESS" else 1
+cur["api"]["totalLatencyMs"] += int(data.get("duration_seconds", 0) * 1000)
+cur["tokens"]["input"] += u.get("input_tokens", 0)
+cur["tokens"]["output"] += u.get("output_tokens", 0)
+cur["tokens"]["total"] += u.get("total_tokens", u.get("input_tokens", 0) + u.get("output_tokens", 0))
+cur["tokens"]["cached"] += u.get("cache_read_tokens", 0)
+cur["tokens"]["thoughts"] = cur["tokens"].get("thoughts", 0) + u.get("thinking_tokens", 0)
+
+for path in (usage_path, os.path.join(task_dir, "token-usage.json")):
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
+' "$output_file" "$task_dir" "${MODEL:-default}" || echo "record_antigravity_usage failed (non-fatal)"
+    fi
+}
+
 # record_engine_usage: the per-engine dispatch — each engine keeps its own
 # recorder, this is the only place that knows which is which.
 function record_engine_usage {
     case "${ENGINE:-gemini}" in
       claude) record_claude_usage "$1" ;;
+      antigravity) record_antigravity_usage "$1" ;;
       *) record_gemini_usage "$1" ;;
     esac
 }
@@ -450,7 +536,7 @@ function record_engine_usage {
 # one place engine invocation lives (design/multi-engine.md).
 #   $1 (optional): output basename (e.g. plan-output.txt); when set, the
 #      engine's final response is extracted next to the prompt file.
-# Env: ENGINE (gemini|claude, default gemini); GEMINI_CONTINUE_SESSION
+# Env: ENGINE (gemini|claude|antigravity, default gemini); GEMINI_CONTINUE_SESSION
 #   ("true" resumes the engine's latest session); SKIP_EMPTY_PROMPT
 #   ("true": no-op when the prompt file is empty — iterate's contract).
 function runEngine {
@@ -494,6 +580,32 @@ function runEngine {
             # unless IS_SANDBOX=1 declares the disposable-container
             # context — which this pod is (same trust model as --yolo).
             if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+                SUCCESS=true
+            fi
+            ;;
+          antigravity)
+            out_json="${task_dir}/antigravity-output.json"
+            response_field="response"
+            configureAntigravity
+            # agy -p takes the prompt as an argument, never from stdin, and
+            # Linux caps one argument at 128KiB — a bigger prompt is handed
+            # over as a pointer to the file instead.
+            local prompt
+            if [ "$(wc -c < "${PROMPT_FILE}")" -le 100000 ]; then
+                prompt="$(cat "${PROMPT_FILE}")"
+            else
+                prompt="Your full instructions are in ${PROMPT_FILE}. Read that whole file first, then follow it."
+            fi
+            # --print-timeout defaults to 5m; the task timeout is the real
+            # bound. "default" leaves the model to agy.
+            AGY_ARGS=("-p" "$prompt" "--dangerously-skip-permissions" "--output-format" "json" "--print-timeout" "${AGY_PRINT_TIMEOUT:-24h}")
+            if [ "$MODEL" != "default" ]; then
+                AGY_ARGS+=("--model" "$MODEL")
+            fi
+            if [ "$resume" = "true" ]; then
+                AGY_ARGS+=("--continue")
+            fi
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
                 SUCCESS=true
             fi
             ;;

@@ -44,6 +44,11 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
 
 RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
+# Antigravity CLI (agy) is a Go binary, not an npm package. It self-updates
+# in the background unless this is exactly "true" — the image pins it.
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && agy --version
+
 # Install code-server
 RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim

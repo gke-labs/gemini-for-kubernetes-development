@@ -44,11 +44,15 @@ func TestGetScriptWithDefaults(t *testing.T) {
 }
 
 // ModelsForEngine: claude gets the static strongest-first list (no
-// key-tier probing in v1); gemini keeps the quota-filtered behavior.
+// key-tier probing in v1), antigravity leaves the model to agy; gemini
+// keeps the quota-filtered behavior.
 func TestModelsForEngine(t *testing.T) {
 	claude := ModelsForEngine("claude", "")
 	if claude != "opus sonnet" {
 		t.Errorf("claude models = %q, want opus sonnet", claude)
+	}
+	if agy := ModelsForEngine("antigravity", ""); agy != "default" {
+		t.Errorf("antigravity models = %q, want default", agy)
 	}
 	gemini := ModelsForEngine("gemini", "no-such-key")
 	if gemini == "" || gemini == claude {

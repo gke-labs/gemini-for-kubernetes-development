@@ -213,3 +213,31 @@ gemini board on the same repo before recommending defaults.
    new engine, in-flight tasks unaffected) — proposed yes — or gated?
 3. Do we want per-verb engine overrides (`auto.review` on engine X,
    fixes on Y) enough to justify the extra spec surface later?
+
+## Third engine: Antigravity CLI (`agy`)
+
+`--engine antigravity` runs Google's Antigravity CLI through the same
+`runEngine` seam. What differs from the other two, and why:
+
+- **Auth**: agy reads `GEMINI_API_KEY` only when
+  `~/.gemini/antigravity-cli/settings.json` has `"modelProvider": "gemini"`
+  (agy ≥ 1.1.13); the key alone has no effect and agy falls back to an
+  interactive sign-in the pod cannot give. `configureAntigravity` merges
+  that key in; `applyEngineEnv` fails fast when the secret has no gemini key.
+- **Prompt**: `-p` takes the prompt as an argument, never stdin. Linux caps
+  one argument at 128KiB, so a prompt over 100KB is replaced by a pointer
+  to the prompt file.
+- **Timeout**: `--print-timeout` defaults to 5m; runEngine passes
+  `${AGY_PRINT_TIMEOUT:-24h}` so the task timeout stays the real bound.
+- **Success**: agy can exit 0 with a non-`SUCCESS` status (e.g. `WAITING`
+  on a soft-denied permission); that counts as a failed model attempt.
+- **Models**: `default` — no `--model`, agy picks. Its slugs are not the
+  gemini-cli names.
+- **Usage**: the `-p` JSON has one `usage` block and no model name; it is
+  booked under the model asked for, in the gemini `llm-usage.json` shape.
+  No tool telemetry yet.
+- **Image**: a Go binary from `antigravity.google/cli/install.sh`, installed
+  to `/usr/local/bin`; `AGY_CLI_DISABLE_AUTO_UPDATE=true` (exactly "true")
+  stops it replacing itself in running pods.
+- **Not covered**: acpd (agy documents no ACP mode) and repo-agent's engine
+  picker / CRD enum, which still offer gemini and claude only.
