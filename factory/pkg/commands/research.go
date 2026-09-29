@@ -83,6 +83,12 @@ func NewResearchCommand(ctx context.Context) *cobra.Command {
 			if strings.TrimSpace(sessionID) == "" {
 				return fmt.Errorf("--session is required")
 			}
+			// The conversation is acpd's, and acpd does not run every
+			// engine a task can: refuse here rather than build a sandbox
+			// whose session create is certain to fail.
+			if _, ok := acpd.Engines[rootFlags.Engine]; !ok {
+				return fmt.Errorf("research conversations do not support engine %q", rootFlags.Engine)
+			}
 			if rootFlags.Timeout > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
@@ -275,7 +281,7 @@ func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
 	// than at the end: what follows only reads the pod, and a sandbox
 	// that is complete should not be torn down again because we could
 	// not look up its IP.
-	if err := factorysandbox.MarkResearchReady(ctx, kubeClient, rootFlags.Namespace, sandboxName); err != nil {
+	if err := factorysandbox.MarkResearchReady(ctx, kubeClient, rootFlags.Namespace, sandboxName, rootFlags.Engine); err != nil {
 		return err
 	}
 

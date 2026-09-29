@@ -322,3 +322,46 @@ func TestSuspendSandbox(t *testing.T) {
 		t.Fatalf("SuspendSandbox on non-existent failed: %v", err)
 	}
 }
+
+// The ready receipt carries the engine the setup prepared for, and is a
+// patch: annotations someone else wrote meanwhile (the board's kickoff)
+// survive it.
+func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{DynamicClient: fakeDynamic}
+	ctx := context.Background()
+	sb := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name":        "rsch-repo-1a2b3c4d",
+			"namespace":   "ns",
+			"annotations": map[string]interface{}{"kickoff": "kept"},
+		},
+	}}
+	if _, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace("ns").Create(ctx, sb, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sandbox.MarkResearchReady(ctx, kubeClient, "ns", "rsch-repo-1a2b3c4d", "antigravity"); err != nil {
+		t.Fatalf("MarkResearchReady: %v", err)
+	}
+
+	got, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace("ns").Get(ctx, "rsch-repo-1a2b3c4d", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	annotations := got.GetAnnotations()
+	if annotations[sandbox.AnnotationResearchEngine] != "antigravity" {
+		t.Errorf("engine annotation = %q, want antigravity", annotations[sandbox.AnnotationResearchEngine])
+	}
+	if annotations[sandbox.AnnotationResearchReady] == "" {
+		t.Error("no ready receipt")
+	}
+	if annotations["kickoff"] != "kept" {
+		t.Error("the patch dropped an annotation it did not own")
+	}
+}
