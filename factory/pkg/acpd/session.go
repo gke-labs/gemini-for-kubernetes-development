@@ -38,10 +38,17 @@ type Engine struct {
 	Env []string
 }
 
-// Engines is the set acpd knows how to start. Only gemini speaks ACP
-// natively today; claude is absent rather than broken on purpose, so the
-// failure is "unknown engine" at session create rather than a hang on a
-// handshake that will never complete.
+// AntigravityACPServer is Google's agy_acp_server, which the antigravity
+// engine runs: agy itself has no ACP mode. It is a separate download with
+// its own harness, installed into the image by
+// images/factory-golang/Dockerfile, which pins the version and digest.
+const AntigravityACPServer = "/opt/agy-acp-server/agy_acp_server.par"
+
+// Engines is the set acpd knows how to start. gemini speaks ACP natively
+// and antigravity through Google's separate server; claude is absent
+// rather than broken on purpose, so the failure is "unknown engine" at
+// session create rather than a hang on a handshake that will never
+// complete.
 var Engines = map[string]Engine{
 	"gemini": {
 		Command:      "gemini",
@@ -61,9 +68,26 @@ var Engines = map[string]Engine{
 		// live too: project hooks, stdio MCP servers, project GEMINI.md.
 		Env: []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
 	},
+	"antigravity": {
+		Command: AntigravityACPServer,
+		Args: []string{
+			"--uid=",
+			// It checks for an IPv6 loopback at start and aborts without
+			// one, and pod network namespaces have no ::1.
+			"--enforce_kernel_ipv6_support=false",
+		},
+		APIKeyEnv: "GEMINI_API_KEY",
+		// It also advertises oauth-personal and oauth-business, which
+		// wait minutes for a browser sign-in and stall the whole server
+		// while they do. Naming the key method keeps chooseAuthMethod
+		// away from them.
+		AuthMethodID: "gemini-api-key",
+	},
 }
 
-// The approval modes gemini advertises. ACP fixes the shape of a mode but
+// The approval modes gemini advertises. antigravity advertises default,
+// auto_edit and yolo — the same modes, one spelled differently, which is
+// the point of the paragraph below. ACP fixes the shape of a mode but
 // not its name, so these are the engine's vocabulary rather than the
 // protocol's: they are here to be recognised, not to be relied on. acpd
 // matches whatever the caller asks for against what the engine actually

@@ -49,6 +49,20 @@ RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && agy --version
 
+# agy has no ACP mode; acpd's antigravity engine runs Google's separate
+# agy_acp_server instead (see factory/pkg/acpd/session.go, which names
+# this directory). Pinned by version and digest. One RUN, so the zip is
+# not kept in a layer; python3 because the image has no unzip, which
+# also drops the executable bits.
+ARG AGY_ACP_SERVER_VERSION=1.2.1
+ARG AGY_ACP_SERVER_SHA256=9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843
+RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 -o /tmp/agy-acp-server.zip \
+      "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-${AGY_ACP_SERVER_VERSION}-linux-x86_64.zip" && \
+    echo "${AGY_ACP_SERVER_SHA256}  /tmp/agy-acp-server.zip" | sha256sum -c - && \
+    python3 -m zipfile -e /tmp/agy-acp-server.zip /opt/agy-acp-server && \
+    rm /tmp/agy-acp-server.zip && \
+    chmod +x /opt/agy-acp-server/agy_acp_server.par /opt/agy-acp-server/localharness_external
+
 # Install code-server
 RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://code-server.dev/install.sh | sh
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim

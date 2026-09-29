@@ -1,6 +1,7 @@
 package acpd
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acp"
@@ -139,5 +140,34 @@ func TestGeminiEngineIsConfiguredForACP(t *testing.T) {
 	}
 	if !trusts {
 		t.Errorf("gemini engine env %v does not trust the workspace", engine.Env)
+	}
+}
+
+func TestAntigravityEngineIsConfiguredForACP(t *testing.T) {
+	engine, ok := Engines["antigravity"]
+	if !ok {
+		t.Fatal("antigravity engine is not registered")
+	}
+	if engine.APIKeyEnv != "GEMINI_API_KEY" {
+		t.Errorf("APIKeyEnv = %q; agy_acp_server's gemini-api-key method reads GEMINI_API_KEY", engine.APIKeyEnv)
+	}
+	// The server also advertises oauth methods that block for minutes
+	// on a browser sign-in. The engine default is what keeps
+	// chooseAuthMethod on the key.
+	advertised := []acp.AuthMethod{{ID: "oauth-personal"}, {ID: "oauth-business"}, {ID: "gemini-api-key"}, {ID: "agent-platform"}}
+	if got := chooseAuthMethod(advertised, "", engine.AuthMethodID); got != "gemini-api-key" {
+		t.Errorf("chooseAuthMethod picked %q, want gemini-api-key", got)
+	}
+	var ipv6 bool
+	for _, arg := range engine.Args {
+		if arg == "--enforce_kernel_ipv6_support=false" {
+			ipv6 = true
+		}
+	}
+	if !ipv6 {
+		t.Errorf("antigravity args %v: without --enforce_kernel_ipv6_support=false the server aborts in a pod", engine.Args)
+	}
+	if !filepath.IsAbs(engine.Command) {
+		t.Errorf("Command %q is not absolute; the server is installed under /opt, not on PATH", engine.Command)
 	}
 }

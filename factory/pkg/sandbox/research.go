@@ -55,6 +55,15 @@ const (
 	// capture already use: the annotation IS the receipt. Absent means
 	// the setup did not finish and whoever was doing it is gone.
 	AnnotationResearchReady = "sandbox.gemini.google.com/research-ready"
+	// AnnotationResearchEngine is the acpd engine the sandbox was set up
+	// for, written with the ready receipt. Whoever creates the
+	// conversation reads it from here rather than from wherever the
+	// choice was first made, so a setting changed mid-launch cannot give
+	// a sandbox a different engine than it was launched with. Absent on
+	// sandboxes older than the field — and on any launched by a factory
+	// that predates it, whose image may not carry the other engines —
+	// which were all gemini.
+	AnnotationResearchEngine = "sandbox.gemini.google.com/research-engine"
 )
 
 // researchSetupGrace is how long a sandbox may go without its ready
@@ -110,16 +119,18 @@ func researchDisposition(sb *unstructured.Unstructured, now time.Time) dispositi
 }
 
 // MarkResearchReady writes the receipt that says this sandbox's setup
-// finished. Called once, by the launch, after the checkout is in place.
+// finished, and the engine it was set up for. Called once, by the
+// launch, after the checkout is in place.
 //
 // A merge patch rather than the read-modify-Update the rest of this
 // package uses, because this is the one annotation written from a
 // different process than the controller that writes the others: a
 // whole-object Update from here would race the board's kickoff stamp
 // and could drop it.
-func MarkResearchReady(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string) error {
-	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
-		AnnotationResearchReady, time.Now().UTC().Format(time.RFC3339))
+func MarkResearchReady(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, engine string) error {
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
+		AnnotationResearchReady, time.Now().UTC().Format(time.RFC3339),
+		AnnotationResearchEngine, engine)
 	_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).
 		Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
