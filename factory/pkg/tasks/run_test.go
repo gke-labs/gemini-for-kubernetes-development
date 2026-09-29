@@ -333,17 +333,23 @@ func TestInstantiateRunbook(t *testing.T) {
 		git(t, root, "add", "-A")
 		git(t, root, "commit", "-qm", "x")
 	}
-	// instantiate runs the function as run.sh does and reports whether
-	// the script lived past it. ref is RUNBOOK_REF: "" is a failed fetch.
-	instantiate := func(t *testing.T, root, runbook, ref string) (string, bool) {
+	// instantiateAt runs the function as run.sh does and reports whether
+	// the script lived past it. ref is RUNBOOK_REF: "" is a failed fetch;
+	// fallback is RUNBOOK_FALLBACK_REF, set by a pull request target.
+	instantiateAt := func(t *testing.T, root, runbook, ref, fallback string) (string, bool) {
 		t.Helper()
 		script := "set -e\nset -o pipefail\nRUNS_BRANCH=research/runs\n" + legacy + "\n" +
 			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", root) +
-			"RUNBOOK_REF='" + ref + "'\ninstantiateRunbook\necho \"SURVIVED ${RUNBOOK_ORIGIN}\"\n"
+			"RUNBOOK_REF='" + ref + "'\nRUNBOOK_FALLBACK_REF='" + fallback + "'\n" +
+			"instantiateRunbook\necho \"SURVIVED ${RUNBOOK_ORIGIN}\"\n"
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = append(os.Environ(), "RUN_NAME=pr-42", "RUN_DIR="+runs+"/pr-42", "RUN_RUNBOOK="+runbook)
 		out, _ := cmd.CombinedOutput()
 		return string(out), strings.Contains(string(out), "SURVIVED")
+	}
+	instantiate := func(t *testing.T, root, runbook, ref string) (string, bool) {
+		t.Helper()
+		return instantiateAt(t, root, runbook, ref, "")
 	}
 	read := func(root, rel string) string {
 		b, _ := os.ReadFile(filepath.Join(root, rel))
@@ -464,6 +470,43 @@ func TestInstantiateRunbook(t *testing.T) {
 		}
 		if got := read(root, runs+"/pr-42/runbook.md"); got != "legacy\n" {
 			t.Errorf("runbook.md = %q, want the legacy run's", got)
+		}
+	})
+
+	t.Run("a pull request that does not carry the runbook gets the default branch's", func(t *testing.T) {
+		// The runbooks on offer are the default branch's, and a pull
+		// request opened before one merged does not have it at its head.
+		root := repo(t)
+		write(t, root, "README", "x")
+		commit(t, root)
+		git(t, root, "branch", "pr")
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
+		commit(t, root)
+		out, ok := instantiateAt(t, root, "gke", "pr", "main")
+		if !ok {
+			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
+		}
+		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
+			t.Errorf("runbook.md = %q, want the default branch's", got)
+		}
+		if !strings.Contains(out, "SURVIVED .agents/runbooks/gke at main") {
+			t.Errorf("the origin does not say it came from the default branch:\n%s", out)
+		}
+	})
+
+	t.Run("a pull request that changes the runbook is deployed with its own", func(t *testing.T) {
+		root := repo(t)
+		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
+		commit(t, root)
+		git(t, root, "checkout", "-q", "-b", "pr")
+		write(t, root, ".agents/runbooks/gke/runbook.md", "changed by the pull request")
+		commit(t, root)
+		git(t, root, "checkout", "-q", "main")
+		if out, ok := instantiateAt(t, root, "gke", "pr", "main"); !ok {
+			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
+		}
+		if got := read(root, runs+"/pr-42/runbook.md"); got != "changed by the pull request\n" {
+			t.Errorf("runbook.md = %q, want the pull request's", got)
 		}
 	})
 
@@ -636,7 +679,7 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 		t.Helper()
 		script := "set -e\nset -o pipefail\nSRC_REMOTE=upstream\nRUNBOOK_REF=main\nTARGET_FILE=target.env\n" +
 			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) +
-			"\nresolveTarget\n" + then + "\necho \"SURVIVED ${RUNBOOK_REF}\"\n"
+			"\nresolveTarget\n" + then + "\necho \"SURVIVED ${RUNBOOK_REF} ${RUNBOOK_FALLBACK_REF}\"\n"
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = append(gitEnv, "RUN_DIR="+runDir, "RUN_MODE="+mode, "RUN_TARGET_PR="+pr)
 		out, _ := cmd.CombinedOutput()
@@ -661,6 +704,10 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 		// A runbook the pull request changes is the one it runs with.
 		if !strings.Contains(out, "SURVIVED "+head) {
 			t.Errorf("RUNBOOK_REF is not the pinned commit:\n%s", out)
+		}
+		// And one it does not carry comes from the default branch.
+		if !strings.Contains(out, "SURVIVED "+head+" main") {
+			t.Errorf("RUNBOOK_FALLBACK_REF is not the default branch:\n%s", out)
 		}
 		// Nothing is staged: the pull request is never committed.
 		if staged := git(t, ws, "diff", "--cached", "--name-only"); staged != "" {
