@@ -381,7 +381,9 @@ describe('WorkRow Deploy', () => {
         type: 'pull', number: 42, stage: 'open', group: 'review', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-09-28T10:00:00Z',
     };
-    const accepted = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'requested' }) }));
+    // A factory, not one shared mock: CRA resets every mock's
+    // implementation before each test.
+    const accepted = () => jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'requested' }) }));
     const renderRow = async (runState, item = pr) => {
         await act(async () => {
             root.render(<table><tbody>
@@ -409,8 +411,7 @@ describe('WorkRow Deploy', () => {
     });
 
     test('the first pick plans a new run from the runbook, pinned to the pull request', async () => {
-        global.fetch = accepted;
-        accepted.mockClear();
+        global.fetch = accepted();
         await renderRow({ repoRunbooks: ['gke'], instances: [] });
 
         await act(async () => { findButton('Deploy ▾').click(); });
@@ -422,8 +423,7 @@ describe('WorkRow Deploy', () => {
     });
 
     test('picking it again re-plans that run, which moves the pin', async () => {
-        global.fetch = accepted;
-        accepted.mockClear();
+        global.fetch = accepted();
         await renderRow({ repoRunbooks: ['gke'], instances: [{ name: 'gke-pr42', target: 42 }] });
 
         await act(async () => { findButton('Deploy ▾').click(); });
