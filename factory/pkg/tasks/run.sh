@@ -311,15 +311,104 @@ function clearTarget {
     # would list every one of them as changed.
     idx="$(mktemp -d)"
     GIT_INDEX_FILE="${idx}/index" git -C "${root}" read-tree "${TARGET_SHA}"
-    changed="$(GIT_INDEX_FILE="${idx}/index" git -C "${root}" diff --name-only -- . ':(exclude)docs-exploration')"
+    changed="$(GIT_INDEX_FILE="${idx}/index" git -C "${root}" diff --name-only -- . ':(exclude)docs-exploration'
+        GIT_INDEX_FILE="${idx}/index" git -C "${root}" ls-files --others --exclude-standard -- . ':(exclude)docs-exploration')"
     rm -rf "${idx}"
     if [ -n "${changed}" ]; then
         echo "Discarding changes to pull request #${TARGET_PR}'s files:"
         echo "${changed}" | sed "s/^/  /"
+        addDiscarded "${changed}"
     fi
     git -C "${root}" restore --source=HEAD --worktree --no-overlay -- . ':(exclude)docs-exploration'
     git -C "${root}" clean -fdq -- . ':(exclude)docs-exploration'
 }
+
+# result.json is what this invocation concluded, in the task directory
+# beside exit_code, for whoever launched it to read without GitHub and
+# without the engine's own output format.
+#
+# This script writes it, never the engine, so it is the same file
+# whichever engine ran. The one thing taken from the engine is the
+# receipt's first line, which every run prompt already makes the
+# verdict; a first word that is not a known verdict is recorded as
+# "unknown", not guessed at. Written on every exit, failures included:
+# a run that dies before its receipt is the one worth reading about.
+RESULT_FILE=""
+[ -n "${PROMPT_FILE:-}" ] && RESULT_FILE="$(dirname "${PROMPT_FILE}")/result.json"
+RESULT_VERDICTS=" PLANNED VERIFIED DEPLOYED-UNVERIFIED FAILED BLOCKED TORN-DOWN PARTIAL "
+RESULT_RECEIPTS_BEFORE=""
+RESULT_COMMIT=""
+# Newline-separated paths this run changed or created outside its own
+# directory, all of them thrown away.
+RESULT_DISCARDED=""
+
+function addDiscarded {
+    [ -n "$1" ] && RESULT_DISCARDED="${RESULT_DISCARDED:+${RESULT_DISCARDED}$'\n'}$1"
+    return 0
+}
+
+# snapshotReceipts records the receipts already on the branch, so the
+# one this invocation writes is the one that is new — by name, since
+# restoring the run's directory rewrites every file's mtime.
+function snapshotReceipts {
+    RESULT_RECEIPTS_BEFORE="$(ls "/workspaces/${REPO_NAME}/${RUN_DIR}" 2>/dev/null | grep '^receipt-' || true)"
+}
+
+function jsonString {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '"%s"' "${s}"
+}
+
+function jsonOrNull {
+    if [ -n "$1" ]; then jsonString "$1"; else printf 'null'; fi
+}
+
+function writeResult {
+    local rc="$1" root="/workspaces/${REPO_NAME}" receipt="" verdict="" name line word target="null" discarded="" first=1 p
+    [ -n "${RESULT_FILE}" ] || return 0
+    for name in $(ls "${root}/${RUN_DIR}" 2>/dev/null | grep '^receipt-' | sort || true); do
+        if ! printf '%s\n' "${RESULT_RECEIPTS_BEFORE}" | grep -qxF "${name}"; then
+            receipt="${RUN_DIR}/${name}"
+        fi
+    done
+    if [ -n "${receipt}" ]; then
+        line="$(grep -m1 -v '^[[:space:]]*$' "${root}/${receipt}" 2>/dev/null || true)"
+        word="$(printf '%s' "${line}" | sed -E 's/^[^A-Za-z]*//; s/[^A-Z-].*$//')"
+        verdict="unknown"
+        if [ -n "${word}" ] && [[ "${RESULT_VERDICTS}" == *" ${word} "* ]]; then
+            verdict="${word}"
+        fi
+    fi
+    if [ -n "${TARGET_PR:-}" ]; then
+        target="{\"pr\": ${TARGET_PR}, \"sha\": $(jsonString "${TARGET_SHA}")}"
+    fi
+    while IFS= read -r p; do
+        [ -n "${p}" ] || continue
+        [ "${first}" = 1 ] || discarded="${discarded}, "
+        discarded="${discarded}$(jsonString "${p}")"
+        first=0
+    done <<< "$(printf '%s\n' "${RESULT_DISCARDED}" | sort -u)"
+    {
+        printf '{\n'
+        printf '  "version": 1,\n'
+        printf '  "run": %s,\n' "$(jsonString "${RUN_NAME}")"
+        printf '  "mode": %s,\n' "$(jsonString "${RUN_MODE}")"
+        printf '  "exitCode": %d,\n' "${rc}"
+        printf '  "verdict": %s,\n' "$(jsonOrNull "${verdict}")"
+        printf '  "receipt": %s,\n' "$(jsonOrNull "${receipt}")"
+        printf '  "branch": %s,\n' "$(jsonString "${RUNS_BRANCH}")"
+        printf '  "commit": %s,\n' "$(jsonOrNull "${RESULT_COMMIT}")"
+        printf '  "target": %s,\n' "${target}"
+        printf '  "discarded": [%s]\n' "${discarded}"
+        printf '}\n'
+    } > "${RESULT_FILE}.tmp" && mv "${RESULT_FILE}.tmp" "${RESULT_FILE}"
+}
+
 
 function commitAndPushRun {
     local what="$1"
@@ -349,7 +438,19 @@ function commitAndPushRun {
     if ! git diff --quiet; then
         echo "Discarding changes outside ${RUN_DIR}:"
         git diff --name-only | sed "s/^/  /"
+        addDiscarded "$(git diff --name-only)"
         git checkout -f -- . 2>/dev/null || true
+    fi
+    # A file the engine created outside the run is not committed
+    # either, and used to go unmentioned: a fix that depended on one (a
+    # .gcloudignore at the repository root) worked in that sandbox and
+    # nowhere else, and nothing recorded that it had ever existed.
+    local untracked
+    untracked="$(git ls-files --others --exclude-standard)"
+    if [ -n "${untracked}" ]; then
+        echo "Not committed (created outside ${RUN_DIR}):"
+        echo "${untracked}" | sed "s/^/  /"
+        addDiscarded "${untracked}"
     fi
     if git commit -m "run(${RUN_NAME}): ${what}"; then
         # A dropped connection after a successful server-side push makes
@@ -372,6 +473,7 @@ function commitAndPushRun {
             fi
         fi
         echo "Pushed ${what} to origin/${RUNS_BRANCH}"
+        RESULT_COMMIT="$(git rev-parse HEAD)"
     else
         echo "No changes to commit for ${what}."
     fi
@@ -379,6 +481,7 @@ function commitAndPushRun {
 }
 
 # Main execution
+trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
 setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
@@ -386,6 +489,7 @@ sleep 5
 checkoutDefaultBranch
 ensureRunsBranch
 resolveTarget
+snapshotReceipts
 configureGemini
 
 case "${RUN_MODE}" in
