@@ -1,22 +1,12 @@
 package commands
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 )
 
 // The marker line is the whole machine-readable contract of `factory
@@ -178,101 +168,5 @@ func TestParseGitHubRepoURL(t *testing.T) {
 func TestResearchPortMatchesACPDDefault(t *testing.T) {
 	if researchACPDPort != 49984 {
 		t.Errorf("researchACPDPort = %d, want acpd's default 49984", researchACPDPort)
-	}
-}
-
-// runAntigravityInstall runs the install script the way envd would — the
-// string under `sh -c` with the env map — against a local zip, so the
-// shell is exercised rather than only read.
-func runAntigravityInstall(t *testing.T, dest, url, digest string) error {
-	t.Helper()
-	cmd := exec.Command("sh", "-c", antigravityInstallScript)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	for k, v := range antigravityInstallEnv(dest, url, digest) {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("install output:\n%s", out)
-	}
-	return err
-}
-
-func TestAntigravityInstallScript(t *testing.T) {
-	for _, tool := range []string{"curl", "sha256sum", "python3"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not on PATH", tool)
-		}
-	}
-
-	// A zip shaped like the real one: the server and the harness it
-	// launches, at the top level.
-	dir := t.TempDir()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, name := range []string{"agy_acp_server.par", "localharness_external"} {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fmt.Fprintf(w, "#!/bin/sh\necho %s\n", name)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	zipPath := filepath.Join(dir, "server.zip")
-	if err := os.WriteFile(zipPath, buf.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(buf.Bytes())
-	digest := hex.EncodeToString(sum[:])
-	url := "file://" + zipPath
-	dest := filepath.Join(dir, "cache", "agy-acp-server", "1.2.1")
-
-	t.Run("a digest mismatch installs nothing", func(t *testing.T) {
-		wrong := strings.Repeat("0", 64)
-		if err := runAntigravityInstall(t, dest, url, wrong); err == nil {
-			t.Fatal("install succeeded with the wrong digest")
-		}
-		if _, err := os.Stat(dest); !os.IsNotExist(err) {
-			t.Fatalf("%s exists after a failed install (err=%v); acpd would run it", dest, err)
-		}
-	})
-
-	t.Run("installs executables", func(t *testing.T) {
-		if err := runAntigravityInstall(t, dest, url, digest); err != nil {
-			t.Fatalf("install: %v", err)
-		}
-		for _, name := range []string{"agy_acp_server.par", "localharness_external"} {
-			fi, err := os.Stat(filepath.Join(dest, name))
-			if err != nil {
-				t.Fatalf("%s not installed: %v", name, err)
-			}
-			if fi.Mode()&0o111 == 0 {
-				t.Errorf("%s is not executable (%v)", name, fi.Mode())
-			}
-		}
-		if _, err := os.Stat(filepath.Join(dest, "server.zip")); !os.IsNotExist(err) {
-			t.Error("the zip was left behind next to the install")
-		}
-	})
-
-	t.Run("an existing install is not fetched again", func(t *testing.T) {
-		// An unreachable URL fails any attempt to download, so success
-		// means the script never tried.
-		if err := runAntigravityInstall(t, dest, "file:///nonexistent/server.zip", digest); err != nil {
-			t.Fatalf("re-running over an existing install: %v", err)
-		}
-	})
-}
-
-func TestAntigravityInstallTargetIsWhatACPDRuns(t *testing.T) {
-	engine, ok := acpd.Engines["antigravity"]
-	if !ok {
-		t.Fatal("acpd has no antigravity engine")
-	}
-	want := acpd.AntigravityACPServerDir + "/agy_acp_server.par"
-	if engine.Command != want {
-		t.Errorf("acpd runs %q but research start installs %q", engine.Command, want)
 	}
 }

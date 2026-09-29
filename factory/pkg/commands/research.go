@@ -266,16 +266,6 @@ func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
 		return err
 	}
 
-	// Before the receipt, so that "ready" still means a session can be
-	// created: acpd starts the engine at session create, and repo-agent
-	// gives that call seconds, not the minutes a download can take.
-	if rootFlags.Engine == "antigravity" {
-		fmt.Printf("Installing agy_acp_server %s...\n", acpd.AntigravityACPServerVersion)
-		if err := installAntigravityACPServer(ctx, client); err != nil {
-			return err
-		}
-	}
-
 	// The checkout is in place, so the sandbox is now worth keeping even
 	// if the rest of this command fails. Write the receipt here rather
 	// than at the end: what follows only reads the pod, and a sandbox
@@ -364,50 +354,6 @@ fi`
 		return fmt.Errorf("preparing checkout: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
-}
-
-// installAntigravityACPServer puts Google's agy_acp_server where the
-// acpd antigravity engine runs it from, unless it is already there.
-//
-// On the PVC rather than in the image: it is a gigabyte unpacked, and
-// only a research sandbox on this engine needs it. The download and the
-// unpack go to a sibling directory that is renamed into place last, so
-// an interrupted install leaves nothing acpd would try to run, and the
-// next start simply does it again.
-func installAntigravityACPServer(ctx context.Context, client *envd.Client) error {
-	env := antigravityInstallEnv(acpd.AntigravityACPServerDir, acpd.AntigravityACPServerURL, acpd.AntigravityACPServerSHA256)
-	var stdout, stderr bytes.Buffer
-	if err := client.Exec(ctx, antigravityInstallScript, "/workspaces", env, nil, &stdout, &stderr); err != nil {
-		return fmt.Errorf("installing agy_acp_server: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
-}
-
-// antigravityInstallScript runs under `sh -c` in the sandbox. python3
-// rather than unzip, which the image does not carry; neither keeps the
-// executable bit, hence the chmod.
-const antigravityInstallScript = `set -e
-if [ -x "${DEST}/agy_acp_server.par" ]; then
-  exit 0
-fi
-tmp="${DEST}.partial"
-rm -rf "${tmp}"
-mkdir -p "${tmp}"
-curl -fsSL --retry 3 -o "${tmp}/server.zip" "${URL}"
-echo "${SHA256}  ${tmp}/server.zip" | sha256sum -c -
-python3 -m zipfile -e "${tmp}/server.zip" "${tmp}"
-rm "${tmp}/server.zip"
-chmod +x "${tmp}/agy_acp_server.par" "${tmp}/localharness_external"
-rm -rf "${DEST}"
-mv "${tmp}" "${DEST}"`
-
-func antigravityInstallEnv(dest, url, sha256 string) map[string]string {
-	return map[string]string{
-		"HOME":   "/workspaces/.home",
-		"DEST":   dest,
-		"URL":    url,
-		"SHA256": sha256,
-	}
 }
 
 // researchPodIP returns the sandbox pod's IP, retrying briefly: a pod

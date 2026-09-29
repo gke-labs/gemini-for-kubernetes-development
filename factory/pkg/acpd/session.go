@@ -38,21 +38,11 @@ type Engine struct {
 	Env []string
 }
 
-// The antigravity engine is Google's agy_acp_server, not the agy CLI:
-// agy has no ACP mode. It is a separate download (a 334MB zip unpacking
-// to about 1GB) that runs its own harness, so it is not in the sandbox
-// image, which every task pulls. `factory research start --engine
-// antigravity` installs it on the workspace PVC instead, pinned by
-// version and digest, and acpd only ever runs it from there.
-const (
-	AntigravityACPServerVersion = "1.2.1"
-	AntigravityACPServerURL     = "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-" + AntigravityACPServerVersion + "-linux-x86_64.zip"
-	AntigravityACPServerSHA256  = "9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843"
-	// AntigravityACPServerDir is versioned so that bumping the pin
-	// installs beside an old copy rather than over one a running session
-	// has open.
-	AntigravityACPServerDir = "/workspaces/.cache/agy-acp-server/" + AntigravityACPServerVersion
-)
+// AntigravityACPServer is Google's agy_acp_server, which the antigravity
+// engine runs: agy itself has no ACP mode. It is a separate download with
+// its own harness, installed into the image by
+// images/factory-golang/Dockerfile, which pins the version and digest.
+const AntigravityACPServer = "/opt/agy-acp-server/agy_acp_server.par"
 
 // Engines is the set acpd knows how to start. gemini speaks ACP natively
 // and antigravity through Google's separate server; claude is absent
@@ -79,7 +69,7 @@ var Engines = map[string]Engine{
 		Env: []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
 	},
 	"antigravity": {
-		Command: AntigravityACPServerDir + "/agy_acp_server.par",
+		Command: AntigravityACPServer,
 		Args: []string{
 			"--uid=",
 			// It checks for an IPv6 loopback at start and aborts without

@@ -55,12 +55,14 @@ const (
 	// capture already use: the annotation IS the receipt. Absent means
 	// the setup did not finish and whoever was doing it is gone.
 	AnnotationResearchReady = "sandbox.gemini.google.com/research-ready"
-	// AnnotationResearchEngine is the acpd engine the setup prepared the
-	// sandbox for, written with the ready receipt. Whoever creates the
+	// AnnotationResearchEngine is the acpd engine the sandbox was set up
+	// for, written with the ready receipt. Whoever creates the
 	// conversation reads it from here rather than from wherever the
-	// choice was first made, so a setting changed mid-launch cannot open
-	// a session on an engine this sandbox has nothing installed for.
-	// Absent on sandboxes older than the field, which were all gemini.
+	// choice was first made, so a setting changed mid-launch cannot give
+	// a sandbox a different engine than it was launched with. Absent on
+	// sandboxes older than the field — and on any launched by a factory
+	// that predates it, whose image may not carry the other engines —
+	// which were all gemini.
 	AnnotationResearchEngine = "sandbox.gemini.google.com/research-engine"
 )
 
@@ -118,7 +120,7 @@ func researchDisposition(sb *unstructured.Unstructured, now time.Time) dispositi
 
 // MarkResearchReady writes the receipt that says this sandbox's setup
 // finished, and the engine it was set up for. Called once, by the
-// launch, after the checkout (and any engine install) is in place.
+// launch, after the checkout is in place.
 //
 // A merge patch rather than the read-modify-Update the rest of this
 // package uses, because this is the one annotation written from a

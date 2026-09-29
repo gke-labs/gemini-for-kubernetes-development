@@ -168,6 +168,6 @@ func TestAntigravityEngineIsConfiguredForACP(t *testing.T) {
 		t.Errorf("antigravity args %v: without --enforce_kernel_ipv6_support=false the server aborts in a pod", engine.Args)
 	}
 	if !filepath.IsAbs(engine.Command) {
-		t.Errorf("Command %q is not absolute; the server is installed on the PVC, not on PATH", engine.Command)
+		t.Errorf("Command %q is not absolute; the server is installed under /opt, not on PATH", engine.Command)
 	}
 }
