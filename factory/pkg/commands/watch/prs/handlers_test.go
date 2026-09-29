@@ -328,3 +328,230 @@ func TestPRIterateTriggerMetadata(t *testing.T) {
 		t.Errorf("unexpected triggerNotes: %s", task.TriggerNotes)
 	}
 }
+
+func TestPRCommentsRetryOnFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	incomingDir := filepath.Join(tempDir, "incoming")
+	processingDir := filepath.Join(tempDir, "processing")
+	processedDir := filepath.Join(tempDir, "processed")
+	_ = os.MkdirAll(incomingDir, 0755)
+	_ = os.MkdirAll(processingDir, 0755)
+	_ = os.MkdirAll(processedDir, 0755)
+
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+
+	commitTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	comment1Time := time.Date(2026, 8, 1, 12, 10, 0, 0, time.UTC)
+
+	comments := []*githubv39.IssueComment{
+		{
+			ID:        int64Ptr(1000),
+			User:      &githubv39.User{Login: stringPtr("reviewer-alice")},
+			Body:      stringPtr("Please fix this"),
+			CreatedAt: &comment1Time,
+		},
+	}
+
+	readyForHumanAdded := false
+	stopLabelAdded := false
+	var prIssues []*githubv39.Issue
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			pr := &githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			commits := []*githubv39.RepositoryCommit{
+				{
+					SHA: stringPtr(headSHA),
+					Commit: &githubv39.Commit{
+						Committer: &githubv39.CommitAuthor{Date: &commitTime},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(commits)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			_ = json.NewEncoder(w).Encode(comments)
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			now := time.Now()
+			c := &githubv39.IssueComment{
+				ID:        int64Ptr(int64(1000 + len(comments))),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Body:      stringPtr(body.Body),
+				CreatedAt: &now,
+			}
+			comments = append(comments, c)
+			_ = json.NewEncoder(w).Encode(c)
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []interface{}{}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/statuses":
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/reactions"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"content": "eyes"})
+		case r.Method == "POST" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/labels":
+			var labels []string
+			_ = json.NewDecoder(r.Body).Decode(&labels)
+			for _, l := range labels {
+				if l == "factory/ready-for-human" {
+					readyForHumanAdded = true
+				}
+				if l == "factory/stop" {
+					stopLabelAdded = true
+					prIssues[0].Labels = append(prIssues[0].Labels, &githubv39.Label{Name: stringPtr(l)})
+				}
+			}
+			_ = json.NewEncoder(w).Encode([]*githubv39.Label{})
+		default:
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	u, _ := url.Parse(server.URL + "/")
+	ghClient.BaseURL = u
+
+	s, queue := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         newTestKubeClient(),
+		BotUsers:     []string{"bot1"},
+		GitHubLogin:  "",
+		TriggerLabel: "factory",
+	})
+
+	prIssues = []*githubv39.Issue{
+		{
+			Number:           &prNum,
+			PullRequestLinks: &githubv39.PullRequestLinks{},
+		},
+	}
+
+	taskFilename := "task-pr-10-comments.yaml"
+	incomingTaskFile := filepath.Join(incomingDir, taskFilename)
+	processedTaskFile := filepath.Join(processedDir, taskFilename)
+
+	readTask := func(path string) api.QueueTask {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", path, err)
+		}
+		var task api.QueueTask
+		if err := yaml.Unmarshal(data, &task); err != nil {
+			t.Fatalf("failed to unmarshal %s: %v", path, err)
+		}
+		return task
+	}
+
+	failCurrentTask := func(completedAt time.Time) {
+		t.Helper()
+		task := readTask(incomingTaskFile)
+		if err := os.Remove(incomingTaskFile); err != nil {
+			t.Fatalf("failed to remove incoming task: %v", err)
+		}
+		task.Status = api.StatusFailed
+		task.CompletedAt = completedAt
+		out, err := yaml.Marshal(&task)
+		if err != nil {
+			t.Fatalf("failed to marshal failed task: %v", err)
+		}
+		if err := os.WriteFile(processedTaskFile, out, 0644); err != nil {
+			t.Fatalf("failed to write processed task: %v", err)
+		}
+		if err := queue.LoadFromDisk(); err != nil {
+			t.Fatalf("failed to reload queue from disk: %v", err)
+		}
+	}
+
+	// Initial evaluation queues task with RetryCount == 0.
+	s.evaluateAll(context.Background(), prIssues)
+	task := readTask(incomingTaskFile)
+	if task.RetryCount != 0 {
+		t.Errorf("expected initial RetryCount 0, got %d", task.RetryCount)
+	}
+
+	// Simulate failures and verify up to maxCommentRetries (3) retries are queued.
+	for wantRetry := 1; wantRetry <= maxCommentRetries; wantRetry++ {
+		failCurrentTask(comment1Time.Add(time.Duration(wantRetry) * time.Minute))
+
+		s.evaluateAll(context.Background(), prIssues)
+
+		if _, err := os.Stat(incomingTaskFile); err != nil {
+			t.Fatalf("retry %d: expected %s to be requeued: %v", wantRetry, taskFilename, err)
+		}
+		retriedTask := readTask(incomingTaskFile)
+		if retriedTask.RetryCount != wantRetry {
+			t.Errorf("retry %d: expected RetryCount %d, got %d", wantRetry, wantRetry, retriedTask.RetryCount)
+		}
+		if !retriedTask.TriggerEventTime.Equal(comment1Time) {
+			t.Errorf("retry %d: expected TriggerEventTime %v, got %v", wantRetry, comment1Time, retriedTask.TriggerEventTime)
+		}
+	}
+
+	// When the 3rd retry fails, no 4th retry should be queued, factory/stop must be added, and ready-for-human must not be added.
+	failCurrentTask(comment1Time.Add(10 * time.Minute))
+	s.evaluateAll(context.Background(), prIssues)
+	if _, err := os.Stat(incomingTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("expected no task to be queued after %d retries, but file exists (err=%v)", maxCommentRetries, err)
+	}
+	if !stopLabelAdded {
+		t.Errorf("expected factory/stop label to be added when comment retries are exhausted")
+	}
+	if readyForHumanAdded {
+		t.Errorf("expected ready-for-human label not to be added when comment retries are exhausted")
+	}
+
+	// When a human removes the factory/stop label, a fresh attempt with RetryCount 0 should be queued.
+	prIssues[0].Labels = nil
+	s.evaluateAll(context.Background(), prIssues)
+	if _, err := os.Stat(incomingTaskFile); err != nil {
+		t.Fatalf("expected task to be requeued after removing factory/stop label: %v", err)
+	}
+	unpausedTask := readTask(incomingTaskFile)
+	if unpausedTask.RetryCount != 0 {
+		t.Errorf("expected RetryCount 0 after removing factory/stop label, got %d", unpausedTask.RetryCount)
+	}
+
+	// If a new human comment arrives after a failure, a fresh task with RetryCount 0 should be queued.
+	failCurrentTask(time.Now())
+	comment2Time := time.Now().Add(time.Minute)
+	comments = append(comments, &githubv39.IssueComment{
+		ID:        int64Ptr(2000),
+		User:      &githubv39.User{Login: stringPtr("reviewer-bob")},
+		Body:      stringPtr("Another comment"),
+		CreatedAt: &comment2Time,
+	})
+	s.evaluateAll(context.Background(), prIssues)
+	if _, err := os.Stat(incomingTaskFile); err != nil {
+		t.Fatalf("expected new task to be queued after new comment: %v", err)
+	}
+	freshTask := readTask(incomingTaskFile)
+	if freshTask.RetryCount != 0 {
+		t.Errorf("expected fresh task RetryCount 0, got %d", freshTask.RetryCount)
+	}
+
+	// If the task fails for an older commit SHA than the current headSHA, it should not be retried.
+	failCurrentTask(comment2Time.Add(5 * time.Minute))
+	headSHA = "sha-new-commit"
+	commitTime = comment2Time.Add(10 * time.Minute)
+	s.evaluateAll(context.Background(), prIssues)
+	if _, err := os.Stat(incomingTaskFile); !os.IsNotExist(err) {
+		t.Fatalf("expected no retry when headSHA changed, but task file exists (err=%v)", err)
+	}
+}

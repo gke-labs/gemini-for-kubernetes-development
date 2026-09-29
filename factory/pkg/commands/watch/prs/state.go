@@ -23,10 +23,6 @@ type prState struct {
 	lastInvestigatedSHA string
 	// lastCommentAddressedTime is when review feedback was last addressed by the bot.
 	lastCommentAddressedTime time.Time
-	// lastCommentAddressedSHA is the head commit SHA when review comments were
-	// last addressed, which prevents processing the same feedback twice on a
-	// commit the agent decided needed no change.
-	lastCommentAddressedSHA string
 	// lastReviewedSHA is the commit SHA for which an automated review was last queued or completed.
 	lastReviewedSHA string
 	// lastIteratedSHA is the commit SHA for which a rebase was last queued or completed.
@@ -173,27 +169,38 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 // foldProcessedPRTask folds one finished task into the state of its pull
 // request.
 //
-// A failed task is folded in as nothing at all: the work it represents did not
-// actually happen, so recording it would suppress the retry.
+// For address-comments tasks, the enqueue timestamp is recorded even when the
+// task failed so that a restart does not mistake pre-existing comments for new
+// ones while still picking up comments posted while the task was running;
+// retries of a failed address-comments task are driven explicitly by inspecting
+// the processed task status. For other phases, a failed task is folded in as
+// nothing at all so that recording it does not suppress a retry.
 func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
-	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
-		return state
-	}
-
 	// The queue dates every finished task, falling back to the task file's own
 	// timestamp for one that recorded no completion time. A zero survivor is
 	// not special-cased: it simply loses every comparison below, which leaves
 	// the SHA - all a review has to record - intact.
 	tTime := t.CompletedAt
 
+	if strings.HasSuffix(name, "-comments") {
+		cTime := t.EnqueuedAt
+		if cTime.IsZero() {
+			cTime = t.StartedAt
+		}
+		if cTime.IsZero() {
+			cTime = tTime
+		}
+		if cTime.After(state.lastCommentAddressedTime) {
+			state.lastCommentAddressedTime = cTime
+		}
+		return state
+	}
+
+	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
+		return state
+	}
+
 	switch {
-	case strings.HasSuffix(name, "-comments"):
-		if tTime.After(state.lastCommentAddressedTime) {
-			state.lastCommentAddressedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastCommentAddressedSHA = t.CommitSHA
-		}
 	case strings.HasSuffix(name, "-investigate"):
 		if tTime.After(state.lastInvestigatedTime) {
 			state.lastInvestigatedTime = tTime

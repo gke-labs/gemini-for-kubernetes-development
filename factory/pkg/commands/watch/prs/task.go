@@ -19,6 +19,7 @@ type taskOptions struct {
 	Phase            api.TaskPhase
 	Assignee         string
 	CommitSHA        string
+	RetryCount       int
 	TriggerEventTime time.Time
 	TriggerReason    api.TriggerReason
 	TriggerNotes     string
@@ -54,6 +55,7 @@ func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
 		Assignee:         opts.Assignee,
 		Status:           api.StatusPending,
 		CommitSHA:        opts.CommitSHA,
+		RetryCount:       opts.RetryCount,
 		Instructions:     opts.Instructions,
 	}
 }
