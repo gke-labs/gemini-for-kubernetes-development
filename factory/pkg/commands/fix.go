@@ -274,6 +274,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		DraftPR:       false,
 		PRLabel:       prLabel,
 		NoPR:          noPR,
+		Disclose:      rootFlags.Disclose,
 	}
 
 	scriptBytes, err := tasks.GetFixIssueScript()

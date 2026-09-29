@@ -334,6 +334,31 @@ func newTestReconciler(fake *fakeLauncher, ghClient *github.Client, objs ...runt
 	}
 }
 
+// The board's Disclose is factory's --disclose, passed either way:
+// factory defaults it on for its other callers, so a board that leaves
+// it off has to say so. It is no longer a line of instruction appended
+// by the controller — factory's own attribution is what it gates.
+func TestFixCarriesTheBoardsDisclose(t *testing.T) {
+	for _, disclose := range []bool{false, true} {
+		g := gomega.NewWithT(t)
+		ghClient := testGithubClient(`[
+			{"number": 10, "title": "mine", "html_url": "https://github.com/test/repo/issues/10",
+			 "assignees": [{"login": "alice"}]}
+		]`)
+		board := testBoard(nil)
+		board.Spec.Policy.Disclose = disclose
+		fake := newFakeLauncher()
+		r := newTestReconciler(fake, ghClient, board, githubSecret())
+
+		_, err := r.Reconcile(context.Background(), boardRequest())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		launches := fake.launches()
+		g.Expect(launches).To(gomega.HaveLen(1))
+		g.Expect(launches[0].FixOpts.Disclose).To(gomega.Equal(disclose))
+		g.Expect(launches[0].FixOpts.Instruction).NotTo(gomega.ContainSubstring("AI agent assistance"))
+	}
+}
+
 func boardRequest() reconcile.Request {
 	return reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-board", Namespace: "alice"}}
 }
@@ -1315,6 +1340,7 @@ func TestPRTaskClicks(t *testing.T) {
 	g.Expect(prTasks[0].PRTaskKind).To(gomega.Equal("iterate"))
 	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the error handling"))
 	g.Expect(prTasks[0].PRTaskOpts.Engine).To(gomega.Equal("gemini"))
+	g.Expect(prTasks[0].PRTaskOpts.Disclose).To(gomega.BeFalse(), "the fixture board does not disclose")
 	g.Expect(prTasks[0].PRTaskOpts.PRURL).To(gomega.ContainSubstring("/pull/42"))
 
 	// Request older than completion: served, no launch.
