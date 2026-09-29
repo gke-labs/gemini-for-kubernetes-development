@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
@@ -52,6 +55,10 @@ func runDaemon(ctx context.Context) error {
 		}
 	}
 
+	// Mark any tasks interrupted by a previous container crash/eviction/restart
+	// before envd starts or any new processes/threads can reuse old PIDs.
+	reconcileInterruptedTasks(ctx, envd.DefaultTasksDir)
+
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)
 
@@ -83,4 +90,48 @@ func runDaemon(ctx context.Context) error {
 
 	log.Info("envd daemon exited successfully")
 	return nil
+}
+
+// reconcileInterruptedTasks sweeps tasksDir on container startup (when factory daemon
+// runs as PID 1 before envd starts) and writes exit_code=137 for any task directory
+// that has a recorded pid or start_time from a previous container lifecycle but no
+// exit_code file yet.
+func reconcileInterruptedTasks(ctx context.Context, tasksDir string) {
+	log := klog.FromContext(ctx)
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Error(err, "failed to read tasks directory for startup reconciliation", "path", tasksDir)
+		}
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		taskPath := filepath.Join(tasksDir, entry.Name())
+		tf := envd.NewTaskFiles(taskPath)
+
+		if hasNonEmptyFile(tf.ExitCodeFile) {
+			continue
+		}
+		if !hasNonEmptyFile(tf.PIDFile) && !hasNonEmptyFile(tf.StartTimeFile) {
+			continue
+		}
+
+		if err := os.WriteFile(tf.ExitCodeFile, []byte("137\n"), 0644); err != nil {
+			log.Error(err, "failed to write exit_code for interrupted task", "task", entry.Name())
+			continue
+		}
+		log.Info("Marked interrupted task from previous container lifecycle as crashed (exit_code=137)", "task", entry.Name())
+	}
+}
+
+func hasNonEmptyFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) != ""
 }
