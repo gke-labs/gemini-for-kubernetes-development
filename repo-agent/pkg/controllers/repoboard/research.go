@@ -317,12 +317,22 @@ func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, s
 	// prompt is not: if the annotation survived a delivery whose receipt
 	// failed to write, this is what stops the engine being asked twice.
 	session, err := client.GetSession(ctx, sessionID)
+	if err == nil {
+		prompted, perr := researchSessionPrompted(ctx, client, session)
+		if perr != nil {
+			return perr
+		}
+		if prompted {
+			return r.clearResearchKickoff(ctx, sb)
+		}
+	}
 	switch {
-	case err == nil && session.Offset > 0:
-		return r.clearResearchKickoff(ctx, sb)
 	case err == nil:
-		// A live, silent session: created by someone opening the tab
-		// before the pod finished booting. Prompt it as it stands.
+		// A live session nobody has asked anything yet: created by
+		// someone opening the tab before the kickoff was stamped. Its
+		// transcript may not be empty — the mode banner, and whatever
+		// the engine announces at start — but none of that is a turn.
+		// Prompt it as it stands.
 	case errors.Is(err, acpd.ErrNotFound):
 		apiKey, kerr := r.engineAPIKey(ctx, sb.GetNamespace())
 		if kerr != nil {
@@ -354,6 +364,36 @@ func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, s
 	}
 	log.FromContext(ctx).Info("sent the research kickoff", "sandbox", sb.GetName(), "kind", kickoff.Kind)
 	return r.clearResearchKickoff(ctx, sb)
+}
+
+// researchSessionPrompted reports whether a live session has already
+// been asked something, which is what makes the opening turn no longer
+// ours to send: a delivery whose receipt failed to write, or the member
+// typing first.
+//
+// Not the transcript's length. Creating a session writes into it before
+// anyone says a word — acpd's mode banner, and antigravity's list of
+// slash commands — so a browser that attached between the ready receipt
+// and the kickoff stamp left a non-empty transcript that read as
+// "already prompted", and the question the member asked was dropped.
+func researchSessionPrompted(ctx context.Context, client *acpd.Client, session *acpd.Session) (bool, error) {
+	if session.Busy {
+		return true, nil // a turn is in flight, so somebody sent one
+	}
+	if session.Offset == 0 {
+		return false, nil
+	}
+	stream, err := client.Events(ctx, session.ID, 0, false)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = stream.Close() }()
+	for stream.Next() {
+		if stream.Event().Kind == acpd.KindUserPrompt {
+			return true, nil
+		}
+	}
+	return false, stream.Err()
 }
 
 // researchKickoffTimeout bounds one delivery attempt. Generous, because

@@ -582,11 +582,11 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 		return nil, err
 	}
 	// An opening turn is still owed, so this is not the side that gets to
-	// create the session. Creating one writes the mode banner into the
-	// transcript, and the controller reads a non-zero offset as "already
-	// prompted" — so an attach that won this race did not merely arrive
-	// early, it threw away the question the member asked. Waiting costs a
-	// reconnect; not waiting costs the session's whole reason to exist.
+	// create the session: the controller creates it and asks the question
+	// in one go. An attach that gets in first is not fatal any more — the
+	// controller prompts any session that has had no turn, whatever else
+	// its transcript holds — and it cannot be fully prevented, since the
+	// kickoff is stamped a reconcile after the sandbox becomes reachable.
 	//
 	// Nothing hangs on this forever: the controller clears Opening when it
 	// delivers, and the kickoff TTL and its error annotation clear it when
