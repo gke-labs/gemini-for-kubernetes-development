@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -807,7 +808,7 @@ func TestTargetIsClearedBeforeEveryCommit(t *testing.T) {
 	if c, a := strings.Index(fn, "clearTarget"), strings.Index(fn, "git add"); c < 0 || c > a {
 		t.Error("commitAndPushRun stages before clearing the target")
 	}
-	if !strings.Contains(s, "ensureRunsBranch\nresolveTarget\nconfigureGemini\n") {
+	if !strings.Contains(s, "ensureRunsBranch\nresolveTarget\nsnapshotReceipts\nconfigureGemini\n") {
 		t.Error("resolveTarget does not run right after the runs branch is ready")
 	}
 }
@@ -827,4 +828,176 @@ func TestPlanPromptKnowsItsTarget(t *testing.T) {
 			t.Errorf("the %s prompt does not know a run can be pinned to a pull request", mode)
 		}
 	}
+}
+
+// runResult is result.json as a reader sees it.
+type runResult struct {
+	Version   int        `json:"version"`
+	Run       string     `json:"run"`
+	Mode      string     `json:"mode"`
+	ExitCode  int        `json:"exitCode"`
+	Verdict   *string    `json:"verdict"`
+	Receipt   *string    `json:"receipt"`
+	Branch    string     `json:"branch"`
+	Commit    *string    `json:"commit"`
+	Target    *runTarget `json:"target"`
+	Discarded []string   `json:"discarded"`
+}
+
+type runTarget struct {
+	PR  int    `json:"pr"`
+	SHA string `json:"sha"`
+}
+
+// result.json is executed, not grepped: it is written from an EXIT
+// trap under set -e, where a failing command inside the writer would
+// take the exit code with it, and its one input from the engine is a
+// receipt's first line in whatever markdown the engine chose.
+func TestRunWritesItsResult(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git required")
+	}
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	from := strings.Index(s, "TARGET_PR=\"\"\n")
+	to := strings.Index(s, "\n# Main execution\n")
+	trapAt := strings.Index(s, "\ntrap ")
+	if from < 0 || to < from || trapAt < to {
+		t.Fatal("run.sh is missing TARGET_PR, the main section or its EXIT trap")
+	}
+	trap := s[trapAt+1 : trapAt+1+strings.Index(s[trapAt+1:], "\n")]
+	body := s[from:to]
+
+	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitBin, append([]string{"-C", dir}, args...)...)
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	const runDir = "docs-exploration/agent-runs/r1"
+
+	// run sets up a workspace whose runs branch already holds a PLANNED
+	// receipt, then runs engine as the invocation, with the EXIT trap
+	// run.sh installs. It returns the exit code and result.json.
+	run := func(t *testing.T, engine string) (int, runResult, string) {
+		t.Helper()
+		root := t.TempDir()
+		origin, ws, task := filepath.Join(root, "origin.git"), filepath.Join(root, "ws"), filepath.Join(root, "task")
+		git(t, root, "init", "-q", "--bare", origin)
+		git(t, root, "init", "-q", "-b", "research/runs", ws)
+		if err := os.MkdirAll(filepath.Join(ws, runDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(task, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for rel, content := range map[string]string{"app.txt": "base", runDir + "/receipt-20260101-0000.md": "PLANNED"} {
+			if err := os.WriteFile(filepath.Join(ws, rel), []byte(content+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		git(t, ws, "add", "-A")
+		git(t, ws, "commit", "-qm", "base")
+		git(t, ws, "remote", "add", "origin", origin)
+		git(t, ws, "push", "-q", "origin", "research/runs")
+
+		script := "set -e\nset -o pipefail\nREPO_NAME=repo\nRUN_NAME=r1\nRUN_MODE=deploy\nRUNS_BRANCH=research/runs\nTARGET_FILE=target.env\n" +
+			"RUN_DIR=" + runDir + "\nPROMPT_FILE=" + filepath.Join(task, "prompt.txt") + "\n" +
+			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) + "\n" + trap + "\nsnapshotReceipts\ncd " + ws + "\n" + engine + "\n"
+		cmd := exec.Command(bash, "-c", script)
+		cmd.Env = gitEnv
+		out, _ := cmd.CombinedOutput()
+		code := cmd.ProcessState.ExitCode()
+		raw, err := os.ReadFile(filepath.Join(task, "result.json"))
+		if err != nil {
+			t.Fatalf("no result.json (exit %d):\n%s", code, out)
+		}
+		var res runResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatalf("result.json is not JSON: %v\n%s\n%s", err, raw, out)
+		}
+		return code, res, string(out)
+	}
+	str := func(p *string) string {
+		if p == nil {
+			return "<null>"
+		}
+		return *p
+	}
+
+	t.Run("a run names its verdict, receipt, commit and what it threw away", func(t *testing.T) {
+		code, res, out := run(t, `printf '\n**VERIFIED** — all good\n' > $RUN_DIR/receipt-20260929-0337.md
+echo x > .gcloudignore
+echo changed > app.txt
+commitAndPushRun deploy`)
+		if code != 0 {
+			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		if res.Version != 1 || res.Run != "r1" || res.Mode != "deploy" || res.Branch != "research/runs" || res.ExitCode != 0 {
+			t.Errorf("identity = %+v", res)
+		}
+		if str(res.Verdict) != "VERIFIED" {
+			t.Errorf("verdict = %s, want VERIFIED (the first word, past the markdown)", str(res.Verdict))
+		}
+		if str(res.Receipt) != runDir+"/receipt-20260929-0337.md" {
+			t.Errorf("receipt = %s, want this invocation's, not the plan's", str(res.Receipt))
+		}
+		if len(str(res.Commit)) != 40 {
+			t.Errorf("commit = %s, want the pushed sha", str(res.Commit))
+		}
+		if strings.Join(res.Discarded, ",") != ".gcloudignore,app.txt" {
+			t.Errorf("discarded = %v, want the created file as well as the edited one", res.Discarded)
+		}
+		if !strings.Contains(out, "Not committed (created outside "+runDir+"):") {
+			t.Errorf("the created file went unmentioned in the log:\n%s", out)
+		}
+	})
+
+	t.Run("a run that dies before its receipt still says so, and keeps its exit code", func(t *testing.T) {
+		code, res, _ := run(t, "false")
+		if code != 1 || res.ExitCode != 1 {
+			t.Errorf("exit %d, exitCode %d, want 1 and 1", code, res.ExitCode)
+		}
+		if res.Verdict != nil || res.Receipt != nil || res.Commit != nil || res.Target != nil || len(res.Discarded) != 0 {
+			t.Errorf("a run with nothing to show claims something: %+v", res)
+		}
+	})
+
+	t.Run("a first line that is not a verdict is unknown, never guessed", func(t *testing.T) {
+		code, res, _ := run(t, "echo 'Deployment went fine' > $RUN_DIR/receipt-20260929-0500-teardown.md\nexit 3")
+		if code != 3 || res.ExitCode != 3 {
+			t.Errorf("exit %d, exitCode %d, want 3 and 3", code, res.ExitCode)
+		}
+		if str(res.Verdict) != "unknown" {
+			t.Errorf("verdict = %s, want unknown", str(res.Verdict))
+		}
+	})
+
+	t.Run("a pull request run names its pin", func(t *testing.T) {
+		_, res, _ := run(t, "echo TORN-DOWN > $RUN_DIR/receipt-20260929-0600-teardown.md\nTARGET_PR=42\nTARGET_SHA=abc")
+		if res.Target == nil || res.Target.PR != 42 || res.Target.SHA != "abc" {
+			t.Errorf("target = %+v, want pr 42 at abc", res.Target)
+		}
+		if str(res.Verdict) != "TORN-DOWN" {
+			t.Errorf("verdict = %s, want TORN-DOWN", str(res.Verdict))
+		}
+	})
+
+	t.Run("a path is escaped, not pasted into the JSON", func(t *testing.T) {
+		_, res, _ := run(t, `addDiscarded 'we"ird\path'`)
+		if strings.Join(res.Discarded, ",") != `we"ird\path` {
+			t.Errorf("discarded = %q", res.Discarded)
+		}
+	})
 }
