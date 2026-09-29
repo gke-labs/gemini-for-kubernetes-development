@@ -1826,3 +1826,24 @@ func TestEngineOrDefault(t *testing.T) {
 		}
 	}
 }
+
+// factory's record of what ran wins; the controller's launch stamp is
+// the fallback for sandboxes from an older factory, and the caller's
+// default for ones nothing recorded.
+func TestSandboxEngine(t *testing.T) {
+	cases := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{"first launch, stamped only by factory", map[string]string{annoTaskEngine: "antigravity"}, "antigravity"},
+		{"factory's record beats the controller's", map[string]string{annoTaskEngine: "claude", "board.gemini.google.com/engine": "gemini"}, "claude"},
+		{"older factory, controller stamp", map[string]string{"board.gemini.google.com/engine": "claude"}, "claude"},
+		{"nothing recorded", nil, "gemini"},
+	}
+	for _, c := range cases {
+		if got := sandboxEngine(c.annotations, "gemini"); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}

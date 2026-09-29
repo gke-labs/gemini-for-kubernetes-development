@@ -607,7 +607,24 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 	return name, nil
 }
 
+// AnnotationTaskEngine is the agent engine (gemini, claude, antigravity)
+// of the task last started in the sandbox. Written in the same update
+// that marks the task Running, so it is on the sandbox from the first
+// task on — including the one whose invocation created the sandbox,
+// which nobody outside factory can stamp before it exists.
+const AnnotationTaskEngine = "sandbox.gemini.google.com/last-task-engine"
+
 func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "")
+}
+
+// MarkSandboxTaskRunning records a task of taskType starting in the
+// sandbox, on engine.
+func MarkSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string) error {
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine)
+}
+
+func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState, engine string) error {
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
@@ -639,6 +656,9 @@ func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.Kubern
 	if taskType != "" {
 		annotations["sandbox.gemini.google.com/last-task-type"] = taskType
 		annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+		if engine != "" {
+			annotations[AnnotationTaskEngine] = engine
+		}
 		if taskState == "Completed" || taskState == "Failed" {
 			nowStr := time.Now().UTC().Format(time.RFC3339)
 			annotations["sandbox.gemini.google.com/completion-time"] = nowStr

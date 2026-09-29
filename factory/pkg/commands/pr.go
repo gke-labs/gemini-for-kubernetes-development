@@ -284,7 +284,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	fmt.Println("Running investigate task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Running")
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "investigate", "Failed")
 		return fmt.Errorf("running task: %w", err)
@@ -557,7 +557,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	fmt.Println("Running address-comments task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Running")
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "address-comments", "Failed")
 		return fmt.Errorf("running task: %w", err)
@@ -973,7 +973,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 
 	fmt.Println("Running iterate task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Running")
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "iterate", "Failed")
 		return fmt.Errorf("running task: %w", err)
@@ -1272,7 +1272,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 
 	fmt.Println("Running adopt task via envd...")
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", "Running")
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", "Failed")
 		return fmt.Errorf("running task: %w", err)

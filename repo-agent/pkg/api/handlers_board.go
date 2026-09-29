@@ -679,15 +679,34 @@ func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo stri
 	return byName, nil
 }
 
+// annoTaskEngine is where factory records the engine of the task it last
+// started in a sandbox, in the same write that marks it Running.
+const annoTaskEngine = "sandbox.gemini.google.com/last-task-engine"
+
+// sandboxEngine is the engine that ran in a sandbox, or fallback when
+// nothing recorded it.
+//
+// factory's own record comes first: it is written by the invocation
+// that ran the task, including the one that created the sandbox. The
+// controller's stamp cannot cover that first launch — it can only
+// annotate a sandbox that already exists — so a new PR on an antigravity
+// or claude board used to read as gemini until its second run.
+func sandboxEngine(annotations map[string]string, fallback string) string {
+	if e := annotations[annoTaskEngine]; e != "" {
+		return e
+	}
+	if e := annotations["board.gemini.google.com/engine"]; e != "" {
+		return e
+	}
+	return fallback
+}
+
 func workSandbox(sb *unstructured.Unstructured, autoIterateDefault bool) *models.WorkSandbox {
 	if sb == nil {
 		return nil
 	}
 	replicas, _, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
-	engine := sb.GetAnnotations()["board.gemini.google.com/engine"]
-	if engine == "" {
-		engine = "gemini" // pre-stamp sandboxes only ever ran gemini
-	}
+	engine := sandboxEngine(sb.GetAnnotations(), "gemini") // pre-stamp sandboxes only ever ran gemini
 	// Effective auto-follow-up: the per-PR annotation overrides the
 	// board policy in either direction (mirrors autoIterateEnabled).
 	override := sb.GetAnnotations()["board.gemini.google.com/auto-iterate"]

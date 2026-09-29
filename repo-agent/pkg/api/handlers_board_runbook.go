@@ -311,13 +311,10 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			if annotations["repo"] != repo {
 				continue
 			}
-			// First-run sandboxes carry no engine annotation (it is only
-			// stamped on relaunches into an existing sandbox) — fall back
-			// to the board's engine so the icon renders.
-			engine := annotations["board.gemini.google.com/engine"]
-			if engine == "" {
-				engine = engineOrDefault(boardEngine)
-			}
+			// A sandbox from an older factory, whose first run nobody
+			// stamped, falls back to the board's engine so the icon
+			// renders.
+			engine := sandboxEngine(annotations, engineOrDefault(boardEngine))
 			row := gin.H{
 				"name":      sb.GetName(),
 				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],

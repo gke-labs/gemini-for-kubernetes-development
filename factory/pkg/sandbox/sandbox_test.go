@@ -224,6 +224,47 @@ func TestUpdateSandboxTaskAnnotation_Resume(t *testing.T) {
 	}
 }
 
+// The engine goes on with Running, and stays through the finish: the
+// board reads it to draw which agent ran, and the finish updates carry
+// no engine of their own.
+func TestMarkSandboxTaskRunningRecordsTheEngine(t *testing.T) {
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		k8s.SandboxGVR: "SandboxList",
+	})
+	kubeClient := &clients.KubernetesClient{DynamicClient: fakeDynamic}
+	ctx := context.Background()
+	ns := "test-ns"
+
+	sb := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata":   map[string]interface{}{"name": "sb", "namespace": ns},
+	}}
+	if _, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Create(ctx, sb, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating sandbox: %v", err)
+	}
+
+	if err := sandbox.MarkSandboxTaskRunning(ctx, kubeClient, ns, "sb", "review", "antigravity"); err != nil {
+		t.Fatalf("MarkSandboxTaskRunning: %v", err)
+	}
+	if err := sandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, ns, "sb", "review", "Completed"); err != nil {
+		t.Fatalf("UpdateSandboxTaskAnnotation: %v", err)
+	}
+
+	got, err := fakeDynamic.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, "sb", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading sandbox back: %v", err)
+	}
+	annotations := got.GetAnnotations()
+	if annotations[sandbox.AnnotationTaskEngine] != "antigravity" {
+		t.Errorf("engine = %q, want antigravity", annotations[sandbox.AnnotationTaskEngine])
+	}
+	if annotations["sandbox.gemini.google.com/last-task-state"] != "Completed" {
+		t.Errorf("state = %q, want Completed", annotations["sandbox.gemini.google.com/last-task-state"])
+	}
+}
+
 func TestSuspendIdleSandboxes_UnpausedAt(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{

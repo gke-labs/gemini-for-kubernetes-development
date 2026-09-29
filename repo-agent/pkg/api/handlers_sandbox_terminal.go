@@ -339,13 +339,11 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 	command := "TERM=xterm-256color exec tmux new-session -A -s " + terminalSession
 	if chatTask != "" {
 		// Sessions are engine-private, so the chat must attach with the
-		// engine that launched into this sandbox (stamped by the
-		// controller at launch); pre-stamp sandboxes default to gemini.
+		// engine that ran in this sandbox; pre-stamp sandboxes default
+		// to gemini.
 		engine := "gemini"
 		if sb, serr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{}); serr == nil {
-			if e := sb.GetAnnotations()["board.gemini.google.com/engine"]; e != "" {
-				engine = e
-			}
+			engine = sandboxEngine(sb.GetAnnotations(), engine)
 		}
 		// The engine's key rides in from the factory-user secret (the
 		// same identity the task ran under) — never stored on the pod.

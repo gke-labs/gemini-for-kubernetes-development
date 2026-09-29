@@ -278,7 +278,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	// Stamp Running at dispatch so the board reads the truth mid-run;
 	// the prober corrects a stale Running if this invocation dies.
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Running")
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Failed")
 		return fmt.Errorf("running run task: %w", err)
