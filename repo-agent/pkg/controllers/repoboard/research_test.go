@@ -214,8 +214,36 @@ func TestResearchClaimLaunches(t *testing.T) {
 	// second claim for the same session would launch a second engine.
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/" + factorycli.ResearchSandboxName("repo", testSession)))
 
+	g.Expect(opts.Engine).To(gomega.Equal(acpd.EngineGemini), "a board with no engine set runs research on gemini")
+
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty(),
 		"an unserved click must stand until the sandbox exists")
+}
+
+// The sandbox is launched for the board's engine, since antigravity's
+// ACP server is installed at launch. acpd has no claude engine, so a
+// claude board's research stays on gemini.
+func TestResearchClaimLaunchesForTheBoardEngine(t *testing.T) {
+	for engine, want := range map[string]string{
+		"antigravity": acpd.EngineAntigravity,
+		"claude":      acpd.EngineGemini,
+	} {
+		t.Run(engine, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+			board := testBoard(nil)
+			board.Spec.Sandbox.Engine = engine
+			fake := newFakeLauncher()
+			r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), req)
+
+			_, err := r.Reconcile(context.Background(), boardRequest())
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+
+			launches := researchLaunches(fake)
+			g.Expect(launches).To(gomega.HaveLen(1))
+			g.Expect(launches[0].ResearchOpts.Engine).To(gomega.Equal(want))
+		})
+	}
 }
 
 // The finished sandbox is the receipt. This is the anti-loop property:
@@ -606,6 +634,9 @@ func TestResearchKickoffIsSentAndCleared(t *testing.T) {
 	// opening that stops to ask blocks until acpd's permission timeout
 	// and is then cancelled, so the answer never arrives at all.
 	g.Expect(acp.created[0].Mode).To(gomega.Equal(acpd.ResearchMode))
+	// No engine recorded on the sandbox: one from before the choice
+	// existed, which was gemini.
+	g.Expect(acp.created[0].Engine).To(gomega.Equal(acpd.EngineGemini))
 
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),
@@ -725,4 +756,30 @@ func TestResearchWithoutAKickoffStampsNothing(t *testing.T) {
 	got := sandboxAnnotations(t, r, name)
 	g.Expect(got).NotTo(gomega.HaveKey(research.KickoffAnnotation))
 	g.Expect(got).NotTo(gomega.HaveKey(research.TitleAnnotation))
+}
+
+// The opening turn goes to the engine the sandbox was set up for, read
+// off the sandbox rather than the board, which may have moved on.
+func TestResearchKickoffUsesTheSandboxEngine(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
+	sb.SetAnnotations(map[string]string{
+		"repo":                        "repo",
+		researchSessionIDAnnotation:   testSession,
+		research.KickoffAnnotation:    kickoff.Encode(),
+		acpd.ResearchEngineAnnotation: acpd.EngineAntigravity,
+	})
+	acp := &fakeACPD{}
+	acp.server(t)
+	// The board says gemini; the sandbox wins.
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Expect(acp.created).To(gomega.HaveLen(1))
+	g.Expect(acp.created[0].Engine).To(gomega.Equal(acpd.EngineAntigravity))
 }

@@ -26,9 +26,40 @@ const APIKeyHeader = "X-Engine-Api-Key"
 // DefaultPort is acpd's listener, adjacent to envd's 49983.
 const DefaultPort = 49984
 
-// Engine names an agent binary acpd knows how to spawn. Only gemini is
-// registered server-side today; an unknown engine fails at create.
-const EngineGemini = "gemini"
+// Engine names an agent binary acpd knows how to spawn. gemini and
+// antigravity (Google's agy_acp_server) are registered server-side; an
+// unknown engine fails at create. Both read the same GEMINI_API_KEY.
+const (
+	EngineGemini      = "gemini"
+	EngineAntigravity = "antigravity"
+)
+
+// ResearchEngineAnnotation is where `factory research start` records the
+// engine it set the sandbox up for, alongside its ready receipt.
+// Mirrored from factory, like the other research sandbox names.
+const ResearchEngineAnnotation = "sandbox.gemini.google.com/research-engine"
+
+// ResearchEngineFor is the engine a research sandbox is launched with
+// for a board on engine. acpd has no claude engine, so a claude board's
+// research runs on gemini, as all research did before the choice
+// existed.
+func ResearchEngineFor(engine string) string {
+	if engine == EngineAntigravity {
+		return EngineAntigravity
+	}
+	return EngineGemini
+}
+
+// ResearchEngine is the engine to create a sandbox's conversation with.
+// Read from the sandbox, not the board: it is what the launch installed,
+// and the board may have been switched since. A sandbox older than the
+// annotation was set up for gemini.
+func ResearchEngine(annotations map[string]string) string {
+	if engine := annotations[ResearchEngineAnnotation]; engine != "" {
+		return engine
+	}
+	return EngineGemini
+}
 
 // The approval modes gemini offers. ACP fixes the shape of a mode but not
 // its vocabulary, so these are the engine's names and not the protocol's:
