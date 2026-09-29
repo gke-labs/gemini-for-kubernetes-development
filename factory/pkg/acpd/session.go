@@ -38,10 +38,27 @@ type Engine struct {
 	Env []string
 }
 
-// Engines is the set acpd knows how to start. Only gemini speaks ACP
-// natively today; claude is absent rather than broken on purpose, so the
-// failure is "unknown engine" at session create rather than a hang on a
-// handshake that will never complete.
+// The antigravity engine is Google's agy_acp_server, not the agy CLI:
+// agy has no ACP mode. It is a separate download (a 334MB zip unpacking
+// to about 1GB) that runs its own harness, so it is not in the sandbox
+// image, which every task pulls. `factory research start --engine
+// antigravity` installs it on the workspace PVC instead, pinned by
+// version and digest, and acpd only ever runs it from there.
+const (
+	AntigravityACPServerVersion = "1.2.1"
+	AntigravityACPServerURL     = "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-" + AntigravityACPServerVersion + "-linux-x86_64.zip"
+	AntigravityACPServerSHA256  = "9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843"
+	// AntigravityACPServerDir is versioned so that bumping the pin
+	// installs beside an old copy rather than over one a running session
+	// has open.
+	AntigravityACPServerDir = "/workspaces/.cache/agy-acp-server/" + AntigravityACPServerVersion
+)
+
+// Engines is the set acpd knows how to start. gemini speaks ACP natively
+// and antigravity through Google's separate server; claude is absent
+// rather than broken on purpose, so the failure is "unknown engine" at
+// session create rather than a hang on a handshake that will never
+// complete.
 var Engines = map[string]Engine{
 	"gemini": {
 		Command:      "gemini",
@@ -61,9 +78,26 @@ var Engines = map[string]Engine{
 		// live too: project hooks, stdio MCP servers, project GEMINI.md.
 		Env: []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
 	},
+	"antigravity": {
+		Command: AntigravityACPServerDir + "/agy_acp_server.par",
+		Args: []string{
+			"--uid=",
+			// It checks for an IPv6 loopback at start and aborts without
+			// one, and pod network namespaces have no ::1.
+			"--enforce_kernel_ipv6_support=false",
+		},
+		APIKeyEnv: "GEMINI_API_KEY",
+		// It also advertises oauth-personal and oauth-business, which
+		// wait minutes for a browser sign-in and stall the whole server
+		// while they do. Naming the key method keeps chooseAuthMethod
+		// away from them.
+		AuthMethodID: "gemini-api-key",
+	},
 }
 
-// The approval modes gemini advertises. ACP fixes the shape of a mode but
+// The approval modes gemini advertises. antigravity advertises default,
+// auto_edit and yolo — the same modes, one spelled differently, which is
+// the point of the paragraph below. ACP fixes the shape of a mode but
 // not its name, so these are the engine's vocabulary rather than the
 // protocol's: they are here to be recognised, not to be relied on. acpd
 // matches whatever the caller asks for against what the engine actually
