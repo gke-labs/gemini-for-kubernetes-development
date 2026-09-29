@@ -68,7 +68,7 @@ echo '{"type":"result","result":"CLAUDE RESPONSE","usage":{"input_tokens":10,"ou
 			// — a soft-denied permission — which must still fall back.
 			writeStub(bin, "agy", `if [ -t 0 ] || [ -n "$(cat)" ]; then echo "stdin was fed" >&2; exit 7; fi
 grep -q '"modelProvider": "gemini"' "$HOME/.gemini/antigravity-cli/settings.json" || exit 8
-echo "update=${AGY_CLI_DISABLE_AUTO_UPDATE:-} $*" >> "$(dirname "$0")/agy.args"
+echo "update=${AGY_CLI_DISABLE_AUTO_UPDATE:-} $*" >> "$(dirname "$0")/antigravity.args"
 case "$*" in *badmodel*) echo '{"status":"WAITING","response":""}'; exit 0 ;; esac
 echo '{"conversation_id":"c","status":"SUCCESS","response":"AGY RESPONSE","duration_seconds":2.5,"num_turns":2,"usage":{"input_tokens":10,"output_tokens":5,"thinking_tokens":3,"cache_read_tokens":4,"total_tokens":15}}'`)
 
