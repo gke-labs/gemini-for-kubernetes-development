@@ -104,3 +104,31 @@ func TestChatCommandClaude(t *testing.T) {
 		}
 	}
 }
+
+// An antigravity board's chat resumes with agy, which authenticates with the
+// gemini key only once its settings name the gemini provider — so the chat
+// re-seeds that before launching, and never falls into gemini's shims.
+func TestChatCommandAntigravity(t *testing.T) {
+	cmd := chatCommand("plan", chatHomeByTask["plan"], "antigravity", "g-key", chatOrientation("plan", "fix-substrate-1746"))
+	for _, want := range []string{
+		"tmux new-session -A -s chat-plan",
+		"export HOME=/workspaces/.home",
+		`GEMINI_API_KEY='\''g-key'\''`,
+		"AGY_CLI_DISABLE_AUTO_UPDATE=true",
+		"antigravity-cli",
+		"modelProvider",
+		"agy --add-dir /workspaces --continue || exec agy --add-dir /workspaces",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("antigravity chatCommand missing %q in:\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "(MISSING)") || strings.Contains(cmd, "%!") {
+		t.Errorf("Sprintf verb collision leaked into the command:\n%s", cmd)
+	}
+	for _, reject := range []string{"exec gemini", "trustedFolders", "ANTHROPIC_API_KEY", "claude"} {
+		if strings.Contains(cmd, reject) {
+			t.Errorf("antigravity chatCommand must not contain %q:\n%s", reject, cmd)
+		}
+	}
+}

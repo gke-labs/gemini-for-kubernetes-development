@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ResearchPanel, AllResearchPanel } from './Research';
+import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
 import { Terminal as XTerm } from 'xterm';
@@ -14,7 +15,7 @@ import 'xterm/css/xterm.css';
 
 // The engine that launched into the row's sandbox (stamped by the
 // controller) — brand icons so an A/B board pair reads at a glance.
-const ENGINE_ICON = { claude: claudeIcon, gemini: geminiIcon };
+const ENGINE_ICON = { antigravity: antigravityIcon, claude: claudeIcon, gemini: geminiIcon };
 function EngineIcon({ engine, title }) {
   const src = ENGINE_ICON[engine];
   if (!src) return null;
@@ -2159,11 +2160,12 @@ function Work({ onBack, namespace }) {
                     onChange={e => setSpec({ ...spec, idleMinutes: parseInt(e.target.value, 10) || 60 })} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}
-                  title="Agent engine for this board's tasks. Per-launch: flipping it affects the next task; in-flight runs finish on the engine they started with. Claude needs an anthropic-api-key secret in your namespace.">
+                  title="Agent engine for this board's tasks. Per-launch: flipping it affects the next task; in-flight runs finish on the engine they started with. Claude needs an anthropic-api-key secret in your namespace; antigravity (the agy CLI) uses your Gemini API key.">
                   Engine
                   <select value={spec.engine || 'gemini'} onChange={e => setSpec({ ...spec, engine: e.target.value })}>
                     <option value="gemini">gemini</option>
                     <option value="claude">claude</option>
+                    <option value="antigravity">antigravity</option>
                   </select>
                 </label>
               </div>

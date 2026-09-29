@@ -113,6 +113,7 @@ spec:
                     enum:
                     - gemini
                     - claude
+                    - antigravity
                     type: string
                   idleMinutes:
                     default: 60
