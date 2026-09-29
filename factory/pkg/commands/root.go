@@ -38,7 +38,7 @@ coding tasks without local side effects or host dependencies.`,
 	}
 
 	cmd.PersistentFlags().StringVarP(&rootFlags.Namespace, "namespace", "n", os.Getenv("NAMESPACE"), "Kubernetes namespace (defaults to $NAMESPACE, gh user, or default)")
-	cmd.PersistentFlags().StringVar(&rootFlags.Engine, "engine", "", "Agent engine: gemini or claude (default gemini; config file key 'engine')")
+	cmd.PersistentFlags().StringVar(&rootFlags.Engine, "engine", "", "Agent engine: gemini, claude or antigravity (default gemini; config file key 'engine')")
 	cmd.PersistentFlags().StringVar(&rootFlags.Image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
 	cmd.PersistentFlags().StringVarP(&rootFlags.User, "user", "u", "", "Run tasks under a specific bot user identity (looks up secret user-<user>)")
@@ -161,9 +161,10 @@ func getGeminiAPIKey(secret *corev1.Secret) string {
 }
 
 // applyEngineEnv threads the selected engine into a task's env: ENGINE,
-// the engine's API key, and the MODELS fallback list. Claude fails fast
-// when its key is missing from the user secret — otherwise the task would
-// only discover the gap in-sandbox and park with an opaque error. The
+// the engine's API key, and the MODELS fallback list. Claude and
+// antigravity fail fast when their key is missing from the user secret —
+// otherwise the task would only discover the gap in-sandbox and park with
+// an opaque error. The
 // gemini path stays permissive (an empty key fails in-sandbox exactly as
 // it always has, and alternative auth setups keep working).
 func applyEngineEnv(envMap map[string]string, secret *corev1.Secret) error {
@@ -180,6 +181,15 @@ func applyEngineEnv(envMap map[string]string, secret *corev1.Secret) error {
 		}
 		envMap["ANTHROPIC_API_KEY"] = key
 		envMap["MODELS"] = tasks.ModelsForEngine(engine, "")
+	case "antigravity":
+		// agy in a pod has no sign-in to fall back on: the gemini key is
+		// its only auth, so a missing one fails here, not in-sandbox.
+		key := getGeminiAPIKey(secret)
+		if key == "" {
+			return fmt.Errorf("engine antigravity selected but no gemini API key is in secret %s (agy authenticates with GEMINI_API_KEY)", rootFlags.SecretName)
+		}
+		envMap["GEMINI_API_KEY"] = key
+		envMap["MODELS"] = tasks.ModelsForEngine(engine, key)
 	default:
 		key := getGeminiAPIKey(secret)
 		envMap["GEMINI_API_KEY"] = key
@@ -252,8 +262,10 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 	if rootFlags.Engine == "" {
 		rootFlags.Engine = "gemini"
 	}
-	if rootFlags.Engine != "gemini" && rootFlags.Engine != "claude" {
-		return nil, fmt.Errorf("unknown engine %q (supported: gemini, claude)", rootFlags.Engine)
+	switch rootFlags.Engine {
+	case "gemini", "claude", "antigravity":
+	default:
+		return nil, fmt.Errorf("unknown engine %q (supported: gemini, claude, antigravity)", rootFlags.Engine)
 	}
 	if !cmd.Flags().Changed("image") && cfg.Image != "" {
 		rootFlags.Image = cfg.Image

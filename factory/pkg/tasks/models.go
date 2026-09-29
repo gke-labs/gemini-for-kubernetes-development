@@ -30,12 +30,21 @@ func GetAvailableModelsForKey(key string) string {
 // the MODELS env passthrough; no key-tier probing in v1.
 var DefaultClaudeModels = []string{"opus", "sonnet"}
 
+// DefaultAntigravityModels is a single "default": runEngine then passes no
+// --model and agy picks. Its slugs (gemini-3.5-flash-medium, …) are not
+// the gemini-cli names, and which ones an API key can reach is agy's
+// call, so a hard-coded list would rot.
+var DefaultAntigravityModels = []string{"default"}
+
 // ModelsForEngine returns the space-separated model fallback list for the
 // selected engine. The gemini list is filtered by the key's quota state
-// (existing behavior); claude uses the static default list.
+// (existing behavior); claude and antigravity use static default lists.
 func ModelsForEngine(engine, geminiKey string) string {
-	if engine == "claude" {
+	switch engine {
+	case "claude":
 		return strings.Join(DefaultClaudeModels, " ")
+	case "antigravity":
+		return strings.Join(DefaultAntigravityModels, " ")
 	}
 	return GetAvailableModelsForKey(geminiKey)
 }
