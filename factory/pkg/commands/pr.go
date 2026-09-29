@@ -232,6 +232,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		IssueComments: prComments,
 		Models:        tasks.DefaultModels,
 		TriggerLabel:  triggerLabel,
+		Disclose:      rootFlags.Disclose,
 	}
 
 	scriptBytes, err := tasks.GetInvestigateScript()
@@ -507,6 +508,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 		PullRequestReviews:    newReviews,
 		Models:                tasks.DefaultModels,
 		TriggerLabel:          triggerLabel,
+		Disclose:              rootFlags.Disclose,
 	}
 
 	scriptBytes, err := tasks.GetAddressFeedbackScript()

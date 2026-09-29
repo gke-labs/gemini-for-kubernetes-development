@@ -2177,7 +2177,7 @@ function Work({ onBack, namespace }) {
                 <input type="checkbox" checked={!!spec.draftPR} onChange={e => setSpec({ ...spec, draftPR: e.target.checked })} style={{ marginRight: '6px' }} />
                 Open agent PRs as drafts
               </label>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Add an AI-assistance disclosure line to agent-created PR descriptions.">
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Let the agent say it is an agent: the generated-by line in PR descriptions, and the footer on its comments and CI reports. Off, it posts none of them.">
                 <input type="checkbox" checked={!!spec.disclose} onChange={e => setSpec({ ...spec, disclose: e.target.checked })} style={{ marginRight: '6px' }} />
                 Disclose agent assistance in PRs
               </label>

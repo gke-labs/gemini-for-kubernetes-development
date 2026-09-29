@@ -104,13 +104,12 @@ const (
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
-	AnnotationEngine            = "board.gemini.google.com/engine"
-	reviewStatePending          = "pending"
-	defaultRequeue              = time.Minute
-	launchRetryBackoff          = 30 * time.Minute
-	prWatchRelaunchInterval     = 10 * time.Minute
-	draftPRInstruction          = "Open the pull request as a draft pull request."
-	discloseInstructionTemplate = "Add a line to the pull request description stating that this change was prepared with AI agent assistance."
+	AnnotationEngine        = "board.gemini.google.com/engine"
+	reviewStatePending      = "pending"
+	defaultRequeue          = time.Minute
+	launchRetryBackoff      = 30 * time.Minute
+	prWatchRelaunchInterval = 10 * time.Minute
+	draftPRInstruction      = "Open the pull request as a draft pull request."
 )
 
 var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"}
@@ -767,9 +766,6 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		// the human promotes.
 		instruction = draftPRInstruction
 	}
-	if work.board.Spec.Policy.Disclose {
-		instruction = strings.TrimSpace(instruction + " " + discloseInstructionTemplate)
-	}
 
 	// An approved plan on the sandbox rides along: the fix follows it and
 	// publishes it as the PR description's Plan section. Only approval
@@ -792,6 +788,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		GithubToken:       token,
 		WithPlan:          withPlan,
 		Engine:            boardEngine(work.board),
+		Disclose:          work.board.Spec.Policy.Disclose,
 	}) {
 		logger.Info("launched factory fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name)
 	}
@@ -1276,6 +1273,7 @@ func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, cl
 			Instruction: instruction,
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
+			Disclose:    work.board.Spec.Policy.Disclose,
 		}) {
 			logger.Info("launched factory pr "+claim.kind+" (manual PR attach)", "pr", claim.pr, "board", work.board.Name)
 		}
@@ -1360,6 +1358,7 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 				Instruction: instruction,
 				GithubToken: token,
 				Engine:      boardEngine(work.board),
+				Disclose:    work.board.Spec.Policy.Disclose,
 			}) {
 				logger.Info("launched factory pr "+k.kind, "pr", prNum, "board", work.board.Name)
 			}
@@ -1401,6 +1400,7 @@ func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefa
 			PRURL:       prURL,
 			GithubToken: token,
 			Engine:      boardEngine(work.board),
+			Disclose:    work.board.Spec.Policy.Disclose,
 		}) {
 			logger.Info("launched factory pr watch", "pr", prNum, "namespace", namespace, "board", work.board.Name)
 		}

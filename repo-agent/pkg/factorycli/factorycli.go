@@ -232,6 +232,9 @@ type PRWatchOptions struct {
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine  string
 	Timeout time.Duration
+	// Disclose is factory's --disclose: whether what the agent posts says
+	// an agent wrote it. Always passed, because factory defaults it on.
+	Disclose bool
 }
 
 // FixOptions are the inputs for a `factory fix` invocation.
@@ -261,6 +264,9 @@ type FixOptions struct {
 	// killed on timeout (--abort-on-cancel=false) and is reattached to by
 	// the next invocation.
 	Timeout time.Duration
+	// Disclose is factory's --disclose: whether what the agent posts says
+	// an agent wrote it. Always passed, because factory defaults it on.
+	Disclose bool
 }
 
 // PlanOptions are the inputs for a `factory plan` invocation: an
@@ -302,6 +308,9 @@ type PRTaskOptions struct {
 	Timeout     time.Duration
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine string
+	// Disclose is factory's --disclose: whether what the agent posts says
+	// an agent wrote it. Always passed, because factory defaults it on.
+	Disclose bool
 }
 
 func (r *Runner) startPRTask(key, subcommand, prefix string, opts PRTaskOptions) bool {
@@ -322,6 +331,7 @@ func (r *Runner) startPRTask(key, subcommand, prefix string, opts PRTaskOptions)
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: prefix,
 	})
@@ -491,6 +501,7 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
 		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "fix",
 	})
@@ -554,6 +565,7 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
