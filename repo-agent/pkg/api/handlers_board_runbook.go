@@ -171,6 +171,9 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 		// under the repository's .agents/runbooks/, or another run.
 		// It is copied in and planned for this run. Plan only.
 		Runbook string `json:"runbook"`
+		// Target is the pull request the run deploys instead of the
+		// default branch. Plan only: the plan pins its head commit.
+		Target int `json:"target"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -203,6 +206,19 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 			return
 		}
 	}
+	switch {
+	case req.Target < 0:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target must be a pull request number"})
+		return
+	case req.Target > 0 && req.Mode != "plan":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a pull request is pinned by a plan; deploy and teardown execute the pin"})
+		return
+	case req.Target > 0 && len(name) > maxTargetRunName:
+		// The sandbox is named after the run, and it is the repository
+		// half that gets cut to fit, never the run's name.
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("run name %q is longer than %d characters", name, maxTargetRunName)})
+		return
+	}
 	// Multi-tenant policy (factory itself only discloses): a member
 	// with no configured deploy project must not launch infrastructure
 	// runbooks — the pod's metadata default is the PLATFORM cluster's
@@ -228,6 +244,7 @@ func (s *Server) kickoffRunbook(c *gin.Context) {
 			Scenario: req.Scenario,
 			Intent:   clampIntent(intent),
 			Runbook:  runbook,
+			Target:   req.Target,
 		},
 	})
 	if err != nil {
@@ -519,6 +536,13 @@ func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member
 			// The review surface. A legacy deployment has none until
 			// its first deploy or teardown reconciles one.
 			row["runbook"] = fh
+		case f.GetName() == runTargetFile:
+			// The pull request this run deploys: one read, and only for
+			// the runs that have one.
+			if pr, sha := s.runTarget(ctx, gh, member, repo, f.GetPath(), ref); pr > 0 {
+				row["target"] = pr
+				row["targetSHA"] = sha
+			}
 		}
 	}
 	row["files"] = files
@@ -583,6 +607,40 @@ func (s *Server) receiptVerdict(ctx context.Context, gh *github.Client, member, 
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
 	return strings.TrimSpace(line)
+}
+
+// runTargetFile is where factory pins the pull request a run deploys
+// (`factory run plan --target`).
+const runTargetFile = "target.env"
+
+// maxTargetRunName keeps a pull request run's sandbox name inside the
+// DNS budget RunbookSandboxName works to: the run's name is kept whole.
+const maxTargetRunName = 40
+
+// runTarget reads a run's target.env: TARGET_PR=<n> and
+// TARGET_SHA=<commit>, one per line. Anything else reads as no target.
+func (s *Server) runTarget(ctx context.Context, gh *github.Client, member, repo, path string, ref *github.RepositoryContentGetOptions) (int, string) {
+	rf, _, _, err := gh.Repositories.GetContents(ctx, member, repo, path, ref)
+	if err != nil || rf == nil {
+		return 0, ""
+	}
+	content, err := rf.GetContent()
+	if err != nil {
+		return 0, ""
+	}
+	pr, sha := 0, ""
+	for _, line := range strings.Split(content, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch k {
+		case "TARGET_PR":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				pr = n
+			}
+		case "TARGET_SHA":
+			sha = v
+		}
+	}
+	return pr, sha
 }
 
 // firstNonEmpty returns the first value with content, so the older

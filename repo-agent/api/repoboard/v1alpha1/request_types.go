@@ -127,6 +127,13 @@ type RunRequest struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	Runbook string `json:"runbook,omitempty"`
+
+	// Target is the pull request this run deploys instead of the
+	// default branch. The plan pins its head commit; deploy and
+	// teardown execute the pin. Plan only.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	Target int `json:"target,omitempty"`
 }
 
 // ResearchRequest is one deep-research conversation: its identity, and

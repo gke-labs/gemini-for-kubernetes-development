@@ -173,6 +173,9 @@ func runClaimFrom(req *boardv1alpha1.Request) (runbookClaim, bool) {
 	if run.Runbook != "" && !runbookNameRE.MatchString(run.Runbook) {
 		return runbookClaim{}, false
 	}
+	if run.Target < 0 {
+		return runbookClaim{}, false
+	}
 	// scenario is the shape, instance is the run. They were one string
 	// in the annotation, which is why runIntent still has to ask whether
 	// they differ.
@@ -188,6 +191,7 @@ func runClaimFrom(req *boardv1alpha1.Request) (runbookClaim, bool) {
 		claimedAt: req.CreationTimestamp.Time,
 		intent:    run.Intent,
 		runbook:   run.Runbook,
+		target:    run.Target,
 		request:   req,
 	}, true
 }
