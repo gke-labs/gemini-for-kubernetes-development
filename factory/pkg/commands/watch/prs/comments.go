@@ -46,7 +46,6 @@ func (s *Scanner) evaluateComments(
 	comments := history.comments
 	reviews := history.reviews
 	revCommentsMap := history.revCommentsMap
-	bots := s.cfg.AllowlistedBots
 
 	updateOldestComment := func(t time.Time, author string, cType string, id int64) {
 		if !t.IsZero() && (analysis.oldestCommentTime.IsZero() || t.Before(analysis.oldestCommentTime)) {
@@ -58,81 +57,108 @@ func (s *Scanner) evaluateComments(
 	}
 
 	for _, c := range comments {
-		isReviewer := conventions.IsReviewerBot(c.GetUser(), s.cfg.ReviewerLogins)
-		if !isReviewer && conventions.ShouldIgnoreUser(c.GetUser(), s.cfg.GitHubLogin, bots) {
+		if s.ignoreFeedback(pr, feedback{
+			user: c.GetUser(),
+			body: c.GetBody(),
+			at:   c.GetCreatedAt(),
+		}, lastCommitTime, lastCommentAddressedTime) {
 			continue
 		}
-		// The pull request's own author talking to itself is not feedback.
-		if strings.EqualFold(c.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
+		if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
 			continue
 		}
-		if conventions.HasIgnorePrefix(c.GetBody(), s.cfg.TriggerLabel) {
-			continue
-		}
-		if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
-			if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
-				continue
-			}
-			analysis.hasNewComments = true
-			analysis.unackCommentIDs = append(analysis.unackCommentIDs, c.GetID())
-			author := ""
-			if c.GetUser() != nil {
-				author = c.GetUser().GetLogin()
-			}
-			updateOldestComment(c.GetCreatedAt(), author, "comment", c.GetID())
-		}
+		analysis.hasNewComments = true
+		analysis.unackCommentIDs = append(analysis.unackCommentIDs, c.GetID())
+		updateOldestComment(c.GetCreatedAt(), c.GetUser().GetLogin(), "comment", c.GetID())
 	}
 
-	// Also check inline PR review comments directly
 	for _, r := range reviews {
-		isReviewer := conventions.IsReviewerBot(r.GetUser(), s.cfg.ReviewerLogins)
-		if !isReviewer && conventions.ShouldIgnoreUser(r.GetUser(), s.cfg.GitHubLogin, bots) {
-			continue
+		// The review body and its inline comments are judged independently:
+		// an empty or approving review body can still carry inline feedback.
+		if !s.ignoreFeedback(pr, feedback{
+			user:        r.GetUser(),
+			body:        r.GetBody(),
+			reviewState: r.GetState(),
+			at:          r.GetSubmittedAt(),
+		}, lastCommitTime, lastCommentAddressedTime) {
+			analysis.hasNewComments = true
+			updateOldestComment(r.GetSubmittedAt(), r.GetUser().GetLogin(), "review", r.GetID())
 		}
-		if strings.EqualFold(r.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-			continue
-		}
-		if r.GetSubmittedAt().After(lastCommitTime) && r.GetSubmittedAt().After(lastCommentAddressedTime) {
-			if conventions.HasIgnorePrefix(r.GetBody(), s.cfg.TriggerLabel) {
+
+		for _, rc := range revCommentsMap[r.GetID()] {
+			if s.ignoreFeedback(pr, feedback{
+				user: rc.GetUser(),
+				body: rc.GetBody(),
+				at:   rc.GetCreatedAt(),
+			}, lastCommitTime, lastCommentAddressedTime) {
 				continue
 			}
 			analysis.hasNewComments = true
-			// A review with an empty body carries no instruction of its own -
-			// its inline comments below are the feedback.
-			if strings.TrimSpace(r.GetBody()) != "" {
-				author := ""
-				if r.GetUser() != nil {
-					author = r.GetUser().GetLogin()
-				}
-				updateOldestComment(r.GetSubmittedAt(), author, "review", r.GetID())
-			}
-		}
-
-		revComments := revCommentsMap[r.GetID()]
-		for _, rc := range revComments {
-			isInlineReviewer := conventions.IsReviewerBot(rc.GetUser(), s.cfg.ReviewerLogins)
-			if !isInlineReviewer && conventions.ShouldIgnoreUser(rc.GetUser(), s.cfg.GitHubLogin, bots) {
-				continue
-			}
-			if strings.EqualFold(rc.GetUser().GetLogin(), pr.GetUser().GetLogin()) {
-				continue
-			}
-			if rc.GetCreatedAt().After(lastCommitTime) && rc.GetCreatedAt().After(lastCommentAddressedTime) {
-				if conventions.HasIgnorePrefix(rc.GetBody(), s.cfg.TriggerLabel) {
-					continue
-				}
-				analysis.hasNewComments = true
-				analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
-				author := ""
-				if rc.GetUser() != nil {
-					author = rc.GetUser().GetLogin()
-				}
-				updateOldestComment(rc.GetCreatedAt(), author, "inline review comment", rc.GetID())
-			}
+			analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
+			updateOldestComment(rc.GetCreatedAt(), rc.GetUser().GetLogin(), "inline review comment", rc.GetID())
 		}
 	}
 
 	return analysis
+}
+
+// feedback is the common shape of an issue comment, a review, or an inline
+// review comment, as far as deciding whether it needs addressing goes.
+type feedback struct {
+	user *githubv39.User
+	body string
+	// reviewState is the review's state (e.g. APPROVED); empty for comments.
+	reviewState string
+	at          time.Time
+}
+
+// approvalCommands are Prow-style commands that signal approval rather than
+// requesting changes.
+var approvalCommands = []string{"/lgtm", "/approve"}
+
+// ignoreFeedback reports whether a piece of feedback should not count as
+// outstanding. It is ignored when:
+//   - it comes from an ignored user (reviewer bots are never ignored),
+//   - it comes from the pull request's own author,
+//   - it predates the last commit or the last address-comments task,
+//   - its body opts out via the ignore prefix,
+//   - its body is empty,
+//   - it is an approving review, or
+//   - a line of its body starts with an approval command such as /lgtm.
+func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastCommitTime, lastCommentAddressedTime time.Time) bool {
+	isReviewer := conventions.IsReviewerBot(f.user, s.cfg.ReviewerLogins)
+	if !isReviewer && conventions.ShouldIgnoreUser(f.user, s.cfg.GitHubLogin, s.cfg.AllowlistedBots) {
+		return true
+	}
+	// The pull request's own author talking to itself is not feedback.
+	if strings.EqualFold(f.user.GetLogin(), pr.GetUser().GetLogin()) {
+		return true
+	}
+	if !f.at.After(lastCommitTime) || !f.at.After(lastCommentAddressedTime) {
+		return true
+	}
+	if conventions.HasIgnorePrefix(f.body, s.cfg.TriggerLabel) {
+		return true
+	}
+	body := strings.TrimSpace(f.body)
+	if body == "" {
+		return true
+	}
+	if strings.EqualFold(f.reviewState, "APPROVED") {
+		return true
+	}
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		for _, cmd := range approvalCommands {
+			if strings.EqualFold(fields[0], cmd) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasBotReviewAfterLastCommit reports whether the current head has already been
