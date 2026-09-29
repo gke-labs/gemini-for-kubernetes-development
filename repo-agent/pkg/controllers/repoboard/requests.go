@@ -570,14 +570,26 @@ func (r *Reconciler) collectRequests(ctx context.Context, work *workState, now t
 		sort.Slice(reqs, func(i, j int) bool {
 			return reqs[j].CreationTimestamp.Before(&reqs[i].CreationTimestamp)
 		})
+		// A failure outlives a success by a week, so a failure that a
+		// later click on the same subject already answered would
+		// outlive its answer and come back as the newest word on it:
+		// the Runs tab read "plan failed" on a run that had re-planned,
+		// deployed and verified, an hour after the success was collected.
+		answered := false
 		for i, req := range reqs {
 			why := ""
 			switch {
 			case i >= maxHistory:
 				why = "history cap"
+			case answered && req.Status.Phase == boardv1alpha1.RequestFailed:
+				why = "superseded"
 			case expired(req, now):
 				why = "ttl"
-			default:
+			}
+			if req.Status.Phase == boardv1alpha1.RequestSucceeded {
+				answered = true
+			}
+			if why == "" {
 				continue
 			}
 			if err := r.Delete(ctx, req); err != nil && !errors.IsNotFound(err) {

@@ -260,6 +260,33 @@ func TestSettledRequestsAreCollectedOnTheirOwnClock(t *testing.T) {
 	g.Expect(requestStatus(t, r, oldFailure).Phase).To(gomega.BeEmpty(), "old-failure should be gone")
 }
 
+// A failure keeps a week and a success an hour, so a failure a later
+// click answered would otherwise be the newest receipt on its subject
+// for six days after the answer was collected. It goes when the answer
+// arrives. A failure newer than the success is the current word and
+// stays; so does another subject's.
+func TestASucceededClickRetiresTheFailuresBeforeIt(t *testing.T) {
+	g := gomega.NewWithT(t)
+	answered := settled("plan-failed", boardv1alpha1.RequestFailed, 40, 50*time.Minute)
+	retry := settled("plan-retried", boardv1alpha1.RequestSucceeded, 40, 10*time.Minute)
+	current := settled("fix-succeeded", boardv1alpha1.RequestSucceeded, 41, 20*time.Minute)
+	stillCurrent := settled("fix-failed-again", boardv1alpha1.RequestFailed, 41, 5*time.Minute)
+	elsewhere := settled("other-failed", boardv1alpha1.RequestFailed, 42, 50*time.Minute)
+
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		answered, retry, current, stillCurrent, elsewhere)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Expect(requestStatus(t, r, answered).Phase).To(gomega.BeEmpty(), "the retry answered this failure")
+	g.Expect(requestStatus(t, r, retry).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+	g.Expect(requestStatus(t, r, current).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+	g.Expect(requestStatus(t, r, stillCurrent).Phase).To(gomega.Equal(boardv1alpha1.RequestFailed),
+		"a failure after the success is the current word on its subject")
+	g.Expect(requestStatus(t, r, elsewhere).Phase).To(gomega.Equal(boardv1alpha1.RequestFailed),
+		"another subject's success answers nothing here")
+}
+
 // Clicking the same thing all afternoon leaves one receipt per click,
 // and only the last of them is ever read. The cap is per subject so a
 // busy issue cannot evict the only failure a quiet one ever had.
