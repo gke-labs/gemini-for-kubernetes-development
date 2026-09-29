@@ -1448,3 +1448,34 @@ func TestSettingTheModeDoesNotCreateASession(t *testing.T) {
 		t.Errorf("setting the mode spawned an engine; calls: %v", acp.calls)
 	}
 }
+
+// The session is created on the engine the sandbox was set up for, and
+// a sandbox from before that was recorded is gemini.
+func TestResearchSessionIsCreatedOnTheSandboxEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name, annotation, want string
+	}{
+		{"recorded", acpd.EngineAntigravity, acpd.EngineAntigravity},
+		{"older sandbox", "", acpd.EngineGemini},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+			if tc.annotation != "" {
+				annotations := sb.GetAnnotations()
+				annotations[acpd.ResearchEngineAnnotation] = tc.annotation
+				sb.SetAnnotations(annotations)
+			}
+			acp := &fakeACPD{sessionExists: false}
+			r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+				researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
+
+			w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hi"}`)
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(acp.createBody, `"engine":"`+tc.want+`"`) {
+				t.Errorf("create body %s, want engine %q", acp.createBody, tc.want)
+			}
+		})
+	}
+}

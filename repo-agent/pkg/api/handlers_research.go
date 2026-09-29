@@ -80,9 +80,10 @@ const (
 // engineAPIKeySecretKey is the field of the member's factory-user Secret
 // that holds the engine credential.
 //
-// Only gemini is registered in acpd, deliberately, so there is no engine
-// switch here: an unsupported engine should fail at session creation
-// rather than be quietly papered over with the wrong key.
+// Both engines acpd runs — gemini and antigravity — authenticate with the
+// same Gemini key, so there is no engine switch here. An engine that
+// needs another credential should add one rather than be quietly handed
+// this key.
 const engineAPIKeySecretKey = "GEMINI_API_KEY"
 
 // safeResearchSessionID mirrors the controller's claim-key check. The id
@@ -112,6 +113,9 @@ type researchSandboxView struct {
 	Repo      string `json:"repo"`
 	HTMLURL   string `json:"htmlUrl,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
+	// Engine is what the conversation runs on, as the sandbox was set up
+	// for it — see acpd.ResearchEngine.
+	Engine string `json:"engine,omitempty"`
 	// Title is what the session is called: the canned exploration's
 	// name, the topic it was started with, or the first thing the member
 	// said. Empty until one of those has happened.
@@ -194,6 +198,7 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		Namespace:    sb.GetNamespace(),
 		Repo:         annotations["repo"],
 		HTMLURL:      annotations["htmlURL"],
+		Engine:       acpd.ResearchEngine(annotations),
 		Title:        annotations[research.TitleAnnotation],
 		Opening:      annotations[research.KickoffAnnotation] != "",
 		OpeningError: annotations[research.KickoffErrorAnnotation],
@@ -596,7 +601,7 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 	}
 	return conn.client.CreateSession(ctx, acpd.CreateSessionRequest{
 		ID:     conn.view.SessionID,
-		Engine: acpd.EngineGemini,
+		Engine: conn.view.Engine,
 		CWD:    conn.view.cwd(),
 		// Set here as well as on the controller's create because either
 		// side can be the one that gets there first: a member who opens

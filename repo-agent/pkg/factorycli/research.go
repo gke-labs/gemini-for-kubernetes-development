@@ -140,7 +140,10 @@ type ResearchOptions struct {
 	// is not passed here and must not be: it travels in the
 	// X-Engine-Api-Key header at session create, so that it never lands
 	// on the sandbox's disk.
-	GithubToken       string
+	GithubToken string
+	// Engine is the acpd engine to prepare the sandbox for. Empty leaves
+	// factory's default, gemini.
+	Engine            string
 	Image             string
 	WorkspaceDiskSize string
 	Timeout           time.Duration
@@ -182,6 +185,9 @@ func researchArgs(opts ResearchOptions, timeout time.Duration) []string {
 		"--session", opts.SessionID,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
+	}
+	if opts.Engine != "" {
+		args = append(args, "--engine", opts.Engine)
 	}
 	if opts.Image != "" {
 		args = append(args, "--image", opts.Image)

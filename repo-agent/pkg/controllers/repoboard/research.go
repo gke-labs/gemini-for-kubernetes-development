@@ -179,6 +179,9 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			SessionID:   claim.sessionID,
 			GithubToken: token,
+			// Read at launch, like a task's engine: switching the board
+			// changes the next session, not the ones already running.
+			Engine: acpd.ResearchEngineFor(boardEngine(work.board)),
 		}) {
 			logger.Info("launched factory research", "session", claim.sessionID, "board", work.board.Name)
 		}
@@ -330,7 +333,7 @@ func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, s
 		// sandbox's disk.
 		if _, cerr := client.CreateSession(ctx, acpd.CreateSessionRequest{
 			ID:     sessionID,
-			Engine: acpd.EngineGemini,
+			Engine: acpd.ResearchEngine(annotations),
 			CWD:    "/workspaces/" + repo,
 			// Nobody is watching this one. A canned opening that stops to
 			// ask permission blocks until acpd's permission timeout and

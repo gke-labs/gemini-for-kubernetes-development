@@ -209,10 +209,11 @@ func TestResearchArgs(t *testing.T) {
 		t.Error("args must not mount a secret into the research sandbox")
 	}
 	if strings.Contains(joined, "--engine") {
-		t.Error("the engine is chosen at session create, not sandbox create")
+		t.Error("no engine asked for, yet one was passed; factory's default should apply")
 	}
 
 	withOverrides := researchArgs(ResearchOptions{
+		Engine:            "antigravity",
 		Image:             "ghcr.io/example/img:tag",
 		WorkspaceDiskSize: "50Gi",
 	}, time.Minute)
@@ -222,6 +223,11 @@ func TestResearchArgs(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--workspace-disk-size 50Gi") {
 		t.Errorf("disk size override missing from %q", joined)
+	}
+	// The sandbox is prepared for the engine: antigravity's ACP server
+	// is installed by research start, not at session create.
+	if !strings.Contains(joined, "--engine antigravity") {
+		t.Errorf("engine missing from %q", joined)
 	}
 }
 
