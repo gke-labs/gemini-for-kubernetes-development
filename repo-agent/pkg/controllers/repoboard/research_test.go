@@ -422,14 +422,17 @@ func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 
 // fakeACPD is an acpd that records what it was asked.
 type fakeACPD struct {
-	mu       sync.Mutex
-	exists   bool  // a session is already live
-	offset   int64 // its transcript length, when it is
-	busy     bool  // a turn is in flight in it
-	created  []acpd.CreateSessionRequest
-	apiKeys  []string
-	prompts  []string
-	promptNo int
+	mu     sync.Mutex
+	exists bool  // a session is already live
+	offset int64 // its transcript length, when it is
+	busy   bool  // a turn is in flight in it
+	// transcript is what its events endpoint returns: the kinds, in
+	// order. offset is what says it is non-empty.
+	transcript []string
+	created    []acpd.CreateSessionRequest
+	apiKeys    []string
+	prompts    []string
+	promptNo   int
 }
 
 func (f *fakeACPD) server(t *testing.T) *httptest.Server {
@@ -446,6 +449,10 @@ func (f *fakeACPD) server(t *testing.T) *httptest.Server {
 			f.apiKeys = append(f.apiKeys, req.Header.Get(acpd.APIKeyHeader))
 			f.exists = true
 			_ = json.NewEncoder(w).Encode(acpd.Session{ID: in.ID, Engine: in.Engine, CWD: in.CWD})
+		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/events"):
+			for i, kind := range f.transcript {
+				_ = json.NewEncoder(w).Encode(acpd.Event{Seq: int64(i + 1), Kind: kind})
+			}
 		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/sessions/"):
 			if !f.exists {
 				w.WriteHeader(http.StatusNotFound)
@@ -676,7 +683,8 @@ func TestResearchKickoffSkipsAConversationInProgress(t *testing.T) {
 	annotations := sb.GetAnnotations()
 	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
 	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{exists: true, offset: 4096}
+	acp := &fakeACPD{exists: true, offset: 4096,
+		transcript: []string{acpd.KindModeChanged, acpd.KindUserPrompt, "agent_message_chunk", acpd.KindTurnEnd}}
 	acp.server(t)
 	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
 		engineSecret(), sb, researchPod(name))
@@ -686,6 +694,50 @@ func TestResearchKickoffSkipsAConversationInProgress(t *testing.T) {
 	g.Expect(acp.sent()).To(gomega.BeEmpty())
 	g.Expect(sandboxAnnotations(t, r, name)).NotTo(gomega.HaveKey(research.KickoffAnnotation),
 		"an opening that can no longer be sent must stop being owed")
+}
+
+// A browser that attaches between the ready receipt and the kickoff
+// stamp creates the session itself, and creating one writes into the
+// transcript before anyone speaks: acpd's mode banner, and antigravity's
+// list of slash commands. That is not a turn. Reading it as one dropped
+// the member's question on the floor.
+func TestResearchKickoffPromptsASessionThatHasOnlyItsBanner(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{exists: true, offset: 261,
+		transcript: []string{"available_commands_update", acpd.KindModeChanged}}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.HaveLen(1))
+	g.Expect(acp.created).To(gomega.BeEmpty(), "the live session is prompted as it stands")
+	g.Expect(sandboxAnnotations(t, r, name)).NotTo(gomega.HaveKey(research.KickoffAnnotation))
+}
+
+// A turn in flight is somebody's prompt, whether or not its event is
+// on disk yet.
+func TestResearchKickoffSkipsABusySession(t *testing.T) {
+	g := gomega.NewWithT(t)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	sb := researchSandboxObj("alice", name)
+	annotations := sb.GetAnnotations()
+	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
+	sb.SetAnnotations(annotations)
+	acp := &fakeACPD{exists: true, busy: true}
+	acp.server(t)
+	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		engineSecret(), sb, researchPod(name))
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(acp.sent()).To(gomega.BeEmpty())
 }
 
 // No pod yet is the normal state for a sandbox's first minutes. It is
