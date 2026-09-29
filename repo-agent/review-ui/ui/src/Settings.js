@@ -249,7 +249,7 @@ function Settings({ onBack }) {
                         )}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginTop: '5px' }}>
-                        Required for AI-powered reviews and triage. 
+                        Required for AI-powered reviews and triage, on the gemini and antigravity engines. 
                     </p>
                     <input
                         type="text"

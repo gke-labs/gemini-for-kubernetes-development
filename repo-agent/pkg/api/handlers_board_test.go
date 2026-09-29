@@ -1810,3 +1810,19 @@ func TestPRTaskKickoffRecordsTheMemberNotTheToken(t *testing.T) {
 		t.Fatalf("the click carries a token: %s", raw)
 	}
 }
+
+// The gear's engine choice survives for every engine factory runs;
+// anything else (including empty) is gemini.
+func TestEngineOrDefault(t *testing.T) {
+	for in, want := range map[string]string{
+		"":            "gemini",
+		"gemini":      "gemini",
+		"claude":      "claude",
+		"antigravity": "antigravity",
+		"agy":         "gemini",
+	} {
+		if got := engineOrDefault(in); got != want {
+			t.Errorf("engineOrDefault(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

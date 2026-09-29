@@ -1708,10 +1708,12 @@ func (s *Server) investigateBoardPR(c *gin.Context) {
 }
 
 // engineOrDefault normalizes the gear's engine choice; anything but an
-// explicit "claude" is gemini (the CRD enum rejects other values anyway).
+// explicit "claude" or "antigravity" is gemini (the CRD enum rejects other
+// values anyway).
 func engineOrDefault(engine string) string {
-	if engine == "claude" {
-		return "claude"
+	switch engine {
+	case "claude", "antigravity":
+		return engine
 	}
 	return "gemini"
 }

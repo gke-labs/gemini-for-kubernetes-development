@@ -137,6 +137,17 @@ json.dump(d,open(p,"w"),indent=2)' "$PWD" 2>/dev/null; `
 		resume = `proj="$HOME/.claude/projects/$(printf %s "$PWD" | tr -c "a-zA-Z0-9" "-")"; ` +
 			`sid=$(ls -t "$proj"/*.jsonl 2>/dev/null | head -1); ` +
 			`if [ -n "$sid" ]; then exec claude --resume "$(basename "$sid" .jsonl)"` + orient + `; else exec claude; fi`
+	case "antigravity":
+		// agy reads GEMINI_API_KEY only when its settings name the gemini
+		// provider — the task run wrote that (factory lib.sh
+		// configureAntigravity); it is merged in again here so a chat never
+		// lands on a sign-in screen it cannot complete. --continue resumes
+		// the task's conversation; with none, a fresh chat opens. No
+		// orientation: agy documents no flag that seeds an interactive
+		// session with a first message.
+		keyExport = "export GEMINI_API_KEY=" + shellSingleQuote(apiKey) + "; export AGY_CLI_DISABLE_AUTO_UPDATE=true"
+		prep = `python3 -c 'import json,os; p=os.path.join(os.environ["HOME"],".gemini","antigravity-cli","settings.json"); os.makedirs(os.path.dirname(p),exist_ok=True); d=json.load(open(p)) if os.path.exists(p) else {}; d["modelProvider"]="gemini"; json.dump(d,open(p,"w"),indent=2)' 2>/dev/null; `
+		resume = "agy --add-dir /workspaces --continue || exec agy --add-dir /workspaces"
 	default:
 		// Trust like the task runs do (no interactive prompt), and widen
 		// the workspace to /workspaces: artifact files (plan-issue-N.md)
@@ -338,7 +349,7 @@ func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {
 		}
 		// The engine's key rides in from the factory-user secret (the
 		// same identity the task ran under) — never stored on the pod.
-		keyName := "GEMINI_API_KEY"
+		keyName := "GEMINI_API_KEY" // gemini and antigravity
 		if engine == "claude" {
 			keyName = "ANTHROPIC_API_KEY"
 		}
