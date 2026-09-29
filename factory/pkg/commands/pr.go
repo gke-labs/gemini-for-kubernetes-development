@@ -264,6 +264,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
@@ -538,6 +539,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  repo,
@@ -951,6 +953,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
@@ -1248,6 +1251,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	}
 
 	envMap := map[string]string{
+		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
