@@ -51,16 +51,30 @@ Check the status of KCC resource Kinds listed in `dev/migration-tracker/data.jso
 
 ## Step 4: Determine Current Stage for In Progress Resources
 For each resource with state `"In Progress"` in `dev/migration-tracker/data.json`:
-1. Check the filesystem (code base) for direct controller migration files to determine its current stage:
-   - **Stage 5 (Controller Implemented)**: Check if `pkg/controller/direct/{service}/{kind}_controller.go` or `pkg/controller/direct/{service}/adapter.go` exists.
-   - **Stage 4 (MockGCP/E2E Fixtures)**: Check if E2E test files or fixtures exist for the resource under `pkg/controller/direct/{service}/` or check if mock files exist under `mockgcp/` for the GCP service.
-   - **Stage 3 (KRM Fuzzer)**: Check if `pkg/controller/direct/{service}/{kind}_fuzzer.go` exists.
-   - **Stage 2 (Identity & Reference Types)**: Check if `apis/{service}/{version}/{kind}_identity.go` or `apis/{service}/{version}/{kind}_reference.go` exists.
-   - **Stage 1 (Direct KRM Types)**: Check if `apis/{service}/{version}/{kind}_types.go` exists.
-2. Use the highest stage (from Stage 1 to Stage 5) where matching files are found as the resource's current stage.
-3. If none of these files exist:
-   - Check if an open PR or issue exists on GitHub for the Kind, and inspect its title/description to infer the stage.
-   - If no PR/issue is found, default the stage to "Investigation/Setup".
+1. **Check Filesystem (Codebase) Prerequisites**:
+   The filesystem (code base) is the primary source of truth for completed stages.
+   - **Prerequisite (Stage 1 - Direct KRM Types)**: Check if `apis/{service}/{version}/{kind}_types.go` exists.
+   - If this Stage 1 types file **does NOT exist** in the codebase:
+     - The migration code has not been merged yet.
+     - You MUST NOT use the filesystem checks for Stage 1 to Stage 5 below (as they will lead to false positives, such as checking generic service-level folders or other resources in the same service).
+     - Instead, proceed directly to item 3 ("Determining Stage for Non-Merged Code") to infer the stage from active PRs/issues on GitHub.
+   - If the Stage 1 types file **does exist** in the codebase:
+     - The resource is at least at Stage 1. You may check the higher stages (Stage 2 to 5) in the codebase using the following rules:
+       - **Stage 5 (Controller Implemented)**: Check if `pkg/controller/direct/{service}/{kind}_controller.go` or `pkg/controller/direct/{service}/adapter.go` exists.
+       - **Stage 4 (MockGCP/E2E Fixtures)**: Check if E2E test files or fixtures specific to this resource Kind (case-insensitive) exist under `pkg/controller/direct/{service}/` (e.g., `{kind}_test.go` or fixtures matching the kind name) OR check if mock files specific to this resource Kind exist/contain references to this Kind under `mockgcp/` for the GCP service. Do NOT assume Stage 4 is met just because the generic directory `mockgcp/{service}/` exists for other resources in the same service.
+       - **Stage 3 (KRM Fuzzer)**: Check if `pkg/controller/direct/{service}/{kind}_fuzzer.go` exists.
+       - **Stage 2 (Identity & Reference Types)**: Check if `apis/{service}/{version}/{kind}_identity.go` or `apis/{service}/{version}/{kind}_reference.go` exists.
+       - **Stage 1 (Direct KRM Types)**: Confirmed (exists).
+2. **Use Highest Valid Code-Based Stage**:
+   If Stage 1 exists in the codebase, use the highest stage (from Stage 1 to Stage 5) where matching files are found and validated as the resource's current stage.
+3. **Determining Stage for Non-Merged Code (Pre-Stage 1)**:
+   If the Stage 1 types file does not exist in the codebase:
+   - Check if an open Pull Request exists on GitHub for the Kind.
+   - If an open Pull Request is found:
+     - Inspect its title, description, and files changed to determine the stage. For example, if the PR is titled "Implement direct KRM types and generate.sh for {Kind}", the current stage is `"Stage 1 (Direct KRM Types)"` (In Progress/PR). If there are multiple open PRs, use the stage of the lowest active PR.
+   - If no open Pull Request is found:
+     - Check open GitHub issues for the Kind. Since multiple tracking issues for various stages (Stage 1 to 5) are often created upfront, you MUST NOT select a higher stage simply because its tracking issue exists. Instead, look for the *lowest* incomplete stage issue that is open/active (e.g., has assignees, comments, or active work) to represent the current phase.
+   - If no open PR or active issue is found, default the stage to `"Investigation/Setup"`.
 
 ## Step 5: Identify Next Pending Resources
 1. Select next migration candidates from `dev/migration-tracker/data.json` meeting these criteria:
