@@ -62,11 +62,13 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 				{
 					ID:        int64Ptr(1001),
 					User:      &githubv39.User{Login: stringPtr("reviewer-bob")},
+					Body:      stringPtr("Please add a test."),
 					CreatedAt: &comment2Time,
 				},
 				{
 					ID:        int64Ptr(1000),
 					User:      &githubv39.User{Login: stringPtr("reviewer-alice")},
+					Body:      stringPtr("Please rename this function."),
 					CreatedAt: &comment1Time,
 				},
 			}
