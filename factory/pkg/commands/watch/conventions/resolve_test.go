@@ -259,6 +259,70 @@ func TestResolveCommentReactions_Since(t *testing.T) {
 	}
 }
 
+// TestResolveCommentReactions_InlineCommentTimedByReview covers inline comments
+// drafted before the review carrying them was submitted. When the task's
+// trigger is that review's submission, its inline comments are still the
+// task's to resolve: they only became visible at that moment.
+func TestResolveCommentReactions_InlineCommentTimedByReview(t *testing.T) {
+	submitted := time.Date(2026, 9, 30, 21, 33, 55, 0, time.UTC)
+	drafted := timePtr(submitted.Add(-21 * time.Second))
+	human := user(testHuman)
+	acked := []*githubv39.Reaction{reaction(ReactionAcknowledged, testSelfLogin)}
+
+	newClient := func() *fakeResolverClient {
+		return &fakeResolverClient{
+			reviews: []*githubv39.PullRequestReview{
+				{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: human, SubmittedAt: timePtr(submitted)},
+			},
+			revComments: []*githubv39.PullRequestComment{
+				// Drafted before, submitted with review 10.
+				{ID: int64Ptr(20), PullRequestReviewID: int64Ptr(10), User: human, CreatedAt: drafted},
+				// Same draft time, but its review is unknown: only its own
+				// creation time is available, and that predates Since.
+				{ID: int64Ptr(21), PullRequestReviewID: int64Ptr(99), User: human, CreatedAt: drafted},
+			},
+			revCommentReaction: map[int64][]*githubv39.Reaction{20: acked, 21: acked},
+		}
+	}
+	opts := testResolveOptions(ReactionResolved)
+	opts.Since = submitted
+
+	t.Run("review listed", func(t *testing.T) {
+		client := newClient()
+		ResolveCommentReactions(context.Background(), client, opts)
+		assertAdded(t, client.added, []string{"review-comment:20:+1"})
+	})
+
+	t.Run("reviews fail to list", func(t *testing.T) {
+		client := newClient()
+		client.listReviewsErr = errors.New("boom")
+		ResolveCommentReactions(context.Background(), client, opts)
+		// Without the review, the comment falls back to its draft time.
+		assertAdded(t, client.added, nil)
+	})
+}
+
+func TestReviewCommentTime(t *testing.T) {
+	created := time.Date(2026, 9, 30, 21, 33, 34, 0, time.UTC)
+	rc := &githubv39.PullRequestComment{CreatedAt: timePtr(created)}
+	for _, tt := range []struct {
+		name      string
+		submitted time.Time
+		want      time.Time
+	}{
+		{"review submitted later", created.Add(time.Minute), created.Add(time.Minute)},
+		{"review unknown", time.Time{}, created},
+		// Never make a comment older than it is.
+		{"review submitted earlier", created.Add(-time.Minute), created},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ReviewCommentTime(rc, tt.submitted); !got.Equal(tt.want) {
+				t.Errorf("ReviewCommentTime() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func timePtr(t time.Time) *time.Time { return &t }
 
 func equalSorted(got, want []string) bool {
