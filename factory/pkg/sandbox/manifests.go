@@ -32,21 +32,22 @@ type EnvVar struct {
 
 // DevSandboxOptions holds common options for creating Sandboxes.
 type DevSandboxOptions struct {
-	Name              string
-	Namespace         string
-	Labels            map[string]string
-	Annotations       map[string]string
-	Image             string
-	Replicas          int64
-	WorkspaceDiskSize string
-	EphemeralStorage  string
-	Resources         corev1.ResourceRequirements
-	CPURequest        string
-	CPULimit          string
-	MemoryRequest     string
-	MemoryLimit       string
-	Secrets           []SecretMount
-	Env               []EnvVar
+	Name                  string
+	Namespace             string
+	Labels                map[string]string
+	Annotations           map[string]string
+	Image                 string
+	Replicas              int64
+	WorkspaceDiskSize     string
+	WorkspaceStorageClass string
+	EphemeralStorage      string
+	Resources             corev1.ResourceRequirements
+	CPURequest            string
+	CPULimit              string
+	MemoryRequest         string
+	MemoryLimit           string
+	Secrets               []SecretMount
+	Env                   []EnvVar
 	// ServiceAccountName runs the sandbox pod as a specific KSA — the
 	// Workload Identity hook: the KSA is the GCP principal the member
 	// grants roles to in their own project.
@@ -215,6 +216,18 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 		podSpecMap["serviceAccountName"] = opt.ServiceAccountName
 	}
 
+	pvcSpec := map[string]interface{}{
+		"accessModes": []interface{}{"ReadWriteOnce"},
+		"resources": map[string]interface{}{
+			"requests": map[string]interface{}{
+				"storage": diskSize,
+			},
+		},
+	}
+	if opt.WorkspaceStorageClass != "" {
+		pvcSpec["storageClassName"] = opt.WorkspaceStorageClass
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -238,14 +251,7 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 						"metadata": map[string]interface{}{
 							"name": "workspaces-pvc",
 						},
-						"spec": map[string]interface{}{
-							"accessModes": []interface{}{"ReadWriteOnce"},
-							"resources": map[string]interface{}{
-								"requests": map[string]interface{}{
-									"storage": diskSize,
-								},
-							},
-						},
+						"spec": pvcSpec,
 					},
 				},
 			},
@@ -368,6 +374,18 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 		podSpecMap["serviceAccountName"] = opt.ServiceAccountName
 	}
 
+	pvcSpec := map[string]interface{}{
+		"accessModes": []interface{}{"ReadWriteOnce"},
+		"resources": map[string]interface{}{
+			"requests": map[string]interface{}{
+				"storage": diskSize,
+			},
+		},
+	}
+	if opt.WorkspaceStorageClass != "" {
+		pvcSpec["storageClassName"] = opt.WorkspaceStorageClass
+	}
+
 	sandbox := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -391,14 +409,7 @@ func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *co
 				"volumeClaimTemplates": []interface{}{
 					map[string]interface{}{
 						"metadata": map[string]interface{}{"name": "workspaces-pvc"},
-						"spec": map[string]interface{}{
-							"accessModes": []interface{}{"ReadWriteOnce"},
-							"resources": map[string]interface{}{
-								"requests": map[string]interface{}{
-									"storage": diskSize,
-								},
-							},
-						},
+						"spec":     pvcSpec,
 					},
 				},
 			},

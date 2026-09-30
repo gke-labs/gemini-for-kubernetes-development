@@ -156,3 +156,89 @@ func TestAgentSandbox_ResourceLimitsAndRequests(t *testing.T) {
 		t.Errorf("custom ephemeral-storage limit = %v, want 10Gi", got)
 	}
 }
+
+func TestSandbox_WorkspaceStorageClass(t *testing.T) {
+	t.Run("default options omit storageClassName", func(t *testing.T) {
+		opt := AgentSandboxOptions{
+			DevSandboxOptions: DevSandboxOptions{
+				Name:      "test-agent",
+				Namespace: "default",
+			},
+		}
+		sb, _ := NewAgentSandbox(opt)
+		pvcs, found, err := unstructured.NestedSlice(sb.Object, "spec", "volumeClaimTemplates")
+		if err != nil || !found || len(pvcs) == 0 {
+			t.Fatalf("Failed to find volumeClaimTemplates: %v", err)
+		}
+		pvcSpec, ok := pvcs[0].(map[string]interface{})["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Invalid PVC spec structure")
+		}
+		if sc, exists := pvcSpec["storageClassName"]; exists {
+			t.Errorf("expected storageClassName to be omitted by default, got: %v", sc)
+		}
+
+		revOpt := ReviewSandboxOptions{
+			DevSandboxOptions: DevSandboxOptions{
+				Name:      "test-review",
+				Namespace: "default",
+			},
+			PRNumber: 100,
+		}
+		revSB, _ := NewReviewSandbox(revOpt)
+		revPVCs, found, err := unstructured.NestedSlice(revSB.Object, "spec", "volumeClaimTemplates")
+		if err != nil || !found || len(revPVCs) == 0 {
+			t.Fatalf("Failed to find volumeClaimTemplates: %v", err)
+		}
+		revPVCSpec, ok := revPVCs[0].(map[string]interface{})["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Invalid PVC spec structure")
+		}
+		if sc, exists := revPVCSpec["storageClassName"]; exists {
+			t.Errorf("expected storageClassName to be omitted by default for review sandbox, got: %v", sc)
+		}
+	})
+
+	t.Run("explicit storageClassName is set on PVC template", func(t *testing.T) {
+		opt := AgentSandboxOptions{
+			DevSandboxOptions: DevSandboxOptions{
+				Name:                  "test-agent",
+				Namespace:             "default",
+				WorkspaceStorageClass: "premium-rwo",
+			},
+		}
+		sb, _ := NewAgentSandbox(opt)
+		pvcs, found, err := unstructured.NestedSlice(sb.Object, "spec", "volumeClaimTemplates")
+		if err != nil || !found || len(pvcs) == 0 {
+			t.Fatalf("Failed to find volumeClaimTemplates: %v", err)
+		}
+		pvcSpec, ok := pvcs[0].(map[string]interface{})["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Invalid PVC spec structure")
+		}
+		if sc, ok := pvcSpec["storageClassName"].(string); !ok || sc != "premium-rwo" {
+			t.Errorf("expected storageClassName 'premium-rwo', got: %v", pvcSpec["storageClassName"])
+		}
+
+		revOpt := ReviewSandboxOptions{
+			DevSandboxOptions: DevSandboxOptions{
+				Name:                  "test-review",
+				Namespace:             "default",
+				WorkspaceStorageClass: "pd-ssd",
+			},
+			PRNumber: 100,
+		}
+		revSB, _ := NewReviewSandbox(revOpt)
+		revPVCs, found, err := unstructured.NestedSlice(revSB.Object, "spec", "volumeClaimTemplates")
+		if err != nil || !found || len(revPVCs) == 0 {
+			t.Fatalf("Failed to find volumeClaimTemplates: %v", err)
+		}
+		revPVCSpec, ok := revPVCs[0].(map[string]interface{})["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Invalid PVC spec structure")
+		}
+		if sc, ok := revPVCSpec["storageClassName"].(string); !ok || sc != "pd-ssd" {
+			t.Errorf("expected storageClassName 'pd-ssd', got: %v", revPVCSpec["storageClassName"])
+		}
+	})
+}

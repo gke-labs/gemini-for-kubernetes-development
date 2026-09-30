@@ -41,6 +41,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringVar(&rootFlags.Engine, "engine", "", "Agent engine: gemini, claude or antigravity (default gemini; config file key 'engine')")
 	cmd.PersistentFlags().StringVar(&rootFlags.Image, "image", "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest", "Sandbox base image")
 	cmd.PersistentFlags().StringVar(&rootFlags.DiskSize, "workspace-disk-size", "10Gi", "Workspace PVC disk size")
+	cmd.PersistentFlags().StringVar(&rootFlags.StorageClass, "workspace-storage-class", "", "StorageClass for workspace PVC (empty uses cluster default)")
 	cmd.PersistentFlags().StringVarP(&rootFlags.User, "user", "u", "", "Run tasks under a specific bot user identity (looks up secret user-<user>)")
 	cmd.PersistentFlags().DurationVar(&rootFlags.Timeout, "timeout", 30*time.Minute, "Overall execution timeout")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Background, "background", false, "Run the CLI command as a background daemon process and redirect output to a log file")
@@ -275,6 +276,9 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 		rootFlags.DiskSize = cfg.WorkspaceDiskSize
 	}
 	workspaceDiskDefaulted = !cmd.Flags().Changed("workspace-disk-size") && cfg.WorkspaceDiskSize == ""
+	if !cmd.Flags().Changed("workspace-storage-class") && cfg.WorkspaceStorageClass != "" {
+		rootFlags.StorageClass = cfg.WorkspaceStorageClass
+	}
 	if !cmd.Flags().Changed("ephemeral-storage") && cfg.EphemeralStorage != "" {
 		rootFlags.EphemeralStorage = cfg.EphemeralStorage
 	}

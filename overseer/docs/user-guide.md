@@ -183,7 +183,7 @@ spec:
 #### 2. Concurrency & Resource Sizing
 - **`maxActiveIssues` & `maxActiveReviews`**: Sets ceilings (`25` and `20`) on how many simultaneous worker sandboxes can run in parallel, safeguarding your cluster from node exhaustion during high-volume event bursts.
 - **Worker Compute Sizing**: KCC compilations require heavy resources. Setting CPU limits to `8000m` (8 cores) and memory limits to `16Gi` ensures fast Go compilation and e2e test execution.
-- **Disk Allocation**: `workspaceDiskSize: 40Gi` and `ephemeralStorage: 10Gi` provide generous persistent disk volumes to prevent out-of-space errors during repeated container builds.
+- **Disk Allocation**: `workspaceDiskSize: 40Gi` and `ephemeralStorage: 10Gi` provide generous persistent disk volumes to prevent out-of-space errors during repeated container builds. Optionally, `workspaceStorageClassName: premium-rwo` (or another StorageClass) can be configured to provision faster disks (such as SSDs) for the overseer and child sandboxes.
 
 #### 3. Custom Worker Images
 - **`image`**: Pointing to a tailored Docker container (`factory-golang:latest`) that comes pre-cached with Go toolchains, common linters, and dependency layers, significantly cutting down cold-start times when spinning up new sandboxes.

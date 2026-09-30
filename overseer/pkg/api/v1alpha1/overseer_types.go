@@ -109,6 +109,10 @@ type OverseerSpec struct {
 	// +kubebuilder:default="10Gi"
 	WorkspaceDiskSize string `json:"workspaceDiskSize,omitempty"`
 
+	// WorkspaceStorageClassName specifies the StorageClass for the workspace PVC.
+	// +kubebuilder:validation:Optional
+	WorkspaceStorageClassName string `json:"workspaceStorageClassName,omitempty"`
+
 	// EphemeralStorage specifies the ephemeral storage size for the overseer pod.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="10Gi"

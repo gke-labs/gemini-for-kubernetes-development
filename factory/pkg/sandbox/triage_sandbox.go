@@ -14,7 +14,7 @@ import (
 
 // EnsureTriageSandbox creates (or reuses) the sandbox for triaging an
 // issue, named triage-<repo>-<issueNumber>.
-func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, issueNum int, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, issueNum int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("triage-%s-%d", repoName, issueNum)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -55,12 +55,13 @@ func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
 		},
 	}
 

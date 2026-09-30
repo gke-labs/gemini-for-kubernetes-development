@@ -242,7 +242,7 @@ func runResearchStart(ctx context.Context, repoURL, sessionID string) error {
 	}
 
 	fmt.Printf("Ensuring research sandbox for %s/%s (session %s)...\n", owner, repo, sessionID)
-	sandboxName, err := factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, repo, sessionID, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, repo, sessionID, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring research sandbox: %w", err)
 	}

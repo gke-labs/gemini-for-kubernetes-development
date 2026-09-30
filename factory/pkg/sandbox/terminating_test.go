@@ -68,7 +68,7 @@ func ensureReview(t *testing.T, kc *clients.KubernetesClient, ns string) (string
 		"https://github.com/gke-labs/open-rl/pull/270",
 		"https://github.com/gke-labs/open-rl/pull/270.diff",
 		"https://github.com/gke-labs/open-rl.git",
-		"img:latest", "10Gi", "10Gi", nil, nil, "barney-s")
+		"img:latest", "10Gi", "", "10Gi", nil, nil, "barney-s")
 }
 
 // A PR's fix sandbox carries the PR label. Deleting it and immediately

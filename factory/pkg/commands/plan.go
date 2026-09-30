@@ -123,7 +123,7 @@ func runPlan(ctx context.Context, flags PlanFlags, ephemeralStorage string, secr
 	// one checkout, so the approved plan is already sitting next to the
 	// code when the fix launches.
 	fmt.Printf("Ensuring fix sandbox for issue #%d...\n", issueNum)
-	sandboxName, err := factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issue.GetHTMLURL(), issue.GetTitle(), rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issue.GetHTMLURL(), issue.GetTitle(), rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring fix sandbox: %w", err)
 	}
