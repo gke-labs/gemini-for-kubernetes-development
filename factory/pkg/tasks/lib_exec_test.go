@@ -211,3 +211,115 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 		})
 	}
 }
+
+// TestSetGitHubURLRewrite pins the fix for sandboxes shared by several
+// identities: HOME is on the PVC, a review task runs as the reviewer bot,
+// then an iterate task runs as the PR's coder bot. Before the fix both
+// credential-bearing insteadOf rewrites piled up in ~/.gitconfig and git
+// used the first (the reviewer's), so every push to the coder's fork was
+// a 403 (seen on GoogleCloudPlatform/k8s-config-connector#13301).
+func TestSetGitHubURLRewrite(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// run sources lib.sh into a fresh HOME with an unrelated rewrite that
+	// must survive, runs body, and returns the output and ~/.gitconfig.
+	run := func(t *testing.T, body string) (string, string) {
+		t.Helper()
+		home := t.TempDir()
+		libPath := filepath.Join(home, "lib.sh")
+		if err := os.WriteFile(libPath, lib, 0644); err != nil {
+			t.Fatal(err)
+		}
+		harness := `set -e
+source "$LIB"
+git config --global url."https://mirror.example/".insteadOf "https://example.org/"
+` + body + `
+echo "RESOLVED=$(git ls-remote --get-url https://github.com/owner/repo.git)"`
+		cmd := exec.Command(bash, "-c", harness)
+		cmd.Env = append(os.Environ(),
+			// The trace assertions match bash's default prefix; bash
+			// inherits an exported PS4 when not running as root.
+			"PS4=+ ",
+			"HOME="+home,
+			"LIB="+libPath,
+			"GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
+			"GIT_CONFIG_NOSYSTEM=1",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("harness failed: %v\n%s", err, out)
+		}
+		cfg, err := os.ReadFile(filepath.Join(home, ".gitconfig"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(cfg), "https://mirror.example/") {
+			t.Errorf("unrelated rewrite was removed:\n%s", cfg)
+		}
+		return string(out), string(cfg)
+	}
+
+	t.Run("reviewer then coder", func(t *testing.T) {
+		// The tasks run under set -x, which must print neither token and
+		// must be back on after the call; with tracing off it stays off.
+		out, cfg := run(t, `export GITHUB_USER_TOKEN=REVIEWER_TOKEN
+set -x
+setGitHubURLRewrite reviewbot-robot
+set +x
+export GITHUB_USER_TOKEN=CODER_TOKEN
+setGitHubURLRewrite lovelace-coder-bot
+echo UNTRACED_AFTER
+set -x
+setGitHubURLRewrite lovelace-coder-bot
+echo TRACED_AFTER
+set +x`)
+
+		if want := "RESOLVED=https://lovelace-coder-bot:CODER_TOKEN@github.com/owner/repo.git"; !strings.Contains(out, want) {
+			t.Errorf("github.com resolved to the wrong identity; want %q in:\n%s", want, out)
+		}
+		for _, l := range strings.Split(out, "\n") {
+			// The RESOLVED line is the harness's own output, not a trace.
+			if strings.HasPrefix(l, "+") && (strings.Contains(l, "REVIEWER_TOKEN") || strings.Contains(l, "CODER_TOKEN")) {
+				t.Errorf("token leaked into the xtrace: %q", l)
+			}
+		}
+		if !strings.Contains(out, "+ echo TRACED_AFTER") {
+			t.Errorf("xtrace was not restored after the call:\n%s", out)
+		}
+		if strings.Contains(out, "+ echo UNTRACED_AFTER") {
+			t.Errorf("xtrace was turned on by a call made with tracing off:\n%s", out)
+		}
+		if strings.Contains(cfg, "REVIEWER_TOKEN") {
+			t.Errorf("previous identity's token left on disk:\n%s", cfg)
+		}
+		if n := strings.Count(cfg, "insteadOf = https://github.com/"); n != 1 {
+			t.Errorf("want exactly 1 github.com rewrite, got %d:\n%s", n, cfg)
+		}
+	})
+
+	t.Run("empty token", func(t *testing.T) {
+		// A passwordless rewrite would override gh's helper; the stale
+		// one must still go, leaving github.com to the helper.
+		out, cfg := run(t, `export GITHUB_USER_TOKEN=REVIEWER_TOKEN
+setGitHubURLRewrite reviewbot-robot
+export GITHUB_USER_TOKEN=
+setGitHubURLRewrite lovelace-coder-bot`)
+
+		if want := "RESOLVED=https://github.com/owner/repo.git"; !strings.Contains(out, want) {
+			t.Errorf("github.com still rewritten with no token; want %q in:\n%s", want, out)
+		}
+		if strings.Contains(cfg, "github.com/") {
+			t.Errorf("want no github.com rewrite, got:\n%s", cfg)
+		}
+	})
+}
