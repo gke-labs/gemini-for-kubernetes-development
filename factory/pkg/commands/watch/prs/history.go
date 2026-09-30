@@ -162,8 +162,8 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 					if conventions.HasIgnorePrefix(rc.GetBody(), triggerLabel) {
 						continue
 					}
-					if rc.GetCreatedAt().After(lastActivity) {
-						lastActivity = rc.GetCreatedAt()
+					if at := conventions.ReviewCommentTime(rc, r.GetSubmittedAt()); at.After(lastActivity) {
+						lastActivity = at
 					}
 				}
 			}

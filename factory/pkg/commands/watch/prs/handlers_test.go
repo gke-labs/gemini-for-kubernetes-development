@@ -562,7 +562,8 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 // task does to review feedback: the review body is acknowledged through
 // GraphQL, the inline comment through REST, and the task is timed from the
 // oldest of them - the cutoff the resolver later relies on to skip older
-// feedback.
+// feedback. An inline comment is timed from its review's submission, not its
+// draft.
 func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 	tempDir := t.TempDir()
 	prNum := 10
@@ -653,8 +654,10 @@ func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 	if err := yaml.Unmarshal(data, &task); err != nil {
 		t.Fatalf("failed to unmarshal task: %v", err)
 	}
-	if !task.TriggerEventTime.Equal(inlineTime) {
-		t.Errorf("triggerEventTime = %v, want %v (oldest feedback)", task.TriggerEventTime, inlineTime)
+	// The inline comment was drafted at 12:05 but only became visible when
+	// its review was submitted at 12:10, so that is when it is timed from.
+	if !task.TriggerEventTime.Equal(reviewTime) {
+		t.Errorf("triggerEventTime = %v, want %v (review submission)", task.TriggerEventTime, reviewTime)
 	}
 
 	if len(reviewAcks) != 1 || reviewAcks[0]["subjectId"] != "PRR_500" || reviewAcks[0]["content"] != "EYES" {

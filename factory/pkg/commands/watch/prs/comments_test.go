@@ -250,6 +250,42 @@ func TestEvaluateComments_CollectsReviewNodeIDs(t *testing.T) {
 	}
 }
 
+// TestEvaluateComments_InlineCommentTimedByReview covers a reviewer who starts
+// drafting before a push and submits after it. The inline comments were not
+// visible when the push happened, so it cannot have answered them: they are
+// timed from the review's submission, not from their drafts.
+func TestEvaluateComments_InlineCommentTimedByReview(t *testing.T) {
+	lastCommit := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	drafted := timePtr(lastCommit.Add(-time.Minute))
+	submitted := lastCommit.Add(time.Minute)
+	alice := &githubv39.User{Login: stringPtr("alice")}
+	pr := &githubv39.PullRequest{User: &githubv39.User{Login: stringPtr("pool-bot")}}
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		Kube:         newTestKubeClient(),
+		BotUsers:     []string{"pool-bot"},
+		TriggerLabel: "factory",
+	})
+	res := s.evaluateComments(context.Background(), pr, &prHistory{
+		reviews: []*githubv39.PullRequestReview{
+			// An empty body: the inline comments are the whole review.
+			{ID: int64Ptr(1), NodeID: stringPtr("PRR_1"), User: alice, State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: timePtr(submitted)},
+		},
+		revCommentsMap: map[int64][]*githubv39.PullRequestComment{
+			1: {{ID: int64Ptr(100), PullRequestReviewID: int64Ptr(1), User: alice, Body: stringPtr("Rename this"), CreatedAt: drafted}},
+		},
+	}, lastCommit, time.Time{})
+
+	if len(res.unackPRCommentIDs) != 1 || res.unackPRCommentIDs[0] != 100 {
+		t.Fatalf("unackPRCommentIDs = %v, want [100]", res.unackPRCommentIDs)
+	}
+	// The trigger time becomes the resolver's Since cut-off, so it must be
+	// the same time the resolver gives the comment.
+	if !res.oldestCommentTime.Equal(submitted) {
+		t.Errorf("oldestCommentTime = %v, want review submission %v", res.oldestCommentTime, submitted)
+	}
+}
+
 // TestEvaluateComments_ReviewReactionGate covers the reaction gate on review
 // bodies and inline review comments: feedback the watcher already marked is
 // not picked up again, unless a human asked for another pass with 'rocket'.

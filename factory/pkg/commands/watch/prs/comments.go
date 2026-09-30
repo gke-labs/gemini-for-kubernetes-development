@@ -95,10 +95,13 @@ func (s *Scanner) evaluateComments(
 		}
 
 		for _, rc := range revCommentsMap[r.GetID()] {
+			// An inline comment only becomes visible when its review is
+			// submitted, so it is timed from then rather than from its draft.
+			at := conventions.ReviewCommentTime(rc, r.GetSubmittedAt())
 			if s.ignoreFeedback(pr, feedback{
 				user: rc.GetUser(),
 				body: rc.GetBody(),
-				at:   rc.GetCreatedAt(),
+				at:   at,
 			}, lastCommitTime, lastCommentAddressedTime) {
 				continue
 			}
@@ -107,7 +110,7 @@ func (s *Scanner) evaluateComments(
 			}
 			analysis.hasNewComments = true
 			analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
-			updateOldestComment(rc.GetCreatedAt(), rc.GetUser().GetLogin(), "inline review comment", rc.GetID())
+			updateOldestComment(at, rc.GetUser().GetLogin(), "inline review comment", rc.GetID())
 		}
 	}
 

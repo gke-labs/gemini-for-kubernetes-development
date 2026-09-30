@@ -123,10 +123,16 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 		}
 	}
 
+	// reviewSubmittedAt times each inline comment by the review that carried
+	// it, as the scanner does (see ReviewCommentTime). If the reviews cannot
+	// be listed it stays empty and inline comments fall back to their own
+	// creation time.
+	reviewSubmittedAt := make(map[int64]time.Time)
 	if reviews, err := client.ListReviews(ctx, prNum); err != nil {
 		klog.Warningf("Failed to list reviews on PR #%d to resolve reactions: %v", prNum, err)
 	} else {
 		for _, r := range reviews {
+			reviewSubmittedAt[r.GetID()] = r.GetSubmittedAt()
 			// Reviews are only reachable for reactions by node ID; a review
 			// without one cannot have been acknowledged in the first place.
 			nodeID := r.GetNodeID()
@@ -144,7 +150,7 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 		klog.Warningf("Failed to list review comments on PR #%d to resolve reactions: %v", prNum, err)
 	} else {
 		for _, rc := range revComments {
-			if !candidate(rc.GetUser(), rc.GetCreatedAt()) {
+			if !candidate(rc.GetUser(), ReviewCommentTime(rc, reviewSubmittedAt[rc.GetPullRequestReviewID()])) {
 				continue
 			}
 			id := rc.GetID()
@@ -154,6 +160,32 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 			)
 		}
 	}
+}
+
+// ReviewCommentTime is when an inline review comment became feedback: the
+// later of when it was written and when the review carrying it was submitted.
+//
+// An inline comment left as part of a review is created when it is drafted,
+// but nobody else can see it until the review is submitted, which can be much
+// later. Timed by its draft, it would fall before a commit or task that
+// happened while the reviewer was still writing, and be dropped as already
+// answered even though nothing could have answered it. Taking the later of the
+// two times means this can only ever make a comment newer, never older.
+//
+// The scanner deciding what to pick up and the resolver deciding what to stamp
+// must time inline comments identically, and consistently with the review they
+// belong to. The resolver's Since cut-off can be a review's submission time;
+// timed by their drafts, that review's own inline comments fell before it and
+// never received an outcome.
+//
+// reviewSubmittedAt may be zero when the review is not known, in which case
+// the comment's own creation time is used.
+func ReviewCommentTime(rc *githubv39.PullRequestComment, reviewSubmittedAt time.Time) time.Time {
+	created := rc.GetCreatedAt()
+	if reviewSubmittedAt.After(created) {
+		return reviewSubmittedAt
+	}
+	return created
 }
 
 // resolveIfAwaiting adds the outcome reaction to a single piece of feedback
