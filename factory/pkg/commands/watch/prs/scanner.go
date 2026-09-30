@@ -660,3 +660,11 @@ func (s *Scanner) reactToReviewComment(ctx context.Context, commentID int64, con
 		klog.Warningf("Failed to create reaction '%s' on PR review comment %d: %v", content, commentID, err)
 	}
 }
+
+// reactToReview records a reaction on the top-level body of a review,
+// addressed by the review's node ID.
+func (s *Scanner) reactToReview(ctx context.Context, reviewNodeID string, content conventions.Reaction) {
+	if err := s.gh.AddReviewReaction(ctx, reviewNodeID, string(content)); err != nil {
+		klog.Warningf("Failed to create reaction '%s' on PR review %s: %v", content, reviewNodeID, err)
+	}
+}

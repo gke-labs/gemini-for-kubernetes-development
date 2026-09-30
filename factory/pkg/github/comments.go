@@ -45,6 +45,13 @@ func (c *Client) ListIssueComments(ctx context.Context, number int) ([]*githubv3
 	}
 }
 
+// reactionPageSize is how many reactions are read from a single comment: the
+// largest page GitHub serves, and the same limit ReviewReactions applies to
+// review bodies. Only one page is read. The watcher's marks do not need to
+// survive a comment collecting more reactions than that, but the REST default
+// of 30 is small enough to be reached on a lively thread.
+const reactionPageSize = 100
+
 // IssueCommentReactions returns the reactions recorded on a single comment.
 //
 // Who reacted matters as much as what they reacted with, so the reactions are
@@ -55,9 +62,26 @@ func (c *Client) IssueCommentReactions(ctx context.Context, commentID int64) ([]
 		return nil, errNoClient
 	}
 
-	reactions, _, err := c.gh.Reactions.ListIssueCommentReactions(ctx, c.owner, c.repo, commentID, nil)
+	opts := &githubv39.ListOptions{PerPage: reactionPageSize}
+	reactions, _, err := c.gh.Reactions.ListIssueCommentReactions(ctx, c.owner, c.repo, commentID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing reactions on comment %d: %w", commentID, err)
+	}
+	return reactions, nil
+}
+
+// PullRequestCommentReactions returns the reactions recorded on a single inline
+// review comment. It is IssueCommentReactions for the other comment namespace;
+// see AddPullRequestCommentReaction.
+func (c *Client) PullRequestCommentReactions(ctx context.Context, commentID int64) ([]*githubv39.Reaction, error) {
+	if !c.Ready() {
+		return nil, errNoClient
+	}
+
+	opts := &githubv39.ListOptions{PerPage: reactionPageSize}
+	reactions, _, err := c.gh.Reactions.ListPullRequestCommentReactions(ctx, c.owner, c.repo, commentID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("listing reactions on review comment %d: %w", commentID, err)
 	}
 	return reactions, nil
 }

@@ -376,6 +376,9 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 	for _, cid := range commentAnalysis.unackPRCommentIDs {
 		s.reactToReviewComment(ctx, cid, conventions.ReactionAcknowledged)
 	}
+	for _, nodeID := range commentAnalysis.unackReviewNodeIDs {
+		s.reactToReview(ctx, nodeID, conventions.ReactionAcknowledged)
+	}
 	state.lastCommentAddressedTime = task.EnqueuedAt
 	s.state.set(num, state)
 	return true

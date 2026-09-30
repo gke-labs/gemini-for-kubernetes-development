@@ -290,7 +290,8 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 	}
 }
 
-// NotifyTaskFinished resolves the acknowledgement reactions on PR review comments.
+// NotifyTaskFinished resolves the acknowledgement reactions on PR feedback -
+// conversation comments, review bodies, and inline review comments.
 func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *api.QueueTask, taskErr error) {
 	w := c.w
 	if task.Type != api.TypePRComments || w.cfg == nil {
@@ -300,7 +301,16 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 	if taskErr != nil {
 		resolution = conventions.ReactionFailed
 	}
-	conventions.ResolveCommentReactions(ctx, w.repoClient, task.Number, resolution, w.cfg.AllowlistedBots, w.githubLogin)
+	conventions.ResolveCommentReactions(ctx, w.repoClient, conventions.ResolveOptions{
+		PRNumber:        task.Number,
+		Resolution:      resolution,
+		SelfLogin:       w.githubLogin,
+		AllowlistedBots: w.cfg.AllowlistedBots,
+		ReviewerLogins:  w.reviewerLogins(),
+		// The scanner times an address-comments task from the oldest
+		// feedback it picked up, so nothing older can be this task's.
+		Since: task.TriggerEventTime,
+	})
 }
 
 // taskStartedComment returns the GitHub comment announcing that a task has started,

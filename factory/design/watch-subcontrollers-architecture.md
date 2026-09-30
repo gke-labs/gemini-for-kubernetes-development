@@ -401,7 +401,7 @@ sequenceDiagram
 * **Budget Tracking**: Computes the remaining timeout from the task's `StartedAt`/`EnqueuedAt`/`CreatedAt` so a restart does not grant a fresh full timeout.
 * **Status Polling**: Every `Config.AdoptionPollInterval` (default 5s), probes the sandbox via `SandboxService`.
 * **Post-Completion Execution**:
-  * On success: calls `TaskQueueManager.CompleteTask()` and `TaskCoordinator.NotifyTaskFinished(ctx, task, nil)`, which resolves `pr-comments` reactions with `+1`.
+  * On success: calls `TaskQueueManager.CompleteTask()` and `TaskCoordinator.NotifyTaskFinished(ctx, task, nil)`, which for a `pr-comments` task resolves the acknowledged conversation comments, review bodies, and inline review comments with `+1`.
   * On failure: calls `TaskQueueManager.FailTask()` and notifies with an error, resolving reactions with `confused`.
   * On timeout: force deletes the sandbox, then fails the task.
   * Atomically renames YAML and `.log` files to `processed/` and appends a structured entry to `journal.jsonl`.

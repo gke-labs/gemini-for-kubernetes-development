@@ -2,8 +2,14 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +18,10 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	githubv39 "github.com/google/go-github/v39/github"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,6 +134,87 @@ func TestTaskStartedComment(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("taskStartedComment(%s) has comment = %v, want %v", tc.taskType, got, tc.want)
 		}
+	}
+}
+
+// TestWatcherTaskCoordinator_NotifyTaskFinished_ResolvesTaskFeedback pins how
+// the task lifecycle wires up the resolver: review-bot feedback is resolved
+// (ReviewerLogins reaches it), and feedback older than the task's trigger is
+// left alone (Since is the task's TriggerEventTime).
+func TestWatcherTaskCoordinator_NotifyTaskFinished_ResolvesTaskFeedback(t *testing.T) {
+	const (
+		watcherLogin  = "factory-bot"
+		reviewerLogin = "gemini-code-assist[bot]"
+	)
+	trigger := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		taskErr error
+		want    string
+	}{
+		{"success", nil, "THUMBS_UP"},
+		{"failure", errors.New("agent failed"), "CONFUSED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu      sync.Mutex
+				reacted = map[string]string{}
+			)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/graphql":
+					var req struct {
+						Query     string                 `json:"query"`
+						Variables map[string]interface{} `json:"variables"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&req)
+					if strings.Contains(req.Query, "addReaction") {
+						mu.Lock()
+						reacted[req.Variables["subjectId"].(string)] = req.Variables["content"].(string)
+						mu.Unlock()
+						_, _ = w.Write([]byte(`{"data":{"addReaction":{"reaction":{"content":"EYES"}}}}`))
+						return
+					}
+					// Every review carries the watcher's acknowledgement.
+					_, _ = w.Write([]byte(`{"data":{"node":{"reactions":{"nodes":[{"content":"EYES","user":{"login":"` + watcherLogin + `"}}]}}}}`))
+				case r.URL.Path == "/repos/test-owner/test-repo/pulls/7/reviews":
+					_, _ = w.Write([]byte(`[
+						{"id":1,"node_id":"PRR_before","user":{"login":"` + reviewerLogin + `","type":"Bot"},"body":"old","state":"COMMENTED","submitted_at":"2026-09-01T11:00:00Z"},
+						{"id":2,"node_id":"PRR_after","user":{"login":"` + reviewerLogin + `","type":"Bot"},"body":"new","state":"COMMENTED","submitted_at":"2026-09-01T13:00:00Z"}
+					]`))
+				default:
+					_, _ = w.Write([]byte(`[]`))
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			w := newTestWatcher(t, t.TempDir())
+			gh := githubv39.NewClient(nil)
+			gh.BaseURL, _ = url.Parse(server.URL + "/")
+			w.repoClient = github.ForRepo(gh, "test-owner", "test-repo")
+			w.githubLogin = watcherLogin
+			w.cfg = &config.FactoryConfig{
+				Roles: map[string]config.RoleConfig{"reviewer": {Users: []string{reviewerLogin}}},
+			}
+
+			coordinator := &watcherTaskCoordinator{w: w}
+			coordinator.NotifyTaskFinished(context.Background(), &api.QueueTask{
+				Type:             api.TypePRComments,
+				Number:           7,
+				TriggerEventTime: trigger,
+			}, tc.taskErr)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if got := reacted["PRR_after"]; got != tc.want {
+				t.Errorf("reaction on the review after the trigger = %q, want %q", got, tc.want)
+			}
+			if got, ok := reacted["PRR_before"]; ok {
+				t.Errorf("review before the trigger got reaction %q, want none", got)
+			}
+		})
 	}
 }
 

@@ -145,15 +145,59 @@ func TestNeedsAttention(t *testing.T) {
 	}
 }
 
-// fakeReactionLister serves a canned reaction set, or an error.
+// TestAwaitingOutcome covers which marked comments a finishing task may record
+// an outcome on: anything picked up and not yet resolved, so a resolved comment
+// is never stamped again but a failed one can still be resolved by a retry.
+func TestAwaitingOutcome(t *testing.T) {
+	tests := []struct {
+		name  string
+		state CommentState
+		want  bool
+	}{
+		{"unmarked comment was never picked up", CommentState{}, false},
+		{"redo alone was never picked up", CommentState{RedoRequested: true}, false},
+		{"acknowledged comment is in flight", CommentState{Acknowledged: true}, true},
+		{"resolved comment is done", CommentState{Acknowledged: true, Resolved: true}, false},
+		{"redo does not reopen a resolved comment", CommentState{Acknowledged: true, Resolved: true, RedoRequested: true}, false},
+		{"resolved outranks an earlier failure", CommentState{Acknowledged: true, Failed: true, Resolved: true}, false},
+		// A retry of the failed task answers the same feedback without
+		// acknowledging it afresh, and must be able to resolve it.
+		{"failed comment can still be resolved", CommentState{Acknowledged: true, Failed: true}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.state.AwaitingOutcome(); got != tt.want {
+				t.Errorf("CommentState%+v.AwaitingOutcome() = %v, want %v", tt.state, got, tt.want)
+			}
+		})
+	}
+}
+
+// fakeReactionLister serves a canned reaction set, or an error, for any kind of
+// feedback, and records which kind was asked for.
 type fakeReactionLister struct {
 	reactions []*githubv39.Reaction
 	err       error
 	calls     int
+	asked     []string
 }
 
 func (f *fakeReactionLister) IssueCommentReactions(_ context.Context, _ int64) ([]*githubv39.Reaction, error) {
 	f.calls++
+	f.asked = append(f.asked, "comment")
+	return f.reactions, f.err
+}
+
+func (f *fakeReactionLister) PullRequestCommentReactions(_ context.Context, _ int64) ([]*githubv39.Reaction, error) {
+	f.calls++
+	f.asked = append(f.asked, "review-comment")
+	return f.reactions, f.err
+}
+
+func (f *fakeReactionLister) ReviewReactions(_ context.Context, _ string) ([]*githubv39.Reaction, error) {
+	f.calls++
+	f.asked = append(f.asked, "review")
 	return f.reactions, f.err
 }
 
@@ -204,5 +248,57 @@ func TestCommentStateWithoutLister(t *testing.T) {
 	interpreter := NewReactionInterpreter(nil, testSelfLogin, testBots())
 	if got := interpreter.CommentState(context.Background(), 42); got != (CommentState{}) {
 		t.Errorf("CommentState() = %+v, want zero value", got)
+	}
+	if got := interpreter.ReviewCommentState(context.Background(), 42); got != (CommentState{}) {
+		t.Errorf("ReviewCommentState() = %+v, want zero value", got)
+	}
+	if got := interpreter.ReviewState(context.Background(), "PRR_1"); got != (CommentState{}) {
+		t.Errorf("ReviewState() = %+v, want zero value", got)
+	}
+}
+
+// TestFeedbackKindReaders covers the readers for review bodies and inline
+// review comments: each asks its own endpoint, and each reads reactions and
+// failures exactly as a conversation comment's would be read.
+func TestFeedbackKindReaders(t *testing.T) {
+	readers := []struct {
+		kind string
+		read func(*ReactionInterpreter) CommentState
+	}{
+		{"review-comment", func(i *ReactionInterpreter) CommentState { return i.ReviewCommentState(context.Background(), 42) }},
+		{"review", func(i *ReactionInterpreter) CommentState { return i.ReviewState(context.Background(), "PRR_42") }},
+	}
+	for _, r := range readers {
+		t.Run(r.kind, func(t *testing.T) {
+			lister := &fakeReactionLister{reactions: []*githubv39.Reaction{
+				reaction(ReactionAcknowledged, testSelfLogin),
+				reaction(ReactionResolved, testSelfLogin),
+			}}
+			got := r.read(NewReactionInterpreter(lister, testSelfLogin, testBots()))
+			if want := (CommentState{Acknowledged: true, Resolved: true}); got != want {
+				t.Errorf("state = %+v, want %+v", got, want)
+			}
+			if len(lister.asked) != 1 || lister.asked[0] != r.kind {
+				t.Errorf("asked %v, want [%s]", lister.asked, r.kind)
+			}
+
+			failing := &fakeReactionLister{err: errors.New("github is down")}
+			if got := r.read(NewReactionInterpreter(failing, testSelfLogin, testBots())); !got.NeedsAttention() {
+				t.Errorf("state after failed read = %+v, want it to need attention", got)
+			}
+		})
+	}
+}
+
+// TestReviewStateWithoutNodeID covers a review that cannot be addressed for
+// reactions: it reads as unmarked without a request being made.
+func TestReviewStateWithoutNodeID(t *testing.T) {
+	lister := &fakeReactionLister{}
+	state := NewReactionInterpreter(lister, testSelfLogin, testBots()).ReviewState(context.Background(), "")
+	if state != (CommentState{}) {
+		t.Errorf("ReviewState(\"\") = %+v, want zero value", state)
+	}
+	if lister.calls != 0 {
+		t.Errorf("ReviewReactions called %d times, want 0", lister.calls)
 	}
 }

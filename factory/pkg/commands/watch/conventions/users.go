@@ -103,3 +103,16 @@ func ShouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 
 	return false
 }
+
+// IsFeedbackAuthor reports whether feedback from a user is something the
+// watcher acts on: anyone ShouldIgnoreUser lets through, plus the review bots,
+// whose feedback counts even though they are automated accounts that were not
+// allowlisted.
+//
+// The scanner deciding what to pick up and the task lifecycle deciding what to
+// resolve must answer this identically. When they did not, the scanner marked
+// review-bot feedback as picked up and the resolver skipped it, so it never
+// received an outcome.
+func IsFeedbackAuthor(user *githubv39.User, githubLogin string, allowlistedBots, reviewerLogins []string) bool {
+	return IsReviewerBot(user, reviewerLogins) || !ShouldIgnoreUser(user, githubLogin, allowlistedBots)
+}
