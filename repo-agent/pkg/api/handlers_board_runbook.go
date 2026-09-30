@@ -684,7 +684,7 @@ func runLivenessScript() string {
 		`if [ -z "$code" ] && [ -n "$pid" ]; then ` +
 		`stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1); ` +
 		`want=$(cat $d/start_time 2>/dev/null | xargs); got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs); ` +
-		`if kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; fi; fi; ` +
+		`if kill -0 "$pid" 2>/dev/null && [ -n "$stat" ] && [ "$stat" != "Z" ] && [ -n "$got" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then alive=yes; else code=137; echo 137 > $d/exit_code 2>/dev/null || true; fi; fi; ` +
 		`echo "$alive|$code|$(stat -c %Y $d/pid 2>/dev/null)"`
 }
 

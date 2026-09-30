@@ -51,7 +51,18 @@ const listTasksScript = `for d in /workspaces/tasks/*/; do
   n=$(basename "$d")
   ec=$(cat "$d/exit_code" 2>/dev/null)
   run=no
-  if [ -z "$ec" ] && [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null; then run=yes; fi
+  if [ -z "$ec" ] && [ -s "$d/pid" ]; then
+    pid=$(cat "$d/pid" 2>/dev/null)
+    stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+    want=$(cat "$d/start_time" 2>/dev/null | xargs)
+    got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -n "$stat" ] && [ "$stat" != "Z" ] && [ -n "$got" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }; then
+      run=yes
+    else
+      ec=137
+      echo 137 > "$d/exit_code" 2>/dev/null || true
+    fi
+  fi
   sz=$(wc -c < "$d/execution.log" 2>/dev/null || echo 0)
   st=$(cat "$d/start_time" 2>/dev/null | head -1)
   printf '%s|%s|%s|%s|%s\n' "$n" "$ec" "$run" "$sz" "$st"

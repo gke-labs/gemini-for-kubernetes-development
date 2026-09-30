@@ -440,15 +440,19 @@ func TestBuildCheckLatestTaskStatusCmd(t *testing.T) {
 		t.Errorf("expected '1', got %q (err: %v)", out, err)
 	}
 
-	// 5. exit_code file is missing, but dead PID exists -> falls back to process check and returns "137"
+	// 5. exit_code file is missing, but dead PID exists -> falls back to process check, writes "137" to exit_code, and returns "137"
 	_ = os.Remove(filepath.Join(t1, "exit_code"))
 	_ = os.WriteFile(filepath.Join(t1, "pid"), []byte("9999999\n"), 0644)
 	out, err = runShell(t, BuildCheckLatestTaskStatusCmd(tasksDir))
 	if err != nil || out != "137" {
 		t.Errorf("expected '137' for missing exit_code with dead PID, got %q (err: %v)", out, err)
 	}
+	if b, err := os.ReadFile(filepath.Join(t1, "exit_code")); err != nil || strings.TrimSpace(string(b)) != "137" {
+		t.Errorf("expected self-healed exit_code '137', got %q (err: %v)", string(b), err)
+	}
 
 	// 6. exit_code file is missing, but live PID with matching start time exists -> returns "RUNNING"
+	_ = os.Remove(filepath.Join(t1, "exit_code"))
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start live process: %v", err)
@@ -470,11 +474,14 @@ func TestBuildCheckLatestTaskStatusCmd(t *testing.T) {
 		t.Errorf("expected 'RUNNING' for missing exit_code with live process, got %q (err: %v)", out, err)
 	}
 
-	// 7. exit_code file is missing, but live PID with mismatched start time (PID recycled) -> returns "137"
+	// 7. exit_code file is missing, but live PID with mismatched start time (PID recycled) -> writes "137" to exit_code and returns "137"
 	_ = os.WriteFile(filepath.Join(t1, "start_time"), []byte("Thu Jan 1 00:00:00 1970"), 0644)
 	out, err = runShell(t, BuildCheckLatestTaskStatusCmd(tasksDir))
 	if err != nil || out != "137" {
 		t.Errorf("expected '137' for missing exit_code with recycled PID, got %q (err: %v)", out, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(t1, "exit_code")); err != nil || strings.TrimSpace(string(b)) != "137" {
+		t.Errorf("expected self-healed exit_code '137' for recycled PID, got %q (err: %v)", string(b), err)
 	}
 
 	// 8. Multiple task directories: ensure the latest created/modified task directory is evaluated

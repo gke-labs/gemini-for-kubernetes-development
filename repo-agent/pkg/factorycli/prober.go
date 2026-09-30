@@ -69,20 +69,30 @@ func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefi
 	// of type — makes every launcher skip; the next reconcile requeues.
 	// Orphan adoption below stays prefix-scoped: only our own task type's
 	// leftovers are ours to harvest.
-	script := fmt.Sprintf(`for p in /workspaces/tasks/*/pid; do
+	script := fmt.Sprintf(`is_alive() {
+  t="$1"
+  pid=$(cat "$t/pid" 2>/dev/null)
+  [ -n "$pid" ] || return 1
+  stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+  want=$(cat "$t/start_time" 2>/dev/null | xargs)
+  got=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs)
+  kill -0 "$pid" 2>/dev/null && [ -n "$stat" ] && [ "$stat" != "Z" ] && [ -n "$got" ] && { [ -z "$want" ] || [ "$want" = "$got" ]; }
+}
+for p in /workspaces/tasks/*/pid; do
   [ -f "$p" ] || continue
   t=$(dirname "$p")
-  [ -f "$t/exit_code" ] && continue
-  if kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null; then echo "running|"; exit 0; fi
+  [ -s "$t/exit_code" ] && continue
+  if is_alive "$t"; then echo "running|"; exit 0; fi
 done
 d=$(ls -dt /workspaces/tasks/%s-* 2>/dev/null | head -1)
 if [ -z "$d" ]; then echo "none|"; exit 0; fi
-if [ -f "$d/exit_code" ]; then
+if [ -s "$d/exit_code" ]; then
   echo "finished|$(cat "$d/exit_code")"
   %s
-elif [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null; then
+elif [ -f "$d/pid" ] && is_alive "$d"; then
   echo "running|"
 else
+  echo 137 > "$d/exit_code" 2>/dev/null || true
   echo "dead|"
 fi`, prefix, collectCmd(outputFile))
 	var stdout, stderr bytes.Buffer

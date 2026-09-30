@@ -365,88 +365,7 @@ func (s *Server) getOverseerSandboxTasks(c *gin.Context) {
 
 	// 4. Exec sh check inside the pod via Stdin
 	var stdout bytes.Buffer
-	peekScript := fmt.Sprintf(`if command -v python3 >/dev/null 2>&1; then
-  python3 -c '
-import os, json, datetime
-tasks_dir = "/workspaces/tasks"
-res = []
-if os.path.exists(tasks_dir):
-    dirs = []
-    for d in os.listdir(tasks_dir):
-        p = os.path.join(tasks_dir, d)
-        if os.path.isdir(p):
-            try: mtime = os.path.getmtime(p)
-            except OSError: mtime = 0
-            dirs.append((d, mtime))
-    dirs.sort(key=lambda x: x[1], reverse=True)
-    for d, mtime in dirs:
-        p = os.path.join(tasks_dir, d)
-        status = "Pending"
-        ec = None
-        if os.path.exists(os.path.join(p, "exit_code")) and os.path.getsize(os.path.join(p, "exit_code")) > 0:
-            try:
-                with open(os.path.join(p, "exit_code")) as f: ec = f.read().strip()
-                status = "Completed" if ec == "0" else "Failed"
-            except Exception: pass
-        elif os.path.exists(os.path.join(p, "pid")) and os.path.getsize(os.path.join(p, "pid")) > 0:
-            try:
-                with open(os.path.join(p, "pid")) as f: pid = int(f.read().strip())
-                stat = ""
-                if os.path.exists(f"/proc/{pid}/stat"):
-                    with open(f"/proc/{pid}/stat") as sf:
-                        cnt = sf.read().split()
-                        stat = cnt[2] if len(cnt) > 2 else ""
-                if stat.startswith("Z"): status = "Crashed"; ec = "137"
-                else:
-                    try:
-                        os.kill(pid, 0)
-                        status = "Running"
-                    except OSError: status = "Crashed"; ec = "137"
-            except Exception: pass
-        try:
-            if mtime > 0:
-                dt = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc)
-                creation_ts = dt.strftime("%%Y-%%m-%%dT%%H:%%M:%%SZ")
-            else:
-                creation_ts = None
-        except Exception:
-            creation_ts = None
-        res.append({"metadata": {"name": d, "namespace": "%s", "creationTimestamp": creation_ts}, "spec": {"taskType": d}, "status": {"state": status, "exitCode": ec}})
-print(json.dumps(res))
-'
-else
-  echo "["
-  first=true
-  if [ -d "/workspaces/tasks" ]; then
-    for d in $(ls -t /workspaces/tasks 2>/dev/null); do
-      if [ ! -d "/workspaces/tasks/$d" ]; then continue; fi
-      if [ "$first" = true ]; then first=false; else echo ","; fi
-      status="Pending"
-      ec="null"
-      if [ -s "/workspaces/tasks/$d/exit_code" ]; then
-        code=$(cat "/workspaces/tasks/$d/exit_code" 2>/dev/null | tr -d "\r\n")
-        ec="\"$code\""
-        if [ "$code" = "0" ]; then status="Completed"; else status="Failed"; fi
-      elif [ -s "/workspaces/tasks/$d/pid" ]; then
-        pid=$(cat "/workspaces/tasks/$d/pid" 2>/dev/null | tr -d "\r\n")
-        stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$stat" != "Z" ]; then status="Running"; else status="Crashed"; ec="\"137\""; fi
-      fi
-      ts="null"
-      if command -v date >/dev/null 2>&1; then
-        formatted_ts=$(date -Iseconds -r "/workspaces/tasks/$d" 2>/dev/null)
-        if [ -z "$formatted_ts" ]; then
-          formatted_ts=$(date -r "/workspaces/tasks/$d" "+%%Y-%%m-%%dT%%H:%%M:%%S%%z" 2>/dev/null)
-        fi
-        if [ -n "$formatted_ts" ]; then
-          ts="\"$formatted_ts\""
-        fi
-      fi
-      printf "{\"metadata\":{\"name\":\"%%s\",\"namespace\":\"%s\",\"creationTimestamp\":%%s},\"spec\":{\"taskType\":\"%%s\"},\"status\":{\"state\":\"%%s\",\"exitCode\":%%s}}" "$d" "$ts" "$d" "$status" "$ec"
-    done
-  fi
-  echo "]"
-fi`, namespace, namespace)
+	peekScript := buildOverseerPeekTasksScript("/workspaces/tasks", namespace)
 
 	execOpts := sandbox.ExecOptions{
 		Command: []string{"/bin/sh"},
@@ -471,6 +390,108 @@ fi`, namespace, namespace)
 	}
 
 	c.JSON(http.StatusOK, peekedTasks)
+}
+
+func buildOverseerPeekTasksScript(tasksDir, namespace string) string {
+	return fmt.Sprintf(`if command -v python3 >/dev/null 2>&1; then
+  python3 -c '
+import os, json, datetime, subprocess
+tasks_dir = %q
+res = []
+if os.path.exists(tasks_dir):
+    dirs = []
+    for d in os.listdir(tasks_dir):
+        p = os.path.join(tasks_dir, d)
+        if os.path.isdir(p):
+            try: mtime = os.path.getmtime(p)
+            except OSError: mtime = 0
+            dirs.append((d, mtime))
+    dirs.sort(key=lambda x: x[1], reverse=True)
+    for d, mtime in dirs:
+        p = os.path.join(tasks_dir, d)
+        status = "Pending"
+        ec = None
+        ec_path = os.path.join(p, "exit_code")
+        pid_path = os.path.join(p, "pid")
+        st_path = os.path.join(p, "start_time")
+        if os.path.exists(ec_path) and os.path.getsize(ec_path) > 0:
+            try:
+                with open(ec_path) as f: ec = f.read().strip()
+                status = "Completed" if ec == "0" else "Failed"
+            except Exception: pass
+        elif os.path.exists(pid_path) and os.path.getsize(pid_path) > 0:
+            try:
+                with open(pid_path) as f: pid = int(f.read().strip())
+                expected_start = ""
+                if os.path.exists(st_path):
+                    with open(st_path) as sf: expected_start = " ".join(sf.read().split())
+                stat_out = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+                stat = stat_out.stdout.strip()[:1] if stat_out.returncode == 0 else ""
+                start_out = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True)
+                current_start = " ".join(start_out.stdout.split()) if start_out.returncode == 0 else ""
+                os.kill(pid, 0)
+                if stat and stat != "Z" and current_start and (not expected_start or expected_start == current_start):
+                    status = "Running"
+                else:
+                    status = "Crashed"; ec = "137"
+            except Exception:
+                status = "Crashed"; ec = "137"
+            if status == "Crashed":
+                try:
+                    with open(ec_path, "w") as ef: ef.write("137\n")
+                    if mtime > 0: os.utime(p, (mtime, mtime))
+                except Exception: pass
+        try:
+            if mtime > 0:
+                dt = datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc)
+                creation_ts = dt.strftime("%%Y-%%m-%%dT%%H:%%M:%%SZ")
+            else:
+                creation_ts = None
+        except Exception:
+            creation_ts = None
+        res.append({"metadata": {"name": d, "namespace": %q, "creationTimestamp": creation_ts}, "spec": {"taskType": d}, "status": {"state": status, "exitCode": ec}})
+print(json.dumps(res))
+'
+else
+  echo "["
+  first=true
+  if [ -d %q ]; then
+    for d in $(ls -t %q 2>/dev/null); do
+      if [ ! -d "%s/$d" ]; then continue; fi
+      if [ "$first" = true ]; then first=false; else echo ","; fi
+      ts="null"
+      if command -v date >/dev/null 2>&1; then
+        formatted_ts=$(date -Iseconds -r "%s/$d" 2>/dev/null)
+        if [ -z "$formatted_ts" ]; then
+          formatted_ts=$(date -r "%s/$d" "+%%Y-%%m-%%dT%%H:%%M:%%S%%z" 2>/dev/null)
+        fi
+        if [ -n "$formatted_ts" ]; then
+          ts="\"$formatted_ts\""
+        fi
+      fi
+      status="Pending"
+      ec="null"
+      if [ -s "%s/$d/exit_code" ]; then
+        code=$(cat "%s/$d/exit_code" 2>/dev/null | tr -d "\r\n")
+        ec="\"$code\""
+        if [ "$code" = "0" ]; then status="Completed"; else status="Failed"; fi
+      elif [ -s "%s/$d/pid" ]; then
+        pid=$(cat "%s/$d/pid" 2>/dev/null | tr -d "\r\n")
+        stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c 1)
+        expected_start=$(cat "%s/$d/start_time" 2>/dev/null | xargs)
+        current_start=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -n "$stat" ] && [ "$stat" != "Z" ] && [ -n "$current_start" ] && { [ -z "$expected_start" ] || [ "$expected_start" = "$current_start" ]; }; then
+          status="Running"
+        else
+          status="Crashed"; ec="\"137\""
+          echo "137" > "%s/$d/exit_code" 2>/dev/null || true
+        fi
+      fi
+      printf "{\"metadata\":{\"name\":\"%%s\",\"namespace\":\"%s\",\"creationTimestamp\":%%s},\"spec\":{\"taskType\":\"%%s\"},\"status\":{\"state\":\"%%s\",\"exitCode\":%%s}}" "$d" "$ts" "$d" "$status" "$ec"
+    done
+  fi
+  echo "]"
+fi`, tasksDir, namespace, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, tasksDir, namespace)
 }
 
 func (s *Server) getOverseerSandboxTaskLogs(c *gin.Context) {
