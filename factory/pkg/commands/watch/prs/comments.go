@@ -16,9 +16,13 @@ import (
 // that has been waiting longest, and quoting it in the task gives the agent the
 // start of the conversation rather than its tail.
 type prCommentAnalysis struct {
-	hasNewComments      bool
-	unackCommentIDs     []int64
-	unackPRCommentIDs   []int64
+	hasNewComments    bool
+	unackCommentIDs   []int64
+	unackPRCommentIDs []int64
+	// unackReviewNodeIDs are the reviews whose bodies count as feedback. They
+	// are held by node ID because reactions on a review body can only be
+	// reached through GraphQL.
+	unackReviewNodeIDs  []string
 	oldestCommentTime   time.Time
 	oldestCommentAuthor string
 	oldestCommentType   string
@@ -75,13 +79,18 @@ func (s *Scanner) evaluateComments(
 	for _, r := range reviews {
 		// The review body and its inline comments are judged independently:
 		// an empty or approving review body can still carry inline feedback.
+		// The reaction read comes last so that only a review body that would
+		// otherwise count costs a (GraphQL) request.
 		if !s.ignoreFeedback(pr, feedback{
 			user:        r.GetUser(),
 			body:        r.GetBody(),
 			reviewState: r.GetState(),
 			at:          r.GetSubmittedAt(),
-		}, lastCommitTime, lastCommentAddressedTime) {
+		}, lastCommitTime, lastCommentAddressedTime) && s.reactions.ReviewState(ctx, r.GetNodeID()).NeedsAttention() {
 			analysis.hasNewComments = true
+			if nodeID := r.GetNodeID(); nodeID != "" {
+				analysis.unackReviewNodeIDs = append(analysis.unackReviewNodeIDs, nodeID)
+			}
 			updateOldestComment(r.GetSubmittedAt(), r.GetUser().GetLogin(), "review", r.GetID())
 		}
 
@@ -91,6 +100,9 @@ func (s *Scanner) evaluateComments(
 				body: rc.GetBody(),
 				at:   rc.GetCreatedAt(),
 			}, lastCommitTime, lastCommentAddressedTime) {
+				continue
+			}
+			if !s.reactions.ReviewCommentState(ctx, rc.GetID()).NeedsAttention() {
 				continue
 			}
 			analysis.hasNewComments = true
@@ -126,8 +138,7 @@ var approvalCommands = []string{"/lgtm", "/approve"}
 //   - it is an approving review, or
 //   - a line of its body starts with an approval command such as /lgtm.
 func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastCommitTime, lastCommentAddressedTime time.Time) bool {
-	isReviewer := conventions.IsReviewerBot(f.user, s.cfg.ReviewerLogins)
-	if !isReviewer && conventions.ShouldIgnoreUser(f.user, s.cfg.GitHubLogin, s.cfg.AllowlistedBots) {
+	if !conventions.IsFeedbackAuthor(f.user, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.ReviewerLogins) {
 		return true
 	}
 	// The pull request's own author talking to itself is not feedback.

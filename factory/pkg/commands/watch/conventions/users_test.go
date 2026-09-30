@@ -48,6 +48,32 @@ func TestShouldIgnoreUser(t *testing.T) {
 	}
 }
 
+func TestIsFeedbackAuthor(t *testing.T) {
+	selfLogin := "factory-bot"
+	allowlistedBots := []string{"trusted-bot"}
+	reviewerLogins := []string{"gemini-code-assist[bot]"}
+
+	tests := []struct {
+		user     *githubv39.User
+		expected bool
+	}{
+		{&githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, true},
+		{&githubv39.User{Login: stringPtr("factory-bot")}, false},
+		{&githubv39.User{Login: stringPtr("trusted-bot"), Type: stringPtr("Bot")}, true},
+		{&githubv39.User{Login: stringPtr("untrusted-bot"), Type: stringPtr("Bot")}, false},
+		// A review bot counts even though it is an automated account that was
+		// not allowlisted.
+		{&githubv39.User{Login: stringPtr("gemini-code-assist[bot]"), Type: stringPtr("Bot")}, true},
+	}
+
+	for _, tc := range tests {
+		got := IsFeedbackAuthor(tc.user, selfLogin, allowlistedBots, reviewerLogins)
+		if got != tc.expected {
+			t.Errorf("IsFeedbackAuthor(%v) = %v, want %v", tc.user.GetLogin(), got, tc.expected)
+		}
+	}
+}
+
 func TestAssignedBotUser(t *testing.T) {
 	issue := &githubv39.Issue{
 		Assignees: []*githubv39.User{

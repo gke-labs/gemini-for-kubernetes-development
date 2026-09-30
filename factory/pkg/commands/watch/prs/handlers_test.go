@@ -557,3 +557,110 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 		t.Fatalf("expected no retry when headSHA changed, but task file exists (err=%v)", err)
 	}
 }
+
+// TestPRCommentsAcknowledgesReviews covers what queueing an address-comments
+// task does to review feedback: the review body is acknowledged through
+// GraphQL, the inline comment through REST, and the task is timed from the
+// oldest of them - the cutoff the resolver later relies on to skip older
+// feedback.
+func TestPRCommentsAcknowledgesReviews(t *testing.T) {
+	tempDir := t.TempDir()
+	prNum := 10
+	mergeable := true
+	headSHA := "sha-1234"
+	commitTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	reviewTime := time.Date(2026, 8, 1, 12, 10, 0, 0, time.UTC)
+	inlineTime := time.Date(2026, 8, 1, 12, 5, 0, 0, time.UTC)
+
+	var reviewAcks []map[string]interface{}
+	var inlineAckPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10":
+			_ = json.NewEncoder(w).Encode(&githubv39.PullRequest{
+				Number:    &prNum,
+				Mergeable: &mergeable,
+				State:     stringPtr("open"),
+				User:      &githubv39.User{Login: stringPtr("bot1")},
+				Head:      &githubv39.PullRequestBranch{SHA: stringPtr(headSHA)},
+				CreatedAt: &commitTime,
+			})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/commits":
+			_ = json.NewEncoder(w).Encode([]*githubv39.RepositoryCommit{{
+				SHA:    stringPtr(headSHA),
+				Commit: &githubv39.Commit{Committer: &githubv39.CommitAuthor{Date: &commitTime}},
+			}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{{
+				ID:          int64Ptr(500),
+				NodeID:      stringPtr("PRR_500"),
+				User:        &githubv39.User{Login: stringPtr("reviewer-alice")},
+				State:       stringPtr("CHANGES_REQUESTED"),
+				Body:        stringPtr("A few things to fix."),
+				SubmittedAt: &reviewTime,
+			}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
+			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{{
+				ID:                  int64Ptr(2001),
+				PullRequestReviewID: int64Ptr(500),
+				User:                &githubv39.User{Login: stringPtr("reviewer-alice")},
+				Body:                stringPtr("Rename this."),
+				CreatedAt:           &inlineTime,
+			}})
+		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/commits/"+headSHA+"/check-runs":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"check_runs": []interface{}{}})
+		case r.Method == "POST" && r.URL.Path == "/graphql":
+			var req struct {
+				Query     string                 `json:"query"`
+				Variables map[string]interface{} `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.Contains(req.Query, "addReaction") {
+				reviewAcks = append(reviewAcks, req.Variables)
+				_, _ = w.Write([]byte(`{"data":{"addReaction":{"reaction":{"content":"EYES"}}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"node":{"reactions":{"nodes":[]}}}}`))
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/test-owner/test-repo/pulls/comments/"):
+			inlineAckPaths = append(inlineAckPaths, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]string{"content": "eyes"})
+		default:
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	s, _ := newTestScanner(t, tempDir, testOpts{
+		GitHub:       ghClient,
+		Kube:         newTestKubeClient(),
+		BotUsers:     []string{"bot1"},
+		TriggerLabel: "factory",
+	})
+	s.evaluateAll(context.Background(), []*githubv39.Issue{{
+		Number:           &prNum,
+		PullRequestLinks: &githubv39.PullRequestLinks{},
+	}})
+
+	data, err := os.ReadFile(filepath.Join(tempDir, "incoming", "task-pr-10-comments.yaml"))
+	if err != nil {
+		t.Fatalf("expected task-pr-10-comments.yaml to be created: %v", err)
+	}
+	var task api.QueueTask
+	if err := yaml.Unmarshal(data, &task); err != nil {
+		t.Fatalf("failed to unmarshal task: %v", err)
+	}
+	if !task.TriggerEventTime.Equal(inlineTime) {
+		t.Errorf("triggerEventTime = %v, want %v (oldest feedback)", task.TriggerEventTime, inlineTime)
+	}
+
+	if len(reviewAcks) != 1 || reviewAcks[0]["subjectId"] != "PRR_500" || reviewAcks[0]["content"] != "EYES" {
+		t.Errorf("review acknowledgements = %v, want one EYES on PRR_500", reviewAcks)
+	}
+	if want := "/repos/test-owner/test-repo/pulls/comments/2001/reactions"; len(inlineAckPaths) != 1 || inlineAckPaths[0] != want {
+		t.Errorf("inline acknowledgements = %v, want [%s]", inlineAckPaths, want)
+	}
+}

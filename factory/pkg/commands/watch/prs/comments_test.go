@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,4 +221,146 @@ func TestEvaluateComments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEvaluateComments_CollectsReviewNodeIDs covers the reviews that get
+// acknowledged when the task is queued: only the ones whose body counts as
+// feedback, and only by node ID, the handle reactions on reviews need.
+func TestEvaluateComments_CollectsReviewNodeIDs(t *testing.T) {
+	baseTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	after := timePtr(baseTime.Add(5 * time.Minute))
+	pr := &githubv39.PullRequest{User: &githubv39.User{Login: stringPtr("pool-bot")}}
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		Kube:         newTestKubeClient(),
+		BotUsers:     []string{"pool-bot"},
+		TriggerLabel: "factory",
+	})
+	res := s.evaluateComments(context.Background(), pr, &prHistory{
+		reviews: []*githubv39.PullRequestReview{
+			{ID: int64Ptr(1), NodeID: stringPtr("PRR_changes"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("CHANGES_REQUESTED"), Body: stringPtr("Please rework"), SubmittedAt: after},
+			{ID: int64Ptr(2), NodeID: stringPtr("PRR_approved"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("APPROVED"), Body: stringPtr("LGTM"), SubmittedAt: after},
+			{ID: int64Ptr(3), NodeID: stringPtr("PRR_empty"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: after},
+			{ID: int64Ptr(4), NodeID: stringPtr("PRR_old"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("COMMENTED"), Body: stringPtr("Stale"), SubmittedAt: timePtr(baseTime.Add(-time.Minute))},
+		},
+	}, baseTime, baseTime)
+
+	if len(res.unackReviewNodeIDs) != 1 || res.unackReviewNodeIDs[0] != "PRR_changes" {
+		t.Errorf("unackReviewNodeIDs = %v, want [PRR_changes]", res.unackReviewNodeIDs)
+	}
+}
+
+// TestEvaluateComments_ReviewReactionGate covers the reaction gate on review
+// bodies and inline review comments: feedback the watcher already marked is
+// not picked up again, unless a human asked for another pass with 'rocket'.
+func TestEvaluateComments_ReviewReactionGate(t *testing.T) {
+	const self = "factory-bot"
+	type gqlReaction struct {
+		Content string            `json:"content"`
+		User    map[string]string `json:"user"`
+	}
+	gql := func(content, login string) gqlReaction {
+		return gqlReaction{Content: content, User: map[string]string{"login": login}}
+	}
+	rest := func(content, login string) *githubv39.Reaction {
+		return &githubv39.Reaction{Content: stringPtr(content), User: &githubv39.User{Login: stringPtr(login)}}
+	}
+
+	reviewReactions := map[string][]gqlReaction{
+		"PRR_acked":    {gql("EYES", self)},
+		"PRR_resolved": {gql("EYES", self), gql("THUMBS_UP", self)},
+		"PRR_redo":     {gql("EYES", self), gql("CONFUSED", self), gql("ROCKET", "alice")},
+	}
+	commentReactions := map[string][]*githubv39.Reaction{
+		"101": {rest("eyes", self)},
+		"102": {rest("eyes", self), rest("rocket", "alice")},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		const commentPrefix = "/repos/test-owner/test-repo/pulls/comments/"
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/graphql":
+			var req struct {
+				Variables map[string]string `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			nodes := reviewReactions[req.Variables["id"]]
+			if nodes == nil {
+				nodes = []gqlReaction{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{"node": map[string]interface{}{"reactions": map[string]interface{}{"nodes": nodes}}},
+			})
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, commentPrefix):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, commentPrefix), "/reactions")
+			reactions := commentReactions[id]
+			if reactions == nil {
+				reactions = []*githubv39.Reaction{}
+			}
+			_ = json.NewEncoder(w).Encode(reactions)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ghClient := githubv39.NewClient(nil)
+	ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+
+	baseTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	after := timePtr(baseTime.Add(5 * time.Minute))
+	alice := &githubv39.User{Login: stringPtr("alice")}
+	review := func(id int64, nodeID string) *githubv39.PullRequestReview {
+		return &githubv39.PullRequestReview{ID: int64Ptr(id), NodeID: stringPtr(nodeID), User: alice, State: stringPtr("COMMENTED"), Body: stringPtr("Please fix"), SubmittedAt: after}
+	}
+	inline := func(id int64) *githubv39.PullRequestComment {
+		return &githubv39.PullRequestComment{ID: int64Ptr(id), User: alice, Body: stringPtr("Nit"), CreatedAt: after}
+	}
+
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       ghClient,
+		Kube:         newTestKubeClient(),
+		BotUsers:     []string{"pool-bot"},
+		GitHubLogin:  self,
+		TriggerLabel: "factory",
+	})
+	res := s.evaluateComments(context.Background(),
+		&githubv39.PullRequest{User: &githubv39.User{Login: stringPtr("pool-bot")}},
+		&prHistory{
+			reviews: []*githubv39.PullRequestReview{
+				review(1, "PRR_new"),
+				review(2, "PRR_acked"),
+				review(3, "PRR_resolved"),
+				review(4, "PRR_redo"),
+			},
+			revCommentsMap: map[int64][]*githubv39.PullRequestComment{
+				1: {inline(100), inline(101), inline(102)},
+			},
+		},
+		baseTime, baseTime,
+	)
+
+	if !res.hasNewComments {
+		t.Error("hasNewComments = false, want true")
+	}
+	if want := []string{"PRR_new", "PRR_redo"}; !equalStrings(res.unackReviewNodeIDs, want) {
+		t.Errorf("unackReviewNodeIDs = %v, want %v", res.unackReviewNodeIDs, want)
+	}
+	if len(res.unackPRCommentIDs) != 2 || res.unackPRCommentIDs[0] != 100 || res.unackPRCommentIDs[1] != 102 {
+		t.Errorf("unackPRCommentIDs = %v, want [100 102]", res.unackPRCommentIDs)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

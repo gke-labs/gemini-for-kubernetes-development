@@ -18,14 +18,18 @@ type Reaction string
 const (
 	// ReactionAcknowledged ('eyes') is applied when the watcher picks a comment
 	// up. It is what stops the next cycle queueing the same feedback again
-	// while the first task is still running.
+	// while the first task is still running. It is never removed: the outcome
+	// reactions below are added alongside it.
 	ReactionAcknowledged Reaction = "eyes"
-	// ReactionResolved ('+1') replaces the acknowledgement once the task that
-	// addressed the comment succeeded.
+	// ReactionResolved ('+1') is added once the task that addressed the
+	// comment succeeded. It is final: nothing reopens or re-stamps a resolved
+	// comment.
 	ReactionResolved Reaction = "+1"
-	// ReactionFailed ('confused') replaces the acknowledgement when the task
-	// failed. The comment is still treated as handled - retrying it
-	// automatically would loop on whatever made it fail - so clearing it is a
+	// ReactionFailed ('confused') is added when the task failed. The comment
+	// is still treated as handled by the scanner - picking it up again as new
+	// feedback would loop on whatever made it fail. The failed task itself is
+	// retried a bounded number of times against the same feedback, and a
+	// retry that succeeds adds ReactionResolved; beyond that, clearing it is a
 	// human's call, made with ReactionRedo.
 	ReactionFailed Reaction = "confused"
 	// ReactionRedo ('rocket') is the human override: it asks the watcher to
@@ -41,9 +45,14 @@ const (
 // same emoji from a human would mean nothing of the sort. Only marks whose
 // author matches the expected side are reported - a human's 'eyes' is not an
 // acknowledgement, and the watcher's own 'rocket' is not a request to redo.
+//
+// The fields are independent: each reports whether one mark is present, and a
+// comment the watcher has finished with carries both the acknowledgement and
+// an outcome.
 type CommentState struct {
-	// Acknowledged is set when the watcher has marked the comment as picked up
-	// but has not yet recorded an outcome for it.
+	// Acknowledged is set when the watcher has marked the comment as picked
+	// up. The mark stays after an outcome is recorded, so it does not by
+	// itself mean the comment is still in progress (see AwaitingOutcome).
 	Acknowledged bool
 	// Resolved is set when the watcher recorded a successful outcome.
 	Resolved bool
@@ -75,13 +84,41 @@ func (s CommentState) NeedsAttention() bool {
 	return !s.Acknowledged && !s.Failed
 }
 
+// AwaitingOutcome reports whether the watcher picked the comment up and can
+// still record an outcome on it.
+//
+// A resolved comment is finished, so a later task never stamps it again - in
+// particular a failing one, which would otherwise put 'confused' next to the
+// '+1' of feedback that was already addressed.
+//
+// A failed comment is deliberately not finished here, unlike in
+// NeedsAttention. A failed address-comments task is retried against the same
+// feedback without acknowledging it afresh, and when the retry succeeds the
+// feedback it addressed must get its '+1'. Which failed comments a task may
+// answer is bounded by the caller instead (see ResolveOptions.Since), so an
+// unrelated later task cannot reach back and resolve them.
+func (s CommentState) AwaitingOutcome() bool {
+	return s.Acknowledged && !s.Resolved
+}
+
 // ReactionLister is the read side of the GitHub client that the interpreter
 // needs. Fetching is the client's job and interpretation is this package's, and
 // the seam between them is what lets the rules above be exercised without a
 // GitHub server.
+//
+// There is one method per kind of feedback because GitHub keeps conversation
+// comments, inline review comments and review bodies as separate resources
+// with separate ID namespaces - review bodies are not even reachable through
+// the same API - but the reactions on all three mean the same thing.
 type ReactionLister interface {
 	// IssueCommentReactions returns the reactions recorded on a comment.
 	IssueCommentReactions(ctx context.Context, commentID int64) ([]*githubv39.Reaction, error)
+	// PullRequestCommentReactions returns the reactions recorded on an inline
+	// review comment.
+	PullRequestCommentReactions(ctx context.Context, commentID int64) ([]*githubv39.Reaction, error)
+	// ReviewReactions returns the reactions recorded on a review's body,
+	// addressed by the review's node ID.
+	ReviewReactions(ctx context.Context, reviewNodeID string) ([]*githubv39.Reaction, error)
 }
 
 // ReactionInterpreter turns the reactions on a comment into a CommentState.
@@ -116,7 +153,30 @@ func (i *ReactionInterpreter) CommentState(ctx context.Context, commentID int64)
 	if i == nil || i.lister == nil {
 		return CommentState{}
 	}
-	reactions, err := i.lister.IssueCommentReactions(ctx, commentID)
+	return i.fetchState(i.lister.IssueCommentReactions(ctx, commentID))
+}
+
+// ReviewCommentState is CommentState for an inline review comment.
+func (i *ReactionInterpreter) ReviewCommentState(ctx context.Context, commentID int64) CommentState {
+	if i == nil || i.lister == nil {
+		return CommentState{}
+	}
+	return i.fetchState(i.lister.PullRequestCommentReactions(ctx, commentID))
+}
+
+// ReviewState is CommentState for a review's body, addressed by the review's
+// node ID. A review without a node ID cannot carry a reaction the watcher can
+// read, so it reads as unmarked.
+func (i *ReactionInterpreter) ReviewState(ctx context.Context, reviewNodeID string) CommentState {
+	if i == nil || i.lister == nil || reviewNodeID == "" {
+		return CommentState{}
+	}
+	return i.fetchState(i.lister.ReviewReactions(ctx, reviewNodeID))
+}
+
+// fetchState applies the failure policy shared by every state reader: a failed
+// fetch reads as unmarked (see CommentState).
+func (i *ReactionInterpreter) fetchState(reactions []*githubv39.Reaction, err error) CommentState {
 	if err != nil {
 		return CommentState{}
 	}
