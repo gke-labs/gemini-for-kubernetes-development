@@ -503,6 +503,361 @@ func TestQuotaStreamTracker(t *testing.T) {
 			t.Fatalf("ObservePoll allocated %v times per poll in steady state, want 0 (is trimWindow reslicing instead of shifting?)", allocs)
 		}
 	})
+
+	t.Run("tracks model quota exhaustion across fallback loop when retries fail", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Poll 1: Model 1 starts
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		if tracker.CurrentModel() != "gemini-3.7-flash" {
+			t.Fatalf("expected CurrentModel to be gemini-3.7-flash, got %s", tracker.CurrentModel())
+		}
+
+		// Poll 2: Model 1 encounters 429 retries with backoff
+		fatal, transient := tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		if fatal {
+			t.Fatalf("expected fatal=false during retry backoff, got true")
+		}
+		if !transient {
+			t.Fatalf("expected transient=true, got false")
+		}
+
+		// Poll 3: Model 1 fails and script falls back to Model 2
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\nTrying model: gemini-3.6-flash\n"))
+		newlyExceeded := tracker.NewlyExceededModels()
+		if len(newlyExceeded) != 1 || newlyExceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected NewlyExceededModels to contain [gemini-3.7-flash], got %v", newlyExceeded)
+		}
+		tracker.AckExceededModels(newlyExceeded...)
+		if tracker.CurrentModel() != "gemini-3.6-flash" {
+			t.Fatalf("expected CurrentModel to be gemini-3.6-flash, got %s", tracker.CurrentModel())
+		}
+
+		// Poll 4: Model 2 encounters transient 429 but succeeds
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff...\nEngine execution successful with model: gemini-3.6-flash\n"))
+
+		// Model 2 should not be exceeded
+		if len(tracker.NewlyExceededModels()) != 0 {
+			t.Fatalf("expected no new exceeded models after successful model run, got %v", tracker.NewlyExceededModels())
+		}
+
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected ExceededModels to be [gemini-3.7-flash], got %v", exceeded)
+		}
+	})
+
+	t.Run("tracks model quota exhaustion when process fails after retries", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+
+		// Process exits with failure (e.g. exit code 1)
+		isFatal := tracker.ObserveFinal(nil, true)
+		if !isFatal {
+			t.Fatalf("expected ObserveFinal to report fatal quota when process failed after 429 retries")
+		}
+
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected ExceededModels to contain gemini-3.7-flash, got %v", exceeded)
+		}
+	})
+
+	t.Run("preserves quota error state across same-model retries", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Attempt 1: Model encounters 429
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+
+		// Attempt 2: Same model is retried (e.g. bash loop retries same model)
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		// Attempt 2 fails without emitting a new 429
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\nTrying model: gemini-2.5-flash\n"))
+
+		exceeded := tracker.NewlyExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected NewlyExceededModels to contain gemini-3.7-flash despite same-model retry, got %v", exceeded)
+		}
+	})
+
+	t.Run("failure line does not clear quota error before ObserveFinal runs", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\n"))
+
+		// Process terminates on failure (no more models or fatal exit)
+		isFatal := tracker.ObserveFinal(nil, true)
+		if !isFatal {
+			t.Fatalf("expected ObserveFinal to report fatal quota error after failure line, got false")
+		}
+
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected ExceededModels to contain gemini-3.7-flash, got %v", exceeded)
+		}
+	})
+
+	t.Run("handles single line with Trying model and quota error correctly", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Single line starting the model and reporting a 429 error
+		tracker.ObservePoll([]byte("Trying model: gemini-2.5-pro - failed with status 429 RESOURCE_EXHAUSTED\n"))
+		if tracker.CurrentModel() != "gemini-2.5-pro" {
+			t.Fatalf("expected CurrentModel to be gemini-2.5-pro, got %s", tracker.CurrentModel())
+		}
+
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-2.5-pro. Retrying with next model...\nTrying model: gemini-2.5-flash\n"))
+		exceeded := tracker.NewlyExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-2.5-pro" {
+			t.Fatalf("expected gemini-2.5-pro to be marked quota exceeded, got %v", exceeded)
+		}
+	})
+
+	t.Run("extracts model names with underscores and slashes", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: models/gemini-1.5-flash_preview\n"))
+		if tracker.CurrentModel() != "models/gemini-1.5-flash_preview" {
+			t.Fatalf("expected CurrentModel to be models/gemini-1.5-flash_preview, got %s", tracker.CurrentModel())
+		}
+
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: models/gemini-1.5-flash_preview. Retrying with next model...\nTrying model: models/gemini-1.5-pro_preview\n"))
+
+		exceeded := tracker.NewlyExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "models/gemini-1.5-flash_preview" {
+			t.Fatalf("expected NewlyExceededModels to contain models/gemini-1.5-flash_preview, got %v", exceeded)
+		}
+	})
+
+	t.Run("retains pending exceeded models until acknowledged", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("429 RESOURCE_EXHAUSTED\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\nTrying model: gemini-2.5-flash\n"))
+
+		// First poll / check: key was missing, caller does not call AckExceededModels
+		pending1 := tracker.NewlyExceededModels()
+		if len(pending1) != 1 || pending1[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected NewlyExceededModels to return [gemini-3.7-flash], got %v", pending1)
+		}
+
+		// Second poll / check: pending list must still retain gemini-3.7-flash
+		pending2 := tracker.NewlyExceededModels()
+		if len(pending2) != 1 || pending2[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected pending models to be retained when unacknowledged, got %v", pending2)
+		}
+
+		// Acknowledging removes the model
+		tracker.AckExceededModels(pending2...)
+		pending3 := tracker.NewlyExceededModels()
+		if len(pending3) != 0 {
+			t.Fatalf("expected no pending models after AckExceededModels, got %v", pending3)
+		}
+	})
+
+	t.Run("unrelated process failure after successful model execution does not report fatal quota", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Model gemini-3.7-flash: Attempt 1 failed with status 429. Retrying with backoff...\n"))
+		tracker.ObservePoll([]byte("Gemini execution successful with model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Running tests...\n--- FAIL: TestFoo (0.00s)\n"))
+
+		isFatal := tracker.ObserveFinal(nil, true)
+		if isFatal {
+			t.Fatalf("expected ObserveFinal to report fatal=false when process failed after model execution succeeded, got true")
+		}
+
+		if len(tracker.ExceededModels()) != 0 {
+			t.Fatalf("expected no exceeded models when model succeeded, got %v", tracker.ExceededModels())
+		}
+	})
+
+	t.Run("transient attempt failure line does not trigger model failure detection", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Model gemini-3.7-flash: Attempt 1 failed with status 429. Retrying with backoff...\n"))
+
+		if len(tracker.NewlyExceededModels()) != 0 {
+			t.Fatalf("expected no newly exceeded models on transient retry line, got %v", tracker.NewlyExceededModels())
+		}
+	})
+
+	t.Run("case-insensitive model lifecycle markers", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Lowercase trying model
+		tracker.ObservePoll([]byte("trying model: gemini-2.5-flash\n"))
+		if tracker.CurrentModel() != "gemini-2.5-flash" {
+			t.Fatalf("expected CurrentModel to be gemini-2.5-flash, got %s", tracker.CurrentModel())
+		}
+
+		tracker.ObservePoll([]byte("status: 429 RESOURCE_EXHAUSTED\n"))
+		// Uppercase execution failed
+		tracker.ObservePoll([]byte("ENGINE EXECUTION FAILED WITH MODEL: gemini-2.5-flash. Retrying with next model...\n"))
+
+		exceeded := tracker.NewlyExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-2.5-flash" {
+			t.Fatalf("expected gemini-2.5-flash to be marked quota exceeded with uppercase failed marker, got %v", exceeded)
+		}
+		tracker.AckExceededModels(exceeded...)
+
+		// Mixed case trying model and execution successful
+		tracker.ObservePoll([]byte("Trying Model: gemini-2.5-pro\n"))
+		if tracker.CurrentModel() != "gemini-2.5-pro" {
+			t.Fatalf("expected CurrentModel to be gemini-2.5-pro, got %s", tracker.CurrentModel())
+		}
+		tracker.ObservePoll([]byte("Engine Execution Successful With Model: gemini-2.5-pro\n"))
+		if len(tracker.NewlyExceededModels()) != 0 {
+			t.Fatalf("expected no newly exceeded models after mixed case successful execution, got %v", tracker.NewlyExceededModels())
+		}
+	})
+
+	t.Run("bytesContainsIgnoreCase handles uppercase and mixed-case substrings", func(t *testing.T) {
+		tests := []struct {
+			s        string
+			sub      string
+			expected bool
+		}{
+			{"hello world", "WORLD", true},
+			{"HELLO WORLD", "world", true},
+			{"foo BAR baz", "Bar", true},
+			{"abc", "abcd", false},
+			{"abc", "", true},
+			{"", "a", false},
+			{"trying model: gemini-2.5", "TRYING MODEL:", true},
+		}
+
+		for _, tc := range tests {
+			if got := bytesContainsIgnoreCase([]byte(tc.s), []byte(tc.sub)); got != tc.expected {
+				t.Errorf("bytesContainsIgnoreCase(%q, %q) = %v, want %v", tc.s, tc.sub, got, tc.expected)
+			}
+		}
+	})
+
+	t.Run("pendingLine is bounded to maxWindowSize across newline-less chunks", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+		tracker.maxWindowSize = 100
+
+		// Send 10 chunks of 50 bytes without newline
+		chunk := bytes.Repeat([]byte("a"), 50)
+		for i := 0; i < 10; i++ {
+			tracker.ObservePoll(chunk)
+		}
+
+		if len(tracker.pendingLine) > tracker.maxWindowSize {
+			t.Fatalf("pendingLine length %d exceeded maxWindowSize %d", len(tracker.pendingLine), tracker.maxWindowSize)
+		}
+	})
+
+	t.Run("fallback loop transition does not trigger fatal ObservePoll on next model", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Model 1 starts, encounters 429 and RPD, and fails
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Generate requests per day status 429 RESOURCE_EXHAUSTED\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\n"))
+
+		// Model 2 starts
+		tracker.ObservePoll([]byte("Trying model: gemini-3.6-flash\n"))
+
+		// On subsequent poll tick while Model 2 is running, ObservePoll should NOT report fatal error
+		isFatal, _ := tracker.ObservePoll([]byte("Working on task with model gemini-3.6-flash...\n"))
+		if isFatal {
+			t.Fatalf("expected ObservePoll to return fatal=false while Model 2 is running, got true")
+		}
+
+		// Model 1 should be marked quota exceeded
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected ExceededModels to contain gemini-3.7-flash, got %v", exceeded)
+		}
+	})
+
+	t.Run("key suspension error triggers fatal ObservePoll during model attempt", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		isFatal, _ := tracker.ObservePoll([]byte("API key suspended: CONSUMER_SUSPENDED\n"))
+		if !isFatal {
+			t.Fatalf("expected ObservePoll to return fatal=true on suspended key, got false")
+		}
+	})
+
+	t.Run("model 1 quota failure followed by model 2 success and process failure does not report fatal quota", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Model 1 fails with quota
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\n"))
+
+		// Model 2 succeeds
+		tracker.ObservePoll([]byte("Trying model: gemini-3.6-flash\n"))
+		tracker.ObservePoll([]byte("Engine execution successful with model: gemini-3.6-flash\n"))
+
+		// Post-engine step (e.g. git push or tests) fails
+		tracker.ObservePoll([]byte("git push failed\n"))
+
+		isFatal := tracker.ObserveFinal(nil, true)
+		if isFatal {
+			t.Fatalf("expected ObserveFinal to report fatal=false when fallback model succeeded, got true")
+		}
+
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected only gemini-3.7-flash to be marked exceeded, got %v", exceeded)
+		}
+	})
+
+	t.Run("model 1 quota failure followed by model 2 non-quota failure does not report fatal quota", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		// Model 1 fails with quota
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+		tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\"error\":{\"message\":\"RESOURCE_EXHAUSTED\"}}\n"))
+		tracker.ObservePoll([]byte("Engine execution failed with model: gemini-3.7-flash. Retrying with next model...\n"))
+
+		// Model 2 fails for syntax / non-quota reason
+		tracker.ObservePoll([]byte("Trying model: gemini-3.6-flash\n"))
+		tracker.ObservePoll([]byte("syntax error: unexpected token\n"))
+
+		isFatal := tracker.ObserveFinal(nil, true)
+		if isFatal {
+			t.Fatalf("expected ObserveFinal to report fatal=false when fallback model failed without quota errors, got true")
+		}
+
+		exceeded := tracker.ExceededModels()
+		if len(exceeded) != 1 || exceeded[0] != "gemini-3.7-flash" {
+			t.Fatalf("expected only gemini-3.7-flash to be marked exceeded, got %v", exceeded)
+		}
+	})
+
+	t.Run("ObservePoll hasTransient only reports true on poll tick receiving retry message", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		tracker.ObservePoll([]byte("Trying model: gemini-3.7-flash\n"))
+
+		// Tick 1: retry backoff message received -> transient is true
+		_, isTransient := tracker.ObservePoll([]byte("Attempt 1 failed with status 429. Retrying with backoff...\n"))
+		if !isTransient {
+			t.Fatalf("expected isTransient=true on poll tick with retry backoff message, got false")
+		}
+
+		// Tick 2: ordinary output -> transient is false (not sticky from buffer)
+		_, isTransient = tracker.ObservePoll([]byte("Still waiting for agent response...\n"))
+		if isTransient {
+			t.Fatalf("expected isTransient=false on subsequent poll tick without new retry message, got true")
+		}
+	})
 }
 
 // BenchmarkQuotaStreamTrackerObservePoll exercises the steady-state hot path: a full

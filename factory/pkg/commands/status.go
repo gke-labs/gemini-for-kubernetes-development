@@ -73,6 +73,15 @@ func NewStatusCommand(ctx context.Context) *cobra.Command {
 						status, err := geminitokens.GetTokensStatus()
 						if err == nil && status != nil {
 							fmt.Fprintf(w, "Tokens Status\t[OK]\tTotal: %d (Active: %d, Quota Exceeded: %d, Suspended: %d)\n", status.Total, status.Active, status.QuotaExceeded, status.Suspended)
+							var degradedList []string
+							for _, activeKey := range status.ActiveList {
+								if strings.Contains(activeKey, "(Degraded: ") {
+									degradedList = append(degradedList, activeKey)
+								}
+							}
+							if len(degradedList) > 0 {
+								fmt.Fprintf(w, "Degraded Keys\t[WARN]\t%s\n", strings.Join(degradedList, ", "))
+							}
 							if len(status.QuotaExceededList) > 0 {
 								fmt.Fprintf(w, "Quota Exceeded\t[WARN]\t%s (resets at midnight)\n", strings.Join(status.QuotaExceededList, ", "))
 							}

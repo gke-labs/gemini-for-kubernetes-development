@@ -315,11 +315,12 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 	}
 
+	geminiKey := getGeminiAPIKey(secret)
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             getGeminiAPIKey(secret),
+		"GEMINI_API_KEY":             geminiKey,
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
@@ -334,7 +335,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		"SESSION_ID":                 flags.SessionID,
 		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
 		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.GetAvailableModelsForKey(getGeminiAPIKey(secret)),
+		"MODELS":                     tasks.GetAvailableModelsForKey(geminiKey),
 		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
 	}
 	if targetNum != 0 {

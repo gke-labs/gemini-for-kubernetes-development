@@ -457,7 +457,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		}
 		isFatalQuota := quotaTracker.ObserveFinal(finalData, processFailed)
 		evidence := quotaEvidence(finalData, quotaTracker.Window())
-		if model := extractModelFromLogs(evidence); model != "" {
+		if model := c.recordExceededModels(evidence, quotaTracker, envs); model != "" {
 			lastModelTried = model
 		}
 		if isFatalQuota {
@@ -503,7 +503,7 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 				}
 				isFatal, isTransient := quotaTracker.ObservePoll(newData)
 				evidence := quotaEvidence(newData, quotaTracker.Window())
-				if model := extractModelFromLogs(evidence); model != "" {
+				if model := c.recordExceededModels(evidence, quotaTracker, envs); model != "" {
 					lastModelTried = model
 				}
 				if isFatal {
@@ -611,7 +611,41 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 	}
 }
 
-var modelRegexp = regexp.MustCompile(`Trying model:\s*([a-zA-Z0-9\-\.]+)`)
+var modelRegexp = regexp.MustCompile(`(?i)Trying model:\s*([a-zA-Z0-9\-\._\/]+)`)
+
+func (c *Client) recordExceededModels(evidence []byte, quotaTracker *geminitokens.QuotaStreamTracker, envs map[string]string) string {
+	newlyExceeded := quotaTracker.NewlyExceededModels()
+
+	key := geminitokens.ExtractAPIKeyFromError(evidence)
+	if key == "" {
+		key = envs[constants.KeyGeminiAPIKey]
+	}
+
+	if len(newlyExceeded) > 0 {
+		if key != "" {
+			for _, m := range newlyExceeded {
+				klog.Warningf("Model '%s' failed after encountering quota error; marking as quota exceeded for key", m)
+				if err := geminitokens.AddQuotaExceededKeyAndModel(key, m, 4*time.Hour); err != nil {
+					klog.Errorf("Failed to mark key and model as quota exceeded: %v", err)
+				}
+			}
+		} else {
+			klog.Warningf("Cannot record quota exceeded models %v: API key could not be resolved from error or environment", newlyExceeded)
+		}
+		quotaTracker.AckExceededModels(newlyExceeded...)
+		return newlyExceeded[len(newlyExceeded)-1]
+	}
+
+	if exceeded := quotaTracker.ExceededModels(); len(exceeded) > 0 {
+		return exceeded[len(exceeded)-1]
+	}
+
+	if quotaTracker.CurrentModel() == "" {
+		return extractModelFromLogs(evidence)
+	}
+
+	return ""
+}
 
 // quotaEvidence returns the buffer to use for post-mortem extraction of failure metadata
 // (model name, API key, suspension vs. quota classification).
