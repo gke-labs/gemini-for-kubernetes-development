@@ -140,16 +140,18 @@ func newSaveNotesEnv(t *testing.T, session string) *saveNotesEnv {
 	}
 	// insteadOf sends the https URL the script builds at a local path,
 	// so the push is real git against a real remote with no network and
-	// no credentials in play. Every git the test runs uses this HOME, so
-	// whatever the developer has in their own ~/.gitconfig stays out of
-	// it.
+	// no credentials in play. It is handed over as GIT_CONFIG_GLOBAL,
+	// which only the caller's environment can set, and lives outside
+	// HOME: the script ignores ${HOME}/.gitconfig, because that is where
+	// the conversation can write. Every git the test runs uses it, so
+	// whatever the developer has in their own ~/.gitconfig stays out.
 	gitconfig := "[url \"" + filepath.Join(root, "remotes") + "/\"]\n" +
 		"\tinsteadOf = https://github.com/\n" +
 		"[init]\n\tdefaultBranch = main\n" +
 		// The stand-in fork is a bare repository and the test reads it
 		// with -C; safe.bareRepository=explicit refuses that.
 		"[safe]\n\tbareRepository = all\n"
-	if err := os.WriteFile(filepath.Join(root, "home", ".gitconfig"), []byte(gitconfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "gitconfig"), []byte(gitconfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// gh answers the two questions the script asks it, and nothing else.
@@ -163,6 +165,7 @@ func newSaveNotesEnv(t *testing.T, session string) *saveNotesEnv {
 
 	e.env = []string{
 		"HOME=" + filepath.Join(root, "home"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "gitconfig"),
 		"PATH=" + filepath.Join(root, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"WORKSPACES=" + filepath.Join(root, "workspaces"),
 		"REPO_NAME=repo",
@@ -368,6 +371,47 @@ func TestSaveNotesIsQuietWhenNothingChanged(t *testing.T) {
 	}
 	if after := mustRun(t, e.root, e.env, "git", "-C", e.fork, "rev-parse", ResearchNotesBranch); after != before {
 		t.Error("an empty commit was pushed")
+	}
+}
+
+// The conversation can write ${HOME}/.gitconfig, and git runs here with
+// the member's token in its environment. A hook it planted there — or in
+// the throwaway clone's own config, which outranks the global one — must
+// not run.
+func TestSaveNotesRunsNoHookTheConversationPlanted(t *testing.T) {
+	e := newSaveNotesEnv(t, "s1")
+	hooks := filepath.Join(e.root, "planted-hooks")
+	marker := filepath.Join(e.root, "hook-ran")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\necho \"$GH_TOKEN\" > " + marker + "\n"
+	for _, name := range []string{"pre-commit", "pre-push", "post-checkout"} {
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	planted := "[core]\n\thooksPath = " + hooks + "\n"
+	if err := os.WriteFile(filepath.Join(e.root, "home", ".gitconfig"), []byte(planted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The same path in the caller's own global config stands for a
+	// repository-level setting: the script must win over that too.
+	f, err := os.OpenFile(filepath.Join(e.root, "gitconfig"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(planted); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	e.write(t, "notes\n")
+	if out, err := e.save(t); err != nil {
+		t.Fatalf("save: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a planted hook ran while the token was in the environment")
 	}
 }
 
