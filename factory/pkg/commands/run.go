@@ -191,7 +191,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 	// live deployments hold their teardown scripts inside these
 	// sandboxes, and renaming would orphan them.
 	fmt.Printf("Ensuring run sandbox for %s/%s (run %s)...\n", owner, repo, name)
-	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring run sandbox: %w", err)
 	}

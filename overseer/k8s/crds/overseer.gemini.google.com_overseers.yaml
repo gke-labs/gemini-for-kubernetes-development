@@ -169,6 +169,8 @@ spec:
               workspaceDiskSize:
                 default: 10Gi
                 type: string
+              workspaceStorageClassName:
+                type: string
             required:
             - repoURL
             type: object

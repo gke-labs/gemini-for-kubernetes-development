@@ -204,7 +204,7 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -477,7 +477,7 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -903,7 +903,7 @@ func runIterate(ctx context.Context, prURL, prompt string, continueSession bool,
 
 	cloneURL := pr.GetBase().GetRepo().GetCloneURL()
 	fmt.Printf("Ensuring review sandbox for PR #%d...\n", prNum)
-	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureReviewSandbox(ctx, kubeClient, rootFlags.Namespace, prNum, pr.GetTitle(), pr.GetHTMLURL(), pr.GetDiffURL(), cloneURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring review sandbox: %w", err)
 	}
@@ -1177,7 +1177,7 @@ func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemera
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
 	fmt.Printf("Ensuring adopt sandbox '%s'...\n", sandboxName)
-	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring adopt sandbox: %w", err)
 	}

@@ -120,7 +120,7 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 	fmt.Printf("Ensuring triage sandbox for issue #%d...\n", issueNum)
-	sandboxName, err := factorysandbox.EnsureTriageSandbox(ctx, kubeClient, rootFlags.Namespace, repo, issueNum, cloneURL, issue.GetHTMLURL(), rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureTriageSandbox(ctx, kubeClient, rootFlags.Namespace, repo, issueNum, cloneURL, issue.GetHTMLURL(), rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring triage sandbox: %w", err)
 	}

@@ -191,10 +191,10 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	var sandboxName string
 	if isIssue {
 		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	} else {
 		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	}
 	if err != nil {
 		return fmt.Errorf("ensuring sandbox: %w", err)

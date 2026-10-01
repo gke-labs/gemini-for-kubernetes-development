@@ -19,6 +19,7 @@ type CLIRunnerConfig struct {
 	Namespace        string
 	Image            string
 	DiskSize         string
+	StorageClass     string
 	EphemeralStorage string
 	CPURequest       string
 	CPULimit         string
@@ -90,6 +91,9 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	}
 	if r.cfg.DiskSize != "" {
 		args = append(args, "--workspace-disk-size", r.cfg.DiskSize)
+	}
+	if r.cfg.StorageClass != "" {
+		args = append(args, "--workspace-storage-class", r.cfg.StorageClass)
 	}
 	if r.cfg.EphemeralStorage != "" {
 		args = append(args, "--ephemeral-storage", r.cfg.EphemeralStorage)

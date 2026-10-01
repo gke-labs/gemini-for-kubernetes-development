@@ -11,6 +11,7 @@ type RootFlags struct {
 	Engine           string
 	Image            string
 	DiskSize         string
+	StorageClass     string
 	SecretName       string
 	User             string
 	Timeout          time.Duration

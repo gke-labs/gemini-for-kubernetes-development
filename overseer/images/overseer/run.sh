@@ -27,6 +27,9 @@ function writeFactoryConfig {
     if [ -n "$WORKSPACE_DISK_SIZE" ]; then
         echo "workspaceDiskSize: $WORKSPACE_DISK_SIZE" >> "$CFG_FILE"
     fi
+    if [ -n "$WORKSPACE_STORAGE_CLASS" ]; then
+        echo "workspaceStorageClass: $WORKSPACE_STORAGE_CLASS" >> "$CFG_FILE"
+    fi
     if [ -n "$SANDBOX_CPU_REQUEST" ]; then
         echo "sandboxCPURequest: $SANDBOX_CPU_REQUEST" >> "$CFG_FILE"
     fi

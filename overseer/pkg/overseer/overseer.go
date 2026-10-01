@@ -303,6 +303,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.WorkspaceDiskSize,
 		})
 	}
+	if o.Spec.WorkspaceStorageClassName != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "WORKSPACE_STORAGE_CLASS",
+			"value": o.Spec.WorkspaceStorageClassName,
+		})
+	}
 	if o.Spec.Image != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "FACTORY_IMAGE",
@@ -438,6 +444,18 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		mainContainer["volumeMounts"] = volumeMounts
 	}
 
+	pvcSpec := map[string]interface{}{
+		"accessModes": []interface{}{"ReadWriteOnce"},
+		"resources": map[string]interface{}{
+			"requests": map[string]interface{}{
+				"storage": diskSize,
+			},
+		},
+	}
+	if o.Spec.WorkspaceStorageClassName != "" {
+		pvcSpec["storageClassName"] = o.Spec.WorkspaceStorageClassName
+	}
+
 	u := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -466,14 +484,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 						"metadata": map[string]interface{}{
 							"name": "workspaces-pvc",
 						},
-						"spec": map[string]interface{}{
-							"accessModes": []interface{}{"ReadWriteOnce"},
-							"resources": map[string]interface{}{
-								"requests": map[string]interface{}{
-									"storage": diskSize,
-								},
-							},
-						},
+						"spec": pvcSpec,
 					},
 				},
 			},

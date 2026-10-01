@@ -129,7 +129,7 @@ func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.Kuber
 // runbook path. Type label "runbook": the board controller excludes these
 // from slot counting and idle-pause — a run environment hosts living
 // deployments, it is not a task slot.
-func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, instance, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, instance, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := RunbookSandboxName(repoName, instance)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -171,13 +171,14 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 				"sandbox.gemini.google.com/runbook-scenario": scenario,
 				"sandbox.gemini.google.com/runbook-instance": instance,
 			},
-			Image:              image,
-			Replicas:           1,
-			WorkspaceDiskSize:  diskSize,
-			EphemeralStorage:   ephemeralStorage,
-			Secrets:            secrets,
-			Env:                envs,
-			ServiceAccountName: DeployerServiceAccount,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
+			ServiceAccountName:    DeployerServiceAccount,
 		},
 	}
 
@@ -203,7 +204,7 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	return name, nil
 }
 
-func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -249,12 +250,13 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
 		},
 	}
 
@@ -274,7 +276,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
-func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
 	labels := map[string]string{
 		"sandbox.gemini.google.com/type":    "agent",
@@ -328,12 +330,13 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
 		},
 	}
 
@@ -353,7 +356,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
-func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("adopt-%s-%d", repoName, prNum)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -399,12 +402,13 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
 		},
 	}
 
@@ -505,7 +509,7 @@ func ensureSandboxUserLabel(ctx context.Context, kubeClient *clients.KubernetesC
 	}
 }
 
-func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	parts := strings.Split(strings.TrimSuffix(prCloneURL, ".git"), "/")
 	repo := parts[len(parts)-1]
 
@@ -576,12 +580,13 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
 			},
-			Image:             image,
-			Replicas:          1,
-			WorkspaceDiskSize: diskSize,
-			EphemeralStorage:  ephemeralStorage,
-			Secrets:           secrets,
-			Env:               envs,
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   envs,
 		},
 		PRNumber:   prNum,
 		PRTitle:    prTitle,

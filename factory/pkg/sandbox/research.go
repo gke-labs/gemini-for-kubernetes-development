@@ -265,7 +265,7 @@ func researchEnv(envs []EnvVar) []EnvVar {
 //
 // The sandbox runs acpd because ACPD_ENABLE is set here. Nothing else
 // turns it on, so every other sandbox type is unaffected.
-func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, diskSize, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("research sandbox needs a session id")
 	}
@@ -318,17 +318,18 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 
 	opt := AgentSandboxOptions{
 		DevSandboxOptions: DevSandboxOptions{
-			Name:               name,
-			Namespace:          namespace,
-			Labels:             researchLabels(sessionID, user),
-			Annotations:        researchAnnotations(repoName, sessionID, cloneURL, htmlURL),
-			Image:              image,
-			Replicas:           1,
-			WorkspaceDiskSize:  diskSize,
-			EphemeralStorage:   ephemeralStorage,
-			Secrets:            secrets,
-			Env:                researchEnv(envs),
-			ServiceAccountName: DeployerServiceAccount,
+			Name:                  name,
+			Namespace:             namespace,
+			Labels:                researchLabels(sessionID, user),
+			Annotations:           researchAnnotations(repoName, sessionID, cloneURL, htmlURL),
+			Image:                 image,
+			Replicas:              1,
+			WorkspaceDiskSize:     diskSize,
+			WorkspaceStorageClass: storageClass,
+			EphemeralStorage:      ephemeralStorage,
+			Secrets:               secrets,
+			Env:                   researchEnv(envs),
+			ServiceAccountName:    DeployerServiceAccount,
 		},
 	}
 

@@ -17,6 +17,7 @@ func testCLIRunner(logDir string) *CLIRunner {
 		Namespace:        "test-namespace",
 		Image:            "custom-image:v1",
 		DiskSize:         "50Gi",
+		StorageClass:     "premium-rwo",
 		EphemeralStorage: "20Gi",
 		CPURequest:       "2",
 		CPULimit:         "4",
@@ -45,19 +46,20 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 		}
 
 		expectedFlags := map[string]string{
-			"--url":                   task.URL,
-			"--instruction":           "Fix this issue",
-			"--namespace":             "test-namespace",
-			"--user":                  "coder-bot",
-			"--image":                 "custom-image:v1",
-			"--workspace-disk-size":   "50Gi",
-			"--ephemeral-storage":     "20Gi",
-			"--cpu-request":           "2",
-			"--cpu-limit":             "4",
-			"--memory-request":        "4Gi",
-			"--memory-limit":          "8Gi",
-			"--timeout":               "30m0s",
-			"--abort-on-cancel=false": "",
+			"--url":                     task.URL,
+			"--instruction":             "Fix this issue",
+			"--namespace":               "test-namespace",
+			"--user":                    "coder-bot",
+			"--image":                   "custom-image:v1",
+			"--workspace-disk-size":     "50Gi",
+			"--workspace-storage-class": "premium-rwo",
+			"--ephemeral-storage":       "20Gi",
+			"--cpu-request":             "2",
+			"--cpu-limit":               "4",
+			"--memory-request":          "4Gi",
+			"--memory-limit":            "8Gi",
+			"--timeout":                 "30m0s",
+			"--abort-on-cancel=false":   "",
 		}
 
 		for flag, expectedVal := range expectedFlags {

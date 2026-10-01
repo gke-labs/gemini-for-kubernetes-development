@@ -21,6 +21,7 @@ Here are the available fields in `.factory.cfg`:
 * **`maxActiveIssues`** (integer, default: unlimited): Maximum number of concurrent issue fix sandboxes allowed in the namespace.
 * **`image`** (string): Default base image to use for spawned sandboxes (e.g., `ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest`).
 * **`workspaceDiskSize`** (string, default: `10Gi`): Default size of the persistent volume claim (PVC) for the sandbox workspace (e.g., `20Gi`).
+* **`workspaceStorageClass`** (string, optional): StorageClass for the sandbox workspace PVC (e.g., `premium-rwo`, `pd-ssd`). If omitted, uses the cluster default StorageClass.
 * **`ephemeralStorage`** (string, default: `6Gi`): Default ephemeral storage request and limit for the sandbox pod (e.g., `10Gi`).
 * **`minNumber`** (integer, default: 0): Minimum issue or PR number to process. Any issue or PR with a number less than `minNumber` will be ignored.
 
@@ -59,6 +60,7 @@ Here are the available fields in `.factory.cfg`:
 # Sandbox Resource Configuration
 image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
 workspaceDiskSize: 20Gi
+workspaceStorageClass: premium-rwo
 ephemeralStorage: 10Gi
 
 # Watch Limits

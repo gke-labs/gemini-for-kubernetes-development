@@ -176,6 +176,7 @@ func (w *Watcher) newCLIRunner() *dispatcher.CLIRunner {
 		Namespace:        w.Namespace,
 		Image:            w.Image,
 		DiskSize:         w.DiskSize,
+		StorageClass:     w.StorageClass,
 		EphemeralStorage: w.EphemeralStorage,
 		CPURequest:       w.CPURequest,
 		CPULimit:         w.CPULimit,
