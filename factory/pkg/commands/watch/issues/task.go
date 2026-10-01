@@ -1,15 +1,19 @@
 package issues
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 // taskOptions specifies the parts of an issue task that vary between a standard
@@ -28,10 +32,16 @@ type taskOptions struct {
 
 // newTask constructs the queue task for an issue with consistent defaults.
 func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
+	return newIssueTask(s.gh, opts)
+}
+
+// newIssueTask constructs the queue task for an issue of the repository gh is
+// bound to, with consistent defaults.
+func newIssueTask(gh *github.Client, opts taskOptions) *api.QueueTask {
 	num := opts.Issue.GetNumber()
 	return &api.QueueTask{
 		Type:             opts.Type,
-		URL:              fmt.Sprintf("https://github.com/%s/%s/issues/%d", s.gh.Owner(), s.gh.Repo(), num),
+		URL:              fmt.Sprintf("https://github.com/%s/%s/issues/%d", gh.Owner(), gh.Repo(), num),
 		Number:           num,
 		Priority:         conventions.Priority(opts.Issue.Labels),
 		Phase:            opts.Phase,
@@ -45,6 +55,29 @@ func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
 		AgentFile:        opts.AgentFile,
 		SessionID:        opts.SessionID,
 	}
+}
+
+// resolveWorkflow returns the workflow an issue asks for in its description,
+// as the definition's path and its name, or two empty strings when it asks for
+// none. A path naming an ordinary skill or agent prompt rather than a workflow
+// definition counts as none: the issue gets the standard fix.
+func resolveWorkflow(ctx context.Context, gh *github.Client, issue *githubv39.Issue) (string, string) {
+	workflowPath := common.FindWorkflowPath(issue.GetBody())
+	if workflowPath == "" || !common.IsWorkflowDefinition(ctx, gh, workflowPath) {
+		return "", ""
+	}
+	filenameOnly := filepath.Base(workflowPath)
+	return workflowPath, strings.TrimSuffix(filenameOnly, filepath.Ext(filenameOnly))
+}
+
+// issueTaskFilename names the task file for an issue's standard fix or, given
+// a workflow name, for its workflow run. The name is what the queue dedupes
+// on, so everything that queues work for an issue must agree on it.
+func issueTaskFilename(num int, workflowName string) string {
+	if workflowName != "" {
+		return fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
+	}
+	return fmt.Sprintf("task-issue-%d.yaml", num)
 }
 
 // triggerInfo determines what made an issue eligible and when, which is

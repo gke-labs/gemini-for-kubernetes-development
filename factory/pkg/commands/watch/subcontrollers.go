@@ -48,10 +48,27 @@ func (w *Watcher) newReconciler() *sandbox.Reconciler {
 		IdleTimeout: w.SandboxIdleTimeout,
 		DryRun:      w.DryRun,
 	}, sandbox.Deps{
+		Sandboxes:  w.sandboxes,
+		Locks:      w.sandboxLocks,
+		Entities:   w.entityCache,
+		Paused:     w.draining,
+		LinkedWork: w.newLinkedWork(),
+	})
+}
+
+// newLinkedWork constructs what the reconciler tells about the issues it finds
+// closed, which queues the workflows waiting on them. Queueing workflow runs is
+// the issue scanner's business, so a watcher that does not scan issues gets
+// nil and nudges nothing.
+func (w *Watcher) newLinkedWork() sandbox.LinkedWork {
+	if !w.issuesEnabled() {
+		return nil
+	}
+	return issues.NewNudger(w.issueScannerConfig(), issues.NudgerDeps{
+		GitHub:    w.repoClient,
+		Queue:     w.queueMgr,
 		Sandboxes: w.sandboxes,
-		Locks:     w.sandboxLocks,
-		Entities:  w.entityCache,
-		Paused:    w.draining,
+		Users:     watcherUserSelector{w: w},
 	})
 }
 
@@ -78,7 +95,20 @@ func (w *Watcher) newChoreScheduler() *chores.Scheduler {
 // instead of waiting behind the pull request evaluation that used to share its
 // cycle.
 func (w *Watcher) newIssueScanner() *issues.Scanner {
-	return issues.New(issues.Config{
+	return issues.New(w.issueScannerConfig(), issues.Deps{
+		GitHub:    w.repoClient,
+		Queue:     w.queueMgr,
+		Entities:  w.entityCache,
+		Sandboxes: w.sandboxes,
+		Users:     watcherUserSelector{w: w},
+		Paused:    w.draining,
+	})
+}
+
+// issueScannerConfig is the issue scanner's configuration, which the nudger
+// that queues workflow runs on its behalf shares.
+func (w *Watcher) issueScannerConfig() issues.Config {
+	return issues.Config{
 		Interval:       issues.DefaultInterval,
 		SweepInterval:  issues.DefaultSweepInterval,
 		TriggerLabel:   w.triggerLabel,
@@ -89,14 +119,7 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 		MinNumber:      w.minIssueNumber(),
 		PrimeOpenPRs:   !w.prsEnabled(),
 		DryRun:         w.DryRun,
-	}, issues.Deps{
-		GitHub:    w.repoClient,
-		Queue:     w.queueMgr,
-		Entities:  w.entityCache,
-		Sandboxes: w.sandboxes,
-		Users:     watcherUserSelector{w: w},
-		Paused:    w.draining,
-	})
+	}
 }
 
 // newPRScanner constructs the pull request scanner, which runs as its own

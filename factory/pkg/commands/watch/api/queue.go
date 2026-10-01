@@ -79,6 +79,10 @@ const (
 
 	// TriggerReasonChoreScheduled indicates the task was triggered by a scheduled cron chore.
 	TriggerReasonChoreScheduled TriggerReason = "ChoreScheduled"
+
+	// TriggerReasonLinkedIssueClosed indicates a workflow task was queued because an issue linked
+	// to the workflow's issue was closed, which is often what the workflow is waiting on.
+	TriggerReasonLinkedIssueClosed TriggerReason = "LinkedIssueClosed"
 )
 
 // QueueTask represents an actionable unit of work to be scheduled and executed in a sandbox.
