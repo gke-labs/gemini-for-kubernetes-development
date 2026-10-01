@@ -26,6 +26,53 @@ export GOPATH="${GO_CACHE_HOME}/go"
 export GOMODCACHE="${GOPATH}/pkg/mod"
 export GOCACHE="${GO_CACHE_HOME}/.cache/go-build"
 
+# setGitHubURLRewrite <user> makes <user>'s credentials (GITHUB_USER_TOKEN)
+# the only global url.<base>.insteadOf rewrite of https://github.com/.
+# Because the credentials are in the URL, git never asks a credential
+# helper for them, so this overrides gh auth git-credential for github.com
+# remotes; it isn't a fallback. The token is read from the environment,
+# not passed as an argument: xtrace prints a call's arguments before the
+# function gets to turn tracing off.
+#
+# HOME lives on the workspace PVC, and one sandbox runs tasks as different
+# identities (review as the reviewer bot, iterate/address as the PR's
+# coder bot). The token is part of the rewrite's section name, so a plain
+# `git config --global url.<creds>.insteadOf` adds a section per identity
+# instead of replacing the last one, and for equal-length matches git
+# picks the first — pushes then go out as whoever ran first in that
+# sandbox, and a coder bot's fork answers 403 "denied to <reviewer bot>"
+# on every rebase from then on. So every existing rewrite of github.com is
+# removed first, matched by value so that any rewrite that would shadow
+# this one goes too; removing the whole section, not just the value, also
+# takes the previous identity's token off the disk.
+#
+# With no token, no rewrite is written: a passwordless one can't
+# authenticate and would hide a GH_TOKEN that gh's helper could use.
+function setGitHubURLRewrite {
+    # The section names carry tokens; keep them out of a set -x trace.
+    local trace=0
+    case "$-" in *x*) trace=1 ;; esac
+    set +x
+
+    local user="$1"
+
+    local key
+    while read -r key; do
+        [ -n "${key}" ] || continue
+        git config --global --remove-section "${key%.insteadof}" 2>/dev/null || true
+    done < <(git config --global --get-regexp '^url\..*\.insteadof$' '^https://github\.com/$' 2>/dev/null | cut -d' ' -f1)
+
+    if [ -n "${GITHUB_USER_TOKEN}" ]; then
+        git config --global url."https://${user}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
+    else
+        echo "GITHUB_USER_TOKEN is empty; not writing a github.com URL rewrite"
+    fi
+
+    if [ "$trace" = 1 ]; then
+        set -x
+    fi
+}
+
 function setupGit {
     echo "Running setupGit..."
     echo "creating ${USER_HOME}/.config/gh directory"
@@ -64,7 +111,7 @@ EOF
     echo "running gh auth setup-git"
     gh auth setup-git || true
     echo "configuring git url fallback"
-    git config --global url."https://${GH_USER}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
+    setGitHubURLRewrite "${GH_USER}"
 
     echo "Configuring global git ignore"
     git config --global core.excludesfile "${USER_HOME}/.gitignore_global"
