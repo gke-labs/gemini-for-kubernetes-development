@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -692,5 +693,104 @@ func TestCollectGarbageReportsClosedIssuesInDryRun(t *testing.T) {
 	}
 	if len(linked.closed) != 1 || linked.closed[0] != 42 {
 		t.Errorf("reported closed issues %v, want [42]", linked.closed)
+	}
+}
+
+// newMergedPRGitHub returns a GitHub client where PR #75, merged, references
+// closed issue #71, open issue #72 and PR #69 - only the first of which the
+// merge can have closed.
+func newMergedPRGitHub(t *testing.T) *githubv39.Client {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		num, _ := strconv.Atoi(path.Base(r.URL.Path))
+		entity := map[string]interface{}{"number": num, "state": "closed"}
+		switch {
+		case strings.Contains(r.URL.Path, "/pulls/"):
+			entity["merged"] = true
+			entity["body"] = "Fixes #71. Follows #69, see also #72."
+		case num == 72:
+			entity["state"] = "open"
+		case num == 69:
+			entity["pull_request"] = map[string]interface{}{"url": "https://example.com/pulls/69"}
+		}
+		_ = json.NewEncoder(w).Encode(entity)
+	}))
+	t.Cleanup(server.Close)
+
+	client := githubv39.NewClient(nil)
+	client.BaseURL, _ = url.Parse(server.URL + "/")
+	return client
+}
+
+// Review sandboxes carry the repo in their name; the issue a merged PR closes
+// may have no sandbox of its own, so the nudge comes from the PR's.
+func TestCollectGarbageCollectsRepoScopedPRSandboxAndNudges(t *testing.T) {
+	linked := &recordingLinkedWork{}
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, newSandbox("factory-pr-test-repo-75", map[string]interface{}{annotationLastTaskState: "Completed"})),
+			GitHub: newMergedPRGitHub(t),
+		}),
+		Locks:      concurrency.NewSandboxLockRegistry(),
+		Entities:   warmCache(),
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if sandboxExists(t, r, "factory-pr-test-repo-75") {
+		t.Errorf("expected the sandbox of merged PR #75 to be deleted")
+	}
+	if len(linked.closed) != 1 || linked.closed[0] != 71 {
+		t.Errorf("reported closed issues %v, want [71]", linked.closed)
+	}
+}
+
+func TestCollectGarbageDoesNotNudgeForUnmergedPR(t *testing.T) {
+	linked := &recordingLinkedWork{}
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, newSandbox("factory-pr-test-repo-7", map[string]interface{}{annotationLastTaskState: "Completed"})),
+			GitHub: newClosedEntityGitHub(t),
+		}),
+		Locks:      concurrency.NewSandboxLockRegistry(),
+		Entities:   warmCache(),
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if sandboxExists(t, r, "factory-pr-test-repo-7") {
+		t.Errorf("expected the sandbox of closed PR #7 to be deleted")
+	}
+	if len(linked.closed) != 0 {
+		t.Errorf("reported closed issues %v, want none for a PR closed without merging", linked.closed)
+	}
+}
+
+func TestPRNumberFromSandbox(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   int
+		wantOK bool
+	}{
+		{name: "factory-pr-k8s-config-connector-13575", want: 13575, wantOK: true},
+		{name: "factory-pr-7", want: 7, wantOK: true},
+		{name: "factory-pr-truncated-slug-8", labels: map[string]string{labelPR: "9"}, want: 9, wantOK: true},
+		{name: "factory-pr-repo", wantOK: false},
+		{name: "fix-test-repo-42", labels: map[string]string{labelPR: "70"}, wantOK: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := newSandbox(tc.name, nil)
+			sb.SetLabels(tc.labels)
+			got, ok := prNumberFromSandbox(sb)
+			if ok != tc.wantOK || got != tc.want {
+				t.Errorf("prNumberFromSandbox(%q) = %d, %v, want %d, %v", tc.name, got, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }
