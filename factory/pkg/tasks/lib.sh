@@ -120,8 +120,21 @@ manager
 bin/
 EOF
 
+    echo "Disabling git hooks"
+    git config --global core.hooksPath /dev/null
+
     echo "Sanitizing workspace (cleaning stale git locks)..."
     find /workspaces -maxdepth 4 -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
+}
+
+# disableGitHooks turns off hooks in the task's repository. Tasks commit,
+# rebase and push unattended, and a repository's hooks (husky, pre-commit,
+# lefthook) can block, prompt, rewrite or reformat behind the agent's back.
+# setupGit already sets core.hooksPath globally, but a repository-level
+# core.hooksPath overrides that — and installers write exactly that, so one
+# that ran in an earlier task on this long-lived workspace would still win.
+function disableGitHooks {
+    (cd "/workspaces/${REPO_NAME}" && git config core.hooksPath /dev/null)
 }
 
 function setupGitRepos {
@@ -147,6 +160,8 @@ function setupGitRepos {
 
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+
+    disableGitHooks
 }
 
 function checkoutPRBranch {

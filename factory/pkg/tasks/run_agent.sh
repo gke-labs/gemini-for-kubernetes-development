@@ -55,6 +55,8 @@ function setupGitRepos {
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
+    disableGitHooks
+
     echo "running git config local user.email"
     (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
 
