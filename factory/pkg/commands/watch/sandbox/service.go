@@ -34,6 +34,9 @@ const (
 	annotationLastTaskState = "sandbox.gemini.google.com/last-task-state"
 	// annotationLastTaskType records the kind of the most recent task run in a sandbox.
 	annotationLastTaskType = "sandbox.gemini.google.com/last-task-type"
+	// labelPR names the pull request a sandbox serves. An issue sandbox
+	// carries it once a PR closing that issue starts reusing it.
+	labelPR = "factory.gemini.google.com/pr"
 
 	// taskStateRunning marks a sandbox whose task has not reported an outcome yet.
 	taskStateRunning = "Running"
@@ -171,6 +174,22 @@ func (s *Service) Suspend(ctx context.Context, name string) error {
 		return nil
 	}
 	return factorysandbox.SuspendSandbox(ctx, s.kube, s.namespace, name)
+}
+
+// Exists reports whether the named sandbox is present in the cluster, whatever
+// its state: a suspended sandbox exists, it is merely scaled to zero.
+func (s *Service) Exists(ctx context.Context, name string) (bool, error) {
+	if s.kube == nil {
+		return false, nil
+	}
+	_, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // IsTaskRunning reports whether the named sandbox is currently executing a task.

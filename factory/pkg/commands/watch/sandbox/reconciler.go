@@ -11,6 +11,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
+	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +54,18 @@ type EntityState interface {
 	IsOpenIssue(num int) bool
 }
 
+// LinkedWork is told about each issue the reconciler confirms closed, so that
+// work elsewhere that was waiting on it can be woken.
+//
+// It is how the reconciler passes on what it learned without being able to
+// queue anything itself: the implementation decides what, if anything, the
+// closure means.
+type LinkedWork interface {
+	// NudgeLinkedWorkflows is called with an issue just confirmed closed
+	// against GitHub, before its sandbox is deleted.
+	NudgeLinkedWorkflows(ctx context.Context, closed *githubv39.Issue)
+}
+
 // Config holds the tuning knobs of a Reconciler.
 type Config struct {
 	// Interval is the delay between sandbox state reconcile cycles.
@@ -88,6 +101,9 @@ type Deps struct {
 	// Run is what stops the reconciler, and unlike this signal it also aborts a
 	// sweep that has already started.
 	Paused func() bool
+	// LinkedWork is told about every issue whose sandbox is collected because
+	// the issue closed. A nil LinkedWork is told nothing.
+	LinkedWork LinkedWork
 }
 
 // Reconciler keeps cluster sandbox state in sync with reality and reclaims
@@ -104,6 +120,7 @@ type Reconciler struct {
 	locks     *concurrency.SandboxLockRegistry
 	entities  EntityState
 	paused    func() bool
+	linked    LinkedWork
 }
 
 // New constructs a Reconciler from its configuration and dependencies.
@@ -120,6 +137,7 @@ func New(cfg Config, deps Deps) *Reconciler {
 		locks:     deps.Locks,
 		entities:  deps.Entities,
 		paused:    deps.Paused,
+		linked:    deps.LinkedWork,
 	}
 }
 
@@ -421,8 +439,11 @@ func (r *Reconciler) cleanupClosedIssueSandboxes(ctx context.Context, items []un
 			continue
 		}
 
-		// Fast-path: skip issues that the latest scan reported as open.
-		if r.entities != nil && r.entities.IsOpenIssue(num) {
+		// Fast-path: skip issues that the latest scan reported as open, unless
+		// the sandbox also served a pull request that has since left the open
+		// set. The issue cache keeps every issue the watcher has worked on, so
+		// a merge closing the issue would otherwise never be noticed here.
+		if r.entities != nil && r.entities.IsOpenIssue(num) && !r.servedClosedPR(item) {
 			continue
 		}
 
@@ -449,6 +470,12 @@ func (r *Reconciler) deleteClosedIssueSandbox(ctx context.Context, item *unstruc
 	}
 	if issue.GetState() != "closed" {
 		return false
+	}
+
+	// Before the delete, and in a dry run too: the nudge is independent of
+	// the sandbox, and a dry-run implementation reports rather than queues.
+	if r.linked != nil {
+		r.linked.NudgeLinkedWorkflows(ctx, issue)
 	}
 
 	klog.Infof("Issue #%d is closed. Deleting corresponding sandbox '%s'...", num, name)
@@ -569,6 +596,20 @@ func (r *Reconciler) suspendIdleSandboxes(ctx context.Context, items []unstructu
 // repoSlug returns the "owner/repo" identifier of the watched repository.
 func (r *Reconciler) repoSlug() string {
 	return r.sandboxes.owner + "/" + r.sandboxes.repo
+}
+
+// servedClosedPR reports whether an issue sandbox was also serving a pull
+// request - the PR tasks reuse the sandbox of the issue the PR closes, and
+// label it with the PR - which the open pull request cache no longer lists.
+func (r *Reconciler) servedClosedPR(item *unstructured.Unstructured) bool {
+	if r.entities == nil || !r.entities.HasOpenPRs() {
+		return false
+	}
+	pr, err := strconv.Atoi(item.GetLabels()[labelPR])
+	if err != nil || pr <= 0 {
+		return false
+	}
+	return !r.entities.IsOpenPR(pr)
 }
 
 // issueNumberFromSandboxName extracts the issue number encoded in a workflow

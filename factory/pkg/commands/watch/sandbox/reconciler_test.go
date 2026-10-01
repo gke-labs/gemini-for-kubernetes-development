@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,7 +48,8 @@ func newClosedEntityGitHub(t *testing.T) *githubv39.Client {
 }
 
 // newEntityGitHub returns a GitHub client reporting every entity as closed,
-// calling onRequest first when it is non-nil.
+// under the number it was asked for, calling onRequest first when it is
+// non-nil.
 func newEntityGitHub(t *testing.T, onRequest func()) *githubv39.Client {
 	t.Helper()
 
@@ -55,7 +58,11 @@ func newEntityGitHub(t *testing.T, onRequest func()) *githubv39.Client {
 			onRequest()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"state": "closed"})
+		entity := map[string]interface{}{"state": "closed"}
+		if num, err := strconv.Atoi(path.Base(r.URL.Path)); err == nil {
+			entity["number"] = num
+		}
+		_ = json.NewEncoder(w).Encode(entity)
 	}))
 	t.Cleanup(server.Close)
 
@@ -585,5 +592,105 @@ func TestParseEvictionAge(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("ParseEvictionAge(%q) = %v, want %v", tc.input, got, tc.want)
 		}
+	}
+}
+
+// recordingLinkedWork records the closed issues the reconciler reports.
+type recordingLinkedWork struct {
+	closed []int
+}
+
+func (l *recordingLinkedWork) NudgeLinkedWorkflows(_ context.Context, closed *githubv39.Issue) {
+	l.closed = append(l.closed, closed.GetNumber())
+}
+
+// prServingIssueSandbox is the sandbox of issue #65 once PR #70, which closes
+// the issue, has started running its tasks in it.
+func prServingIssueSandbox() *unstructured.Unstructured {
+	sb := newSandbox("fix-test-repo-65", map[string]interface{}{annotationLastTaskState: "Completed"})
+	sb.SetLabels(map[string]string{labelPR: "70"})
+	return sb
+}
+
+// The issue cache counts every issue the watcher has worked on as open, so a
+// merge closing issue #65 is noticed through its PR leaving the open set.
+func TestCollectGarbageCollectsIssueSandboxWhenItsPRCloses(t *testing.T) {
+	linked := &recordingLinkedWork{}
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, prServingIssueSandbox()),
+			GitHub: newClosedEntityGitHub(t),
+		}),
+		Locks: concurrency.NewSandboxLockRegistry(),
+		Entities: &stubEntityState{
+			prsPopulated:    true,
+			issuesPopulated: true,
+			openIssues:      map[int]bool{65: true},
+		},
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if sandboxExists(t, r, "fix-test-repo-65") {
+		t.Errorf("expected the sandbox of issue #65 to be deleted once its PR closed")
+	}
+	if len(linked.closed) != 1 || linked.closed[0] != 65 {
+		t.Errorf("reported closed issues %v, want [65]", linked.closed)
+	}
+}
+
+func TestCollectGarbageKeepsIssueSandboxWhileItsPRIsOpen(t *testing.T) {
+	linked := &recordingLinkedWork{}
+	var requests atomic.Int32
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, prServingIssueSandbox()),
+			GitHub: newEntityGitHub(t, func() { requests.Add(1) }),
+		}),
+		Locks: concurrency.NewSandboxLockRegistry(),
+		Entities: &stubEntityState{
+			prsPopulated:    true,
+			issuesPopulated: true,
+			openPRs:         map[int]bool{70: true},
+			openIssues:      map[int]bool{65: true},
+		},
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if !sandboxExists(t, r, "fix-test-repo-65") {
+		t.Errorf("expected the sandbox of issue #65 to be kept while PR #70 is open")
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("made %d GitHub requests, want none for a sandbox the cache vouches for", n)
+	}
+	if len(linked.closed) != 0 {
+		t.Errorf("reported closed issues %v, want none", linked.closed)
+	}
+}
+
+// The nudge goes out in a dry run too; the implementation is the one that
+// reports instead of queueing.
+func TestCollectGarbageReportsClosedIssuesInDryRun(t *testing.T) {
+	linked := &recordingLinkedWork{}
+	r := New(Config{DryRun: true}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, newSandbox("wf-issue-42", map[string]interface{}{annotationLastTaskState: "Completed"})),
+			GitHub: newClosedEntityGitHub(t),
+		}),
+		Locks:      concurrency.NewSandboxLockRegistry(),
+		Entities:   warmCache(),
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if !sandboxExists(t, r, "wf-issue-42") {
+		t.Errorf("expected dry run to keep the sandbox")
+	}
+	if len(linked.closed) != 1 || linked.closed[0] != 42 {
+		t.Errorf("reported closed issues %v, want [42]", linked.closed)
 	}
 }

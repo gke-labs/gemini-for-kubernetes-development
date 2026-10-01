@@ -16,8 +16,6 @@ package issues
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -343,24 +341,8 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 
 	// An issue may name a workflow in its description, in which case the task
 	// runs that definition instead of the standard fix.
-	workflowPath := common.FindWorkflowPath(issue.GetBody())
-	workflowName := ""
-	if workflowPath != "" {
-		if common.IsWorkflowDefinition(ctx, s.gh, workflowPath) {
-			filenameOnly := filepath.Base(workflowPath)
-			ext := filepath.Ext(filenameOnly)
-			workflowName = strings.TrimSuffix(filenameOnly, ext)
-		} else {
-			// It was just a standard skill/agent prompt mentioned, not a
-			// workflow. Fall back to the standard issue fix.
-			workflowPath = ""
-		}
-	}
-
-	filename := fmt.Sprintf("task-issue-%d.yaml", num)
-	if workflowName != "" {
-		filename = fmt.Sprintf("task-workflow-%s-issue-%d.yaml", common.Slugify(workflowName), num)
-	}
+	workflowPath, workflowName := resolveWorkflow(ctx, s.gh, issue)
+	filename := issueTaskFilename(num, workflowName)
 
 	if s.queue.TaskExists(filename) {
 		return
