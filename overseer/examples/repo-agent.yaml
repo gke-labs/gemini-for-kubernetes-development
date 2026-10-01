@@ -11,6 +11,7 @@ spec:
     mode: disabled
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
+  workspaceStorageClassName: premium-rwo
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   repo:
     issueMode: enabled
