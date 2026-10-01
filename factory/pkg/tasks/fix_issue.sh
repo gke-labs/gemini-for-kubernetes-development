@@ -66,55 +66,6 @@ function setupGitRepos {
     (cd "/workspaces/${REPO_NAME}" && git branch --show-current)
 }
 
-function checkForExistingPR {
-    echo "Checking for existing PRs..."
-    if [ "$NO_PR" = "true" ]; then
-        echo "NO_PR is true; skipping check for existing PR."
-        return
-    fi
-    if [ "${ISSUE_NUMBER:-0}" -eq 0 ]; then
-        echo "No issue number specified; skipping check for existing PR."
-        return
-    fi
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-
-    # Try to find a PR by the current user first, restricting search to title and body to be safer
-    local pr_number=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json number --jq '.[0] | "\(.number)"' --limit 1 2>/dev/null)
-    local pr_url=$(gh search prs "${ISSUE_NUMBER}" --state open --repo "${REPO_OWNER}/${REPO_NAME}" --author "${GITHUB_USER_ID}" --match title,body --json url --jq '.[0] | "\(.url)"' --limit 1 2>/dev/null)
-
-    # If not found, look for any PR linked to the issue via the timeline API
-    if [ -z "$pr_number" ] || [ "$pr_number" == "null" ]; then
-        pr_number=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.number' 2>/dev/null | head -n 1)
-        pr_url=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/timeline" \
-            --jq '.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "open") | .source.issue.html_url' 2>/dev/null | head -n 1)
-    fi
-
-    if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
-        echo "Found existing PR:"
-        echo $pr_number
-        echo $pr_url
-
-        echo "Found existing PR #${pr_number}"
-        git rebase --abort 2>/dev/null || true
-        git merge --abort 2>/dev/null || true
-        git cherry-pick --abort 2>/dev/null || true
-        git reset --hard HEAD
-        git clean -fd
-        /usr/bin/gh pr checkout "$pr_number" --force
-
-        local output_file="$(dirname "${PROMPT_FILE}")/agent-output.txt"
-
-        echo "We are not generating anything because there is an existing PR." > "$output_file"
-        echo "${pr_url}" >> "$output_file"
-        # The earlier run may have been killed before anything labelled this PR.
-        applyPRLabels "$pr_url"
-        exit 0
-    fi
-
-    popd > /dev/null
-}
-
 # applyPRLabels puts the labels resolved by the factory CLI - the trigger label,
 # the repository's additional labels, and the labels of the issue being fixed -
 # onto the pull request.
@@ -230,7 +181,6 @@ setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
-checkForExistingPR
 checkoutNewBranch
 configureGemini
 installExtensions

@@ -169,6 +169,11 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	isIssue := false
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
+	var branchName string
+	var issueBody string
+	var issueComments []tasks.IssueComment
+	var issue *githubv39.Issue
+
 	if len(parts) >= 4 && parts[2] == "issues" {
 		isIssue = true
 		issueNum, err = strconv.Atoi(parts[3])
@@ -176,43 +181,8 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 			return fmt.Errorf("invalid issue number in URL: %s", parts[3])
 		}
 		issueTitle = fmt.Sprintf("Issue #%d", issueNum)
-	} else {
-		if name == "" {
-			return fmt.Errorf("--name is required when URL is a repository URL without an issue number")
-		}
-		issueTitle = fmt.Sprintf("Task: %s", name)
-	}
-
-	kubeClient, err := clients.NewKubernetesClient()
-	if err != nil {
-		return fmt.Errorf("creating k8s client: %w", err)
-	}
-
-	var sandboxName string
-	if isIssue {
-		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	} else {
-		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	}
-	if err != nil {
-		return fmt.Errorf("ensuring sandbox: %w", err)
-	}
-
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
-	}
-	githubLogin := string(secret.Data[constants.KeyGithubLogin])
-	githubEmail := string(secret.Data[constants.KeyGithubEmail])
-
-	var branchName string
-	var issueBody string
-	var issueComments []tasks.IssueComment
-	var issue *githubv39.Issue
-	if isIssue {
 		branchName = fmt.Sprintf("issue-%d-%d", issueNum, time.Now().Unix())
+
 		fmt.Printf("Fetching details for issue #%d...\n", issueNum)
 		var getErr error
 		issue, _, getErr = ghClient.Issues.Get(ctx, owner, repo, issueNum)
@@ -222,6 +192,18 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		if issue.GetState() == "closed" {
 			return fmt.Errorf("github issue #%d is closed, cannot execute fix task", issueNum)
 		}
+
+		if !noPR {
+			hasLinkedPR, err := repoClient.HasLinkedPR(ctx, issueNum)
+			if err != nil {
+				return fmt.Errorf("checking linked PR for issue #%d: %w", issueNum, err)
+			}
+			if hasLinkedPR {
+				fmt.Printf("Issue #%d already has an open linked pull request; skipping fix.\n", issueNum)
+				return nil
+			}
+		}
+
 		issueBody = issue.GetBody()
 		if issue.GetTitle() != "" {
 			issueTitle = issue.GetTitle()
@@ -251,9 +233,37 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 			}
 		}
 	} else {
+		if name == "" {
+			return fmt.Errorf("--name is required when URL is a repository URL without an issue number")
+		}
+		issueTitle = fmt.Sprintf("Task: %s", name)
 		branchName = fmt.Sprintf("fix-%s-%d", name, time.Now().Unix())
 		issueBody = prompt
 	}
+
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+
+	var sandboxName string
+	if isIssue {
+		fmt.Printf("Ensuring sandbox for issue #%d...\n", issueNum)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	} else {
+		fmt.Printf("Ensuring sandbox for task %s on repo %s/%s...\n", name, owner, repo)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, cloneURL, targetURL, issueTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	}
+	if err != nil {
+		return fmt.Errorf("ensuring sandbox: %w", err)
+	}
+
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	githubLogin := string(secret.Data[constants.KeyGithubLogin])
+	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
 	prLabel := resolvePRLabels(cfg, issue, isIssue)
 
