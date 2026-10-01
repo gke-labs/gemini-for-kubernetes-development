@@ -65,6 +65,20 @@ FORK_URL="https://github.com/${FORK_OWNER}/${REPO_NAME}.git"
 # no secret and dies with the temporary clone below.
 GIT_CRED='!gh auth git-credential'
 
+# Git runs here with the token in its environment, and the global config
+# lives in ${HOME} on the PVC, where the conversation can write it. A
+# core.hooksPath or core.fsmonitor planted there is a command git would
+# run for us, token and all. So ${HOME}/.gitconfig and the system config
+# are not read at all — a GIT_CONFIG_GLOBAL from the caller is honoured,
+# since only the caller sets this process's environment — and hooks are
+# off for every git call below, passed as command-line config, which
+# outranks any other setting.
+export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-/dev/null}"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0=/dev/null
+
 # Everything happens in a throwaway clone, never in the conversation's
 # checkout. Switching that checkout's branch under a live session would
 # change files the agent is in the middle of reading, and a session is
