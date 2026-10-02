@@ -155,8 +155,11 @@ EOF
 # core.hooksPath, ...) still win. Through an include the token stays in the
 # file rather than in the engine's environment.
 function engineGitConfig {
+    # The script's own global config, not the /dev/null gemini sets for its
+    # shells later. If the script itself runs without one there is nothing
+    # to bring back.
     local global="${GIT_CONFIG_GLOBAL:-${USER_HOME}/.gitconfig}"
-    if [ "${global}" = /dev/null ] || [ ! -f "${global}" ]; then
+    if [ ! -f "${global}" ]; then
         return 0
     fi
     local n="${GIT_CONFIG_COUNT:-0}"
