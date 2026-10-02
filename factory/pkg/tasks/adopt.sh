@@ -4,6 +4,8 @@ set -o pipefail
 set -x
 
 
+# The token must not reach the xtrace (execution.log).
+{ set +x; } 2>/dev/null
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
     GITHUB_USER_TOKEN="${MANUAL_PAT:-${OAUTH_PAT}}"
@@ -14,6 +16,7 @@ if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
     fi
 fi
+set -x
 
 setupGit
 configureGemini

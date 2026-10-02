@@ -90,6 +90,14 @@ func TestRenderedScripts(t *testing.T) {
 		if strings.Contains(script, "\nsetupGit\n") && !strings.Contains(script, "GITHUB_USER_TOKEN:-${GITHUB_TOKEN}") {
 			t.Errorf("%s: calls setupGit without bridging GITHUB_TOKEN to GITHUB_USER_TOKEN", name)
 		}
+		// execution.log is the script's xtrace; the token resolution must
+		// run with it off.
+		if i := strings.Index(script, "export GITHUB_USER_TOKEN="); i >= 0 {
+			before := script[:i]
+			if strings.LastIndex(before, "\nset -x") > strings.LastIndex(before, "\n{ set +x; } 2>/dev/null") {
+				t.Errorf("%s: resolves GITHUB_USER_TOKEN under set -x", name)
+			}
+		}
 		if bashErr == nil {
 			cmd := exec.Command(bash, "-n", "/dev/stdin")
 			cmd.Stdin = strings.NewReader(script)

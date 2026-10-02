@@ -19,6 +19,8 @@ set -x
 # - PR_NUMBER
 # - MODELS
 
+# The token must not reach the xtrace (execution.log).
+{ set +x; } 2>/dev/null
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
     # Try other common names
@@ -30,6 +32,7 @@ if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
     fi
 fi
+set -x
 
 function setupGitRepos {
     echo "Running setupGitRepos..."
@@ -130,7 +133,8 @@ function commitChanges {
                 echo "https://github.com/${REPO_OWNER}/${REPO_NAME}/pull/${PR_NUMBER}" > "$(dirname "${PROMPT_FILE}")/agent-output.txt"
             else
                 # Determine Repo Owner for the link
-                REPO_URL=$(git remote get-url origin)
+                # As configured: get-url applies the token-bearing github.com rewrite.
+                REPO_URL=$(git config --get remote.origin.url)
                 REPO_PATH=$(echo $REPO_URL | sed -E 's/.*github.com[:\/]//;s/\.git$//')
                 FORK_OWNER=$(echo "$REPO_PATH" | cut -d'/' -f1)
                 
