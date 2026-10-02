@@ -122,8 +122,6 @@ spec:
   repoURL: https://github.com/GoogleCloudPlatform/k8s-config-connector
   minNumber: 9000
   robotAccount: argus-watcher-bot
-  maxActiveReviews: 20
-  maxActiveIssues: 25
   sandboxIdleTimeout: 1h
   chores:
     mode: enabled
@@ -181,7 +179,7 @@ spec:
 - **`robotAccount`**: The primary GitHub identity (`argus-watcher-bot`) responsible for synchronizing the state tracking branch (`overseer`).
 
 #### 2. Concurrency & Resource Sizing
-- **`maxActiveIssues` & `maxActiveReviews`**: Sets ceilings (`25` and `20`) on how many simultaneous worker sandboxes can run in parallel, safeguarding your cluster from node exhaustion during high-volume event bursts.
+- **Concurrency**: `factory watch` stops starting new tasks once 40 sandboxes are pending or running (`--max-pending`), and starts at most 40 actions per cycle (`--max-actions`). The `Overseer` resource does not change these limits.
 - **Worker Compute Sizing**: KCC compilations require heavy resources. Setting CPU limits to `8000m` (8 cores) and memory limits to `16Gi` ensures fast Go compilation and e2e test execution.
 - **Disk Allocation**: `workspaceDiskSize: 40Gi` and `ephemeralStorage: 10Gi` provide generous persistent disk volumes to prevent out-of-space errors during repeated container builds. Optionally, `workspaceStorageClassName: premium-rwo` (or another StorageClass) can be configured to provision faster disks (such as SSDs) for the overseer and child sandboxes.
 

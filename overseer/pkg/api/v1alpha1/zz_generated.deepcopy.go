@@ -122,16 +122,6 @@ func (in *OverseerSpec) DeepCopyInto(out *OverseerSpec) {
 		**out = **in
 	}
 	in.Review.DeepCopyInto(&out.Review)
-	if in.MaxActiveReviews != nil {
-		in, out := &in.MaxActiveReviews, &out.MaxActiveReviews
-		*out = new(int32)
-		**out = **in
-	}
-	if in.MaxActiveIssues != nil {
-		in, out := &in.MaxActiveIssues, &out.MaxActiveIssues
-		*out = new(int32)
-		**out = **in
-	}
 	if in.PRInactivityTimeout != nil {
 		in, out := &in.PRInactivityTimeout, &out.PRInactivityTimeout
 		*out = new(v1.Duration)

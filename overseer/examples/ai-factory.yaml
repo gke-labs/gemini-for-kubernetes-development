@@ -5,8 +5,6 @@ metadata:
 spec:
   repoURL: https://github.com/ai-on-gke/ai-factory
   robotAccount: factorybot-robot
-  maxActiveReviews: 3
-  maxActiveIssues: 3
   chores:
     mode: enabled
   geminiAPIKeySecretName: gemini-vscode-tokens

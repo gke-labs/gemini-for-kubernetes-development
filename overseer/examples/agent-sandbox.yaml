@@ -5,8 +5,6 @@ metadata:
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
   robotAccount: factorybot-robot
-  maxActiveReviews: 3
-  maxActiveIssues: 3
   chores:
     mode: disabled
   review:

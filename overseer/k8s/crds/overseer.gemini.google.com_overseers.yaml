@@ -68,12 +68,6 @@ spec:
                 type: string
               issuePrompt:
                 type: string
-              maxActiveIssues:
-                format: int32
-                type: integer
-              maxActiveReviews:
-                format: int32
-                type: integer
               minNumber:
                 format: int32
                 type: integer

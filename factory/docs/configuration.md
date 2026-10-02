@@ -55,9 +55,8 @@ Every sandbox setting can be overridden per command by the matching flag (shown 
     * `reviewer` (default for PR review tasks: `pr-review`)
     * `agent` (default for custom agent tasks: `agent-chore`. Falls back to the `coder` role if the `agent` role is not explicitly configured).
 
-### Keys that are parsed but not used
-These keys are accepted for compatibility and have no effect:
-* **`maxActiveReviews`**, **`maxActiveIssues`**: nothing enforces them. To bound the work `factory watch` takes on, use `--max-pending` (default 40) and `--max-actions`.
+### Parsed but not used
+This key is accepted for compatibility and has no effect:
 * **`prInactivityTimeout`**: use `factory watch --pr-inactivity-timeout` or the `PR_INACTIVITY_TIMEOUT` environment variable.
 
 ---

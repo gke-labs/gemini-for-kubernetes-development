@@ -8,12 +8,6 @@ function writeFactoryConfig {
     rm -f "$CFG_FILE"
     touch "$CFG_FILE"
     
-    if [ -n "$MAX_ACTIVE_REVIEWS" ]; then
-        echo "maxActiveReviews: $MAX_ACTIVE_REVIEWS" >> "$CFG_FILE"
-    fi
-    if [ -n "$MAX_ACTIVE_ISSUES" ]; then
-        echo "maxActiveIssues: $MAX_ACTIVE_ISSUES" >> "$CFG_FILE"
-    fi
     if [ -n "$CHORES_MODE" ]; then
         echo "chores:" >> "$CFG_FILE"
         echo "  mode: $CHORES_MODE" >> "$CFG_FILE"

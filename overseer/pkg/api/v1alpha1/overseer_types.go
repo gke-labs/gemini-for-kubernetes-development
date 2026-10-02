@@ -138,14 +138,6 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Review ReviewSpec `json:"review"`
 
-	// MaxActiveReviews limits the number of concurrent review sandboxes.
-	// +kubebuilder:validation:Optional
-	MaxActiveReviews *int32 `json:"maxActiveReviews,omitempty"`
-
-	// MaxActiveIssues limits the number of concurrent issue sandboxes.
-	// +kubebuilder:validation:Optional
-	MaxActiveIssues *int32 `json:"maxActiveIssues,omitempty"`
-
 	// SandboxEvictionAge defines the age threshold for idle sandbox eviction (e.g. "7d", "24h").
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="7d"
