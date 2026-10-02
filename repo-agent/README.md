@@ -84,6 +84,11 @@ with the team.
   <PR>`). Run chips on the row show the PR's deployments.
 - Teardown verifies the resources are gone and writes a receipt. The
   all-boards Runs view works as a fleet dashboard for every deployment.
+- If the repository can't be forked (some organisations don't allow
+  forks of private repositories into personal accounts), the run is
+  **local-only**. Its records stay in the run's sandbox, and the Runs tab
+  reads them from there. Deleting that sandbox deletes the records,
+  including the teardown script.
 
 ### Research conversations
 

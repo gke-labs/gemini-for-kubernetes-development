@@ -178,6 +178,36 @@ describe('TryPanel Remove', () => {
     });
 });
 
+describe('TryPanel local-only runs', () => {
+    const localReply = () => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+            repoShort: 'granule', gcpProject: 'p', sandboxes: [], pending: [],
+            instances: [{
+                name: 'gke-std', deployed: false, localOnly: true, sandbox: 'runbook-granule-gke-std',
+                htmlURL: '/api/board/myboard/runbook/instance/gke-std/file/runbook.md',
+                runbook: { name: 'runbook.md', htmlURL: '/api/board/myboard/runbook/instance/gke-std/file/runbook.md' },
+            }],
+        }),
+    });
+
+    test('are marked, link to the sandbox copy, and offer no Remove', async () => {
+        global.fetch = jest.fn(localReply);
+
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+
+        expect(container.textContent).toContain('local-only');
+        const links = Array.from(container.querySelectorAll('a')).map(a => a.getAttribute('href'));
+        expect(links).toContain('/api/board/myboard/runbook/instance/gke-std/file/runbook.md');
+        expect(links.some(h => h && h.includes('github.com'))).toBe(false);
+        // Its records are the sandbox's: removing them is deleting the
+        // sandbox, which takes the teardown script with it.
+        expect(findButton('Remove')).toBeFalsy();
+    });
+});
+
 // React listens for the native setter, not a plain assignment.
 const setValue = (el, value) => {
     const proto = el.tagName === 'SELECT' ? window.HTMLSelectElement.prototype

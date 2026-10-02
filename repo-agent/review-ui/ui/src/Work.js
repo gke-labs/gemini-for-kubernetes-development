@@ -1034,6 +1034,19 @@ function verdictBadge(receipt) {
   return <Chip text={`${v.split(' ')[0].toLowerCase()}${when}`} color="#b08800" bg="rgba(176,136,0,0.12)" />;
 }
 
+// localOnlyChip marks a run whose records live only in its sandbox:
+// the repository could not be forked, so nothing was pushed, and
+// deleting the sandbox deletes the run — teardown script and all.
+function localOnlyChip(run) {
+  if (!run || !run.localOnly) return null;
+  return (
+    <span style={{ marginLeft: '6px' }}
+      title={`Local-only: the repository can't be forked, so this run's records are kept in sandbox ${run.sandbox} and never pushed. Deleting that sandbox deletes them, teardown script included.`}>
+      <Chip text="local-only" color="#b08800" bg="rgba(176,136,0,0.12)" />
+    </span>
+  );
+}
+
 // elapsedSince renders a compact age ("1h43m") for running tasks.
 function elapsedSince(iso) {
   if (!iso) return '';
@@ -1185,8 +1198,11 @@ function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
                   </td>
                   <td style={cell}>
                     {inst.provisional ? <span style={{ fontWeight: 500 }}>⛭ {inst.name}</span> : (
-                      <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
-                        style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}>⛭ {inst.name} ↗</a>
+                      <>
+                        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
+                          style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}>⛭ {inst.name} ↗</a>
+                        {localOnlyChip(inst)}
+                      </>
                     )}
                   </td>
                   <td style={cell}>
@@ -1436,9 +1452,12 @@ function TryPanel({ boardName, onOpenSandbox }) {
                           <span style={{ fontWeight: 500 }}
                             title="Provisioning — the run's directory appears on the branch after the plan pushes (a first run boots and clones, a few minutes)">⛭ {run.name}</span>
                         ) : (
-                          <a href={run.htmlURL} target="_blank" rel="noopener noreferrer"
-                            style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
-                            title="This run's files on GitHub">⛭ {run.name} ↗</a>
+                          <>
+                            <a href={run.htmlURL} target="_blank" rel="noopener noreferrer"
+                              style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}
+                              title={run.localOnly ? "This run's procedure, read from its sandbox" : "This run's files on GitHub"}>⛭ {run.name} ↗</a>
+                            {localOnlyChip(run)}
+                          </>
                         )}
                       </td>
                       <td style={cell}>
@@ -1482,7 +1501,7 @@ function TryPanel({ boardName, onOpenSandbox }) {
                             title="Runs this run's teardown script, verifies the resources are gone, writes a teardown receipt"
                             onClick={() => kickoff('teardown', run.name, '')}>Tear down</button>
                         )}
-                        {!deployed && !run.provisional && idle && (
+                        {!deployed && !run.provisional && !run.localOnly && idle && (
                           <button className="btn btn-sm" style={{ marginLeft: '6px' }}
                             title="Remove this run's records from the branch (receipts included) — never touches cloud resources"
                             onClick={() => removeRun(run.name)}>✕ Remove</button>
