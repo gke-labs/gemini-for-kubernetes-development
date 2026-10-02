@@ -16,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: "Publish Features"
-        uses: devcontainers/action@1082abd5d2bf3a11abccba70eef98df068277772 # v1
+        uses: devcontainers/action@1082abd5d2bf3a11abccba70eef98df068277772 # v1.4.3
         with:
           publish-features: "true"
-          base-path-to-features: "./devcontainer-features/"
+          base-path-to-features: "./extras/devcontainer-features/"
           generate-docs: "true"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,9 +38,9 @@ jobs:
           git checkout -b $branch
           message='Automated documentation update'
           # Add / update and commit
-          git add ./devcontainer-features/gemini-cli/README.md
-          git add ./devcontainer-features/claude-code/README.md
-          git add ./devcontainer-features/antigravity/README.md
+          git add ./extras/devcontainer-features/gemini-cli/README.md
+          git add ./extras/devcontainer-features/claude-code/README.md
+          git add ./extras/devcontainer-features/antigravity/README.md
           git commit -m 'Automated documentation update [skip ci]' || export NO_UPDATES=true
           # Push
           if [ "$NO_UPDATES" != "true" ] ; then

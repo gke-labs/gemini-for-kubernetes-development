@@ -29,7 +29,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/services/container-registry/pkg/blobstore"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/container-registry/pkg/blobstore"
 	"github.com/google/uuid"
 )
 

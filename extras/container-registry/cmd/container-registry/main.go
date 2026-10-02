@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/services/container-registry/pkg/server"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/container-registry/pkg/server"
 )
 
 func main() {

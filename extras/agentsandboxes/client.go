@@ -22,7 +22,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes/pkg/threads"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

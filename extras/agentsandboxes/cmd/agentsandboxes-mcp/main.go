@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

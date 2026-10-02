@@ -21,7 +21,7 @@ Please execute the following steps:
 
 2. **Reconcile Step 1**:
    - If Step 1 is not checked yet:
-     - Find all directories containing a `go.mod` file (e.g. `factory/`, `repo-agent/`, `overseer/`, `agentsandboxes/`).
+     - Find all directories containing a `go.mod` file (e.g. `factory/`, `repo-agent/`, `overseer/`, `extras/agentsandboxes/`).
      - For each module directory:
        - Run `go mod tidy`.
      - Check `git status --porcelain`.

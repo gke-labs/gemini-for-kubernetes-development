@@ -11,17 +11,17 @@ COPY repo-agent/go.mod repo-agent/go.mod
 COPY repo-agent/go.sum repo-agent/go.sum
 COPY overseer/go.mod overseer/go.mod
 COPY overseer/go.sum overseer/go.sum
-COPY agentsandboxes/go.mod agentsandboxes/go.mod
-COPY agentsandboxes/go.sum agentsandboxes/go.sum
+COPY extras/agentsandboxes/go.mod extras/agentsandboxes/go.mod
+COPY extras/agentsandboxes/go.sum extras/agentsandboxes/go.sum
 COPY dev/tools/go.mod dev/tools/go.mod
 COPY dev/tools/go.sum dev/tools/go.sum
-COPY services/container-registry/go.mod services/container-registry/go.mod
-COPY services/container-registry/go.sum services/container-registry/go.sum
+COPY extras/container-registry/go.mod extras/container-registry/go.mod
+COPY extras/container-registry/go.sum extras/container-registry/go.sum
 COPY factory/go.mod factory/go.mod
 COPY factory/go.sum factory/go.sum
 
 # Copy the source code
-COPY agentsandboxes/ agentsandboxes/
+COPY extras/agentsandboxes/ extras/agentsandboxes/
 COPY repo-agent/pkg/ repo-agent/pkg/
 COPY repo-agent/api/ repo-agent/api/
 COPY repo-agent/cmd/review-api/ repo-agent/cmd/review-api/
