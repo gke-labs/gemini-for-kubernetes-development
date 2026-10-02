@@ -327,21 +327,10 @@ const researchACPDPort = 49984
 // a research conversation reads the repository, and a reset would throw
 // away work if the same sandbox is ever reused for one.
 func cloneForResearch(ctx context.Context, client *envd.Client, repo, cloneURL string, githubToken []byte) error {
-	// repo and cloneURL come from a user-supplied URL, so they reach the
-	// shell as environment values and are referenced quoted. Interpolating
-	// them into the script text would make a repository path with a
-	// semicolon in it into arbitrary code running in the sandbox.
-	const script = `set -e
-if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
-  rm -rf "/workspaces/${REPO_NAME}"
-  cd /workspaces && git clone "${CLONE_URL}"
-else
-  cd "/workspaces/${REPO_NAME}" && git fetch origin
-fi`
-
 	env := map[string]string{
 		"HOME":         "/workspaces/.home",
 		"GITHUB_TOKEN": string(githubToken),
+		"WORKSPACES":   "/workspaces",
 		"REPO_NAME":    repo,
 		"CLONE_URL":    cloneURL,
 	}
@@ -350,10 +339,51 @@ fi`
 	// through as-is; wrapping it in another shell would only add a layer
 	// of quoting to get wrong.
 	var stdout, stderr bytes.Buffer
-	if err := client.Exec(ctx, script, "/workspaces", env, nil, &stdout, &stderr); err != nil {
+	if err := client.Exec(ctx, researchCheckoutScript, "/workspaces", env, nil, &stdout, &stderr); err != nil {
 		return fmt.Errorf("preparing checkout: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
-	return nil
+	return checkoutOutcome(stdout.String(), stderr.String())
+}
+
+// researchCheckoutScript clones or fetches the repository a research
+// conversation reads.
+//
+// repo and cloneURL come from a user-supplied URL, so they reach the
+// shell as environment values and are referenced quoted. Interpolating
+// them into the script text would make a repository path with a
+// semicolon in it into arbitrary code running in the sandbox.
+//
+// GITHUB_TOKEN in the environment means nothing to git on its own, so
+// git is pointed at gh, which reads it from there. That is what lets a
+// private repository clone at all; without it git asks for a username,
+// has no terminal to ask on, and gives up. The helper is passed with -c
+// for this command only, so the token is never written to the PVC — not
+// into a config file and not into the remote URL. The empty helper
+// before it drops any inherited one.
+//
+// The last line is the receipt. envd reports a command that ran and
+// exited non-zero as a success, so the exit code cannot be trusted to
+// say the checkout landed; the marker can, because set -e stops the
+// script before it is printed.
+const researchCheckoutScript = `set -e
+git_auth() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"; }
+if [ ! -d "${WORKSPACES}/${REPO_NAME}/.git" ]; then
+  rm -rf "${WORKSPACES}/${REPO_NAME}"
+  cd "${WORKSPACES}" && git_auth clone "${CLONE_URL}"
+else
+  cd "${WORKSPACES}/${REPO_NAME}" && git_auth fetch origin
+fi
+echo "` + researchCheckoutMarker + `"`
+
+const researchCheckoutMarker = "research-checkout-ok"
+
+// checkoutOutcome reads the checkout script's output. Without the
+// receipt the checkout did not land, and git's stderr says why.
+func checkoutOutcome(stdout, stderr string) error {
+	if strings.Contains(stdout, researchCheckoutMarker) {
+		return nil
+	}
+	return fmt.Errorf("preparing checkout: the repository was not cloned (stderr: %s)", strings.TrimSpace(stderr))
 }
 
 // researchPodIP returns the sandbox pod's IP, retrying briefly: a pod
