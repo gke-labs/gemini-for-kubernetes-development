@@ -1,436 +1,248 @@
 # AI Factory CLI (`factory`)
 
-AI Factory CLI (`factory`) is a powerful, robust, and fully decoupled command-line tool for automating software engineering tasks in Kubernetes sandboxes.
+`factory` runs AI coding agents (Gemini CLI, Claude Code or Antigravity) against real GitHub work: issues, pull requests, deployments and open-ended research. Each task runs inside its own Kubernetes sandbox rather than on a laptop.
 
-It spins up isolated development environments (`agents.x-k8s.io`), establishes direct port-forwarding to the embedded `envd` Connect-RPC daemon, and executes LLM-powered coding workflows (fixing bugs, reviewing pull requests, and watching repositories) without local side-effects or host dependencies.
+**The problem it solves.** Pointing an agent at a repository on your own machine doesn't scale and isn't safe:
 
-## Architecture & Design
+- one checkout at a time
+- the agent holds your credentials
+- a dropped terminal kills the job
+- nobody notices CI failures or review comments until a human goes looking
 
-> **Note**: For an end-to-end architecture guide and interaction diagrams describing how Factory operates alongside the Kubernetes-native **Overseer** orchestration controller, see [../overseer/docs/architecture-overseer-factory.md](../overseer/docs/architecture-overseer-factory.md).
+`factory` gives every task its own sandbox. That's an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) `Sandbox` with a persistent `/workspaces` volume and an `envd` daemon. The CLI drives that sandbox over a port-forward and leaves nothing behind on the host. The same CLI also runs as an unattended loop (`factory watch`, which the [Overseer](../overseer/docs/architecture-overseer-factory.md) runs in-cluster). That loop does several things:
+
+- picks up issues
+- reacts to CI failures, review comments and merge conflicts on its own PRs
+- reviews PRs that are labelled for it
+- cleans up after itself
 
 ```
-+-------------------+         +------------------------------------------------+
-|   Local Machine   |         |               Kubernetes Cluster               |
-|                   |         |                                                |
-|  +-------------+  | kubectl |  +------------------------------------------+  |
-|  | factory CLI | <========> |  | Pod: factory-issue-917                   |  |
-|  +-------------+  | port-   |  |                                          |  |
-|         |         | forward |  |  +------------------------------------+  |  |
-|         |         | (49983) |  |  | Container: sandbox                 |  |  |
-|         |         |         |  |  |                                    |  |  |
-|         +------------------------>| Daemon: envd (Connect-RPC)         |  |  |
-|                   |         |  |  |                                    |  |  |
-|                   |         |  |  |  +------------------------------+  |  |  |
-|                   |         |  |  |  | /workspaces/tasks/fix-*/     |  |  |  |
-|                   |         |  |  |  |   ├── agent-prompt.txt       |  |  |  |
-|                   |         |  |  |  |   ├── pre-script.sh          |  |  |  |
-|                   |         |  |  |  |   └── execution.log          |  |  |  |
-|                   |         |  |  |  +------------------------------+  |  |  |
-|                   |         |  |  +------------------------------------+  |  |
-|                   |         |  +------------------------------------------+  |
-+-------------------+         +------------------------------------------------+
-```
-
-### Key Principles
-- **Zero Host Side-Effects**: No temporary file creation on your local machine. All scripts, prompts, and task logs are written directly to timestamped subdirectories inside the sandbox PVC (`/workspaces/tasks/fix-<timestamp>/`).
-- **Full Environment Injection & Dynamic Tokens**: The CLI dynamically resolves your GitHub credentials and Gemini API keys from Kubernetes Secrets (or dynamically via a token script if `TOKENSCRIPT_DIR` is set) and injects them directly into the `envd` execution environment.
-- **Background Daemon Execution**: Support for running blocking remote tasks in the background (`--background`). The CLI detaches, spawns as a background process, and redirects all stdout and stderr cleanly to a command-specific log file (storing logs under a custom `FACTORY_LOGS` path if set, or in the current directory by default).
-- **Live Streaming & Logging**: Standard output and error are streamed live to your terminal while simultaneously being recorded into `execution.log` inside the sandbox.
-- **Label-Based Discovery & Session Continuity**: Sandboxes are dynamically aliased to Pull Requests via Kubernetes labels (`factory.gemini.google.com/pr`), allowing `pr watch`, `investigate`, and `address-comments` to reuse existing sandboxes (`fix-...`) and maintain full Gemini chat session history across PR workflows.
-
-### Command Tree
-```
-factory
- ├── up (Install CRDs & operator components, interactively onboard user)
- ├── fix (Fix a bug for a given GitHub issue URL in a sandbox)
- ├── pr
- │    ├── review (Review a GitHub pull request in a sandbox)
- │    ├── investigate (Investigate CI check failures for a PR in a sandbox)
- │    ├── address-comments (Address review feedback and comments for a PR)
- │    ├── iterate (Iterate on code / resolve merge conflicts for a PR)
- │    ├── watch (Continuously monitor a PR for CI failures or new feedback)
- │    └── adopt (Adopt a third-party PR under the bot user identity in a sandbox)
- ├── agent
- │    └── create (Run a custom agent definition in a sandbox)
- ├── watch (Continuously monitor a GitHub repo for failures and assigned issues)
- ├── status (Diagnostic pre-flight checks to verify cluster and factory health)
- ├── user
- │    └── onboard (Onboard a new user by creating a namespace and secret)
- ├── cleanup (Delete sandboxes older than a specified duration)
- └── sandbox
-      ├── list (List sandboxes in the current namespace)
-      ├── delete (Delete a sandbox and its load-balancer service)
-      ├── cp (Copy files into sandbox)
-      ├── exec (Run interactive commands with env/cwd injection)
-      ├── connect (Connect to a sandbox via interactive tmux session)
-      ├── chat (Connect to a sandbox and resume a Gemini CLI chat session)
-      ├── inspect (Inspect sandbox status, PVC usage, pod info)
-      └── logs (Stream task execution logs or envd daemon logs)
+ local / Overseer pod                     Kubernetes namespace
++--------------------+   port-forward   +-------------------------------------------+
+|  factory CLI       | ===============> | Sandbox  factory-issue-917                |
+|  (or factory watch)|   envd :49983    |   envd (Connect-RPC)   acpd :49984 (opt.) |
++--------------------+                  |   /workspaces (PVC)                       |
+                                        |     <repo>/                               |
+                                        |     tasks/fix-20261002-101500/            |
+                                        |       agent-prompt.txt  execution.log     |
+                                        |       pid  exit_code  token-usage.json    |
+                                        +-------------------------------------------+
 ```
 
 ---
 
-## Installation & Setup
+## Features
+
+### Agents on issues and pull requests
+- **Fix an issue.** `factory fix` clones the repository into a sandbox and checks out an issue branch. It runs the agent, then pushes to the bot's fork and opens a PR. It also accepts a bare repository with `--name` and `--instruction` / `--instruction-file`, and `--no-pr` pushes without opening one. `--watch` hands the new PR straight to `pr watch`.
+- **Plan first.** `factory plan` drafts an implementation plan in the issue's sandbox without posting anything. `--feedback` revises it, and `factory fix --with-plan` folds the approved plan into the fix.
+- **Triage.** `factory triage` suggests labels, priority, duplicates and an assessment. With `--publish yes` it applies the labels and posts the comment.
+- **PR lifecycle.**
+  - `pr review` reviews the diff using repeatable `--instruction` files or strings. `--publish` takes `no`, `ask`, `yes` or `draft`.
+  - `pr investigate` works on CI failures.
+  - `pr address-comments` handles review feedback.
+  - `pr iterate` rebases and resolves conflicts.
+  - `pr watch` loops over all of the above for one PR until it merges or closes.
+- **Session continuity.** A sandbox is aliased to its PR with the `factory.gemini.google.com/pr` label. Follow-up PR tasks therefore reuse the sandbox that wrote the code, and `--continue-session` keeps the agent's chat history.
+- **Adoption.** `pr adopt open|close` takes over a PR the bot can't push to. `--strategy reuse` copies the commits; `--strategy reimplement` re-implements the change on the latest base. PR tasks on PRs the bot doesn't own fail until the PR is adopted.
+- **Custom agents.** `factory agent create` runs an agent definition from the repository's `.agents/`, or a local file with `--local`. A definition is YAML front-matter plus a prompt, and the same definitions drive scheduled chores. `--dry-run` simulates the run without invoking the agent.
+- **Workflows.** A definition with `mode: workflow` runs as a long-lived, multi-step process in a `wf-issue-<n>` sandbox, advancing one step per cycle. It is triggered when an issue body references the definition, or with `agent create --session-id`.
+
+### Autonomous watch loop (`factory watch`)
+- **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label.
+- **PR reactions.** For each bot PR it dispatches, in priority order:
+  1. unaddressed feedback → `address-comments`
+  2. merge conflict → `iterate`
+  3. failing CI → `investigate`
+  4. green and labelled for review → `review`
+
+  A PR that passes review is labelled `<trigger>/ready-for-human` and handed to the human assignees. `--pr-inactivity-timeout` pauses PRs that no human has touched for that long.
+- **Chores.** Agent definitions under `.agents/` that have a cron `schedule` run as `agent-chore` tasks (`--chores-mode`).
+- **Filesystem queue.**
+  - Work is queued as task files that move `incoming/ → processing/ → processed/` under `--queue-dir`. A `journal.jsonl` sits alongside.
+  - `--mode scan` only discovers and queues work; `--mode run` only processes the queue. Several processes can therefore cooperate through atomic file moves.
+  - `--max-actions` and `--max-pending` bound each cycle; `--scan-limit` bounds each scan.
+- **Restart-safe.** After a restart it re-adopts tasks whose sandboxes are still running. Tasks that can't be recovered are marked failed. `--task-timeout` fails a stuck task and deletes its sandbox.
+- **Garbage collection.** It deletes sandboxes whose issue or PR has closed, and evicts old ones (`--sandbox-eviction-age`). It suspends idle ones by scaling them to zero (`--sandbox-idle-timeout`) and never touches a sandbox with a task in flight.
+- **Workflow nudging.** When an issue or PR a workflow is waiting on closes, the workflow's issue is nudged so it advances without a human.
+- **Status API on `:13338`.**
+  - `GET /api/v1/queue` returns the queue.
+  - `DELETE /api/v1/queue/<file>` drops a task, and `POST /api/v1/queue/<file>/priority` re-prioritizes one.
+  - `GET /api/v1/status` returns the Gemini key-pool state.
+
+### Runbooks: plan, deploy, tear down (`factory run`)
+A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/runs` branch of your fork. It holds `runbook.md`, `params.env`, `deploy.sh`, `teardown.sh` and receipts.
+
+- `run plan` writes the procedure and generates the scripts, but executes nothing. `--runbook` starts from `.agents/runbooks/<name>` in the repository, or from one of your earlier runs. `--target <PR number|URL>` deploys a pull request and pins its head commit.
+- `run deploy` executes the approved plan, repairs scripts that fail, and then reconciles `runbook.md` with what actually worked.
+- `run teardown` removes what the run created, preferring the generated `teardown.sh`.
+
+### Research conversations (`factory research`, `factory acpd`)
+- **Start a sandbox.** `research start --url --session` creates a research sandbox and clones the repository, private repos included. The token is never written to the volume. It then prints a `RESEARCH_SANDBOX_READY {json}` receipt with the pod IP and port of the conversation server.
+- **Conversation server.** `acpd` serves agent conversations over HTTP using the Agent Client Protocol on `:49984`. It handles sessions, prompts, streamed events, permission prompts, cancel and modes (`default`, `auto_edit`, `yolo`), and keeps transcripts under `/workspaces/.acpd/sessions`. It drives `gemini --acp` or Antigravity's `agy_acp_server`; Claude is not supported for research yet.
+- **Save notes.** `research save-notes` pushes `docs-exploration/research/<note>.md` to the `research/notes` branch of your fork. This command holds the GitHub credential, not the agent session.
+
+### Engines and models
+- **Choosing an engine.** `--engine gemini|claude|antigravity` (config key `engine`) picks the agent:
+  - `gemini --yolo`, which uses `GEMINI_API_KEY`
+  - `claude -p`, which needs `ANTHROPIC_API_KEY` in the user secret
+  - `agy`, which uses the Gemini key
+- **Model fallback.** Each task gets an ordered model list and falls through to the next model when the engine fails. For Gemini that is the current flash models first, then pro. For Claude it is `opus`, then `sonnet`.
+
+### Gemini key pool and quota handling
+- **Key source.** With `TOKENSCRIPT_DIR` set, keys come from a token script instead of the single key in the user secret.
+- **Quota tracking.** Quota exhaustion is detected from the task log and recorded per **key and model** for 4h. New tasks skip exhausted models, or the whole key once every model is out. Keys reporting `CONSUMER_SUSPENDED` are set aside.
+- **Visibility.** `factory status` and the watch status endpoint report healthy, degraded, quota-exceeded and suspended keys.
+
+### Resilient task execution
+- **Survives disconnects.** Tasks are launched detached inside the pod, with `pid`, `execution.log` and `exit_code` in the task directory. The CLI tails the log and re-establishes the port-forward when it drops. Re-running a task reattaches to it if it is still running, and reports the result if it has already finished.
+- **Flags.**
+  - `--detached` returns immediately after launch.
+  - `--abort-on-cancel` (default on) kills the in-pod task when you Ctrl-C.
+  - `--background` detaches the CLI itself and logs to `$FACTORY_LOGS`.
+- **Container restarts.** If the container restarts, interrupted tasks are marked failed (exit 137) instead of hanging forever.
+
+### Credential hygiene
+- **No tokens in the engine's environment.** The agent's environment never contains a GitHub token. The task script authenticates git through a URL rewrite, and the engine gets a git config without that rewrite, falling back to `gh auth git-credential`.
+- **No tokens in logs.** Tokens are kept out of git config files the agent can read and out of `set -x` traces.
+- **Fork check.** Pushes go to the identity's own fork, and a task stops if `origin` is not that fork.
+- **Bot identities.** `--user` runs a task as a bot identity (secret `user-<name>`). `roles` in `.factory.cfg` (`coder`, `reviewer`, `agent`) give each task type a pool of bots.
+- **Attribution.** `--disclose` (default on) states in PR descriptions, comments and reports that an agent wrote them.
+
+### Observability and operations
+- **Token usage.** Every task records per-engine token usage. The CLI harvests it and posts it to a collector (`$COLLECTOR_URL`) served by the hidden `factory token-daemon`, which offers rollups by issue, PR, day and workflow. See [token usage collection](design/token-usage-collection.md).
+- **Sandbox tooling.** `factory sandbox` can list, inspect, stream logs (task or envd), exec, cp, suspend/resume, and connect over tmux, or resume a Gemini chat in a sandbox. `factory cleanup` deletes sandboxes older than a given age.
+- **Sandbox resources.** Per-sandbox resources: `--image`, `--workspace-disk-size`, `--workspace-storage-class`, `--ephemeral-storage`, `--cpu-request`/`--cpu-limit` and `--memory-request`/`--memory-limit`. Extra configuration can be injected with `--secret` and `--env`.
+
+---
+
+## Getting started
 
 ### Prerequisites
-- `kubectl` configured to communicate with your Kubernetes or Kind cluster.
-- `gh` (GitHub CLI) installed and authenticated (`gh auth login`).
-- `GEMINI_API_KEY` environment variable exported in your local terminal.
+- `kubectl` pointing at a cluster, or `kind` for a local one
+- `gh` installed and authenticated (`gh auth login`)
+- A Gemini API key in `GEMINI_API_KEY`. Claude Code also needs an Anthropic key in the user secret.
 
-### 1. Build or Run the CLI
-**Option A: Build Locally**
+### Build
 ```bash
 cd factory/
-make build
+make build                     # produces bin/factory
+alias factory="$PWD/bin/factory"
 
-# Set up a local alias
-alias factory="./bin/factory"
-```
-
-**Option B: Run Directly via Go**
-You can execute the CLI directly from the repository without cloning or building locally by setting up a shell alias:
-```bash
+# or run without building
 alias factory="go run github.com/gke-labs/gemini-for-kubernetes-development/factory@main"
-
-# Now you can run all commands natively
-factory --help
 ```
-*(Note: In the following examples, both aliases allow you to use `factory` directly).*
 
-### 2. Cluster Bootstrap (`factory up`)
-Spin up operator components and install required CRDs (`agents.x-k8s.io/v1alpha1`).
-
-**Option A: Create a New Kind Cluster (Default)**
+### Bootstrap the cluster and onboard yourself
 ```bash
+# create (or reuse) a kind cluster named "factory" and install agent-sandbox
 GEMINI_API_KEY=yourkey factory up
-```
 
-**Option B: Connect to an Existing Cluster**
-If you already have an active Kubernetes cluster configured in your `KUBECONFIG`:
-```bash
+# use the current kubectl context instead of kind
 GEMINI_API_KEY=yourkey factory up --current-context
 ```
-
-**User Onboarding**:
-User onboarding is automatically performed during `factory up` if `gh` CLI is installed and authenticated (`gh auth login`). The CLI deduces your GitHub username, email, and token, displays them for confirmation, and provisions a dedicated namespace and `factory-user` Kubernetes Secret.
-
-If automatic onboarding is skipped or fails, you can configure your identity and keys manually at any time. You can also onboard to a custom namespace by using the global `-n` or `--namespace` flag:
+`factory up` then onboards you through `gh`: it detects your login, email and token, and creates your namespace and `factory-user` secret. To onboard manually, or into another namespace:
 ```bash
-factory -n my-custom-namespace user onboard \
-  --github-login yourlogin \
-  --github-token yourpat \
-  --github-email youremail \
-  --gemini-key yourkey
+factory -n my-namespace user onboard \
+  --github-login yourlogin --github-email you@example.com \
+  --github-token yourpat --gemini-key yourkey
 ```
 
-### 3. Diagnostic Check (`factory status`)
-Verify system health before running workflows:
+### Check health
 ```bash
 factory status
 ```
-Example Output:
-```
-CHECK            STATUS   MESSAGE
-Kubernetes API   [OK]     Connected to cluster
-Namespace        [OK]     barney-s
-Agent CRDs       [OK]     agents.x-k8s.io/v1alpha1 installed
-GitHub Login     [OK]     barney-s
-GitHub Token     [OK]     Configured in secret 'factory-user'
-Gemini Key       [OK]     Configured in secret 'factory-user'
-```
+This checks the Kubernetes API, namespace, agent CRDs, user secret, GitHub login and token, Gemini key, and the key-pool state (degraded, quota-exceeded and suspended keys).
+
+### Configuration
+Limits, default resources, trigger labels, injected secrets/env and bot role pools live in `.factory.cfg`. It is read from the current directory or from `$FACTORY_CONFIG`. See the [configuration guide](docs/configuration.md).
 
 ---
 
-## Configuration (`.factory.cfg`)
+## Common usage
 
-The `factory` CLI and watch daemon support a local YAML configuration file named `.factory.cfg` to manage limits, default resources, and multiple bot identity pools (roles).
-
-For a complete reference of the config fields, paths, and an example YAML file, see the [AI Factory Configuration Guide](docs/configuration.md).
-
----
-
-## Usage & AI Workflows
-
-### Fixing Issues (`factory fix`)
-Automatically spin up a sandbox, clone the repository, checkout a dedicated issue branch, run Gemini to fix the bug, and open a Pull Request:
 ```bash
-factory fix --url https://github.com/owner/repo/issues/1
-```
+# Fix an issue, then keep watching the PR it opens
+factory fix --url https://github.com/owner/repo/issues/1 --watch --watch-timeout 1h --cleanup
 
-**Advanced Customization**: Override the default instruction, provide an instruction file, execute repository-level tasks without an issue, push a branch without creating a PR, or automatically transition to watching the created PR:
-```bash
-factory fix \
-  --url https://github.com/owner/repo/issues/1 \
-  --instruction "Use Go 1.26 and ensure 100% test coverage" \
-  --image kind.local/factory-golang:latest \
-  --workspace-disk-size 20Gi
-
-# Execute a custom task on a repository without an issue number (requires --name)
-factory fix \
-  --url https://github.com/owner/repo \
-  --name refactor-auth \
-  --instruction "Refactor the auth package"
-
-# Read instruction from a file
-factory fix \
-  --url https://github.com/owner/repo \
-  --name refactor-auth \
+# Repository task without an issue, using Claude Code
+factory fix --engine claude --url https://github.com/owner/repo --name refactor-auth \
   --instruction-file ./prompt.txt
 
-# Commit changes and push branch remotely, but do not create a pull request
-factory fix \
-  --url https://github.com/owner/repo/issues/1 \
-  --name refactor-auth \
-  --instruction "Refactor the auth package" \
-  --no-pr
+# Plan, revise, then implement the approved plan
+factory plan --url https://github.com/owner/repo/issues/1
+factory plan --url https://github.com/owner/repo/issues/1 --feedback "merge steps 2 and 3"
+factory fix  --url https://github.com/owner/repo/issues/1 --with-plan
 
-# Automatically alias the sandbox to the created PR, start watching it, and cleanup on completion
-factory fix \
-  --url https://github.com/owner/repo/issues/1 \
-  --watch \
-  --watch-timeout 1h \
-  --cleanup
-```
-
-### Reviewing Pull Requests (`factory pr review`)
-Spin up a review sandbox to analyze diffs and provide constructive feedback. You can pass multiple instructions as either paths to files containing guidelines (located locally or in the repo) or as inline raw instruction strings:
-```bash
-# Review a PR with standard options
-factory pr review --pr-url https://github.com/owner/repo/pull/1
-
-# Review a PR with file-based instructions
-factory pr review --pr-url https://github.com/owner/repo/pull/1 --instruction docs/guidelines.md
-
-# Review a PR with inline/raw instruction strings
+# Review a PR against guidelines and post it as a pending review
 factory pr review --pr-url https://github.com/owner/repo/pull/1 \
-  --instruction "focus on the memory allocations" \
-  --instruction "ignore changes in test files"
+  --instruction docs/guidelines.md --instruction "ignore test-only changes" --publish draft
 
-# Review a PR in the background and post as a draft review comment on GitHub
-factory pr review --pr-url https://github.com/owner/repo/pull/1 \
-  --instruction docs/guidelines.md \
-  --publish draft \
-  --background
-```
+# React to CI failures and review comments on a PR until it merges
+factory pr watch --pr-url https://github.com/owner/repo/pull/1 --continue-session
 
-### Investigating Check Failures (`factory pr investigate`)
-Spin up a review sandbox to analyze failed CI check logs, review previous investigation comments, and attempt to fix the failure or report root causes. Use `--continue-session` to preserve LLM conversation history across multiple PR operations in the same sandbox:
-```bash
-factory pr investigate --pr-url https://github.com/owner/repo/pull/1 --continue-session
-```
-
-### Addressing Review Comments (`factory pr address-comments`)
-Spin up a review sandbox to parse new review feedback and PR comments, execute code fixes, and push updated commits. Use `--continue-session` to maintain full Gemini chat context from previous fixes or investigations:
-```bash
-factory pr address-comments --pr-url https://github.com/owner/repo/pull/1 --continue-session
-```
-
-### Iterating on Code (`factory pr iterate`)
-Spin up a sandbox to resolve merge conflicts, rebase, or run manual code iterations:
-```bash
-factory pr iterate --pr-url https://github.com/owner/repo/pull/1 --prompt "Please rebase onto latest master"
-```
-
-### Watching Pull Requests (`factory pr watch`)
-Continuously monitor a specific PR in the foreground, automatically triggering `investigate` on CI failures or `address-comments` on new review feedback. Use `--continue-session` to ensure all dispatched tasks inherit the ongoing chat session. The watch loop logs explicit sleep intervals and cleanly terminates when the PR is merged, closed, or timeout expires:
-```bash
-factory pr watch --pr-url https://github.com/owner/repo/pull/1 --watch-timeout 1h --cleanup
-```
-
-### Adopting Pull Requests (`factory pr adopt`)
-When collaborating on a shared repository, you often need the bot to work on a PR created by another developer. Since your bot's token cannot push directly to their personal fork, you must "adopt" the PR first. The adopt command runs in a sandbox and forks the base repository under the bot user identity, copies the commits or re-implements them, and opens a new adopted PR on GitHub.
-
-```bash
-# Adopt a PR using the git 'reuse' strategy (git fetch/push to preserve author history) and close the original
-factory pr adopt close --pr-url https://github.com/owner/repo/pull/1 --strategy reuse
-
-# Adopt a PR and leave the original open (linking to the new adopted PR via comment)
+# Take over someone else's PR under the bot identity
 factory pr adopt open --pr-url https://github.com/owner/repo/pull/1 --strategy reuse
 
-# Adopt a PR using the 'reimplement' strategy (LLM-based re-implementation on top of latest master/main) and close original
-factory pr adopt close --pr-url https://github.com/owner/repo/pull/1 --strategy reimplement
-```
+# Deploy a PR from an existing runbook
+factory run plan   --url https://github.com/owner/repo --name deploy-pr-42 --runbook deploy-gke --target 42
+factory run deploy --url https://github.com/owner/repo --name deploy-pr-42
 
-**Note**: The legacy `--adopt` flag on other commands (`investigate`, `iterate`, and `watch`) has been removed. Those commands will now fail immediately with a descriptive error if the PR does not belong to the factory bot, requiring you to adopt it first.
-
-### Running Custom Agents (`factory agent create`)
-Automatically spin up a sandbox, clone the repository (or PR branch), retrieve a custom agent definition file, execute its prompt instructions inside the sandbox, and automatically commit/push/create/update a Pull Request depending on your configuration and whether it was triggered on a PR or a repository:
-```bash
-# Run an agent defined in the remote .agents/my-agent.yaml on a repository
-factory agent create --url https://github.com/owner/repo --agent my-agent.yaml
-```
-
-**Advanced Customization**:
-```bash
-# Run an agent defined locally in a sandbox for a PR
-factory agent create \
-  --url https://github.com/owner/repo/pull/123 \
-  --agent ./my-agent.yaml \
-  --local
-
-# Simulate agent execution (dry-run) without invoking the LLM inside the sandbox
-factory agent create \
-  --url https://github.com/owner/repo \
-  --agent my-agent.yaml \
-  --dry-run
-```
-
-### Watching Repositories (`factory watch`)
-Continuously monitor a GitHub repository in the foreground for test failures, assigned issues, or open pull requests, automatically dispatching `fix`, `investigate`, or `address-comments` tasks.
-
-**Key Features**:
-- **Assignee & Label Filtering**: By default, it monitors issues and PRs assigned to the onboarded user (resolved from the `factory-user` secret) OR labelled `overseer`. You can override the assignee with `--assignee` (e.g. `--assignee ""` to watch for unassigned issues/PRs).
-- **PR Check Failure & Comment Watching**: For watched PRs, it automatically dispatches `investigate` on CI test failures and `address-comments` on new review comments since the last commit.
-- **Smart Issue Link Detection**: To prevent redundant work, it will automatically skip triggering a fix task for an issue if it finds an open PR referencing that issue (checked via branch names, PR titles, PR bodies, or the GitHub Timeline API).
-- **Dry-run Execution**: Fully respects the `--dryrun` flag, printing actions without creating sandboxes or starting tasks.
-
-```bash
-# Watch for issues/PRs assigned to the onboarded user (from secret) or labelled "overseer"
+# Watch a repository (what the Overseer runs)
 factory watch --repo owner/repo
-
-# Watch for unassigned issues/PRs with specific labels
-factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
-
-# Simulate watch loop actions without executing any tasks or creating sandboxes
-factory watch --repo owner/repo --dryrun
+factory watch --repo owner/repo --dryrun --once
 ```
 
-### Persistent Multi-Step Workflows
-
-A **Workflow** is a long-running, multi-step process with dependencies that spans hours or days (e.g., migrating APIs kind-by-kind, or running multi-stage verification checklists). Workflows run inside isolated, persistent Sandboxes named `wf-issue-<id>` and sync their progress to a Git branch.
-
-#### 1. Automatic Triggering via GitHub Issues
-Workflows are automatically triggered by the background `factory watch` loop when:
-1.  An issue is created and assigned to the bot.
-2.  The issue description mentions a path referencing a workflow definition file in the repository (located under `.agents/workflows/` or `.gemini/skills/` with the metadata `mode: workflow`).
-
-#### 2. Manual CLI Triggering & Local Testing
-You can manually trigger and test workflows directly from the CLI without relying on GitHub issue assignment.
-
-*   **Via `factory fix`**: If your issue body references a workflow definition, running:
-    ```bash
-    factory fix --url https://github.com/owner/repo/issues/123
-    ```
-    will automatically detect the workflow and assign a matching `SessionID` (e.g. `issue-123`) under the hood. No manual session configuration is needed!
-*   **Via `factory agent create` (Local Filesystem)**: If you are developing a new workflow and want to test it locally from your filesystem without committing it to the repository:
-    ```bash
-    factory agent create \
-      --url https://github.com/owner/repo \
-      --agent ./my-local-workflow.md \
-      --local \
-      --session-id my-test-session
-    ```
-    *   **`--local`**: Forces the CLI to load the workflow definition file from your local disk.
-    *   **`--session-id`**: Sets a custom session ID to keep the chat history and filesystem state persistent on the cluster.
-
-#### 3. Execution Logs & Session Resumption
-*   **Real-time Monitoring**: You can stream execution logs of the active workflow using the sandbox logs command:
-    ```bash
-    factory sandbox logs wf-issue-my-test-session
-    ```
-*   **State Persistence**: All state tracking and Gemini CLI chat history persist on the sandbox's `/workspaces` PVC, allowing the workflow to resume exactly where it left off across periodic watch cycles.
-*   **Git Syncing**: The workflow commits and pushes its progress journal (e.g. `session-my-test-session.md`) to the `overseer` branch of the robot's fork for durability.
-
-#### 4. Workflow Progression & Automation
-Workflows execute in **cycles** (or "ticks"). Each cycle processes the next checklist step (e.g. runs tests, creates a child PR, or checks PR merge status) and exits, returning the sandbox to an idle state.
-
-To progress a workflow through its steps, it must be executed periodically:
-*   **Manual Progression**: Re-run the trigger command (either `factory fix` or `factory agent create`) with the same session context once the current step's blocker is resolved (e.g., once the child PR is merged).
-*   **Automated Progression (Local)**: Run `factory watch --repo owner/repo` in a spare terminal. The watch daemon will automatically poll GitHub and execute/reconcile the workflow sandbox every 2 minutes.
-*   **Automated Progression (Cluster-wide)**: Once committed to the repository, assign the issue to the bot, and the cluster-wide **Overseer** controller will automatically orchestrate and run the workflow cycles.
-
----
-
-## Sandbox Management & Debugging
-
-### Resuming Chat Sessions (`factory sandbox chat`)
-Connect to an active sandbox container and resume a Gemini CLI chat session with automatic repository detection, session backup/restore, and `GEMINI_API_KEY` environment injection:
+Debugging a sandbox:
 ```bash
-# Resume the latest chat session in the sandbox
-factory sandbox chat factory-issue-917
-
-# List all available saved sessions for the project
-factory sandbox chat factory-issue-917 -l
-
-# Resume a specific session by index or ID
-factory sandbox chat factory-issue-917 -r 2
-```
-
-### Executing Commands (`factory sandbox exec`)
-Run interactive commands in an active sandbox with environment variable injection and custom working directories:
-```bash
-factory sandbox exec factory-issue-917 -e FOO=bar -w /workspaces/my-repo -- make test
-```
-
-### Inspecting Sandboxes (`factory sandbox inspect`)
-View metadata, PVC status, and active pod resolution:
-```bash
-factory sandbox inspect factory-issue-917
-```
-
-### Streaming Logs (`factory sandbox logs`)
-Stream either the active task execution transcript or the underlying `envd` daemon logs:
-```bash
-# Stream task execution log (execution.log)
-factory sandbox logs factory-issue-917
-
-# Stream envd daemon logs
-factory sandbox logs factory-issue-917 --daemon
-```
-
-### Copying Files (`factory sandbox cp`)
-Copy files directly into a specific path in the sandbox container:
-```bash
-factory sandbox cp factory-issue-917 ./local-script.sh /workspaces/script.sh
-```
-
-### Listing & Deleting Sandboxes
-```bash
-# List all active sandboxes in your namespace with active tasks and PR/issue URLs
 factory sandbox list
-
-# Delete a sandbox and its load-balancer service
-factory sandbox delete factory-issue-917
-```
-
-### Cleaning up Sandboxes (`factory cleanup`)
-Delete sandboxes older than a specified duration (default 24h).
-```bash
-# Delete sandboxes older than 1 day
-factory cleanup
-
-# Delete sandboxes older than 6 hours
-factory cleanup --older-than 6h
+factory sandbox logs factory-issue-917            # task execution.log (--daemon for envd)
+factory sandbox exec -w /workspaces/repo factory-issue-917 -- make test
+factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 ```
 
 ---
 
-## Design Footnote: Directory-Based Queue Design for `factory watch`
+## Command reference
 
-To support decoupled operation and integration with external schedulers (e.g. Overseer prompt or custom scripts), `factory watch` supports a directory-based queueing model. 
+| Command | What it does |
+|---|---|
+| `up` | Create/reuse a kind cluster (or `--current-context`), install agent-sandbox, onboard via `gh` |
+| `status` | Pre-flight checks for cluster, identity, keys and the key pool |
+| `user onboard` | Create a namespace and `factory-user` secret |
+| `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
+| `plan` | Draft or revise an implementation plan for an issue; posts nothing |
+| `triage` | Suggest labels, priority, duplicates; `--publish yes` applies them |
+| `pr review` | Review a PR; `--publish no\|ask\|yes\|draft` |
+| `pr investigate` | Investigate and fix CI failures on a PR |
+| `pr address-comments` | Address review feedback on a PR |
+| `pr iterate` | Rebase, resolve conflicts, or apply a `--prompt` |
+| `pr watch` | Loop over investigate / address-comments for one PR |
+| `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
+| `agent create` | Run an `.agents/` (or `--local`) agent definition |
+| `run plan\|deploy\|teardown` | Runbook-driven deployments (`--runbook`, `--target`) |
+| `research start` | Create a research sandbox and report its conversation server |
+| `research save-notes` | Push research notes to your fork's `research/notes` branch |
+| `watch` | The autonomous scan / dispatch / GC loop |
+| `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
+| `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |
+| `acpd` | Agent Client Protocol server (runs inside research sandboxes) |
+| `sshd` | Embedded SSH server over stdin/stdout for terminal forwarding |
+| `daemon`, `token-daemon` (hidden) | Sandbox entrypoint (envd + acpd); token-usage collector |
 
-```
-                  ┌──────────────────────┐
-                  │  External Systems /  │
-                  │   Overseer Prompt    │
-                  └──────────┬───────────┘
-                             │ (writes task file)
-                             ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│factory watch │     │   incoming/  │     │factory watch │
-│  --mode=scan ├────>│ task-123.yaml├────>│  --mode=run  │
-└──────────────┘     └──────────────┘     └──────┬───────┘
-                                                 │ (runs sandbox)
-                                                 ▼
-                                          ┌──────────────┐
-                                          │  processing/ │
-                                          └──────┬───────┘
-                                                 │ (completed)
-                                                 ▼
-                                          ┌──────────────┐
-                                          │  processed/  │
-                                          └──────────────┘
-```
+Global flags (`--engine`, `--user`, `--namespace`, `--timeout`, `--disclose`, resource and injection flags) apply to every command; see `factory --help`.
 
-By splitting the command execution into `--mode=scan` (discovers issues/PRs/chores, unassigns from the bot, and writes deterministic YAML files to `incoming/`) and `--mode=run` (reads from queue directories, respects concurrency and execution limits, and runs tasks), multiple daemons can safely interact asynchronously via POSIX-atomic file moves without file lock conflicts.
+---
 
+## Further reading
+
+- [Overseer and factory architecture](../overseer/docs/architecture-overseer-factory.md)
+- [Configuration guide (`.factory.cfg`)](docs/configuration.md)
+- Watch internals: [design note](design/watch-design-note.md), [subcontroller architecture](design/watch-subcontrollers-architecture.md)
+- [Resilient and reconnectable task execution](design/resilient-task-execution.md)
+- [Multi-engine sandboxes](design/multi-engine.md)
+- [Automated PR review](design/pr-automated-review.md) · [PR adoption](design/pr-adopt.md)
+- [Workflow orchestration and session reconciliation](design/workflow-orchestration-and-session-reconciliation.md)
+- [Token usage collection](design/token-usage-collection.md)
+- [GitHub App identity](design/github-app-identity.md)
+- [Research warm pool](design/research-warm-pool.md) (design, not built)
