@@ -62,7 +62,7 @@ type EntityState interface {
 // closure means.
 type LinkedWork interface {
 	// NudgeLinkedWorkflows is called with an issue just confirmed closed
-	// against GitHub, before its sandbox is deleted.
+	// against GitHub, before the sandbox that worked on it is deleted.
 	NudgeLinkedWorkflows(ctx context.Context, closed *githubv39.Issue)
 }
 
@@ -102,7 +102,8 @@ type Deps struct {
 	// sweep that has already started.
 	Paused func() bool
 	// LinkedWork is told about every issue whose sandbox is collected because
-	// the issue closed. A nil LinkedWork is told nothing.
+	// the issue closed, and every issue closed by a merged PR whose sandbox is
+	// collected. A nil LinkedWork is told nothing.
 	LinkedWork LinkedWork
 }
 
@@ -368,11 +369,8 @@ func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, items []unstr
 
 		item := &items[i]
 		name := item.GetName()
-		if !strings.HasPrefix(name, "factory-pr-") {
-			continue
-		}
-		num, err := strconv.Atoi(strings.TrimPrefix(name, "factory-pr-"))
-		if err != nil {
+		num, ok := prNumberFromSandbox(item)
+		if !ok {
 			continue
 		}
 
@@ -406,6 +404,9 @@ func (r *Reconciler) deleteClosedPRSandbox(ctx context.Context, item *unstructur
 		return false
 	}
 
+	// Before the delete, and in a dry run too, as for a closed issue.
+	r.nudgeIssuesClosedBy(ctx, pr)
+
 	klog.Infof("Pull Request #%d is closed/merged. Deleting corresponding sandbox '%s'...", num, name)
 	if r.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would delete sandbox '%s' for closed PR #%d\n", name, num)
@@ -422,6 +423,35 @@ func (r *Reconciler) deleteClosedPRSandbox(ctx context.Context, item *unstructur
 		return false
 	}
 	return true
+}
+
+// nudgeIssuesClosedBy reports to LinkedWork the issues a merged pull request
+// closed. A PR often runs in a sandbox of its own, so the issue it closes may
+// have no sandbox for the closed issue sweep to find.
+func (r *Reconciler) nudgeIssuesClosedBy(ctx context.Context, pr *githubv39.PullRequest) {
+	if r.linked == nil || !pr.GetMerged() {
+		return
+	}
+	gh := r.sandboxes.gh
+	for _, num := range common.ReferencedIssueList(pr) {
+		if ctx.Err() != nil {
+			return
+		}
+		if num == pr.GetNumber() {
+			continue
+		}
+		// The references are loose (title, body and branch name), so each is
+		// confirmed to be an issue that is now closed.
+		issue, _, err := gh.Issues.Get(ctx, r.sandboxes.owner, r.sandboxes.repo, num)
+		if err != nil {
+			klog.Warningf("Failed to fetch issue #%d referenced by merged PR #%d: %v", num, pr.GetNumber(), err)
+			continue
+		}
+		if issue.IsPullRequest() || issue.GetState() != "closed" {
+			continue
+		}
+		r.linked.NudgeLinkedWorkflows(ctx, issue)
+	}
 }
 
 // cleanupClosedIssueSandboxes deletes sandboxes belonging to closed issues,
@@ -610,6 +640,24 @@ func (r *Reconciler) servedClosedPR(item *unstructured.Unstructured) bool {
 		return false
 	}
 	return !r.entities.IsOpenPR(pr)
+}
+
+// prNumberFromSandbox returns the pull request a review sandbox
+// ("factory-pr-<repo>-N", or "factory-pr-N" before review sandboxes were
+// scoped by repo) belongs to, preferring its PR label over the name.
+func prNumberFromSandbox(item *unstructured.Unstructured) (int, bool) {
+	name := item.GetName()
+	if !strings.HasPrefix(name, "factory-pr-") {
+		return 0, false
+	}
+	if num, err := strconv.Atoi(item.GetLabels()[labelPR]); err == nil && num > 0 {
+		return num, true
+	}
+	num, err := strconv.Atoi(name[strings.LastIndex(name, "-")+1:])
+	if err != nil || num <= 0 {
+		return 0, false
+	}
+	return num, true
 }
 
 // issueNumberFromSandboxName extracts the issue number encoded in a workflow
