@@ -7,13 +7,20 @@
 
 2.  **Installing Repo-Agent:**
 
-    Install from the release manifests:
+    Install the images published from `main` (every merge pushes `:latest`
+    and `:<commit sha>` to `ghcr.io/gke-labs/gemini-for-kubernetes-development`):
 
     ```bash
     kind create cluster  # optional you can use an existing cluster
-    export VERSION=v0.1.0-rc.3
-    curl -L  https://github.com/gke-labs/gemini-for-kubernetes-development/releases/download/${VERSION}/installer.sh | bash
+    git clone https://github.com/gke-labs/gemini-for-kubernetes-development.git
+    cd gemini-for-kubernetes-development/repo-agent
+    make install-repo-agent-latest                 # or IMAGE_TAG=<commit sha> to pin
     ```
+
+    This installs the dependencies (agent-sandbox, and Envoy Gateway on kind),
+    creates the secrets from your environment variables, and applies the
+    manifests. The last tagged release, `v0.1.0-rc.3`, predates boards, so
+    don't use its `installer.sh` with this guide.
 
 3.  **Access the UI:**
 
@@ -33,8 +40,6 @@
     page), or apply the example RepoBoard:
 
     ```bash
-    export VERSION=v0.1.0-rc.3
-    export URL_PREFIX=https://raw.githubusercontent.com/gke-labs/gemini-for-kubernetes-development/refs/tags/${VERSION}/repo-agent/examples
-    curl ${URL_PREFIX}/repoboard.yaml | kubectl apply -f -
+    kubectl apply -f examples/repoboard.yaml
     ```
 

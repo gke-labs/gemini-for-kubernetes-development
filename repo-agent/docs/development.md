@@ -3,7 +3,7 @@
 ### Prerequisites
 
 Ensure you have the following installed:
-- **Go 1.25+**
+- **Go 1.26.3+** (see `go.mod`)
 - **Docker**
 - **KinD**
 - **kubectl**

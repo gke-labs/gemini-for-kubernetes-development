@@ -16,13 +16,16 @@ The `factory` CLI looks for the configuration file in the following order:
 
 Here are the available fields in `.factory.cfg`:
 
+Every sandbox setting can be overridden per command by the matching flag (shown in parentheses).
+
 ### Core Settings
-* **`maxActiveReviews`** (integer, default: unlimited): Maximum number of concurrent PR review sandboxes allowed in the namespace.
-* **`maxActiveIssues`** (integer, default: unlimited): Maximum number of concurrent issue fix sandboxes allowed in the namespace.
-* **`image`** (string): Default base image to use for spawned sandboxes (e.g., `ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest`).
-* **`workspaceDiskSize`** (string, default: `10Gi`): Default size of the persistent volume claim (PVC) for the sandbox workspace (e.g., `20Gi`).
-* **`workspaceStorageClass`** (string, optional): StorageClass for the sandbox workspace PVC (e.g., `premium-rwo`, `pd-ssd`). If omitted, uses the cluster default StorageClass.
-* **`ephemeralStorage`** (string, default: `6Gi`): Default ephemeral storage request and limit for the sandbox pod (e.g., `10Gi`).
+* **`engine`** (string: `gemini` | `claude` | `antigravity`, default: `gemini`; `--engine`): The coding agent that runs tasks. `claude` needs `ANTHROPIC_API_KEY` in the user secret; `gemini` and `antigravity` use the Gemini key.
+* **`image`** (string; `--image`): Default base image to use for spawned sandboxes (e.g., `ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest`).
+* **`workspaceDiskSize`** (string, default: `10Gi`; `--workspace-disk-size`): Default size of the persistent volume claim (PVC) for the sandbox workspace (e.g., `20Gi`).
+* **`workspaceStorageClass`** (string, optional; `--workspace-storage-class`): StorageClass for the sandbox workspace PVC (e.g., `premium-rwo`, `pd-ssd`). If omitted, uses the cluster default StorageClass.
+* **`ephemeralStorage`** (string, default: `6Gi`; `--ephemeral-storage`): Default ephemeral storage request and limit for the sandbox pod (e.g., `10Gi`).
+* **`sandboxCPURequest`**, **`sandboxCPULimit`** (string; `--cpu-request`, `--cpu-limit`): CPU request and limit for sandbox pods (e.g., `2`, `500m`).
+* **`sandboxMemoryRequest`**, **`sandboxMemoryLimit`** (string; `--memory-request`, `--memory-limit`): Memory request and limit for sandbox pods (e.g., `4Gi`).
 * **`minNumber`** (integer, default: 0): Minimum issue or PR number to process. Any issue or PR with a number less than `minNumber` will be ignored.
 
 ### Repository Watching & Triggering
@@ -32,7 +35,7 @@ Here are the available fields in `.factory.cfg`:
 
 ### Chores Configuration
 * **`chores`** (object): Configures the automated repository maintenance routines.
-  * **`mode`** (string: `enabled` | `disabled` | `dryrun`, default: `enabled`): Whether background repo chores are executed.
+  * **`mode`** (string: `enabled` | `disabled`, default: `enabled`): Whether `factory watch` schedules chores. `disabled` here overrides `--chores-mode` and `CHORES_MODE`. For a dry run, use `factory watch --dryrun`.
 
 ### Secrets & Environment Variables Injection
 * **`secrets`** (array of secret mounts): Custom Kubernetes secrets to mount in all sandboxes.
@@ -52,20 +55,27 @@ Here are the available fields in `.factory.cfg`:
     * `reviewer` (default for PR review tasks: `pr-review`)
     * `agent` (default for custom agent tasks: `agent-chore`. Falls back to the `coder` role if the `agent` role is not explicitly configured).
 
+### Keys that are parsed but not used
+These keys are accepted for compatibility and have no effect:
+* **`maxActiveReviews`**, **`maxActiveIssues`**: nothing enforces them. To bound the work `factory watch` takes on, use `--max-pending` (default 40) and `--max-actions`.
+* **`prInactivityTimeout`**: use `factory watch --pr-inactivity-timeout` or the `PR_INACTIVITY_TIMEOUT` environment variable.
+
 ---
 
 ## Example `.factory.cfg`
 
 ```yaml
+engine: gemini
+
 # Sandbox Resource Configuration
 image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
 workspaceDiskSize: 20Gi
 workspaceStorageClass: premium-rwo
 ephemeralStorage: 10Gi
+sandboxCPURequest: "2"
+sandboxMemoryRequest: 4Gi
+sandboxMemoryLimit: 8Gi
 
-# Watch Limits
-maxActiveReviews: 5
-maxActiveIssues: 3
 minNumber: 10400
 
 # Watching Options
