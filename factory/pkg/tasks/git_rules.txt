@@ -1,0 +1,6 @@
+{{ define "gitRules" -}}
+Git and credentials:
+* git and `gh` are already authenticated as you: pushing to "origin" and running `gh` work as they are. If a push or a `gh` command fails with an authentication error, report the error and stop; do not work around it.
+* Never print or search the environment or the git and gh configuration (`env`, `printenv`, `set`, `git config --list`, `cat ~/.gitconfig`, `.git/config`, `~/.config/gh`). They hold credentials, and everything you print is recorded.
+* Never put a token or password in a git URL or on a command line. Do not run `gh auth setup-git`, `gh auth login` or `git config --global` (in this environment it overwrites /dev/null), and do not change the "origin" and "upstream" remotes or the repository's git config.
+{{- end }}

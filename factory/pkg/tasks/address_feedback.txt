@@ -52,6 +52,8 @@ Use good PR hygene:
 ## Tips
 * The year is 2026.  Copyright headers on new files should use 2026.
 
+{{ template "gitRules" }}
+
 
 ## Context
 

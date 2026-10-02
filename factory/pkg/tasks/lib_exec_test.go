@@ -323,3 +323,208 @@ setGitHubURLRewrite lovelace-coder-bot`)
 		}
 	})
 }
+
+// runLib sources lib.sh in bash with HOME in a temp dir and a git
+// repository standing in for /workspaces/$REPO_NAME (every cd lands there),
+// runs body, and returns the combined output and the repository's path.
+func runLib(t *testing.T, env []string, setup, body string) (string, string, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	repo := filepath.Join(home, "repo")
+	libPath := filepath.Join(home, "lib.sh")
+	if err := os.WriteFile(libPath, lib, 0644); err != nil {
+		t.Fatal(err)
+	}
+	harness := `set -e
+source "$LIB"
+git init -q "$REPO_DIR"
+cd() { builtin cd "$REPO_DIR"; }
+sleep() { :; }
+` + setup + `
+` + body
+	cmd := exec.Command(bash, "-c", harness)
+	cmd.Env = append(os.Environ(),
+		"PS4=+ ",
+		"HOME="+home,
+		"LIB="+libPath,
+		"REPO_DIR="+repo,
+		"REPO_NAME=repo",
+		"REPO_OWNER=upstream-org",
+		"PATH="+filepath.Join(home, "bin")+":"+os.Getenv("PATH"),
+		"GIT_CONFIG_NOSYSTEM=1",
+	)
+	cmd.Env = append(cmd.Env, env...)
+	if err := os.MkdirAll(filepath.Join(home, "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out), repo, err
+}
+
+// TestEngineGitConfig pins the fix for gemini-cli 0.62+, which runs every
+// shell command with GIT_CONFIG_GLOBAL=/dev/null and its own overrides
+// appended: without the include, the identity and the github.com
+// credential rewrite were gone and pushes failed with "could not read
+// Username" (k8s-config-connector#13619).
+func TestEngineGitConfig(t *testing.T) {
+	out, _, err := runLib(t, []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=foo.inherited", "GIT_CONFIG_VALUE_0=kept"}, `
+git config --global user.name "coder bot"
+git config --global core.hooksPath /dev/null
+export GITHUB_USER_TOKEN=CODER_TOKEN
+setGitHubURLRewrite coder-bot
+unset GITHUB_USER_TOKEN`, `
+engineGitConfig
+# What gemini-cli does to every shell command it runs.
+n=$GIT_CONFIG_COUNT
+export GIT_CONFIG_GLOBAL=/dev/null
+export "GIT_CONFIG_KEY_${n}=credential.helper" "GIT_CONFIG_VALUE_${n}="
+export "GIT_CONFIG_KEY_$((n+1))=core.hooksPath" "GIT_CONFIG_VALUE_$((n+1))="
+export GIT_CONFIG_COUNT=$((n+2))
+echo "RESOLVED=$(git ls-remote --get-url https://github.com/owner/repo.git)"
+echo "NAME=$(git config user.name)"
+echo "INHERITED=$(git config foo.inherited)"
+echo "HOOKS=[$(git config core.hooksPath)]"
+env | grep -c CODER_TOKEN || true`)
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"RESOLVED=https://coder-bot:CODER_TOKEN@github.com/owner/repo.git",
+		"NAME=coder bot",
+		"INHERITED=kept",
+		// gemini's own overrides come after the include and still win.
+		"HOOKS=[]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); lines[len(lines)-1] != "0" {
+		t.Errorf("the token reached the engine's environment:\n%s", out)
+	}
+}
+
+// TestEnsureForkRemote pins the fix for k8s-config-connector#13635: the
+// fork call answered 429, the error was ignored, origin stayed the upstream
+// repository, and the agent pushed its branch there.
+func TestEnsureForkRemote(t *testing.T) {
+	// The gh stub fails as often as $HOME/fails says, then does what
+	// `gh repo fork --remote` does: upstream ← origin, origin ← the fork.
+	ghStub := `mkdir -p "$HOME/bin" && cat > "$HOME/bin/gh" <<'STUB'
+#!/bin/bash
+echo call >> "$HOME/gh.calls"
+f=$(cat "$HOME/fails" 2>/dev/null || echo 0)
+if [ "$f" -gt 0 ]; then echo $((f-1)) > "$HOME/fails"; echo "HTTP 429" >&2; exit 1; fi
+git remote rename origin upstream
+git remote add origin https://github.com/Coder-Bot/repo.git
+STUB
+chmod +x "$HOME/bin/gh"
+builtin cd "$REPO_DIR" && git remote add origin https://github.com/upstream-org/repo.git`
+	report := `
+echo "ORIGIN=$(git remote get-url origin)"
+echo "CALLS=$(wc -l < "$HOME/gh.calls" 2>/dev/null | tr -d ' ')"`
+
+	t.Run("retries past a 429", func(t *testing.T) {
+		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
+echo 2 > "$HOME/fails"`, "ensureForkRemote"+report)
+		if err != nil {
+			t.Fatalf("ensureForkRemote failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "ORIGIN=https://github.com/Coder-Bot/repo.git") || !strings.Contains(out, "CALLS=3") {
+			t.Errorf("want origin to be the fork after 3 calls:\n%s", out)
+		}
+	})
+
+	t.Run("stops when the fork never comes", func(t *testing.T) {
+		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
+echo 99 > "$HOME/fails"`, "ensureForkRemote\necho REACHED")
+		if err == nil || strings.Contains(out, "REACHED") {
+			t.Fatalf("ensureForkRemote let the task go on with origin = upstream:\n%s", out)
+		}
+		if !strings.Contains(out, "stopping rather than pushing to the upstream repository") {
+			t.Errorf("missing the reason:\n%s", out)
+		}
+	})
+
+	t.Run("origin already the fork", func(t *testing.T) {
+		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
+git remote set-url origin https://github.com/coder-bot/repo.git`, "ensureForkRemote"+report)
+		if err != nil {
+			t.Fatalf("ensureForkRemote failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "CALLS=\n") && !strings.Contains(out, "CALLS=0") {
+			t.Errorf("gh was called although origin was already the fork:\n%s", out)
+		}
+	})
+}
+
+// TestResetRepoGitConfig pins the repository-level settings left behind on a
+// long-lived workspace that broke later tasks: diff.external=false made
+// every `git diff` fail (fix-k8s-config-connector-13580), and a repository's
+// own hooksPath or credential rewrite would beat setupGit's global ones.
+func TestResetRepoGitConfig(t *testing.T) {
+	out, repo, err := runLib(t, nil, `builtin cd "$REPO_DIR"
+git config diff.external false
+git config core.pager less
+git config core.hooksPath .husky
+git config credential.helper store
+git config url."https://someone:OLD_TOKEN@github.com/".insteadOf https://github.com/
+git config url."https://mirror.example/".insteadOf https://example.org/
+git config foo.unrelated kept`, `set -x
+resetRepoGitConfig
+set +x`)
+	if err != nil {
+		t.Fatalf("resetRepoGitConfig failed: %v\n%s", err, out)
+	}
+	cfg, err := os.ReadFile(filepath.Join(repo, ".git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"external", "pager", ".husky", "store", "OLD_TOKEN"} {
+		if strings.Contains(string(cfg), gone) {
+			t.Errorf("%q still in .git/config:\n%s", gone, cfg)
+		}
+	}
+	for _, kept := range []string{"hooksPath = /dev/null", "https://mirror.example/", "unrelated = kept"} {
+		if !strings.Contains(string(cfg), kept) {
+			t.Errorf("want %q in .git/config:\n%s", kept, cfg)
+		}
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "+") && strings.Contains(l, "OLD_TOKEN") {
+			t.Errorf("token leaked into the xtrace: %q", l)
+		}
+	}
+}
+
+// TestPromptsCarryGitRules: every prompt whose agent touches git gets the
+// shared credential rules.
+func TestPromptsCarryGitRules(t *testing.T) {
+	for _, name := range []string{"fix_issue.txt", "address_feedback.txt", "investigate_failures.txt", "iterate.txt", "run_agent.txt"} {
+		raw, err := promptFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `{{ template "gitRules" }}`) {
+			t.Errorf("%s does not include the gitRules block", name)
+		}
+		tmpl, err := getPromptTemplate(name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if tmpl.Lookup("gitRules") == nil {
+			t.Errorf("%s: gitRules is not defined", name)
+		}
+	}
+}

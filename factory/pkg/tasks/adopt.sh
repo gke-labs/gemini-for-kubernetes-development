@@ -34,7 +34,7 @@ if [ ! -d "/workspaces/${REPO_NAME}" ]; then
 fi
 
 cd "/workspaces/${REPO_NAME}"
-disableGitHooks
+resetRepoGitConfig
 FORK_URL="https://github.com/${GH_USER}/${REPO_NAME}.git"
 git remote add fork "${FORK_URL}" || true
 git fetch origin

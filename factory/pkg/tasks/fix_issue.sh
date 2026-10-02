@@ -48,13 +48,12 @@ function setupGitRepos {
         (cd "/workspaces/${REPO_NAME}" && git fetch origin)
     fi
 
-    echo "running gh repo fork"
-    (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote || true)
+    ensureForkRemote
 
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
-    disableGitHooks
+    resetRepoGitConfig
 
     echo "running git config local user.email"
     (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
