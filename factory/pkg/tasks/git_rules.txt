@@ -1,0 +1,5 @@
+{{ define "gitRules" -}}
+Git and credentials:
+* git and `gh` are already authenticated as you. Never print or search the environment or the git and gh configuration (`env`, `printenv`, `set`, `git config --list`, `cat ~/.gitconfig`, `.git/config`, `~/.config/gh`): they hold credentials, and everything you print is recorded.
+* Do not run `git config --global`: in this environment it overwrites /dev/null and breaks git for the rest of the run.
+{{- end }}

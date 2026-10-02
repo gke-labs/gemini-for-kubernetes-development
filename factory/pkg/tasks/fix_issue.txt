@@ -29,6 +29,8 @@ Tips:
 {{ if .PRLabel }}* You MUST label the PR `{{ .PRLabel }}` `gh pr edit <PR_NUMBER> --add-label "{{ .PRLabel }}"` or  `gh pr create --label "{{ .PRLabel }}"`{{ end }}{{ end }}
 * The year is 2026.  Copyright headers on new files should use 2026.
 
+{{ template "gitRules" }}
+
 Final Steps:
 * After you have finished, you MUST summarize the design decisions you made. Explain the rationale behind your changes and any alternatives you considered. This summary is for the human reviewer reading the agent logs.
 

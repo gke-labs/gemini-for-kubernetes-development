@@ -26,6 +26,22 @@ export GOPATH="${GO_CACHE_HOME}/go"
 export GOMODCACHE="${GOPATH}/pkg/mod"
 export GOCACHE="${GO_CACHE_HOME}/.cache/go-build"
 
+# ensureDevNull recreates /dev/null when it is no longer the null device.
+# gemini-cli runs the agent's git with GIT_CONFIG_GLOBAL=/dev/null, so an
+# agent's `git config --global` writes /dev/null.lock and renames it over
+# /dev/null. From then on every `2>/dev/null` appends to a regular file and
+# git rejects it as a config file ("bad config line 1 in file /dev/null").
+# The pod outlives the task, so the next task inherits it; repair it before
+# anything else runs. mknod needs root, which the sandbox runs as.
+function ensureDevNull {
+    if [ -c /dev/null ]; then
+        return 0
+    fi
+    echo "/dev/null is not the null device; recreating it"
+    rm -f /dev/null && mknod -m 666 /dev/null c 1 3 || echo "Warning: could not recreate /dev/null" >&2
+}
+ensureDevNull
+
 # setGitHubURLRewrite <user> makes <user>'s credentials (GITHUB_USER_TOKEN)
 # the only global url.<base>.insteadOf rewrite of https://github.com/.
 # Because the credentials are in the URL, git never asks a credential
@@ -127,14 +143,101 @@ EOF
     find /workspaces -maxdepth 4 -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
 }
 
-# disableGitHooks turns off hooks in the task's repository. Tasks commit,
-# rebase and push unattended, and a repository's hooks (husky, pre-commit,
-# lefthook) can block, prompt, rewrite or reformat behind the agent's back.
-# setupGit already sets core.hooksPath globally, but a repository-level
-# core.hooksPath overrides that — and installers write exactly that, so one
-# that ran in an earlier task on this long-lived workspace would still win.
-function disableGitHooks {
-    (cd "/workspaces/${REPO_NAME}" && git config core.hooksPath /dev/null)
+# engineGitConfig points the engine's git back at the global config. gemini-cli
+# (0.62+) runs every shell command with GIT_CONFIG_GLOBAL=/dev/null and its
+# own overrides appended as GIT_CONFIG_KEY_n, so the identity and the
+# github.com credential rewrite setupGit wrote are gone: pushes fail with
+# "could not read Username", and agents improvised by printing the
+# environment and config, pushing with the token in the URL, and running
+# `git config --global` (see ensureDevNull). gemini keeps the GIT_CONFIG_*
+# it inherits and appends its overrides after them, so an include.path
+# here brings the file back while its overrides (credential.helper,
+# core.hooksPath, ...) still win. Through an include the token stays in the
+# file rather than in the engine's environment.
+function engineGitConfig {
+    # The script's own global config, not the /dev/null gemini sets for its
+    # shells later. If the script itself runs without one there is nothing
+    # to bring back.
+    local global="${GIT_CONFIG_GLOBAL:-${USER_HOME}/.gitconfig}"
+    if [ ! -f "${global}" ]; then
+        return 0
+    fi
+    local n="${GIT_CONFIG_COUNT:-0}"
+    export "GIT_CONFIG_KEY_${n}=include.path"
+    export "GIT_CONFIG_VALUE_${n}=${global}"
+    export GIT_CONFIG_COUNT=$((n + 1))
+}
+
+# ensureForkRemote makes "origin" the task identity's fork, with the original
+# repository as "upstream". A fork call that fails — GitHub answers 429 under
+# load — used to be ignored, leaving origin pointing at upstream, and the
+# agent then pushed its branch to the upstream repository. So the call is
+# retried, and the task stops if origin still isn't the fork afterwards.
+function ensureForkRemote {
+    local owner="${GITHUB_BOT_LOGIN:-${GITHUB_USER_ID}}"
+    local attempt
+    for attempt in 1 2 3 4; do
+        if originIsForkOf "${owner}"; then
+            return 0
+        fi
+        echo "running gh repo fork --remote (attempt ${attempt})"
+        if (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote) && originIsForkOf "${owner}"; then
+            return 0
+        fi
+        if [ "${attempt}" -lt 4 ]; then
+            sleep $((attempt * 30))
+        fi
+    done
+    echo "origin is not ${owner}'s fork of ${REPO_OWNER}/${REPO_NAME}; stopping rather than pushing to the upstream repository" >&2
+    exit 1
+}
+
+# originIsForkOf <owner>: origin's URL names <owner>'s repository. GitHub
+# owners are case-insensitive.
+function originIsForkOf {
+    local owner url
+    owner="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    url="$(cd "/workspaces/${REPO_NAME}" && git remote get-url origin 2>/dev/null)" || return 1
+    url="$(printf '%s' "${url}" | tr '[:upper:]' '[:lower:]')"
+    case "${url}" in
+        *github.com/"${owner}"/*|*github.com:"${owner}"/*) return 0 ;;
+    esac
+    return 1
+}
+
+# resetRepoGitConfig makes the task repository's own config safe to run
+# unattended. The workspace is long-lived, so whatever an earlier task or
+# agent set at repository level is still there, and repository config
+# overrides setupGit's global config:
+#   - hooks: tasks commit, rebase and push unattended, and a repository's
+#     hooks (husky, pre-commit, lefthook) can block, prompt, rewrite or
+#     reformat behind the agent's back. Installers write a repository-level
+#     core.hooksPath, so it is pinned here as well as globally.
+#   - commands git runs for us: an agent once left diff.external=false, which
+#     makes every `git diff` fail; editors, pagers, fsmonitor and ssh commands
+#     are the same kind of trap.
+#   - credentials: a repository-level helper or github.com rewrite would
+#     shadow the task identity's (setGitHubURLRewrite).
+function resetRepoGitConfig {
+    (
+        cd "/workspaces/${REPO_NAME}"
+        local key
+        for key in diff.external core.editor sequence.editor core.pager core.fsmonitor core.sshCommand core.askPass credential.helper; do
+            git config --local --unset-all "${key}" 2>/dev/null || true
+        done
+        # The section names can carry tokens; keep them out of a set -x trace.
+        local trace=0
+        case "$-" in *x*) trace=1 ;; esac
+        set +x
+        while read -r key; do
+            [ -n "${key}" ] || continue
+            git config --local --remove-section "${key%.insteadof}" 2>/dev/null || true
+        done < <(git config --local --get-regexp '^url\..*\.insteadof$' '^https://github\.com/$' 2>/dev/null | cut -d' ' -f1)
+        if [ "$trace" = 1 ]; then
+            set -x
+        fi
+        git config core.hooksPath /dev/null
+    )
 }
 
 function setupGitRepos {
@@ -161,7 +264,7 @@ function setupGitRepos {
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
-    disableGitHooks
+    resetRepoGitConfig
 }
 
 function checkoutPRBranch {
@@ -678,7 +781,7 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 GEMINI_ARGS+=("--resume" "latest")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && engineGitConfig && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
                 SUCCESS=true
             fi
             ;;

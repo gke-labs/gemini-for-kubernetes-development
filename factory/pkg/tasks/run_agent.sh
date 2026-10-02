@@ -55,7 +55,7 @@ function setupGitRepos {
     echo "running gh repo set-default"
     (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
 
-    disableGitHooks
+    resetRepoGitConfig
 
     echo "running git config local user.email"
     (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}")
@@ -97,7 +97,7 @@ function commitChanges {
             # If there are uncommitted changes, commit them
             if [ -n "$(git status --porcelain)" ]; then
                 echo "Committing uncommitted changes..."
-                git diff > /tmp/agent_diff.txt
+                git diff --no-ext-diff > /tmp/agent_diff.txt
                 
                 gemini --yolo --output-format json -p "Generate a concise, meaningful commit message for the following changes.
     The changes are part of an agent named '${AGENT_NAME}' (defined in ${AGENT_FILE}).
