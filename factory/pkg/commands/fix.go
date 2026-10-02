@@ -368,21 +368,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		klog.Warningf("Could not read agent-output.txt: %v", err)
 	}
 
-	var prURL string
-	var prNum int
-	for _, line := range strings.Split(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "/pull/") {
-			prURL = line
-			parts := strings.Split(line, "/")
-			if len(parts) > 0 {
-				if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
-					prNum = n
-					break
-				}
-			}
-		}
-	}
+	prURL, prNum := factorysandbox.PRFromAgentOutput(buf.String())
 
 	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
 		Repo:     owner + "/" + repo,

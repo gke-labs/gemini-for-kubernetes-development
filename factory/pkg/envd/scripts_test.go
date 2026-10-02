@@ -495,3 +495,36 @@ func TestBuildCheckLatestTaskStatusCmd(t *testing.T) {
 		t.Errorf("expected latest task dir exit_code '42', got %q (err: %v)", out, err)
 	}
 }
+
+func TestBuildReadLatestTaskOutputCmd(t *testing.T) {
+	tasksDir := t.TempDir()
+	if out, err := runShell(t, BuildReadLatestTaskOutputCmd(tasksDir)); err != nil || out != "" {
+		t.Errorf("no tasks: got %q (err: %v), want empty", out, err)
+	}
+
+	older := filepath.Join(tasksDir, "fix-1")
+	newer := filepath.Join(tasksDir, "fix-2")
+	for _, d := range []string{older, newer} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(older, "agent-output.txt"), []byte("https://github.com/o/r/pull/1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(older, past, past); err != nil {
+		t.Fatal(err)
+	}
+	// The latest task wrote no output: nothing, not the older task's PR.
+	if out, err := runShell(t, BuildReadLatestTaskOutputCmd(tasksDir)); err != nil || out != "" {
+		t.Errorf("latest task without output: got %q (err: %v), want empty", out, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(newer, "agent-output.txt"), []byte("https://github.com/o/r/pull/2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runShell(t, BuildReadLatestTaskOutputCmd(tasksDir)); err != nil || out != "https://github.com/o/r/pull/2" {
+		t.Errorf("got %q (err: %v), want the latest task's PR", out, err)
+	}
+}

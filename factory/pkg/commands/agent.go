@@ -373,21 +373,7 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		fmt.Printf("\nAgent Output:\n%s\n", buf.String())
 	}
 
-	var prURL string
-	var createdPRNum int
-	for _, line := range strings.Split(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "/pull/") {
-			prURL = line
-			parts := strings.Split(line, "/")
-			if len(parts) > 0 {
-				if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
-					createdPRNum = n
-					break
-				}
-			}
-		}
-	}
+	prURL, createdPRNum := factorysandbox.PRFromAgentOutput(buf.String())
 
 	if createdPRNum > 0 {
 		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, createdPRNum)

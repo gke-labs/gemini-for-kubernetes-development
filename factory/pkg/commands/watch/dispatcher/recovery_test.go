@@ -76,6 +76,11 @@ func TestRecover_AdoptsRunningTaskAndCompletesIt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tempDir, "processed", "task-issue-100.yaml")); err != nil {
 		t.Errorf("expected the adopted task file in processed: %v", err)
 	}
+	// The factory process that would have aliased the sandbox to the PR the
+	// fix opened died with the previous watcher (fix-k8s-config-connector-13652).
+	if got := sandboxes.aliasedSandboxes(); len(got) != 1 || got[0] != "sandbox" {
+		t.Errorf("aliased sandboxes = %v, want [sandbox]", got)
+	}
 }
 
 func TestRecover_AdoptedTaskFailureIsRecorded(t *testing.T) {
@@ -104,6 +109,9 @@ func TestRecover_AdoptedTaskFailureIsRecorded(t *testing.T) {
 	}
 	if d.sandboxLocks.IsBusy("sandbox") {
 		t.Error("expected the sandbox lease to be released after the adopted task failed")
+	}
+	if got := sandboxes.aliasedSandboxes(); len(got) != 0 {
+		t.Errorf("aliased sandboxes = %v after a failed task, want none", got)
 	}
 }
 
@@ -384,6 +392,9 @@ func TestRecover_AdoptsRunningChoreTaskAndSuspendsSandboxOnCompletion(t *testing
 	suspended := sandboxes.suspendedSandboxes()
 	if len(suspended) != 1 || suspended[0] != "sandbox" {
 		t.Errorf("expected sandbox to be suspended after adopted chore completion, got %v", suspended)
+	}
+	if got := sandboxes.aliasedSandboxes(); len(got) != 1 || got[0] != "sandbox" {
+		t.Errorf("aliased sandboxes = %v, want [sandbox]", got)
 	}
 }
 

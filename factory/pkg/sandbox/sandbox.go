@@ -428,6 +428,22 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
+// PRFromAgentOutput returns the pull request a task's agent-output.txt names:
+// the first line holding a /pull/<N> URL. It returns 0 when there is none.
+func PRFromAgentOutput(output string) (string, int) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "/pull/") {
+			continue
+		}
+		parts := strings.Split(line, "/")
+		if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil && n > 0 {
+			return line, n
+		}
+	}
+	return "", 0
+}
+
 func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int, prURL string) error {
 	unstructObj, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
