@@ -42,6 +42,23 @@ function ensureDevNull {
 }
 ensureDevNull
 
+# removeGitHubURLRewrites <location> removes every url.<base>.insteadOf
+# rewrite of https://github.com/ from one git config: --global, --local or
+# -f <file>. The section names carry tokens, so it runs with xtrace off.
+function removeGitHubURLRewrites {
+    local trace=0
+    case "$-" in *x*) trace=1 ;; esac
+    set +x
+    local key
+    while read -r key; do
+        [ -n "${key}" ] || continue
+        git config "$@" --remove-section "${key%.insteadof}" 2>/dev/null || true
+    done < <(git config "$@" --get-regexp '^url\..*\.insteadof$' '^https://github\.com/$' 2>/dev/null | cut -d' ' -f1)
+    if [ "$trace" = 1 ]; then
+        set -x
+    fi
+}
+
 # setGitHubURLRewrite <user> makes <user>'s credentials (GITHUB_USER_TOKEN)
 # the only global url.<base>.insteadOf rewrite of https://github.com/.
 # Because the credentials are in the URL, git never asks a credential
@@ -64,6 +81,8 @@ ensureDevNull
 #
 # With no token, no rewrite is written: a passwordless one can't
 # authenticate and would hide a GH_TOKEN that gh's helper could use.
+#
+# The engine never sees this rewrite (engineGitConfigFile).
 function setGitHubURLRewrite {
     # The section names carry tokens; keep them out of a set -x trace.
     local trace=0
@@ -72,11 +91,7 @@ function setGitHubURLRewrite {
 
     local user="$1"
 
-    local key
-    while read -r key; do
-        [ -n "${key}" ] || continue
-        git config --global --remove-section "${key%.insteadof}" 2>/dev/null || true
-    done < <(git config --global --get-regexp '^url\..*\.insteadof$' '^https://github\.com/$' 2>/dev/null | cut -d' ' -f1)
+    removeGitHubURLRewrites --global
 
     if [ -n "${GITHUB_USER_TOKEN}" ]; then
         git config --global url."https://${user}:${GITHUB_USER_TOKEN}@github.com/".insteadOf "https://github.com/"
@@ -143,37 +158,108 @@ EOF
     find /workspaces -maxdepth 4 -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
 }
 
-# engineGitConfig points the engine's git back at the global config. gemini-cli
-# (0.62+) runs every shell command with GIT_CONFIG_GLOBAL=/dev/null and its
-# own overrides appended as GIT_CONFIG_KEY_n, so the identity and the
-# github.com credential rewrite setupGit wrote are gone: pushes fail with
-# "could not read Username", and agents improvised by printing the
-# environment and config, pushing with the token in the URL, and running
-# `git config --global` (see ensureDevNull). gemini keeps the GIT_CONFIG_*
-# it inherits and appends its overrides after them, so an include.path
-# here brings the file back while its overrides (credential.helper,
-# core.hooksPath, ...) still win. Through an include the token stays in the
-# file rather than in the engine's environment.
-function engineGitConfig {
+# engineGitConfigFile writes the global git config the engine gets and prints
+# its path: setupGit's, without the github.com rewrite. That rewrite carries
+# the token in its section name, and agents print their git config when git
+# misbehaves — one ran `git config --list` and put the token in the recorded
+# trace (fix-k8s-config-connector-13652). Without it the engine's git
+# authenticates through gh's credential helper, which setupGit configured
+# too and which reads the token from ~/.config/gh/hosts.yml.
+function engineGitConfigFile {
     # The script's own global config, not the /dev/null gemini sets for its
     # shells later. If the script itself runs without one there is nothing
-    # to bring back.
+    # to hand on.
     local global="${GIT_CONFIG_GLOBAL:-${USER_HOME}/.gitconfig}"
+    local engine="${USER_HOME}/.config/factory/engine.gitconfig"
     if [ ! -f "${global}" ]; then
-        return 0
+        return 1
     fi
+    mkdir -p "$(dirname "${engine}")"
+    cp "${global}" "${engine}"
+    removeGitHubURLRewrites -f "${engine}"
+    echo "${engine}"
+}
+
+# engineGitGlobal gives claude and agy the engine's global config.
+function engineGitGlobal {
+    local config
+    config="$(engineGitConfigFile)" || return 0
+    export GIT_CONFIG_GLOBAL="${config}"
+}
+
+# engineGitConfig does the same for gemini. gemini-cli (0.62+) runs every
+# shell command with GIT_CONFIG_GLOBAL=/dev/null and its own overrides
+# appended as GIT_CONFIG_KEY_n, so the identity and credentials setupGit
+# wrote are gone: pushes fail with "could not read Username", and agents
+# improvised by printing the environment and config, pushing with the token
+# in the URL, and running `git config --global` (see ensureDevNull). gemini
+# keeps the GIT_CONFIG_* it inherits and appends its overrides after them,
+# so an include.path here brings the config back while its overrides
+# (core.hooksPath, ...) still win.
+#
+# One of them, credential.helper="", empties the helper list the include
+# brought, so gh's helper is named again in GIT_CONFIG_PARAMETERS — git's
+# `-c`, read after every GIT_CONFIG_KEY_n and passed through by gemini.
+# Another, diff.external="", breaks every plain `git diff`; engineGitShim
+# takes that one out.
+function engineGitConfig {
+    local config gh
+    config="$(engineGitConfigFile)" || return 0
     local n="${GIT_CONFIG_COUNT:-0}"
     export "GIT_CONFIG_KEY_${n}=include.path"
-    export "GIT_CONFIG_VALUE_${n}=${global}"
+    export "GIT_CONFIG_VALUE_${n}=${config}"
     export GIT_CONFIG_COUNT=$((n + 1))
+    if gh="$(command -v gh)"; then
+        export GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:+${GIT_CONFIG_PARAMETERS} }'credential.https://github.com.helper'='!${gh} auth git-credential'"
+    fi
+    engineGitShim
+}
+
+# engineGitShim puts a git in front of the real one, for gemini's shells, that
+# drops gemini's diff.external="" override. git runs an empty external diff
+# command instead of ignoring it, so every plain `git diff` fails with
+# "external diff died" — repository scripts that check `git diff` with it —
+# and no config value switches the external diff back off (true makes every
+# diff empty). Agents that hit it went on to print their environment and
+# config looking for the cause.
+function engineGitShim {
+    local dir="${USER_HOME}/.config/factory/engine-bin"
+    local real
+    real="$(type -ap git | grep -v "^${dir}/" | head -n 1)"
+    if [ -z "${real}" ]; then
+        return 0
+    fi
+    mkdir -p "${dir}"
+    cat > "${dir}/git" <<EOF
+#!/bin/bash
+# Written by factory (lib.sh engineGitShim): drops gemini-cli's empty
+# diff.external override, then runs ${real}.
+if [ -n "\${GIT_CONFIG_COUNT:-}" ]; then
+    keys=() values=()
+    for ((i = 0; i < GIT_CONFIG_COUNT; i++)); do
+        k="GIT_CONFIG_KEY_\${i}" v="GIT_CONFIG_VALUE_\${i}"
+        if [ "\${!k}" != diff.external ] || [ -n "\${!v}" ]; then
+            keys+=("\${!k}") values+=("\${!v}")
+        fi
+        unset "\${k}" "\${v}"
+    done
+    for i in "\${!keys[@]}"; do
+        export "GIT_CONFIG_KEY_\${i}=\${keys[i]}" "GIT_CONFIG_VALUE_\${i}=\${values[i]}"
+    done
+    export GIT_CONFIG_COUNT="\${#keys[@]}"
+fi
+exec "${real}" "\$@"
+EOF
+    chmod +x "${dir}/git"
+    export PATH="${dir}:${PATH}"
 }
 
 # dropGitHubTokens takes the GitHub tokens out of the engine's environment.
 # The engine prints whatever its commands print into a recorded trace, and
 # agents have run `env` (k8s-config-connector#13619). Nothing in the engine
-# needs them: git authenticates through the global config's github.com
-# rewrite (engineGitConfig) and gh through ~/.config/gh/hosts.yml, both
-# written by setupGit. The script keeps them for its own steps.
+# needs them: git and gh both authenticate through ~/.config/gh/hosts.yml,
+# written by setupGit (git through gh's credential helper, see
+# engineGitConfigFile). The script keeps them for its own steps.
 function dropGitHubTokens {
     unset GITHUB_TOKEN GH_TOKEN GITHUB_USER_TOKEN GITHUB_BOT_TOKEN GITHUB_BOT_MANUAL_PAT GITHUB_BOT_OAUTH_PAT MANUAL_PAT OAUTH_PAT
 }
@@ -203,11 +289,13 @@ function ensureForkRemote {
 }
 
 # originIsForkOf <owner>: origin's URL names <owner>'s repository. GitHub
-# owners are case-insensitive.
+# owners are case-insensitive. The URL is read as configured: `git remote
+# get-url` applies setGitHubURLRewrite's rewrite, which carries the token,
+# and the tasks run under set -x.
 function originIsForkOf {
     local owner url
     owner="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-    url="$(cd "/workspaces/${REPO_NAME}" && git remote get-url origin 2>/dev/null)" || return 1
+    url="$(cd "/workspaces/${REPO_NAME}" && git config --get remote.origin.url 2>/dev/null)" || return 1
     url="$(printf '%s' "${url}" | tr '[:upper:]' '[:lower:]')"
     case "${url}" in
         *github.com/"${owner}"/*|*github.com:"${owner}"/*) return 0 ;;
@@ -235,17 +323,7 @@ function resetRepoGitConfig {
         for key in diff.external core.editor sequence.editor core.pager core.fsmonitor core.sshCommand core.askPass credential.helper; do
             git config --local --unset-all "${key}" 2>/dev/null || true
         done
-        # The section names can carry tokens; keep them out of a set -x trace.
-        local trace=0
-        case "$-" in *x*) trace=1 ;; esac
-        set +x
-        while read -r key; do
-            [ -n "${key}" ] || continue
-            git config --local --remove-section "${key%.insteadof}" 2>/dev/null || true
-        done < <(git config --local --get-regexp '^url\..*\.insteadof$' '^https://github\.com/$' 2>/dev/null | cut -d' ' -f1)
-        if [ "$trace" = 1 ]; then
-            set -x
-        fi
+        removeGitHubURLRewrites --local
         git config core.hooksPath /dev/null
     )
 }
@@ -754,7 +832,7 @@ function runEngine {
             # Claude Code refuses --dangerously-skip-permissions as root
             # unless IS_SANDBOX=1 declares the disposable-container
             # context — which this pod is (same trust model as --yolo).
-            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && dropGitHubTokens && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && engineGitGlobal && dropGitHubTokens && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
                 SUCCESS=true
             fi
             ;;
@@ -780,7 +858,7 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 AGY_ARGS+=("--continue")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && dropGitHubTokens && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && engineGitGlobal && dropGitHubTokens && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
                 SUCCESS=true
             fi
             ;;

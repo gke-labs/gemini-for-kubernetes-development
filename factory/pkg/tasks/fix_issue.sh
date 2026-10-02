@@ -18,6 +18,8 @@ set -x
 # - BRANCH_NAME
 # - MODELS
 
+# The token must not reach the xtrace (execution.log).
+{ set +x; } 2>/dev/null
 export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
 if [ -z "$GITHUB_USER_TOKEN" ]; then
     # Try other common names
@@ -29,6 +31,7 @@ if [ -n "${GITHUB_BOT_LOGIN}" ]; then
         GITHUB_USER_TOKEN="${GITHUB_BOT_TOKEN:-${GITHUB_BOT_MANUAL_PAT:-${GITHUB_BOT_OAUTH_PAT}}}"
     fi
 fi
+set -x
 
 function setupGitRepos {
     echo "Running setupGitRepos..."

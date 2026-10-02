@@ -372,46 +372,95 @@ sleep() { :; }
 	return string(out), repo, err
 }
 
-// TestEngineGitConfig pins the fix for gemini-cli 0.62+, which runs every
-// shell command with GIT_CONFIG_GLOBAL=/dev/null and its own overrides
-// appended: without the include, the identity and the github.com
-// credential rewrite were gone and pushes failed with "could not read
-// Username" (k8s-config-connector#13619).
-func TestEngineGitConfig(t *testing.T) {
-	out, _, err := runLib(t, []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=foo.inherited", "GIT_CONFIG_VALUE_0=kept"}, `
+// engineGitSetup is what setupGit leaves behind, with a gh stub that answers
+// `gh auth git-credential get` the way gh does from hosts.yml.
+const engineGitSetup = `
+mkdir -p "$HOME/bin" && cat > "$HOME/bin/gh" <<'STUB'
+#!/bin/bash
+[ "$1 $2 $3" = "auth git-credential get" ] && printf 'username=coder-bot\npassword=HOSTS_YML_TOKEN\n'
+STUB
+chmod +x "$HOME/bin/gh"
 git config --global user.name "coder bot"
 git config --global core.hooksPath /dev/null
+git config --global credential.https://github.com.helper ""
+git config --global --add credential.https://github.com.helper "!$HOME/bin/gh auth git-credential"
 export GITHUB_USER_TOKEN=CODER_TOKEN
 setGitHubURLRewrite coder-bot
-unset GITHUB_USER_TOKEN`, `
+unset GITHUB_USER_TOKEN
+builtin cd "$REPO_DIR"
+echo one > f && git add f && git -c user.email=x@x commit -qm one && echo two > f`
+
+// engineGitReport prints what the engine's git sees.
+const engineGitReport = `
+echo "RESOLVED=$(git ls-remote --get-url https://github.com/owner/repo.git)"
+echo "NAME=$(git config user.name)"
+echo "CREDENTIAL=$(printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>&1 | grep password)"
+echo "LISTED_TOKENS=$(git config --list | grep -c CODER_TOKEN)"
+echo "ENV_TOKENS=$(env | grep -c CODER_TOKEN)"`
+
+// TestEngineGitConfig pins gemini-cli 0.62+'s engine git: every shell
+// command runs with GIT_CONFIG_GLOBAL=/dev/null and gemini's overrides
+// appended. Without the include the identity and credentials were gone and
+// pushes failed with "could not read Username" (k8s-config-connector#13619);
+// with the whole global config included, `git config --list` printed the
+// token from the github.com rewrite into the trace
+// (fix-k8s-config-connector-13652); and gemini's diff.external="" broke
+// every plain `git diff`.
+func TestEngineGitConfig(t *testing.T) {
+	out, _, err := runLib(t, []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=foo.inherited", "GIT_CONFIG_VALUE_0=kept"}, engineGitSetup, `
 engineGitConfig
 # What gemini-cli does to every shell command it runs.
 n=$GIT_CONFIG_COUNT
 export GIT_CONFIG_GLOBAL=/dev/null
 export "GIT_CONFIG_KEY_${n}=credential.helper" "GIT_CONFIG_VALUE_${n}="
 export "GIT_CONFIG_KEY_$((n+1))=core.hooksPath" "GIT_CONFIG_VALUE_$((n+1))="
-export GIT_CONFIG_COUNT=$((n+2))
-echo "RESOLVED=$(git ls-remote --get-url https://github.com/owner/repo.git)"
-echo "NAME=$(git config user.name)"
+export "GIT_CONFIG_KEY_$((n+2))=diff.external" "GIT_CONFIG_VALUE_$((n+2))="
+export GIT_CONFIG_COUNT=$((n+3))
+`+engineGitReport+`
 echo "INHERITED=$(git config foo.inherited)"
 echo "HOOKS=[$(git config core.hooksPath)]"
-env | grep -c CODER_TOKEN || true`)
+echo "DIFF=$(git diff 2>&1 | grep -e '^+two' -e 'external diff')"`)
 	if err != nil {
 		t.Fatalf("harness failed: %v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"RESOLVED=https://coder-bot:CODER_TOKEN@github.com/owner/repo.git",
+		"RESOLVED=https://github.com/owner/repo.git",
 		"NAME=coder bot",
+		"CREDENTIAL=password=HOSTS_YML_TOKEN",
+		"LISTED_TOKENS=0",
+		"ENV_TOKENS=0",
 		"INHERITED=kept",
-		// gemini's own overrides come after the include and still win.
+		// gemini's other overrides come after the include and still win.
 		"HOOKS=[]",
+		"DIFF=+two",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("want %q in:\n%s", want, out)
 		}
 	}
-	if lines := strings.Split(strings.TrimSpace(out), "\n"); lines[len(lines)-1] != "0" {
-		t.Errorf("the token reached the engine's environment:\n%s", out)
+}
+
+// TestEngineGitGlobal pins the same for claude and agy, which leave git's
+// config alone: the global config they read must not carry the token.
+func TestEngineGitGlobal(t *testing.T) {
+	out, _, err := runLib(t, nil, engineGitSetup, `
+echo "SCRIPT_RESOLVED=$(git ls-remote --get-url https://github.com/owner/repo.git)"
+engineGitGlobal
+`+engineGitReport)
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		// The script's own git keeps the rewrite.
+		"SCRIPT_RESOLVED=https://coder-bot:CODER_TOKEN@github.com/owner/repo.git",
+		"RESOLVED=https://github.com/owner/repo.git",
+		"NAME=coder bot",
+		"CREDENTIAL=password=HOSTS_YML_TOKEN",
+		"LISTED_TOKENS=0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
 	}
 }
 
@@ -454,6 +503,20 @@ echo 99 > "$HOME/fails"`, "ensureForkRemote\necho REACHED")
 		}
 		if !strings.Contains(out, "stopping rather than pushing to the upstream repository") {
 			t.Errorf("missing the reason:\n%s", out)
+		}
+	})
+
+	t.Run("no token in the trace", func(t *testing.T) {
+		// git remote get-url applies the token-bearing github.com rewrite,
+		// and fix_issue.sh runs under set -x.
+		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
+git remote set-url origin https://github.com/coder-bot/repo.git
+GITHUB_USER_TOKEN=CODER_TOKEN setGitHubURLRewrite coder-bot`, "set -x\nensureForkRemote\nset +x")
+		if err != nil {
+			t.Fatalf("ensureForkRemote failed: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "CODER_TOKEN") {
+			t.Errorf("token leaked into the xtrace:\n%s", out)
 		}
 	})
 
@@ -528,12 +591,14 @@ env > "$HOME/$(basename "$0").env"
 echo '{"response":"ok","result":"ok","status":"SUCCESS"}'
 STUB
 chmod +x "$HOME/bin/$e"
-done`
+done
+git config --global user.name "coder bot"`
 	out, _, err := runLib(t, env, stubs, `
 for engine in gemini claude antigravity; do ENGINE=$engine runEngine; done
 for e in gemini claude agy; do
   echo "$e TOKENS=$(grep -c SECRET_ "$HOME/$e.env")"
   echo "$e KEY=$(grep -c API_KEY_VALUE "$HOME/$e.env")"
+  echo "$e ENGINE_GITCONFIG=$(grep -c 'engine.gitconfig' "$HOME/$e.env")"
 done
 echo "SCRIPT_KEPT=${GITHUB_USER_TOKEN}"`)
 	if err != nil {
@@ -545,6 +610,11 @@ echo "SCRIPT_KEPT=${GITHUB_USER_TOKEN}"`)
 		}
 		if strings.Contains(out, e+" KEY=0") {
 			t.Errorf("%s lost its API key:\n%s", e, out)
+		}
+		// The global config without the token: GIT_CONFIG_GLOBAL for
+		// claude and agy, an include for gemini.
+		if strings.Contains(out, e+" ENGINE_GITCONFIG=0") {
+			t.Errorf("%s did not get the engine's git config:\n%s", e, out)
 		}
 	}
 	if !strings.Contains(out, "SCRIPT_KEPT=SECRET_GITHUB_USER_TOKEN") {
