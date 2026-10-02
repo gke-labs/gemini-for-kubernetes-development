@@ -508,23 +508,46 @@ set +x`)
 	}
 }
 
-// TestPromptsCarryGitRules: every prompt whose agent touches git gets the
-// shared credential rules.
-func TestPromptsCarryGitRules(t *testing.T) {
-	for _, name := range []string{"fix_issue.txt", "address_feedback.txt", "investigate_failures.txt", "iterate.txt", "run_agent.txt"} {
-		raw, err := promptFS.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
+// TestEngineEnvHasNoGitHubTokens pins that no engine inherits a GitHub
+// token: agents print their environment into the recorded trace, and one
+// did (k8s-config-connector#13619). The API key the engine needs stays.
+func TestEngineEnvHasNoGitHubTokens(t *testing.T) {
+	tokenVars := []string{"GITHUB_TOKEN", "GH_TOKEN", "GITHUB_USER_TOKEN", "GITHUB_BOT_TOKEN", "GITHUB_BOT_MANUAL_PAT", "GITHUB_BOT_OAUTH_PAT", "MANUAL_PAT", "OAUTH_PAT"}
+	env := []string{"MODELS=m", "GEMINI_API_KEY=API_KEY_VALUE", "ANTHROPIC_API_KEY=API_KEY_VALUE"}
+	for _, v := range tokenVars {
+		env = append(env, v+"=SECRET_"+v)
+	}
+	// Each stub dumps its environment, then answers like a successful run.
+	stubs := `mkdir -p "$HOME/bin" "$HOME/task"
+printf 'prompt' > "$HOME/task/agent-prompt.txt"
+export PROMPT_FILE="$HOME/task/agent-prompt.txt"
+for e in gemini claude agy; do
+cat > "$HOME/bin/$e" <<'STUB'
+#!/bin/bash
+env > "$HOME/$(basename "$0").env"
+echo '{"response":"ok","result":"ok","status":"SUCCESS"}'
+STUB
+chmod +x "$HOME/bin/$e"
+done`
+	out, _, err := runLib(t, env, stubs, `
+for engine in gemini claude antigravity; do ENGINE=$engine runEngine; done
+for e in gemini claude agy; do
+  echo "$e TOKENS=$(grep -c SECRET_ "$HOME/$e.env")"
+  echo "$e KEY=$(grep -c API_KEY_VALUE "$HOME/$e.env")"
+done
+echo "SCRIPT_KEPT=${GITHUB_USER_TOKEN}"`)
+	if err != nil {
+		t.Fatalf("harness failed: %v\n%s", err, out)
+	}
+	for _, e := range []string{"gemini", "claude", "agy"} {
+		if !strings.Contains(out, e+" TOKENS=0") {
+			t.Errorf("%s inherited a GitHub token:\n%s", e, out)
 		}
-		if !strings.Contains(string(raw), `{{ template "gitRules" }}`) {
-			t.Errorf("%s does not include the gitRules block", name)
+		if strings.Contains(out, e+" KEY=0") {
+			t.Errorf("%s lost its API key:\n%s", e, out)
 		}
-		tmpl, err := getPromptTemplate(name)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if tmpl.Lookup("gitRules") == nil {
-			t.Errorf("%s: gitRules is not defined", name)
-		}
+	}
+	if !strings.Contains(out, "SCRIPT_KEPT=SECRET_GITHUB_USER_TOKEN") {
+		t.Errorf("the script's own token was dropped too:\n%s", out)
 	}
 }

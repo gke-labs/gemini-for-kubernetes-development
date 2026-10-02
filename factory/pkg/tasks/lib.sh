@@ -168,6 +168,16 @@ function engineGitConfig {
     export GIT_CONFIG_COUNT=$((n + 1))
 }
 
+# dropGitHubTokens takes the GitHub tokens out of the engine's environment.
+# The engine prints whatever its commands print into a recorded trace, and
+# agents have run `env` (k8s-config-connector#13619). Nothing in the engine
+# needs them: git authenticates through the global config's github.com
+# rewrite (engineGitConfig) and gh through ~/.config/gh/hosts.yml, both
+# written by setupGit. The script keeps them for its own steps.
+function dropGitHubTokens {
+    unset GITHUB_TOKEN GH_TOKEN GITHUB_USER_TOKEN GITHUB_BOT_TOKEN GITHUB_BOT_MANUAL_PAT GITHUB_BOT_OAUTH_PAT MANUAL_PAT OAUTH_PAT
+}
+
 # ensureForkRemote makes "origin" the task identity's fork, with the original
 # repository as "upstream". A fork call that fails — GitHub answers 429 under
 # load — used to be ignored, leaving origin pointing at upstream, and the
@@ -744,7 +754,7 @@ function runEngine {
             # Claude Code refuses --dangerously-skip-permissions as root
             # unless IS_SANDBOX=1 declares the disposable-container
             # context — which this pod is (same trust model as --yolo).
-            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && dropGitHubTokens && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
                 SUCCESS=true
             fi
             ;;
@@ -770,7 +780,7 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 AGY_ARGS+=("--continue")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && dropGitHubTokens && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
                 SUCCESS=true
             fi
             ;;
@@ -781,7 +791,7 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 GEMINI_ARGS+=("--resume" "latest")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && engineGitConfig && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && engineGitConfig && dropGitHubTokens && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
                 SUCCESS=true
             fi
             ;;
