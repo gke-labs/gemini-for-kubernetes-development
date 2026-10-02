@@ -1,4 +1,4 @@
-module github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes
+module github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes
 
 go 1.26.3
 

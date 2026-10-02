@@ -20,46 +20,47 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes"
 	"github.com/spf13/cobra"
 )
 
-// ListOptions holds options for the list command.
-type ListOptions struct {
+// DeleteOptions holds options for the delete command.
+type DeleteOptions struct {
+	Name string
 }
 
-// InitDefaults initializes default values for ListOptions.
-func (o *ListOptions) InitDefaults() {
+// InitDefaults initializes default values for DeleteOptions.
+func (o *DeleteOptions) InitDefaults() {
 }
 
-// BuildListCommand builds the cobra command for listing agent sandboxes.
-func BuildListCommand() *cobra.Command {
-	var opt ListOptions
+// BuildDeleteCommand builds the cobra command for deleting an agent sandbox.
+func BuildDeleteCommand() *cobra.Command {
+	var opt DeleteOptions
 	opt.InitDefaults()
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List agent sandboxes",
+		Use:   "delete [name]",
+		Short: "Delete an agent sandbox",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return RunList(cmd.Context(), opt)
+			opt.Name = args[0]
+			return RunDelete(cmd.Context(), opt)
 		},
 	}
 	return cmd
 }
 
-// RunList executes the list logic.
-func RunList(ctx context.Context, opt ListOptions) error {
+// RunDelete executes the delete logic.
+func RunDelete(ctx context.Context, opt DeleteOptions) error {
 	client, err := agentsandboxes.NewClient()
 	if err != nil {
 		return err
 	}
-	sandboxes, err := client.List(ctx)
-	if err != nil {
+
+	if err := client.Delete(ctx, opt.Name); err != nil {
 		return err
 	}
 
-	for _, s := range sandboxes {
-		fmt.Printf("%s/%s\n", s.Namespace, s.Name)
-	}
+	fmt.Printf("Deleted sandbox: %s\n", opt.Name)
 	return nil
 }

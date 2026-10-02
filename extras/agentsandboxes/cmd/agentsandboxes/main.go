@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/commands"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes/pkg/commands"
 )
 
 func main() {

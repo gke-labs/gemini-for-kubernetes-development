@@ -2,10 +2,10 @@ go 1.26.3
 
 use (
 	.
-	./agentsandboxes
 	./dev/tools
+	./extras/agentsandboxes
+	./extras/container-registry
 	./factory
 	./overseer
 	./repo-agent
-	./services/container-registry
 )

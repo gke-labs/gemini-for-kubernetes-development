@@ -21,8 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
-	"github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes/pkg/threads"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes"
+	"github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes/pkg/threads"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/types"
 )

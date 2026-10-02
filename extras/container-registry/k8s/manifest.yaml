@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
       - name: registry
-        image: ko://services/container-registry/cmd/container-registry
+        image: ko://extras/container-registry/cmd/container-registry
         ports:
         - containerPort: 5000
         env:

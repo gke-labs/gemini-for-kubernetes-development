@@ -11,7 +11,7 @@ This package provides a Go client and tooling for managing agent sandboxes based
 ## Usage (Go Client)
 
 ```go
-import "github.com/gke-labs/gemini-for-kubernetes-development/agentsandboxes"
+import "github.com/gke-labs/gemini-for-kubernetes-development/extras/agentsandboxes"
 
 // Create a new sandbox
 sandbox, err := agentsandboxes.New("my-sandbox").
