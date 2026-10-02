@@ -70,6 +70,12 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 		files = append(files, inBase...)
 	}
 	if !found {
+		// A local-only run's records are the sandbox's: removing them is
+		// deleting the sandbox, which takes its teardown script with it.
+		if sb, _ := s.runSandboxFor(ctx, namespace, repo, instance); sb != "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "run " + instance + " is local-only: its records live in sandbox " + sb + ", and are removed by deleting that sandbox"})
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "instance records not found"})
 		return
 	}
@@ -283,6 +289,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		out["gcpProject"] = ""
 	}
 
+	instances := []gin.H{}
 	token, terr := s.memberToken(ctx, namespace)
 	if terr == nil {
 		gh := githubClientForToken(ctx, token)
@@ -294,7 +301,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		// runbook-deployments/<instance>/ with the procedure in a
 		// shared document — because those deployments are live and
 		// their teardown has to stay reachable until each is adopted.
-		instances := s.scanRunDirectories(ctx, gh, member, repo, ref)
+		instances = s.scanRunDirectories(ctx, gh, member, repo, ref)
 		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
 		out["instances"] = instances
 		// What a new run can start from, besides the runs above.
@@ -365,6 +372,31 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			sandboxes = append(sandboxes, row)
 		}
 		out["sandboxes"] = sandboxes
+
+		// A run the fork does not have may be local-only: read it from
+		// its sandbox. Only once the fork has been read — without it,
+		// every run would look local.
+		if terr == nil {
+			onFork := map[string]bool{}
+			for _, inst := range instances {
+				onFork[inst["name"].(string)] = true
+			}
+			added := false
+			for _, sb := range sandboxes {
+				run, _ := sb["instance"].(string)
+				if run == "" || onFork[run] {
+					continue
+				}
+				if row := s.readLocalRun(ctx, namespace, board.GetName(), sb["name"].(string), repo, run); row != nil {
+					instances = append(instances, row)
+					added = true
+				}
+			}
+			if added {
+				sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
+				out["instances"] = instances
+			}
+		}
 	}
 
 	// The run clicks: queued and running ones, and the failures.
@@ -548,8 +580,17 @@ func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member
 	sort.Slice(receipts, func(i, j int) bool {
 		return receipts[i]["name"].(string) > receipts[j]["name"].(string)
 	})
+	applyReceiptVerdicts(row, receipts, func(r gin.H) string {
+		return s.receiptVerdict(ctx, gh, member, repo, r["path"].(string), ref)
+	})
+	return row
+}
+
+// applyReceiptVerdicts sets the row's latestReceipt and deployed from
+// its receipts, newest first, reading each one's verdict with verdictOf.
+func applyReceiptVerdicts(row gin.H, receipts []gin.H, verdictOf func(gin.H) string) {
 	if len(receipts) == 0 {
-		return row
+		return
 	}
 
 	deployedDecided := false
@@ -557,7 +598,7 @@ func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member
 		if i >= receiptScanLimit {
 			break
 		}
-		verdict := s.receiptVerdict(ctx, gh, member, repo, r["path"].(string), ref)
+		verdict := verdictOf(r)
 		if verdict == "" {
 			continue
 		}
@@ -581,7 +622,6 @@ func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member
 	if _, ok := row["latestReceipt"]; !ok {
 		row["latestReceipt"] = receipts[0]
 	}
-	return row
 }
 
 // verdictWord takes the first token of a verdict line, so
@@ -625,6 +665,11 @@ func (s *Server) runTarget(ctx context.Context, gh *github.Client, member, repo,
 	if err != nil {
 		return 0, ""
 	}
+	return parseRunTarget(content)
+}
+
+// parseRunTarget reads target.env's content.
+func parseRunTarget(content string) (int, string) {
 	pr, sha := 0, ""
 	for _, line := range strings.Split(content, "\n") {
 		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
