@@ -3,6 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,5 +171,88 @@ func TestParseGitHubRepoURL(t *testing.T) {
 func TestResearchPortMatchesACPDDefault(t *testing.T) {
 	if researchACPDPort != 49984 {
 		t.Errorf("researchACPDPort = %d, want acpd's default 49984", researchACPDPort)
+	}
+}
+
+// runCheckoutScript runs researchCheckoutScript against a stand-in git
+// that records its arguments, and fails a clone when gitFails is set.
+func runCheckoutScript(t *testing.T, workspaces string, gitFails bool) (stdout, stderr, gitArgs string) {
+	t.Helper()
+	bin := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "git-args")
+	fakeGit := `#!/bin/sh
+printf '%s\n' "$*" >> "$GIT_ARGS_LOG"
+for a in "$@"; do
+  case "$a" in
+    clone)
+      if [ -n "$GIT_FAILS" ]; then
+        echo "fatal: could not read Username for 'https://github.com': No such device or address" >&2
+        exit 128
+      fi
+      mkdir -p "$REPO_NAME/.git"
+      exit 0 ;;
+    fetch) exit 0 ;;
+  esac
+done
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fakeGit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", researchCheckoutScript)
+	cmd.Env = []string{
+		"PATH=" + bin + ":/usr/bin:/bin",
+		"GIT_ARGS_LOG=" + argsLog,
+		"WORKSPACES=" + workspaces,
+		"REPO_NAME=granule",
+		"CLONE_URL=https://github.com/gke-labs/granule.git",
+	}
+	if gitFails {
+		cmd.Env = append(cmd.Env, "GIT_FAILS=1")
+	}
+	var out, errOut strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	_ = cmd.Run() // the outcome is read from the output, as in the sandbox
+	logged, _ := os.ReadFile(argsLog)
+	return out.String(), errOut.String(), string(logged)
+}
+
+// A private repository only clones if git is told where the token is:
+// the helper has to reach git on the command line, after an empty one
+// that drops anything inherited.
+func TestResearchCheckoutAuthenticatesThroughGh(t *testing.T) {
+	workspaces := t.TempDir()
+	stdout, stderr, gitArgs := runCheckoutScript(t, workspaces, false)
+	if err := checkoutOutcome(stdout, stderr); err != nil {
+		t.Fatalf("checkoutOutcome: %v", err)
+	}
+	want := "-c credential.helper= -c credential.helper=!gh auth git-credential clone https://github.com/gke-labs/granule.git"
+	if strings.TrimSpace(gitArgs) != want {
+		t.Errorf("git called with %q, want %q", strings.TrimSpace(gitArgs), want)
+	}
+	if _, err := os.Stat(filepath.Join(workspaces, "granule", ".git")); err != nil {
+		t.Errorf("clone did not land: %v", err)
+	}
+
+	// A second run finds the checkout and fetches, authenticated the same way.
+	stdout, stderr, gitArgs = runCheckoutScript(t, workspaces, false)
+	if err := checkoutOutcome(stdout, stderr); err != nil {
+		t.Fatalf("checkoutOutcome on refetch: %v", err)
+	}
+	if want := "-c credential.helper= -c credential.helper=!gh auth git-credential fetch origin"; strings.TrimSpace(gitArgs) != want {
+		t.Errorf("git called with %q, want %q", strings.TrimSpace(gitArgs), want)
+	}
+}
+
+// envd reports a command that exited non-zero as a success, so a failed
+// clone has to be caught from the output. This is what wrote a ready
+// receipt for a sandbox with no checkout in it.
+func TestResearchCheckoutFailureIsReported(t *testing.T) {
+	stdout, stderr, _ := runCheckoutScript(t, t.TempDir(), true)
+	err := checkoutOutcome(stdout, stderr)
+	if err == nil {
+		t.Fatal("a failed clone was reported as a checkout")
+	}
+	if !strings.Contains(err.Error(), "could not read Username") {
+		t.Errorf("error %q does not carry git's reason", err)
 	}
 }
