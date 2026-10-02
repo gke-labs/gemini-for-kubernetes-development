@@ -1001,3 +1001,22 @@ commitAndPushRun deploy`)
 		}
 	})
 }
+
+// Runs push research/runs to origin, so origin must be the member's
+// fork before anything is pushed — and before the engine spends its
+// time, since a run that cannot push has nowhere to put its work.
+func TestRunScriptRequiresTheForkBeforeTheEngine(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	body := s[strings.LastIndex(s, "\nsetupGitRepos\n"):]
+	fork, engine := strings.Index(body, "\nensureForkRemote\n"), strings.Index(body, "runEngine")
+	if fork < 0 {
+		t.Fatal("run.sh does not call ensureForkRemote after setupGitRepos")
+	}
+	if engine >= 0 && engine < fork {
+		t.Error("run.sh runs the engine before checking for the fork")
+	}
+}

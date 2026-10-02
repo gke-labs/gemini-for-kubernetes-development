@@ -484,6 +484,12 @@ function commitAndPushRun {
 trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
 setupGit
 setupGitRepos
+# Runs are pushed to research/runs on origin, and the UI reads them from
+# the member's fork. setupGitRepos ignores a failed fork, which left
+# origin on the upstream repository: the push then failed with a 403
+# after the engine had done all its work — or, for a member with write
+# access, would have put research/runs on the upstream repository.
+ensureForkRemote
 # HACK: Avoid git lock issues
 sleep 5
 checkoutDefaultBranch

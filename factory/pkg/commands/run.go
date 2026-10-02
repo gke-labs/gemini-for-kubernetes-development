@@ -243,6 +243,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
+		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
 		"PROMPT_FILE":                promptPath,

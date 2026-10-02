@@ -269,17 +269,29 @@ function dropGitHubTokens {
 # load — used to be ignored, leaving origin pointing at upstream, and the
 # agent then pushed its branch to the upstream repository. So the call is
 # retried, and the task stops if origin still isn't the fork afterwards.
+#
+# A fork the organisation forbids — private repositories whose policy keeps
+# forks out of personal accounts — answers 403 "due to a policy" every
+# time, so that stops at once instead of after three minutes of retries.
 function ensureForkRemote {
     local owner="${GITHUB_BOT_LOGIN:-${GITHUB_USER_ID}}"
-    local attempt
+    local attempt out
     for attempt in 1 2 3 4; do
         if originIsForkOf "${owner}"; then
             return 0
         fi
         echo "running gh repo fork --remote (attempt ${attempt})"
-        if (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote) && originIsForkOf "${owner}"; then
+        if out="$(cd "/workspaces/${REPO_NAME}" && gh repo fork --remote 2>&1)" && originIsForkOf "${owner}"; then
+            echo "${out}"
             return 0
         fi
+        echo "${out}" >&2
+        case "${out}" in
+            *"due to a policy"*)
+                echo "${REPO_OWNER}/${REPO_NAME} cannot be forked to ${owner}: the organisation's policy forbids it. This task pushes to ${owner}'s fork and never to the upstream repository, so it cannot run here." >&2
+                exit 1
+                ;;
+        esac
         if [ "${attempt}" -lt 4 ]; then
             sleep $((attempt * 30))
         fi
