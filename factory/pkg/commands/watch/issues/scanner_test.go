@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -454,6 +455,27 @@ func TestScanOnce_QueuesAssignedIssue(t *testing.T) {
 	s.ScanOnce(context.Background())
 	if _, ok := queue.enqueued["task-issue-7.yaml"]; ok {
 		t.Error("issue 7 was queued twice without having been updated in between")
+	}
+}
+
+// TestPublishOpenIssues_LeavesOutProcessedIssues pins that an issue the
+// watcher has worked on is not reported open once the sweep no longer sees it.
+// Reporting it open kept the sandbox reconciler from ever confirming it closed,
+// so the workflows linked to it were never nudged
+// (k8s-config-connector#13652 → #13244).
+func TestPublishOpenIssues_LeavesOutProcessedIssues(t *testing.T) {
+	s, queue, entities := newScanner(t, Config{}, Deps{})
+	queue.finish("task-issue-7.yaml", &api.QueueTask{
+		Type:        api.TypeIssueFix,
+		Number:      7,
+		Status:      api.StatusCompleted,
+		CompletedAt: time.Now().Add(-time.Hour),
+	})
+
+	s.publishOpenIssues([]*githubv39.Issue{{Number: githubv39.Int(9)}})
+
+	if want := []int{9}; !reflect.DeepEqual(entities.openIssues, want) {
+		t.Errorf("published open issues %v, want %v", entities.openIssues, want)
 	}
 }
 

@@ -297,19 +297,18 @@ func (s *Scanner) primeOpenPRs(ctx context.Context) {
 // entity cache. The sandbox reconciler uses it to skip sandboxes belonging to
 // live work instead of confirming every one of them against GitHub.
 //
-// Issues that have already been processed are treated as open: their sandbox
-// may still hold a workspace whose result has not been pushed yet, and the
-// reconciler confirms the state with GitHub before deleting anything anyway.
+// Only the issues the sweep saw open are published. An issue the watcher has
+// worked on carries the trigger label, so it is in the sweep while it is open
+// and drops out when it closes - which is what lets the reconciler confirm it
+// closed, nudge the workflows linked to it and collect its sandbox. Padding
+// the set with every processed issue kept those issues "open" forever
+// (k8s-config-connector#13652, closed by a merged PR, never nudged #13244).
 func (s *Scanner) publishOpenIssues(openIssues []*githubv39.Issue) {
-	processed := s.processedIssues()
-	nums := make([]int, 0, len(openIssues)+len(processed))
+	nums := make([]int, 0, len(openIssues))
 	for _, iss := range openIssues {
 		if num := iss.GetNumber(); num > 0 {
 			nums = append(nums, num)
 		}
-	}
-	for num := range processed {
-		nums = append(nums, num)
 	}
 	s.entities.SetOpenIssueNumbers(nums)
 }
