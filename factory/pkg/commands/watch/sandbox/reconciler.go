@@ -469,10 +469,10 @@ func (r *Reconciler) cleanupClosedIssueSandboxes(ctx context.Context, items []un
 			continue
 		}
 
-		// Fast-path: skip issues that the latest scan reported as open, unless
+		// Fast-path: skip issues that the latest sweep reported as open, unless
 		// the sandbox also served a pull request that has since left the open
-		// set. The issue cache keeps every issue the watcher has worked on, so
-		// a merge closing the issue would otherwise never be noticed here.
+		// set. The issue set is only republished every sweep, so the PR check
+		// notices a merge that closed the issue sooner.
 		if r.entities != nil && r.entities.IsOpenIssue(num) && !r.servedClosedPR(item) {
 			continue
 		}
