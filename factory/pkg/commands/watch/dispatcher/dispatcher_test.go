@@ -32,6 +32,7 @@ type fakeSandboxService struct {
 	countErr     error
 	deleted      []string
 	suspended    []string
+	aliased      []string
 }
 
 func newFakeSandboxService() *fakeSandboxService {
@@ -88,6 +89,19 @@ func (f *fakeSandboxService) Suspend(_ context.Context, sandboxName string) erro
 	defer f.mu.Unlock()
 	f.suspended = append(f.suspended, sandboxName)
 	return nil
+}
+
+func (f *fakeSandboxService) AliasToTaskPR(_ context.Context, sandboxName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.aliased = append(f.aliased, sandboxName)
+	return nil
+}
+
+func (f *fakeSandboxService) aliasedSandboxes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.aliased...)
 }
 
 func (f *fakeSandboxService) suspendedSandboxes() []string {

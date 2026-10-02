@@ -60,6 +60,9 @@ type SandboxService interface {
 	Delete(ctx context.Context, sandboxName string) error
 	// Suspend scales a sandbox down to zero replicas.
 	Suspend(ctx context.Context, sandboxName string) error
+	// AliasToTaskPR labels a sandbox with the pull request its latest task
+	// opened, if any.
+	AliasToTaskPR(ctx context.Context, sandboxName string) error
 }
 
 // TaskCoordinator abstracts the GitHub-side interactions that surround the

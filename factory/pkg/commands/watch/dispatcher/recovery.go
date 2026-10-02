@@ -213,6 +213,13 @@ func (d *Dispatcher) monitorAdoptedTask(ctx context.Context, taskFilename string
 			// The task has finished, one way or the other.
 			if state == sandboxStateCompleted {
 				klog.Infof("Adopted task %s in sandbox %s completed successfully.", taskFilename, sandboxName)
+				// The factory process that would have recorded the PR the task
+				// opened died with the previous watcher. Before any suspend.
+				if opensPR(task.Type) {
+					if err := d.sandboxes.AliasToTaskPR(monitorCtx, sandboxName); err != nil {
+						klog.Warningf("Failed to alias sandbox %s to the PR adopted task %s opened: %v", sandboxName, taskFilename, err)
+					}
+				}
 				_ = d.queue.CompleteTask(taskFilename, task)
 				d.coordinator.NotifyTaskFinished(monitorCtx, task, nil)
 			} else {
@@ -276,4 +283,10 @@ func (d *Dispatcher) sandboxProbeRetryDelay() time.Duration {
 		return d.cfg.SandboxProbeRetryDelay
 	}
 	return DefaultSandboxProbeRetryDelay
+}
+
+// opensPR reports whether a task of this type can open a pull request from its
+// sandbox. PR tasks run in a sandbox already labelled with their PR.
+func opensPR(t api.TaskType) bool {
+	return t == api.TypeIssueFix || t == api.TypeAgentChore
 }

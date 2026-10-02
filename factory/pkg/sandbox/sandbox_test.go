@@ -406,3 +406,23 @@ func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
 		t.Error("the patch dropped an annotation it did not own")
 	}
 }
+
+func TestPRFromAgentOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, output, wantURL string
+		wantNum               int
+	}{
+		{"fix task", "https://github.com/o/r/pull/13655\n", "https://github.com/o/r/pull/13655", 13655},
+		{"first PR line wins", "Agent output\n  https://github.com/o/r/pull/7  \nhttps://github.com/o/r/pull/8", "https://github.com/o/r/pull/7", 7},
+		{"no PR", "No changes detected.\n", "", 0},
+		{"not a number", "https://github.com/o/r/pull/7/files", "", 0},
+		{"empty", "", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url, num := sandbox.PRFromAgentOutput(tc.output)
+			if url != tc.wantURL || num != tc.wantNum {
+				t.Errorf("PRFromAgentOutput(%q) = %q, %d; want %q, %d", tc.output, url, num, tc.wantURL, tc.wantNum)
+			}
+		})
+	}
+}

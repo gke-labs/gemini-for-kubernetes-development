@@ -343,6 +343,35 @@ func (s *Service) probeTaskViaEnvd(ctx context.Context, name string, annotations
 	}
 }
 
+// AliasToTaskPR labels the sandbox with the pull request its latest task
+// opened, as named by the task's agent-output.txt.
+//
+// The factory process that runs a task does this when the task ends, but a
+// watcher restart kills that process and the task is adopted instead: without
+// this, the sandbox of a task that outlived a restart never learned its PR
+// (fix-k8s-config-connector-13652 and PR #13655).
+func (s *Service) AliasToTaskPR(ctx context.Context, name string) error {
+	if s.kube == nil {
+		return nil
+	}
+	client, err := envd.Connect(ctx, s.namespace, name)
+	if err != nil {
+		return fmt.Errorf("connecting to sandbox %s: %w", name, err)
+	}
+	defer client.Close()
+
+	var buf bytes.Buffer
+	if err := client.Exec(ctx, envd.BuildReadLatestTaskOutputCmd(envd.DefaultTasksDir), "/workspaces", nil, nil, &buf, nil); err != nil {
+		return fmt.Errorf("reading the latest task output in sandbox %s: %w", name, err)
+	}
+	prURL, prNum := factorysandbox.PRFromAgentOutput(buf.String())
+	if prNum == 0 {
+		return nil
+	}
+	klog.Infof("Aliasing sandbox %s to PR #%d opened by its adopted task.", name, prNum)
+	return factorysandbox.AliasSandboxToPR(ctx, s.kube, s.namespace, name, prNum, prURL)
+}
+
 // IsTaskCompleted reports whether the named sandbox has already completed a
 // task of the given type, which is how a recovered task is recognised as
 // finished after a watcher restart.

@@ -71,6 +71,16 @@ func BuildWriteExitCodeIfMissingCmd(exitCodeFile string, exitCode int) string {
 	return fmt.Sprintf("if [ ! -f %s ]; then echo %d > %s; fi", exitCodeFile, exitCode, exitCodeFile)
 }
 
+// BuildReadLatestTaskOutputCmd generates the shell script that prints the
+// agent-output.txt of the most recent task directory, or nothing.
+func BuildReadLatestTaskOutputCmd(tasksParentDir string) string {
+	return fmt.Sprintf(`task_dir=$(ls -td %s/* 2>/dev/null | head -1)
+if [ -n "$task_dir" ]; then
+	cat "$task_dir/agent-output.txt" 2>/dev/null
+fi
+true`, tasksParentDir)
+}
+
 // BuildCheckLatestTaskStatusCmd generates the shell script to check the status of the most recent task directory.
 func BuildCheckLatestTaskStatusCmd(tasksParentDir string) string {
 	return fmt.Sprintf(`task_dir=$(ls -td %s/* 2>/dev/null | head -1)
