@@ -7,8 +7,6 @@ spec:
   robotAccount: factorybot-robot
   chores:
     mode: disabled
-  review:
-    severityThreshold: HIGH
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest

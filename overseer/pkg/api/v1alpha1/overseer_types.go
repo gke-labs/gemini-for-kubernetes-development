@@ -59,28 +59,6 @@ type RepoSpec struct {
 	IssueMode string `json:"issueMode,omitempty"`
 }
 
-type ReviewSpec struct {
-	// Prompt is the prompt to use for the LLM. This can be a simple string or
-	// a Go template that will be populated with information about the pull
-	// request or issue.
-	Prompt string `json:"prompt,omitempty"`
-
-	// The maximum number of files to review in a PR.
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:default=150
-	MaxReviewFiles int `json:"maxReviewFiles"`
-
-	// IgnoreFiles specifies a list of glob patterns for files that should be ignored during review.
-	// +kubebuilder:validation:Optional
-	IgnoreFiles []string `json:"ignoreFiles,omitempty"`
-
-	// SeverityThreshold sets the minimum severity level for review comments to be posted.
-	// Comments below this threshold will be filtered out. Valid values: "LOW", "MEDIUM", "HIGH".
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum=LOW;MEDIUM;HIGH;CRITICAL
-	SeverityThreshold string `json:"severityThreshold,omitempty"`
-}
-
 // OverseerSpec defines the desired state of Overseer
 type OverseerSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -99,10 +77,6 @@ type OverseerSpec struct {
 	// Image to use for the development sandbox. If set, this overrides the devcontainer image.
 	// +kubebuilder:validation:Optional
 	Image string `json:"image,omitempty"`
-
-	// Issue prompt for issue handling
-	// +kubebuilder:validation:Optional
-	IssuePrompt string `json:"issuePrompt,omitempty"`
 
 	// WorkspaceDiskSize specifies the disk size for the workspace PVC.
 	// +kubebuilder:validation:Optional
@@ -133,10 +107,6 @@ type OverseerSpec struct {
 	// SandboxMemoryLimit specifies the memory limit for child sandboxes.
 	// +kubebuilder:validation:Optional
 	SandboxMemoryLimit string `json:"sandboxMemoryLimit,omitempty"`
-
-	// Review configuration for PRs
-	// +kubebuilder:validation:Optional
-	Review ReviewSpec `json:"review"`
 
 	// SandboxEvictionAge defines the age threshold for idle sandbox eviction (e.g. "7d", "24h").
 	// +kubebuilder:validation:Optional

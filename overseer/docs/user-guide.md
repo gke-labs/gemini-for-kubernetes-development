@@ -198,7 +198,7 @@ Rather than relying on a single bot account, tasks are routed to specialized per
 
 #### 6. Operational Modes (`repo` & `chores`)
 - **`issueMode` & `prMode`**: Enabled to permit automatic bug fixing and PR assistance.
-- **`reviewMode: disabled`**: Disables automated review comments on all incoming PRs (useful if you prefer human-only initial reviews).
+- **`reviewMode: disabled`**: Leaves PR review out of the optional Gemini orchestrator prompt (`enableGeminiOrchestrator`). `factory watch` does not read it yet: automated reviews run only on PRs that carry the `overseer/review` label (directly or on a parent issue), so leaving that label off keeps initial reviews human-only.
 - **`chores.mode: enabled`**: Instructs Overseer to run periodic maintenance routines defined in repository `.agents/*.md` workflows (such as dependency upgrades or automated release formatting).
 
 ---
