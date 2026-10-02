@@ -5,12 +5,8 @@ metadata:
 spec:
   repoURL: https://github.com/kubernetes-sigs/agent-sandbox
   robotAccount: factorybot-robot
-  maxActiveReviews: 3
-  maxActiveIssues: 3
   chores:
     mode: disabled
-  review:
-    severityThreshold: HIGH
   geminiAPIKeySecretName: gemini-vscode-tokens
   ephemeralStorage: 10Gi
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest

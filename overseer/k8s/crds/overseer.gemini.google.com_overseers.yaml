@@ -66,14 +66,6 @@ spec:
                 type: string
               image:
                 type: string
-              issuePrompt:
-                type: string
-              maxActiveIssues:
-                format: int32
-                type: integer
-              maxActiveReviews:
-                format: int32
-                type: integer
               minNumber:
                 format: int32
                 type: integer
@@ -108,25 +100,6 @@ spec:
                 type: object
               repoURL:
                 type: string
-              review:
-                properties:
-                  ignoreFiles:
-                    items:
-                      type: string
-                    type: array
-                  maxReviewFiles:
-                    default: 150
-                    type: integer
-                  prompt:
-                    type: string
-                  severityThreshold:
-                    enum:
-                    - LOW
-                    - MEDIUM
-                    - HIGH
-                    - CRITICAL
-                    type: string
-                type: object
               robotAccount:
                 type: string
               roles:

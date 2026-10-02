@@ -255,18 +255,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		}
 	}
 
-	if o.Spec.MaxActiveReviews != nil {
-		env = append(env, map[string]interface{}{
-			"name":  "MAX_ACTIVE_REVIEWS",
-			"value": fmt.Sprintf("%d", *o.Spec.MaxActiveReviews),
-		})
-	}
-	if o.Spec.MaxActiveIssues != nil {
-		env = append(env, map[string]interface{}{
-			"name":  "MAX_ACTIVE_ISSUES",
-			"value": fmt.Sprintf("%d", *o.Spec.MaxActiveIssues),
-		})
-	}
 	if o.Spec.SandboxEvictionAge != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "SANDBOX_EVICTION_AGE",

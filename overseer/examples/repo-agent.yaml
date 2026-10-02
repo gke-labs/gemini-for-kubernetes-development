@@ -5,8 +5,6 @@ metadata:
 spec:
   repoURL: https://github.com/gke-labs/gemini-for-kubernetes-development
   robotAccount: factorybot-robot
-  maxActiveReviews: 3
-  maxActiveIssues: 3
   chores:
     mode: disabled
   geminiAPIKeySecretName: gemini-vscode-tokens
