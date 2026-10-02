@@ -28,14 +28,6 @@ func getPromptTemplate(name string) (*template.Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Shared blocks: every prompt can {{ template "gitRules" }}.
-	shared, err := promptFS.ReadFile("git_rules.txt")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := t.Parse(string(shared)); err != nil {
-		return nil, err
-	}
 
 	templates[name] = t
 	return t, nil

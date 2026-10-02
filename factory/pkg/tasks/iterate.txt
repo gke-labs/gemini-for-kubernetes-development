@@ -17,5 +17,3 @@ Guidelines:
 6. **Cleaning up:** If you run build commands (like `make`, `go build`, `go test`), ensure you clean up any generated binaries or artifacts before committing. Use `make clean` if available, or manually remove them.
 7. Do not delete files unless explicitly asked.
 8. If the request is vague, make a reasonable attempt to fulfill it based on common practices.
-
-{{ template "gitRules" }}
