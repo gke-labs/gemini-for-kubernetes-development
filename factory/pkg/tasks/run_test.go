@@ -1005,18 +1005,48 @@ commitAndPushRun deploy`)
 // Runs push research/runs to origin, so origin must be the member's
 // fork before anything is pushed — and before the engine spends its
 // time, since a run that cannot push has nowhere to put its work.
-func TestRunScriptRequiresTheForkBeforeTheEngine(t *testing.T) {
+func TestRunScriptSetsUpTheForkBeforeTheEngine(t *testing.T) {
 	b, err := GetRunScript()
 	if err != nil {
 		t.Fatalf("GetRunScript: %v", err)
 	}
 	s := string(b)
 	body := s[strings.LastIndex(s, "\nsetupGitRepos\n"):]
-	fork, engine := strings.Index(body, "\nensureForkRemote\n"), strings.Index(body, "runEngine")
+	fork, engine := strings.Index(body, "\nsetupRunsRemote\n"), strings.Index(body, "runEngine")
 	if fork < 0 {
-		t.Fatal("run.sh does not call ensureForkRemote after setupGitRepos")
+		t.Fatal("run.sh does not call setupRunsRemote after setupGitRepos")
 	}
 	if engine >= 0 && engine < fork {
-		t.Error("run.sh runs the engine before checking for the fork")
+		t.Error("run.sh runs the engine before setting up the fork")
+	}
+}
+
+// A repository the organisation will not let the member fork runs
+// local-only: origin is still the upstream repository, so its push URL
+// must be unusable, the commit must not be pushed, and the next phase
+// must find the branch it left rather than rebuild it from the default
+// branch.
+func TestRunScriptLocalOnly(t *testing.T) {
+	b, err := GetRunScript()
+	if err != nil {
+		t.Fatalf("GetRunScript: %v", err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		"2) enterLocalOnly ;;",
+		`remote set-url --push origin "${LOCAL_ONLY_PUSH_URL}"`,
+		`if [ -z "${RUNS_LOCAL_ONLY}" ] && git fetch origin "${RUNS_BRANCH}"`,
+		`elif git show-ref --verify --quiet "refs/heads/${RUNS_BRANCH}"; then`,
+		`elif [ -n "${RUNS_LOCAL_ONLY}" ]; then`,
+		`"localOnly": %s`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("run.sh missing %q", want)
+		}
+	}
+	commit := s[strings.Index(s, "function commitAndPushRun"):]
+	local, push := strings.Index(commit, `elif [ -n "${RUNS_LOCAL_ONLY}" ]; then`), strings.Index(commit, `git push origin`)
+	if local < 0 || push < 0 || local > push {
+		t.Error("commitAndPushRun must branch off local-only runs before it pushes")
 	}
 }

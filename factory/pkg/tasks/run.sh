@@ -8,6 +8,11 @@ set -o pipefail
 # test results — all under docs-exploration/agent-runs/<name>/ on the
 # research/runs branch of the member's fork.
 #
+# A repository the member cannot fork — an organisation's policy keeps
+# forks of its private repositories out of personal accounts — runs
+# local-only: the same branch, committed in this sandbox and never
+# pushed anywhere. See enterLocalOnly.
+#
 # The difference from the runbook task this replaces is that nothing is
 # shared. One run reads and writes one directory, so there are no
 # siblings to hide, no source document to protect from edits, and no
@@ -52,11 +57,68 @@ fi
 RUNS_BRANCH="research/runs"
 RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
 
+# RUNS_LOCAL_ONLY is set when this run's records stay in the sandbox;
+# see enterLocalOnly.
+RUNS_LOCAL_ONLY=""
+
+# LOCAL_ONLY_PUSH_URL is what origin pushes to in a local-only run:
+# not a URL, so any push fails before it reaches the network.
+LOCAL_ONLY_PUSH_URL="local-only-run:never-push"
+
+# setupRunsRemote makes origin the member's fork, which is where runs
+# are pushed and where the UI reads them. setupGitRepos ignores a
+# failed fork, which left origin on the upstream repository: the push
+# then failed with a 403 after the engine had done all its work — or,
+# for a member with write access, would have put research/runs on the
+# upstream repository.
+function setupRunsRemote {
+    local rc=0
+    forkRemote || rc=$?
+    case "${rc}" in
+        0) return 0 ;;
+        2) enterLocalOnly ;;
+        *)
+            echo "origin is not ${GITHUB_USER_ID}'s fork of ${REPO_OWNER}/${REPO_NAME}; stopping rather than pushing to the upstream repository" >&2
+            exit 1
+            ;;
+    esac
+}
+
+# enterLocalOnly keeps the run's records in this sandbox when the
+# repository cannot be forked. Cloning only needs read access, and a
+# run's sandbox and its PVC outlive every phase — plan, deploy and
+# teardown all run here — so the branch can live on the PVC instead of
+# the fork. The cost is that the records are only as durable as the
+# PVC: deleting the sandbox deletes the teardown script with it.
+#
+# origin is still the upstream repository, so its push URL is replaced
+# with something that is not one: a push from this script, or from the
+# engine, fails instead of landing upstream. It is repository config,
+# which persists on the PVC and which resetRepoGitConfig leaves alone.
+# If a fork becomes possible later, `gh repo fork --remote` renames
+# this remote to upstream and the guard goes with it.
+function enterLocalOnly {
+    RUNS_LOCAL_ONLY=1
+    git -C "/workspaces/${REPO_NAME}" remote set-url --push origin "${LOCAL_ONLY_PUSH_URL}"
+    echo "${REPO_OWNER}/${REPO_NAME} cannot be forked to ${GITHUB_USER_ID} (the organisation's policy forbids it)."
+    echo "This run is local-only: ${RUNS_BRANCH} is committed in this sandbox and never pushed."
+    echo "Deleting the sandbox deletes the run's records, its teardown script included."
+}
+
 function ensureRunsBranch {
     echo "Ensuring runs branch ${RUNS_BRANCH}..."
     pushd "/workspaces/${REPO_NAME}" > /dev/null
-    if git fetch origin "${RUNS_BRANCH}" 2>/dev/null; then
+    # A local-only run's origin is the upstream repository, whose
+    # research/runs — if it has one — is not this member's.
+    #
+    # Without a branch on the remote, the local one is the record: a
+    # local-only run's, or a plan whose push failed. Recreating it from
+    # the default branch, which checkoutDefaultBranch just checked out,
+    # dropped those commits.
+    if [ -z "${RUNS_LOCAL_ONLY}" ] && git fetch origin "${RUNS_BRANCH}" 2>/dev/null; then
         git checkout -B "${RUNS_BRANCH}" "origin/${RUNS_BRANCH}"
+    elif git show-ref --verify --quiet "refs/heads/${RUNS_BRANCH}"; then
+        git checkout "${RUNS_BRANCH}"
     else
         git checkout -B "${RUNS_BRANCH}"
     fi
@@ -402,6 +464,7 @@ function writeResult {
         printf '  "verdict": %s,\n' "$(jsonOrNull "${verdict}")"
         printf '  "receipt": %s,\n' "$(jsonOrNull "${receipt}")"
         printf '  "branch": %s,\n' "$(jsonString "${RUNS_BRANCH}")"
+        printf '  "localOnly": %s,\n' "$([ -n "${RUNS_LOCAL_ONLY}" ] && echo true || echo false)"
         printf '  "commit": %s,\n' "$(jsonOrNull "${RESULT_COMMIT}")"
         printf '  "target": %s,\n' "${target}"
         printf '  "discarded": [%s]\n' "${discarded}"
@@ -452,7 +515,12 @@ function commitAndPushRun {
         echo "${untracked}" | sed "s/^/  /"
         addDiscarded "${untracked}"
     fi
-    if git commit -m "run(${RUN_NAME}): ${what}"; then
+    if ! git commit -m "run(${RUN_NAME}): ${what}"; then
+        echo "No changes to commit for ${what}."
+    elif [ -n "${RUNS_LOCAL_ONLY}" ]; then
+        echo "Committed ${what} to ${RUNS_BRANCH} in this sandbox; local-only, so nothing is pushed."
+        RESULT_COMMIT="$(git rev-parse HEAD)"
+    else
         # A dropped connection after a successful server-side push makes
         # the retry fail with 'cannot lock ref … is at <our sha>'. If the
         # remote is already at our commit, the push succeeded.
@@ -474,8 +542,6 @@ function commitAndPushRun {
         fi
         echo "Pushed ${what} to origin/${RUNS_BRANCH}"
         RESULT_COMMIT="$(git rev-parse HEAD)"
-    else
-        echo "No changes to commit for ${what}."
     fi
     popd > /dev/null
 }
@@ -484,12 +550,7 @@ function commitAndPushRun {
 trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
 setupGit
 setupGitRepos
-# Runs are pushed to research/runs on origin, and the UI reads them from
-# the member's fork. setupGitRepos ignores a failed fork, which left
-# origin on the upstream repository: the push then failed with a 403
-# after the engine had done all its work — or, for a member with write
-# access, would have put research/runs on the upstream repository.
-ensureForkRemote
+setupRunsRemote
 # HACK: Avoid git lock issues
 sleep 5
 checkoutDefaultBranch

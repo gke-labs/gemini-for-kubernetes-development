@@ -76,6 +76,7 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - `run plan` writes the procedure and generates the scripts, but executes nothing. `--runbook` starts from `.agents/runbooks/<name>` in the repository, or from one of your earlier runs. `--target <PR number|URL>` deploys a pull request and pins its head commit.
 - `run deploy` executes the approved plan, repairs scripts that fail, and then reconciles `runbook.md` with what actually worked.
 - `run teardown` removes what the run created, preferring the generated `teardown.sh`.
+- If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. The branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`.
 
 ### Research conversations (`factory research`, `factory acpd`)
 - **Start a sandbox.** `research start --url --session` creates a research sandbox and clones the repository, private repos included. The token is never written to the volume. It then prints a `RESEARCH_SANDBOX_READY {json}` receipt with the pod IP and port of the conversation server.
