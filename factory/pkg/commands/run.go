@@ -61,6 +61,10 @@ func slugifyScenario(s string) string {
 // procedure in place instead of filing recommendations against a
 // document other runs also read.
 //
+// A repository the member cannot fork runs local-only: the branch is
+// committed in the run's sandbox and never pushed (run.sh's
+// enterLocalOnly).
+//
 // --runbook starts a new run from an existing runbook instead of from
 // nothing: the repository's .agents/runbooks/<name>/ if it has one,
 // else one of the member's own runs (any run is a runbook). It is
@@ -243,6 +247,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
+		"REPO_OWNER":                 owner,
 		"REPO_NAME":                  repo,
 		"CLONE_URL":                  cloneURL,
 		"PROMPT_FILE":                promptPath,
@@ -293,7 +298,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 		Sandbox:  sandboxName,
 	})
 	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Completed")
-	fmt.Printf("Run %s %s finished for %s/%s; pushed to the research/runs branch.\n", name, mode, owner, repo)
+	fmt.Printf("Run %s %s finished for %s/%s; recorded on the research/runs branch.\n", name, mode, owner, repo)
 	return nil
 }
 

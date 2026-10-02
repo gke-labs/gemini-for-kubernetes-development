@@ -264,27 +264,52 @@ function dropGitHubTokens {
     unset GITHUB_TOKEN GH_TOKEN GITHUB_USER_TOKEN GITHUB_BOT_TOKEN GITHUB_BOT_MANUAL_PAT GITHUB_BOT_OAUTH_PAT MANUAL_PAT OAUTH_PAT
 }
 
-# ensureForkRemote makes "origin" the task identity's fork, with the original
+# forkRemote makes "origin" the task identity's fork, with the original
 # repository as "upstream". A fork call that fails — GitHub answers 429 under
 # load — used to be ignored, leaving origin pointing at upstream, and the
 # agent then pushed its branch to the upstream repository. So the call is
-# retried, and the task stops if origin still isn't the fork afterwards.
-function ensureForkRemote {
+# retried.
+#
+# A fork the organisation forbids — private repositories whose policy keeps
+# forks out of personal accounts — answers 403 "due to a policy" every
+# time, so that stops at once instead of after three minutes of retries.
+#
+# Returns 0 when origin is the fork, 2 when the organisation's policy
+# refuses one, 1 when the fork could not be made for any other reason.
+function forkRemote {
     local owner="${GITHUB_BOT_LOGIN:-${GITHUB_USER_ID}}"
-    local attempt
+    local attempt out
     for attempt in 1 2 3 4; do
         if originIsForkOf "${owner}"; then
             return 0
         fi
         echo "running gh repo fork --remote (attempt ${attempt})"
-        if (cd "/workspaces/${REPO_NAME}" && gh repo fork --remote) && originIsForkOf "${owner}"; then
+        if out="$(cd "/workspaces/${REPO_NAME}" && gh repo fork --remote 2>&1)" && originIsForkOf "${owner}"; then
+            echo "${out}"
             return 0
         fi
+        echo "${out}" >&2
+        case "${out}" in
+            *"due to a policy"*) return 2 ;;
+        esac
         if [ "${attempt}" -lt 4 ]; then
             sleep $((attempt * 30))
         fi
     done
-    echo "origin is not ${owner}'s fork of ${REPO_OWNER}/${REPO_NAME}; stopping rather than pushing to the upstream repository" >&2
+    return 1
+}
+
+# ensureForkRemote is forkRemote for tasks that cannot do without the fork:
+# the task stops if origin isn't the fork, rather than pushing to the
+# upstream repository.
+function ensureForkRemote {
+    local owner="${GITHUB_BOT_LOGIN:-${GITHUB_USER_ID}}" rc=0
+    forkRemote || rc=$?
+    case "${rc}" in
+        0) return 0 ;;
+        2) echo "${REPO_OWNER}/${REPO_NAME} cannot be forked to ${owner}: the organisation's policy forbids it. This task pushes to ${owner}'s fork and never to the upstream repository, so it cannot run here." >&2 ;;
+        *) echo "origin is not ${owner}'s fork of ${REPO_OWNER}/${REPO_NAME}; stopping rather than pushing to the upstream repository" >&2 ;;
+    esac
     exit 1
 }
 
