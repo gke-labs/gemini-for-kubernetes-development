@@ -72,7 +72,11 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 	repOut, err := exec.CommandContext(ctx, "kubectl", "get", "sandbox", sandboxName, "-n", namespace, "-o", "jsonpath={.spec.replicas}").Output()
 	if err == nil && string(repOut) == "0" {
 		fmt.Printf("Sandbox %s is currently suspended (replicas=0). Setting replicas to 1 to bring up the pod back...\n", sandboxName)
-		_ = exec.CommandContext(ctx, "kubectl", "patch", "sandbox", sandboxName, "-n", namespace, "--type=merge", "-p", `{"spec":{"replicas":1}}`).Run()
+		// unpaused-at too: without it the idle suspender, counting from
+		// the last task, scales the sandbox straight back to zero before
+		// the pod is ready.
+		patch := fmt.Sprintf(`{"spec":{"replicas":1},"metadata":{"annotations":{"sandbox.gemini.google.com/unpaused-at":%q}}}`, time.Now().UTC().Format(time.RFC3339))
+		_ = exec.CommandContext(ctx, "kubectl", "patch", "sandbox", sandboxName, "-n", namespace, "--type=merge", "-p", patch).Run()
 	}
 
 	for i := 0; i < 120; i++ {

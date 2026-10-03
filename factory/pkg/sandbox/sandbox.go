@@ -479,10 +479,10 @@ func sandboxBelongsToRepo(sb *unstructured.Unstructured, repo, prHTMLURL string)
 
 // prepareReusedSandbox readies an existing sandbox an Ensure* function is
 // handing back: it records the user, and wakes the sandbox if the idle
-// suspender scaled it to zero. Callers connect to envd straight after, and
-// MarkSandboxTaskRunning, which used to be the only thing that woke a
-// sandbox, runs after the connect, so a suspended sandbox timed out
-// waiting for a pod nothing was going to start.
+// suspender scaled it to zero, stamping unpaused-at. envd.Connect also
+// wakes a suspended sandbox, but without the stamp the suspender, counting
+// from the last task hours ago, scaled it straight back to zero and the
+// connect timed out waiting for the pod.
 func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
 	changed := false
 	labels := sb.GetLabels()
