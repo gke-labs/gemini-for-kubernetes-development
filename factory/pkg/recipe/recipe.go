@@ -50,6 +50,11 @@ type Recipe struct {
 	// is factory's, not the runner's: ForSandbox takes it out of the
 	// recipe a sandbox gets, and the task carries it in task.json.
 	TaskOutput *taskoutput.Decl `yaml:"task-output,omitempty"`
+	// TaskType makes the recipe its sandbox's main task, of that type, as
+	// plan or fix are: it records its state in last-task-*, where callers
+	// already look for that type. Unset, it is a side task,
+	// recipe-<name>, beside them. Like TaskOutput it is factory's.
+	TaskType string `yaml:"task-type,omitempty"`
 }
 
 // Input is one declared input.
@@ -121,9 +126,10 @@ var NamedSteps = map[string]string{
 }
 
 var (
-	stepIDRE  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	inputRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	withKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+	stepIDRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	inputRE    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	taskTypeRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	withKeyRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 )
 
 // Parse reads and validates a recipe.
@@ -159,6 +165,9 @@ func (r *Recipe) Validate() error {
 		if in.Type != "" && in.Type != InstructionsType {
 			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
 		}
+	}
+	if r.TaskType != "" && !taskTypeRE.MatchString(r.TaskType) {
+		return fmt.Errorf("task-type %q must match %s", r.TaskType, taskTypeRE)
 	}
 	if to := r.TaskOutput; to != nil {
 		if !taskoutput.Known(to.Kind) {
@@ -287,8 +296,8 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without
-// task-output and input types, which runners older than them reject as
-// unknown fields.
+// task-output, task-type and input types, which runners older than them
+// reject as unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -299,6 +308,9 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := dropKey(m, "task-output")
+	if dropKey(m, "task-type") {
+		changed = true
+	}
 	if inputs := mapValue(m, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
 		for i := 1; i < len(inputs.Content); i += 2 {
 			if inputs.Content[i].Kind == yaml.MappingNode && dropKey(inputs.Content[i], "type") {

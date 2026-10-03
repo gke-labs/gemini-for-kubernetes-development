@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -415,16 +416,19 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 
 	task := newSpoolTask(rec.Name, runName, itemURL)
 	task.Output = rec.TaskOutput
+	task.TaskType = rec.TaskType
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
 	taskType := "recipe-" + rec.Name
-	// In an issue's sandbox the recipe is a side task: last-task-* stay
-	// the fix's.
+	// In an issue's sandbox a recipe is a side task, and last-task-* stay
+	// the plan's or fix's, unless it is the sandbox's main task itself.
 	markRunning, update := factorysandbox.MarkSandboxTaskRunning, factorysandbox.UpdateSandboxTaskAnnotation
-	if !it.IsPR {
+	if rec.TaskType != "" {
+		taskType = rec.TaskType
+	} else if !it.IsPR {
 		markRunning, update = factorysandbox.MarkSandboxSideTaskRunning, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	_ = markRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
@@ -801,6 +805,12 @@ func writeTaskOutput(taskDir string, inputs map[string]string, engine string) er
 	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
 	if err != nil {
 		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
+	}
+	if !slices.Contains(taskoutput.KnownKinds(), task.Output.Kind) {
+		// A kind newer than this sandbox's image: the client, which knows
+		// it, wraps the result when it is read (sandbox task output).
+		fmt.Printf("::task-output %s left in %s for the client to wrap\n", task.Output.Kind, task.Output.From)
+		return nil
 	}
 	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), taskTarget(task, inputs), taskoutput.Source{
 		Task:   filepath.Base(taskDir),

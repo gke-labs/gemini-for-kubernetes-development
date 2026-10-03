@@ -1,6 +1,6 @@
 # Design Note: Recipes, Task Outputs and Apply
 
-**Status:** Proposal. Triage is built this way end to end (#1707–#1723). Other task kinds are not yet built.
+**Status:** Proposal. Triage is built this way end to end (#1707–#1725); plan is built as a recipe with a Plan output. Other task kinds are not yet built.
 
 This note describes how a factory task should run and how its result should reach GitHub. A **recipe** describes the work. A **spooled task** runs it inside the sandbox, independent of whoever started it. The task leaves a **task output**, a typed document of what it found. **`factory apply`** is the one place that turns that document into GitHub writes, using the caller's identity.
 
@@ -57,8 +57,9 @@ A recipe is YAML shaped like a GitHub Actions workflow and embedded in the facto
 | `steps:` | `uses:` runs a named `lib.sh` step from a closed set. These are the only steps that get the token. `run:` is inline shell without the token, with inputs as `INPUT_*`. `ask:` is one prompt turn; all asks share one agent session. `capture:` saves a turn's reply to a file. |
 | `outputs:` | Files the task's result consists of. |
 | `task-output:` | `{kind, from}`: the file that becomes the typed result, and its kind. |
+| `task-type:` | Makes the recipe its sandbox's main task, of that type, as plan and fix are: its state is `last-task-*`, and it lists as that type. Unset, the recipe is a side task, `recipe-<name>`. |
 
-The sandbox runs the recipe with its own `factory recipe exec`. The CLI strips the fields it handles itself, such as `task-output:`, before uploading (`recipe.ForSandbox`).
+The sandbox runs the recipe with its own `factory recipe exec`. The CLI strips the fields it handles itself, such as `task-output:` and `task-type:`, before uploading (`recipe.ForSandbox`).
 
 ### 2. Spooled task: where and how it runs
 
@@ -86,7 +87,7 @@ spec:
   assessment: "…"
 ```
 
-The runner wraps the declared file (`from:`) into this document as `task-output.yaml` in the task directory. For sandboxes whose runner predates task outputs, `sandbox task output` does the wrapping on the client side. The document is a draft: a person or program can read it, edit it, and keep it. Nothing has happened on GitHub at this point.
+The runner wraps the declared file (`from:`) into this document as `task-output.yaml` in the task directory. When the runner predates task outputs, or doesn't know the kind, it leaves the file as it is, and `sandbox task output` wraps it on the client side. A new kind therefore does not need a new sandbox image. Runners older than this rule fail the task on a kind they don't know. The document is a draft: a person or program can read it, edit it, and keep it. Nothing has happened on GitHub at this point.
 
 ### 4. Apply: the one publisher
 
@@ -98,12 +99,17 @@ The runner wraps the declared file (`from:`) into this document as `task-output.
   - Adding labels is idempotent anyway.
 - **Kind-aware.** Each kind decides which targets it accepts; for example, a Triage refuses a PR URL.
 
+| Kind | Recipe | Apply |
+|---|---|---|
+| Triage | `triage` | Adds the suggested labels and comments the assessment on the issue. |
+| Plan | `plan` | Comments the plan on the issue. The plan is also left at `/workspaces/plan-issue-<n>.md`, where `fix --with-plan`, repo-agent's plan editor and a continued chat read it. |
+
 ### Addressing: one sandbox per issue
 
 An issue's triage, plan, fix and recipes all run in one sandbox.
 
 - **Finding it.** factory labels the sandbox `factory.gemini.google.com/repo` and `/issue`, and callers find it by those labels rather than by name.
-- **State.** A side task records its state in `sandbox.gemini.google.com/<type>-task-state`, for example `recipe-triage-task-state`. It never touches `last-task-*`, which stays the plan's or fix's.
+- **State.** A side task records its state in `sandbox.gemini.google.com/<type>-task-state`, for example `recipe-triage-task-state`. It never touches `last-task-*`, which stays the plan's or fix's. A recipe with `task-type:`, such as plan, is the main task and records its state in `last-task-*`.
 - **One at a time.** A sandbox with a pending or running task refuses another, because two agents in one checkout would get in each other's way.
 
 ---
@@ -143,7 +149,7 @@ A run name takes precedence over `--apply`'s "newest run of this recipe and URL"
 | One sandbox per issue | #1719 | Triage runs in the issue's sandbox, found by label, with its own `<type>-task-state`. Repeatable `--instruction`. |
 | Wait, apply, resume | #1720 | `recipe … --apply`, which picks up after an interruption. |
 | repo-agent | #1721 | Runs `recipe triage --run-name` and reads the result by run name instead of from stdout banners. |
-| Idempotent launch | this change | A rerun with the same run name follows or returns that task instead of starting another. |
+| Idempotent launch | #1725 | A rerun with the same run name follows or returns that task instead of starting another. |
 | Removal | #1722, #1723 | `factory triage`, its script and prompt, and repo-agent's support for old `triage-*` sandboxes and old annotations are gone. |
 
 ---
@@ -158,10 +164,11 @@ A run name takes precedence over `--apply`'s "newest run of this recipe and URL"
 3. **Pin the target to what the task saw.** For example, add `target.commit` for a Review, so that applying a stale review to newer code is refused or flagged.
 4. **Update callers.** Start the task with a run name and read the output by that name. Leave publishing to `apply`, and never publish from inside the task.
 
+Plan is built: `factory recipe plan` (`task-type: plan`) revises the plan it finds in the sandbox, and `fix --with-plan` follows it. repo-agent's switch to it, and the removal of `factory plan`, follow as triage's did.
+
 Planned kinds, in order:
 - **Review.** Pin `target.commit`; submit as a pending review or a comment.
 - **PullRequest.** Link and alias an existing PR, and add labels.
-- **Plan.** A draft that can be fed into the next task's inputs, for example `fix` using an approved plan.
 
 After those, repo-agent's drafts become the documents themselves, published through the same applier.
 

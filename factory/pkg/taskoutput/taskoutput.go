@@ -68,6 +68,7 @@ type kind struct {
 
 var kinds = map[string]kind{
 	"Triage": {parse: parseTriage},
+	"Plan":   {parse: parsePlan},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.
@@ -174,6 +175,48 @@ func parseTriage(raw string) (any, error) {
 		return nil, fmt.Errorf("no triage: block")
 	}
 	return out.Triage, nil
+}
+
+// Plan is a Plan document's spec: an implementation plan for an issue,
+// in markdown, which a fix can follow (factory fix --with-plan).
+type Plan struct {
+	Markdown string `yaml:"markdown"`
+}
+
+// PlanSpec decodes a Plan document's spec.
+func (d *Document) PlanSpec() (*Plan, error) {
+	if d.Kind != "Plan" {
+		return nil, fmt.Errorf("%s task output is not a Plan", d.Kind)
+	}
+	var p Plan
+	if err := d.Spec.Decode(&p); err != nil {
+		return nil, fmt.Errorf("Plan spec: %w", err)
+	}
+	if strings.TrimSpace(p.Markdown) == "" {
+		return nil, fmt.Errorf("Plan spec has no markdown")
+	}
+	return &p, nil
+}
+
+func parsePlan(raw string) (any, error) {
+	md := CleanAgentMarkdown(raw)
+	if md == "" {
+		return nil, fmt.Errorf("the plan is empty")
+	}
+	return &Plan{Markdown: md}, nil
+}
+
+// CleanAgentMarkdown is the markdown in an agent's reply, without a fence
+// around all of it.
+func CleanAgentMarkdown(raw string) string {
+	s := strings.TrimSpace(raw)
+	for _, open := range []string{"```markdown\n", "```md\n", "```\n"} {
+		if strings.HasPrefix(s, open) && strings.HasSuffix(s, "```") {
+			s = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(s, open), "```"))
+			break
+		}
+	}
+	return s
 }
 
 // CleanAgentYAML is the YAML in an agent's reply: without markdown fences

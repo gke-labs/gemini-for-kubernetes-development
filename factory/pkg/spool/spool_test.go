@@ -196,6 +196,10 @@ func TestListAndFind(t *testing.T) {
 		return os.WriteFile(envd.NewTaskFiles(taskDir).ExitCodeFile, []byte("0\n"), 0o644)
 	})
 	submit(t, r, "c", "client-1", now)
+	// A recipe that is its sandbox's main task lists as that task type.
+	if err := Submit(context.Background(), r, Task{ID: "d", Recipe: "plan", TaskType: "plan", SubmittedAt: now.Add(-3 * time.Minute)}, []byte("name: plan\n"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	// Tasks envd started: no task.json, kind and time from their names.
 	// fix is running (its pid is this test's); plan's process is gone
 	// without an exit code, as after a sandbox restart.
@@ -222,7 +226,7 @@ func TestListAndFind(t *testing.T) {
 	for _, e := range entries {
 		got = append(got, e.ID+":"+e.Kind+":"+string(e.State)+e.ExitCode)
 	}
-	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 " + fix + ":fix:running " + plan + ":plan:exited137"; strings.Join(got, " ") != want {
+	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 d:plan:pending " + fix + ":fix:running " + plan + ":plan:exited137"; strings.Join(got, " ") != want {
 		t.Errorf("List = %v", got)
 	}
 	if code, _ := os.ReadFile(envd.NewTaskFiles(filepath.Join(r.tasks(), plan)).ExitCodeFile); strings.TrimSpace(string(code)) != "137" {
