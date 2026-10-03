@@ -22,8 +22,14 @@ func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 // works in for one issue or PR, named recipe-<repo>-<number>. Not
 // triage-…: repo-agent resumes triage sandboxes it finds unfinished.
 func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, number int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := fmt.Sprintf("recipe-%s-%d", repoName, number)
+	name := RecipeSandboxName(repoName, number)
 	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "recipe", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+// RecipeSandboxName is the sandbox `factory recipe run` uses for issue or
+// PR number of repo.
+func RecipeSandboxName(repo string, number int) string {
+	return fmt.Sprintf("recipe-%s-%d", repo, number)
 }
 
 func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, sandboxType, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {

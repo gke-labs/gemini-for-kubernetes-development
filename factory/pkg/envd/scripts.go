@@ -30,6 +30,15 @@ func BuildDetachedLaunchCmd(files TaskFiles, cmdStr string) string {
 		files.PIDFile, files.StartTimeFile, cmdStr, files.LogFile, files.ExitCodeFile)
 }
 
+// TaskScript is what BuildDetachedLaunchCmd runs, for a caller that
+// starts the shell itself rather than through another shell: it records
+// the pid and start time, runs cmdStr into the log and records the exit
+// code, writing exactly the files AttachTask and the kill commands read.
+func TaskScript(files TaskFiles, cmdStr string) string {
+	return fmt.Sprintf("echo $$ > %s; ps -p $$ -o lstart= > %s; %s > %s 2>&1; echo $? > %s",
+		files.PIDFile, files.StartTimeFile, cmdStr, files.LogFile, files.ExitCodeFile)
+}
+
 // BuildCheckPidCmd generates the shell command to check if a task process is alive, not a zombie, and matches start_time.
 // Outputs "alive" if the process is currently running and start time matches.
 func BuildCheckPidCmd(pidFile, startTimeFile string) string {

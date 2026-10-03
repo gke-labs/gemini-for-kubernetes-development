@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -22,6 +25,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 )
@@ -35,6 +39,8 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
+	cmd.AddCommand(newRecipeAttachCommand(ctx))
+	cmd.AddCommand(newRecipeListCommand(ctx))
 	return cmd
 }
 
@@ -42,7 +48,7 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 // is a YAML file, no Go. It prints the recipe's outputs and publishes
 // nothing; the dedicated commands (triage, fix …) still do that.
 func newRecipeRunCommand(ctx context.Context) *cobra.Command {
-	var recipeArg, itemURL string
+	var recipeArg, itemURL, clientID string
 	var inputArgs []string
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -65,12 +71,13 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runRecipe(ctx, recipeArg, itemURL, overrides)
+			return runRecipe(ctx, recipeArg, itemURL, clientID, overrides)
 		},
 	}
 	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A built-in recipe's name, or a recipe file (a path, or a name ending in .yaml)")
 	cmd.Flags().StringVar(&itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (recipe attach --client-id)")
 	_ = cmd.MarkFlagRequired("recipe")
 	_ = cmd.MarkFlagRequired("url")
 	return cmd
@@ -155,7 +162,7 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 	}
 }
 
-func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[string]string) error {
+func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrides map[string]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -212,12 +219,6 @@ func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[str
 	}
 	defer client.Close()
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/recipe-%s-%s", rec.Name, time.Now().Format("20060102-150405"))
-	cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, inputs)
-	if err != nil {
-		return err
-	}
-
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
@@ -239,9 +240,11 @@ func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[str
 		return err
 	}
 
-	fmt.Printf("Running recipe %s via envd (task dir %s)...\n", rec.Name, taskDir)
+	task := newSpoolTask(rec.Name, clientID, itemURL)
+	taskDir := spool.TaskDir(task.ID)
+	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
 	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", rootFlags.Engine)
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
+	if err := spoolRecipe(ctx, client, sandboxName, task, recipeBytes, inputs, envMap); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", "Failed")
 		return fmt.Errorf("running recipe: %w", err)
 	}
@@ -258,6 +261,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[str
 	}
 	usagereport.HarvestTask(ctx, client, taskDir, meta)
 
+	if err := printRecipeOutputs(ctx, client, rec, taskDir); err != nil {
+		return err
+	}
+	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
+	return nil
+}
+
+func printRecipeOutputs(ctx context.Context, client *envd.Client, rec *recipe.Recipe, taskDir string) error {
 	for _, name := range rec.OutputFiles() {
 		var out, errOut bytes.Buffer
 		if err := client.Exec(ctx, "cat "+taskDir+"/"+name, "/workspaces", nil, nil, &out, &errOut); err != nil {
@@ -265,8 +276,177 @@ func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[str
 		}
 		fmt.Printf("\n================= %s =================\n%s\n", name, strings.TrimSpace(out.String()))
 	}
-	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
 	return nil
+}
+
+// newSpoolTask names a recipe task: unique, and sortable by when it was
+// started.
+func newSpoolTask(recipeName, clientID, itemURL string) spool.Task {
+	now := time.Now()
+	return spool.Task{
+		ID:          fmt.Sprintf("recipe-%s-%s-%04x", recipeName, now.Format("20060102-150405"), rand.Intn(1<<16)),
+		ClientID:    clientID,
+		Recipe:      recipeName,
+		URL:         itemURL,
+		SubmittedAt: now.UTC(),
+	}
+}
+
+// spoolRecipe hands a recipe to the sandbox's spool and follows it, or,
+// with --detached, returns once the sandbox has started it. A sandbox
+// whose image predates the spool never claims it; the recipe is then
+// started through envd as before, in the same task directory.
+func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) error {
+	taskDir := spool.TaskDir(task.ID)
+	if err := spool.Submit(ctx, client, task, recipeBytes, inputs, envMap); err != nil {
+		return err
+	}
+	fmt.Printf("Spooled task %s; waiting for the sandbox to start it...\n", task.ID)
+	err := spool.AwaitStart(ctx, client, task.ID, 20*time.Second, 2*time.Minute)
+	if errors.Is(err, spool.ErrNotClaimed) {
+		fmt.Println("The sandbox's image has no spool (recreate the sandbox to get one); starting the recipe through envd instead.")
+		cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, inputs)
+		if err != nil {
+			return err
+		}
+		// So that recipe list and attach find it like a spooled one.
+		if taskJSON, err := json.Marshal(task); err == nil {
+			_ = client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
+		}
+		return client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel)
+	}
+	if err != nil {
+		return err
+	}
+	if rootFlags.Detached {
+		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory recipe attach -n %s --sandbox %s --task %s\n", task.ID, rootFlags.Namespace, sandboxName, task.ID)
+		return nil
+	}
+	return client.AttachTask(ctx, taskDir, envMap, rootFlags.AbortOnCancel)
+}
+
+// recipeSandboxFlags picks the sandbox the attach and list commands talk
+// to: named, or the one `recipe run --url` used.
+type recipeSandboxFlags struct {
+	sandbox, url string
+}
+
+func (f *recipeSandboxFlags) add(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.sandbox, "sandbox", "", "Sandbox name")
+	cmd.Flags().StringVar(&f.url, "url", "", "The issue or PR URL `recipe run` was given; picks its sandbox")
+}
+
+func (f *recipeSandboxFlags) name() (string, error) {
+	switch {
+	case f.sandbox != "":
+		return f.sandbox, nil
+	case f.url != "":
+		it, err := parseGitHubItemURL(f.url)
+		if err != nil {
+			return "", err
+		}
+		return factorysandbox.RecipeSandboxName(it.Repo, it.Number), nil
+	}
+	return "", fmt.Errorf("--sandbox or --url is required")
+}
+
+// newRecipeAttachCommand reconnects to a spooled recipe: it follows the
+// log to the end and prints the recipe's outputs, as `recipe run` would
+// have.
+func newRecipeAttachCommand(ctx context.Context) *cobra.Command {
+	var sb recipeSandboxFlags
+	var taskID, clientID string
+	cmd := &cobra.Command{
+		Use:   "attach",
+		Short: "Follow a recipe task in a sandbox and print its outputs",
+		Example: `  factory recipe attach --url https://github.com/owner/repo/issues/123
+  factory recipe attach --sandbox recipe-repo-123 --client-id my-run-7`,
+		RunE: func(c *cobra.Command, _ []string) error {
+			if _, err := ResolveRootFlags(c); err != nil {
+				return err
+			}
+			name, err := sb.name()
+			if err != nil {
+				return err
+			}
+			client, err := envd.Connect(ctx, rootFlags.Namespace, name)
+			if err != nil {
+				return fmt.Errorf("connecting to sandbox: %w", err)
+			}
+			defer client.Close()
+			entries, err := spool.List(ctx, client)
+			if err != nil {
+				return err
+			}
+			e, err := spool.Find(entries, taskID, clientID)
+			if err != nil {
+				return err
+			}
+			if e.State == spool.Pending || e.State == spool.Claimed {
+				if err := spool.AwaitStart(ctx, client, e.ID, 365*24*time.Hour, 2*time.Minute); err != nil {
+					return err
+				}
+			}
+			taskDir := spool.TaskDir(e.ID)
+			fmt.Printf("Attaching to task %s (%s)...\n", e.ID, taskDir)
+			// Detaching from here leaves the task running.
+			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
+				return fmt.Errorf("task %s: %w", e.ID, err)
+			}
+			var recipeYAML bytes.Buffer
+			if err := client.Exec(ctx, "cat "+taskDir+"/"+spool.RecipeFile, "/workspaces", nil, nil, &recipeYAML, nil); err != nil {
+				return err
+			}
+			rec, err := recipe.Parse(recipeYAML.Bytes())
+			if err != nil {
+				return fmt.Errorf("reading the task's recipe: %w", err)
+			}
+			return printRecipeOutputs(ctx, client, rec, taskDir)
+		},
+	}
+	sb.add(cmd)
+	cmd.Flags().StringVar(&taskID, "task", "", "Task id (default: the newest task, or the newest with --client-id)")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "The --client-id the task was run with")
+	return cmd
+}
+
+// newRecipeListCommand lists a sandbox's spooled recipe tasks.
+func newRecipeListCommand(ctx context.Context) *cobra.Command {
+	var sb recipeSandboxFlags
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List the recipe tasks in a sandbox",
+		RunE: func(c *cobra.Command, _ []string) error {
+			if _, err := ResolveRootFlags(c); err != nil {
+				return err
+			}
+			name, err := sb.name()
+			if err != nil {
+				return err
+			}
+			client, err := envd.Connect(ctx, rootFlags.Namespace, name)
+			if err != nil {
+				return fmt.Errorf("connecting to sandbox: %w", err)
+			}
+			defer client.Close()
+			entries, err := spool.List(ctx, client)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "TASK\tRECIPE\tCLIENT ID\tSTATE\tSUBMITTED")
+			for _, e := range entries {
+				state := string(e.State)
+				if e.State == spool.Exited {
+					state = "exited " + e.ExitCode
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Recipe, e.ClientID, state, e.SubmittedAt.Local().Format(time.DateTime))
+			}
+			return w.Flush()
+		},
+	}
+	sb.add(cmd)
+	return cmd
 }
 
 // writeRecipe puts a recipe and its inputs into the sandbox and returns
