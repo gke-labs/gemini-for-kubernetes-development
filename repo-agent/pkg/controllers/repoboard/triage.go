@@ -29,11 +29,11 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-// Triage intake (design D4): `factory triage --publish no` prepares label /
+// Triage intake (design D4): `factory recipe triage` prepares label /
 // priority / duplicate suggestions per inbound issue. It writes nothing to
-// GitHub, and the structured report is harvested from the invocation's
-// stdout banners — the same contract the review flow uses. The maintainer
-// applies suggestions with their own clicks.
+// GitHub; its result, a Triage task output, is read back by the task's
+// client id (factorycli.StartTriage). The maintainer applies suggestions
+// with their own clicks.
 //
 // It runs in the issue's sandbox, the one plan and fix use
 // (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,
@@ -92,7 +92,7 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 
 // ensureTriage drives one issue's triage state machine in namespace:
 // harvest a finished run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace string, clicked bool) {
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, clientID string, clicked bool) {
 	logger := log.FromContext(ctx)
 	sb := work.triageSandbox(namespace, issue.GetNumber())
 	if sb == nil {
@@ -179,6 +179,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		IssueURL:    issue.GetHTMLURL(),
 		GithubToken: token,
 		Engine:      boardEngine(work.board),
+		ClientID:    clientID,
 	}) {
 		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
@@ -219,15 +220,28 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
 			url = u
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), false)
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageClientID(work.board.Name, n, triageClick{}), false)
 	}
 }
 
-// triageClick is a Triage click: the issue, and the namespace of the
-// member who clicked, where it runs.
+// triageClick is a Triage click: the issue, the namespace of the member
+// who clicked, where it runs, and the UID of the click's Request.
 type triageClick struct {
-	issue  int
-	member string
+	issue   int
+	member  string
+	request string
+}
+
+// triageClientID is what a triage's task is recorded under in the sandbox
+// (factory --client-id), to read its result by: one per click, by its
+// Request; one per board and issue for auto-triage, which never redoes a
+// triage a human rejected. Identifiers only: anyone in the sandbox can
+// read it.
+func triageClientID(board string, issue int, click triageClick) string {
+	if click.request != "" {
+		return "request/" + click.request
+	}
+	return fmt.Sprintf("auto/%s/%d", board, issue)
 }
 
 // resultStaleSince reports whether a remembered invocation result predates

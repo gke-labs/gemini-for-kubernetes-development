@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"k8s.io/klog/v2"
 )
 
@@ -473,6 +474,9 @@ type preflight struct {
 	prefix     string
 	outputFile string
 	banner     string
+	// harvest, when set, turns the invocation's output and error into the
+	// result's, running more factory commands if it needs to.
+	harvest func(ctx context.Context, out string, err error) (string, error)
 }
 
 func NewRunner() *Runner {
@@ -584,15 +588,19 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
+// StartTriage runs `factory recipe triage` and reads its result back with
+// `factory sandbox task output --client-id`, as a typed Triage task
+// output. The result's Output has it between triageBanner and a closer,
+// for ExtractTriageYAML.
 func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Minute
 	}
 	args := []string{
-		"triage",
+		"recipe", "triage",
+		"--client-id", opts.ClientID,
 		"--url", opts.IssueURL,
-		"--publish", "no",
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
@@ -600,9 +608,23 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	sandbox := opts.SandboxName
+	if sandbox == "" {
+		sandbox = opts.IssueURL
+	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "triage",
-		outputFile: "triage-output.txt", banner: triageBanner,
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "recipe-triage",
+		outputFile: TaskOutputFile, banner: triageBanner,
+		harvest: func(ctx context.Context, out string, err error) (string, error) {
+			if err != nil {
+				return out, err
+			}
+			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--client-id", opts.ClientID}, opts.GithubToken)
+			if err != nil {
+				return out + "\n" + doc, fmt.Errorf("reading the triage's task output: %w", err)
+			}
+			return triageBanner + "\n" + doc + "\n" + bannerCloser + "\n", nil
+		},
 	})
 }
 
@@ -665,7 +687,7 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 					klog.Infof("factorycli: adopting orphaned %s result in %s/%s (key %s)", pre.prefix, pre.namespace, pre.sandbox, key)
 					res := Result{FinishedAt: time.Now()}
 					if probe.ExitCode == "0" {
-						res.Output = pre.banner + "\n" + probe.Output + "\n================================================\n"
+						res.Output = pre.banner + "\n" + probe.Output + "\n" + bannerCloser + "\n"
 					} else {
 						res.Err = fmt.Errorf("adopted %s task exited %s", pre.prefix, probe.ExitCode)
 						res.Output = probe.Output
@@ -690,7 +712,7 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 	r.running[key] = struct{}{}
 	r.mu.Unlock()
 
-	go r.run(key, args, githubToken, timeout)
+	go r.run(key, args, githubToken, timeout, pre)
 	return true
 }
 
@@ -708,32 +730,40 @@ func (r *Runner) LastResult(key string) (Result, bool) {
 	return res, ok
 }
 
-func (r *Runner) run(key string, args []string, githubToken string, timeout time.Duration) {
+func (r *Runner) run(key string, args []string, githubToken string, timeout time.Duration, pre *preflight) {
 	// Detached from any reconcile context: the invocation outlives the
 	// reconcile that started it.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Appended, not prepended: args[0] is the subcommand, logged below.
-	args = append(args[:len(args):len(args)], "--launcher="+LauncherName)
-	cmd := exec.CommandContext(ctx, r.Binary, args...)
-	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+githubToken)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
 	klog.Infof("factorycli: starting %s %s (key %s)", r.Binary, strings.Join(args[:2], " "), key)
-	err := cmd.Run()
+	out, err := r.exec(ctx, args, githubToken)
+	if pre != nil && pre.harvest != nil {
+		out, err = pre.harvest(ctx, out, err)
+	}
 	if err != nil {
-		klog.Errorf("factorycli: %s for %s failed: %v\noutput tail:\n%s", args[0], key, err, tail(out.String(), 4096))
+		klog.Errorf("factorycli: %s for %s failed: %v\noutput tail:\n%s", args[0], key, err, tail(out, 4096))
 	} else {
 		klog.Infof("factorycli: %s for %s completed", args[0], key)
 	}
 
 	r.mu.Lock()
 	delete(r.running, key)
-	r.results[key] = Result{Err: err, Output: out.String(), FinishedAt: time.Now()}
+	r.results[key] = Result{Err: err, Output: out, FinishedAt: time.Now()}
 	r.mu.Unlock()
+}
+
+// exec runs one factory command to its end and returns what it printed,
+// stdout and stderr together.
+func (r *Runner) exec(ctx context.Context, args []string, githubToken string) (string, error) {
+	args = append(args[:len(args):len(args)], "--launcher="+LauncherName)
+	cmd := exec.CommandContext(ctx, r.Binary, args...)
+	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+githubToken)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
 }
 
 func tail(s string, n int) string {
@@ -755,14 +785,26 @@ type TriageOptions struct {
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine  string
 	Timeout time.Duration
+	// ClientID records the triage's task in the sandbox, to read its
+	// result back by (factory --client-id).
+	ClientID string
 }
 
 // triageBanner opens the triage YAML on `factory triage --publish no`
-// stdout (factory/pkg/commands/triage.go).
+// stdout (factory/pkg/commands/triage.go); StartTriage puts a recipe
+// triage's result between it and bannerCloser too.
 const triageBanner = "================= ISSUE TRIAGE ================="
 
-// ExtractTriageYAML returns the triage YAML printed after the ISSUE TRIAGE
-// banner of a completed `factory triage` invocation, or "".
+// bannerCloser closes what a banner opens.
+const bannerCloser = "================================================"
+
+// TaskOutputFile is where a recipe task leaves its typed result
+// (factory/pkg/taskoutput).
+const TaskOutputFile = "task-output.yaml"
+
+// ExtractTriageYAML returns the triage YAML after the ISSUE TRIAGE banner
+// of a completed triage, or "": the agent's `triage:` block as `factory
+// triage` prints it, or the same made from a Triage task output.
 func ExtractTriageYAML(output string) string {
 	start := strings.Index(output, triageBanner)
 	if start < 0 {
@@ -772,7 +814,31 @@ func ExtractTriageYAML(output string) string {
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}
-	return strings.TrimSpace(rest)
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, "apiVersion:") {
+		return triageFromTaskOutput(rest)
+	}
+	return rest
+}
+
+// triageFromTaskOutput is a Triage task output's spec as the `triage:`
+// block drafts are kept in, or "".
+func triageFromTaskOutput(doc string) string {
+	var d struct {
+		Kind string    `yaml:"kind"`
+		Spec yaml.Node `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(doc), &d); err != nil || d.Kind != "Triage" || d.Spec.Kind == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(map[string]*yaml.Node{"triage": &d.Spec}); err != nil {
+		return ""
+	}
+	_ = enc.Close()
+	return strings.TrimSpace(buf.String())
 }
 
 // planBanner opens the plan text on `factory plan` output; the closer is

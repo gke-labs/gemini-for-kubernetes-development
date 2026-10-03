@@ -271,9 +271,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// Clicks override the rejected-draft tombstone; auto candidates don't.
 	// A click runs in the clicker's namespace; auto-triage, which has no
 	// clicker, in the board owner's.
-	clickedTriage := map[int]string{}
+	clickedTriage := map[int]triageClick{}
 	for _, click := range mail.triages {
-		clickedTriage[click.issue] = click.member
+		clickedTriage[click.issue] = click
 	}
 	seenTriage := map[int]bool{}
 	for _, issue := range triageCandidates {
@@ -338,11 +338,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensureReview(ctx, work, plan)
 	}
 	for _, issue := range triageCandidates {
-		member, clicked := clickedTriage[issue.GetNumber()]
+		click, clicked := clickedTriage[issue.GetNumber()]
+		member := click.member
 		if !clicked || member == "" {
 			member = board.Namespace
 		}
-		r.ensureTriage(ctx, work, issue, member, clicked)
+		r.ensureTriage(ctx, work, issue, member, triageClientID(board.Name, issue.GetNumber(), click), clicked)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
@@ -1464,7 +1465,7 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		// Triage in an issue's sandbox keeps its own state: running, the
 		// sandbox is busy whatever the fix's says; alone, it is the state.
 		state := annotations[factorycli.AnnotationTaskState]
-		triage := annotations[factorycli.AnnotationTriageTaskState]
+		triage := factorycli.TriageTaskState(annotations)
 		if triage == "Running" || state == "" {
 			state = triage
 		}
