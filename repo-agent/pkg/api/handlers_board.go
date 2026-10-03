@@ -25,6 +25,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -438,9 +439,10 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	// namespace named by an assignee claim on this repo's items.
 	sandboxNamespaces := map[string]bool{}
 	sandboxes := map[string]*unstructured.Unstructured{}
-	// Triage runs in the board namespace, in the issue's sandbox, which a
-	// member's sandbox of the same name would hide in sandboxes.
-	boardNSSandboxes := map[string]*unstructured.Unstructured{}
+	// Every sandbox loaded, whatever its namespace: sandboxes is by name,
+	// and two members' sandboxes for one issue share it. Triage, run in
+	// the clicker's namespace, is looked up here.
+	var allSandboxes []*unstructured.Unstructured
 	loadSandboxNamespace := func(ns string) {
 		if ns == "" || sandboxNamespaces[ns] {
 			return
@@ -453,9 +455,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for k, v := range got {
 			sandboxes[k] = v
-			if ns == board.GetNamespace() {
-				boardNSSandboxes[k] = v
-			}
+			allSandboxes = append(allSandboxes, v)
 		}
 	}
 	loadSandboxNamespace(board.GetNamespace())
@@ -477,7 +477,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, boardNSSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
+			s.mergeIssueRow(items, sandboxes, allSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 		}
 	}
 	// One request for the whole board. A hole in the universe would show
@@ -513,7 +513,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		if len(issue.Assignees) > 0 {
 			continue
 		}
-		s.mergeIssueRow(items, sandboxes, boardNSSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
+		s.mergeIssueRow(items, sandboxes, allSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 	}
 
 	// GitHub is the only durable record of the member's reviews, so both a
@@ -760,7 +760,7 @@ func hasAnyLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes, boardNSSandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string, autoDefault bool) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, allSandboxes []*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string, autoDefault bool) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
@@ -806,7 +806,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes, boa
 	triageDraft := ""
 	triageState := ""
 	triagePublished := false
-	triageSB := factorycli.TriageSandbox(maps.Values(boardNSSandboxes), repo, issue.GetNumber())
+	triageSB := factorycli.TriageSandbox(slices.Values(allSandboxes), repo, issue.GetNumber())
 	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
 		return
 	}
@@ -2090,11 +2090,12 @@ func (s *Server) publishBoardTriage(c *gin.Context) {
 }
 
 // findTriageDraft locates the sandbox holding issue number's triage draft:
-// the issue's sandbox in the board namespace, where triage runs, or a
-// legacy triage-<repo>-<N> one; the viewer's namespace is checked too.
+// the issue's sandbox in the viewer's namespace, where their triage ran,
+// then the board's, where auto-triage runs and legacy triage-<repo>-<N>
+// sandboxes are.
 func (s *Server) findTriageDraft(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
 	ctx := c.Request.Context()
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
 		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
 		if err != nil {
 			continue

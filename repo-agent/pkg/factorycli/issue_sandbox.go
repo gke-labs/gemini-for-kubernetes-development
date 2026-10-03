@@ -106,18 +106,33 @@ func IsLegacyTriageSandbox(sb *unstructured.Unstructured) bool {
 	return strings.HasPrefix(sb.GetName(), "triage-")
 }
 
-// TriageSandbox picks the sandbox holding issue's triage out of one
-// namespace's sandboxes: the issue's sandbox once a triage has touched it,
+// TriageSandbox picks the sandbox holding issue's triage out of
+// sandboxes: an issue's sandbox a triage has touched — one with a draft
+// first, then one running a triage, should several namespaces have one —
 // else a legacy triage-<repo>-<N> one. Nil when there is neither.
 func TriageSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, issue int) *unstructured.Unstructured {
-	if sb := IssueSandbox(sandboxes, repo, issue); sb != nil && HasTriage(sb) {
-		return sb
+	rank := func(sb *unstructured.Unstructured) int {
+		switch {
+		case TriageDraft(sb) != "":
+			return 2
+		case TriageState(sb) == "Running":
+			return 1
+		}
+		return 0
 	}
-	legacy := LegacyTriageSandboxName(repo, issue)
+	var best, legacy *unstructured.Unstructured
+	legacyName := LegacyTriageSandboxName(repo, issue)
 	for sb := range sandboxes {
-		if sb.GetName() == legacy {
-			return sb
+		if n, ok := IssueOf(sb, repo); ok && n == issue && HasTriage(sb) {
+			if best == nil || rank(sb) > rank(best) {
+				best = sb
+			}
+		} else if sb.GetName() == legacyName {
+			legacy = sb
 		}
 	}
-	return nil
+	if best != nil {
+		return best
+	}
+	return legacy
 }

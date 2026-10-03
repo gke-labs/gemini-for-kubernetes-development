@@ -30,17 +30,19 @@ import (
 )
 
 // Triage intake (design D4): `factory triage --publish no` prepares label /
-// priority / duplicate suggestions per inbound issue. It runs in the board
-// namespace under the discovery identity, writes nothing to GitHub, and the
-// structured report is harvested from the invocation's stdout banners —
-// the same contract the review flow uses. The maintainer applies
-// suggestions with their own clicks.
+// priority / duplicate suggestions per inbound issue. It writes nothing to
+// GitHub, and the structured report is harvested from the invocation's
+// stdout banners — the same contract the review flow uses. The maintainer
+// applies suggestions with their own clicks.
 //
-// It runs in the issue's sandbox in the board namespace, the one plan and
-// fix use (factorycli.IssueSandbox), recording its state in its own
-// annotation and its draft in AnnotationTriageDraft so that neither reads
-// as the plan's, fix's or a review's. Triages from before that live in
-// triage-<repo>-<N> sandboxes, which are still read (factorycli.TriageSandbox).
+// It runs in the issue's sandbox, the one plan and fix use
+// (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,
+// as a clicked plan or fix runs, under their token; auto-triage, which has
+// no clicker, in the board owner's, under the discovery identity. It
+// records its state in its own annotation and its draft in
+// AnnotationTriageDraft so that neither reads as the plan's, fix's or a
+// review's. Triages from before that live in triage-<repo>-<N> sandboxes
+// in the board namespace, which are still read (factorycli.TriageSandbox).
 
 const (
 	// AnnotationTriagedAt marks a stored triage draft.
@@ -88,13 +90,13 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 	}
 }
 
-// ensureTriage drives one issue's triage state machine: harvest a finished
-// run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, clicked bool) {
+// ensureTriage drives one issue's triage state machine in namespace:
+// harvest a finished run's stdout report, or launch one within limits.
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace string, clicked bool) {
 	logger := log.FromContext(ctx)
-	sb := work.triageSandbox(issue.GetNumber())
+	sb := work.triageSandbox(namespace, issue.GetNumber())
 	if sb == nil {
-		sb = work.issueSandbox(work.board.Namespace, issue.GetNumber())
+		sb = work.issueSandbox(namespace, issue.GetNumber())
 	}
 	name := factorycli.FixSandboxName(work.repo, issue.GetNumber())
 	if sb != nil && !factorycli.IsLegacyTriageSandbox(sb) {
@@ -102,7 +104,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	}
 	// The single-flight key keeps the old sandbox name: it only has to be
 	// stable, and a run in flight across a rollout keeps its slot.
-	key := work.board.Namespace + "/" + factorycli.LegacyTriageSandboxName(work.repo, issue.GetNumber())
+	key := namespace + "/" + factorycli.LegacyTriageSandboxName(work.repo, issue.GetNumber())
 
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
@@ -124,7 +126,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		// A finished run's sandbox is the issue's; a legacy triage one
 		// still found here is not where it ran.
 		if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
-			if isb := work.issueSandbox(work.board.Namespace, issue.GetNumber()); isb != nil {
+			if isb := work.issueSandbox(namespace, issue.GetNumber()); isb != nil {
 				sb, annotations = isb, isb.GetAnnotations()
 				if annotations == nil {
 					annotations = map[string]string{}
@@ -156,18 +158,26 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 
 	if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
 		// A new run goes to the issue's sandbox, not the legacy one.
-		sb = work.issueSandbox(work.board.Namespace, issue.GetNumber())
+		sb = work.issueSandbox(namespace, issue.GetNumber())
 	}
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		return
 	}
+	token := work.discToken
+	if namespace != work.board.Namespace {
+		var err error
+		if token, err = r.executorToken(ctx, namespace); err != nil {
+			logger.Info("no github token for the triage's namespace", "namespace", namespace, "err", err)
+			return
+		}
+	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{
-		Namespace:   work.board.Namespace,
+		Namespace:   namespace,
 		SandboxName: name,
 		IssueURL:    issue.GetHTMLURL(),
-		GithubToken: work.discToken,
+		GithubToken: token,
 		Engine:      boardEngine(work.board),
 	}) {
 		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
@@ -182,11 +192,8 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 // issue's sandbox that only planned or fixed is not one to triage.
 func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 	legacyPrefix := "triage-" + work.repo + "-"
-	seen := map[int]bool{}
+	seen := map[string]bool{}
 	for _, sb := range work.sandboxes {
-		if sb.GetNamespace() != work.board.Namespace {
-			continue
-		}
 		annotations := sb.GetAnnotations()
 		if annotations[AnnotationTriagedAt] != "" {
 			continue
@@ -202,17 +209,25 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		} else {
 			continue
 		}
-		if seen[n] {
+		k := fmt.Sprintf("%s/%d", sb.GetNamespace(), n)
+		if seen[k] {
 			continue
 		}
-		seen[n] = true
+		seen[k] = true
 		num := n
 		url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, n)
 		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
 			url = u
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, false)
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), false)
 	}
+}
+
+// triageClick is a Triage click: the issue, and the namespace of the
+// member who clicked, where it runs.
+type triageClick struct {
+	issue  int
+	member string
 }
 
 // resultStaleSince reports whether a remembered invocation result predates

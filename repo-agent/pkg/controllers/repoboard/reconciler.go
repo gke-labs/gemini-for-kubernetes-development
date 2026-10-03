@@ -269,18 +269,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	reviews = append(reviews, mail.reviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
 	// Clicks override the rejected-draft tombstone; auto candidates don't.
-	clickedTriage := map[int]bool{}
-	for _, n := range mail.triages {
-		clickedTriage[n] = true
+	// A click runs in the clicker's namespace; auto-triage, which has no
+	// clicker, in the board owner's.
+	clickedTriage := map[int]string{}
+	for _, click := range mail.triages {
+		clickedTriage[click.issue] = click.member
 	}
 	seenTriage := map[int]bool{}
 	for _, issue := range triageCandidates {
 		seenTriage[issue.GetNumber()] = true
 	}
-	for _, n := range mail.triages {
-		if seenTriage[n] {
+	for _, click := range mail.triages {
+		if seenTriage[click.issue] {
 			continue
 		}
+		seenTriage[click.issue] = true
+		n := click.issue
 		num := n
 		url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, n)
 		triageCandidates = append(triageCandidates, &github.Issue{Number: &num, HTMLURL: &url})
@@ -299,6 +303,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	for _, req := range mail.plans {
 		namespaces[req.member] = true
+	}
+	for _, click := range mail.triages {
+		namespaces[click.member] = true
 	}
 	// A research claim is served by its sandbox existing, so the
 	// member's namespace has to be one the sandbox load covers. Boards
@@ -331,7 +338,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensureReview(ctx, work, plan)
 	}
 	for _, issue := range triageCandidates {
-		r.ensureTriage(ctx, work, issue, clickedTriage[issue.GetNumber()])
+		member, clicked := clickedTriage[issue.GetNumber()]
+		if !clicked || member == "" {
+			member = board.Namespace
+		}
+		r.ensureTriage(ctx, work, issue, member, clicked)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
@@ -408,10 +419,10 @@ func (w *workState) issueSandbox(namespace string, issue int) *unstructured.Unst
 	return factorycli.IssueSandbox(w.sandboxesIn(namespace), w.repo, issue)
 }
 
-// triageSandbox is the board-namespace sandbox holding issue's triage
+// triageSandbox is the sandbox in namespace holding issue's triage
 // (factorycli.TriageSandbox).
-func (w *workState) triageSandbox(issue int) *unstructured.Unstructured {
-	return factorycli.TriageSandbox(w.sandboxesIn(w.board.Namespace), w.repo, issue)
+func (w *workState) triageSandbox(namespace string, issue int) *unstructured.Unstructured {
+	return factorycli.TriageSandbox(w.sandboxesIn(namespace), w.repo, issue)
 }
 
 func (w *workState) sandboxesIn(namespace string) iter.Seq[*unstructured.Unstructured] {
@@ -603,7 +614,7 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 type mailbox struct {
 	fixes    []fixPlan
 	reviews  []reviewPlan
-	triages  []int
+	triages  []triageClick
 	plans    []planRequest
 	prTasks  []prTaskClaim
 	runbooks []runbookClaim

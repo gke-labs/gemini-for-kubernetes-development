@@ -132,7 +132,7 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 		case boardv1alpha1.VerbReview:
 			box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
 		case boardv1alpha1.VerbTriage:
-			box.triages = append(box.triages, spec.Number)
+			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member})
 		case boardv1alpha1.VerbPlan:
 			box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
 		case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
@@ -367,7 +367,11 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 	case boardv1alpha1.VerbTriage:
 		// The click stands until a draft is stored: the sandbox may be a
 		// rejected leftover whose tombstone the click overrides.
-		if sb := work.triageSandbox(spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
+		member := spec.Member
+		if member == "" {
+			member = work.board.Namespace
+		}
+		if sb := work.triageSandbox(member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 			return served(sb.GetName())
 		}
 

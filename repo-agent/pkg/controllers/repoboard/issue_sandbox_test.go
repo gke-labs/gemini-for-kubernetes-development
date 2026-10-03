@@ -114,3 +114,25 @@ func TestPauseWaitsForTriage(t *testing.T) {
 		g.Expect(replicas).To(gomega.Equal(want), name)
 	}
 }
+
+// A Triage click runs in the clicker's namespace, under their token, as a
+// Fix click does: not in the board owner's.
+func TestTriageClickRunsInClickersNamespace(t *testing.T) {
+	g := gomega.NewWithT(t)
+	bob := githubSecret()
+	bob.Namespace = "bob"
+	bob.Data = map[string][]byte{"oauth_pat": []byte("gho_bob")}
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbTriage, Number: 40, Member: "bob"})
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), bob, req)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].Key).To(gomega.Equal("bob/triage-repo-40"))
+	g.Expect(launches[0].TriageOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].TriageOpts.Namespace).To(gomega.Equal("bob"))
+	g.Expect(launches[0].TriageOpts.SandboxName).To(gomega.Equal("fix-repo-40"))
+	g.Expect(launches[0].TriageOpts.GithubToken).To(gomega.Equal("gho_bob"))
+}
