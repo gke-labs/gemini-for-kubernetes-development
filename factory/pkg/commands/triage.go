@@ -151,9 +151,12 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 
 	taskDir := fmt.Sprintf("/workspaces/tasks/triage-%s", time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
+	// The file the task leaves its triage in: the recipe names its output;
+	// triage_issue.sh writes triage-output.txt.
+	outputFile := "triage-output.txt"
 	var cmdStr string
 	if useRecipe {
-		if cmdStr, err = writeTriageRecipe(ctx, client, taskDir, issue, instructions); err != nil {
+		if cmdStr, outputFile, err = writeTriageRecipe(ctx, client, taskDir, issue, instructions); err != nil {
 			return err
 		}
 	} else {
@@ -200,7 +203,7 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
-	catCmd := fmt.Sprintf("cat %s/triage-output.txt", taskDir)
+	catCmd := fmt.Sprintf("cat %s/%s", taskDir, outputFile)
 	if err := client.Exec(ctx, catCmd, "/workspaces", nil, nil, &stdoutBuf, &stderrBuf); err != nil {
 		return fmt.Errorf("reading triage output from sandbox: %w (stderr: %s)", err, stderrBuf.String())
 	}
@@ -275,17 +278,22 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 }
 
 // writeTriageRecipe puts the triage recipe and its inputs into the sandbox
-// and returns the command that runs them.
-func writeTriageRecipe(ctx context.Context, client *envd.Client, taskDir string, issue *githubv39.Issue, instructions []string) (string, error) {
-	recipeBytes, _, err := recipe.Builtin("triage")
+// and returns the command that runs them and the file the triage ends up in.
+func writeTriageRecipe(ctx context.Context, client *envd.Client, taskDir string, issue *githubv39.Issue, instructions []string) (string, string, error) {
+	recipeBytes, rec, err := recipe.Builtin("triage")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return writeRecipe(ctx, client, taskDir, recipeBytes, map[string]string{
+	outputs := rec.OutputFiles()
+	if len(outputs) != 1 {
+		return "", "", fmt.Errorf("the triage recipe must have exactly one output, has %v", outputs)
+	}
+	cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, map[string]string{
 		"issue_url":    issue.GetHTMLURL(),
 		"issue_number": strconv.Itoa(issue.GetNumber()),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
 		"instructions": strings.Join(instructions, "\n\n---\n\n"),
 	})
+	return cmdStr, outputs[0], err
 }

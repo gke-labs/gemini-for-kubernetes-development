@@ -22,8 +22,8 @@ func TestBuiltinTriageParses(t *testing.T) {
 		t.Fatalf("recipe = %+v", r)
 	}
 	last := r.Steps[len(r.Steps)-1]
-	if last.Capture != "triage-output.txt" {
-		t.Errorf("last step captures %q, want triage-output.txt (what the CLI reads)", last.Capture)
+	if last.Capture != "triage-output.yaml" || fmt.Sprint(r.Outputs) != "[triage-output.yaml]" {
+		t.Errorf("captures %q, outputs %v; want triage-output.yaml as both (what the CLI reads)", last.Capture, r.Outputs)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
 			t.Errorf("step %s: %v", s.Label(i), err)
 		}
 	}
-	if got := r.OutputFiles(); fmt.Sprint(got) != "[triage-output.txt]" {
-		t.Errorf("outputs = %v, want the capture file", got)
+	if got := r.OutputFiles(); fmt.Sprint(got) != "[triage-output.yaml]" {
+		t.Errorf("outputs = %v", got)
 	}
 }
 

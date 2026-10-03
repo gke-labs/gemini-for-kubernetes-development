@@ -1,5 +1,6 @@
 # factory triage --recipe: triage_issue.sh + structured_triage.txt as steps.
-# The CLI reads triage-output.txt and publishes, exactly as without --recipe.
+# The CLI reads the output, triage-output.yaml, and publishes, exactly as
+# without --recipe.
 #
 # Also runs as `factory recipe run --recipe triage --url <issue>`, which
 # sets the issue_* inputs and prints the triage instead of publishing it.
@@ -61,4 +62,7 @@ steps:
         duplicates: []    # issue numbers that look like duplicates, if any
         assessment: ""    # 2-4 sentences: what the issue is, the likely cause or
                           # affected area, and a suggested next step
-    capture: triage-output.txt
+    capture: triage-output.yaml
+
+outputs:
+  - triage-output.yaml
