@@ -67,7 +67,9 @@ func (f *fakeExec) Uses(_ context.Context, name string, with map[string]string, 
 func (f *fakeExec) Run(_ context.Context, script string, _ map[string]string, log io.Writer) (int, error) {
 	f.ran = append(f.ran, "run:"+script)
 	code := 0
-	fmt.Sscanf(strings.TrimPrefix(script, "exit "), "%d", &code)
+	if n, err := fmt.Sscanf(strings.TrimPrefix(script, "exit "), "%d", &code); n == 0 || err != nil {
+		code = 0
+	}
 	return code, nil
 }
 
@@ -180,8 +182,8 @@ func TestSandboxRunStripsTokensAndPassesInputsAsEnv(t *testing.T) {
 		t.Fatalf("code %d, err %v", code, err)
 	}
 	want := "tok=none/none keep=1 title=$(touch pwned) pwd=" + repo
-	if real, _ := filepath.EvalSymlinks(repo); real != repo {
-		want = strings.Replace(want, repo, real, 1)
+	if resolved, _ := filepath.EvalSymlinks(repo); resolved != repo {
+		want = strings.Replace(want, repo, resolved, 1)
 	}
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
