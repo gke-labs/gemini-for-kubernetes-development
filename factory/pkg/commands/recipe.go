@@ -74,7 +74,7 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A built-in recipe's name, or a recipe file (a path, or a name ending in .yaml)")
 	cmd.Flags().StringVar(&itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task attach --client-id)")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task status|output|attach --client-id)")
 	_ = cmd.MarkFlagRequired("recipe")
 	_ = cmd.MarkFlagRequired("url")
 	return cmd
@@ -310,16 +310,24 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 		if taskJSON, err := json.Marshal(task); err == nil {
 			_ = client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
 		}
-		return client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel)
+		if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil || !rootFlags.Detached {
+			return err
+		}
+		printDetachedHint(sandboxName, task.ID)
+		return nil
 	}
 	if err != nil {
 		return err
 	}
 	if rootFlags.Detached {
-		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory sandbox task attach %s -n %s --task %s\n", task.ID, sandboxName, rootFlags.Namespace, task.ID)
+		printDetachedHint(sandboxName, task.ID)
 		return nil
 	}
 	return client.AttachTask(ctx, taskDir, envMap, rootFlags.AbortOnCancel)
+}
+
+func printDetachedHint(sandboxName, taskID string) {
+	fmt.Printf("Task %[1]s started in the sandbox. Follow it, or check on it and read its outputs, with:\n  factory sandbox task attach %[2]s -n %[3]s --task %[1]s\n  factory sandbox task status %[2]s -n %[3]s --task %[1]s\n  factory sandbox task output %[2]s -n %[3]s --task %[1]s\n", taskID, sandboxName, rootFlags.Namespace)
 }
 
 // writeRecipe puts a recipe and its inputs into the sandbox and returns

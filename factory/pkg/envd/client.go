@@ -150,7 +150,7 @@ func GetSandboxPodName(ctx context.Context, namespace, sandboxName string) (stri
 func Connect(ctx context.Context, namespace, sandboxName string) (*Client, error) {
 	serviceName := sandboxName + "-lb"
 
-	fmt.Printf("Waiting for sandbox pod %s to become ready (and any terminating pods to exit)...\n", sandboxName)
+	fmt.Fprintf(os.Stderr, "Waiting for sandbox pod %s to become ready (and any terminating pods to exit)...\n", sandboxName)
 	_, err := GetSandboxPodName(ctx, namespace, sandboxName)
 	if err != nil {
 		return nil, err
@@ -159,7 +159,7 @@ func Connect(ctx context.Context, namespace, sandboxName string) (*Client, error
 	// If running inside Kubernetes cluster, connect directly to the service DNS
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
 		baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:49983", serviceName, namespace)
-		fmt.Printf("Running inside Kubernetes cluster. Connecting directly to service: %s\n", baseURL)
+		fmt.Fprintf(os.Stderr, "Running inside Kubernetes cluster. Connecting directly to service: %s\n", baseURL)
 
 		ready := false
 		for i := 0; i < 40; i++ {

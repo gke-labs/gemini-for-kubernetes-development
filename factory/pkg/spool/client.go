@@ -146,10 +146,10 @@ func withdraw(ctx context.Context, r Remote, id string) (bool, error) {
 // its directory).
 type Entry struct {
 	Task
-	Kind     string
-	Started  time.Time
-	State    State
-	ExitCode string
+	Kind     string    `json:"kind"`
+	Started  time.Time `json:"started,omitempty"`
+	State    State     `json:"state"`
+	ExitCode string    `json:"exit_code,omitempty"`
 }
 
 // taskName splits a task directory name into its kind and the time in it.
@@ -157,13 +157,24 @@ var taskName = regexp.MustCompile(`^(.+)-(\d{8}-\d{6})(?:-[0-9a-f]+)?$`)
 
 // List finds every task in the sandbox, spooled ones not yet claimed and
 // every directory in the tasks directory, whoever started it, newest
-// first.
+// first. A task whose process is gone without an exit code — the sandbox
+// restarted under it — is given 137, as AttachTask and watch's recovery
+// give it, so it does not look running forever.
 func List(ctx context.Context, r Remote) ([]Entry, error) {
 	script := fmt.Sprintf(`for d in %s/*/ %s/*/; do
   [ -d "$d" ] || continue
-  case "$d" in %s/*) s=pending ;; *) if [ -s "${d}exit_code" ]; then s="exited:$(cat "${d}exit_code")"; elif [ -s "${d}pid" ]; then s=running; else s=claimed; fi ;; esac
+  case "$d" in
+  %s/*) s=pending ;;
+  *)
+    if [ -s "${d}exit_code" ]; then s="exited:$(cat "${d}exit_code")"
+    elif [ -s "${d}pid" ]; then
+      if [ -n "$(%s)" ]; then s=running
+      elif [ -s "${d}exit_code" ]; then s="exited:$(cat "${d}exit_code")"
+      else echo 137 > "${d}exit_code" 2>/dev/null; s="exited:137"; fi
+    else s=claimed; fi ;;
+  esac
   printf '%%s\t%%s\t%%s\n' "$s" "$(basename "$d")" "$(tr -d '\n' < "${d}%s" 2>/dev/null)"
-done`, IncomingDir, envd.DefaultTasksDir, IncomingDir, TaskFile)
+done`, IncomingDir, envd.DefaultTasksDir, IncomingDir, envd.BuildCheckPidCmd(`"${d}pid"`, `"${d}start_time"`), TaskFile)
 	var out bytes.Buffer
 	if err := r.Exec(ctx, script, "/workspaces", nil, nil, &out, nil); err != nil {
 		return nil, err
