@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"k8s.io/klog/v2"
 )
 
@@ -54,6 +55,9 @@ type Task struct {
 	Recipe      string    `json:"recipe"`
 	URL         string    `json:"url,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at"`
+	// Output is the recipe's task-output declaration, which the recipe the
+	// sandbox runs no longer has (recipe.ForSandbox).
+	Output *taskoutput.Decl `json:"output,omitempty"`
 }
 
 // ExecCmd is the command that runs the recipe in taskDir, with factory

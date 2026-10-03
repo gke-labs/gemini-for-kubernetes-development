@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
 // Recipe is one task.
@@ -43,6 +45,11 @@ type Recipe struct {
 	// Outputs are the task-directory files `recipe run` prints when the
 	// recipe ends, in order. Unset, they are the capture files.
 	Outputs []string `yaml:"outputs,omitempty"`
+	// TaskOutput declares the task's result: the runner wraps the file the
+	// agent wrote into taskoutput.File, which `factory apply` acts on. It
+	// is factory's, not the runner's: ForSandbox takes it out of the
+	// recipe a sandbox gets, and the task carries it in task.json.
+	TaskOutput *taskoutput.Decl `yaml:"task-output,omitempty"`
 }
 
 // Input is one declared input.
@@ -139,6 +146,14 @@ func (r *Recipe) Validate() error {
 		}
 		if in.Required && in.Default != "" {
 			return fmt.Errorf("input %s: required and default are exclusive", name)
+		}
+	}
+	if to := r.TaskOutput; to != nil {
+		if !taskoutput.Known(to.Kind) {
+			return fmt.Errorf("task-output kind %q is not one of: %s", to.Kind, strings.Join(taskoutput.KnownKinds(), ", "))
+		}
+		if !safeFileName(to.From) {
+			return fmt.Errorf("task-output from %q must be a plain file name", to.From)
 		}
 	}
 	for _, o := range r.Outputs {
@@ -257,6 +272,26 @@ func namedStepNames() []string {
 // safeFileName is one name in the task directory: no path, no dotfile.
 func safeFileName(name string) bool {
 	return name != "" && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".")
+}
+
+// ForSandbox is the recipe as a sandbox's runner gets it: without
+// task-output, which runners older than it reject as an unknown field.
+func ForSandbox(data []byte) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parsing recipe: %w", err)
+	}
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	m := doc.Content[0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == "task-output" {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return yaml.Marshal(&doc)
+		}
+	}
+	return data, nil
 }
 
 //go:embed recipes/*.yaml

@@ -1,6 +1,6 @@
 # factory triage --recipe: triage_issue.sh + structured_triage.txt as steps.
-# The CLI reads the output, triage-output.yaml, and publishes, exactly as
-# without --recipe.
+# The task's result is a Triage task output (task-output.yaml), which
+# `factory apply` publishes; `triage --publish yes` applies it itself.
 #
 # Also runs as `factory recipe run --recipe triage --url <issue>`, which
 # sets the issue_* inputs and prints the triage instead of publishing it.
@@ -66,3 +66,7 @@ steps:
 
 outputs:
   - triage-output.yaml
+
+task-output:
+  kind: Triage
+  from: triage-output.yaml

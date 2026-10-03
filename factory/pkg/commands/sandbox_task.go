@@ -19,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
 // newSandboxTaskCommand groups the commands that look at the tasks in a sandbox,
@@ -42,24 +43,24 @@ func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 // annotation is that URL. When several are (an issue's fix and triage
 // sandboxes) it asks for the name rather than connect to — and so wake —
 // all of them.
-func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, error) {
+func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, string, error) {
 	if _, err := ResolveRootFlags(c); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	name := arg
 	if strings.HasPrefix(arg, "https://") || strings.HasPrefix(arg, "http://") {
 		var err error
 		if name, err = sandboxForURL(ctx, arg); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	} else if err := validateSandboxName(name); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	client, err := envd.Connect(ctx, rootFlags.Namespace, name)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to sandbox %s: %w", name, err)
+		return nil, "", fmt.Errorf("connecting to sandbox %s: %w", name, err)
 	}
-	return client, nil
+	return client, name, nil
 }
 
 func sandboxForURL(ctx context.Context, itemURL string) (string, error) {
@@ -119,7 +120,7 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
   factory sandbox task list fix-repo-123`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, err := connectTaskSandbox(ctx, c, args[0])
+			client, _, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -176,7 +177,7 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if output != "" && output != "json" {
 				return fmt.Errorf("--output must be json or empty, not %q", output)
 			}
-			client, err := connectTaskSandbox(ctx, c, args[0])
+			client, _, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -214,13 +215,15 @@ func newTaskOutputCommand(ctx context.Context) *cobra.Command {
 	var sel taskSelectFlags
 	cmd := &cobra.Command{
 		Use:   "output <sandbox-name | issue/PR URL> [file]",
-		Short: "Print the outputs of a finished task",
-		Long: `Print the outputs of a finished task.
+		Short: "Print the result of a finished task",
+		Long: `Print the result of a finished task.
 
-With no file, a recipe task's declared outputs are printed, each under a
-banner with its name. With a file, that file of the task directory is
-printed as it is, for a program to read.`,
-		Example: `  factory sandbox task output recipe-repo-123 --client-id my-run-7
+With no file, the task's result is printed as a task output document
+(task-output.yaml), for ` + "`factory apply`" + ` to act on; a task with none
+gets its recipe's declared outputs, each under a banner with its name.
+With a file, that file of the task directory is printed as it is, for a
+program to read.`,
+		Example: `  factory sandbox task output recipe-repo-123 --client-id my-run-7 | factory apply -f - --dry-run
   factory sandbox task output recipe-repo-123 --client-id my-run-7 triage-output.yaml
   factory sandbox task output triage-repo-123 triage-output.txt`,
 		Args: cobra.RangeArgs(1, 2),
@@ -228,7 +231,7 @@ printed as it is, for a program to read.`,
 			if len(args) == 2 && !outputFileName.MatchString(args[1]) {
 				return fmt.Errorf("%q is not a file name in the task directory", args[1])
 			}
-			client, err := connectTaskSandbox(ctx, c, args[0])
+			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -244,6 +247,13 @@ printed as it is, for a program to read.`,
 			if len(args) == 2 {
 				return printTaskFile(ctx, client, taskDir, args[1])
 			}
+			if doc, err := readTaskOutput(ctx, client, sandboxName, e); err != nil || doc != nil {
+				if err != nil {
+					return err
+				}
+				_, err = os.Stdout.Write(doc)
+				return err
+			}
 			rec, err := taskRecipe(ctx, client, taskDir)
 			if err != nil {
 				return err
@@ -258,6 +268,61 @@ printed as it is, for a program to read.`,
 	}
 	sel.add(cmd)
 	return cmd
+}
+
+// classicOutputs are the results of tasks started without a task.json,
+// by the kind in their directory names.
+var classicOutputs = map[string]taskoutput.Decl{
+	"triage": {Kind: "Triage", From: "triage-output.txt"},
+}
+
+// readTaskOutput is a finished task's task output document: the one it
+// wrote, or else one made here from the result it declared — sandboxes
+// whose runner predates task outputs, and classic tasks, leave none. Nil
+// when the task has no result of a known kind.
+func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string, e spool.Entry) ([]byte, error) {
+	taskDir := spool.TaskDir(e.ID)
+	var out bytes.Buffer
+	_ = client.Exec(ctx, "cat "+taskDir+"/"+taskoutput.File+" 2>/dev/null", "/workspaces", nil, nil, &out, nil)
+	if out.Len() > 0 {
+		return out.Bytes(), nil
+	}
+	decl := e.Output
+	if decl == nil {
+		if d, ok := classicOutputs[e.Kind]; ok {
+			decl = &d
+		}
+	}
+	if decl == nil {
+		return nil, nil
+	}
+	var raw bytes.Buffer
+	_ = client.Exec(ctx, "cat "+taskDir+"/"+decl.From+" 2>/dev/null", "/workspaces", nil, nil, &raw, nil)
+	if raw.Len() == 0 {
+		return nil, fmt.Errorf("task %s left no %s, its %s result", e.ID, decl.From, decl.Kind)
+	}
+	target := e.URL
+	if target == "" {
+		target = sandboxHTMLURL(ctx, sandboxName)
+	}
+	doc, err := taskoutput.Wrap(decl.Kind, raw.String(), taskoutput.Target{URL: target}, taskoutput.Source{Sandbox: sandboxName, Task: e.ID, Recipe: e.Recipe})
+	if err != nil {
+		return nil, fmt.Errorf("task %s: %w", e.ID, err)
+	}
+	return taskoutput.Marshal(doc)
+}
+
+// sandboxHTMLURL is the issue or PR a sandbox works on, or "".
+func sandboxHTMLURL(ctx context.Context, name string) string {
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return ""
+	}
+	sb, err := k8s.NewManager(kubeClient).GetSandbox(ctx, rootFlags.Namespace, name)
+	if err != nil {
+		return ""
+	}
+	return sb.GetAnnotations()["htmlURL"]
 }
 
 func printTaskFile(ctx context.Context, client *envd.Client, taskDir, name string) error {
@@ -299,7 +364,7 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
   factory sandbox task attach recipe-repo-123 --client-id my-run-7`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, err := connectTaskSandbox(ctx, c, args[0])
+			client, _, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -337,7 +402,7 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
   factory sandbox task logs fix-repo-123 --task fix-20261002-150405 -f`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, err := connectTaskSandbox(ctx, c, args[0])
+			client, _, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}

@@ -25,6 +25,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 )
@@ -238,6 +239,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	}
 
 	task := newSpoolTask(rec.Name, clientID, itemURL)
+	task.Output = rec.TaskOutput
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
 	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", rootFlags.Engine)
@@ -262,6 +264,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 		return err
 	}
 	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
+	if rec.TaskOutput != nil {
+		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
+	}
 	return nil
 }
 
@@ -295,11 +300,15 @@ func newSpoolTask(recipeName, clientID, itemURL string) spool.Task {
 // started through envd as before, in the same task directory.
 func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) error {
 	taskDir := spool.TaskDir(task.ID)
+	recipeBytes, err := recipe.ForSandbox(recipeBytes)
+	if err != nil {
+		return err
+	}
 	if err := spool.Submit(ctx, client, task, recipeBytes, inputs, envMap); err != nil {
 		return err
 	}
 	fmt.Printf("Spooled task %s; waiting for the sandbox to start it...\n", task.ID)
-	err := spool.AwaitStart(ctx, client, task.ID, 20*time.Second, 2*time.Minute)
+	err = spool.AwaitStart(ctx, client, task.ID, 20*time.Second, 2*time.Minute)
 	if errors.Is(err, spool.ErrNotClaimed) {
 		fmt.Println("The sandbox's image has no spool (recreate the sandbox to get one); starting the recipe through envd instead.")
 		cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, inputs)
@@ -423,5 +432,50 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		Inputs:  inputs,
 		Log:     os.Stdout,
 	}
-	return r.Run(ctx, rec)
+	if err := r.Run(ctx, rec); err != nil {
+		return err
+	}
+	return writeTaskOutput(taskDir, inputs, engine)
+}
+
+// writeTaskOutput wraps the result the task declared (task.json's output)
+// into taskoutput.File. A result that does not parse fails the task: it is
+// caught here, not when someone applies it.
+func writeTaskOutput(taskDir string, inputs map[string]string, engine string) error {
+	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
+	if err != nil {
+		return nil // started by hand, or by a CLI older than task.json
+	}
+	var task spool.Task
+	if err := json.Unmarshal(data, &task); err != nil || task.Output == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
+	if err != nil {
+		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
+	}
+	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), taskTarget(task, inputs), taskoutput.Source{
+		Task:   filepath.Base(taskDir),
+		Recipe: task.Recipe,
+		Engine: engine,
+	})
+	if err != nil {
+		return err
+	}
+	out, err := taskoutput.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("::task-output %s %s\n", doc.Kind, taskoutput.File)
+	return os.WriteFile(filepath.Join(taskDir, taskoutput.File), out, 0o644)
+}
+
+// taskTarget is the issue or PR a task's result is about.
+func taskTarget(task spool.Task, inputs map[string]string) taskoutput.Target {
+	for _, u := range []string{task.URL, inputs["url"], inputs["issue_url"], inputs["pr_url"]} {
+		if u != "" {
+			return taskoutput.Target{URL: u}
+		}
+	}
+	return taskoutput.Target{}
 }

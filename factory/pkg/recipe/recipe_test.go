@@ -355,3 +355,36 @@ func TestACPSessionAsksTurnByTurn(t *testing.T) {
 		t.Errorf("no transcript: %v", err)
 	}
 }
+
+func TestForSandboxDropsTaskOutput(t *testing.T) {
+	data, rec, err := Builtin("triage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.TaskOutput == nil || rec.TaskOutput.Kind != "Triage" || rec.TaskOutput.From != "triage-output.yaml" {
+		t.Fatalf("triage task-output = %+v", rec.TaskOutput)
+	}
+	out, err := ForSandbox(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "\ntask-output:") {
+		t.Errorf("task-output still in the sandbox's recipe:\n%s", out)
+	}
+	// What a runner without task-output reads: everything else, strictly.
+	got, err := Parse(out)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.TaskOutput != nil || len(got.Steps) != len(rec.Steps) || got.Context != rec.Context {
+		t.Errorf("sandbox recipe differs beyond task-output: %+v", got)
+	}
+}
+
+func TestTaskOutputValidated(t *testing.T) {
+	for _, to := range []string{"{kind: Poem, from: x.yaml}", "{kind: Triage, from: ../x}"} {
+		if _, err := Parse([]byte("name: x\nsteps: [{run: 'true'}]\ntask-output: " + to + "\n")); err == nil {
+			t.Errorf("task-output %s accepted", to)
+		}
+	}
+}
