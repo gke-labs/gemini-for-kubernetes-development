@@ -3,8 +3,10 @@ package commands
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -28,6 +30,8 @@ func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 		Short: "List, follow and read the tasks in a sandbox",
 	}
 	cmd.AddCommand(newTaskListCommand(ctx))
+	cmd.AddCommand(newTaskStatusCommand(ctx))
+	cmd.AddCommand(newTaskOutputCommand(ctx))
 	cmd.AddCommand(newTaskAttachCommand(ctx))
 	cmd.AddCommand(newTaskLogsCommand(ctx))
 	return cmd
@@ -127,24 +131,160 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "TASK\tKIND\tCLIENT ID\tSTATE\tSTARTED")
 			for _, e := range entries {
-				state := string(e.State)
-				if e.State == spool.Exited {
-					state = "exited " + e.ExitCode
-				}
-				started := "-"
-				if !e.Started.IsZero() {
-					started = e.Started.Local().Format(time.DateTime)
-				}
-				clientID := e.ClientID
-				if clientID == "" {
-					clientID = "-"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, clientID, state, started)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, orDash(e.ClientID), taskState(e), taskStarted(e))
 			}
 			return w.Flush()
 		},
 	}
 	return cmd
+}
+
+func taskState(e spool.Entry) string {
+	if e.State == spool.Exited {
+		return "exited " + e.ExitCode
+	}
+	return string(e.State)
+}
+
+func taskStarted(e spool.Entry) string {
+	if e.Started.IsZero() {
+		return "-"
+	}
+	return e.Started.Local().Format(time.DateTime)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// newTaskStatusCommand reports where a task is without following it, so a
+// caller that started a task detached can come back for it: pending,
+// claimed, running, or exited with its exit code.
+func newTaskStatusCommand(ctx context.Context) *cobra.Command {
+	var sel taskSelectFlags
+	var output string
+	cmd := &cobra.Command{
+		Use:   "status <sandbox-name | issue/PR URL>",
+		Short: "Show whether a task is still running, and how it exited",
+		Example: `  factory sandbox task status recipe-repo-123 --client-id my-run-7
+  factory sandbox task status https://github.com/owner/repo/issues/123 -o json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if output != "" && output != "json" {
+				return fmt.Errorf("--output must be json or empty, not %q", output)
+			}
+			client, err := connectTaskSandbox(ctx, c, args[0])
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+			e, err := sel.find(ctx, client)
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(e)
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "Task:\t%s\n", e.ID)
+			fmt.Fprintf(w, "Kind:\t%s\n", e.Kind)
+			fmt.Fprintf(w, "Client ID:\t%s\n", orDash(e.ClientID))
+			fmt.Fprintf(w, "State:\t%s\n", taskState(e))
+			fmt.Fprintf(w, "Started:\t%s\n", taskStarted(e))
+			return w.Flush()
+		},
+	}
+	sel.add(cmd)
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json")
+	return cmd
+}
+
+// outputFileName is a file directly in a task directory.
+var outputFileName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*$`)
+
+// newTaskOutputCommand reads what a finished task left: a recipe's
+// declared outputs, or a file named. It does not wait; a task still going
+// is an error, so a caller never takes a half-written file for the result.
+func newTaskOutputCommand(ctx context.Context) *cobra.Command {
+	var sel taskSelectFlags
+	cmd := &cobra.Command{
+		Use:   "output <sandbox-name | issue/PR URL> [file]",
+		Short: "Print the outputs of a finished task",
+		Long: `Print the outputs of a finished task.
+
+With no file, a recipe task's declared outputs are printed, each under a
+banner with its name. With a file, that file of the task directory is
+printed as it is, for a program to read.`,
+		Example: `  factory sandbox task output recipe-repo-123 --client-id my-run-7
+  factory sandbox task output recipe-repo-123 --client-id my-run-7 triage-output.yaml
+  factory sandbox task output triage-repo-123 triage-output.txt`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 2 && !outputFileName.MatchString(args[1]) {
+				return fmt.Errorf("%q is not a file name in the task directory", args[1])
+			}
+			client, err := connectTaskSandbox(ctx, c, args[0])
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+			e, err := sel.find(ctx, client)
+			if err != nil {
+				return err
+			}
+			if e.State != spool.Exited {
+				return fmt.Errorf("task %s is %s; its outputs are not final (wait for it with: factory sandbox task attach %s --task %s)", e.ID, e.State, args[0], e.ID)
+			}
+			taskDir := spool.TaskDir(e.ID)
+			if len(args) == 2 {
+				return printTaskFile(ctx, client, taskDir, args[1])
+			}
+			rec, err := taskRecipe(ctx, client, taskDir)
+			if err != nil {
+				return err
+			}
+			if rec == nil {
+				var ls bytes.Buffer
+				_ = client.Exec(ctx, "ls "+taskDir, "/workspaces", nil, nil, &ls, nil)
+				return fmt.Errorf("task %s is not a recipe task; name the file to print, one of: %s", e.ID, strings.Join(strings.Fields(ls.String()), ", "))
+			}
+			return printRecipeOutputs(ctx, client, rec, taskDir)
+		},
+	}
+	sel.add(cmd)
+	return cmd
+}
+
+func printTaskFile(ctx context.Context, client *envd.Client, taskDir, name string) error {
+	path := taskDir + "/" + name
+	var out, errOut bytes.Buffer
+	if err := client.Exec(ctx, fmt.Sprintf("if [ -f %[1]s ]; then cat %[1]s; else echo missing >&2; fi", path), "/workspaces", nil, nil, &out, &errOut); err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	if strings.TrimSpace(errOut.String()) == "missing" {
+		return fmt.Errorf("the task left no %s", name)
+	}
+	_, err := os.Stdout.Write(out.Bytes())
+	return err
+}
+
+// taskRecipe is the recipe a task ran, or nil for a task that is not one.
+func taskRecipe(ctx context.Context, client *envd.Client, taskDir string) (*recipe.Recipe, error) {
+	var recipeYAML bytes.Buffer
+	_ = client.Exec(ctx, "cat "+taskDir+"/"+spool.RecipeFile+" 2>/dev/null", "/workspaces", nil, nil, &recipeYAML, nil)
+	if recipeYAML.Len() == 0 {
+		return nil, nil
+	}
+	rec, err := recipe.Parse(recipeYAML.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("reading the task's recipe: %w", err)
+	}
+	return rec, nil
 }
 
 // newTaskAttachCommand reconnects to a task: it follows the log to the end
@@ -176,14 +316,9 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
 			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
-			var recipeYAML bytes.Buffer
-			_ = client.Exec(ctx, "cat "+taskDir+"/"+spool.RecipeFile+" 2>/dev/null", "/workspaces", nil, nil, &recipeYAML, nil)
-			if recipeYAML.Len() == 0 {
-				return nil
-			}
-			rec, err := recipe.Parse(recipeYAML.Bytes())
-			if err != nil {
-				return fmt.Errorf("reading the task's recipe: %w", err)
+			rec, err := taskRecipe(ctx, client, taskDir)
+			if err != nil || rec == nil {
+				return err
 			}
 			return printRecipeOutputs(ctx, client, rec, taskDir)
 		},

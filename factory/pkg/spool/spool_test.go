@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -195,13 +196,22 @@ func TestListAndFind(t *testing.T) {
 		return os.WriteFile(envd.NewTaskFiles(taskDir).ExitCodeFile, []byte("0\n"), 0o644)
 	})
 	submit(t, r, "c", "client-1", now)
-	// A task envd started: no task.json, kind and time from its name.
+	// Tasks envd started: no task.json, kind and time from their names.
+	// fix is running (its pid is this test's); plan's process is gone
+	// without an exit code, as after a sandbox restart.
 	fix := "fix-" + now.Add(-time.Hour).Format("20060102-150405")
-	if err := os.MkdirAll(filepath.Join(r.tasks(), fix), 0o755); err != nil {
+	plan := "plan-" + now.Add(-2*time.Hour).Format("20060102-150405")
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(envd.NewTaskFiles(filepath.Join(r.tasks(), fix)).PIDFile, []byte("1\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for name, pid := range map[string]int{fix: os.Getpid(), plan: gone.Process.Pid} {
+		if err := os.MkdirAll(filepath.Join(r.tasks(), name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(envd.NewTaskFiles(filepath.Join(r.tasks(), name)).PIDFile, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	entries, err := List(context.Background(), r)
@@ -212,8 +222,11 @@ func TestListAndFind(t *testing.T) {
 	for _, e := range entries {
 		got = append(got, e.ID+":"+e.Kind+":"+string(e.State)+e.ExitCode)
 	}
-	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 " + fix + ":fix:running"; strings.Join(got, " ") != want {
+	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 " + fix + ":fix:running " + plan + ":plan:exited137"; strings.Join(got, " ") != want {
 		t.Errorf("List = %v", got)
+	}
+	if code, _ := os.ReadFile(envd.NewTaskFiles(filepath.Join(r.tasks(), plan)).ExitCodeFile); strings.TrimSpace(string(code)) != "137" {
+		t.Errorf("dead task's exit_code = %q, want 137 recorded", code)
 	}
 	for _, tc := range []struct{ id, client, want string }{
 		{"a", "", "a"},
