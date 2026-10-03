@@ -46,8 +46,10 @@ RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
 
 # Antigravity CLI (agy) is a Go binary, not an npm package. It self-updates
 # in the background unless this is exactly "true" — the image pins it.
+# --compressed: the server sometimes sends the script gzipped even when not
+# asked to, and bash then chokes on the raw bytes.
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
-RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && agy --version
+RUN curl -fsSL --compressed --retry 5 --retry-connrefused --retry-delay 3 https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin && agy --version
 
 # agy has no ACP mode; acpd's antigravity engine runs Google's separate
 # agy_acp_server instead (see factory/pkg/acpd/session.go, which names
