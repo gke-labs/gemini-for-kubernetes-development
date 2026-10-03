@@ -195,6 +195,14 @@ func TestListAndFind(t *testing.T) {
 		return os.WriteFile(envd.NewTaskFiles(taskDir).ExitCodeFile, []byte("0\n"), 0o644)
 	})
 	submit(t, r, "c", "client-1", now)
+	// A task envd started: no task.json, kind and time from its name.
+	fix := "fix-" + now.Add(-time.Hour).Format("20060102-150405")
+	if err := os.MkdirAll(filepath.Join(r.tasks(), fix), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envd.NewTaskFiles(filepath.Join(r.tasks(), fix)).PIDFile, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	entries, err := List(context.Background(), r)
 	if err != nil {
@@ -202,9 +210,9 @@ func TestListAndFind(t *testing.T) {
 	}
 	var got []string
 	for _, e := range entries {
-		got = append(got, e.ID+":"+string(e.State)+e.ExitCode)
+		got = append(got, e.ID+":"+e.Kind+":"+string(e.State)+e.ExitCode)
 	}
-	if strings.Join(got, " ") != "c:pending b:exited0 a:exited0" {
+	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 " + fix + ":fix:running"; strings.Join(got, " ") != want {
 		t.Errorf("List = %v", got)
 	}
 	for _, tc := range []struct{ id, client, want string }{

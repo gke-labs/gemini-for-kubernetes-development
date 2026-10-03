@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -139,21 +140,30 @@ func withdraw(ctx context.Context, r Remote, id string) (bool, error) {
 	return strings.TrimSpace(out.String()) == "withdrawn", nil
 }
 
-// Entry is a spooled task as List finds it.
+// Entry is a task as List finds it. Kind and Started come from task.json
+// when the task has one (spooled and recipe tasks) and from the directory
+// name otherwise (<kind>-<YYYYMMDD-HHMMSS>, as every task command names
+// its directory).
 type Entry struct {
 	Task
+	Kind     string
+	Started  time.Time
 	State    State
 	ExitCode string
 }
 
-// List finds the spooled tasks in the sandbox, pending and claimed,
-// newest first.
+// taskName splits a task directory name into its kind and the time in it.
+var taskName = regexp.MustCompile(`^(.+)-(\d{8}-\d{6})(?:-[0-9a-f]+)?$`)
+
+// List finds every task in the sandbox, spooled ones not yet claimed and
+// every directory in the tasks directory, whoever started it, newest
+// first.
 func List(ctx context.Context, r Remote) ([]Entry, error) {
 	script := fmt.Sprintf(`for d in %s/*/ %s/*/; do
-  [ -f "${d}%s" ] || continue
+  [ -d "$d" ] || continue
   case "$d" in %s/*) s=pending ;; *) if [ -s "${d}exit_code" ]; then s="exited:$(cat "${d}exit_code")"; elif [ -s "${d}pid" ]; then s=running; else s=claimed; fi ;; esac
-  printf '%%s\t%%s\n' "$s" "$(tr -d '\n' < "${d}%s")"
-done`, IncomingDir, envd.DefaultTasksDir, TaskFile, IncomingDir, TaskFile)
+  printf '%%s\t%%s\t%%s\n' "$s" "$(basename "$d")" "$(tr -d '\n' < "${d}%s" 2>/dev/null)"
+done`, IncomingDir, envd.DefaultTasksDir, IncomingDir, TaskFile)
 	var out bytes.Buffer
 	if err := r.Exec(ctx, script, "/workspaces", nil, nil, &out, nil); err != nil {
 		return nil, err
@@ -164,21 +174,28 @@ done`, IncomingDir, envd.DefaultTasksDir, TaskFile, IncomingDir, TaskFile)
 func parseList(out string) []Entry {
 	var entries []Entry
 	for _, line := range strings.Split(out, "\n") {
-		state, taskJSON, ok := strings.Cut(line, "\t")
-		if !ok {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 || parts[1] == "" {
 			continue
 		}
-		var e Entry
-		if err := json.Unmarshal([]byte(taskJSON), &e.Task); err != nil || e.ID == "" {
-			continue
+		state, name, taskJSON := parts[0], parts[1], parts[2]
+		e := Entry{Kind: name}
+		if m := taskName.FindStringSubmatch(name); m != nil {
+			e.Kind = m[1]
+			e.Started, _ = time.ParseInLocation("20060102-150405", m[2], time.Local)
 		}
+		if taskJSON != "" && json.Unmarshal([]byte(taskJSON), &e.Task) == nil && e.ID != "" {
+			e.Kind = "recipe-" + e.Recipe
+			e.Started = e.SubmittedAt
+		}
+		e.ID = name
 		e.State = State(state)
 		if code, ok := strings.CutPrefix(state, "exited:"); ok {
 			e.State, e.ExitCode = Exited, strings.TrimSpace(code)
 		}
 		entries = append(entries, e)
 	}
-	sort.SliceStable(entries, func(i, j int) bool { return entries[i].SubmittedAt.After(entries[j].SubmittedAt) })
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Started.After(entries[j].Started) })
 	return entries
 }
 
@@ -192,11 +209,11 @@ func Find(entries []Entry, id, clientID string) (Entry, error) {
 	}
 	switch {
 	case id != "":
-		return Entry{}, fmt.Errorf("no spooled task %s", id)
+		return Entry{}, fmt.Errorf("no task %s", id)
 	case clientID != "":
-		return Entry{}, fmt.Errorf("no spooled task with client id %s", clientID)
+		return Entry{}, fmt.Errorf("no task with client id %s", clientID)
 	}
-	return Entry{}, fmt.Errorf("no spooled tasks")
+	return Entry{}, fmt.Errorf("no tasks")
 }
 
 // run runs script and fails unless it succeeded. envd's Exec does not
