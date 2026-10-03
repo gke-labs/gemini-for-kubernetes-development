@@ -36,6 +36,10 @@ type Engine struct {
 	// has no flag for and that every session started here wants — not for
 	// credentials, which come from APIKeyEnv and the request.
 	Env []string
+	// ModelFlag is the flag that picks the model, for a caller that names
+	// one (SessionConfig.Model). Empty: the engine takes no such flag and
+	// a requested model is ignored.
+	ModelFlag string
 }
 
 // AntigravityACPServer is Google's agy_acp_server, which the antigravity
@@ -66,7 +70,8 @@ var Engines = map[string]Engine{
 		// therefore the honest answer rather than a way around the
 		// question. It does mean the checkout's own .gemini config is
 		// live too: project hooks, stdio MCP servers, project GEMINI.md.
-		Env: []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
+		Env:       []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
+		ModelFlag: "--model",
 	},
 	"antigravity": {
 		Command: AntigravityACPServer,
@@ -133,6 +138,9 @@ type SessionConfig struct {
 	AuthMethodID string
 	// CWD is the workspace the agent operates in.
 	CWD string
+	// Model is the model to start the engine on. Empty leaves it on the
+	// engine's default, as research sessions do.
+	Model string
 	// Mode is the approval mode to switch to once the session exists.
 	// Empty leaves the engine on whatever it starts in. The ids are the
 	// engine's, advertised in the session/new reply — see GeminiMode*.
@@ -279,7 +287,11 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	}
 	s.engineLog = engineLog
 
-	cmd := exec.CommandContext(ctx, engine.Command, engine.Args...)
+	args := append([]string(nil), engine.Args...)
+	if cfg.Model != "" && engine.ModelFlag != "" {
+		args = append(args, engine.ModelFlag, cfg.Model)
+	}
+	cmd := exec.CommandContext(ctx, engine.Command, args...)
 	cmd.Dir = cfg.CWD
 	// An explicit environment, not the inherited one. The credential goes
 	// to the engine and to nothing else: acpd's own /proc/<pid>/environ

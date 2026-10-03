@@ -1,0 +1,198 @@
+// Package recipe runs a task as a list of steps in one sandbox, around one
+// agent session — the shape of a GitHub Actions job with one more kind of
+// step:
+//
+//	uses: a named step that ships with factory (setup-git, setup-repo …).
+//	      The only steps that run with the GitHub token.
+//	run:  inline shell, run with the agent's privileges: no GitHub token.
+//	ask:  a prompt turn. Every ask goes to the same session, so a later
+//	      turn does not repeat what an earlier one said.
+//
+// Steps run in order and the first failure ends the recipe. A recipe is
+// data, shipped by the CLI; the runner is the factory binary in the
+// sandbox image, which also decides what each `uses` name means.
+//
+// Values reach steps the way they reach a workflow's: a run step sees its
+// inputs as INPUT_<NAME> environment variables and never as shell source,
+// so an issue title cannot become a command. An ask is a text/template
+// rendered just before the turn is sent, so it can read the inputs and
+// what earlier steps produced.
+package recipe
+
+import (
+	"embed"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Recipe is one task.
+type Recipe struct {
+	Name string `yaml:"name"`
+	// Context is the standing rules: what the agent may and may not do.
+	// It is sent once, ahead of the first ask, rather than repeated in
+	// every turn.
+	Context string `yaml:"context,omitempty"`
+	Steps   []Step `yaml:"steps"`
+}
+
+// Step is one step; exactly one of Uses, Run and Ask is set.
+type Step struct {
+	// ID names the step for later ones: {{ .Steps.<id>.ExitCode }}.
+	ID   string            `yaml:"id,omitempty"`
+	Uses string            `yaml:"uses,omitempty"`
+	With map[string]string `yaml:"with,omitempty"`
+	Run  string            `yaml:"run,omitempty"`
+	Ask  string            `yaml:"ask,omitempty"`
+	// Capture writes an ask's reply to this file in the task directory,
+	// where the CLI reads it back, as runEngine's output file is today.
+	Capture string `yaml:"capture,omitempty"`
+	// ContinueOnError lets a failed run step be judged by a later one
+	// instead of ending the recipe.
+	ContinueOnError bool `yaml:"continue-on-error,omitempty"`
+}
+
+// Kind is "uses", "run" or "ask".
+func (s Step) Kind() string {
+	switch {
+	case s.Uses != "":
+		return "uses"
+	case s.Run != "":
+		return "run"
+	default:
+		return "ask"
+	}
+}
+
+// Label names the step in the log.
+func (s Step) Label(i int) string {
+	if s.ID != "" {
+		return s.ID
+	}
+	switch s.Kind() {
+	case "uses":
+		return fmt.Sprintf("%d:%s", i+1, s.Uses)
+	default:
+		return fmt.Sprintf("%d:%s", i+1, s.Kind())
+	}
+}
+
+// NamedSteps maps each `uses` name to the lib.sh function it runs. A
+// closed set: these are the steps that hold the GitHub token, so a recipe
+// can choose among them but cannot add one.
+var NamedSteps = map[string]string{
+	"setup-git":               "setupGit",
+	"setup-repo":              "setupGitRepos",
+	"checkout-default-branch": "checkoutDefaultBranch",
+	"configure-engine":        "configureGemini",
+}
+
+var (
+	stepIDRE  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	withKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+)
+
+// Parse reads and validates a recipe.
+func Parse(data []byte) (*Recipe, error) {
+	var r Recipe
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("parsing recipe: %w", err)
+	}
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// Validate checks what can be checked before anything runs, so a bad
+// recipe fails in the CLI and not halfway through a sandbox.
+func (r *Recipe) Validate() error {
+	if r.Name == "" {
+		return fmt.Errorf("recipe has no name")
+	}
+	if len(r.Steps) == 0 {
+		return fmt.Errorf("recipe %s has no steps", r.Name)
+	}
+	ids := map[string]bool{}
+	for i, s := range r.Steps {
+		set := 0
+		for _, v := range []string{s.Uses, s.Run, s.Ask} {
+			if v != "" {
+				set++
+			}
+		}
+		if set != 1 {
+			return fmt.Errorf("step %d: exactly one of uses, run and ask must be set", i+1)
+		}
+		if s.ID != "" {
+			if !stepIDRE.MatchString(s.ID) {
+				return fmt.Errorf("step %d: id %q must match %s", i+1, s.ID, stepIDRE)
+			}
+			if ids[s.ID] {
+				return fmt.Errorf("step %d: duplicate id %q", i+1, s.ID)
+			}
+			ids[s.ID] = true
+		}
+		if s.Uses != "" {
+			if _, ok := NamedSteps[s.Uses]; !ok {
+				return fmt.Errorf("step %d: unknown step %q (known: %s)", i+1, s.Uses, strings.Join(namedStepNames(), ", "))
+			}
+		}
+		if len(s.With) > 0 && s.Uses == "" {
+			return fmt.Errorf("step %d: with is only for uses steps", i+1)
+		}
+		for k := range s.With {
+			if !withKeyRE.MatchString(k) {
+				return fmt.Errorf("step %d: with key %q must match %s", i+1, k, withKeyRE)
+			}
+		}
+		if s.Capture != "" {
+			if s.Ask == "" {
+				return fmt.Errorf("step %d: capture is only for ask steps", i+1)
+			}
+			if !safeFileName(s.Capture) {
+				return fmt.Errorf("step %d: capture %q must be a plain file name", i+1, s.Capture)
+			}
+		}
+		if s.ContinueOnError && s.Run == "" {
+			return fmt.Errorf("step %d: continue-on-error is only for run steps", i+1)
+		}
+	}
+	return nil
+}
+
+func namedStepNames() []string {
+	names := make([]string, 0, len(NamedSteps))
+	for n := range NamedSteps {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// safeFileName is one name in the task directory: no path, no dotfile.
+func safeFileName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".")
+}
+
+//go:embed recipes/*.yaml
+var builtinFS embed.FS
+
+// Builtin returns the recipe that ships with factory under name, as bytes
+// to hand to the sandbox and parsed to fail early here.
+func Builtin(name string) ([]byte, *Recipe, error) {
+	data, err := builtinFS.ReadFile("recipes/" + name + ".yaml")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no built-in recipe %q: %w", name, err)
+	}
+	r, err := Parse(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("built-in recipe %s: %w", name, err)
+	}
+	return data, r, nil
+}

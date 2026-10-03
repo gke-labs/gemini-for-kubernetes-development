@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
@@ -27,6 +29,9 @@ type TriageFlags struct {
 	IssueURL     string
 	Publish      string
 	Instructions []string
+	// Recipe runs the task as the triage recipe (pkg/recipe) instead of
+	// triage_issue.sh: an agent session in the sandbox. Experimental.
+	Recipe bool
 }
 
 // NewTriageCommand triages a GitHub issue in a sandbox: it produces
@@ -62,18 +67,20 @@ func NewTriageCommand(ctx context.Context) *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
 				defer cancel()
 			}
-			return runTriage(ctx, flags.IssueURL, flags.Publish, flags.Instructions, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runTriage(ctx, flags.IssueURL, flags.Publish, flags.Instructions, flags.Recipe, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.IssueURL, "url", "", "GitHub issue URL (e.g. https://github.com/owner/repo/issues/123)")
 	cmd.Flags().StringVar(&flags.Publish, "publish", "no", "Publish policy: no (print only) or yes (apply labels and comment)")
 	cmd.Flags().StringSliceVar(&flags.Instructions, "instruction", nil, "Triage instruction (local file path, repo file path, or raw string). Can be specified multiple times.")
+	cmd.Flags().BoolVar(&flags.Recipe, "recipe", false, "Run as the triage recipe: steps around one agent session (experimental; needs a sandbox image with `factory recipe`)")
+	_ = cmd.Flags().MarkHidden("recipe")
 
 	return cmd
 }
 
-func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionPaths []string, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionPaths []string, useRecipe bool, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	fmt.Printf("Resolving issue URL: %s...\n", issueURL)
 
 	u, err := url.Parse(issueURL)
@@ -136,20 +143,6 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 		ghClient = github.NewClientWithToken(ctx, userToken)
 	}
 
-	promptBytes, err := tasks.RenderStructuredTriagePrompt(tasks.StructuredTriageParams{
-		Issue:        *issue,
-		Instructions: instructions,
-		HTMLURL:      issue.GetHTMLURL(),
-	})
-	if err != nil {
-		return fmt.Errorf("rendering structured triage prompt: %w", err)
-	}
-
-	scriptBytes, err := tasks.GetTriageScript()
-	if err != nil {
-		return fmt.Errorf("getting triage script: %w", err)
-	}
-
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
 	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
@@ -159,14 +152,15 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 
 	taskDir := fmt.Sprintf("/workspaces/tasks/triage-%s", time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
-	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
-
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
+	var cmdStr string
+	if useRecipe {
+		if cmdStr, err = writeTriageRecipe(ctx, client, taskDir, issue, instructions); err != nil {
+			return err
+		}
+	} else {
+		if cmdStr, err = writeTriageScript(ctx, client, taskDir, promptPath, issue, instructions); err != nil {
+			return err
+		}
 	}
 
 	envMap := map[string]string{
@@ -186,7 +180,6 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	}
 
 	fmt.Println("Running triage task via envd...")
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
 	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", rootFlags.Engine)
 	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Failed")
@@ -254,4 +247,59 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	}
 
 	return nil
+}
+
+// writeTriageScript puts the classic task into the sandbox: the rendered
+// prompt and triage_issue.sh. It returns the command that runs it.
+func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, promptPath string, issue *githubv39.Issue, instructions []string) (string, error) {
+	promptBytes, err := tasks.RenderStructuredTriagePrompt(tasks.StructuredTriageParams{
+		Issue:        *issue,
+		Instructions: instructions,
+		HTMLURL:      issue.GetHTMLURL(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("rendering structured triage prompt: %w", err)
+	}
+	scriptBytes, err := tasks.GetTriageScript()
+	if err != nil {
+		return "", fmt.Errorf("getting triage script: %w", err)
+	}
+	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
+	fmt.Println("Writing prompt and script into sandbox...")
+	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
+		return "", fmt.Errorf("writing prompt: %w", err)
+	}
+	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
+		return "", fmt.Errorf("writing script: %w", err)
+	}
+	return fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath), nil
+}
+
+// writeTriageRecipe puts the triage recipe and its inputs into the sandbox
+// and returns the command that runs them. The recipe comes from this
+// binary; what its steps mean comes from the sandbox's.
+func writeTriageRecipe(ctx context.Context, client *envd.Client, taskDir string, issue *githubv39.Issue, instructions []string) (string, error) {
+	recipeBytes, _, err := recipe.Builtin("triage")
+	if err != nil {
+		return "", err
+	}
+	inputs, err := json.Marshal(map[string]string{
+		"issue_url":    issue.GetHTMLURL(),
+		"issue_number": strconv.Itoa(issue.GetNumber()),
+		"issue_title":  issue.GetTitle(),
+		"issue_body":   issue.GetBody(),
+		"instructions": strings.Join(instructions, "\n\n---\n\n"),
+	})
+	if err != nil {
+		return "", err
+	}
+	recipePath, inputsPath := taskDir+"/recipe.yaml", taskDir+"/inputs.json"
+	fmt.Println("Writing the triage recipe into sandbox...")
+	if err := client.WriteFile(ctx, recipePath, recipeBytes); err != nil {
+		return "", fmt.Errorf("writing recipe: %w", err)
+	}
+	if err := client.WriteFile(ctx, inputsPath, inputs); err != nil {
+		return "", fmt.Errorf("writing inputs: %w", err)
+	}
+	return fmt.Sprintf("factory recipe exec --recipe %s --inputs %s --task-dir %s", recipePath, inputsPath, taskDir), nil
 }
