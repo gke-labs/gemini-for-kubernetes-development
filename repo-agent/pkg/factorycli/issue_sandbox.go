@@ -17,27 +17,16 @@ const (
 	LabelIssue = "factory.gemini.google.com/issue"
 	LabelRepo  = "factory.gemini.google.com/repo"
 
-	// AnnotationTriageTaskState is where factory records triage's state
-	// in the issue's sandbox. last-task-state and last-task-type stay the
-	// plan's or fix's.
-	AnnotationTriageTaskState = "sandbox.gemini.google.com/triage-task-state"
 	// AnnotationRecipeTriageTaskState is where `factory recipe triage`
-	// records its state: the triage repo-agent runs now.
+	// records triage's state in the issue's sandbox. last-task-state and
+	// last-task-type stay the plan's or fix's.
 	AnnotationRecipeTriageTaskState = "sandbox.gemini.google.com/recipe-triage-task-state"
 )
 
 // TriageTaskState is the state of the triage in a sandbox with
-// annotations a: running if either kind of triage is, else the recipe's,
-// which is the newer, else the classic one's.
+// annotations a.
 func TriageTaskState(a map[string]string) string {
-	recipe, classic := a[AnnotationRecipeTriageTaskState], a[AnnotationTriageTaskState]
-	switch {
-	case recipe == TaskStateRunning || classic == TaskStateRunning:
-		return TaskStateRunning
-	case recipe != "":
-		return recipe
-	}
-	return classic
+	return a[AnnotationRecipeTriageTaskState]
 }
 
 // IssueOf returns the issue of repo whose sandbox sb is: by its label,
@@ -86,47 +75,24 @@ func OnlyTriaged(sb *unstructured.Unstructured) bool {
 	return sb.GetAnnotations()[AnnotationTaskType] == "" && HasTriage(sb)
 }
 
-// AnnotationTriageDraft holds the board's triage draft. A triage-<repo>-<N>
-// sandbox from before triage moved into the issue's sandbox keeps its
-// draft in agentDraft (with agentDraftType=triage) instead: in the issue's
-// sandbox agentDraft is a review's.
+// AnnotationTriageDraft holds the board's triage draft. agentDraft, in
+// the issue's sandbox, is a review's.
 const AnnotationTriageDraft = "board.gemini.google.com/triage-draft"
 
-// TriageDraft returns the triage draft stored on sb, wherever it is.
+// TriageDraft returns the triage draft stored on sb.
 func TriageDraft(sb *unstructured.Unstructured) string {
-	a := sb.GetAnnotations()
-	if d := a[AnnotationTriageDraft]; d != "" {
-		return d
-	}
-	if IsLegacyTriageSandbox(sb) || a["agentDraftType"] == "triage" {
-		return a["agentDraft"]
-	}
-	return ""
+	return sb.GetAnnotations()[AnnotationTriageDraft]
 }
 
-// TriageState returns triage's task state in sb: its own annotation, or
-// in a legacy triage-<repo>-<N> sandbox, last-task-state.
+// TriageState returns triage's task state in sb.
 func TriageState(sb *unstructured.Unstructured) string {
-	a := sb.GetAnnotations()
-	if s := TriageTaskState(a); s != "" {
-		return s
-	}
-	if IsLegacyTriageSandbox(sb) {
-		return a[AnnotationTaskState]
-	}
-	return ""
-}
-
-// IsLegacyTriageSandbox reports whether sb is a triage-<repo>-<N> sandbox
-// from before triage moved into the issue's sandbox.
-func IsLegacyTriageSandbox(sb *unstructured.Unstructured) bool {
-	return strings.HasPrefix(sb.GetName(), "triage-")
+	return TriageTaskState(sb.GetAnnotations())
 }
 
 // TriageSandbox picks the sandbox holding issue's triage out of
 // sandboxes: an issue's sandbox a triage has touched — one with a draft
-// first, then one running a triage, should several namespaces have one —
-// else a legacy triage-<repo>-<N> one. Nil when there is neither.
+// first, then one running a triage, should several namespaces have one.
+// Nil when there is none.
 func TriageSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, issue int) *unstructured.Unstructured {
 	rank := func(sb *unstructured.Unstructured) int {
 		switch {
@@ -137,19 +103,13 @@ func TriageSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, 
 		}
 		return 0
 	}
-	var best, legacy *unstructured.Unstructured
-	legacyName := LegacyTriageSandboxName(repo, issue)
+	var best *unstructured.Unstructured
 	for sb := range sandboxes {
 		if n, ok := IssueOf(sb, repo); ok && n == issue && HasTriage(sb) {
 			if best == nil || rank(sb) > rank(best) {
 				best = sb
 			}
-		} else if sb.GetName() == legacyName {
-			legacy = sb
 		}
 	}
-	if best != nil {
-		return best
-	}
-	return legacy
+	return best
 }

@@ -48,7 +48,7 @@ func getSandbox(t *testing.T, r *Reconciler, name string) *unstructured.Unstruct
 func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := issueSandbox("repo-30", "30", map[string]interface{}{
-		factorycli.AnnotationTriageTaskState: "Completed",
+		factorycli.AnnotationRecipeTriageTaskState: "Completed",
 	})
 	fake := newFakeLauncher()
 	fake.results["alice/triage-repo-30"] = factorycli.Result{
@@ -71,9 +71,9 @@ func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
 func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := issueSandbox("fix-repo-77", "77", map[string]interface{}{
-		factorycli.AnnotationTriageTaskState: "Completed",
-		factorycli.AnnotationTriageDraft:     "triage: {}",
-		AnnotationTriagedAt:                  time.Now().UTC().Format(time.RFC3339),
+		factorycli.AnnotationRecipeTriageTaskState: "Completed",
+		factorycli.AnnotationTriageDraft:           "triage: {}",
+		AnnotationTriagedAt:                        time.Now().UTC().Format(time.RFC3339),
 	})
 	fake := newFakeLauncher()
 	req := click(boardv1alpha1.VerbFix, 77)
@@ -93,18 +93,18 @@ func TestPauseWaitsForTriage(t *testing.T) {
 	g := gomega.NewWithT(t)
 	long := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	running := issueSandbox("fix-repo-5", "5", map[string]interface{}{
-		factorycli.AnnotationTaskState:       "Completed",
-		factorycli.AnnotationCompletionTime:  long,
-		factorycli.AnnotationTriageTaskState: "Running",
+		factorycli.AnnotationTaskState:             "Completed",
+		factorycli.AnnotationCompletionTime:        long,
+		factorycli.AnnotationRecipeTriageTaskState: "Running",
 	})
 	finished := issueSandbox("fix-repo-6", "6", map[string]interface{}{
-		factorycli.AnnotationTaskState:       "Completed",
-		factorycli.AnnotationCompletionTime:  long,
-		factorycli.AnnotationTriageTaskState: "Completed",
+		factorycli.AnnotationTaskState:             "Completed",
+		factorycli.AnnotationCompletionTime:        long,
+		factorycli.AnnotationRecipeTriageTaskState: "Completed",
 	})
 	triagedOnly := issueSandbox("fix-repo-7", "7", map[string]interface{}{
-		factorycli.AnnotationCompletionTime:  long,
-		factorycli.AnnotationTriageTaskState: "Completed",
+		factorycli.AnnotationCompletionTime:        long,
+		factorycli.AnnotationRecipeTriageTaskState: "Completed",
 	})
 	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(), running, finished, triagedOnly)
 	r.pauseFinished(context.Background(), &workState{sandboxes: []*unstructured.Unstructured{running, finished, triagedOnly}}, time.Hour)
