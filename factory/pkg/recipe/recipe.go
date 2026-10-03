@@ -64,7 +64,7 @@ type Input struct {
 
 // InstructionsType is an input given any number of times on the command
 // line, each a local file, a file in the repository or the text itself,
-// as `factory triage --instruction` takes them; the recipe gets them
+// as `factory pr review --instruction` takes them; the recipe gets them
 // joined into one string.
 const InstructionsType = "instructions"
 

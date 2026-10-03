@@ -154,7 +154,7 @@ func inputFlagName(input string, decl recipe.Input) string {
 	return name
 }
 
-// resolveInstructions reads each instruction as `factory triage
+// resolveInstructions reads each instruction as `factory pr review
 // --instruction` does and joins them as it does.
 func resolveInstructions(ctx context.Context, ghClient *githubv39.Client, owner, repo string, vals []string) (string, error) {
 	var out []string
@@ -287,7 +287,7 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 
 // runRecipe runs recipeArg against itemURL. instructions are the raw
 // values of instructions-type inputs, each resolved as
-// `factory triage --instruction` resolves its own. With apply it applies
+// `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off.
 func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
@@ -747,4 +747,24 @@ func taskTarget(task spool.Task, inputs map[string]string) taskoutput.Target {
 		}
 	}
 	return taskoutput.Target{}
+}
+
+// instructionSeparator is between instructions joined into one input.
+const instructionSeparator = "\n\n---\n\n"
+
+// refuseIfBusy fails when a task is waiting or running in the sandbox. An
+// issue's triage, recipes, plan and fix share its sandbox, and two agents
+// in one workspace would trip over each other.
+func refuseIfBusy(ctx context.Context, client *envd.Client, sandboxName string) error {
+	entries, err := spool.List(ctx, client)
+	if err != nil {
+		return fmt.Errorf("listing the tasks in sandbox %s: %w", sandboxName, err)
+	}
+	for _, e := range entries {
+		switch e.State {
+		case spool.Pending, spool.Claimed, spool.Running:
+			return fmt.Errorf("sandbox %s is busy: task %s is %s; try again when it is done (factory sandbox task list %s -n %s)", sandboxName, e.ID, e.State, sandboxName, rootFlags.Namespace)
+		}
+	}
+	return nil
 }

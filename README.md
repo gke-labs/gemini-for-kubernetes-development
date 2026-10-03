@@ -6,7 +6,7 @@ Running one agent on one issue is easy. Running dozens against a busy repository
 
 | | What it is | Use it when |
 |---|---|---|
-| **[factory](factory/)** | The engine. A CLI that runs one agent task in a Kubernetes sandbox: `fix`, `plan`, `triage`, `pr review / investigate / address-comments / iterate / watch`, runbook deployments (`run plan / deploy / teardown`), research conversations, plus `factory watch`, the autonomous loop. | You want to run agent tasks yourself, from a terminal or a script. |
+| **[factory](factory/)** | The engine. A CLI that runs one agent task in a Kubernetes sandbox: `fix`, `plan`, `recipe triage`, `pr review / investigate / address-comments / iterate / watch`, runbook deployments (`run plan / deploy / teardown`), research conversations, plus `factory watch`, the autonomous loop. | You want to run agent tasks yourself, from a terminal or a script. |
 | **[overseer](overseer/)** | Unattended operation. An `Overseer` custom resource runs `factory watch` against one repository, in its own namespace with a bot account pool. It picks up labelled issues, opens PRs, works them until CI is green and comments are addressed, labels them ready for a human, runs scheduled chores, and garbage-collects sandboxes. | A repository should have agents working its backlog around the clock, steered from GitHub labels. |
 | **[repo-agent](repo-agent/)** | The human in the loop. A multi-user web app (UI, API, controller) with a board per repository: what needs you next, one click to triage, plan, fix, review, deploy or research, and every GitHub write made as *you*, after you have seen it. | People want agents to do the legwork while staying the author of everything GitHub sees. |
 

@@ -15,7 +15,7 @@ import (
 var taskScripts = []string{
 	"address_feedback.sh", "adopt.sh", "fix_issue.sh",
 	"investigate_failures.sh", "iterate.sh", "plan_issue.sh", "review.sh",
-	"run.sh", "run_agent.sh", "triage_issue.sh",
+	"run.sh", "run_agent.sh",
 }
 
 // Functions that live only in lib.sh — every rendered script must define
@@ -28,7 +28,6 @@ var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "re
 // until the agent flow's engine follow-up).
 var engineCalls = map[string]string{
 	"plan_issue.sh":           "runEngine plan-output.txt",
-	"triage_issue.sh":         "runEngine triage-output.txt",
 	"review.sh":               "runEngine review-output.txt",
 	"fix_issue.sh":            "\nrunEngine\n",
 	"iterate.sh":              "SKIP_EMPTY_PROMPT=true runEngine",

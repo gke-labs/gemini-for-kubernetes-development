@@ -42,8 +42,8 @@ func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 // connectTaskSandbox connects to the sandbox a task command names: by
 // name, or by the issue or PR URL it works on — the sandbox whose htmlURL
 // annotation is that URL, or for an issue, the one labelled with it. When
-// several are (an issue's sandbox and a legacy triage-… one) it asks for
-// the name rather than connect to — and so wake — all of them.
+// several are it asks for the name rather than connect to — and so wake —
+// all of them.
 func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, string, error) {
 	if _, err := ResolveRootFlags(c); err != nil {
 		return nil, "", err
@@ -268,8 +268,7 @@ gets its recipe's declared outputs, each under a banner with its name.
 With a file, that file of the task directory is printed as it is, for a
 program to read.`,
 		Example: `  factory sandbox task output recipe-repo-123 --client-id my-run-7 | factory apply -f - --dry-run
-  factory sandbox task output recipe-repo-123 --client-id my-run-7 triage-output.yaml
-  factory sandbox task output triage-repo-123 triage-output.txt`,
+  factory sandbox task output recipe-repo-123 --client-id my-run-7 triage-output.yaml`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 2 && !outputFileName.MatchString(args[1]) {
@@ -314,16 +313,10 @@ program to read.`,
 	return cmd
 }
 
-// classicOutputs are the results of tasks started without a task.json,
-// by the kind in their directory names.
-var classicOutputs = map[string]taskoutput.Decl{
-	"triage": {Kind: "Triage", From: "triage-output.txt"},
-}
-
 // readTaskOutput is a finished task's task output document: the one it
 // wrote, or else one made here from the result it declared — sandboxes
-// whose runner predates task outputs, and classic tasks, leave none. Nil
-// when the task has no result of a known kind.
+// whose runner predates task outputs leave none. Nil when the task has no
+// result of a known kind.
 func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string, e spool.Entry) ([]byte, error) {
 	taskDir := spool.TaskDir(e.ID)
 	var out bytes.Buffer
@@ -332,11 +325,6 @@ func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string
 		return out.Bytes(), nil
 	}
 	decl := e.Output
-	if decl == nil {
-		if d, ok := classicOutputs[e.Kind]; ok {
-			decl = &d
-		}
-	}
 	if decl == nil {
 		return nil, nil
 	}
