@@ -868,31 +868,23 @@ func triageFromTaskOutput(doc string) string {
 }
 
 // planBanner opens the plan in a plan's Output: StartPlan puts the recipe
-// plan's result between it and bannerCloser. `factory plan` printed the
-// plan's markdown itself there, closed by any run of sixteen '='.
+// plan's result between it and bannerCloser.
 const planBanner = "================== ISSUE PLAN =================="
 
 // ExtractPlan returns the plan markdown after the ISSUE PLAN banner of a
-// completed plan, or "": a Plan task output's, or what `factory plan`
-// printed.
+// completed plan, or "": a Plan task output's.
 func ExtractPlan(output string) string {
 	start := strings.Index(output, planBanner)
 	if start < 0 {
 		return ""
 	}
 	rest := output[start+len(planBanner):]
-	if strings.HasPrefix(strings.TrimSpace(rest), "apiVersion:") {
-		// The markdown may underline a heading with '='s: only the last
-		// closer is the banner's.
-		if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
-			rest = rest[:end]
-		}
-		return planFromTaskOutput(rest)
-	}
-	if end := strings.Index(rest, "================"); end >= 0 {
+	// The markdown may underline a heading with '='s: only the last
+	// closer is the banner's.
+	if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
 		rest = rest[:end]
 	}
-	return strings.TrimSpace(rest)
+	return planFromTaskOutput(rest)
 }
 
 // planFromTaskOutput is a Plan task output's markdown, or "".

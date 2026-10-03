@@ -35,7 +35,7 @@
 
 ### Agents on issues and pull requests
 - **Fix an issue.** `factory fix` clones the repository into a sandbox and checks out an issue branch. It runs the agent, then pushes to the bot's fork and opens a PR. It also accepts a bare repository with `--name` and `--instruction` / `--instruction-file`, and `--no-pr` pushes without opening one. `--watch` hands the new PR straight to `pr watch`.
-- **Plan first.** `factory recipe plan --url <issue>` drafts an implementation plan in the issue's sandbox, as a task output, without posting anything. Run again, it revises the plan it finds there, against `--feedback` if given. `factory fix --with-plan` folds the approved plan into the fix, and `--apply` (or `factory apply -f`) comments it on the issue. `factory plan` is the older form and will be removed.
+- **Plan first.** `factory recipe plan --url <issue>` drafts an implementation plan in the issue's sandbox, as a task output, without posting anything. Run again, it revises the plan it finds there, against `--feedback` if given. `factory fix --with-plan` folds the approved plan into the fix, and `--apply` (or `factory apply -f`) comments it on the issue.
 - **Triage.** `factory recipe triage --url <issue>` suggests labels, priority, duplicates and an assessment, as a task output. `--apply` waits for it and applies the labels and posts the comment, and so does `factory apply -f` on the output.
 - **PR lifecycle.**
   - `pr review` reviews the diff using repeatable `--instruction` files or strings. `--publish` takes `no`, `ask`, `yes` or `draft`.
@@ -171,9 +171,9 @@ factory fix --engine claude --url https://github.com/owner/repo --name refactor-
   --instruction-file ./prompt.txt
 
 # Plan, revise, then implement the approved plan
-factory plan --url https://github.com/owner/repo/issues/1
-factory plan --url https://github.com/owner/repo/issues/1 --feedback "merge steps 2 and 3"
-factory fix  --url https://github.com/owner/repo/issues/1 --with-plan
+factory recipe plan --url https://github.com/owner/repo/issues/1
+factory recipe plan --url https://github.com/owner/repo/issues/1 --feedback "merge steps 2 and 3"
+factory fix --url https://github.com/owner/repo/issues/1 --with-plan
 
 # Review a PR against guidelines and post it as a pending review
 factory pr review --pr-url https://github.com/owner/repo/pull/1 \
@@ -212,7 +212,6 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `status` | Pre-flight checks for cluster, identity, keys and the key pool |
 | `user onboard` | Create a namespace and `factory-user` secret |
 | `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
-| `plan` | Draft or revise an implementation plan for an issue; posts nothing |
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |

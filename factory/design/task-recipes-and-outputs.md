@@ -164,7 +164,7 @@ A run name takes precedence over `--apply`'s "newest run of this recipe and URL"
 3. **Pin the target to what the task saw.** For example, add `target.commit` for a Review, so that applying a stale review to newer code is refused or flagged.
 4. **Update callers.** Start the task with a run name and read the output by that name. Leave publishing to `apply`, and never publish from inside the task.
 
-Plan is built: `factory recipe plan` (`task-type: plan`) revises the plan it finds in the sandbox, and `fix --with-plan` follows it. repo-agent's switch to it, and the removal of `factory plan`, follow as triage's did.
+Plan is built: `factory recipe plan` (`task-type: plan`) revises the plan it finds in the sandbox, and `fix --with-plan` follows it. repo-agent runs it (#1728), and `factory plan`, its script and prompt are gone.
 
 Planned kinds, in order:
 - **Review.** Pin `target.commit`; submit as a pending review or a comment.

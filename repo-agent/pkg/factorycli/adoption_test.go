@@ -49,26 +49,6 @@ func TestRunnerSkipsBusySandbox(t *testing.T) {
 	}
 }
 
-// An orphaned finished plan (annotation claimed Running, exit code
-// present) is adopted: its output becomes the harvestable result and
-// factory never spawns.
-func TestRunnerAdoptsOrphanedPlan(t *testing.T) {
-	r := &Runner{Binary: "/nonexistent-factory",
-		Prober:  &fakeProber{probe: TaskProbe{State: ProbeOrphanCompleted, ExitCode: "0", Output: "## Summary\nadopted"}},
-		running: map[string]struct{}{}, results: map[string]Result{}}
-
-	if !r.StartPlan("alice/plan-repo-2", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-2", IssueURL: "u"}) {
-		t.Fatal("adoption should report started")
-	}
-	res := waitResult(t, r, "alice/plan-repo-2")
-	if res.Err != nil {
-		t.Fatalf("adoption should not error: %v", res.Err)
-	}
-	if ExtractPlan(res.Output) != "## Summary\nadopted" {
-		t.Errorf("adopted output not harvestable: %q", res.Output)
-	}
-}
-
 // An orphaned FAILED task records the failure without re-executing.
 func TestRunnerAdoptsOrphanedFailure(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory",
