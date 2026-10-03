@@ -57,7 +57,16 @@ type Input struct {
 	Description string `yaml:"description,omitempty"`
 	Default     string `yaml:"default,omitempty"`
 	Required    bool   `yaml:"required,omitempty"`
+	// Type is "" for a string, or InstructionsType. Like task-output it is
+	// factory's: ForSandbox drops it.
+	Type string `yaml:"type,omitempty"`
 }
+
+// InstructionsType is an input given any number of times on the command
+// line, each a local file, a file in the repository or the text itself,
+// as `factory triage --instruction` takes them; the recipe gets them
+// joined into one string.
+const InstructionsType = "instructions"
 
 // Step is one step; exactly one of Uses, Run and Ask is set.
 type Step struct {
@@ -146,6 +155,9 @@ func (r *Recipe) Validate() error {
 		}
 		if in.Required && in.Default != "" {
 			return fmt.Errorf("input %s: required and default are exclusive", name)
+		}
+		if in.Type != "" && in.Type != InstructionsType {
+			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
 		}
 	}
 	if to := r.TaskOutput; to != nil {
@@ -275,7 +287,8 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without
-// task-output, which runners older than it reject as an unknown field.
+// task-output and input types, which runners older than them reject as
+// unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -285,13 +298,37 @@ func ForSandbox(data []byte) ([]byte, error) {
 		return data, nil
 	}
 	m := doc.Content[0]
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == "task-output" {
-			m.Content = append(m.Content[:i], m.Content[i+2:]...)
-			return yaml.Marshal(&doc)
+	changed := dropKey(m, "task-output")
+	if inputs := mapValue(m, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
+		for i := 1; i < len(inputs.Content); i += 2 {
+			if inputs.Content[i].Kind == yaml.MappingNode && dropKey(inputs.Content[i], "type") {
+				changed = true
+			}
 		}
 	}
-	return data, nil
+	if !changed {
+		return data, nil
+	}
+	return yaml.Marshal(&doc)
+}
+
+func dropKey(m *yaml.Node, key string) bool {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func mapValue(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
 }
 
 //go:embed recipes/*.yaml

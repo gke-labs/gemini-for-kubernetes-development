@@ -84,8 +84,8 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for in := range rec.Inputs {
-			flag := inputFlagName(in)
+		for in, decl := range rec.Inputs {
+			flag := inputFlagName(in, decl)
 			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "client-id" {
 				t.Errorf("recipe %s: input %s's flag --%s is taken", name, in, flag)
 			}

@@ -290,6 +290,9 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 	return fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath), nil
 }
 
+// instructionSeparator is between instructions joined into one input.
+const instructionSeparator = "\n\n---\n\n"
+
 // triageRecipe is the triage recipe, its inputs for issue, and the file
 // it leaves the triage in.
 func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[string]string, *taskoutput.Decl, error) {
@@ -305,6 +308,6 @@ func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[st
 		"issue_number": strconv.Itoa(issue.GetNumber()),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
-		"instructions": strings.Join(instructions, "\n\n---\n\n"),
+		"instructions": strings.Join(instructions, instructionSeparator),
 	}, rec.TaskOutput, nil
 }

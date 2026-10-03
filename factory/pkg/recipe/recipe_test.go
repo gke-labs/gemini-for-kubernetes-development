@@ -356,13 +356,16 @@ func TestACPSessionAsksTurnByTurn(t *testing.T) {
 	}
 }
 
-func TestForSandboxDropsTaskOutput(t *testing.T) {
+func TestForSandboxDropsFactoryFields(t *testing.T) {
 	data, rec, err := Builtin("triage")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rec.TaskOutput == nil || rec.TaskOutput.Kind != "Triage" || rec.TaskOutput.From != "triage-output.yaml" {
 		t.Fatalf("triage task-output = %+v", rec.TaskOutput)
+	}
+	if rec.Inputs["instructions"].Type != InstructionsType {
+		t.Fatalf("triage instructions input = %+v", rec.Inputs["instructions"])
 	}
 	out, err := ForSandbox(data)
 	if err != nil {
@@ -378,6 +381,20 @@ func TestForSandboxDropsTaskOutput(t *testing.T) {
 	}
 	if got.TaskOutput != nil || len(got.Steps) != len(rec.Steps) || got.Context != rec.Context {
 		t.Errorf("sandbox recipe differs beyond task-output: %+v", got)
+	}
+	if in := got.Inputs["instructions"]; in.Type != "" || in.Description != rec.Inputs["instructions"].Description {
+		t.Errorf("sandbox recipe's instructions input = %+v, want it without its type", in)
+	}
+}
+
+func TestInputTypeValidated(t *testing.T) {
+	r := &Recipe{Name: "x", Steps: []Step{{Run: "true"}}, Inputs: map[string]Input{"a": {Type: "number"}}}
+	if err := r.Validate(); err == nil {
+		t.Error("an unknown input type validated")
+	}
+	r.Inputs["a"] = Input{Type: InstructionsType}
+	if err := r.Validate(); err != nil {
+		t.Errorf("instructions type: %v", err)
 	}
 }
 

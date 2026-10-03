@@ -51,6 +51,9 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 type recipeRunFlags struct {
 	itemURL, clientID string
 	inputArgs         []string
+	// instructions are the values of each instructions-type input's flag,
+	// resolved once the repository is known.
+	instructions map[string]*[]string
 }
 
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
@@ -78,7 +81,13 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 	for k, v := range extra {
 		overrides[k] = v
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, overrides)
+	instructions := map[string][]string{}
+	for in, vals := range f.instructions {
+		if len(*vals) > 0 {
+			instructions[in] = *vals
+		}
+	}
+	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -90,7 +99,7 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 		// Built-ins are parsed by the tests; this is a broken build.
 		panic(err)
 	}
-	var f recipeRunFlags
+	f := recipeRunFlags{instructions: map[string]*[]string{}}
 	inputs := map[string]*string{}
 	cmd := &cobra.Command{
 		Use:     name,
@@ -100,7 +109,7 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			extra := map[string]string{}
 			for in, v := range inputs {
-				if c.Flags().Changed(inputFlagName(in)) {
+				if c.Flags().Changed(inputFlagName(in, rec.Inputs[in])) {
 					extra[in] = *v
 				}
 			}
@@ -110,9 +119,14 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	f.add(cmd)
 	for _, in := range sortedInputNames(rec) {
 		decl := rec.Inputs[in]
+		if decl.Type == recipe.InstructionsType {
+			// An array, not a slice: an instruction's text may have commas.
+			f.instructions[in] = cmd.Flags().StringArray(inputFlagName(in, decl), nil, decl.Description+" (a local file, a file in the repository, or the text itself). Repeatable.")
+			continue
+		}
 		// Not marked required: the URL may set it; the recipe says what is
 		// missing when it runs.
-		inputs[in] = cmd.Flags().String(inputFlagName(in), decl.Default, decl.Description)
+		inputs[in] = cmd.Flags().String(inputFlagName(in, decl), decl.Default, decl.Description)
 	}
 	if rec.TaskOutput != nil {
 		cmd.Long = fmt.Sprintf("Run the built-in %s recipe against a GitHub issue or PR.\n\nIts result is a %s task output, which `factory apply` acts on.", name, rec.TaskOutput.Kind)
@@ -120,9 +134,34 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	return cmd
 }
 
-// inputFlagName is the flag an input is set with: issue_body → --issue-body.
-func inputFlagName(input string) string {
-	return strings.ReplaceAll(input, "_", "-")
+// inputFlagName is the flag an input is set with: issue_body →
+// --issue-body. An instructions input's flag is singular, as it is given
+// once per instruction: instructions → --instruction.
+func inputFlagName(input string, decl recipe.Input) string {
+	name := strings.ReplaceAll(input, "_", "-")
+	if decl.Type == recipe.InstructionsType {
+		name = strings.TrimSuffix(name, "s")
+	}
+	return name
+}
+
+// resolveInstructions reads each instruction as `factory triage
+// --instruction` does and joins them as it does.
+func resolveInstructions(ctx context.Context, ghClient *githubv39.Client, owner, repo string, vals []string) (string, error) {
+	var out []string
+	for _, v := range vals {
+		content, isFile, err := resolveInstruction(ctx, ghClient, owner, repo, "", v)
+		if err != nil {
+			return "", err
+		}
+		if isFile {
+			fmt.Printf("Loaded instruction file: %s\n", v)
+		} else {
+			fmt.Printf("Loaded instruction: %q\n", v)
+		}
+		out = append(out, content)
+	}
+	return strings.Join(out, instructionSeparator), nil
 }
 
 func sortedInputNames(rec *recipe.Recipe) []string {
@@ -237,7 +276,10 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 	}
 }
 
-func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrides map[string]string) error {
+// runRecipe runs recipeArg against itemURL. instructions are the raw
+// values of instructions-type inputs, each resolved as
+// `factory triage --instruction` resolves its own.
+func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -250,6 +292,13 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
+	}
+	for in, vals := range instructions {
+		joined, err := resolveInstructions(ctx, ghClient, it.Owner, it.Repo, vals)
+		if err != nil {
+			return err
+		}
+		overrides[in] = joined
 	}
 	var standard map[string]string
 	var htmlURL string
@@ -282,7 +331,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
 	fmt.Printf("Ensuring recipe sandbox for #%d...\n", it.Number)
-	sandboxName, err := factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	sandboxName, err := factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, rec.Name, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
 		return fmt.Errorf("ensuring recipe sandbox: %w", err)
 	}
@@ -319,17 +368,18 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	task.Output = rec.TaskOutput
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", rootFlags.Engine)
+	taskType := "recipe-" + rec.Name
+	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
 	if err := spoolRecipe(ctx, client, sandboxName, task, recipeBytes, inputs, envMap); err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", "Failed")
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return fmt.Errorf("running recipe: %w", err)
 	}
 	if rootFlags.Detached {
 		return nil
 	}
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "recipe", "Completed")
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
 
-	meta := usagereport.Meta{Repo: it.Owner + "/" + it.Repo, TaskType: "recipe-" + rec.Name, Sandbox: sandboxName}
+	meta := usagereport.Meta{Repo: it.Owner + "/" + it.Repo, TaskType: taskType, Sandbox: sandboxName}
 	if it.IsPR {
 		meta.PR = it.Number
 	} else {
