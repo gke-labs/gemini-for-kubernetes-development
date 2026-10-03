@@ -82,7 +82,7 @@ steps: [{run: x}]
 	}
 }
 
-// TestBuiltinTriageRendersFromIssueInputs: `recipe run --recipe triage`
+// TestBuiltinTriageRendersFromIssueInputs: `recipe triage`
 // gives it only what an issue URL sets, and every ask must still render.
 func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
 	_, r, err := Builtin("triage")
