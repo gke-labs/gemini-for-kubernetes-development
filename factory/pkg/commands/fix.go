@@ -128,7 +128,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.InstructionFile, "instruction-file", "", "Path to a file containing custom instruction for the fix task")
 	cmd.Flags().StringVar(&flags.Name, "name", "", "Short name for the sandbox (required when URL is a repository URL without an issue number)")
 	cmd.Flags().BoolVar(&flags.NoPR, "no-pr", false, "Commit changes and push branch remotely, but do not create a pull request")
-	cmd.Flags().BoolVar(&flags.WithPlan, "with-plan", false, "Fold the approved plan from a prior `factory plan` run (found in the sandbox) into the fix prompt")
+	cmd.Flags().BoolVar(&flags.WithPlan, "with-plan", false, "Fold the approved plan from a prior `factory recipe plan` run (found in the sandbox) into the fix prompt")
 	cmd.Flags().BoolVar(&flags.Watch, "watch", false, "Watch the created pull request for check failures and new review comments")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval for watching the PR")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching the PR (default forever)")
@@ -344,7 +344,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	}
 	if withPlan {
 		// The approved plan lives inside the sandbox (written by a prior
-		// `factory plan` run); the task script folds it into the prompt.
+		// `factory recipe plan` run); the task script folds it into the prompt.
 		envMap["WITH_PLAN"] = "true"
 		envMap["PLAN_FILE"] = tasks.PlanFilePath(issueNum)
 	}

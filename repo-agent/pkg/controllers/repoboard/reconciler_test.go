@@ -1110,7 +1110,7 @@ func TestPlanLifecycle(t *testing.T) {
 	fake2 := newFakeLauncher()
 	fake2.results["alice/plan-repo-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "banner\n================== ISSUE PLAN ==================\n## Summary\nDo the thing.\n================================================\ntrailer",
+		Output:     "banner\n================== ISSUE PLAN ==================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
 	}
 	planReq := click(boardv1alpha1.VerbPlan, 42)
 	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
