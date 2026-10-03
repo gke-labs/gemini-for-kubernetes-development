@@ -140,10 +140,23 @@ func buildPodResources(opt DevSandboxOptions) map[string]interface{} {
 	}
 }
 
+// LabelLauncher records who created a sandbox: "factory" for the CLI,
+// or whatever a program driving it passes as --launcher (repo-agent
+// passes "repo-agent"). Programs that adopt sandboxes they find, as
+// repo-agent's board does, use it to leave other launchers' alone.
+const LabelLauncher = "factory.gemini.google.com/launcher"
+
+// Launcher is the LabelLauncher value stamped on sandboxes this process
+// creates; the root command sets it from --launcher.
+var Launcher = "factory"
+
 // NewAgentSandbox creates a new Sandbox (unstructured) and Service object.
 func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
 	sandboxName := opt.Name
-	labelsInterface := make(map[string]interface{}, len(opt.Labels)+1)
+	labelsInterface := make(map[string]interface{}, len(opt.Labels)+2)
+	if Launcher != "" {
+		labelsInterface[LabelLauncher] = Launcher
+	}
 	for k, v := range opt.Labels {
 		labelsInterface[k] = v
 	}
@@ -294,6 +307,9 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
 	sandboxName := opt.Name
 	labels := make(map[string]interface{})
+	if Launcher != "" {
+		labels[LabelLauncher] = Launcher
+	}
 	for k, v := range opt.Labels {
 		labels[k] = v
 	}

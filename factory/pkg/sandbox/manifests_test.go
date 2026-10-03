@@ -242,3 +242,22 @@ func TestSandbox_WorkspaceStorageClass(t *testing.T) {
 		}
 	})
 }
+
+func TestSandbox_LauncherLabel(t *testing.T) {
+	defer func(old string) { Launcher = old }(Launcher)
+
+	for _, tc := range []struct{ launcher, want string }{
+		{"factory", "factory"},
+		{"repo-agent", "repo-agent"},
+	} {
+		Launcher = tc.launcher
+		sb, _ := NewAgentSandbox(AgentSandboxOptions{DevSandboxOptions: DevSandboxOptions{Name: "a"}})
+		if got := sb.GetLabels()[LabelLauncher]; got != tc.want {
+			t.Errorf("agent sandbox launcher = %q, want %q", got, tc.want)
+		}
+		rsb, _ := NewReviewSandbox(ReviewSandboxOptions{DevSandboxOptions: DevSandboxOptions{Name: "r"}})
+		if got := rsb.GetLabels()[LabelLauncher]; got != tc.want {
+			t.Errorf("review sandbox launcher = %q, want %q", got, tc.want)
+		}
+	}
+}

@@ -925,6 +925,46 @@ func TestResumeTriageHarvest(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
+// A triage sandbox the factory CLI created is not the board's: it is left
+// unharvested and unrelaunched, however much it looks like an unfinished
+// board triage.
+func TestResumeTriageSkipsOtherLaunchers(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	cliSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "triage-repo-31", "namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed":  "true",
+				"factory.gemini.google.com/launcher": "factory",
+			},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/31",
+				"sandbox.gemini.google.com/last-task-state": "Completed",
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	fake := newFakeLauncher()
+	fake.results["alice/triage-repo-31"] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
+	}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), cliSandbox)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-31", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).To(gomega.BeEmpty())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+}
+
 // A failed review invocation parks the review: the error lands on the
 // sandbox and no relaunch happens until a member's re-review click is
 // newer than the recorded failure. Auto-retrying re-runs the whole agent

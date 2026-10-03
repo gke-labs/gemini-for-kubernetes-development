@@ -652,6 +652,9 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 		}
 		for i := range list.Items {
 			sb := &list.Items[i]
+			if factorycli.LaunchedElsewhere(sb.GetLabels()) {
+				continue
+			}
 			annotations := sb.GetAnnotations()
 			if annotations != nil {
 				if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != work.repo {
