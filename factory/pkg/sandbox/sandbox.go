@@ -142,7 +142,7 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 			return "", werr
 		}
 	case err == nil:
-		ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 		return name, nil
 	case !strings.Contains(err.Error(), "not found"):
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -215,18 +215,7 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			return "", werr
 		}
 	} else if err == nil {
-		labels := sb.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sb.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
-			}
-		}
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -299,18 +288,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			return "", werr
 		}
 	} else if err == nil {
-		labels := sb.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sb.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
-			}
-		}
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -367,18 +345,7 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			return "", werr
 		}
 	} else if err == nil {
-		labels := sb.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sb.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
-			}
-		}
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -510,7 +477,14 @@ func sandboxBelongsToRepo(sb *unstructured.Unstructured, repo, prHTMLURL string)
 	return false
 }
 
-func ensureSandboxUserLabel(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
+// prepareReusedSandbox readies an existing sandbox an Ensure* function is
+// handing back: it records the user, and wakes the sandbox if the idle
+// suspender scaled it to zero. Callers connect to envd straight after, and
+// MarkSandboxTaskRunning, which used to be the only thing that woke a
+// sandbox, runs after the connect, so a suspended sandbox timed out
+// waiting for a pod nothing was going to start.
+func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
+	changed := false
 	labels := sb.GetLabels()
 	if labels == nil {
 		labels = make(map[string]string)
@@ -518,10 +492,26 @@ func ensureSandboxUserLabel(ctx context.Context, kubeClient *clients.KubernetesC
 	if labels["factory.gemini.google.com/user"] != user && user != "" {
 		labels["factory.gemini.google.com/user"] = user
 		sb.SetLabels(labels)
-		_, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
-		if err != nil {
-			klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
+		changed = true
+	}
+	if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
+		_ = unstructured.SetNestedField(sb.Object, int64(1), "spec", "replicas")
+		annotations := sb.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
 		}
+		// idleSince counts from here, so the suspender does not put it
+		// straight back to sleep.
+		annotations["sandbox.gemini.google.com/unpaused-at"] = time.Now().UTC().Format(time.RFC3339)
+		sb.SetAnnotations(annotations)
+		fmt.Printf("Waking suspended sandbox '%s' (replicas=1)\n", sb.GetName())
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{}); err != nil {
+		klog.Warningf("Failed to update reused sandbox %s: %v", sb.GetName(), err)
 	}
 }
 
@@ -549,7 +539,7 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 				klog.Infof("sandbox %s carries the PR label but is terminating; not reusing it", sb.GetName())
 				continue
 			}
-			ensureSandboxUserLabel(ctx, kubeClient, namespace, sb, user)
+			prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 			return sb.GetName(), nil
 		}
 	}
@@ -579,7 +569,7 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			}
 			continue
 		}
-		ensureSandboxUserLabel(ctx, kubeClient, namespace, sbGet, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sbGet, user)
 		return candidate, nil
 	}
 
