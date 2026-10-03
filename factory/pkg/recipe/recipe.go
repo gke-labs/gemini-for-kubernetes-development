@@ -36,7 +36,17 @@ type Recipe struct {
 	// It is sent once, ahead of the first ask, rather than repeated in
 	// every turn.
 	Context string `yaml:"context,omitempty"`
-	Steps   []Step `yaml:"steps"`
+	// Inputs declares what the recipe takes beyond what its caller always
+	// sets, so a missing or misspelt one fails before a sandbox is made.
+	Inputs map[string]Input `yaml:"inputs,omitempty"`
+	Steps  []Step           `yaml:"steps"`
+}
+
+// Input is one declared input.
+type Input struct {
+	Description string `yaml:"description,omitempty"`
+	Default     string `yaml:"default,omitempty"`
+	Required    bool   `yaml:"required,omitempty"`
 }
 
 // Step is one step; exactly one of Uses, Run and Ask is set.
@@ -87,11 +97,13 @@ var NamedSteps = map[string]string{
 	"setup-git":               "setupGit",
 	"setup-repo":              "setupGitRepos",
 	"checkout-default-branch": "checkoutDefaultBranch",
+	"checkout-pr-branch":      "checkoutPRBranch",
 	"configure-engine":        "configureGemini",
 }
 
 var (
 	stepIDRE  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	inputRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	withKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 )
 
@@ -117,6 +129,14 @@ func (r *Recipe) Validate() error {
 	}
 	if len(r.Steps) == 0 {
 		return fmt.Errorf("recipe %s has no steps", r.Name)
+	}
+	for name, in := range r.Inputs {
+		if !inputRE.MatchString(name) {
+			return fmt.Errorf("input %q must match %s", name, inputRE)
+		}
+		if in.Required && in.Default != "" {
+			return fmt.Errorf("input %s: required and default are exclusive", name)
+		}
 	}
 	ids := map[string]bool{}
 	for i, s := range r.Steps {
@@ -164,6 +184,53 @@ func (r *Recipe) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ResolveInputs is what the recipe runs with: the caller's standard
+// inputs, the declared defaults, then overrides. An override must name a
+// standard or a declared input, and a required input must end up set.
+func (r *Recipe) ResolveInputs(standard, overrides map[string]string) (map[string]string, error) {
+	out := map[string]string{}
+	for k, v := range standard {
+		out[k] = v
+	}
+	for name, in := range r.Inputs {
+		if _, ok := out[name]; !ok {
+			out[name] = in.Default
+		}
+	}
+	for k, v := range overrides {
+		if _, ok := out[k]; !ok {
+			return nil, fmt.Errorf("recipe %s has no input %q (it takes: %s)", r.Name, k, strings.Join(sortedKeys(out), ", "))
+		}
+		out[k] = v
+	}
+	for name, in := range r.Inputs {
+		if in.Required && out[name] == "" {
+			return nil, fmt.Errorf("recipe %s needs input %s: pass --input %s=…", r.Name, name, name)
+		}
+	}
+	return out, nil
+}
+
+// Captures is every file an ask writes, in step order.
+func (r *Recipe) Captures() []string {
+	var out []string
+	for _, s := range r.Steps {
+		if s.Capture != "" {
+			out = append(out, s.Capture)
+		}
+	}
+	return out
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func namedStepNames() []string {

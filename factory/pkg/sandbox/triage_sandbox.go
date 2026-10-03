@@ -16,6 +16,18 @@ import (
 // issue, named triage-<repo>-<issueNumber>.
 func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, issueNum int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("triage-%s-%d", repoName, issueNum)
+	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "triage", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+// EnsureRecipeSandbox creates (or reuses) the sandbox `factory recipe run`
+// works in for one issue or PR, named recipe-<repo>-<number>. Not
+// triage-…: repo-agent resumes triage sandboxes it finds unfinished.
+func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, number int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := fmt.Sprintf("recipe-%s-%d", repoName, number)
+	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "recipe", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, sandboxType, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
@@ -46,7 +58,7 @@ func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "triage",
+				"sandbox.gemini.google.com/type":    sandboxType,
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
 			},

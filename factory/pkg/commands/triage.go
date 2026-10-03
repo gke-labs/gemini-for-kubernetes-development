@@ -3,7 +3,6 @@ package commands
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -276,30 +275,17 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 }
 
 // writeTriageRecipe puts the triage recipe and its inputs into the sandbox
-// and returns the command that runs them. The recipe comes from this
-// binary; what its steps mean comes from the sandbox's.
+// and returns the command that runs them.
 func writeTriageRecipe(ctx context.Context, client *envd.Client, taskDir string, issue *githubv39.Issue, instructions []string) (string, error) {
 	recipeBytes, _, err := recipe.Builtin("triage")
 	if err != nil {
 		return "", err
 	}
-	inputs, err := json.Marshal(map[string]string{
+	return writeRecipe(ctx, client, taskDir, recipeBytes, map[string]string{
 		"issue_url":    issue.GetHTMLURL(),
 		"issue_number": strconv.Itoa(issue.GetNumber()),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
 		"instructions": strings.Join(instructions, "\n\n---\n\n"),
 	})
-	if err != nil {
-		return "", err
-	}
-	recipePath, inputsPath := taskDir+"/recipe.yaml", taskDir+"/inputs.json"
-	fmt.Println("Writing the triage recipe into sandbox...")
-	if err := client.WriteFile(ctx, recipePath, recipeBytes); err != nil {
-		return "", fmt.Errorf("writing recipe: %w", err)
-	}
-	if err := client.WriteFile(ctx, inputsPath, inputs); err != nil {
-		return "", fmt.Errorf("writing inputs: %w", err)
-	}
-	return fmt.Sprintf("factory recipe exec --recipe %s --inputs %s --task-dir %s", recipePath, inputsPath, taskDir), nil
 }
