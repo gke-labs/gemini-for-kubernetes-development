@@ -66,3 +66,17 @@ func TestWriteTaskOutputWithoutDeclaration(t *testing.T) {
 		t.Error("a task output was written without a declaration")
 	}
 }
+
+// A kind newer than the sandbox's runner does not fail the task: the
+// client, which knows it, wraps the result when it reads it.
+func TestWriteTaskOutputLeavesAnUnknownKind(t *testing.T) {
+	dir := t.TempDir()
+	writeTaskFiles(t, dir, spool.Task{ID: "x", Output: &taskoutput.Decl{Kind: "Later", From: "later-output.md"}},
+		map[string]string{"later-output.md": "something"})
+	if err := writeTaskOutput(dir, nil, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
+		t.Error("a task output was written for an unknown kind")
+	}
+}

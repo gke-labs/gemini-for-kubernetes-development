@@ -197,6 +197,9 @@ func parseList(out string) []Entry {
 		}
 		if taskJSON != "" && json.Unmarshal([]byte(taskJSON), &e.Task) == nil && e.ID != "" {
 			e.Kind = "recipe-" + e.Recipe
+			if e.TaskType != "" {
+				e.Kind = e.TaskType
+			}
 			e.Started = e.SubmittedAt
 		}
 		e.ID = name

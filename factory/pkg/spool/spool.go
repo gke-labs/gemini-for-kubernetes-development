@@ -51,8 +51,11 @@ type Task struct {
 	ID string `json:"id"`
 	// RunName is whatever the submitting client wants to find the task
 	// by later; factory does not interpret it.
-	RunName     string    `json:"run_name,omitempty"`
-	Recipe      string    `json:"recipe"`
+	RunName string `json:"run_name,omitempty"`
+	Recipe  string `json:"recipe"`
+	// TaskType is the recipe's task-type, when it is its sandbox's main
+	// task; unset, the task's kind is recipe-<Recipe>.
+	TaskType    string    `json:"task_type,omitempty"`
 	URL         string    `json:"url,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at"`
 	// Output is the recipe's task-output declaration, which the recipe the

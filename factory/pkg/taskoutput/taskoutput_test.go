@@ -160,3 +160,67 @@ func TestApplyTriageNeedsAnIssue(t *testing.T) {
 		t.Error("a Triage was applied to a PR")
 	}
 }
+
+func planDoc(t *testing.T, task, raw string) *Document {
+	t.Helper()
+	doc, err := Wrap("Plan", raw, Target{URL: "https://github.com/o/r/issues/12"}, Source{Task: task, Recipe: "plan"})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	return doc
+}
+
+func TestWrapPlan(t *testing.T) {
+	for _, raw := range []string{
+		"## Summary\nDo it.\n\n## Steps\n1. a",
+		"```markdown\n## Summary\nDo it.\n\n## Steps\n1. a\n```",
+		"```\n## Summary\nDo it.\n\n## Steps\n1. a\n```\n",
+	} {
+		data, err := Marshal(planDoc(t, "recipe-plan-1", raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs, err := Parse(data)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		p, err := docs[0].PlanSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Markdown != "## Summary\nDo it.\n\n## Steps\n1. a" {
+			t.Errorf("Wrap(%q) markdown = %q", raw, p.Markdown)
+		}
+	}
+	if _, err := Wrap("Plan", " \n```\n```", Target{}, Source{}); err == nil {
+		t.Error("an empty plan was wrapped")
+	}
+}
+
+func TestApplyPlan(t *testing.T) {
+	f := &fakeGitHub{}
+	gh := f.client(t)
+	doc := planDoc(t, "recipe-plan-1", "## Summary\nDo it.")
+	var out bytes.Buffer
+	if err := Apply(context.Background(), gh, doc, true, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.comments) != 0 || !strings.Contains(out.String(), "Would comment on") {
+		t.Errorf("dry run: comments %q, said:\n%s", f.comments, out.String())
+	}
+	for range 2 {
+		if err := Apply(context.Background(), gh, doc, false, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "**Implementation plan**\n\n## Summary\nDo it.") || !strings.Contains(f.comments[0], "kind=Plan task=recipe-plan-1") {
+		t.Errorf("applied twice, comments = %q", f.comments)
+	}
+	if len(f.labels) != 0 {
+		t.Errorf("a Plan added labels %v", f.labels)
+	}
+	doc.Target.URL = "https://github.com/o/r/pull/12"
+	if err := Apply(context.Background(), gh, doc, false, &out); err == nil {
+		t.Error("a Plan was applied to a PR")
+	}
+}

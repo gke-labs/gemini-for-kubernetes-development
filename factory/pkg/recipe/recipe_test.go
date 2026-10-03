@@ -46,6 +46,7 @@ func TestParseRejects(t *testing.T) {
 		"output path":      "name: a\noutputs: [../x]\nsteps: [{run: x}]",
 		"output dotfile":   "name: a\noutputs: [.env]\nsteps: [{run: x}]",
 		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nsteps: [{run: x}]",
+		"bad task type":    "name: a\ntask-type: Plan_1\nsteps: [{run: x}]",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
@@ -403,5 +404,60 @@ func TestTaskOutputValidated(t *testing.T) {
 		if _, err := Parse([]byte("name: x\nsteps: [{run: 'true'}]\ntask-output: " + to + "\n")); err == nil {
 			t.Errorf("task-output %s accepted", to)
 		}
+	}
+}
+
+// TestBuiltinPlanRenders: `recipe plan` from an issue URL alone, and as a
+// revision, with an earlier plan in the task directory and feedback.
+func TestBuiltinPlanRenders(t *testing.T) {
+	data, r, err := Builtin("plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TaskType != "plan" || r.TaskOutput == nil || r.TaskOutput.Kind != "Plan" || r.TaskOutput.From != "plan-output.md" {
+		t.Fatalf("plan task-type %q, task-output %+v", r.TaskType, r.TaskOutput)
+	}
+	std := map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "u",
+		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
+	}
+	askAll := func(overrides map[string]string, prior string) string {
+		t.Helper()
+		inputs, err := r.ResolveInputs(std, overrides)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "prior-plan.md"), []byte(prior), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var all strings.Builder
+		for i, s := range r.Steps {
+			if s.Ask == "" {
+				continue
+			}
+			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
+			if err != nil {
+				t.Fatalf("step %s: %v", s.Label(i), err)
+			}
+			all.WriteString(out)
+		}
+		return all.String()
+	}
+	fresh := askAll(nil, "")
+	if strings.Contains(fresh, "<previous_plan>") || strings.Contains(fresh, "<feedback>") {
+		t.Errorf("a fresh plan mentions a previous plan or feedback:\n%s", fresh)
+	}
+	revise := askAll(map[string]string{"feedback": "merge steps 2 and 3"}, "## Summary\nold plan\n")
+	if !strings.Contains(revise, "<previous_plan>\n## Summary\nold plan") || !strings.Contains(revise, "<feedback>\nmerge steps 2 and 3") {
+		t.Errorf("a revision lacks the previous plan or the feedback:\n%s", revise)
+	}
+
+	out, err := ForSandbox(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "task-type") {
+		t.Errorf("task-type still in the sandbox's recipe:\n%s", out)
 	}
 }

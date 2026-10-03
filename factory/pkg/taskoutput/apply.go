@@ -17,6 +17,8 @@ func Apply(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool
 	switch doc.Kind {
 	case "Triage":
 		return applyTriage(ctx, gh, doc, dryRun, out)
+	case "Plan":
+		return applyPlan(ctx, gh, doc, dryRun, out)
 	}
 	return fmt.Errorf("cannot apply task output kind %q", doc.Kind)
 }
@@ -69,6 +71,46 @@ func applyTriage(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		return fmt.Errorf("posting the triage comment: %w", err)
 	}
 	return nil
+}
+
+// applyPlan posts the plan on its issue, once.
+func applyPlan(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	p, err := doc.PlanSpec()
+	if err != nil {
+		return err
+	}
+	owner, repo, num, isPR, err := parseItemURL(doc.Target.URL)
+	if err != nil {
+		return err
+	}
+	if isPR {
+		return fmt.Errorf("a Plan targets an issue, not %s", doc.Target.URL)
+	}
+	if doc.Source.Task != "" {
+		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
+		if err != nil {
+			return err
+		}
+		if posted {
+			fmt.Fprintf(out, "The plan of task %s is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
+			return nil
+		}
+	}
+	if dryRun {
+		fmt.Fprintf(out, "Would comment on %s:\n%s\n", doc.Target.URL, indent(PlanComment(p)))
+		return nil
+	}
+	fmt.Fprintf(out, "Commenting the plan on %s\n", doc.Target.URL)
+	body := PlanComment(p) + marker(doc)
+	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+		return fmt.Errorf("posting the plan comment: %w", err)
+	}
+	return nil
+}
+
+// PlanComment is the comment a plan is published as.
+func PlanComment(p *Plan) string {
+	return "**Implementation plan**\n\n" + strings.TrimSpace(p.Markdown)
 }
 
 // TriageComment is the comment a triage is published as.
