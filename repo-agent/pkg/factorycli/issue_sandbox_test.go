@@ -119,3 +119,20 @@ func TestRunningClaims(t *testing.T) {
 		}
 	}
 }
+
+func TestTriageTaskState(t *testing.T) {
+	for _, c := range []struct {
+		recipe, classic, want string
+	}{
+		{"", "", ""},
+		{"", "Completed", "Completed"},
+		{"Failed", "Completed", "Failed"},
+		{"Completed", "Running", "Running"},
+		{"Running", "Completed", "Running"},
+	} {
+		a := map[string]string{AnnotationRecipeTriageTaskState: c.recipe, AnnotationTriageTaskState: c.classic}
+		if got := TriageTaskState(a); got != c.want {
+			t.Errorf("TriageTaskState(recipe %q, classic %q) = %q, want %q", c.recipe, c.classic, got, c.want)
+		}
+	}
+}

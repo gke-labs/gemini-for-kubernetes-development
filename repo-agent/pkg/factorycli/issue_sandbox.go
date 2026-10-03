@@ -21,7 +21,24 @@ const (
 	// in the issue's sandbox. last-task-state and last-task-type stay the
 	// plan's or fix's.
 	AnnotationTriageTaskState = "sandbox.gemini.google.com/triage-task-state"
+	// AnnotationRecipeTriageTaskState is where `factory recipe triage`
+	// records its state: the triage repo-agent runs now.
+	AnnotationRecipeTriageTaskState = "sandbox.gemini.google.com/recipe-triage-task-state"
 )
+
+// TriageTaskState is the state of the triage in a sandbox with
+// annotations a: running if either kind of triage is, else the recipe's,
+// which is the newer, else the classic one's.
+func TriageTaskState(a map[string]string) string {
+	recipe, classic := a[AnnotationRecipeTriageTaskState], a[AnnotationTriageTaskState]
+	switch {
+	case recipe == TaskStateRunning || classic == TaskStateRunning:
+		return TaskStateRunning
+	case recipe != "":
+		return recipe
+	}
+	return classic
+}
 
 // IssueOf returns the issue of repo whose sandbox sb is: by its label,
 // else by the fix-<repo>-<N> name.
@@ -59,7 +76,7 @@ func IssueSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, i
 // left a draft or a rejection there.
 func HasTriage(sb *unstructured.Unstructured) bool {
 	a := sb.GetAnnotations()
-	return a[AnnotationTriageTaskState] != "" || a[AnnotationTriageDraft] != "" ||
+	return TriageTaskState(a) != "" || a[AnnotationTriageDraft] != "" ||
 		a["board.gemini.google.com/triaged-at"] != "" || a["board.gemini.google.com/triage-rejected-at"] != ""
 }
 
@@ -91,7 +108,7 @@ func TriageDraft(sb *unstructured.Unstructured) string {
 // in a legacy triage-<repo>-<N> sandbox, last-task-state.
 func TriageState(sb *unstructured.Unstructured) string {
 	a := sb.GetAnnotations()
-	if s := a[AnnotationTriageTaskState]; s != "" {
+	if s := TriageTaskState(a); s != "" {
 		return s
 	}
 	if IsLegacyTriageSandbox(sb) {

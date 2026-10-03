@@ -132,7 +132,7 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 		case boardv1alpha1.VerbReview:
 			box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
 		case boardv1alpha1.VerbTriage:
-			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member})
+			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID)})
 		case boardv1alpha1.VerbPlan:
 			box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
 		case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
