@@ -846,9 +846,9 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 		]`,
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
-	triageSandbox := sandboxCR("triage-repo-20",
+	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, board, triageSandbox)
 
@@ -872,7 +872,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	}
 	// The paused triage sandbox surfaces on the resting row (Agent column
 	// chip + logs link), like plan-ready and fix-done rows do.
-	if row := byKey["issue-20"]; row.Sandbox == nil || row.Sandbox.Name != "triage-repo-20" {
+	if row := byKey["issue-20"]; row.Sandbox == nil || row.Sandbox.Name != "fix-repo-20" {
 		t.Errorf("issue-20 should carry its triage sandbox: %+v", row.Sandbox)
 	}
 	if row := byKey["issue-21"]; row.Group != "issues" || row.Stage != "untriaged" {
@@ -1180,9 +1180,9 @@ func TestPutBoardTriageDraft(t *testing.T) {
 		]`,
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
-	triageSandbox := sandboxCR("triage-repo-20",
+	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 
@@ -1478,13 +1478,12 @@ func TestRejectBoardTriage(t *testing.T) {
 		]`,
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
-	triageSandbox := sandboxCR("triage-repo-20",
+	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{
-			"agentDraft":                                "triage:\n  labels: [bug]",
-			"agentDraftType":                            "triage",
-			"board.gemini.google.com/triaged-at":        "2026-09-17T00:00:00Z",
-			"sandbox.gemini.google.com/last-task-state": "Completed",
+			factorycli.AnnotationTriageDraft:                     "triage:\n  labels: [bug]",
+			"board.gemini.google.com/triaged-at":                 "2026-09-17T00:00:00Z",
+			"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
 			"htmlURL": "https://github.com/test/repo/issues/20",
 		}, 1)
 
@@ -1498,12 +1497,12 @@ func TestRejectBoardTriage(t *testing.T) {
 		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "triage-repo-20", v1.GetOptions{})
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "fix-repo-20", v1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	annotations := sb.GetAnnotations()
-	if annotations["agentDraft"] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
+	if annotations[factorycli.AnnotationTriageDraft] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
 		t.Errorf("breadcrumbs not cleared: %v", annotations)
 	}
 	if annotations["board.gemini.google.com/triage-rejected-at"] == "" {
@@ -1577,9 +1576,9 @@ func TestUpNextDefersBareReviewRequests(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	triageSandbox := sandboxCR("triage-repo-20",
+	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{"agentDraft": "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -1864,11 +1863,11 @@ func TestTriageInIssueSandbox(t *testing.T) {
 	sb := sandboxCR("repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "20"},
 		map[string]interface{}{
-			"repo":                               "repo",
-			"htmlURL":                            "https://github.com/test/repo/issues/20",
-			"agentDraft":                         "not a triage",
-			factorycli.AnnotationTriageDraft:     "triage:\n  labels: [bug]",
-			factorycli.AnnotationTriageTaskState: "Completed",
+			"repo":                           "repo",
+			"htmlURL":                        "https://github.com/test/repo/issues/20",
+			"agentDraft":                     "not a triage",
+			factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]",
+			factorycli.AnnotationRecipeTriageTaskState: "Completed",
 		}, 1)
 	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
 

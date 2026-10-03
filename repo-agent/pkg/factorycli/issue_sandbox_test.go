@@ -51,15 +51,11 @@ func TestIssueSandboxPrefersTheLabel(t *testing.T) {
 }
 
 func TestTriageSandbox(t *testing.T) {
-	legacy := testSandbox("triage-repo-7", nil, map[string]string{"agentDraft": "triage: {}"})
 	untouched := testSandbox("fix-repo-7", map[string]string{LabelIssue: "7"}, map[string]string{"repo": "repo"})
 	triaged := testSandbox("fix-repo-7", map[string]string{LabelIssue: "7"},
-		map[string]string{"repo": "repo", AnnotationTriageTaskState: "Running"})
+		map[string]string{"repo": "repo", AnnotationRecipeTriageTaskState: "Running"})
 
-	if got := TriageSandbox(slices.Values([]*unstructured.Unstructured{untouched, legacy}), "repo", 7); got != legacy {
-		t.Errorf("issue sandbox without a triage: got %s, want the legacy one", got.GetName())
-	}
-	if got := TriageSandbox(slices.Values([]*unstructured.Unstructured{triaged, legacy}), "repo", 7); got != triaged {
+	if got := TriageSandbox(slices.Values([]*unstructured.Unstructured{untouched, triaged}), "repo", 7); got != triaged {
 		t.Errorf("issue sandbox with a triage: got %s, want it", got.GetName())
 	}
 	if got := TriageSandbox(slices.Values([]*unstructured.Unstructured{untouched}), "repo", 7); got != nil {
@@ -83,13 +79,10 @@ func TestTriageDraftAndState(t *testing.T) {
 	}{
 		// The issue's sandbox: its own keys; agentDraft there is a review's.
 		{testSandbox("fix-repo-7", nil, map[string]string{
-			AnnotationTriageDraft: "new", AnnotationTriageTaskState: "Completed",
+			AnnotationTriageDraft: "new", AnnotationRecipeTriageTaskState: "Completed",
 			"agentDraft": "review", AnnotationTaskState: "Running",
 		}), "new", "Completed"},
 		{testSandbox("fix-repo-7", nil, map[string]string{"agentDraft": "review", AnnotationTaskState: "Running"}), "", ""},
-		// Legacy: agentDraft and last-task-state.
-		{testSandbox("triage-repo-7", nil, map[string]string{"agentDraft": "old", AnnotationTaskState: "Completed"}), "old", "Completed"},
-		{testSandbox("fix-repo-7", nil, map[string]string{"agentDraft": "typed", "agentDraftType": "triage"}), "typed", ""},
 	} {
 		if d := TriageDraft(c.sb); d != c.draft {
 			t.Errorf("TriageDraft(%s %v) = %q, want %q", c.sb.GetName(), c.sb.GetAnnotations(), d, c.draft)
@@ -108,31 +101,14 @@ func TestRunningClaims(t *testing.T) {
 		own, side, other bool
 	}{
 		{"plan running", map[string]string{AnnotationTaskState: "Running", AnnotationTaskType: "plan"}, "plan", true, false, false},
-		{"plan sees triage", map[string]string{AnnotationTaskState: "Completed", AnnotationTaskType: "plan", AnnotationTriageTaskState: "Running"}, "plan", false, false, true},
-		{"triage running", map[string]string{AnnotationTaskState: "Completed", AnnotationTaskType: "plan", AnnotationTriageTaskState: "Running"}, "triage", true, true, false},
-		{"triage sees plan", map[string]string{AnnotationTaskState: "Running", AnnotationTaskType: "plan"}, "triage", false, false, true},
+		{"plan sees triage", map[string]string{AnnotationTaskState: "Completed", AnnotationTaskType: "plan", AnnotationRecipeTriageTaskState: "Running"}, "plan", false, false, true},
+		{"triage running", map[string]string{AnnotationTaskState: "Completed", AnnotationTaskType: "plan", AnnotationRecipeTriageTaskState: "Running"}, "recipe-triage", true, true, false},
+		{"triage sees plan", map[string]string{AnnotationTaskState: "Running", AnnotationTaskType: "plan"}, "recipe-triage", false, false, true},
 		{"idle", map[string]string{AnnotationTaskState: "Completed", AnnotationTaskType: "plan"}, "plan", false, false, false},
 	} {
 		own, side, other := runningClaims(c.annotations, c.prefix)
 		if own != c.own || side != c.side || other != c.other {
 			t.Errorf("%s: runningClaims = %v %v %v, want %v %v %v", c.name, own, side, other, c.own, c.side, c.other)
-		}
-	}
-}
-
-func TestTriageTaskState(t *testing.T) {
-	for _, c := range []struct {
-		recipe, classic, want string
-	}{
-		{"", "", ""},
-		{"", "Completed", "Completed"},
-		{"Failed", "Completed", "Failed"},
-		{"Completed", "Running", "Running"},
-		{"Running", "Completed", "Running"},
-	} {
-		a := map[string]string{AnnotationRecipeTriageTaskState: c.recipe, AnnotationTriageTaskState: c.classic}
-		if got := TriageTaskState(a); got != c.want {
-			t.Errorf("TriageTaskState(recipe %q, classic %q) = %q, want %q", c.recipe, c.classic, got, c.want)
 		}
 	}
 }

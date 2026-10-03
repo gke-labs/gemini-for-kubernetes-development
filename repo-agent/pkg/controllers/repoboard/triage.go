@@ -19,7 +19,6 @@ package repoboard
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,15 +40,11 @@ import (
 // no clicker, in the board owner's, under the discovery identity. It
 // records its state in its own annotation and its draft in
 // AnnotationTriageDraft so that neither reads as the plan's, fix's or a
-// review's. Triages from before that live in triage-<repo>-<N> sandboxes
-// in the board namespace, which are still read (factorycli.TriageSandbox).
+// review's.
 
 const (
 	// AnnotationTriagedAt marks a stored triage draft.
 	AnnotationTriagedAt = "board.gemini.google.com/triaged-at"
-	// AnnotationDraftType distinguished triage drafts from review drafts on
-	// the shared agentDraft key, where legacy triage sandboxes keep theirs.
-	AnnotationDraftType = "agentDraftType"
 	// AnnotationTriageRejected tombstones a rejected draft: auto-triage
 	// must not redo work a human threw away, and a stale invocation
 	// result must not resurrect the draft. A fresh Triage click re-arms.
@@ -99,12 +94,11 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		sb = work.issueSandbox(namespace, issue.GetNumber())
 	}
 	name := factorycli.FixSandboxName(work.repo, issue.GetNumber())
-	if sb != nil && !factorycli.IsLegacyTriageSandbox(sb) {
+	if sb != nil {
 		name = sb.GetName()
 	}
-	// The single-flight key keeps the old sandbox name: it only has to be
-	// stable, and a run in flight across a rollout keeps its slot.
-	key := namespace + "/" + factorycli.LegacyTriageSandboxName(work.repo, issue.GetNumber())
+	// The single-flight key only has to be stable.
+	key := fmt.Sprintf("%s/triage-%s-%d", namespace, work.repo, issue.GetNumber())
 
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
@@ -123,25 +117,9 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	}
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
-		// A finished run's sandbox is the issue's; a legacy triage one
-		// still found here is not where it ran.
-		if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
-			if isb := work.issueSandbox(namespace, issue.GetNumber()); isb != nil {
-				sb, annotations = isb, isb.GetAnnotations()
-				if annotations == nil {
-					annotations = map[string]string{}
-				}
-			}
-		}
 		if res.Err == nil && sb != nil {
 			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
-				if factorycli.IsLegacyTriageSandbox(sb) {
-					// Where an older repo-agent would look for it.
-					annotations[AnnotationAgentDraft] = report
-					annotations[AnnotationDraftType] = "triage"
-				} else {
-					annotations[factorycli.AnnotationTriageDraft] = report
-				}
+				annotations[factorycli.AnnotationTriageDraft] = report
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				sb.SetAnnotations(annotations)
@@ -156,10 +134,6 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		}
 	}
 
-	if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
-		// A new run goes to the issue's sandbox, not the legacy one.
-		sb = work.issueSandbox(namespace, issue.GetNumber())
-	}
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		return
 	}
@@ -181,7 +155,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		Engine:      boardEngine(work.board),
 		ClientID:    clientID,
 	}) {
-		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
+		logger.Info("launched factory recipe triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
 }
 
@@ -192,22 +166,14 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 // show Triaging… forever). Only sandboxes a triage has touched count: an
 // issue's sandbox that only planned or fixed is not one to triage.
 func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
-	legacyPrefix := "triage-" + work.repo + "-"
 	seen := map[string]bool{}
 	for _, sb := range work.sandboxes {
 		annotations := sb.GetAnnotations()
 		if annotations[AnnotationTriagedAt] != "" {
 			continue
 		}
-		var n int
-		if rest, ok := strings.CutPrefix(sb.GetName(), legacyPrefix); ok {
-			var err error
-			if n, err = strconv.Atoi(rest); err != nil {
-				continue
-			}
-		} else if issue, ok := factorycli.IssueOf(sb, work.repo); ok && factorycli.HasTriage(sb) {
-			n = issue
-		} else {
+		n, ok := factorycli.IssueOf(sb, work.repo)
+		if !ok || !factorycli.HasTriage(sb) {
 			continue
 		}
 		k := fmt.Sprintf("%s/%d", sb.GetNamespace(), n)

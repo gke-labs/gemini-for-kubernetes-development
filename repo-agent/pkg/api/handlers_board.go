@@ -1861,11 +1861,7 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 	}
 	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
 		name := sb.GetName()
-		keys := []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished}
-		if factorycli.IsLegacyTriageSandbox(sb) {
-			keys = append(keys, "agentDraft", "agentDraftType")
-		}
-		for _, key := range keys {
+		for _, key := range []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished} {
 			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
 				return
@@ -2004,7 +2000,7 @@ func (s *Server) putBoardTriageDraft(c *gin.Context) {
 	}
 
 	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), triageDraftKey(sb), strings.TrimSpace(req.Draft)+"\n"); err != nil {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AnnotationTriageDraft, strings.TrimSpace(req.Draft)+"\n"); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
 			return
 		}
@@ -2091,8 +2087,7 @@ func (s *Server) publishBoardTriage(c *gin.Context) {
 
 // findTriageDraft locates the sandbox holding issue number's triage draft:
 // the issue's sandbox in the viewer's namespace, where their triage ran,
-// then the board's, where auto-triage runs and legacy triage-<repo>-<N>
-// sandboxes are.
+// then the board's, where auto-triage runs.
 func (s *Server) findTriageDraft(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
 	ctx := c.Request.Context()
 	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
@@ -2107,18 +2102,10 @@ func (s *Server) findTriageDraft(c *gin.Context, board *unstructured.Unstructure
 	return nil, ""
 }
 
-// triageDraftKey is the annotation sb keeps its triage draft in.
-func triageDraftKey(sb *unstructured.Unstructured) string {
-	if factorycli.IsLegacyTriageSandbox(sb) && sb.GetAnnotations()[factorycli.AnnotationTriageDraft] == "" {
-		return "agentDraft"
-	}
-	return factorycli.AnnotationTriageDraft
-}
-
 // scaledownTriaged parks a sandbox once its triage is published or thrown
-// away, unless it is the issue's sandbox and a plan or fix is running in it.
+// away, unless a plan or fix is running in it.
 func (s *Server) scaledownTriaged(ctx context.Context, sb *unstructured.Unstructured) {
-	if !factorycli.IsLegacyTriageSandbox(sb) && sb.GetAnnotations()[annoTaskState] == "Running" {
+	if sb.GetAnnotations()[annoTaskState] == "Running" {
 		return
 	}
 	_ = s.K8sManager.ScaledownSandboxByName(ctx, sb.GetNamespace(), sb.GetName())

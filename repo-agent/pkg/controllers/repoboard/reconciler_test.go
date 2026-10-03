@@ -710,7 +710,7 @@ func TestTriageIntake(t *testing.T) {
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
 		"metadata": map[string]interface{}{
-			"name": "triage-repo-30", "namespace": "alice",
+			"name": "fix-repo-30", "namespace": "alice",
 			"labels":      map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/issues/30"},
 		},
@@ -728,9 +728,8 @@ func TestTriageIntake(t *testing.T) {
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("priority: high"))
-	g.Expect(updated.GetAnnotations()[AnnotationDraftType]).To(gomega.Equal("triage"))
+	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageDraft]).To(gomega.ContainSubstring("priority: high"))
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 }
 
@@ -897,11 +896,11 @@ func TestResumeTriageHarvest(t *testing.T) {
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
 		"metadata": map[string]interface{}{
-			"name": "triage-repo-30", "namespace": "alice",
+			"name": "fix-repo-30", "namespace": "alice",
 			"labels": map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 			"annotations": map[string]interface{}{
 				"htmlURL": "https://github.com/test/repo/issues/30",
-				"sandbox.gemini.google.com/last-task-state": "Completed",
+				"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -919,8 +918,8 @@ func TestResumeTriageHarvest(t *testing.T) {
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.ContainSubstring("labels: [bug]"))
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageDraft]).To(gomega.ContainSubstring("labels: [bug]"))
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
@@ -936,14 +935,14 @@ func TestResumeTriageSkipsOtherLaunchers(t *testing.T) {
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
 		"metadata": map[string]interface{}{
-			"name": "triage-repo-31", "namespace": "alice",
+			"name": "fix-repo-31", "namespace": "alice",
 			"labels": map[string]interface{}{
 				"factory.gemini.google.com/managed":  "true",
 				"factory.gemini.google.com/launcher": "factory",
 			},
 			"annotations": map[string]interface{}{
 				"htmlURL": "https://github.com/test/repo/issues/31",
-				"sandbox.gemini.google.com/last-task-state": "Completed",
+				"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -960,7 +959,7 @@ func TestResumeTriageSkipsOtherLaunchers(t *testing.T) {
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "triage-repo-31", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-31", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).To(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
@@ -1310,9 +1309,9 @@ func TestWakeStampsUnpaused(t *testing.T) {
 			"namespace": "alice",
 			"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "30"},
 			"annotations": map[string]interface{}{
-				"repo":                               "repo",
-				"htmlURL":                            "https://github.com/test/repo/issues/30",
-				factorycli.AnnotationTriageTaskState: "Completed",
+				"repo":    "repo",
+				"htmlURL": "https://github.com/test/repo/issues/30",
+				factorycli.AnnotationRecipeTriageTaskState:   "Completed",
 				"sandbox.gemini.google.com/completion-time":  time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
 				"board.gemini.google.com/triage-rejected-at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 			},
