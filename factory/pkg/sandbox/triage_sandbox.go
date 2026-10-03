@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -31,18 +30,7 @@ func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		labels := sb.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if labels["factory.gemini.google.com/user"] != user && user != "" {
-			labels["factory.gemini.google.com/user"] = user
-			sb.SetLabels(labels)
-			_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{})
-			if err != nil {
-				klog.Warningf("Failed to update sandbox labels with user '%s': %v", user, err)
-			}
-		}
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {
