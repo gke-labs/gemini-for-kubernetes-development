@@ -390,12 +390,17 @@ function checkoutPRBranch {
     OLD_HEAD=$(cd "/workspaces/${REPO_NAME}" && git rev-parse HEAD)
 }
 
+# checkoutDefaultBranch puts the checkout on the repository's latest default
+# branch. After setupGitRepos forks, origin is the member's fork, whose
+# default branch is only as new as their last sync — triage read days-old
+# code from it — so the branch comes from upstream; a local-only run has
+# no fork, and origin is the repository itself.
 function checkoutDefaultBranch {
     echo "Running checkoutDefaultBranch..."
     (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
     (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
-    (cd "/workspaces/${REPO_NAME}" && BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) && git reset --hard HEAD && git clean -fd && git checkout "${BASE_BRANCH}" && git fetch origin "${BASE_BRANCH}" && git reset --hard "origin/${BASE_BRANCH}")
+    (cd "/workspaces/${REPO_NAME}" && SRC_REMOTE=upstream && { git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE=origin; } && BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) && git reset --hard HEAD && git clean -fd && git checkout "${BASE_BRANCH}" && git fetch "${SRC_REMOTE}" "${BASE_BRANCH}" && git reset --hard "${SRC_REMOTE}/${BASE_BRANCH}")
 }
 
 function configureGemini {

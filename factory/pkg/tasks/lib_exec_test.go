@@ -532,6 +532,43 @@ git remote set-url origin https://github.com/coder-bot/repo.git`, "ensureForkRem
 	})
 }
 
+// TestCheckoutDefaultBranch: after the fork, origin's default branch is
+// the member's last sync, so the checkout must come from upstream; with no
+// upstream (a local-only run) origin is the repository itself.
+func TestCheckoutDefaultBranch(t *testing.T) {
+	// upstream has a commit the stale fork lacks. gh only answers
+	// `gh repo view` with the default branch.
+	setup := `mkdir -p "$HOME/bin" && printf '#!/bin/bash\necho main\n' > "$HOME/bin/gh" && chmod +x "$HOME/bin/gh"
+c() { git -c user.email=x@x -c user.name=x commit -q --allow-empty -m "$1"; }
+git init -q -b main "$HOME/up" && (builtin cd "$HOME/up" && c old)
+git clone -q "$HOME/up" "$HOME/fork"
+(builtin cd "$HOME/up" && c new)
+rm -rf "$REPO_DIR" && git clone -q "$HOME/fork" "$REPO_DIR" && builtin cd "$REPO_DIR"
+`
+	report := `
+echo "HEAD=$(git log -1 --format=%s)"`
+
+	t.Run("upstream when forked", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+`git remote add upstream "$HOME/up"`, "checkoutDefaultBranch"+report)
+		if err != nil {
+			t.Fatalf("checkoutDefaultBranch failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "HEAD=new") {
+			t.Errorf("want upstream's latest commit, not the fork's:\n%s", out)
+		}
+	})
+
+	t.Run("origin when local-only", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+`git remote set-url origin "$HOME/up"`, "checkoutDefaultBranch"+report)
+		if err != nil {
+			t.Fatalf("checkoutDefaultBranch failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "HEAD=new") {
+			t.Errorf("want origin's latest commit:\n%s", out)
+		}
+	})
+}
+
 // TestResetRepoGitConfig pins the repository-level settings left behind on a
 // long-lived workspace that broke later tasks: diff.external=false made
 // every `git diff` fail (fix-k8s-config-connector-13580), and a repository's
