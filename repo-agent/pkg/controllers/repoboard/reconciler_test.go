@@ -1068,7 +1068,7 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
 }
 
-// The plan loop, controller side: a Plan click launches `factory plan` in
+// The plan loop, controller side: a Plan click launches `factory recipe plan` in
 // the member's fix sandbox; the finished run's banner output is stored as
 // the draft; feedback newer than the draft re-launches with --feedback;
 // approval makes the eventual fix run --with-plan.
@@ -1088,6 +1088,7 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(launches[0].PlanOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].PlanOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
 	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.BeEmpty())
+	g.Expect(launches[0].PlanOpts.RunName).To(gomega.HavePrefix("plan/test-board/42/"))
 
 	// 2. Harvest: finished run + fix sandbox -> draft stored, the click
 	// stands until it is, then settles.

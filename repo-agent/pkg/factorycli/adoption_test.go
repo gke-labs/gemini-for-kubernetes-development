@@ -10,9 +10,12 @@ import (
 
 type fakeProber struct {
 	probe TaskProbe
+	// What it was last asked to probe.
+	taskType, dirPrefix, outputFile string
 }
 
-func (f *fakeProber) Probe(_ context.Context, _, _, _, _ string) (TaskProbe, error) {
+func (f *fakeProber) Probe(_ context.Context, _, _, taskType, dirPrefix, outputFile string) (TaskProbe, error) {
+	f.taskType, f.dirPrefix, f.outputFile = taskType, dirPrefix, outputFile
 	return f.probe, nil
 }
 
@@ -102,12 +105,12 @@ func TestRunnerPassesLauncher(t *testing.T) {
 	r := &Runner{Binary: bin, Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	r.StartPlan("alice/plan-repo-5", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u"})
-	res := waitResult(t, r, "alice/plan-repo-5")
+	r.StartPRWatch("alice/watch-repo-5", PRWatchOptions{Namespace: "alice", PRURL: "u"})
+	res := waitResult(t, r, "alice/watch-repo-5")
 	if res.Err != nil {
 		t.Fatalf("run: %v", res.Err)
 	}
-	if !strings.HasPrefix(res.Output, "plan ") || !strings.Contains(res.Output, "--launcher=repo-agent") {
+	if !strings.HasPrefix(res.Output, "pr watch ") || !strings.Contains(res.Output, "--launcher=repo-agent") {
 		t.Errorf("args = %q, want the subcommand first and --launcher=repo-agent", res.Output)
 	}
 }

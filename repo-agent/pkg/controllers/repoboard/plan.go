@@ -27,7 +27,7 @@ import (
 )
 
 // The plan loop: agent PLAN -> human REFINE -> agent UPDATE_PLAN -> human
-// APPROVE/REJECT -> agent FIX. `factory plan` runs in the issue's fix
+// APPROVE/REJECT -> agent FIX. `factory recipe plan` runs in the issue's fix
 // sandbox and writes nothing to GitHub; the draft lives on the sandbox
 // (AnnotationPlanDraft) until the member approves — approval launches the
 // fix with --with-plan, which publishes the plan as the PR description's
@@ -115,9 +115,19 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
 		Engine:            boardEngine(work.board),
+		RunName:           planRunName(work.board.Name, req.issue),
 	}) {
-		logger.Info("launched factory plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)
+		logger.Info("launched factory recipe plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)
 	}
+}
+
+// planRunName is what a plan's task is recorded under in the sandbox
+// (factory --run-name), to read its result by. factory runs a name once,
+// so it names one launch: a failed plan is retried, not returned. A
+// launch's in-flight or orphaned plan is the prober's to find, not the
+// name's. Identifiers only: anyone in the sandbox can read it.
+func planRunName(board string, issue int) string {
+	return fmt.Sprintf("plan/%s/%d/%d", board, issue, time.Now().Unix())
 }
 
 // planResultStale reports whether a remembered plan result predates a
