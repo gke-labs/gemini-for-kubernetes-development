@@ -18,6 +18,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
@@ -40,9 +41,9 @@ func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 
 // connectTaskSandbox connects to the sandbox a task command names: by
 // name, or by the issue or PR URL it works on — the sandbox whose htmlURL
-// annotation is that URL. When several are (an issue's fix and triage
-// sandboxes) it asks for the name rather than connect to — and so wake —
-// all of them.
+// annotation is that URL, or for an issue, the one labelled with it. When
+// several are (an issue's sandbox and a legacy triage-… one) it asks for
+// the name rather than connect to — and so wake — all of them.
 func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, string, error) {
 	if _, err := ResolveRootFlags(c); err != nil {
 		return nil, "", err
@@ -73,9 +74,13 @@ func sandboxForURL(ctx context.Context, itemURL string) (string, error) {
 		return "", fmt.Errorf("listing sandboxes: %w", err)
 	}
 	want := normalizeItemURL(itemURL)
+	it, err := parseGitHubItemURL(itemURL)
+	issue := err == nil && !it.IsPR
 	var names []string
-	for _, item := range list.Items {
-		if normalizeItemURL(item.GetAnnotations()["htmlURL"]) == want {
+	for i := range list.Items {
+		item := &list.Items[i]
+		if normalizeItemURL(item.GetAnnotations()["htmlURL"]) == want ||
+			(issue && factorysandbox.IsIssueSandbox(item, it.Owner, it.Repo, it.Number)) {
 			names = append(names, item.GetName())
 		}
 	}
@@ -104,12 +109,51 @@ func (f *taskSelectFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.clientID, "client-id", "", "The --client-id the task was run with")
 }
 
-func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client) (spool.Entry, error) {
+func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client, sandboxName string) (spool.Entry, error) {
 	entries, err := spool.List(ctx, client)
 	if err != nil {
 		return spool.Entry{}, err
 	}
-	return spool.Find(entries, f.id, f.clientID)
+	e, err := spool.Find(entries, f.id, f.clientID)
+	if err == nil {
+		settleTaskState(ctx, sandboxName, entries, e)
+	}
+	return e, err
+}
+
+// settleTaskState records on the sandbox how a task found exited ended,
+// when the sandbox still says it is running: nothing else does for a task
+// run --detached, whose CLI returned when it started. A side task left
+// "running" in an issue's sandbox would keep it from being suspended, or
+// paused by repo-agent's board, for good.
+func settleTaskState(ctx context.Context, sandboxName string, entries []spool.Entry, e spool.Entry) {
+	if e.State != spool.Exited || e.Kind == "" {
+		return
+	}
+	for _, other := range entries {
+		if other.Kind == e.Kind && other.State != spool.Exited {
+			return // the running one of its kind holds the claim
+		}
+	}
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return
+	}
+	sb, err := k8s.NewManager(kubeClient).GetSandbox(ctx, rootFlags.Namespace, sandboxName)
+	if err != nil {
+		return
+	}
+	state := "Completed"
+	if e.ExitCode != "0" {
+		state = "Failed"
+	}
+	a := sb.GetAnnotations()
+	switch {
+	case a[factorysandbox.SideTaskStateAnnotation(e.Kind)] == "Running":
+		_ = factorysandbox.UpdateSandboxSideTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, e.Kind, state)
+	case a["sandbox.gemini.google.com/last-task-type"] == e.Kind && a["sandbox.gemini.google.com/last-task-state"] == "Running":
+		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, e.Kind, state)
+	}
 }
 
 func newTaskListCommand(ctx context.Context) *cobra.Command {
@@ -177,12 +221,12 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if output != "" && output != "json" {
 				return fmt.Errorf("--output must be json or empty, not %q", output)
 			}
-			client, _, err := connectTaskSandbox(ctx, c, args[0])
+			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
 			defer client.Close()
-			e, err := sel.find(ctx, client)
+			e, err := sel.find(ctx, client, sandboxName)
 			if err != nil {
 				return err
 			}
@@ -236,7 +280,7 @@ program to read.`,
 				return err
 			}
 			defer client.Close()
-			e, err := sel.find(ctx, client)
+			e, err := sel.find(ctx, client, sandboxName)
 			if err != nil {
 				return err
 			}
@@ -364,12 +408,12 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
   factory sandbox task attach recipe-repo-123 --client-id my-run-7`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, _, err := connectTaskSandbox(ctx, c, args[0])
+			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
 			defer client.Close()
-			e, err := sel.find(ctx, client)
+			e, err := sel.find(ctx, client, sandboxName)
 			if err != nil {
 				return err
 			}
@@ -381,6 +425,7 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
 			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
+			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, client, sandboxName)
 			rec, err := taskRecipe(ctx, client, taskDir)
 			if err != nil || rec == nil {
 				return err
@@ -402,12 +447,12 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
   factory sandbox task logs fix-repo-123 --task fix-20261002-150405 -f`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, _, err := connectTaskSandbox(ctx, c, args[0])
+			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
 			defer client.Close()
-			e, err := sel.find(ctx, client)
+			e, err := sel.find(ctx, client, sandboxName)
 			if err != nil {
 				return err
 			}
@@ -421,6 +466,7 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
 			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
+			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, client, sandboxName)
 			return nil
 		},
 	}

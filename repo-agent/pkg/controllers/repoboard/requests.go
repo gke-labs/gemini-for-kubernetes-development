@@ -132,7 +132,7 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 		case boardv1alpha1.VerbReview:
 			box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
 		case boardv1alpha1.VerbTriage:
-			box.triages = append(box.triages, spec.Number)
+			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member})
 		case boardv1alpha1.VerbPlan:
 			box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
 		case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
@@ -330,7 +330,14 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 	spec := req.Spec
 	switch spec.Verb {
 	case boardv1alpha1.VerbFix:
-		if sb := work.findSandbox(spec.Member, work.fixSandboxName(spec.Number)); sb != nil {
+		// The issue's sandbox may predate the click — a triage or plan made
+		// it — so it is served by a fix in it: stamped, running, or run
+		// since the click.
+		key := fmt.Sprintf("%s/fix-%s-%d", spec.Member, work.repo, spec.Number)
+		res, ran := r.Factory.LastResult(key)
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil &&
+			(strings.HasPrefix(sb.GetAnnotations()[factorycli.AnnotationTaskType], "fix") || r.Factory.IsRunning(key) ||
+				(ran && res.FinishedAt.After(req.CreationTimestamp.Time))) {
 			return served(sb.GetName())
 		}
 
@@ -360,15 +367,18 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 	case boardv1alpha1.VerbTriage:
 		// The click stands until a draft is stored: the sandbox may be a
 		// rejected leftover whose tombstone the click overrides.
-		name := factorycli.TriageSandboxName(work.repo, spec.Number)
-		if sb := work.findSandbox(work.board.Namespace, name); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
+		member := spec.Member
+		if member == "" {
+			member = work.board.Namespace
+		}
+		if sb := work.triageSandbox(member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
 			return served(sb.GetName())
 		}
 
 	case boardv1alpha1.VerbPlan:
 		// Likewise: the fix sandbox may predate the click, so its
 		// existence proves nothing. A stored draft does.
-		if sb := work.findSandbox(spec.Member, work.fixSandboxName(spec.Number)); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
 			return served(sb.GetName())
 		}
 

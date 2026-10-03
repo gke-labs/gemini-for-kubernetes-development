@@ -14,13 +14,13 @@ import (
 // the caller connects to envd next, before anything else would wake it.
 func TestReusedSandboxIsWoken(t *testing.T) {
 	ns := "u"
-	sb := prSandbox("triage-open-rl-7", ns, "", "", false)
+	sb := prSandbox("recipe-open-rl-7", ns, "", "", false)
 	_ = unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
 	kc := reviewClients(t, ns, sb)
 
-	name, err := sandbox.EnsureTriageSandbox(context.Background(), kc, ns, "open-rl", 7, "", "", "", "", "", "", nil, nil, "")
+	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "", "", "", "", "", "", nil, nil, "")
 	if err != nil {
-		t.Fatalf("EnsureTriageSandbox: %v", err)
+		t.Fatalf("EnsureRecipeSandbox: %v", err)
 	}
 	got, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {

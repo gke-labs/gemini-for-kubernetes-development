@@ -30,22 +30,32 @@ import (
 )
 
 // Triage intake (design D4): `factory triage --publish no` prepares label /
-// priority / duplicate suggestions per inbound issue. It runs in the board
-// namespace under the discovery identity, writes nothing to GitHub, and the
-// structured report is harvested from the invocation's stdout banners —
-// the same contract the review flow uses. The maintainer applies
-// suggestions with their own clicks.
+// priority / duplicate suggestions per inbound issue. It writes nothing to
+// GitHub, and the structured report is harvested from the invocation's
+// stdout banners — the same contract the review flow uses. The maintainer
+// applies suggestions with their own clicks.
+//
+// It runs in the issue's sandbox, the one plan and fix use
+// (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,
+// as a clicked plan or fix runs, under their token; auto-triage, which has
+// no clicker, in the board owner's, under the discovery identity. It
+// records its state in its own annotation and its draft in
+// AnnotationTriageDraft so that neither reads as the plan's, fix's or a
+// review's. Triages from before that live in triage-<repo>-<N> sandboxes
+// in the board namespace, which are still read (factorycli.TriageSandbox).
 
 const (
 	// AnnotationTriagedAt marks a stored triage draft.
 	AnnotationTriagedAt = "board.gemini.google.com/triaged-at"
-	// AnnotationDraftType distinguishes triage drafts from review drafts on
-	// the shared agentDraft key (legacy name the UI already understands).
+	// AnnotationDraftType distinguished triage drafts from review drafts on
+	// the shared agentDraft key, where legacy triage sandboxes keep theirs.
 	AnnotationDraftType = "agentDraftType"
 	// AnnotationTriageRejected tombstones a rejected draft: auto-triage
 	// must not redo work a human threw away, and a stale invocation
 	// result must not resurrect the draft. A fresh Triage click re-arms.
 	AnnotationTriageRejected = "board.gemini.google.com/triage-rejected-at"
+	// AnnotationTriagePublished marks a draft the maintainer published.
+	AnnotationTriagePublished = "board.gemini.google.com/triage-published-at"
 )
 
 // discoverTriage lists open issues needing auto-triage: not PRs, eligible
@@ -80,13 +90,21 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 	}
 }
 
-// ensureTriage drives one issue's triage state machine: harvest a finished
-// run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, clicked bool) {
+// ensureTriage drives one issue's triage state machine in namespace:
+// harvest a finished run's stdout report, or launch one within limits.
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace string, clicked bool) {
 	logger := log.FromContext(ctx)
-	name := factorycli.TriageSandboxName(work.repo, issue.GetNumber())
-	sb := work.findSandbox(work.board.Namespace, name)
-	key := work.board.Namespace + "/" + name
+	sb := work.triageSandbox(namespace, issue.GetNumber())
+	if sb == nil {
+		sb = work.issueSandbox(namespace, issue.GetNumber())
+	}
+	name := factorycli.FixSandboxName(work.repo, issue.GetNumber())
+	if sb != nil && !factorycli.IsLegacyTriageSandbox(sb) {
+		name = sb.GetName()
+	}
+	// The single-flight key keeps the old sandbox name: it only has to be
+	// stable, and a run in flight across a rollout keeps its slot.
+	key := namespace + "/" + factorycli.LegacyTriageSandboxName(work.repo, issue.GetNumber())
 
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
@@ -105,10 +123,25 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	}
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
+		// A finished run's sandbox is the issue's; a legacy triage one
+		// still found here is not where it ran.
+		if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
+			if isb := work.issueSandbox(namespace, issue.GetNumber()); isb != nil {
+				sb, annotations = isb, isb.GetAnnotations()
+				if annotations == nil {
+					annotations = map[string]string{}
+				}
+			}
+		}
 		if res.Err == nil && sb != nil {
 			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
-				annotations[AnnotationAgentDraft] = report
-				annotations[AnnotationDraftType] = "triage"
+				if factorycli.IsLegacyTriageSandbox(sb) {
+					// Where an older repo-agent would look for it.
+					annotations[AnnotationAgentDraft] = report
+					annotations[AnnotationDraftType] = "triage"
+				} else {
+					annotations[factorycli.AnnotationTriageDraft] = report
+				}
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				sb.SetAnnotations(annotations)
@@ -123,52 +156,78 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		}
 	}
 
+	if sb != nil && factorycli.IsLegacyTriageSandbox(sb) {
+		// A new run goes to the issue's sandbox, not the legacy one.
+		sb = work.issueSandbox(namespace, issue.GetNumber())
+	}
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		return
+	}
+	token := work.discToken
+	if namespace != work.board.Namespace {
+		var err error
+		if token, err = r.executorToken(ctx, namespace); err != nil {
+			logger.Info("no github token for the triage's namespace", "namespace", namespace, "err", err)
+			return
+		}
 	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{
-		Namespace:   work.board.Namespace,
+		Namespace:   namespace,
 		SandboxName: name,
 		IssueURL:    issue.GetHTMLURL(),
-		GithubToken: work.discToken,
+		GithubToken: token,
 		Engine:      boardEngine(work.board),
 	}) {
 		logger.Info("launched factory triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
 }
 
-// resumeTriages re-drives triage sandboxes whose suggestions have not been
+// resumeTriages re-drives triages whose suggestions have not been
 // harvested: a clicked triage's Request settles when the sandbox
 // appears, minutes before the run completes, so without this pass the
 // finished invocation's output would never be stored (and the row would
-// show Triaging… forever).
+// show Triaging… forever). Only sandboxes a triage has touched count: an
+// issue's sandbox that only planned or fixed is not one to triage.
 func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
-	prefix := "triage-" + work.repo + "-"
+	legacyPrefix := "triage-" + work.repo + "-"
+	seen := map[string]bool{}
 	for _, sb := range work.sandboxes {
-		if sb.GetNamespace() != work.board.Namespace {
-			continue
-		}
-		name := sb.GetName()
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
 		annotations := sb.GetAnnotations()
 		if annotations[AnnotationTriagedAt] != "" {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
-		if err != nil {
+		var n int
+		if rest, ok := strings.CutPrefix(sb.GetName(), legacyPrefix); ok {
+			var err error
+			if n, err = strconv.Atoi(rest); err != nil {
+				continue
+			}
+		} else if issue, ok := factorycli.IssueOf(sb, work.repo); ok && factorycli.HasTriage(sb) {
+			n = issue
+		} else {
 			continue
 		}
-		num := n
-		url := annotations["htmlURL"]
-		if url == "" {
-			url = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, n)
+		k := fmt.Sprintf("%s/%d", sb.GetNamespace(), n)
+		if seen[k] {
+			continue
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, false)
+		seen[k] = true
+		num := n
+		url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, n)
+		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
+			url = u
+		}
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), false)
 	}
+}
+
+// triageClick is a Triage click: the issue, and the namespace of the
+// member who clicked, where it runs.
+type triageClick struct {
+	issue  int
+	member string
 }
 
 // resultStaleSince reports whether a remembered invocation result predates

@@ -2,12 +2,14 @@
 # The task's result is a Triage task output (task-output.yaml), which
 # `factory apply` publishes; `triage --publish yes` applies it itself.
 #
-# Also runs as `factory recipe triage --url <issue>`, which
-# sets the issue_* inputs and prints the triage instead of publishing it.
+# Also runs as `factory recipe triage --url <issue> [--instruction …]`,
+# which sets the issue_* inputs and prints the triage instead of
+# publishing it.
 name: triage
 
 inputs:
   instructions:
+    type: instructions
     description: Additional triage instructions the agent must follow
 
 context: |

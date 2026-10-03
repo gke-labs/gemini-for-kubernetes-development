@@ -47,18 +47,26 @@ func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefi
 		return none, nil // no sandbox yet: nothing to duplicate
 	}
 	annotations := sb.GetAnnotations()
-	if annotations["sandbox.gemini.google.com/last-task-state"] != "Running" ||
-		annotations["sandbox.gemini.google.com/last-task-type"] != prefix {
+	// A side task — triage in the issue's sandbox — claims Running under
+	// its own name (sandbox.gemini.google.com/<type>-task-state) and
+	// leaves last-task-* to the fix.
+	own, side, other := runningClaims(annotations, prefix)
+	if !own && !other {
 		// A live invocation owns (or owned) this sandbox's story; only a
 		// stale Running claim marks a recovered orphan.
 		return none, nil
+	}
+	stamp := func(state string) {
+		if own {
+			p.stampTaskState(ctx, namespace, sandboxName, prefix, state, side)
+		}
 	}
 
 	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sandboxName, namespace)
 	if err != nil || podID == nil {
 		// Annotation claims Running but there is no pod: the run died with
 		// its pod. Correct the record and release the launch path.
-		p.stampTaskState(ctx, namespace, sandboxName, prefix, "Failed")
+		stamp("Failed")
 		return none, nil
 	}
 
@@ -111,15 +119,18 @@ fi`, prefix, collectCmd(outputFile))
 	case "running":
 		return TaskProbe{State: ProbeRunning}, nil
 	case "finished":
+		if !own {
+			return none, nil
+		}
 		state := "Completed"
 		if exitCode != "0" {
 			state = "Failed"
 		}
-		p.stampTaskState(ctx, namespace, sandboxName, prefix, state)
+		stamp(state)
 		return TaskProbe{State: ProbeOrphanCompleted, ExitCode: exitCode, Output: strings.TrimSpace(rest)}, nil
 	case "dead":
 		// Launched but died without an exit code (pod restart mid-task).
-		p.stampTaskState(ctx, namespace, sandboxName, prefix, "Failed")
+		stamp("Failed")
 		return none, nil
 	default:
 		return none, nil
@@ -137,7 +148,32 @@ func collectCmd(outputFile string) string {
 // that should have stamped the final state died with the old controller,
 // so the prober corrects the record — the board and the pause pass see
 // truth, and later probes are cheap.
-func (p *PodTaskProber) stampTaskState(ctx context.Context, namespace, sandboxName, taskType, state string) {
+// runningClaims reads the Running claims on a sandbox for a launch of
+// prefix: own, its own (side, under its side-task key); other, another
+// type's — a triage while a fix launches, a fix while a triage does, now
+// that they share the issue's sandbox — which only asks for the
+// sandbox-wide busy check, its leftovers not being ours.
+func runningClaims(annotations map[string]string, prefix string) (own, side, other bool) {
+	side = annotations[sideTaskStateKey(prefix)] == "Running"
+	own = side || (annotations["sandbox.gemini.google.com/last-task-state"] == "Running" &&
+		annotations["sandbox.gemini.google.com/last-task-type"] == prefix)
+	for k, v := range annotations {
+		if v != "Running" || !strings.HasPrefix(k, "sandbox.gemini.google.com/") || !strings.HasSuffix(k, "task-state") {
+			continue
+		}
+		if k == sideTaskStateKey(prefix) || (own && !side && k == "sandbox.gemini.google.com/last-task-state") {
+			continue
+		}
+		other = true
+	}
+	return own, side, other
+}
+
+func sideTaskStateKey(taskType string) string {
+	return "sandbox.gemini.google.com/" + taskType + "-task-state"
+}
+
+func (p *PodTaskProber) stampTaskState(ctx context.Context, namespace, sandboxName, taskType, state string, side bool) {
 	sb, err := p.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
 		klog.Warningf("factorycli: cannot stamp adopted task state on %s/%s: %v", namespace, sandboxName, err)
@@ -148,8 +184,12 @@ func (p *PodTaskProber) stampTaskState(ctx context.Context, namespace, sandboxNa
 		annotations = map[string]string{}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	annotations["sandbox.gemini.google.com/last-task-state"] = state
-	annotations["sandbox.gemini.google.com/last-task-type"] = taskType
+	if side {
+		annotations[sideTaskStateKey(taskType)] = state
+	} else {
+		annotations["sandbox.gemini.google.com/last-task-state"] = state
+		annotations["sandbox.gemini.google.com/last-task-type"] = taskType
+	}
 	annotations["sandbox.gemini.google.com/last-task-time"] = now
 	annotations["sandbox.gemini.google.com/completion-time"] = now
 	sb.SetAnnotations(annotations)

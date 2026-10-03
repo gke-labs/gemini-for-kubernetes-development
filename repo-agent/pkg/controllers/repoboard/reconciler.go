@@ -26,6 +26,7 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"iter"
 	"strconv"
 	"strings"
 	"time"
@@ -268,18 +269,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	reviews = append(reviews, mail.reviews...)
 	// A clicked triage needs only number+URL; no GitHub fetch required.
 	// Clicks override the rejected-draft tombstone; auto candidates don't.
-	clickedTriage := map[int]bool{}
-	for _, n := range mail.triages {
-		clickedTriage[n] = true
+	// A click runs in the clicker's namespace; auto-triage, which has no
+	// clicker, in the board owner's.
+	clickedTriage := map[int]string{}
+	for _, click := range mail.triages {
+		clickedTriage[click.issue] = click.member
 	}
 	seenTriage := map[int]bool{}
 	for _, issue := range triageCandidates {
 		seenTriage[issue.GetNumber()] = true
 	}
-	for _, n := range mail.triages {
-		if seenTriage[n] {
+	for _, click := range mail.triages {
+		if seenTriage[click.issue] {
 			continue
 		}
+		seenTriage[click.issue] = true
+		n := click.issue
 		num := n
 		url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, n)
 		triageCandidates = append(triageCandidates, &github.Issue{Number: &num, HTMLURL: &url})
@@ -298,6 +303,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	for _, req := range mail.plans {
 		namespaces[req.member] = true
+	}
+	for _, click := range mail.triages {
+		namespaces[click.member] = true
 	}
 	// A research claim is served by its sandbox existing, so the
 	// member's namespace has to be one the sandbox load covers. Boards
@@ -330,7 +338,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensureReview(ctx, work, plan)
 	}
 	for _, issue := range triageCandidates {
-		r.ensureTriage(ctx, work, issue, clickedTriage[issue.GetNumber()])
+		member, clicked := clickedTriage[issue.GetNumber()]
+		if !clicked || member == "" {
+			member = board.Namespace
+		}
+		r.ensureTriage(ctx, work, issue, member, clicked)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
@@ -399,6 +411,28 @@ type workState struct {
 
 func (w *workState) fixSandboxName(issue int) string {
 	return factorycli.FixSandboxName(w.repo, issue)
+}
+
+// issueSandbox is issue's sandbox in namespace (factorycli.IssueSandbox),
+// whatever factory named it.
+func (w *workState) issueSandbox(namespace string, issue int) *unstructured.Unstructured {
+	return factorycli.IssueSandbox(w.sandboxesIn(namespace), w.repo, issue)
+}
+
+// triageSandbox is the sandbox in namespace holding issue's triage
+// (factorycli.TriageSandbox).
+func (w *workState) triageSandbox(namespace string, issue int) *unstructured.Unstructured {
+	return factorycli.TriageSandbox(w.sandboxesIn(namespace), w.repo, issue)
+}
+
+func (w *workState) sandboxesIn(namespace string) iter.Seq[*unstructured.Unstructured] {
+	return func(yield func(*unstructured.Unstructured) bool) {
+		for _, sb := range w.sandboxes {
+			if sb.GetNamespace() == namespace && !yield(sb) {
+				return
+			}
+		}
+	}
 }
 
 func (w *workState) findSandbox(namespace, name string) *unstructured.Unstructured {
@@ -580,7 +614,7 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 type mailbox struct {
 	fixes    []fixPlan
 	reviews  []reviewPlan
-	triages  []int
+	triages  []triageClick
 	plans    []planRequest
 	prTasks  []prTaskClaim
 	runbooks []runbookClaim
@@ -686,10 +720,9 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 // IsRunning).
 func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 	var out []fixPlan
-	prefix := "fix-" + work.repo + "-"
 	for _, sb := range work.sandboxes {
-		n, err := strconv.Atoi(strings.TrimPrefix(sb.GetName(), prefix))
-		if err != nil || !strings.HasPrefix(sb.GetName(), prefix) {
+		n, ok := factorycli.IssueOf(sb, work.repo)
+		if !ok {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -714,8 +747,11 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 // in the executor's namespace with the executor's identity.
 func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
 	logger := log.FromContext(ctx)
+	sb := work.issueSandbox(plan.executor, plan.issue)
 	name := work.fixSandboxName(plan.issue)
-	sb := work.findSandbox(plan.executor, name)
+	if sb != nil {
+		name = sb.GetName()
+	}
 	// PR/issue numbers repeat across repos, so runner keys carry the repo:
 	// two boards in one namespace must never share a single-flight slot.
 	key := fmt.Sprintf("%s/fix-%s-%d", plan.executor, work.repo, plan.issue)
@@ -1306,7 +1342,8 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 		if skip[sb.GetName()] {
 			continue // converted this pass; next reconcile owns it
 		}
-		if !strings.HasPrefix(sb.GetName(), "fix-") && !strings.HasPrefix(sb.GetName(), "factory-pr-") {
+		issue, isIssueSB := factorycli.IssueOf(sb, work.repo)
+		if !isIssueSB && !strings.HasPrefix(sb.GetName(), "factory-pr-") {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -1330,7 +1367,8 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 		// task landed yet for the prober's sandbox-wide busy check to
 		// see): their runner keys derive from the sandbox name.
 		if r.Factory.IsRunning(namespace+"/"+sb.GetName()) ||
-			r.Factory.IsRunning(namespace+"/plan-"+strings.TrimPrefix(sb.GetName(), "fix-")) {
+			(isIssueSB && (r.Factory.IsRunning(fmt.Sprintf("%s/fix-%s-%d", namespace, work.repo, issue)) ||
+				r.Factory.IsRunning(fmt.Sprintf("%s/plan-%s-%d", namespace, work.repo, issue)))) {
 			busy = true
 		}
 		if busy {
@@ -1375,7 +1413,7 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefault bool) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {
-		if !strings.HasPrefix(sb.GetName(), "fix-") {
+		if _, ok := factorycli.IssueOf(sb, work.repo); !ok {
 			continue
 		}
 		if !autoIterateEnabled(sb, boardDefault) {
@@ -1423,7 +1461,13 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		if annotations[AnnotationPreventAutoPause] == "true" {
 			continue
 		}
+		// Triage in an issue's sandbox keeps its own state: running, the
+		// sandbox is busy whatever the fix's says; alone, it is the state.
 		state := annotations[factorycli.AnnotationTaskState]
+		triage := annotations[factorycli.AnnotationTriageTaskState]
+		if triage == "Running" || state == "" {
+			state = triage
+		}
 		if state != factorycli.TaskStateCompleted && state != factorycli.TaskStateFailed {
 			continue
 		}
@@ -1487,9 +1531,13 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 			needsHuman++
 			continue
 		}
+		if annotations[factorycli.AnnotationTriageDraft] != "" && annotations[AnnotationTriagePublished] == "" {
+			needsHuman++
+			continue
+		}
+		_, isIssueSB := factorycli.IssueOf(sb, work.repo)
 		if annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateCompleted &&
-			strings.Contains(annotations["htmlURL"], "/pull/") &&
-			strings.HasPrefix(sb.GetName(), "fix-") {
+			strings.Contains(annotations["htmlURL"], "/pull/") && isIssueSB {
 			needsHuman++
 		}
 	}

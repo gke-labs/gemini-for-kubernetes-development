@@ -129,10 +129,12 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	}
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-	fmt.Printf("Ensuring triage sandbox for issue #%d...\n", issueNum)
-	sandboxName, err := factorysandbox.EnsureTriageSandbox(ctx, kubeClient, rootFlags.Namespace, repo, issueNum, cloneURL, issue.GetHTMLURL(), rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	// The issue's sandbox, the one plan and fix use: triage leaves the
+	// checkout warm for them.
+	fmt.Printf("Ensuring the sandbox for issue #%d...\n", issueNum)
+	sandboxName, err := factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, strconv.Itoa(issueNum), cloneURL, issue.GetHTMLURL(), issue.GetTitle(), rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	if err != nil {
-		return fmt.Errorf("ensuring triage sandbox: %w", err)
+		return fmt.Errorf("ensuring the issue's sandbox: %w", err)
 	}
 
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
@@ -152,6 +154,9 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
+	if err := refuseIfBusy(ctx, client, sandboxName); err != nil {
+		return err
+	}
 
 	taskDir := fmt.Sprintf("/workspaces/tasks/triage-%s", time.Now().Format("20060102-150405"))
 	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
@@ -193,7 +198,7 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 		return err
 	}
 
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", rootFlags.Engine)
+	_ = factorysandbox.MarkSandboxSideTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", rootFlags.Engine)
 	if useRecipe {
 		fmt.Printf("Running the triage recipe (task %s)...\n", task.ID)
 		err = spoolRecipe(ctx, client, sandboxName, task, recipeBytes, recipeInputs, envMap)
@@ -202,13 +207,13 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 		err = client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel)
 	}
 	if err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Failed")
+		_ = factorysandbox.UpdateSandboxSideTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
 	if rootFlags.Detached {
 		return nil
 	}
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Completed")
+	_ = factorysandbox.UpdateSandboxSideTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Completed")
 
 	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
 		Repo:     owner + "/" + repo,
@@ -290,6 +295,9 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 	return fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath), nil
 }
 
+// instructionSeparator is between instructions joined into one input.
+const instructionSeparator = "\n\n---\n\n"
+
 // triageRecipe is the triage recipe, its inputs for issue, and the file
 // it leaves the triage in.
 func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[string]string, *taskoutput.Decl, error) {
@@ -305,6 +313,23 @@ func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[st
 		"issue_number": strconv.Itoa(issue.GetNumber()),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
-		"instructions": strings.Join(instructions, "\n\n---\n\n"),
+		"instructions": strings.Join(instructions, instructionSeparator),
 	}, rec.TaskOutput, nil
+}
+
+// refuseIfBusy fails when a task is waiting or running in the sandbox. An
+// issue's triage, recipes, plan and fix share its sandbox, and two agents
+// in one workspace would trip over each other.
+func refuseIfBusy(ctx context.Context, client *envd.Client, sandboxName string) error {
+	entries, err := spool.List(ctx, client)
+	if err != nil {
+		return fmt.Errorf("listing the tasks in sandbox %s: %w", sandboxName, err)
+	}
+	for _, e := range entries {
+		switch e.State {
+		case spool.Pending, spool.Claimed, spool.Running:
+			return fmt.Errorf("sandbox %s is busy: task %s is %s; try again when it is done (factory sandbox task list %s -n %s)", sandboxName, e.ID, e.State, sandboxName, rootFlags.Namespace)
+		}
+	}
+	return nil
 }
