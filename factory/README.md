@@ -36,7 +36,7 @@
 ### Agents on issues and pull requests
 - **Fix an issue.** `factory fix` clones the repository into a sandbox and checks out an issue branch. It runs the agent, then pushes to the bot's fork and opens a PR. It also accepts a bare repository with `--name` and `--instruction` / `--instruction-file`, and `--no-pr` pushes without opening one. `--watch` hands the new PR straight to `pr watch`.
 - **Plan first.** `factory plan` drafts an implementation plan in the issue's sandbox without posting anything. `--feedback` revises it, and `factory fix --with-plan` folds the approved plan into the fix.
-- **Triage.** `factory triage` suggests labels, priority, duplicates and an assessment. With `--publish yes` it applies the labels and posts the comment.
+- **Triage.** `factory recipe triage --url <issue>` suggests labels, priority, duplicates and an assessment, as a task output. `--apply` waits for it and applies the labels and posts the comment, and so does `factory apply -f` on the output.
 - **PR lifecycle.**
   - `pr review` reviews the diff using repeatable `--instruction` files or strings. `--publish` takes `no`, `ask`, `yes` or `draft`.
   - `pr investigate` works on CI failures.
@@ -213,7 +213,8 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `user onboard` | Create a namespace and `factory-user` secret |
 | `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
 | `plan` | Draft or revise an implementation plan for an issue; posts nothing |
-| `triage` | Suggest labels, priority, duplicates; `--publish yes` applies them |
+| `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
+| `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `pr review` | Review a PR; `--publish no\|ask\|yes\|draft` |
 | `pr investigate` | Investigate and fix CI failures on a PR |
 | `pr address-comments` | Address review feedback on a PR |
