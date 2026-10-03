@@ -23,24 +23,24 @@ This note describes how a factory task should run and how its result should reac
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Caller as Caller (CLI user / repo-agent)
+    participant Caller as Caller (CLI user or repo-agent)
     participant CLI as factory CLI (host)
     participant Spool as Sandbox: spool + daemon (PID 1)
     participant Task as Sandbox: factory recipe exec
     participant GH as GitHub
 
-    Caller->>CLI: factory recipe triage --url <issue> --client-id <id> [--apply]
+    Caller->>CLI: factory recipe triage --url ISSUE --client-id ID [--apply]
     CLI->>CLI: find or create the issue's sandbox (by label)
-    CLI->>Spool: refuse if a task is pending/running
+    CLI->>Spool: refuse if a task is pending or running
     CLI->>Spool: write task dir to /workspaces/spool/incoming (recipe, inputs, env, task.json)
-    Spool->>Task: claim → /workspaces/tasks/<id>, run steps
-    CLI-->>Task: attach (tail logs) — optional; Ctrl-C detaches or aborts
-    Task->>Task: steps: uses / run / ask (one agent session)
+    Spool->>Task: claim into /workspaces/tasks/ID, run steps
+    CLI-->>Task: attach and tail logs (optional). Ctrl-C detaches or aborts
+    Task->>Task: steps: uses, run, ask (one agent session)
     Task->>Task: write task-output.yaml (kind, target, source, spec)
-    Caller->>CLI: factory sandbox task output <sandbox> --client-id <id>
+    Caller->>CLI: factory sandbox task output SANDBOX --client-id ID
     CLI-->>Caller: task-output.yaml
-    Caller->>CLI: factory apply -f - [--dry-run]   (or --apply did it)
-    CLI->>GH: labels, comment (+ hidden idempotency marker), with caller's token
+    Caller->>CLI: factory apply -f - [--dry-run], or --apply did it
+    CLI->>GH: labels and comment (with a hidden marker), using the caller's token
 ```
 
 The pattern has four parts and one addressing rule.
