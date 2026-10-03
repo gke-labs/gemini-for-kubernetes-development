@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
 func TestParseGitHubItemURL(t *testing.T) {
@@ -96,5 +97,26 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 	}
 	if len(recipe.BuiltinNames()) == 0 {
 		t.Error("no built-in recipes")
+	}
+}
+
+// --apply picks up the newest run of the recipe on the issue, whatever
+// ran after it on other issues or with other recipes.
+func TestLastRun(t *testing.T) {
+	entry := func(id, recipeName, url string) spool.Entry {
+		return spool.Entry{Task: spool.Task{ID: id, Recipe: recipeName, URL: url}}
+	}
+	entries := []spool.Entry{ // newest first, as spool.List gives them
+		entry("recipe-triage-3", "triage", "https://github.com/o/r/issues/8"),
+		entry("recipe-explain-2", "explain", "https://github.com/o/r/issues/7"),
+		entry("fix-2", "", ""),
+		entry("recipe-triage-2", "triage", "https://github.com/O/r/issues/7/"),
+		entry("recipe-triage-1", "triage", "https://github.com/o/r/issues/7"),
+	}
+	if e, ok := lastRun(entries, "triage", "https://github.com/o/r/issues/7"); !ok || e.ID != "recipe-triage-2" {
+		t.Errorf("lastRun = %s, %v; want recipe-triage-2", e.ID, ok)
+	}
+	if e, ok := lastRun(entries, "triage", "https://github.com/o/r/issues/9"); ok {
+		t.Errorf("lastRun on an issue never run = %s; want none", e.ID)
 	}
 }

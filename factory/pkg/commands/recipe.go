@@ -51,6 +51,7 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 type recipeRunFlags struct {
 	itemURL, clientID string
 	inputArgs         []string
+	apply, dryRun     bool
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
@@ -60,6 +61,8 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task status|output|attach --client-id)")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
+	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
 }
 
@@ -68,6 +71,12 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg string, extra map[string]string) error {
 	if _, err := ResolveRootFlags(c); err != nil {
 		return err
+	}
+	if f.dryRun && !f.apply {
+		return fmt.Errorf("--dry-run goes with --apply")
+	}
+	if f.apply && rootFlags.Detached {
+		return fmt.Errorf("--apply waits for the task; it cannot be --detached")
 	}
 	if rootFlags.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -87,7 +96,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, applyMode{f.apply, f.dryRun}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -278,11 +287,15 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 
 // runRecipe runs recipeArg against itemURL. instructions are the raw
 // values of instructions-type inputs, each resolved as
-// `factory triage --instruction` resolves its own.
-func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrides map[string]string, instructions map[string][]string) error {
+// `factory triage --instruction` resolves its own. With apply it applies
+// the task's result, picking up where an interrupted run left off.
+func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
+	}
+	if apply.on && rec.TaskOutput == nil {
+		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
 	}
 	it, err := parseGitHubItemURL(itemURL)
 	if err != nil {
@@ -349,6 +362,19 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
+	if apply.on {
+		e, ok, err := resumableTask(ctx, client, rec.Name, htmlURL)
+		if err != nil {
+			return err
+		}
+		if ok {
+			fmt.Printf("Picking up task %s, this recipe's last run on %s (run again once it is applied to start a new one).\n", e.ID, htmlURL)
+			return awaitAndApply(ctx, client, ghClient, sandboxName, e.ID, apply.dryRun)
+		}
+		// Interrupting stops the waiting; the task runs on, for the
+		// next run to pick up.
+		rootFlags.AbortOnCancel = false
+	}
 	if err := refuseIfBusy(ctx, client, sandboxName); err != nil {
 		return err
 	}
@@ -378,6 +404,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	task.Output = rec.TaskOutput
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
+	if apply.on {
+		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
+	}
 	taskType := "recipe-" + rec.Name
 	// In an issue's sandbox the recipe is a side task: last-task-* stay
 	// the fix's.
@@ -407,6 +436,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 		return err
 	}
 	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
+	if apply.on {
+		return awaitAndApply(ctx, client, ghClient, sandboxName, task.ID, apply.dryRun)
+	}
 	if rec.TaskOutput != nil {
 		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
 	}
@@ -480,6 +512,100 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 
 func printDetachedHint(sandboxName, taskID string) {
 	fmt.Printf("Task %[1]s started in the sandbox. Follow it, or check on it and read its outputs, with:\n  factory sandbox task attach %[2]s -n %[3]s --task %[1]s\n  factory sandbox task status %[2]s -n %[3]s --task %[1]s\n  factory sandbox task output %[2]s -n %[3]s --task %[1]s\n", taskID, sandboxName, rootFlags.Namespace)
+}
+
+// applyMode is what --apply and --dry-run ask of a recipe run.
+type applyMode struct{ on, dryRun bool }
+
+// resumableTask is the newest run of recipeName on itemURL in the sandbox
+// when it is one `--apply` picks up: still pending or running, or
+// finished well and not applied yet. Anything else — failed, applied, no
+// run — starts a new one.
+func resumableTask(ctx context.Context, client *envd.Client, recipeName, itemURL string) (spool.Entry, bool, error) {
+	entries, err := spool.List(ctx, client)
+	if err != nil {
+		return spool.Entry{}, false, err
+	}
+	e, ok := lastRun(entries, recipeName, itemURL)
+	if !ok || e.State != spool.Exited {
+		return e, ok, nil
+	}
+	if e.ExitCode != "0" || taskApplied(ctx, client, e.ID) {
+		return spool.Entry{}, false, nil
+	}
+	return e, true, nil
+}
+
+// lastRun is the newest task in entries (newest first) that ran
+// recipeName on itemURL.
+func lastRun(entries []spool.Entry, recipeName, itemURL string) (spool.Entry, bool) {
+	want := normalizeItemURL(itemURL)
+	for _, e := range entries {
+		if e.Recipe == recipeName && normalizeItemURL(e.URL) == want {
+			return e, true
+		}
+	}
+	return spool.Entry{}, false
+}
+
+func taskApplied(ctx context.Context, client *envd.Client, id string) bool {
+	var out bytes.Buffer
+	_ = client.Exec(ctx, "cat "+spool.TaskDir(id)+"/"+taskoutput.AppliedFile+" 2>/dev/null", "/workspaces", nil, nil, &out, nil)
+	return out.Len() > 0
+}
+
+// awaitAndApply follows task id to its end, unless it has ended, and
+// applies its result with gh, as `factory apply` does. Applying again is
+// harmless: a triage's comment is not posted twice.
+func awaitAndApply(ctx context.Context, client *envd.Client, gh *githubv39.Client, sandboxName, id string, dryRun bool) error {
+	sel := taskSelectFlags{id: id}
+	e, err := sel.find(ctx, client, sandboxName)
+	if err != nil {
+		return err
+	}
+	taskDir := spool.TaskDir(e.ID)
+	if e.State != spool.Exited {
+		fmt.Printf("Waiting for task %s to finish; interrupting stops the waiting, not the task...\n", e.ID)
+		if err := awaitTaskStart(ctx, client, e); err != nil {
+			return err
+		}
+		if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
+			return fmt.Errorf("task %s: %w", e.ID, err)
+		}
+		if e, err = sel.find(ctx, client, sandboxName); err != nil {
+			return err
+		}
+	}
+	if e.State != spool.Exited {
+		return fmt.Errorf("task %s is %s; run again to wait for it", e.ID, e.State)
+	}
+	if e.ExitCode != "0" {
+		return fmt.Errorf("task %s failed (exit %s); nothing applied. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
+	}
+	data, err := readTaskOutput(ctx, client, sandboxName, e)
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		return fmt.Errorf("task %s left no task output to apply", e.ID)
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		return fmt.Errorf("task %s: %w", e.ID, err)
+	}
+	fmt.Printf("\nApplying the result of task %s...\n", e.ID)
+	for _, d := range docs {
+		if err := taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout); err != nil {
+			return fmt.Errorf("applying the %s for %s: %w", d.Kind, d.Target.URL, err)
+		}
+	}
+	if dryRun {
+		return nil
+	}
+	if err := client.WriteFile(ctx, taskDir+"/"+taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n")); err != nil {
+		fmt.Fprintf(os.Stderr, "Applied, but could not mark task %s applied (%v): running this again applies it again, which posts nothing twice.\n", e.ID, err)
+	}
+	return nil
 }
 
 // writeRecipe puts a recipe and its inputs into the sandbox and returns
