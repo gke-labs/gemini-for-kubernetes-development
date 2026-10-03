@@ -22,8 +22,11 @@ import (
 
 const (
 	// File is the task-directory file a task's result is in.
-	File       = "task-output.yaml"
-	APIVersion = "factory.gemini.google.com/v1alpha1"
+	File = "task-output.yaml"
+	// AppliedFile marks, in a task directory, that the task's result was
+	// applied: `factory recipe --apply` run again does not pick it up.
+	AppliedFile = "task-output.applied"
+	APIVersion  = "factory.gemini.google.com/v1alpha1"
 )
 
 // Decl declares a task's result: which kind it is and the task-directory
