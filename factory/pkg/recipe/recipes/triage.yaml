@@ -1,9 +1,13 @@
 # factory triage --recipe: triage_issue.sh + structured_triage.txt as steps.
 # The CLI reads triage-output.txt and publishes, exactly as without --recipe.
 #
-# Inputs (set by the CLI): issue_url, issue_number, issue_title,
-# issue_body, instructions (empty when none).
+# Also runs as `factory recipe run --recipe triage --url <issue>`, which
+# sets the issue_* inputs and prints the triage instead of publishing it.
 name: triage
+
+inputs:
+  instructions:
+    description: Additional triage instructions the agent must follow
 
 context: |
   You are a triage assistant preparing suggestions for a repository

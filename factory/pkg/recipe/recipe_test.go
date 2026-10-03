@@ -42,10 +42,69 @@ func TestParseRejects(t *testing.T) {
 		"bad id":           "name: a\nsteps: [{id: A-1, run: x}]",
 		"unknown field":    "name: a\nsteps: [{run: x, shell: zsh}]",
 		"continue on uses": "name: a\nsteps: [{uses: setup-git, continue-on-error: true}]",
+		"bad input name":   "name: a\ninputs: {Focus: {}}\nsteps: [{run: x}]",
+		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nsteps: [{run: x}]",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
 		}
+	}
+}
+
+func TestResolveInputs(t *testing.T) {
+	r, err := Parse([]byte(`
+name: a
+inputs:
+  focus: {default: all}
+  target: {required: true}
+steps: [{run: x}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	std := map[string]string{"issue_number": "7"}
+
+	got, err := r.ResolveInputs(std, map[string]string{"target": "t", "issue_number": "8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"issue_number": "8", "focus": "all", "target": "t"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("inputs = %v, want %v", got, want)
+	}
+	if _, err := r.ResolveInputs(std, nil); err == nil || !strings.Contains(err.Error(), "target") {
+		t.Errorf("missing required input: err = %v", err)
+	}
+	if _, err := r.ResolveInputs(std, map[string]string{"target": "t", "fcous": "x"}); err == nil || !strings.Contains(err.Error(), "fcous") {
+		t.Errorf("misspelt input: err = %v", err)
+	}
+}
+
+// TestBuiltinTriageRendersFromIssueInputs: `recipe run --recipe triage`
+// gives it only what an issue URL sets, and every ask must still render.
+func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
+	_, r, err := Builtin("triage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := r.ResolveInputs(map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "u",
+		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
+	for i, s := range r.Steps {
+		if s.Ask == "" {
+			continue
+		}
+		if _, err := render(s.Label(i), s.Ask, data, t.TempDir()); err != nil {
+			t.Errorf("step %s: %v", s.Label(i), err)
+		}
+	}
+	if got := r.Captures(); fmt.Sprint(got) != "[triage-output.txt]" {
+		t.Errorf("captures = %v", got)
 	}
 }
 
