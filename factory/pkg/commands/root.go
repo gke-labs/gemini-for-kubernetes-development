@@ -155,6 +155,8 @@ coding tasks without local side effects or host dependencies.`,
 	researchCmd.GroupID = "workflows"
 	cmd.AddCommand(researchCmd)
 
+	cmd.AddCommand(NewRecipeCommand(ctx))
+
 	return cmd
 }
 
