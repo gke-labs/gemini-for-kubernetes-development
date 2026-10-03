@@ -105,3 +105,20 @@ func TestAdoptedRecipeTriage(t *testing.T) {
 		t.Errorf("draft = %q", got)
 	}
 }
+
+// A Triage task output, whole or behind lines that are not YAML, becomes
+// the triage: block; any other draft is left as it is.
+func TestNormalizeTriageDraft(t *testing.T) {
+	block := "triage:\n  labels:\n    - bug\n  assessment: A crash on start."
+	for name, tc := range map[string]struct{ in, want string }{
+		"task output":     {triageTaskOutput, block},
+		"behind progress": {"Waiting for sandbox pod fix-repo-5 to become ready...\nRunning inside Kubernetes cluster.\n" + triageTaskOutput, block},
+		"triage block":    {block, block},
+		"other kind":      {strings.Replace(triageTaskOutput, "kind: Triage", "kind: Plan", 1), strings.Replace(triageTaskOutput, "kind: Triage", "kind: Plan", 1)},
+		"not yaml":        {"triage: [", "triage: ["},
+	} {
+		if got := NormalizeTriageDraft(tc.in); got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
+	}
+}

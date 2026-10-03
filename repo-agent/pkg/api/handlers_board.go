@@ -1994,6 +1994,7 @@ func (s *Server) putBoardTriageDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
 		return
 	}
+	req.Draft = factorycli.NormalizeTriageDraft(req.Draft)
 	if err := validateTriageDraft(req.Draft); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "draft does not match the triage schema", "details": err.Error()})
 		return

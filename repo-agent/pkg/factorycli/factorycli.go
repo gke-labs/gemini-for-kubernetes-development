@@ -857,11 +857,7 @@ func ExtractTriageYAML(output string) string {
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, "apiVersion:") {
-		return triageFromTaskOutput(rest)
-	}
-	return rest
+	return NormalizeTriageDraft(strings.TrimSpace(rest))
 }
 
 // triageFromTaskOutput is a Triage task output's spec as the `triage:`

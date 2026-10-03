@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1232,6 +1233,58 @@ func TestPutBoardTriageDraft(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
+	}
+}
+
+// A draft stored as a Triage task output, behind factory's progress lines
+// (as a harvest that read stderr stored it), is shown, edited and saved as
+// the triage: block.
+func TestTriageDraftFromTaskOutput(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
+	}
+	taskOutput := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\ntarget:\n  url: https://github.com/test/repo/issues/20\nspec:\n  labels:\n    - bug\n  assessment: %s\n"
+	stored := "Waiting for sandbox pod fix-repo-20 to become ready...\n" + fmt.Sprintf(taskOutput, "from the agent")
+	triageSandbox := sandboxCR("fix-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{factorycli.AnnotationTriageDraft: stored, "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+
+	draft := func() string {
+		req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var work []models.WorkItem
+		if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+			t.Fatalf("bad json: %v", err)
+		}
+		for _, item := range work {
+			if item.Type == "issue" && item.Number == 20 {
+				return item.Draft
+			}
+		}
+		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
+		return ""
+	}
+	if got, want := draft(), "triage:\n  labels:\n    - bug\n  assessment: from the agent"; got != want {
+		t.Errorf("shown draft = %q, want %q", got, want)
+	}
+
+	body, _ := json.Marshal(map[string]string{"draft": fmt.Sprintf(taskOutput, "human-refined")})
+	req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("task-output edit: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := draft(); !strings.HasPrefix(got, "triage:\n") || !strings.Contains(got, "human-refined") {
+		t.Errorf("saved draft = %q, want the triage: block with the edit", got)
 	}
 }
 

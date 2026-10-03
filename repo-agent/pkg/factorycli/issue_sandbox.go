@@ -79,9 +79,29 @@ func OnlyTriaged(sb *unstructured.Unstructured) bool {
 // the issue's sandbox, is a review's.
 const AnnotationTriageDraft = "board.gemini.google.com/triage-draft"
 
-// TriageDraft returns the triage draft stored on sb.
+// TriageDraft returns the triage draft stored on sb, as a triage: block
+// (NormalizeTriageDraft).
 func TriageDraft(sb *unstructured.Unstructured) string {
-	return sb.GetAnnotations()[AnnotationTriageDraft]
+	return NormalizeTriageDraft(sb.GetAnnotations()[AnnotationTriageDraft])
+}
+
+// NormalizeTriageDraft returns draft as the triage: block drafts are kept
+// in. A Triage task output — whole, or after lines that are not YAML, as
+// a harvest that read factory's stderr stored it — becomes its spec; any
+// other draft is returned as it is.
+func NormalizeTriageDraft(draft string) string {
+	doc := draft
+	if !strings.HasPrefix(doc, "apiVersion:") {
+		i := strings.Index(doc, "\napiVersion:")
+		if i < 0 {
+			return draft
+		}
+		doc = doc[i+1:]
+	}
+	if t := triageFromTaskOutput(doc); t != "" {
+		return t
+	}
+	return draft
 }
 
 // TriageState returns triage's task state in sb.
