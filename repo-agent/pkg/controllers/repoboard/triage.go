@@ -32,9 +32,8 @@ import (
 // Triage intake (design D4): `factory recipe triage` prepares label /
 // priority / duplicate suggestions per inbound issue. It writes nothing to
 // GitHub; its result, a Triage task output, is read back by the task's
-// client id (factorycli.StartTriage), and a sandbox too old for recipes is
-// triaged with `factory triage --publish no`. The maintainer applies
-// suggestions with their own clicks.
+// client id (factorycli.StartTriage). The maintainer applies suggestions
+// with their own clicks.
 //
 // It runs in the issue's sandbox, the one plan and fix use
 // (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,

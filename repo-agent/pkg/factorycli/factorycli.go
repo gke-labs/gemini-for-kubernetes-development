@@ -590,26 +590,24 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 
 // StartTriage runs `factory recipe triage` and reads its result back with
 // `factory sandbox task output --client-id`, as a typed Triage task
-// output. A sandbox whose image predates recipes is triaged with `factory
-// triage --publish no` instead, whose stdout carries the triage between
-// banners. Either way the result's Output has the triage between
-// triageBanner and a closer, for ExtractTriageYAML.
+// output. The result's Output has it between triageBanner and a closer,
+// for ExtractTriageYAML.
 func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Minute
 	}
-	common := []string{
+	args := []string{
+		"recipe", "triage",
+		"--client-id", opts.ClientID,
 		"--url", opts.IssueURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
 	}
 	if opts.Engine != "" {
-		common = append(common, "--engine", opts.Engine)
+		args = append(args, "--engine", opts.Engine)
 	}
-	args := append([]string{"recipe", "triage", "--client-id", opts.ClientID}, common...)
-	classic := append([]string{"triage", "--publish", "no"}, common...)
 	sandbox := opts.SandboxName
 	if sandbox == "" {
 		sandbox = opts.IssueURL
@@ -619,10 +617,6 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 		outputFile: TaskOutputFile, banner: triageBanner,
 		harvest: func(ctx context.Context, out string, err error) (string, error) {
 			if err != nil {
-				if strings.Contains(out, ErrNoRecipes) {
-					klog.Infof("factorycli: sandbox %s/%s cannot run recipes; running factory triage instead (key %s)", opts.Namespace, opts.SandboxName, key)
-					return r.exec(ctx, classic, opts.GithubToken)
-				}
 				return out, err
 			}
 			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--client-id", opts.ClientID}, opts.GithubToken)
@@ -804,13 +798,9 @@ const triageBanner = "================= ISSUE TRIAGE ================="
 // bannerCloser closes what a banner opens.
 const bannerCloser = "================================================"
 
-// TaskOutputFile is where a recipe task leaves its typed result, and
-// ErrNoRecipes what factory says of a sandbox that cannot run recipes
-// (factory/pkg/taskoutput, factory/pkg/commands/recipe.go).
-const (
-	TaskOutputFile = "task-output.yaml"
-	ErrNoRecipes   = "cannot run recipes"
-)
+// TaskOutputFile is where a recipe task leaves its typed result
+// (factory/pkg/taskoutput).
+const TaskOutputFile = "task-output.yaml"
 
 // ExtractTriageYAML returns the triage YAML after the ISSUE TRIAGE banner
 // of a completed triage, or "": the agent's `triage:` block as `factory

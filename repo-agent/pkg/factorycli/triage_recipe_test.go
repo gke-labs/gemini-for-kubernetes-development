@@ -78,25 +78,7 @@ sandbox) cat <<'DOC'
 	}
 }
 
-// A sandbox whose image predates recipes is triaged the old way.
-func TestStartTriageFallsBackWithoutRecipes(t *testing.T) {
-	bin, argsLog := fakeFactory(t, `recipe) echo "Error: sandbox fix-repo-5 cannot run recipes: its image predates them"; exit 1 ;;
-triage) printf '%s\ntriage:\n  labels: [bug]\n%s\n' "`+triageBanner+`" "`+bannerCloser+`" ;;
-*) exit 9 ;;`)
-	res := startTriage(t, bin)
-	if res.Err != nil {
-		t.Fatalf("run: %v\n%s", res.Err, res.Output)
-	}
-	if got := ExtractTriageYAML(res.Output); got != "triage:\n  labels: [bug]" {
-		t.Errorf("draft = %q", got)
-	}
-	if args := readArgs(t, argsLog); len(args) != 2 || !strings.HasPrefix(args[1], "triage --publish no ") {
-		t.Errorf("commands run = %q, want recipe then factory triage", args)
-	}
-}
-
-// A recipe that fails for any other reason is a failed triage; there is
-// no result to read.
+// A recipe that fails is a failed triage; there is no result to read.
 func TestStartTriageRecipeFailure(t *testing.T) {
 	bin, argsLog := fakeFactory(t, `recipe) echo "sandbox fix-repo-5 is busy"; exit 1 ;;
 *) exit 9 ;;`)

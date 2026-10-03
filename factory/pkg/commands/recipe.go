@@ -349,9 +349,6 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
-	if err := refuseIfNoRecipes(ctx, client, sandboxName); err != nil {
-		return err
-	}
 	if err := refuseIfBusy(ctx, client, sandboxName); err != nil {
 		return err
 	}
@@ -425,23 +422,6 @@ func printRecipeOutputs(ctx context.Context, client *envd.Client, rec *recipe.Re
 		fmt.Printf("\n================= %s =================\n%s\n", name, strings.TrimSpace(out.String()))
 	}
 	return nil
-}
-
-// ErrNoRecipes starts the error for a sandbox that cannot run recipes;
-// repo-agent looks for it to fall back to `factory triage`.
-const ErrNoRecipes = "cannot run recipes"
-
-// refuseIfNoRecipes fails when the sandbox's own factory has no `recipe
-// exec`, which runs a recipe's steps: its image predates recipes, and a
-// reused sandbox keeps its image. Without this the task would start and
-// fail on an unknown command.
-func refuseIfNoRecipes(ctx context.Context, client *envd.Client, sandboxName string) error {
-	var out bytes.Buffer
-	_ = client.Exec(ctx, "factory recipe exec --help >/dev/null 2>&1 && echo recipes-ok", "/workspaces", nil, nil, &out, nil)
-	if strings.Contains(out.String(), "recipes-ok") {
-		return nil
-	}
-	return fmt.Errorf("sandbox %s %s: its image predates them (no `factory recipe exec`); recreate the sandbox for a newer image", sandboxName, ErrNoRecipes)
 }
 
 // newSpoolTask names a recipe task: unique, and sortable by when it was
