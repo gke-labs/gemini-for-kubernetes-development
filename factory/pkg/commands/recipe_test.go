@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 )
 
 func TestParseGitHubItemURL(t *testing.T) {
@@ -56,5 +59,42 @@ func TestLoadRecipe(t *testing.T) {
 	}
 	if _, r, err := loadRecipe(path); err != nil || r.Name != "mine" {
 		t.Errorf("file: %v, %v", r, err)
+	}
+}
+
+// Every built-in recipe is a command of its own, `factory recipe <name>`,
+// with a flag per input that shadows no other flag.
+func TestBuiltinRecipeCommands(t *testing.T) {
+	root := NewRootCommand(context.Background())
+	recipeCmd, _, err := root.Find([]string{"recipe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range recipe.BuiltinNames() {
+		if name == "run" || name == "exec" {
+			t.Errorf("built-in recipe %q takes the name of a recipe command", name)
+			continue
+		}
+		cmd, _, err := recipeCmd.Find([]string{name})
+		if err != nil || cmd.Name() != name {
+			t.Errorf("factory recipe %s: no such command (%v)", name, err)
+			continue
+		}
+		_, rec, err := recipe.Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for in := range rec.Inputs {
+			flag := inputFlagName(in)
+			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "client-id" {
+				t.Errorf("recipe %s: input %s's flag --%s is taken", name, in, flag)
+			}
+			if cmd.Flags().Lookup(flag) == nil {
+				t.Errorf("factory recipe %s has no --%s", name, flag)
+			}
+		}
+	}
+	if len(recipe.BuiltinNames()) == 0 {
+		t.Error("no built-in recipes")
 	}
 }

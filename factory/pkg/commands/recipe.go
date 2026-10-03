@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -39,45 +40,121 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
+	for _, name := range recipe.BuiltinNames() {
+		// run and exec are taken; TestBuiltinRecipeCommands keeps them so.
+		cmd.AddCommand(newBuiltinRecipeCommand(ctx, name))
+	}
 	return cmd
+}
+
+// recipeRunFlags are the flags every way of running a recipe takes.
+type recipeRunFlags struct {
+	itemURL, clientID string
+	inputArgs         []string
+}
+
+func (f *recipeRunFlags) add(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue or PR URL")
+	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
+	cmd.Flags().StringVar(&f.clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task status|output|attach --client-id)")
+	_ = cmd.MarkFlagRequired("url")
+}
+
+// run runs recipeArg with the flags' inputs and extra, which overrides
+// them.
+func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg string, extra map[string]string) error {
+	if _, err := ResolveRootFlags(c); err != nil {
+		return err
+	}
+	if rootFlags.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
+		defer cancel()
+	}
+	overrides, err := parseInputArgs(f.inputArgs)
+	if err != nil {
+		return err
+	}
+	for k, v := range extra {
+		overrides[k] = v
+	}
+	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, overrides)
+}
+
+// newBuiltinRecipeCommand makes a built-in recipe a command of its own,
+// `factory recipe <name>`, with a flag for each input it declares: adding
+// a recipe file adds the command.
+func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
+	_, rec, err := recipe.Builtin(name)
+	if err != nil {
+		// Built-ins are parsed by the tests; this is a broken build.
+		panic(err)
+	}
+	var f recipeRunFlags
+	inputs := map[string]*string{}
+	cmd := &cobra.Command{
+		Use:     name,
+		Short:   fmt.Sprintf("Run the built-in %s recipe against a GitHub issue or PR", name),
+		Example: fmt.Sprintf(`  factory recipe %s --url https://github.com/owner/repo/issues/123`, name),
+		Args:    cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			extra := map[string]string{}
+			for in, v := range inputs {
+				if c.Flags().Changed(inputFlagName(in)) {
+					extra[in] = *v
+				}
+			}
+			return f.run(ctx, c, name, extra)
+		},
+	}
+	f.add(cmd)
+	for _, in := range sortedInputNames(rec) {
+		decl := rec.Inputs[in]
+		// Not marked required: the URL may set it; the recipe says what is
+		// missing when it runs.
+		inputs[in] = cmd.Flags().String(inputFlagName(in), decl.Default, decl.Description)
+	}
+	if rec.TaskOutput != nil {
+		cmd.Long = fmt.Sprintf("Run the built-in %s recipe against a GitHub issue or PR.\n\nIts result is a %s task output, which `factory apply` acts on.", name, rec.TaskOutput.Kind)
+	}
+	return cmd
+}
+
+// inputFlagName is the flag an input is set with: issue_body → --issue-body.
+func inputFlagName(input string) string {
+	return strings.ReplaceAll(input, "_", "-")
+}
+
+func sortedInputNames(rec *recipe.Recipe) []string {
+	names := make([]string, 0, len(rec.Inputs))
+	for n := range rec.Inputs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // newRecipeRunCommand runs any recipe against an issue or a PR: a new task
 // is a YAML file, no Go. It prints the recipe's outputs and publishes
 // nothing; the dedicated commands (triage, fix …) still do that.
 func newRecipeRunCommand(ctx context.Context) *cobra.Command {
-	var recipeArg, itemURL, clientID string
-	var inputArgs []string
+	var recipeArg string
+	var f recipeRunFlags
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run a recipe against a GitHub issue or PR in a sandbox",
-		Example: `  # A built-in recipe
-  factory recipe run --recipe triage --url https://github.com/owner/repo/issues/123
+		Short: "Run a recipe file against a GitHub issue or PR in a sandbox",
+		Example: `  # A recipe file, with an input it declares
+  factory recipe run --recipe ./explain-pr.yaml --url https://github.com/owner/repo/pull/45 --input focus="error handling"
 
-  # A recipe file, with an input it declares
-  factory recipe run --recipe ./explain-pr.yaml --url https://github.com/owner/repo/pull/45 --input focus="error handling"`,
+  # A built-in recipe; the same as: factory recipe triage --url …
+  factory recipe run --recipe triage --url https://github.com/owner/repo/issues/123`,
 		RunE: func(c *cobra.Command, _ []string) error {
-			if _, err := ResolveRootFlags(c); err != nil {
-				return err
-			}
-			if rootFlags.Timeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, rootFlags.Timeout)
-				defer cancel()
-			}
-			overrides, err := parseInputArgs(inputArgs)
-			if err != nil {
-				return err
-			}
-			return runRecipe(ctx, recipeArg, itemURL, clientID, overrides)
+			return f.run(ctx, c, recipeArg, nil)
 		},
 	}
-	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A built-in recipe's name, or a recipe file (a path, or a name ending in .yaml)")
-	cmd.Flags().StringVar(&itemURL, "url", "", "GitHub issue or PR URL")
-	cmd.Flags().StringArrayVar(&inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task status|output|attach --client-id)")
+	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A recipe file (a path, or a name ending in .yaml), or a built-in recipe's name")
+	f.add(cmd)
 	_ = cmd.MarkFlagRequired("recipe")
-	_ = cmd.MarkFlagRequired("url")
 	return cmd
 }
 

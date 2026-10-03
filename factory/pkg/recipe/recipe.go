@@ -297,6 +297,19 @@ func ForSandbox(data []byte) ([]byte, error) {
 //go:embed recipes/*.yaml
 var builtinFS embed.FS
 
+// BuiltinNames lists the recipes that ship with factory.
+func BuiltinNames() []string {
+	entries, _ := builtinFS.ReadDir("recipes")
+	var names []string
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".yaml"); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Builtin returns the recipe that ships with factory under name, as bytes
 // to hand to the sandbox and parsed to fail early here.
 func Builtin(name string) ([]byte, *Recipe, error) {
