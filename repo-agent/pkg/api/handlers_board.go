@@ -39,6 +39,7 @@ import (
 	"k8s.io/klog/v2"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/ghquota"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
@@ -665,6 +666,9 @@ func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo stri
 	repoHint := fmt.Sprintf("github.com/%s/%s/", owner, repo)
 	for i := range list.Items {
 		sb := &list.Items[i]
+		if factorycli.LaunchedElsewhere(sb.GetLabels()) {
+			continue
+		}
 		annotations := sb.GetAnnotations()
 		if annotations != nil {
 			if annoRepo := annotations["repo"]; annoRepo != "" && annoRepo != repo {

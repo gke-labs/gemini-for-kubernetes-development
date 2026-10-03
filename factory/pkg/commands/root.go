@@ -55,6 +55,7 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().StringArrayVar(&rootFlags.Envs, "env", nil, "Inject an environment variable with format KEY=VALUE (can be specified multiple times)")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Detached, "detached", false, "Run the task in the background of the sandbox pod and return immediately")
 	cmd.PersistentFlags().BoolVar(&rootFlags.Disclose, "disclose", true, "State in PR descriptions, comments and reports that an agent wrote them")
+	cmd.PersistentFlags().StringVar(&factorysandbox.Launcher, "launcher", factorysandbox.Launcher, "Recorded on the sandboxes this command creates (label "+factorysandbox.LabelLauncher+"), so programs that adopt sandboxes can tell theirs apart")
 	cmd.PersistentFlags().BoolVar(&rootFlags.AbortOnCancel, "abort-on-cancel", true, "Abort the background task in the sandbox pod if the local CLI command is canceled or killed")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {

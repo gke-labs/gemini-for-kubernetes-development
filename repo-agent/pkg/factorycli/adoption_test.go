@@ -2,6 +2,7 @@ package factorycli
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -88,5 +89,37 @@ func TestRunnerLaunchesWhenIdle(t *testing.T) {
 	res := waitResult(t, r, "alice/plan-repo-4")
 	if res.Err == nil {
 		t.Error("expected exec error from nonexistent binary")
+	}
+}
+
+// Every invocation tells factory who is launching it, so the sandboxes it
+// creates carry the launcher label the board filters on.
+func TestRunnerPassesLauncher(t *testing.T) {
+	bin := t.TempDir() + "/factory"
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{Binary: bin, Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
+		running: map[string]struct{}{}, results: map[string]Result{}}
+
+	r.StartPlan("alice/plan-repo-5", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u"})
+	res := waitResult(t, r, "alice/plan-repo-5")
+	if res.Err != nil {
+		t.Fatalf("run: %v", res.Err)
+	}
+	if !strings.HasPrefix(res.Output, "plan ") || !strings.Contains(res.Output, "--launcher=repo-agent") {
+		t.Errorf("args = %q, want the subcommand first and --launcher=repo-agent", res.Output)
+	}
+}
+
+func TestLaunchedElsewhere(t *testing.T) {
+	for labels, want := range map[string]bool{"": false, "repo-agent": false, "factory": true} {
+		l := map[string]string{}
+		if labels != "" {
+			l[LabelLauncher] = labels
+		}
+		if got := LaunchedElsewhere(l); got != want {
+			t.Errorf("LaunchedElsewhere(launcher=%q) = %v, want %v", labels, got, want)
+		}
 	}
 }

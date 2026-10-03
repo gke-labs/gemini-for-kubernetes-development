@@ -40,6 +40,7 @@ import (
 // (see factory/pkg/sandbox). Part of the wire contract, not imported.
 const (
 	LabelManaged             = "factory.gemini.google.com/managed"
+	LabelLauncher            = "factory.gemini.google.com/launcher"
 	AnnotationTaskState      = "sandbox.gemini.google.com/last-task-state"
 	AnnotationTaskType       = "sandbox.gemini.google.com/last-task-type"
 	AnnotationCompletionTime = "sandbox.gemini.google.com/completion-time"
@@ -48,6 +49,20 @@ const (
 	TaskStateCompleted = "Completed"
 	TaskStateFailed    = "Failed"
 )
+
+// LauncherName is what repo-agent passes factory as --launcher, which factory
+// records on the sandboxes it creates as LabelLauncher.
+const LauncherName = "repo-agent"
+
+// LaunchedElsewhere reports whether another launcher — the factory CLI run
+// by hand, say — created the sandbox. The board leaves those alone: a
+// triage-<repo>-<N> from `factory triage` is not one of its triages to
+// resume, publish or pause. A sandbox without the label predates it and
+// is treated as the board's, as it always was.
+func LaunchedElsewhere(labels map[string]string) bool {
+	l := labels[LabelLauncher]
+	return l != "" && l != LauncherName
+}
 
 // RunTaskPrefix is the task directory prefix `factory run` writes:
 // /workspaces/tasks/run-<ts>/. Everything that looks for a run's
@@ -699,6 +714,8 @@ func (r *Runner) run(key string, args []string, githubToken string, timeout time
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// Appended, not prepended: args[0] is the subcommand, logged below.
+	args = append(args[:len(args):len(args)], "--launcher="+LauncherName)
 	cmd := exec.CommandContext(ctx, r.Binary, args...)
 	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+githubToken)
 	var out bytes.Buffer
