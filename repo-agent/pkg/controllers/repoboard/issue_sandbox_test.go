@@ -137,16 +137,16 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 	g.Expect(launches[0].TriageOpts.Namespace).To(gomega.Equal("bob"))
 	g.Expect(launches[0].TriageOpts.SandboxName).To(gomega.Equal("fix-repo-40"))
 	g.Expect(launches[0].TriageOpts.GithubToken).To(gomega.Equal("gho_bob"))
-	g.Expect(launches[0].TriageOpts.ClientID).To(gomega.Equal("request/uid-40"))
+	g.Expect(launches[0].TriageOpts.RunName).To(gomega.Equal("request/uid-40"))
 }
 
 // A click's triage is recorded under its Request; auto-triage under the
 // board, the issue and the launch, so that a failed one is retried.
-func TestTriageClientID(t *testing.T) {
-	if got := triageClientID("b", 5, triageClick{issue: 5, member: "bob", request: "uid-1"}); got != "request/uid-1" {
+func TestTriageRunName(t *testing.T) {
+	if got := triageRunName("b", 5, triageClick{issue: 5, member: "bob", request: "uid-1"}); got != "request/uid-1" {
 		t.Errorf("click: %q", got)
 	}
-	if got := triageClientID("b", 5, triageClick{}); !strings.HasPrefix(got, "auto/b/5/") {
+	if got := triageRunName("b", 5, triageClick{}); !strings.HasPrefix(got, "auto/b/5/") {
 		t.Errorf("auto: %q", got)
 	}
 }

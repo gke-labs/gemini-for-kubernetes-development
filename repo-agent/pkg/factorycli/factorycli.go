@@ -589,7 +589,7 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 }
 
 // StartTriage runs `factory recipe triage` and reads its result back with
-// `factory sandbox task output --client-id`, as a typed Triage task
+// `factory sandbox task output --run-name`, as a typed Triage task
 // output. The result's Output has it between triageBanner and a closer,
 // for ExtractTriageYAML.
 func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
@@ -599,7 +599,7 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	}
 	args := []string{
 		"recipe", "triage",
-		"--client-id", opts.ClientID,
+		"--run-name", opts.RunName,
 		"--url", opts.IssueURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
@@ -619,7 +619,7 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 			if err != nil {
 				return out, err
 			}
-			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--client-id", opts.ClientID}, opts.GithubToken)
+			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
 			if err != nil {
 				return out + "\n" + doc, fmt.Errorf("reading the triage's task output: %w", err)
 			}
@@ -785,9 +785,9 @@ type TriageOptions struct {
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine  string
 	Timeout time.Duration
-	// ClientID records the triage's task in the sandbox, to read its
-	// result back by (factory --client-id).
-	ClientID string
+	// RunName records the triage's task in the sandbox, to read its
+	// result back by (factory --run-name).
+	RunName string
 }
 
 // triageBanner opens the triage YAML in a triage's Output: StartTriage

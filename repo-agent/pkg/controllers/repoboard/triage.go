@@ -31,7 +31,7 @@ import (
 // Triage intake (design D4): `factory recipe triage` prepares label /
 // priority / duplicate suggestions per inbound issue. It writes nothing to
 // GitHub; its result, a Triage task output, is read back by the task's
-// client id (factorycli.StartTriage). The maintainer applies suggestions
+// run name (factorycli.StartTriage). The maintainer applies suggestions
 // with their own clicks.
 //
 // It runs in the issue's sandbox, the one plan and fix use
@@ -87,7 +87,7 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 
 // ensureTriage drives one issue's triage state machine in namespace:
 // harvest a finished run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, clientID string, clicked bool) {
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, runName string, clicked bool) {
 	logger := log.FromContext(ctx)
 	sb := work.triageSandbox(namespace, issue.GetNumber())
 	if sb == nil {
@@ -153,7 +153,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		IssueURL:    issue.GetHTMLURL(),
 		GithubToken: token,
 		Engine:      boardEngine(work.board),
-		ClientID:    clientID,
+		RunName:     runName,
 	}) {
 		logger.Info("launched factory recipe triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
@@ -186,7 +186,7 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
 			url = u
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageClientID(work.board.Name, n, triageClick{}), false)
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageRunName(work.board.Name, n, triageClick{}), false)
 	}
 }
 
@@ -198,13 +198,13 @@ type triageClick struct {
 	request string
 }
 
-// triageClientID is what a triage's task is recorded under in the sandbox
-// (factory --client-id), to read its result by. factory runs a client id
+// triageRunName is what a triage's task is recorded under in the sandbox
+// (factory --run-name), to read its result by. factory runs a name
 // once — running it again returns that run — so it names one attempt:
 // one per click, by its Request; one per launch for auto-triage, so that
 // a failed run is retried rather than returned. Identifiers only: anyone
 // in the sandbox can read it.
-func triageClientID(board string, issue int, click triageClick) string {
+func triageRunName(board string, issue int, click triageClick) string {
 	if click.request != "" {
 		return "request/" + click.request
 	}

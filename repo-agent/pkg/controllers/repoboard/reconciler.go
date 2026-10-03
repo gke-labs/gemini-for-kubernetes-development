@@ -343,7 +343,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if !clicked || member == "" {
 			member = board.Namespace
 		}
-		r.ensureTriage(ctx, work, issue, member, triageClientID(board.Name, issue.GetNumber(), click), clicked)
+		r.ensureTriage(ctx, work, issue, member, triageRunName(board.Name, issue.GetNumber(), click), clicked)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)

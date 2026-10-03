@@ -49,9 +49,9 @@ const (
 // client that reconnects can find its task again.
 type Task struct {
 	ID string `json:"id"`
-	// ClientID is whatever the submitting client wants to find the task
+	// RunName is whatever the submitting client wants to find the task
 	// by later; factory does not interpret it.
-	ClientID    string    `json:"client_id,omitempty"`
+	RunName     string    `json:"run_name,omitempty"`
 	Recipe      string    `json:"recipe"`
 	URL         string    `json:"url,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at"`

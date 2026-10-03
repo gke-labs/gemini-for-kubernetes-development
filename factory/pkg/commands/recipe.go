@@ -49,9 +49,9 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 
 // recipeRunFlags are the flags every way of running a recipe takes.
 type recipeRunFlags struct {
-	itemURL, clientID string
-	inputArgs         []string
-	apply, dryRun     bool
+	itemURL, runName string
+	inputArgs        []string
+	apply, dryRun    bool
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
@@ -60,7 +60,7 @@ type recipeRunFlags struct {
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&f.clientID, "client-id", "", "Names this run: running again with the same id follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --client-id")
+	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
@@ -96,7 +96,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.clientID, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, applyMode{f.apply, f.dryRun}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -289,7 +289,7 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // values of instructions-type inputs, each resolved as
 // `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off.
-func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -362,17 +362,17 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply a
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
-	if clientID != "" {
+	if runName != "" {
 		entries, err := spool.List(ctx, client)
 		if err != nil {
 			return err
 		}
-		e, ok, err := runByClientID(entries, clientID, rec.Name, htmlURL)
+		e, ok, err := runByName(entries, runName, rec.Name, htmlURL)
 		if err != nil {
 			return err
 		}
 		if ok {
-			return resumeClientRun(ctx, client, ghClient, rec, sandboxName, e, apply)
+			return resumeNamedRun(ctx, client, ghClient, rec, sandboxName, e, apply)
 		}
 	}
 	if apply.on {
@@ -413,7 +413,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply a
 		return err
 	}
 
-	task := newSpoolTask(rec.Name, clientID, itemURL)
+	task := newSpoolTask(rec.Name, runName, itemURL)
 	task.Output = rec.TaskOutput
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
@@ -471,11 +471,11 @@ func printRecipeOutputs(ctx context.Context, client *envd.Client, rec *recipe.Re
 
 // newSpoolTask names a recipe task: unique, and sortable by when it was
 // started.
-func newSpoolTask(recipeName, clientID, itemURL string) spool.Task {
+func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 	now := time.Now()
 	return spool.Task{
 		ID:          fmt.Sprintf("recipe-%s-%s-%04x", recipeName, now.Format("20060102-150405"), rand.Intn(1<<16)),
-		ClientID:    clientID,
+		RunName:     runName,
 		Recipe:      recipeName,
 		URL:         itemURL,
 		SubmittedAt: now.UTC(),
@@ -527,28 +527,28 @@ func printDetachedHint(sandboxName, taskID string) {
 	fmt.Printf("Task %[1]s started in the sandbox. Follow it, or check on it and read its outputs, with:\n  factory sandbox task attach %[2]s -n %[3]s --task %[1]s\n  factory sandbox task status %[2]s -n %[3]s --task %[1]s\n  factory sandbox task output %[2]s -n %[3]s --task %[1]s\n", taskID, sandboxName, rootFlags.Namespace)
 }
 
-// runByClientID is the task in entries (newest first) run under
-// clientID, if any. A client id names one run: of one recipe on one
+// runByName is the task in entries (newest first) run under
+// runName, if any. A run name is one run's: of one recipe on one
 // item, so finding it under another is the caller's mistake.
-func runByClientID(entries []spool.Entry, clientID, recipeName, itemURL string) (spool.Entry, bool, error) {
+func runByName(entries []spool.Entry, runName, recipeName, itemURL string) (spool.Entry, bool, error) {
 	for _, e := range entries {
-		if e.ClientID != clientID {
+		if e.RunName != runName {
 			continue
 		}
 		if e.Recipe != recipeName || normalizeItemURL(e.URL) != normalizeItemURL(itemURL) {
-			return e, false, fmt.Errorf("client id %s is task %s, recipe %s on %s: use another id for this run", clientID, e.ID, e.Recipe, e.URL)
+			return e, false, fmt.Errorf("run name %s is task %s, recipe %s on %s: use another name for this run", runName, e.ID, e.Recipe, e.URL)
 		}
 		return e, true, nil
 	}
 	return spool.Entry{}, false, nil
 }
 
-// resumeClientRun is a recipe run whose client id names a task already:
+// resumeNamedRun is a recipe run whose run name names a task already:
 // rather than start another it follows that one, or, if it has ended,
 // prints its outputs or applies its result. A failed run stays failed;
 // retrying takes a new id.
-func resumeClientRun(ctx context.Context, client *envd.Client, gh *githubv39.Client, rec *recipe.Recipe, sandboxName string, e spool.Entry, apply applyMode) error {
-	fmt.Printf("Client id %s is task %s (%s): picking it up instead of starting another.\n", e.ClientID, e.ID, e.State)
+func resumeNamedRun(ctx context.Context, client *envd.Client, gh *githubv39.Client, rec *recipe.Recipe, sandboxName string, e spool.Entry, apply applyMode) error {
+	fmt.Printf("Run name %s is task %s (%s): picking it up instead of starting another.\n", e.RunName, e.ID, e.State)
 	if apply.on {
 		if e.State == spool.Exited && e.ExitCode == "0" && !apply.dryRun && taskApplied(ctx, client, e.ID) {
 			fmt.Printf("Task %s's result is applied already.\n", e.ID)
@@ -579,7 +579,7 @@ func resumeClientRun(ctx context.Context, client *envd.Client, gh *githubv39.Cli
 		return fmt.Errorf("task %s is %s; run again to follow it", e.ID, e.State)
 	}
 	if e.ExitCode != "0" {
-		return fmt.Errorf("task %s failed (exit %s); a client id names one run, so retry with a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
+		return fmt.Errorf("task %s failed (exit %s); a run name is one run's, so retry under a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
 	}
 	if rootFlags.Detached {
 		fmt.Printf("Task %s has finished.\n", e.ID)

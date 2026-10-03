@@ -41,9 +41,9 @@ func (l localRemote) Exec(_ context.Context, script, _ string, _ map[string]stri
 func (l localRemote) incoming() string { return l.path(IncomingDir) }
 func (l localRemote) tasks() string    { return l.path(envd.DefaultTasksDir) }
 
-func submit(t *testing.T, r localRemote, id, clientID string, at time.Time) {
+func submit(t *testing.T, r localRemote, id, runName string, at time.Time) {
 	t.Helper()
-	task := Task{ID: id, ClientID: clientID, Recipe: "triage", SubmittedAt: at}
+	task := Task{ID: id, RunName: runName, Recipe: "triage", SubmittedAt: at}
 	if err := Submit(context.Background(), r, task, []byte("name: triage\n"), map[string]string{"issue_number": "7"}, map[string]string{"GITHUB_TOKEN": "secret"}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -240,12 +240,12 @@ func TestListAndFind(t *testing.T) {
 		}
 	}
 	if _, err := Find(entries, "", "nobody"); err == nil {
-		t.Error("Find of an unknown client id succeeded")
+		t.Error("Find of an unknown run name succeeded")
 	}
 }
 
 func TestTaskJSONRoundTrips(t *testing.T) {
-	in := Task{ID: "x", ClientID: "c", Recipe: "triage", URL: "u", SubmittedAt: time.Unix(100, 0).UTC()}
+	in := Task{ID: "x", RunName: "c", Recipe: "triage", URL: "u", SubmittedAt: time.Unix(100, 0).UTC()}
 	b, _ := json.Marshal(in)
 	var out Task
 	if err := json.Unmarshal(b, &out); err != nil || out != in {

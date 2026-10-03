@@ -211,18 +211,18 @@ func parseList(out string) []Entry {
 }
 
 // Find picks the task to attach to: by id, else the newest with
-// clientID, else the newest of all.
-func Find(entries []Entry, id, clientID string) (Entry, error) {
+// runName, else the newest of all.
+func Find(entries []Entry, id, runName string) (Entry, error) {
 	for _, e := range entries {
-		if (id != "" && e.ID == id) || (id == "" && clientID != "" && e.ClientID == clientID) || (id == "" && clientID == "") {
+		if (id != "" && e.ID == id) || (id == "" && runName != "" && e.RunName == runName) || (id == "" && runName == "") {
 			return e, nil
 		}
 	}
 	switch {
 	case id != "":
 		return Entry{}, fmt.Errorf("no task %s", id)
-	case clientID != "":
-		return Entry{}, fmt.Errorf("no task with client id %s", clientID)
+	case runName != "":
+		return Entry{}, fmt.Errorf("no task with run name %s", runName)
 	}
 	return Entry{}, fmt.Errorf("no tasks")
 }

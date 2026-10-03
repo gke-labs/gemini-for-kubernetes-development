@@ -87,7 +87,7 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 		}
 		for in, decl := range rec.Inputs {
 			flag := inputFlagName(in, decl)
-			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "client-id" {
+			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "run-name" {
 				t.Errorf("recipe %s: input %s's flag --%s is taken", name, in, flag)
 			}
 			if cmd.Flags().Lookup(flag) == nil {
@@ -121,25 +121,25 @@ func TestLastRun(t *testing.T) {
 	}
 }
 
-func TestRunByClientID(t *testing.T) {
-	entry := func(id, clientID, recipeName, url string) spool.Entry {
-		return spool.Entry{Task: spool.Task{ID: id, ClientID: clientID, Recipe: recipeName, URL: url}}
+func TestRunByName(t *testing.T) {
+	entry := func(id, runName, recipeName, url string) spool.Entry {
+		return spool.Entry{Task: spool.Task{ID: id, RunName: runName, Recipe: recipeName, URL: url}}
 	}
 	entries := []spool.Entry{ // newest first
 		entry("recipe-triage-3", "auto/b/7/2", "triage", "https://github.com/o/r/issues/7"),
 		entry("recipe-explain-2", "request/x", "explain", "https://github.com/o/r/issues/7"),
 		entry("recipe-triage-1", "request/y", "triage", "https://github.com/O/r/issues/7/"),
 	}
-	if e, ok, err := runByClientID(entries, "request/y", "triage", "https://github.com/o/r/issues/7"); err != nil || !ok || e.ID != "recipe-triage-1" {
-		t.Errorf("runByClientID(request/y) = %s, %v, %v; want recipe-triage-1", e.ID, ok, err)
+	if e, ok, err := runByName(entries, "request/y", "triage", "https://github.com/o/r/issues/7"); err != nil || !ok || e.ID != "recipe-triage-1" {
+		t.Errorf("runByName(request/y) = %s, %v, %v; want recipe-triage-1", e.ID, ok, err)
 	}
-	if e, ok, err := runByClientID(entries, "request/z", "triage", "https://github.com/o/r/issues/7"); err != nil || ok {
-		t.Errorf("runByClientID of an unused id = %s, %v, %v; want none", e.ID, ok, err)
+	if e, ok, err := runByName(entries, "request/z", "triage", "https://github.com/o/r/issues/7"); err != nil || ok {
+		t.Errorf("runByName of an unused id = %s, %v, %v; want none", e.ID, ok, err)
 	}
-	if _, ok, err := runByClientID(entries, "request/x", "triage", "https://github.com/o/r/issues/7"); err == nil || ok {
-		t.Errorf("runByClientID of another recipe's id = %v, %v; want an error", ok, err)
+	if _, ok, err := runByName(entries, "request/x", "triage", "https://github.com/o/r/issues/7"); err == nil || ok {
+		t.Errorf("runByName of another recipe's id = %v, %v; want an error", ok, err)
 	}
-	if _, ok, err := runByClientID(entries, "request/y", "triage", "https://github.com/o/r/issues/8"); err == nil || ok {
-		t.Errorf("runByClientID of another issue's id = %v, %v; want an error", ok, err)
+	if _, ok, err := runByName(entries, "request/y", "triage", "https://github.com/o/r/issues/8"); err == nil || ok {
+		t.Errorf("runByName of another issue's id = %v, %v; want an error", ok, err)
 	}
 }
