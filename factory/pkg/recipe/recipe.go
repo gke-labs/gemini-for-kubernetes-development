@@ -40,6 +40,9 @@ type Recipe struct {
 	// sets, so a missing or misspelt one fails before a sandbox is made.
 	Inputs map[string]Input `yaml:"inputs,omitempty"`
 	Steps  []Step           `yaml:"steps"`
+	// Outputs are the task-directory files `recipe run` prints when the
+	// recipe ends, in order. Unset, they are the capture files.
+	Outputs []string `yaml:"outputs,omitempty"`
 }
 
 // Input is one declared input.
@@ -138,6 +141,11 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("input %s: required and default are exclusive", name)
 		}
 	}
+	for _, o := range r.Outputs {
+		if !safeFileName(o) {
+			return fmt.Errorf("output %q must be a plain file name", o)
+		}
+	}
 	ids := map[string]bool{}
 	for i, s := range r.Steps {
 		set := 0
@@ -213,8 +221,12 @@ func (r *Recipe) ResolveInputs(standard, overrides map[string]string) (map[strin
 	return out, nil
 }
 
-// Captures is every file an ask writes, in step order.
-func (r *Recipe) Captures() []string {
+// OutputFiles is what `recipe run` prints: Outputs, or else every file an
+// ask captures, in step order.
+func (r *Recipe) OutputFiles() []string {
+	if len(r.Outputs) > 0 {
+		return r.Outputs
+	}
 	var out []string
 	for _, s := range r.Steps {
 		if s.Capture != "" {

@@ -39,7 +39,7 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 }
 
 // newRecipeRunCommand runs any recipe against an issue or a PR: a new task
-// is a YAML file, no Go. It prints what the recipe captured and publishes
+// is a YAML file, no Go. It prints the recipe's outputs and publishes
 // nothing; the dedicated commands (triage, fix …) still do that.
 func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 	var recipeArg, itemURL string
@@ -258,7 +258,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL string, overrides map[str
 	}
 	usagereport.HarvestTask(ctx, client, taskDir, meta)
 
-	for _, name := range rec.Captures() {
+	for _, name := range rec.OutputFiles() {
 		var out, errOut bytes.Buffer
 		if err := client.Exec(ctx, "cat "+taskDir+"/"+name, "/workspaces", nil, nil, &out, &errOut); err != nil {
 			return fmt.Errorf("reading %s from sandbox: %w (stderr: %s)", name, err, errOut.String())

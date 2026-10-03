@@ -22,8 +22,8 @@ func TestBuiltinTriageParses(t *testing.T) {
 		t.Fatalf("recipe = %+v", r)
 	}
 	last := r.Steps[len(r.Steps)-1]
-	if last.Capture != "triage-output.txt" {
-		t.Errorf("last step captures %q, want triage-output.txt (what the CLI reads)", last.Capture)
+	if last.Capture != "triage-output.yaml" || fmt.Sprint(r.Outputs) != "[triage-output.yaml]" {
+		t.Errorf("captures %q, outputs %v; want triage-output.yaml as both (what the CLI reads)", last.Capture, r.Outputs)
 	}
 }
 
@@ -43,6 +43,8 @@ func TestParseRejects(t *testing.T) {
 		"unknown field":    "name: a\nsteps: [{run: x, shell: zsh}]",
 		"continue on uses": "name: a\nsteps: [{uses: setup-git, continue-on-error: true}]",
 		"bad input name":   "name: a\ninputs: {Focus: {}}\nsteps: [{run: x}]",
+		"output path":      "name: a\noutputs: [../x]\nsteps: [{run: x}]",
+		"output dotfile":   "name: a\noutputs: [.env]\nsteps: [{run: x}]",
 		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nsteps: [{run: x}]",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
@@ -103,8 +105,18 @@ func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
 			t.Errorf("step %s: %v", s.Label(i), err)
 		}
 	}
-	if got := r.Captures(); fmt.Sprint(got) != "[triage-output.txt]" {
-		t.Errorf("captures = %v", got)
+	if got := r.OutputFiles(); fmt.Sprint(got) != "[triage-output.yaml]" {
+		t.Errorf("outputs = %v", got)
+	}
+}
+
+func TestOutputs(t *testing.T) {
+	r, err := Parse([]byte("name: a\noutputs: [diff.txt, reply.md]\nsteps: [{ask: x, capture: reply.md}]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.OutputFiles(); fmt.Sprint(got) != "[diff.txt reply.md]" {
+		t.Errorf("outputs = %v", got)
 	}
 }
 
