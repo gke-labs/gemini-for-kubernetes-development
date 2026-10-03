@@ -101,12 +101,12 @@ func normalizeItemURL(u string) string {
 
 // taskSelectFlags picks a task in the sandbox.
 type taskSelectFlags struct {
-	id, clientID string
+	id, runName string
 }
 
 func (f *taskSelectFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.id, "task", "", "Task id (default: the newest task, or the newest with --client-id)")
-	cmd.Flags().StringVar(&f.clientID, "client-id", "", "The --client-id the task was run with")
+	cmd.Flags().StringVar(&f.id, "task", "", "Task id (default: the newest task, or the newest with --run-name)")
+	cmd.Flags().StringVar(&f.runName, "run-name", "", "The --run-name the task was run with")
 }
 
 func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client, sandboxName string) (spool.Entry, error) {
@@ -114,7 +114,7 @@ func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client, sandbox
 	if err != nil {
 		return spool.Entry{}, err
 	}
-	e, err := spool.Find(entries, f.id, f.clientID)
+	e, err := spool.Find(entries, f.id, f.runName)
 	if err == nil {
 		settleTaskState(ctx, sandboxName, entries, e)
 	}
@@ -174,9 +174,9 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "TASK\tKIND\tCLIENT ID\tSTATE\tSTARTED")
+			fmt.Fprintln(w, "TASK\tKIND\tRUN NAME\tSTATE\tSTARTED")
 			for _, e := range entries {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, orDash(e.ClientID), taskState(e), taskStarted(e))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, orDash(e.RunName), taskState(e), taskStarted(e))
 			}
 			return w.Flush()
 		},
@@ -214,7 +214,7 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status <sandbox-name | issue/PR URL>",
 		Short: "Show whether a task is still running, and how it exited",
-		Example: `  factory sandbox task status recipe-repo-123 --client-id my-run-7
+		Example: `  factory sandbox task status recipe-repo-123 --run-name my-run-7
   factory sandbox task status https://github.com/owner/repo/issues/123 -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -238,7 +238,7 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintf(w, "Task:\t%s\n", e.ID)
 			fmt.Fprintf(w, "Kind:\t%s\n", e.Kind)
-			fmt.Fprintf(w, "Client ID:\t%s\n", orDash(e.ClientID))
+			fmt.Fprintf(w, "Run name:\t%s\n", orDash(e.RunName))
 			fmt.Fprintf(w, "State:\t%s\n", taskState(e))
 			fmt.Fprintf(w, "Started:\t%s\n", taskStarted(e))
 			return w.Flush()
@@ -267,8 +267,8 @@ With no file, the task's result is printed as a task output document
 gets its recipe's declared outputs, each under a banner with its name.
 With a file, that file of the task directory is printed as it is, for a
 program to read.`,
-		Example: `  factory sandbox task output recipe-repo-123 --client-id my-run-7 | factory apply -f - --dry-run
-  factory sandbox task output recipe-repo-123 --client-id my-run-7 triage-output.yaml`,
+		Example: `  factory sandbox task output recipe-repo-123 --run-name my-run-7 | factory apply -f - --dry-run
+  factory sandbox task output recipe-repo-123 --run-name my-run-7 triage-output.yaml`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			if len(args) == 2 && !outputFileName.MatchString(args[1]) {
@@ -393,7 +393,7 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
 		Use:   "attach <sandbox-name | issue/PR URL>",
 		Short: "Follow a task in a sandbox to its end",
 		Example: `  factory sandbox task attach https://github.com/owner/repo/issues/123
-  factory sandbox task attach recipe-repo-123 --client-id my-run-7`,
+  factory sandbox task attach recipe-repo-123 --run-name my-run-7`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])

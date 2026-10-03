@@ -37,7 +37,7 @@ func startTriage(t *testing.T, bin string) Result {
 	r := &Runner{Binary: bin, Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
 	r.StartTriage("alice/triage-repo-5", TriageOptions{
-		Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "https://github.com/o/repo/issues/5", ClientID: "request/uid-1",
+		Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "https://github.com/o/repo/issues/5", RunName: "request/uid-1",
 	})
 	return waitResult(t, r, "alice/triage-repo-5")
 }
@@ -51,7 +51,7 @@ func readArgs(t *testing.T, argsLog string) []string {
 	return strings.Split(strings.TrimSpace(string(data)), "\n")
 }
 
-// The triage runs as a recipe and its result is read back by client id,
+// The triage runs as a recipe and its result is read back by run name,
 // as the triage block drafts are kept in.
 func TestStartTriageRunsTheRecipe(t *testing.T) {
 	bin, argsLog := fakeFactory(t, `recipe) echo "Running recipe triage..." ;;
@@ -70,10 +70,10 @@ sandbox) cat <<'DOC'
 	if len(args) != 2 {
 		t.Fatalf("commands run = %q, want recipe then sandbox task output", args)
 	}
-	if !strings.HasPrefix(args[0], "recipe triage --client-id request/uid-1 ") || !strings.Contains(args[0], "--abort-on-cancel=false") {
+	if !strings.HasPrefix(args[0], "recipe triage --run-name request/uid-1 ") || !strings.Contains(args[0], "--abort-on-cancel=false") {
 		t.Errorf("recipe args = %q", args[0])
 	}
-	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --client-id request/uid-1") {
+	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --run-name request/uid-1") {
 		t.Errorf("output args = %q", args[1])
 	}
 }
@@ -96,7 +96,7 @@ func TestAdoptedRecipeTriage(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory",
 		Prober:  &fakeProber{probe: TaskProbe{State: ProbeOrphanCompleted, ExitCode: "0", Output: triageTaskOutput}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
-	r.StartTriage("alice/triage-repo-5", TriageOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u", ClientID: "auto/b/5"})
+	r.StartTriage("alice/triage-repo-5", TriageOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u", RunName: "auto/b/5"})
 	res, ok := r.LastResult("alice/triage-repo-5")
 	if !ok || res.Err != nil {
 		t.Fatalf("result = %+v, %v", res, ok)
