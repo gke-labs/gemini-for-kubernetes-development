@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -58,6 +60,14 @@ func runDaemon(ctx context.Context) error {
 	// Mark any tasks interrupted by a previous container crash/eviction/restart
 	// before envd starts or any new processes/threads can reuse old PIDs.
 	reconcileInterruptedTasks(ctx, envd.DefaultTasksDir)
+
+	// Recipes a client left in the spool: claimed and started here, so the
+	// client need not stay connected to start or keep them.
+	factoryBin, err := os.Executable()
+	if err != nil {
+		factoryBin = "factory"
+	}
+	go spool.Watch(ctx, spool.IncomingDir, envd.DefaultTasksDir, 2*time.Second, spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath))
 
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)

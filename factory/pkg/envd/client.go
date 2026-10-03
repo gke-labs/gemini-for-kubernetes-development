@@ -423,6 +423,16 @@ func (c *Client) RunTaskResilient(ctx context.Context, cmdStr string, envs map[s
 		fmt.Printf("Task launched/running in detached mode. Task directory: %s\n", taskDir)
 		return nil
 	}
+	return c.AttachTask(ctx, taskDir, envs, abortOnCancel)
+}
+
+// AttachTask follows a task that is already running (or finished) in
+// taskDir: it streams the log, watches for quota exhaustion and returns
+// the task's result. It never launches anything, so it is also how a
+// client reconnects to a task something else started. envs is the task's
+// environment, read only to attribute quota errors to an API key.
+func (c *Client) AttachTask(ctx context.Context, taskDir string, envs map[string]string, abortOnCancel bool) error {
+	taskFiles := NewTaskFiles(taskDir)
 
 	// 2. Tailing & status loop
 	var offset int64

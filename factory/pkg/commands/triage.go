@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 )
@@ -155,10 +156,15 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	// triage_issue.sh writes triage-output.txt.
 	outputFile := "triage-output.txt"
 	var cmdStr string
+	var recipeBytes []byte
+	var recipeInputs map[string]string
+	var task spool.Task
 	if useRecipe {
-		if cmdStr, outputFile, err = writeTriageRecipe(ctx, client, taskDir, issue, instructions); err != nil {
+		if recipeBytes, recipeInputs, outputFile, err = triageRecipe(issue, instructions); err != nil {
 			return err
 		}
+		task = newSpoolTask("triage", "", issueURL)
+		taskDir = spool.TaskDir(task.ID)
 	} else {
 		if cmdStr, err = writeTriageScript(ctx, client, taskDir, promptPath, issue, instructions); err != nil {
 			return err
@@ -181,9 +187,15 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 		return err
 	}
 
-	fmt.Println("Running triage task via envd...")
 	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", rootFlags.Engine)
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
+	if useRecipe {
+		fmt.Printf("Running the triage recipe (task %s)...\n", task.ID)
+		err = spoolRecipe(ctx, client, sandboxName, task, recipeBytes, recipeInputs, envMap)
+	} else {
+		fmt.Println("Running triage task via envd...")
+		err = client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel)
+	}
+	if err != nil {
 		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "triage", "Failed")
 		return fmt.Errorf("running task: %w", err)
 	}
@@ -277,23 +289,22 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 	return fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath), nil
 }
 
-// writeTriageRecipe puts the triage recipe and its inputs into the sandbox
-// and returns the command that runs them and the file the triage ends up in.
-func writeTriageRecipe(ctx context.Context, client *envd.Client, taskDir string, issue *githubv39.Issue, instructions []string) (string, string, error) {
+// triageRecipe is the triage recipe, its inputs for issue, and the file
+// it leaves the triage in.
+func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[string]string, string, error) {
 	recipeBytes, rec, err := recipe.Builtin("triage")
 	if err != nil {
-		return "", "", err
+		return nil, nil, "", err
 	}
 	outputs := rec.OutputFiles()
 	if len(outputs) != 1 {
-		return "", "", fmt.Errorf("the triage recipe must have exactly one output, has %v", outputs)
+		return nil, nil, "", fmt.Errorf("the triage recipe must have exactly one output, has %v", outputs)
 	}
-	cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, map[string]string{
+	return recipeBytes, map[string]string{
 		"issue_url":    issue.GetHTMLURL(),
 		"issue_number": strconv.Itoa(issue.GetNumber()),
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
 		"instructions": strings.Join(instructions, "\n\n---\n\n"),
-	})
-	return cmdStr, outputs[0], err
+	}, outputs[0], nil
 }
