@@ -158,6 +158,10 @@ coding tasks without local side effects or host dependencies.`,
 
 	cmd.AddCommand(NewRecipeCommand(ctx))
 
+	applyCmd := NewApplyCommand(ctx)
+	applyCmd.GroupID = "workflows"
+	cmd.AddCommand(applyCmd)
+
 	return cmd
 }
 

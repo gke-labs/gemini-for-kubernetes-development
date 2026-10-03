@@ -5,14 +5,16 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
@@ -21,6 +23,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 )
@@ -160,10 +163,13 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	var recipeInputs map[string]string
 	var task spool.Task
 	if useRecipe {
-		if recipeBytes, recipeInputs, outputFile, err = triageRecipe(issue, instructions); err != nil {
+		var decl *taskoutput.Decl
+		if recipeBytes, recipeInputs, decl, err = triageRecipe(issue, instructions); err != nil {
 			return err
 		}
+		outputFile = decl.From
 		task = newSpoolTask("triage", "", issueURL)
+		task.Output = decl
 		taskDir = spool.TaskDir(task.ID)
 	} else {
 		if cmdStr, err = writeTriageScript(ctx, client, taskDir, promptPath, issue, instructions); err != nil {
@@ -224,11 +230,14 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	if triageOutput == "" {
 		return fmt.Errorf("triage output was empty")
 	}
-	triageOutput = stripYAMLMarkers(triageOutput)
-	triageOutput = stripUntilIndicator(triageOutput, "triage:")
+	triageOutput = taskoutput.CleanAgentYAML(triageOutput, "triage:")
 
-	var agentOutput tasks.TriageAgentOutput
-	if err := yaml.Unmarshal([]byte(triageOutput), &agentOutput); err != nil {
+	source := taskoutput.Source{Sandbox: sandboxName, Task: path.Base(taskDir), Engine: rootFlags.Engine}
+	if useRecipe {
+		source.Recipe = "triage"
+	}
+	doc, err := taskoutput.Wrap("Triage", triageOutput, taskoutput.Target{URL: issue.GetHTMLURL()}, source)
+	if err != nil {
 		return fmt.Errorf("parsing structured triage output: %w", err)
 	}
 
@@ -236,26 +245,18 @@ func runTriage(ctx context.Context, issueURL, publishPolicy string, instructionP
 	fmt.Println(triageOutput)
 	fmt.Println("================================================")
 
-	if publishPolicy == "yes" && agentOutput.Triage != nil {
-		if len(agentOutput.Triage.Labels) > 0 {
-			fmt.Printf("Applying labels: %v...\n", agentOutput.Triage.Labels)
-			if _, _, err := ghClient.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, agentOutput.Triage.Labels); err != nil {
-				return fmt.Errorf("applying labels: %w", err)
-			}
+	// The task output, for `factory sandbox task output | factory apply`
+	// later: the recipe's runner writes it too, but the classic task and
+	// sandboxes older than the runner's do not.
+	if out, err := taskoutput.Marshal(doc); err == nil {
+		if err := client.WriteFile(ctx, taskDir+"/"+taskoutput.File, out); err != nil {
+			klog.Warningf("Could not write %s: %v", taskoutput.File, err)
 		}
-		if agentOutput.Triage.Assessment != "" {
-			body := fmt.Sprintf("**Triage assessment**\n\n%s", agentOutput.Triage.Assessment)
-			if len(agentOutput.Triage.Duplicates) > 0 {
-				var refs []string
-				for _, d := range agentOutput.Triage.Duplicates {
-					refs = append(refs, fmt.Sprintf("#%d", d))
-				}
-				body += fmt.Sprintf("\n\nPossible duplicates: %s", strings.Join(refs, ", "))
-			}
-			fmt.Println("Posting triage assessment as a comment...")
-			if _, _, err := ghClient.Issues.CreateComment(ctx, owner, repo, issueNum, &githubv39.IssueComment{Body: &body}); err != nil {
-				return fmt.Errorf("posting triage comment: %w", err)
-			}
+	}
+
+	if publishPolicy == "yes" {
+		if err := taskoutput.Apply(ctx, ghClient, doc, false, os.Stdout); err != nil {
+			return err
 		}
 		fmt.Println("Triage published to the issue.")
 	}
@@ -291,14 +292,13 @@ func writeTriageScript(ctx context.Context, client *envd.Client, taskDir, prompt
 
 // triageRecipe is the triage recipe, its inputs for issue, and the file
 // it leaves the triage in.
-func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[string]string, string, error) {
+func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[string]string, *taskoutput.Decl, error) {
 	recipeBytes, rec, err := recipe.Builtin("triage")
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, err
 	}
-	outputs := rec.OutputFiles()
-	if len(outputs) != 1 {
-		return nil, nil, "", fmt.Errorf("the triage recipe must have exactly one output, has %v", outputs)
+	if rec.TaskOutput == nil || rec.TaskOutput.Kind != "Triage" {
+		return nil, nil, nil, fmt.Errorf("the triage recipe must declare a Triage task-output")
 	}
 	return recipeBytes, map[string]string{
 		"issue_url":    issue.GetHTMLURL(),
@@ -306,5 +306,5 @@ func triageRecipe(issue *githubv39.Issue, instructions []string) ([]byte, map[st
 		"issue_title":  issue.GetTitle(),
 		"issue_body":   issue.GetBody(),
 		"instructions": strings.Join(instructions, "\n\n---\n\n"),
-	}, outputs[0], nil
+	}, rec.TaskOutput, nil
 }
