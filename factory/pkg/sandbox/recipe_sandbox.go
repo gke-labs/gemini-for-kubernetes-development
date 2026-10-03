@@ -3,7 +3,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,31 +11,13 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 )
 
-// EnsureTriageSandbox creates (or reuses) the sandbox for triaging an
-// issue, named triage-<repo>-<issueNumber>.
-func EnsureTriageSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, issueNum int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := fmt.Sprintf("triage-%s-%d", repoName, issueNum)
-	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "triage", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
-}
-
 // EnsureRecipeSandbox creates (or reuses) the sandbox `factory recipe`
-// runs recipeName in for one issue or PR, named r<recipe>-<repo>-<number>.
-// Not triage-…: repo-agent resumes triage sandboxes it finds unfinished.
-func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, recipeName, repoName string, number int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := RecipeSandboxName(recipeName, repoName, number)
+// runs a recipe in for a PR, recipe-<repo>-<number>. An issue's recipes
+// run in the issue's sandbox (EnsureFixSandbox).
+func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, number int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := fmt.Sprintf("recipe-%s-%d", repoName, number)
 	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "recipe", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
 }
-
-// RecipeSandboxName is the sandbox `factory recipe` runs recipeName in for
-// issue or PR number of repo: rtriage-<repo>-<number> for triage. The
-// recipe name is lowercased and anything but letters, digits and dashes
-// becomes a dash, to make a valid name.
-func RecipeSandboxName(recipeName, repo string, number int) string {
-	r := strings.Trim(nonNameChars.ReplaceAllString(strings.ToLower(recipeName), "-"), "-")
-	return fmt.Sprintf("r%s-%s-%d", r, repo, number)
-}
-
-var nonNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
 
 func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, sandboxType, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 

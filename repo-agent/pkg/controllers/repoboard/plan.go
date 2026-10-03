@@ -19,8 +19,6 @@ package repoboard
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -42,7 +40,10 @@ import (
 func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRequest) {
 	logger := log.FromContext(ctx)
 	name := work.fixSandboxName(req.issue)
-	sb := work.findSandbox(req.member, name)
+	sb := work.issueSandbox(req.member, req.issue)
+	if sb != nil {
+		name = sb.GetName()
+	}
 	key := fmt.Sprintf("%s/plan-%s-%d", req.member, work.repo, req.issue)
 
 	annotations := map[string]string{}
@@ -135,10 +136,9 @@ func planResultStale(annotations map[string]string, finishedAt time.Time) bool {
 // stamp survives on the sandbox while the Request (which only covers the
 // fresh-plan bootstrap) is long settled.
 func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
-	prefix := "fix-" + work.repo + "-"
 	for _, sb := range work.sandboxes {
-		name := sb.GetName()
-		if !strings.HasPrefix(name, prefix) {
+		n, ok := factorycli.IssueOf(sb, work.repo)
+		if !ok {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -150,10 +150,6 @@ func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 			continue
 		}
 		if plannedAt, err := time.Parse(time.RFC3339, annotations[AnnotationPlannedAt]); err == nil && !feedbackAt.After(plannedAt) {
-			continue
-		}
-		n, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
-		if err != nil {
 			continue
 		}
 		r.ensurePlan(ctx, work, planRequest{issue: n, member: sb.GetNamespace()})

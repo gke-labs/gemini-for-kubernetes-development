@@ -204,8 +204,52 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	return name, nil
 }
 
+const (
+	// LabelRepo and LabelIssue name the repo and issue an issue's sandbox
+	// works on, whatever factory calls the sandbox, so that clients find it
+	// by selector rather than by knowing its name. The repo's full name is
+	// the "repo" annotation; the label is that, made a valid label value.
+	LabelRepo  = "factory.gemini.google.com/repo"
+	LabelIssue = "factory.gemini.google.com/issue"
+)
+
+// IssueLabels are the LabelRepo and LabelIssue labels for the sandbox of
+// repoName's issue taskID; none for LabelIssue when taskID is not an
+// issue number (a named task's sandbox).
+func IssueLabels(repoName, taskID string) map[string]string {
+	labels := map[string]string{LabelRepo: labelValue(repoName)}
+	if n, err := strconv.Atoi(taskID); err == nil && n > 0 {
+		labels[LabelIssue] = taskID
+	}
+	return labels
+}
+
+// IsIssueSandbox reports whether sb is the sandbox of issue n of
+// owner/repo by its labels, whatever its name: the htmlURL annotation is
+// no help once a fix's PR replaces the issue there.
+func IsIssueSandbox(sb *unstructured.Unstructured, owner, repo string, n int) bool {
+	a := sb.GetAnnotations()
+	return sb.GetLabels()[LabelIssue] == strconv.Itoa(n) && a["repo"] == repo &&
+		strings.Contains(strings.ToLower(a["cloneURL"]), strings.ToLower("github.com/"+owner+"/"+repo+"."))
+}
+
+// labelValue makes a repo name (letters, digits, '.', '-', '_', up to 100
+// characters) a label value: at most 63 characters, starting and ending
+// with a letter or digit.
+func labelValue(s string) string {
+	if len(s) > 63 {
+		s = s[:63]
+	}
+	return strings.TrimFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	})
+}
+
+// EnsureFixSandbox creates (or reuses) the sandbox for repoName's issue (or
+// named task) taskID, fix-<repo>-<taskID>. Plan and triage run in it too.
 func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
+	issueLabels := IssueLabels(repoName, taskID)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil && terminating(sb) {
@@ -215,7 +259,15 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			return "", werr
 		}
 	} else if err == nil {
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		reuseLabels := withLabels(map[string]string{}, issueLabels)
+		// A program (repo-agent) reusing an issue's sandbox the CLI made —
+		// a triage run by hand, now that triage shares it — takes it over:
+		// its board ignores other launchers' sandboxes, and would never see
+		// the fix it runs there. The CLI never takes one from a program.
+		if Launcher != "" && Launcher != "factory" {
+			reuseLabels[LabelLauncher] = Launcher
+		}
+		prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, reuseLabels)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -229,11 +281,11 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		DevSandboxOptions: DevSandboxOptions{
 			Name:      name,
 			Namespace: namespace,
-			Labels: map[string]string{
+			Labels: withLabels(map[string]string{
 				"sandbox.gemini.google.com/type":    "fix",
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
-			},
+			}, issueLabels),
 			Annotations: map[string]string{
 				"repo":     repoName,
 				"cloneURL": cloneURL,
@@ -484,6 +536,12 @@ func sandboxBelongsToRepo(sb *unstructured.Unstructured, repo, prHTMLURL string)
 // from the last task hours ago, scaled it straight back to zero and the
 // connect timed out waiting for the pod.
 func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
+	prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, nil)
+}
+
+// prepareReusedSandboxLabels is prepareReusedSandbox, also adding labels
+// a sandbox made before they were stamped lacks.
+func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string, extra map[string]string) {
 	changed := false
 	labels := sb.GetLabels()
 	if labels == nil {
@@ -491,8 +549,16 @@ func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	}
 	if labels["factory.gemini.google.com/user"] != user && user != "" {
 		labels["factory.gemini.google.com/user"] = user
-		sb.SetLabels(labels)
 		changed = true
+	}
+	for k, v := range extra {
+		if labels[k] != v {
+			labels[k] = v
+			changed = true
+		}
+	}
+	if changed {
+		sb.SetLabels(labels)
 	}
 	if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
 		_ = unstructured.SetNestedField(sb.Object, int64(1), "spec", "replicas")
@@ -513,6 +579,13 @@ func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{}); err != nil {
 		klog.Warningf("Failed to update reused sandbox %s: %v", sb.GetName(), err)
 	}
+}
+
+func withLabels(labels, extra map[string]string) map[string]string {
+	for k, v := range extra {
+		labels[k] = v
+	}
+	return labels
 }
 
 func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
@@ -626,16 +699,36 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 const AnnotationTaskEngine = "sandbox.gemini.google.com/last-task-engine"
 
 func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "")
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", false)
 }
 
 // MarkSandboxTaskRunning records a task of taskType starting in the
 // sandbox, on engine.
 func MarkSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine)
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, false)
 }
 
-func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState, engine string) error {
+// SideTaskStateAnnotation is where a task that borrows an issue's sandbox
+// from its fix — triage, an issue recipe — records its state, under its
+// own name. last-task-type and last-task-state stay the fix's (or plan's):
+// factory watch and repo-agent's board read them as that.
+func SideTaskStateAnnotation(taskType string) string {
+	return "sandbox.gemini.google.com/" + taskType + "-task-state"
+}
+
+// MarkSandboxSideTaskRunning is MarkSandboxTaskRunning for a side task:
+// it records the state at SideTaskStateAnnotation.
+func MarkSandboxSideTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string) error {
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, true)
+}
+
+// UpdateSandboxSideTaskAnnotation is UpdateSandboxTaskAnnotation for a side
+// task.
+func UpdateSandboxSideTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", true)
+}
+
+func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState, engine string, side bool) error {
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
@@ -665,8 +758,12 @@ func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient
 	}
 
 	if taskType != "" {
-		annotations["sandbox.gemini.google.com/last-task-type"] = taskType
-		annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+		if side {
+			annotations[SideTaskStateAnnotation(taskType)] = taskState
+		} else {
+			annotations["sandbox.gemini.google.com/last-task-type"] = taskType
+			annotations["sandbox.gemini.google.com/last-task-state"] = taskState
+		}
 		if engine != "" {
 			annotations[AnnotationTaskEngine] = engine
 		}
@@ -904,8 +1001,12 @@ func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now t
 	// timestamps a task run leaves behind.
 	lastActivity := item.GetCreationTimestamp().Time
 	if annotations := item.GetAnnotations(); annotations != nil {
-		if state := annotations["sandbox.gemini.google.com/last-task-state"]; state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
-			return time.Time{}, false
+		// last-task-state, and a side task's state (SideTaskStateAnnotation).
+		for key, state := range annotations {
+			if strings.HasPrefix(key, "sandbox.gemini.google.com/") && strings.HasSuffix(key, "task-state") &&
+				state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
+				return time.Time{}, false
+			}
 		}
 		for _, key := range []string{
 			"sandbox.gemini.google.com/completion-time",

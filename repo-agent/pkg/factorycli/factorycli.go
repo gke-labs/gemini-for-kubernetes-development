@@ -56,7 +56,7 @@ const LauncherName = "repo-agent"
 
 // LaunchedElsewhere reports whether another launcher — the factory CLI run
 // by hand, say — created the sandbox. The board leaves those alone: a
-// triage-<repo>-<N> from `factory triage` is not one of its triages to
+// sandbox `factory triage` was run in by hand is not one of its triages to
 // resume, publish or pause. A sandbox without the label predates it and
 // is treated as the board's, as it always was.
 func LaunchedElsewhere(labels map[string]string) bool {
@@ -746,7 +746,7 @@ func tail(s string, n int) string {
 // TriageOptions are the inputs for a `factory triage` invocation
 // (draft-only issue triage; --publish no writes nothing to GitHub).
 type TriageOptions struct {
-	// SandboxName enables the in-flight preflight (triage-<repo>-<n>).
+	// SandboxName enables the in-flight preflight (the issue's sandbox).
 	SandboxName string
 
 	Namespace   string
@@ -793,8 +793,9 @@ func ExtractPlan(output string) string {
 	return strings.TrimSpace(rest)
 }
 
-// TriageSandboxName returns the sandbox name `factory triage` uses
-// (EnsureTriageSandbox: triage-<repo>-<issueNumber>).
-func TriageSandboxName(repo string, issueNumber int) string {
+// LegacyTriageSandboxName is the sandbox `factory triage` used before it
+// moved into the issue's sandbox (IssueSandbox). Boards still read drafts
+// from them; nothing makes new ones.
+func LegacyTriageSandboxName(repo string, issueNumber int) string {
 	return fmt.Sprintf("triage-%s-%d", repo, issueNumber)
 }

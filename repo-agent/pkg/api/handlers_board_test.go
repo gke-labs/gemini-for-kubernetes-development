@@ -32,6 +32,7 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/google/go-github/v39/github"
@@ -1845,5 +1846,80 @@ func TestSandboxEngine(t *testing.T) {
 		if got := sandboxEngine(c.annotations, "gemini"); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// Triage in the issue's sandbox: the row reads the draft and state from
+// triage's own keys, never the review's agentDraft or the fix's state, and
+// editing and rejecting touch only those keys.
+func TestTriageInIssueSandbox(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
+		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
+		]`,
+		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
+	}
+	sb := sandboxCR("repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "20"},
+		map[string]interface{}{
+			"repo":                               "repo",
+			"htmlURL":                            "https://github.com/test/repo/issues/20",
+			"agentDraft":                         "not a triage",
+			factorycli.AnnotationTriageDraft:     "triage:\n  labels: [bug]",
+			factorycli.AnnotationTriageTaskState: "Completed",
+		}, 1)
+	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
+
+	row := func() *models.WorkItem {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var work []models.WorkItem
+		if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+			t.Fatalf("bad json: %v", err)
+		}
+		for i := range work {
+			if work[i].Type == "issue" && work[i].Number == 20 {
+				return &work[i]
+			}
+		}
+		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
+		return nil
+	}
+	if got := row(); got.Stage != "triage-ready" || got.Draft != "triage:\n  labels: [bug]" ||
+		got.Sandbox == nil || got.Sandbox.Name != "repo-20" || got.Sandbox.TaskState != "Completed" {
+		t.Errorf("row = %+v sandbox %+v", got, got.Sandbox)
+	}
+
+	body, _ := json.Marshal(map[string]string{"draft": "triage:\n  labels: [bug, p1]"})
+	req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("edit: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	stored := func() map[string]string {
+		got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "repo-20", v1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.GetAnnotations()
+	}
+	if a := stored(); !strings.Contains(a[factorycli.AnnotationTriageDraft], "p1") || a["agentDraft"] != "not a triage" {
+		t.Errorf("after edit: %v", a)
+	}
+
+	req, _ = http.NewRequest("POST", "/board/myboard/issues/20/triage-reject", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if a := stored(); a[factorycli.AnnotationTriageDraft] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/triage-rejected-at"] == "" {
+		t.Errorf("after reject: %v", a)
 	}
 }

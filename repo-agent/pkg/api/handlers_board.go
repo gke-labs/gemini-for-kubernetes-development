@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"sort"
@@ -437,6 +438,9 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	// namespace named by an assignee claim on this repo's items.
 	sandboxNamespaces := map[string]bool{}
 	sandboxes := map[string]*unstructured.Unstructured{}
+	// Triage runs in the board namespace, in the issue's sandbox, which a
+	// member's sandbox of the same name would hide in sandboxes.
+	boardNSSandboxes := map[string]*unstructured.Unstructured{}
 	loadSandboxNamespace := func(ns string) {
 		if ns == "" || sandboxNamespaces[ns] {
 			return
@@ -449,6 +453,9 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for k, v := range got {
 			sandboxes[k] = v
+			if ns == board.GetNamespace() {
+				boardNSSandboxes[k] = v
+			}
 		}
 	}
 	loadSandboxNamespace(board.GetNamespace())
@@ -470,7 +477,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 			if issue.IsPullRequest() {
 				continue
 			}
-			s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
+			s.mergeIssueRow(items, sandboxes, boardNSSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 		}
 	}
 	// One request for the whole board. A hole in the universe would show
@@ -506,7 +513,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		if len(issue.Assignees) > 0 {
 			continue
 		}
-		s.mergeIssueRow(items, sandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
+		s.mergeIssueRow(items, sandboxes, boardNSSandboxes, issue, repo, member, viewLabels, autoIterateDefault(board))
 	}
 
 	// GitHub is the only durable record of the member's reviews, so both a
@@ -753,7 +760,7 @@ func hasAnyLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string, autoDefault bool) {
+func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes, boardNSSandboxes map[string]*unstructured.Unstructured, issue *github.Issue, repo, member string, viewLabels []string, autoDefault bool) {
 	key := fmt.Sprintf("issue-%d", issue.GetNumber())
 	if _, ok := items[key]; ok {
 		return
@@ -773,7 +780,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		claimedBy = strings.Join(assignees[:2], ", ") + fmt.Sprintf(" +%d", len(assignees)-2)
 	}
 
-	sb := sandboxes[fmt.Sprintf("fix-%s-%d", repo, issue.GetNumber())]
+	sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue.GetNumber())
 	state := ""
 	prURL := ""
 	taskType := ""
@@ -799,13 +806,13 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	triageDraft := ""
 	triageState := ""
 	triagePublished := false
-	triageSB := sandboxes[fmt.Sprintf("triage-%s-%d", repo, issue.GetNumber())]
+	triageSB := factorycli.TriageSandbox(maps.Values(boardNSSandboxes), repo, issue.GetNumber())
 	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
 		return
 	}
 	if triageSB != nil {
-		triageDraft = triageSB.GetAnnotations()["agentDraft"]
-		triageState = triageSB.GetAnnotations()[annoTaskState]
+		triageDraft = factorycli.TriageDraft(triageSB)
+		triageState = factorycli.TriageState(triageSB)
 		triagePublished = triageSB.GetAnnotations()[annoTriagePublished] != ""
 	}
 
@@ -845,6 +852,11 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		// Unclaimed and untouched: the triage inbox state.
 		stage = "untriaged"
 	}
+	if sb != nil && sb == triageSB && taskType == "" {
+		// The issue's sandbox has only been triaged in: it is the triage's
+		// on the row, not a fix's.
+		sb = nil
+	}
 	if sb == nil && triageSB != nil && (triageDraft != "" || triageState != "Completed") {
 		// Surface the triage sandbox on rows without a fix sandbox while
 		// it carries a draft or is still moving. A rejected leftover
@@ -875,6 +887,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		PlanApproved:    planApproved,
 		Sandbox:         workSandbox(sb, autoDefault),
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
+	}
+	if ws := items[key].Sandbox; ws != nil && sb == triageSB && ws.TaskState == "" {
+		ws.TaskState = triageState
 	}
 }
 
@@ -945,7 +960,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	// closing refs — "fixes #N" names the fix sandbox directly.
 	if sb == nil {
 		for _, n := range closingRefs(pr.GetBody()) {
-			if candidate, found := sandboxes[fmt.Sprintf("fix-%s-%d", repo, n)]; found {
+			if candidate := factorycli.IssueSandbox(maps.Values(sandboxes), repo, n); candidate != nil && !factorycli.OnlyTriaged(candidate) {
 				sb = candidate
 				break
 			}
@@ -1246,11 +1261,11 @@ func (s *Server) rerunBoardIssue(c *gin.Context) {
 	// their own reruns).
 	var sandboxNS, sandboxName string
 	annotation := annoRefixRequest
-	name := fmt.Sprintf("fix-%s-%s", repo, number)
+	issue, _ := strconv.Atoi(number)
 	for _, ns := range []string{namespace, board.GetNamespace()} {
 		if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
-			if _, ok := sandboxes[name]; ok {
-				sandboxNS, sandboxName = ns, name
+			if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue); sb != nil && !factorycli.OnlyTriaged(sb) {
+				sandboxNS, sandboxName = ns, sb.GetName()
 				break
 			}
 		}
@@ -1628,7 +1643,8 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 			continue
 		}
 		for _, sb := range sandboxes {
-			if (strings.HasPrefix(sb.GetName(), "fix-") || strings.HasPrefix(sb.GetName(), "factory-pr-")) &&
+			_, isIssue := factorycli.IssueOf(sb, repo)
+			if (isIssue || strings.HasPrefix(sb.GetName(), "factory-pr-")) &&
 				sb.GetLabels()["factory.gemini.google.com/pr"] == prStr {
 				return sb, ns
 			}
@@ -1643,11 +1659,11 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 					continue
 				}
 				for _, ref := range items[i].Fixes {
-					name := fmt.Sprintf("fix-%s-%d", repo, ref)
-					sb, found := sandboxes[name]
-					if !found {
+					sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, ref)
+					if sb == nil || factorycli.OnlyTriaged(sb) {
 						continue
 					}
+					name := sb.GetName()
 					_ = s.K8sManager.UpdateSandboxLabel(ctx, ns, name, "factory.gemini.google.com/pr", prStr)
 					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "pr", prStr)
 					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "htmlURL", items[i].HTMLURL)
@@ -1745,13 +1761,12 @@ func engineOrDefault(engine string) string {
 // checking the viewer's namespace then the board's.
 func (s *Server) findPlanSandbox(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
 	ctx := c.Request.Context()
-	name := fmt.Sprintf("fix-%s-%d", repo, number)
 	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
 		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
 		if err != nil {
 			continue
 		}
-		if sb, found := sandboxes[name]; found && sb.GetAnnotations()[annoPlanDraft] != "" {
+		if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, number); sb != nil && sb.GetAnnotations()[annoPlanDraft] != "" {
 			return sb, ns
 		}
 	}
@@ -1844,17 +1859,13 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	name := fmt.Sprintf("triage-%s-%d", repo, number)
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
+	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
+		name := sb.GetName()
+		keys := []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished}
+		if factorycli.IsLegacyTriageSandbox(sb) {
+			keys = append(keys, "agentDraft", "agentDraftType")
 		}
-		sb, found := sandboxes[name]
-		if !found || sb.GetAnnotations()["agentDraft"] == "" {
-			continue
-		}
-		for _, key := range []string{"agentDraft", "agentDraftType", "board.gemini.google.com/triaged-at", annoTriagePublished} {
+		for _, key := range keys {
 			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
 				return
@@ -1864,7 +1875,7 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject triage", "details": err.Error()})
 			return
 		}
-		_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, name)
+		s.scaledownTriaged(ctx, sb)
 		c.Status(http.StatusOK)
 		return
 	}
@@ -1992,20 +2003,13 @@ func (s *Server) putBoardTriageDraft(c *gin.Context) {
 		return
 	}
 
-	name := fmt.Sprintf("triage-%s-%d", repo, number)
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		if sb, found := sandboxes[name]; found && sb.GetAnnotations()["agentDraft"] != "" {
-			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "agentDraft", strings.TrimSpace(req.Draft)+"\n"); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
-				return
-			}
-			c.Status(http.StatusOK)
+	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), triageDraftKey(sb), strings.TrimSpace(req.Draft)+"\n"); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
 			return
 		}
+		c.Status(http.StatusOK)
+		return
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to edit"})
 }
@@ -2048,25 +2052,14 @@ func (s *Server) publishBoardTriage(c *gin.Context) {
 		return
 	}
 
-	var draftSB *unstructured.Unstructured
-	name := fmt.Sprintf("triage-%s-%d", repo, number)
-	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		if sb, found := sandboxes[name]; found && sb.GetAnnotations()["agentDraft"] != "" {
-			draftSB = sb
-			break
-		}
-	}
+	draftSB, _ := s.findTriageDraft(c, board, owner, repo, number)
 	if draftSB == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to publish"})
 		return
 	}
 
 	suggestion := &triageSuggestion{}
-	if err := yamlv3.Unmarshal([]byte(draftSB.GetAnnotations()["agentDraft"]), suggestion); err != nil {
+	if err := yamlv3.Unmarshal([]byte(factorycli.TriageDraft(draftSB)), suggestion); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "triage suggestion is not parseable", "details": err.Error()})
 		return
 	}
@@ -2092,6 +2085,40 @@ func (s *Server) publishBoardTriage(c *gin.Context) {
 	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), annoTriagePublished, nowRFC3339()); err != nil {
 		klog.FromContext(ctx).Info("failed to mark triage published", "issue", number, "err", err)
 	}
-	_ = s.K8sManager.ScaledownSandboxByName(ctx, draftSB.GetNamespace(), draftSB.GetName())
+	s.scaledownTriaged(ctx, draftSB)
 	c.Status(http.StatusOK)
+}
+
+// findTriageDraft locates the sandbox holding issue number's triage draft:
+// the issue's sandbox in the board namespace, where triage runs, or a
+// legacy triage-<repo>-<N> one; the viewer's namespace is checked too.
+func (s *Server) findTriageDraft(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
+	ctx := c.Request.Context()
+	for _, ns := range []string{board.GetNamespace(), s.Auth.GetNamespaceFromContext(c)} {
+		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
+		if err != nil {
+			continue
+		}
+		if sb := factorycli.TriageSandbox(maps.Values(sandboxes), repo, number); sb != nil && factorycli.TriageDraft(sb) != "" {
+			return sb, ns
+		}
+	}
+	return nil, ""
+}
+
+// triageDraftKey is the annotation sb keeps its triage draft in.
+func triageDraftKey(sb *unstructured.Unstructured) string {
+	if factorycli.IsLegacyTriageSandbox(sb) && sb.GetAnnotations()[factorycli.AnnotationTriageDraft] == "" {
+		return "agentDraft"
+	}
+	return factorycli.AnnotationTriageDraft
+}
+
+// scaledownTriaged parks a sandbox once its triage is published or thrown
+// away, unless it is the issue's sandbox and a plan or fix is running in it.
+func (s *Server) scaledownTriaged(ctx context.Context, sb *unstructured.Unstructured) {
+	if !factorycli.IsLegacyTriageSandbox(sb) && sb.GetAnnotations()[annoTaskState] == "Running" {
+		return
+	}
+	_ = s.K8sManager.ScaledownSandboxByName(ctx, sb.GetNamespace(), sb.GetName())
 }

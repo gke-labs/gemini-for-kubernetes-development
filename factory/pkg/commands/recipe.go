@@ -330,10 +330,17 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	}
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
-	fmt.Printf("Ensuring recipe sandbox for #%d...\n", it.Number)
-	sandboxName, err := factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, rec.Name, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	// An issue's recipes run in the issue's sandbox, beside its triage,
+	// plan and fix; a PR's in a sandbox of their own.
+	fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
+	var sandboxName string
+	if it.IsPR {
+		sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	} else {
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	}
 	if err != nil {
-		return fmt.Errorf("ensuring recipe sandbox: %w", err)
+		return fmt.Errorf("ensuring the sandbox: %w", err)
 	}
 
 	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
@@ -342,6 +349,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
+	if err := refuseIfBusy(ctx, client, sandboxName); err != nil {
+		return err
+	}
 
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	envMap := map[string]string{
@@ -369,15 +379,21 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, overrid
 	taskDir := spool.TaskDir(task.ID)
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
 	taskType := "recipe-" + rec.Name
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
+	// In an issue's sandbox the recipe is a side task: last-task-* stay
+	// the fix's.
+	markRunning, update := factorysandbox.MarkSandboxTaskRunning, factorysandbox.UpdateSandboxTaskAnnotation
+	if !it.IsPR {
+		markRunning, update = factorysandbox.MarkSandboxSideTaskRunning, factorysandbox.UpdateSandboxSideTaskAnnotation
+	}
+	_ = markRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
 	if err := spoolRecipe(ctx, client, sandboxName, task, recipeBytes, inputs, envMap); err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
+		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return fmt.Errorf("running recipe: %w", err)
 	}
 	if rootFlags.Detached {
 		return nil
 	}
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
+	_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
 
 	meta := usagereport.Meta{Repo: it.Owner + "/" + it.Repo, TaskType: taskType, Sandbox: sandboxName}
 	if it.IsPR {

@@ -55,15 +55,3 @@ func TestSandboxBelongsToRepo(t *testing.T) {
 		t.Error("adopted a sandbox with no provenance")
 	}
 }
-
-func TestRecipeSandboxName(t *testing.T) {
-	for _, c := range []struct{ recipe, want string }{
-		{"triage", "rtriage-repo-7"},
-		{"Explain_PR", "rexplain-pr-repo-7"},
-		{"-triage", "rtriage-repo-7"},
-	} {
-		if got := RecipeSandboxName(c.recipe, "repo", 7); got != c.want {
-			t.Errorf("RecipeSandboxName(%q) = %q, want %q", c.recipe, got, c.want)
-		}
-	}
-}
