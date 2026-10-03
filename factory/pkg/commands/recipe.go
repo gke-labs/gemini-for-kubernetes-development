@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -39,8 +38,6 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
-	cmd.AddCommand(newRecipeAttachCommand(ctx))
-	cmd.AddCommand(newRecipeListCommand(ctx))
 	return cmd
 }
 
@@ -77,7 +74,7 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A built-in recipe's name, or a recipe file (a path, or a name ending in .yaml)")
 	cmd.Flags().StringVar(&itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (recipe attach --client-id)")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task attach --client-id)")
 	_ = cmd.MarkFlagRequired("recipe")
 	_ = cmd.MarkFlagRequired("url")
 	return cmd
@@ -309,7 +306,7 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 		if err != nil {
 			return err
 		}
-		// So that recipe list and attach find it like a spooled one.
+		// So that task list and attach find it like a spooled one.
 		if taskJSON, err := json.Marshal(task); err == nil {
 			_ = client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
 		}
@@ -319,134 +316,10 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 		return err
 	}
 	if rootFlags.Detached {
-		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory recipe attach -n %s --sandbox %s --task %s\n", task.ID, rootFlags.Namespace, sandboxName, task.ID)
+		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory sandbox task attach %s -n %s --task %s\n", task.ID, sandboxName, rootFlags.Namespace, task.ID)
 		return nil
 	}
 	return client.AttachTask(ctx, taskDir, envMap, rootFlags.AbortOnCancel)
-}
-
-// recipeSandboxFlags picks the sandbox the attach and list commands talk
-// to: named, or the one `recipe run --url` used.
-type recipeSandboxFlags struct {
-	sandbox, url string
-}
-
-func (f *recipeSandboxFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.sandbox, "sandbox", "", "Sandbox name")
-	cmd.Flags().StringVar(&f.url, "url", "", "The issue or PR URL `recipe run` was given; picks its sandbox")
-}
-
-func (f *recipeSandboxFlags) name() (string, error) {
-	switch {
-	case f.sandbox != "":
-		return f.sandbox, nil
-	case f.url != "":
-		it, err := parseGitHubItemURL(f.url)
-		if err != nil {
-			return "", err
-		}
-		return factorysandbox.RecipeSandboxName(it.Repo, it.Number), nil
-	}
-	return "", fmt.Errorf("--sandbox or --url is required")
-}
-
-// newRecipeAttachCommand reconnects to a spooled recipe: it follows the
-// log to the end and prints the recipe's outputs, as `recipe run` would
-// have.
-func newRecipeAttachCommand(ctx context.Context) *cobra.Command {
-	var sb recipeSandboxFlags
-	var taskID, clientID string
-	cmd := &cobra.Command{
-		Use:   "attach",
-		Short: "Follow a recipe task in a sandbox and print its outputs",
-		Example: `  factory recipe attach --url https://github.com/owner/repo/issues/123
-  factory recipe attach --sandbox recipe-repo-123 --client-id my-run-7`,
-		RunE: func(c *cobra.Command, _ []string) error {
-			if _, err := ResolveRootFlags(c); err != nil {
-				return err
-			}
-			name, err := sb.name()
-			if err != nil {
-				return err
-			}
-			client, err := envd.Connect(ctx, rootFlags.Namespace, name)
-			if err != nil {
-				return fmt.Errorf("connecting to sandbox: %w", err)
-			}
-			defer client.Close()
-			entries, err := spool.List(ctx, client)
-			if err != nil {
-				return err
-			}
-			e, err := spool.Find(entries, taskID, clientID)
-			if err != nil {
-				return err
-			}
-			if e.State == spool.Pending || e.State == spool.Claimed {
-				if err := spool.AwaitStart(ctx, client, e.ID, 365*24*time.Hour, 2*time.Minute); err != nil {
-					return err
-				}
-			}
-			taskDir := spool.TaskDir(e.ID)
-			fmt.Printf("Attaching to task %s (%s)...\n", e.ID, taskDir)
-			// Detaching from here leaves the task running.
-			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
-				return fmt.Errorf("task %s: %w", e.ID, err)
-			}
-			var recipeYAML bytes.Buffer
-			if err := client.Exec(ctx, "cat "+taskDir+"/"+spool.RecipeFile, "/workspaces", nil, nil, &recipeYAML, nil); err != nil {
-				return err
-			}
-			rec, err := recipe.Parse(recipeYAML.Bytes())
-			if err != nil {
-				return fmt.Errorf("reading the task's recipe: %w", err)
-			}
-			return printRecipeOutputs(ctx, client, rec, taskDir)
-		},
-	}
-	sb.add(cmd)
-	cmd.Flags().StringVar(&taskID, "task", "", "Task id (default: the newest task, or the newest with --client-id)")
-	cmd.Flags().StringVar(&clientID, "client-id", "", "The --client-id the task was run with")
-	return cmd
-}
-
-// newRecipeListCommand lists a sandbox's spooled recipe tasks.
-func newRecipeListCommand(ctx context.Context) *cobra.Command {
-	var sb recipeSandboxFlags
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List the recipe tasks in a sandbox",
-		RunE: func(c *cobra.Command, _ []string) error {
-			if _, err := ResolveRootFlags(c); err != nil {
-				return err
-			}
-			name, err := sb.name()
-			if err != nil {
-				return err
-			}
-			client, err := envd.Connect(ctx, rootFlags.Namespace, name)
-			if err != nil {
-				return fmt.Errorf("connecting to sandbox: %w", err)
-			}
-			defer client.Close()
-			entries, err := spool.List(ctx, client)
-			if err != nil {
-				return err
-			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "TASK\tRECIPE\tCLIENT ID\tSTATE\tSUBMITTED")
-			for _, e := range entries {
-				state := string(e.State)
-				if e.State == spool.Exited {
-					state = "exited " + e.ExitCode
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.Recipe, e.ClientID, state, e.SubmittedAt.Local().Format(time.DateTime))
-			}
-			return w.Flush()
-		},
-	}
-	sb.add(cmd)
-	return cmd
 }
 
 // writeRecipe puts a recipe and its inputs into the sandbox and returns
