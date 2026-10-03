@@ -199,15 +199,16 @@ type triageClick struct {
 }
 
 // triageClientID is what a triage's task is recorded under in the sandbox
-// (factory --client-id), to read its result by: one per click, by its
-// Request; one per board and issue for auto-triage, which never redoes a
-// triage a human rejected. Identifiers only: anyone in the sandbox can
-// read it.
+// (factory --client-id), to read its result by. factory runs a client id
+// once — running it again returns that run — so it names one attempt:
+// one per click, by its Request; one per launch for auto-triage, so that
+// a failed run is retried rather than returned. Identifiers only: anyone
+// in the sandbox can read it.
 func triageClientID(board string, issue int, click triageClick) string {
 	if click.request != "" {
 		return "request/" + click.request
 	}
-	return fmt.Sprintf("auto/%s/%d", board, issue)
+	return fmt.Sprintf("auto/%s/%d/%d", board, issue, time.Now().Unix())
 }
 
 // resultStaleSince reports whether a remembered invocation result predates

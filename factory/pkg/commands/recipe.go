@@ -60,7 +60,7 @@ type recipeRunFlags struct {
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&f.clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task status|output|attach --client-id)")
+	cmd.Flags().StringVar(&f.clientID, "client-id", "", "Names this run: running again with the same id follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --client-id")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
@@ -362,6 +362,19 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, clientID string, apply a
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer client.Close()
+	if clientID != "" {
+		entries, err := spool.List(ctx, client)
+		if err != nil {
+			return err
+		}
+		e, ok, err := runByClientID(entries, clientID, rec.Name, htmlURL)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return resumeClientRun(ctx, client, ghClient, rec, sandboxName, e, apply)
+		}
+	}
 	if apply.on {
 		e, ok, err := resumableTask(ctx, client, rec.Name, htmlURL)
 		if err != nil {
@@ -512,6 +525,72 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 
 func printDetachedHint(sandboxName, taskID string) {
 	fmt.Printf("Task %[1]s started in the sandbox. Follow it, or check on it and read its outputs, with:\n  factory sandbox task attach %[2]s -n %[3]s --task %[1]s\n  factory sandbox task status %[2]s -n %[3]s --task %[1]s\n  factory sandbox task output %[2]s -n %[3]s --task %[1]s\n", taskID, sandboxName, rootFlags.Namespace)
+}
+
+// runByClientID is the task in entries (newest first) run under
+// clientID, if any. A client id names one run: of one recipe on one
+// item, so finding it under another is the caller's mistake.
+func runByClientID(entries []spool.Entry, clientID, recipeName, itemURL string) (spool.Entry, bool, error) {
+	for _, e := range entries {
+		if e.ClientID != clientID {
+			continue
+		}
+		if e.Recipe != recipeName || normalizeItemURL(e.URL) != normalizeItemURL(itemURL) {
+			return e, false, fmt.Errorf("client id %s is task %s, recipe %s on %s: use another id for this run", clientID, e.ID, e.Recipe, e.URL)
+		}
+		return e, true, nil
+	}
+	return spool.Entry{}, false, nil
+}
+
+// resumeClientRun is a recipe run whose client id names a task already:
+// rather than start another it follows that one, or, if it has ended,
+// prints its outputs or applies its result. A failed run stays failed;
+// retrying takes a new id.
+func resumeClientRun(ctx context.Context, client *envd.Client, gh *githubv39.Client, rec *recipe.Recipe, sandboxName string, e spool.Entry, apply applyMode) error {
+	fmt.Printf("Client id %s is task %s (%s): picking it up instead of starting another.\n", e.ClientID, e.ID, e.State)
+	if apply.on {
+		if e.State == spool.Exited && e.ExitCode == "0" && !apply.dryRun && taskApplied(ctx, client, e.ID) {
+			fmt.Printf("Task %s's result is applied already.\n", e.ID)
+			return nil
+		}
+		return awaitAndApply(ctx, client, gh, sandboxName, e.ID, apply.dryRun)
+	}
+	if e.State != spool.Exited {
+		if rootFlags.Detached {
+			printDetachedHint(sandboxName, e.ID)
+			return nil
+		}
+		if err := awaitTaskStart(ctx, client, e); err != nil {
+			return err
+		}
+		if err := client.AttachTask(ctx, spool.TaskDir(e.ID), nil, rootFlags.AbortOnCancel); err != nil {
+			return fmt.Errorf("task %s: %w", e.ID, err)
+		}
+	}
+	// Finding it again settles the sandbox's record of it, if it ended
+	// unwatched.
+	sel := taskSelectFlags{id: e.ID}
+	e, err := sel.find(ctx, client, sandboxName)
+	if err != nil {
+		return err
+	}
+	if e.State != spool.Exited {
+		return fmt.Errorf("task %s is %s; run again to follow it", e.ID, e.State)
+	}
+	if e.ExitCode != "0" {
+		return fmt.Errorf("task %s failed (exit %s); a client id names one run, so retry with a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
+	}
+	if rootFlags.Detached {
+		fmt.Printf("Task %s has finished.\n", e.ID)
+	}
+	if err := printRecipeOutputs(ctx, client, rec, spool.TaskDir(e.ID)); err != nil {
+		return err
+	}
+	if rec.TaskOutput != nil {
+		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, e.ID)
+	}
+	return nil
 }
 
 // applyMode is what --apply and --dry-run ask of a recipe run.

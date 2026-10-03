@@ -2,6 +2,7 @@ package repoboard
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,12 +141,12 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 }
 
 // A click's triage is recorded under its Request; auto-triage under the
-// board and issue.
+// board, the issue and the launch, so that a failed one is retried.
 func TestTriageClientID(t *testing.T) {
 	if got := triageClientID("b", 5, triageClick{issue: 5, member: "bob", request: "uid-1"}); got != "request/uid-1" {
 		t.Errorf("click: %q", got)
 	}
-	if got := triageClientID("b", 5, triageClick{}); got != "auto/b/5" {
+	if got := triageClientID("b", 5, triageClick{}); !strings.HasPrefix(got, "auto/b/5/") {
 		t.Errorf("auto: %q", got)
 	}
 }

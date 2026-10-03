@@ -31,7 +31,8 @@ sequenceDiagram
 
     Caller->>CLI: factory recipe triage --url ISSUE --client-id ID [--apply]
     CLI->>CLI: find or create the issue's sandbox (by label)
-    CLI->>Spool: refuse if a task is pending or running
+    CLI->>Spool: a task with this client ID already? Follow it or return its result
+    CLI->>Spool: otherwise refuse if a task is pending or running
     CLI->>Spool: write task dir to /workspaces/spool/incoming (recipe, inputs, env, task.json)
     Spool->>Task: claim into /workspaces/tasks/ID, run steps
     CLI-->>Task: attach and tail logs (optional). Ctrl-C detaches or aborts
@@ -111,12 +112,24 @@ An issue's triage, plan, fix and recipes all run in one sandbox.
 
 | Mode | Command | Ctrl-C / caller dies | Rerun |
 |---|---|---|---|
-| Foreground | `factory recipe triage --url U` | Aborts the task (`--abort-on-cancel`, the default) | New task |
-| Detached | `… --detached`, later `sandbox task status`, then `output` | Nothing to interrupt | Read by `--client-id` |
+| Foreground | `factory recipe triage --url U` | Aborts the task (`--abort-on-cancel`, the default) | New task; with `--client-id`, the same task |
+| Detached | `… --detached`, later `sandbox task status`, then `output` | Nothing to interrupt | Read by `--client-id`, or rerun with it |
 | Wait and apply | `… --apply [--dry-run]` | Stops waiting; the task keeps running | Picks up the newest run of this recipe and URL: waits if it's running, applies if it exited 0 and isn't yet applied (`task-output.applied`) |
 | Program (repo-agent) | `… --client-id ID --abort-on-cancel=false`, then `sandbox task output --client-id ID` | The task survives; the prober adopts its `task-output.yaml` | Same client ID finds the same task |
 
-**Client IDs** are chosen by the caller and opaque to factory. They contain identifiers only, because anyone in the sandbox can read them. repo-agent uses `request/<Request UID>` for a click (one task per click) and `auto/<board>/<issue>` for auto-triage.
+**Client IDs** are chosen by the caller and opaque to factory. They contain identifiers only, because anyone in the sandbox can read them. They are recorded in the task's `task.json` (`client_id`). The task directory keeps its generated, time-sorted name, because a client ID may contain `/`.
+
+**A client ID names one run, so launching with one is idempotent.** `factory recipe … --client-id ID` looks for a task recorded under ID before starting anything:
+
+| Task under ID | Without `--apply` | With `--apply` |
+|---|---|---|
+| None | Start one | Start one, wait, apply |
+| Pending or running | Follow it (`--detached`: print how to) | Wait for it, apply |
+| Exited 0 | Print its outputs | Apply, unless already applied |
+| Failed | Error: retry with a new ID | Error: retry with a new ID |
+| Another recipe or URL | Error: the ID is taken | Error: the ID is taken |
+
+A client ID takes precedence over `--apply`'s "newest run of this recipe and URL" rule. repo-agent uses `request/<Request UID>` for a click (one task per click) and `auto/<board>/<issue>/<launch time>` for auto-triage, one per attempt, so a failed run is retried rather than returned.
 
 ---
 
@@ -130,6 +143,7 @@ An issue's triage, plan, fix and recipes all run in one sandbox.
 | One sandbox per issue | #1719 | Triage runs in the issue's sandbox, found by label, with its own `<type>-task-state`. Repeatable `--instruction`. |
 | Wait, apply, resume | #1720 | `recipe … --apply`, which picks up after an interruption. |
 | repo-agent | #1721 | Runs `recipe triage --client-id` and reads the result by client ID instead of from stdout banners. |
+| Idempotent launch | this change | A rerun with the same client ID follows or returns that task instead of starting another. |
 | Removal | #1722, #1723 | `factory triage`, its script and prompt, and repo-agent's support for old `triage-*` sandboxes and old annotations are gone. |
 
 ---
@@ -168,5 +182,5 @@ After those, repo-agent's drafts become the documents themselves, published thro
 ## Non-goals
 
 - **No change to overseer or `factory watch`.** They keep the classic task model, and none of this is required for them.
-- **No server-side task IDs (yet).** Task IDs stay timestamped. A caller-supplied task ID that makes launching idempotent (launch or attach) is deferred; client IDs cover lookup for now.
+- **No caller-chosen task IDs.** Task IDs stay generated and timestamped; the client ID is the caller's handle, and it makes launching idempotent.
 - **No GitHub writes from tasks.** Git push and PR creation by fix-type tasks remain the only exception.
