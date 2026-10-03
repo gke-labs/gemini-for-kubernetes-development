@@ -74,7 +74,7 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A built-in recipe's name, or a recipe file (a path, or a name ending in .yaml)")
 	cmd.Flags().StringVar(&itemURL, "url", "", "GitHub issue or PR URL")
 	cmd.Flags().StringArrayVar(&inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
-	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (task attach --client-id)")
+	cmd.Flags().StringVar(&clientID, "client-id", "", "Recorded with the task, to find it by later (sandbox task attach --client-id)")
 	_ = cmd.MarkFlagRequired("recipe")
 	_ = cmd.MarkFlagRequired("url")
 	return cmd
@@ -316,7 +316,7 @@ func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, t
 		return err
 	}
 	if rootFlags.Detached {
-		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory task attach -n %s --sandbox %s --task %s\n", task.ID, rootFlags.Namespace, sandboxName, task.ID)
+		fmt.Printf("Task %s started in the sandbox. Follow it with:\n  factory sandbox task attach %s -n %s --task %s\n", task.ID, sandboxName, rootFlags.Namespace, task.ID)
 		return nil
 	}
 	return client.AttachTask(ctx, taskDir, envMap, rootFlags.AbortOnCancel)

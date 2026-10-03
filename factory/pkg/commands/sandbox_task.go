@@ -19,10 +19,10 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
-// NewTaskCommand groups the commands that look at the tasks in a sandbox,
+// newSandboxTaskCommand groups the commands that look at the tasks in a sandbox,
 // whether the sandbox's daemon took them from the spool or envd started
 // them: they all run in /workspaces/tasks/<id> with the same files.
-func NewTaskCommand(ctx context.Context) *cobra.Command {
+func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
 		Short: "List, follow and read the tasks in a sandbox",
@@ -33,28 +33,32 @@ func NewTaskCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-// taskSandboxFlags picks the sandbox a task command talks to: named, or
-// the one working on an issue or PR.
-type taskSandboxFlags struct {
-	sandbox, url string
-}
-
-func (f *taskSandboxFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.sandbox, "sandbox", "", "Sandbox name")
-	cmd.Flags().StringVar(&f.url, "url", "", "The issue or PR URL the sandbox works on")
-}
-
-// name resolves the sandbox. By URL it is the sandbox whose htmlURL
-// annotation is that URL; when several are (an issue's fix and triage
-// sandboxes), it asks for --sandbox rather than connect to — and so wake —
+// connectTaskSandbox connects to the sandbox a task command names: by
+// name, or by the issue or PR URL it works on — the sandbox whose htmlURL
+// annotation is that URL. When several are (an issue's fix and triage
+// sandboxes) it asks for the name rather than connect to — and so wake —
 // all of them.
-func (f *taskSandboxFlags) name(ctx context.Context) (string, error) {
-	if f.sandbox != "" {
-		return f.sandbox, nil
+func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, error) {
+	if _, err := ResolveRootFlags(c); err != nil {
+		return nil, err
 	}
-	if f.url == "" {
-		return "", fmt.Errorf("--sandbox or --url is required")
+	name := arg
+	if strings.HasPrefix(arg, "https://") || strings.HasPrefix(arg, "http://") {
+		var err error
+		if name, err = sandboxForURL(ctx, arg); err != nil {
+			return nil, err
+		}
+	} else if err := validateSandboxName(name); err != nil {
+		return nil, err
 	}
+	client, err := envd.Connect(ctx, rootFlags.Namespace, name)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sandbox %s: %w", name, err)
+	}
+	return client, nil
+}
+
+func sandboxForURL(ctx context.Context, itemURL string) (string, error) {
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return "", fmt.Errorf("creating k8s client: %w", err)
@@ -63,7 +67,7 @@ func (f *taskSandboxFlags) name(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("listing sandboxes: %w", err)
 	}
-	want := normalizeItemURL(f.url)
+	want := normalizeItemURL(itemURL)
 	var names []string
 	for _, item := range list.Items {
 		if normalizeItemURL(item.GetAnnotations()["htmlURL"]) == want {
@@ -73,32 +77,16 @@ func (f *taskSandboxFlags) name(ctx context.Context) (string, error) {
 	sort.Strings(names)
 	switch len(names) {
 	case 0:
-		return "", fmt.Errorf("no sandbox in namespace %s works on %s", rootFlags.Namespace, f.url)
+		return "", fmt.Errorf("no sandbox in namespace %s works on %s", rootFlags.Namespace, itemURL)
 	case 1:
 		return names[0], nil
 	}
-	return "", fmt.Errorf("several sandboxes work on %s; pick one with --sandbox: %s", f.url, strings.Join(names, ", "))
+	return "", fmt.Errorf("several sandboxes work on %s; name one instead: %s", itemURL, strings.Join(names, ", "))
 }
 
 func normalizeItemURL(u string) string {
 	u, _, _ = strings.Cut(u, "#")
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u), "/"))
-}
-
-// connect resolves the root flags and the sandbox and connects to it.
-func (f *taskSandboxFlags) connect(ctx context.Context, c *cobra.Command) (*envd.Client, error) {
-	if _, err := ResolveRootFlags(c); err != nil {
-		return nil, err
-	}
-	name, err := f.name(ctx)
-	if err != nil {
-		return nil, err
-	}
-	client, err := envd.Connect(ctx, rootFlags.Namespace, name)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to sandbox %s: %w", name, err)
-	}
-	return client, nil
 }
 
 // taskSelectFlags picks a task in the sandbox.
@@ -120,14 +108,14 @@ func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client) (spool.
 }
 
 func newTaskListCommand(ctx context.Context) *cobra.Command {
-	var sb taskSandboxFlags
 	cmd := &cobra.Command{
-		Use:   "list",
+		Use:   "list <sandbox-name | issue/PR URL>",
 		Short: "List the tasks in a sandbox, newest first",
-		Example: `  factory task list --url https://github.com/owner/repo/issues/123
-  factory task list --sandbox fix-repo-123`,
-		RunE: func(c *cobra.Command, _ []string) error {
-			client, err := sb.connect(ctx, c)
+		Example: `  factory sandbox task list https://github.com/owner/repo/issues/123
+  factory sandbox task list fix-repo-123`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			client, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -156,7 +144,6 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
 			return w.Flush()
 		},
 	}
-	sb.add(cmd)
 	return cmd
 }
 
@@ -164,15 +151,15 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
 // and returns the task's result; for a recipe it prints the outputs, as
 // `recipe run` would have. Interrupting it leaves the task running.
 func newTaskAttachCommand(ctx context.Context) *cobra.Command {
-	var sb taskSandboxFlags
 	var sel taskSelectFlags
 	cmd := &cobra.Command{
-		Use:   "attach",
+		Use:   "attach <sandbox-name | issue/PR URL>",
 		Short: "Follow a task in a sandbox to its end",
-		Example: `  factory task attach --url https://github.com/owner/repo/issues/123
-  factory task attach --sandbox recipe-repo-123 --client-id my-run-7`,
-		RunE: func(c *cobra.Command, _ []string) error {
-			client, err := sb.connect(ctx, c)
+		Example: `  factory sandbox task attach https://github.com/owner/repo/issues/123
+  factory sandbox task attach recipe-repo-123 --client-id my-run-7`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			client, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -201,22 +188,21 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
 			return printRecipeOutputs(ctx, client, rec, taskDir)
 		},
 	}
-	sb.add(cmd)
 	sel.add(cmd)
 	return cmd
 }
 
 func newTaskLogsCommand(ctx context.Context) *cobra.Command {
-	var sb taskSandboxFlags
 	var sel taskSelectFlags
 	var follow bool
 	cmd := &cobra.Command{
-		Use:   "logs",
+		Use:   "logs <sandbox-name | issue/PR URL>",
 		Short: "Print a task's log",
-		Example: `  factory task logs --url https://github.com/owner/repo/issues/123
-  factory task logs --sandbox fix-repo-123 --task fix-20261002-150405 -f`,
-		RunE: func(c *cobra.Command, _ []string) error {
-			client, err := sb.connect(ctx, c)
+		Example: `  factory sandbox task logs https://github.com/owner/repo/issues/123
+  factory sandbox task logs fix-repo-123 --task fix-20261002-150405 -f`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			client, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
@@ -238,7 +224,6 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
 			return nil
 		},
 	}
-	sb.add(cmd)
 	sel.add(cmd)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow the log until the task exits")
 	return cmd

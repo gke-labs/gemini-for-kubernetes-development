@@ -136,10 +136,6 @@ coding tasks without local side effects or host dependencies.`,
 	sandboxCmd.GroupID = "management"
 	cmd.AddCommand(sandboxCmd)
 
-	taskCmd := NewTaskCommand(ctx)
-	taskCmd.GroupID = "management"
-	cmd.AddCommand(taskCmd)
-
 	daemonCmd := NewDaemonCommand(ctx)
 	daemonCmd.GroupID = "management"
 	cmd.AddCommand(daemonCmd)

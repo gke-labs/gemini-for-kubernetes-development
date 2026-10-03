@@ -37,6 +37,7 @@ func NewSandboxCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(NewSandboxExecCommand(ctx))
 	cmd.AddCommand(NewSandboxInspectCommand(ctx))
 	cmd.AddCommand(NewSandboxLogsCommand(ctx))
+	cmd.AddCommand(newSandboxTaskCommand(ctx))
 	cmd.AddCommand(NewSandboxConnectCommand(ctx))
 	cmd.AddCommand(NewSandboxChatCommand(ctx))
 	cmd.AddCommand(NewSandboxSuspendCommand(ctx))
