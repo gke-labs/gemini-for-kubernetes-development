@@ -55,7 +55,7 @@ func readArgs(t *testing.T, argsLog string) []string {
 // as the triage block drafts are kept in.
 func TestStartTriageRunsTheRecipe(t *testing.T) {
 	bin, argsLog := fakeFactory(t, `recipe) echo "Running recipe triage..." ;;
-sandbox) cat <<'DOC'
+sandbox) echo "Waiting for sandbox pod fix-repo-5 to become ready..." >&2; cat <<'DOC'
 `+triageTaskOutput+`DOC
 ;;
 *) exit 9 ;;`)
