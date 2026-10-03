@@ -39,8 +39,11 @@ func NewPodTaskProber() (*PodTaskProber, error) {
 	return &PodTaskProber{kube: kube}, nil
 }
 
-func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix, outputFile string) (TaskProbe, error) {
+func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix, dirPrefix, outputFile string) (TaskProbe, error) {
 	none := TaskProbe{State: ProbeNone}
+	if dirPrefix == "" {
+		dirPrefix = prefix
+	}
 
 	sb, err := p.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
@@ -102,7 +105,7 @@ elif [ -f "$d/pid" ] && is_alive "$d"; then
 else
   echo 137 > "$d/exit_code" 2>/dev/null || true
   echo "dead|"
-fi`, prefix, collectCmd(outputFile))
+fi`, dirPrefix, collectCmd(outputFile))
 	var stdout, stderr bytes.Buffer
 	if err := sandbox.ExecInPod(ctx, p.kube, *podID, sandbox.ExecOptions{
 		Command: []string{"sh", "-c", script},

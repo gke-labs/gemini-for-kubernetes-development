@@ -265,7 +265,7 @@ type FixOptions struct {
 	IssueURL string
 	// Instruction is an optional custom prompt (factory --instruction).
 	Instruction string
-	// WithPlan folds the approved plan from a prior `factory plan` run
+	// WithPlan folds the approved plan from a prior `factory recipe plan` run
 	// (living in the fix sandbox) into the fix prompt.
 	WithPlan bool
 	// Image overrides the sandbox base image; must be factory-compatible.
@@ -285,9 +285,9 @@ type FixOptions struct {
 	Disclose bool
 }
 
-// PlanOptions are the inputs for a `factory plan` invocation: an
-// implementation plan prepared in the issue's fix sandbox, printed between
-// ISSUE PLAN banners (see ExtractPlan) and left in the sandbox for a later
+// PlanOptions are the inputs for a `factory recipe plan` invocation: an
+// implementation plan prepared in the issue's sandbox, read back as a Plan
+// task output (see ExtractPlan) and left in the sandbox for a later
 // `factory fix --with-plan`. Nothing is written to GitHub.
 type PlanOptions struct {
 	// SandboxName enables the in-flight preflight (the issue fix sandbox).
@@ -304,6 +304,9 @@ type PlanOptions struct {
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine  string
 	Timeout time.Duration
+	// RunName records the plan's task in the sandbox, to read its result
+	// back by (factory --run-name).
+	RunName string
 }
 
 // PRTaskOptions are the inputs for the follow-up verbs on a factory PR:
@@ -387,7 +390,7 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
-	// StartPlan launches `factory plan` for key unless one is already
+	// StartPlan launches `factory recipe plan` for key unless one is already
 	// running; a controller pass harvests the finished invocation's output
 	// (see ExtractPlan) via LastResult.
 	StartPlan(key string, opts PlanOptions) bool
@@ -439,10 +442,12 @@ type Runner struct {
 // re-executes) or, for task types with host-side completion steps,
 // corrected and released for a normal launch. Nil disables preflight.
 type TaskProber interface {
-	// Probe inspects the newest <prefix>-* task in the sandbox against
-	// the sandbox's recorded task state, correcting stale annotations as
-	// a side effect (the watch IsTaskRunning discipline).
-	Probe(ctx context.Context, namespace, sandboxName, prefix, outputFile string) (TaskProbe, error)
+	// Probe inspects the newest <dirPrefix>-* task in the sandbox against
+	// the sandbox's recorded task state for taskType, correcting stale
+	// annotations as a side effect (the watch IsTaskRunning discipline).
+	// An empty dirPrefix is taskType: a recipe's task directories are
+	// recipe-<name>-*, whatever task type it records.
+	Probe(ctx context.Context, namespace, sandboxName, taskType, dirPrefix, outputFile string) (TaskProbe, error)
 }
 
 // TaskProbe is a probe verdict.
@@ -469,9 +474,11 @@ const (
 // triage); review and fix finish host-side, so their orphans are
 // corrected and relaunched normally.
 type preflight struct {
-	namespace  string
-	sandbox    string
-	prefix     string
+	namespace string
+	sandbox   string
+	prefix    string
+	// dirPrefix names the task's directories, when not prefix.
+	dirPrefix  string
 	outputFile string
 	banner     string
 	// harvest, when set, turns the invocation's output and error into the
@@ -628,13 +635,19 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	})
 }
 
+// StartPlan runs `factory recipe plan` and reads its result back with
+// `factory sandbox task output --run-name`, as a typed Plan task output.
+// The result's Output has it between planBanner and a closer, for
+// ExtractPlan. The recipe is the sandbox's main task, of type plan, so
+// last-task-type stays plan; its task directories are recipe-plan-*.
 func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Minute
 	}
 	args := []string{
-		"plan",
+		"recipe", "plan",
+		"--run-name", opts.RunName,
 		"--url", opts.IssueURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
@@ -652,9 +665,23 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
+	sandbox := opts.SandboxName
+	if sandbox == "" {
+		sandbox = opts.IssueURL
+	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "plan",
-		outputFile: "plan-output.txt", banner: planBanner,
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "plan", dirPrefix: "recipe-plan",
+		outputFile: TaskOutputFile, banner: planBanner,
+		harvest: func(ctx context.Context, out string, err error) (string, error) {
+			if err != nil {
+				return out, err
+			}
+			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
+			if err != nil {
+				return out + "\n" + doc, fmt.Errorf("reading the plan's task output: %w", err)
+			}
+			return planBanner + "\n" + doc + "\n" + bannerCloser + "\n", nil
+		},
 	})
 }
 
@@ -675,7 +702,7 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 	// adopt its output as the result instead of re-executing.
 	if pre != nil && r.Prober != nil && pre.sandbox != "" {
 		probeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix, pre.outputFile)
+		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix, pre.dirPrefix, pre.outputFile)
 		cancel()
 		if err == nil {
 			switch probe.State {
@@ -840,20 +867,44 @@ func triageFromTaskOutput(doc string) string {
 	return strings.TrimSpace(buf.String())
 }
 
-// planBanner opens the plan text on `factory plan` output; the closer is
-// any run of at least sixteen '=' characters.
+// planBanner opens the plan in a plan's Output: StartPlan puts the recipe
+// plan's result between it and bannerCloser. `factory plan` printed the
+// plan's markdown itself there, closed by any run of sixteen '='.
 const planBanner = "================== ISSUE PLAN =================="
 
-// ExtractPlan extracts the plan markdown from a `factory plan` invocation's
-// output; empty when no plan was produced.
+// ExtractPlan returns the plan markdown after the ISSUE PLAN banner of a
+// completed plan, or "": a Plan task output's, or what `factory plan`
+// printed.
 func ExtractPlan(output string) string {
 	start := strings.Index(output, planBanner)
 	if start < 0 {
 		return ""
 	}
 	rest := output[start+len(planBanner):]
+	if strings.HasPrefix(strings.TrimSpace(rest), "apiVersion:") {
+		// The markdown may underline a heading with '='s: only the last
+		// closer is the banner's.
+		if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
+			rest = rest[:end]
+		}
+		return planFromTaskOutput(rest)
+	}
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}
 	return strings.TrimSpace(rest)
+}
+
+// planFromTaskOutput is a Plan task output's markdown, or "".
+func planFromTaskOutput(doc string) string {
+	var d struct {
+		Kind string `yaml:"kind"`
+		Spec struct {
+			Markdown string `yaml:"markdown"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(doc), &d); err != nil || d.Kind != "Plan" {
+		return ""
+	}
+	return strings.TrimSpace(d.Spec.Markdown)
 }
