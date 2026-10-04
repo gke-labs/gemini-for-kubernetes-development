@@ -1,6 +1,6 @@
 # Design Note: Recipes, Task Outputs and Apply
 
-**Status:** Proposal. Triage is built this way end to end (#1707–#1725); plan is built as a recipe with a Plan output (#1727–#1729). Other task kinds are not yet built. Actions (part 5) are proposed, not built.
+**Status:** Proposal. Triage is built this way end to end (#1707–#1725); plan is built as a recipe with a Plan output (#1727–#1729). Other task kinds are not yet built. Actions (part 5): factory's side is built (phase 1); repo-agent's (phase 2) and extensible verbs (phase 3) are not.
 
 This note describes how a factory task should run and how its result should reach GitHub. A **recipe** describes the work. A **spooled task** runs it inside the sandbox, independent of whoever started it. The task leaves a **task output**, a typed document of what it found. **`factory apply`** is the one place that turns that document into GitHub writes, using the caller's identity.
 
@@ -106,7 +106,7 @@ The runner wraps the declared file (`from:`) into this document as `task-output.
 
 ### 5. Actions: what can be done with a result
 
-**Proposed.** Today each caller hard-codes what a result offers: the board knows a triage has Edit, Publish and Reject, and a plan has Edit, Feedback, Approve and Reject. Instead, a task output carries its **actions**, so a UI renders whatever the document declares and a new kind needs no new UI code.
+**Phase 1 built; callers not yet.** Today each caller hard-codes what a result offers: the board knows a triage has Edit, Publish and Reject, and a plan has Edit, Feedback, Approve and Reject. Instead, a task output carries its **actions**, so a UI renders whatever the document declares and a new kind needs no new UI code.
 
 ```yaml
 # recipes/plan.yaml
@@ -268,7 +268,7 @@ After those, repo-agent's drafts become the documents themselves, published thro
 
 Factory first, then repo-agent. The factory phase stands alone: `apply --action` is useful from the CLI. repo-agent then only consumes factory's commands and documents, so no dependency points from factory to repo-agent.
 
-**Phase 1: factory.**
+**Phase 1: factory.** Built.
 1. Add `Action {verb, field, format, run, label}` to `taskoutput.Decl` and `Document`, the verb registry, and validation of a recipe's actions.
 2. Have the runner copy `actions` into `task-output.yaml`; client-side wrapping copies them from the client's recipe. A document without actions gets the kind's defaults.
 3. Add `factory apply --action <verb>` with the apply and follow-up verbs. Split Triage's apply into `label` and `comment`. Plain `apply -f` stays as it is.

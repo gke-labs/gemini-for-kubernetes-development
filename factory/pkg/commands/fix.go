@@ -76,7 +76,7 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 				prompt = strings.TrimSpace(string(content))
 			}
 			if prompt == "" {
-				prompt = "Fix this issue in the repository and push a PR"
+				prompt = defaultFixPrompt
 			}
 
 			sessionName := "factory-fix"
@@ -135,6 +135,9 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 
 	return cmd
 }
+
+// defaultFixPrompt is a fix's instruction when it is given none.
+const defaultFixPrompt = "Fix this issue in the repository and push a PR"
 
 func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, withPlan bool, pollInterval time.Duration, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
 	cfg, err := config.LoadConfig()

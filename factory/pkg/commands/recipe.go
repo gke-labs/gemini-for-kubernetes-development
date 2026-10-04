@@ -820,6 +820,7 @@ func writeTaskOutput(taskDir string, inputs map[string]string, engine string) er
 	if err != nil {
 		return err
 	}
+	doc.Actions = task.Output.Actions
 	out, err := taskoutput.Marshal(doc)
 	if err != nil {
 		return err

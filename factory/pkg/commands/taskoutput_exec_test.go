@@ -80,3 +80,57 @@ func TestWriteTaskOutputLeavesAnUnknownKind(t *testing.T) {
 		t.Error("a task output was written for an unknown kind")
 	}
 }
+
+// The runner copies the actions the task declared into the document.
+func TestWriteTaskOutputCopiesActions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-plan-20261003-101010-abcd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "run", Run: "fix", Label: "Fix"}}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
+		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
+	if err := writeTaskOutput(dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := docs[0].Actions; len(got) != 2 || got[1].Run != "fix" || got[1].Label != "Fix" {
+		t.Errorf("actions = %+v", got)
+	}
+}
+
+// A document from a runner older than actions gets the ones its task
+// declared; one that has actions, or a declaration without any, is left
+// as it is.
+func TestWithDeclaredActions(t *testing.T) {
+	doc, err := taskoutput.Wrap("Plan", "## Summary\nDo it.", taskoutput.Target{URL: "https://github.com/o/r/issues/1"}, taskoutput.Source{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, _ := taskoutput.Marshal(doc)
+	decl := &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: []taskoutput.Action{{Verb: "comment"}}}
+
+	out, err := withDeclaredActions(bare, decl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(out)
+	if err != nil || len(docs[0].Actions) != 1 || docs[0].Actions[0].Verb != "comment" {
+		t.Errorf("backfilled = %s (%v)", out, err)
+	}
+	if out, _ := withDeclaredActions(bare, &taskoutput.Decl{Kind: "Plan"}); string(out) != string(bare) {
+		t.Errorf("no declared actions changed the document:\n%s", out)
+	}
+	doc.Actions = []taskoutput.Action{{Verb: "reject"}}
+	own, _ := taskoutput.Marshal(doc)
+	if out, _ := withDeclaredActions(own, decl); string(out) != string(own) {
+		t.Errorf("a document's own actions were replaced:\n%s", out)
+	}
+}

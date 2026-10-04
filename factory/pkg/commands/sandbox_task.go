@@ -321,10 +321,10 @@ func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string
 	taskDir := spool.TaskDir(e.ID)
 	var out bytes.Buffer
 	_ = client.Exec(ctx, "cat "+taskDir+"/"+taskoutput.File+" 2>/dev/null", "/workspaces", nil, nil, &out, nil)
-	if out.Len() > 0 {
-		return out.Bytes(), nil
-	}
 	decl := e.Output
+	if out.Len() > 0 {
+		return withDeclaredActions(out.Bytes(), decl)
+	}
 	if decl == nil {
 		return nil, nil
 	}
@@ -341,7 +341,23 @@ func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string
 	if err != nil {
 		return nil, fmt.Errorf("task %s: %w", e.ID, err)
 	}
+	doc.Actions = decl.Actions
 	return taskoutput.Marshal(doc)
+}
+
+// withDeclaredActions is a task output with the actions its task declared,
+// when its runner, older than actions, left them out. Anything else is
+// returned as it is.
+func withDeclaredActions(data []byte, decl *taskoutput.Decl) ([]byte, error) {
+	if decl == nil || len(decl.Actions) == 0 {
+		return data, nil
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil || len(docs) != 1 || len(docs[0].Actions) > 0 || docs[0].Kind != decl.Kind {
+		return data, nil
+	}
+	docs[0].Actions = decl.Actions
+	return taskoutput.Marshal(docs[0])
 }
 
 // sandboxHTMLURL is the issue or PR a sandbox works on, or "".

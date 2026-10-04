@@ -461,3 +461,28 @@ func TestBuiltinPlanRenders(t *testing.T) {
 		t.Errorf("task-type still in the sandbox's recipe:\n%s", out)
 	}
 }
+
+func TestTaskOutputActionsValidated(t *testing.T) {
+	for _, acts := range []string{"[{verb: merge}]", "[{verb: label}]", "[{verb: run, run: deploy}]"} {
+		if _, err := Parse([]byte("name: x\nsteps: [{run: 'true'}]\ntask-output: {kind: Plan, from: p.md, actions: " + acts + "}\n")); err == nil {
+			t.Errorf("task-output actions %s accepted", acts)
+		}
+	}
+}
+
+// The built-in recipes declare what their results offer.
+func TestBuiltinActions(t *testing.T) {
+	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject"} {
+		_, r, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var verbs []string
+		for _, a := range r.TaskOutput.Actions {
+			verbs = append(verbs, a.Verb)
+		}
+		if got := strings.Join(verbs, " "); got != want {
+			t.Errorf("%s actions = %s, want %s", name, got, want)
+		}
+	}
+}
