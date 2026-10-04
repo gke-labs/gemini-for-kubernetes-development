@@ -219,17 +219,18 @@ function prRunChip(run) {
 
 // DRAFT_VERBS: what a verb a draft's task output offers looks like on
 // the board when the document gives it no label, and what to confirm
-// before taking it. writes marks a verb that writes to GitHub as you, not
-// offered on a read-only board.
+// before taking it. Whether the viewer may take one is the API's word,
+// in its enabled and reason, not the board's role: posting an assessment
+// needs no access to the repo, adding labels needs triage.
 const DRAFT_VERBS = {
   Triage: {
     edit: { label: 'Edit', title: 'Edit the suggestion before it is posted' },
     label: {
-      label: 'Add labels', writes: true, title: 'Adds the suggested labels to the issue under your identity',
+      label: 'Add labels', title: 'Adds the suggested labels to the issue under your identity',
       confirm: n => `Add the suggested labels to issue #${n} as you?`,
     },
     comment: {
-      label: 'Post assessment', writes: true, title: 'Posts the assessment as a comment on the issue under your identity',
+      label: 'Post assessment', title: 'Posts the assessment as a comment on the issue under your identity',
       confirm: n => `Post the triage assessment on issue #${n} as you?`,
     },
     reject: {
@@ -240,7 +241,7 @@ const DRAFT_VERBS = {
   Plan: {
     edit: { label: 'Edit', title: 'Edit the plan text directly' },
     comment: {
-      label: 'Post plan', writes: true, title: 'Posts the plan as a comment on the issue under your identity',
+      label: 'Post plan', title: 'Posts the plan as a comment on the issue under your identity',
       confirm: n => `Post this plan on issue #${n} as you?`,
     },
     run: {
@@ -259,9 +260,9 @@ const DRAFT_VERBS = {
 // draft's state rules out just now stays, disabled, saying why.
 // A write is the controller's (factory apply): filed, it shows as posting
 // until done; failed, it says why and can be clicked again.
-function DraftActions({ kind, actions, number, readOnly, onEdit, onTake }) {
+function DraftActions({ kind, actions, number, onEdit, onTake }) {
   const verbs = DRAFT_VERBS[kind];
-  const shown = (actions || []).filter(a => verbs[a.verb] && !(readOnly && verbs[a.verb].writes));
+  const shown = (actions || []).filter(a => verbs[a.verb]);
   const buttons = shown.map(a => {
     const v = verbs[a.verb];
     const label = a.label || v.label;
@@ -283,7 +284,7 @@ function DraftActions({ kind, actions, number, readOnly, onEdit, onTake }) {
   return [...buttons, ...failures];
 }
 
-function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly, runState, onRunStarted }) {
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, runState, onRunStarted }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -630,7 +631,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     }}>{draftErr}</div>
                   )}
                   <div style={{ textAlign: 'right' }}>
-                    <DraftActions kind="Triage" actions={item.triageActions} number={item.number} readOnly={readOnly}
+                    <DraftActions kind="Triage" actions={item.triageActions} number={item.number}
                       onEdit={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}
                       onTake={a => takeAction('Triage', a.verb, { run: a.run, setErr: setDraftErr })} />
                   </div>
@@ -695,7 +696,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                         title="Continue the planning conversation — opens a terminal tab resuming the same agent session; changes to the plan file ride into Approve & Fix"
                       >Continue session ↗</a>
                     )}
-                    <DraftActions kind="Plan" actions={item.planActions} number={item.number} readOnly={readOnly}
+                    <DraftActions kind="Plan" actions={item.planActions} number={item.number}
                       onEdit={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}
                       onTake={a => takeAction('Plan', a.verb, { run: a.run, setErr: setPlanErr })} />
                   </div>
@@ -1802,7 +1803,6 @@ function Work({ onBack, namespace }) {
   };
 
   const board = boards.find(b => b.name === activeBoard);
-  const readOnly = !!board && board.role === 'read-only';
 
   return (
     <div style={{ padding: '10px 20px' }}>
@@ -1965,8 +1965,7 @@ function Work({ onBack, namespace }) {
                       onAction={(p, l) => handleAction(p, l, item.board)} onRefresh={fetchWork}
                       namespace={namespace} groupTag={item.board}
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
-                      onOpenSandbox={setCardSandbox}
-                      readOnly={(boards.find(b => b.name === item.board) || {}).role === 'read-only'} />
+                      onOpenSandbox={setCardSandbox} />
                   ))}
                   {!loadingWork && !upNextAll.length && (
                     <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
@@ -2109,7 +2108,7 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
                       onOpenSandbox={setCardSandbox}
                       onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
-                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined} readOnly={readOnly}
+                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined}
                       runState={runState} onRunStarted={onRunStarted} />
                   ))}
                   {!loadingWork && !rows.length && (

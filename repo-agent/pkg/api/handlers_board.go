@@ -137,16 +137,23 @@ func (s *Server) getBoard(ctx context.Context, namespace, name string) (*unstruc
 	return s.K8sManager.Client.Resource(repoBoardGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 }
 
-// repoPermCache caches "does this user's token have push on that repo"
-// verdicts (design §4.1: ~15 min, so GitHub-side revocation propagates).
+// repoPermCache caches the access each user's token has on a repo
+// (design §4.1: ~15 min, so GitHub-side revocation propagates).
 var repoPermCache = struct {
 	sync.Mutex
 	entries map[string]repoPermEntry
 }{entries: map[string]repoPermEntry{}}
 
 type repoPermEntry struct {
-	allowed bool
+	perms   repoPerms
 	expires time.Time
+}
+
+// repoPerms is what a user may do on a repo: push for the board's own
+// buttons (Fix, Promote, …), triage for labelling issues.
+type repoPerms struct {
+	push   bool
+	triage bool
 }
 
 // The viewer's review states used to live in a 60s cache here, refilled by
@@ -155,11 +162,15 @@ type repoPermEntry struct {
 // nothing left to cache and nothing left to invalidate.
 
 func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, repoURL string) bool {
+	return s.repoPermissions(ctx, namespace, sessionUser, repoURL).push
+}
+
+func (s *Server) repoPermissions(ctx context.Context, namespace, sessionUser, repoURL string) repoPerms {
 	key := sessionUser + "|" + repoURL
 	repoPermCache.Lock()
 	if e, ok := repoPermCache.entries[key]; ok && time.Now().Before(e.expires) {
 		repoPermCache.Unlock()
-		return e.allowed
+		return e.perms
 	}
 	repoPermCache.Unlock()
 
@@ -169,37 +180,38 @@ func (s *Server) hasPushPermission(ctx context.Context, namespace, sessionUser, 
 	// for 15 minutes. On error, keep any previous verdict and retry soon.
 	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
-		return false
+		return repoPerms{}
 	}
 	token, err := s.memberToken(ctx, namespace)
 	if err != nil {
-		return s.stalePermOrFalse(key)
+		return s.stalePermsOrNone(key)
 	}
 	gh := githubClientForToken(ctx, token)
 	repository, _, err := gh.Repositories.Get(ctx, owner, repo)
 	if err != nil {
-		klog.FromContext(ctx).Info("push-permission check failed; keeping previous verdict", "repo", repoURL, "err", err)
-		return s.stalePermOrFalse(key)
+		klog.FromContext(ctx).Info("repo-permission check failed; keeping previous verdict", "repo", repoURL, "err", err)
+		return s.stalePermsOrNone(key)
 	}
-	perms := repository.GetPermissions()
-	allowed := perms["push"] || perms["maintain"] || perms["admin"]
+	p := repository.GetPermissions()
+	push := p["push"] || p["maintain"] || p["admin"]
+	perms := repoPerms{push: push, triage: push || p["triage"]}
 	repoPermCache.Lock()
-	repoPermCache.entries[key] = repoPermEntry{allowed: allowed, expires: time.Now().Add(15 * time.Minute)}
+	repoPermCache.entries[key] = repoPermEntry{perms: perms, expires: time.Now().Add(15 * time.Minute)}
 	repoPermCache.Unlock()
-	return allowed
+	return perms
 }
 
-// stalePermOrFalse returns the last cached verdict (even expired) when a
+// stalePermsOrNone returns the last cached verdict (even expired) when a
 // fresh check could not be made, extending it briefly so the next request
 // retries soon.
-func (s *Server) stalePermOrFalse(key string) bool {
+func (s *Server) stalePermsOrNone(key string) repoPerms {
 	repoPermCache.Lock()
 	defer repoPermCache.Unlock()
 	if e, ok := repoPermCache.entries[key]; ok {
-		repoPermCache.entries[key] = repoPermEntry{allowed: e.allowed, expires: time.Now().Add(30 * time.Second)}
-		return e.allowed
+		repoPermCache.entries[key] = repoPermEntry{perms: e.perms, expires: time.Now().Add(30 * time.Second)}
+		return e.perms
 	}
-	return false
+	return repoPerms{}
 }
 
 // Boards are personal: each lives in its owner's namespace and is visible
@@ -399,7 +411,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			// suggestion-prefetch lesson).
 			go s.refreshWorkFeed(context.WithoutCancel(ctx), key, board, member, namespace)
 		}
-		c.JSON(http.StatusOK, items)
+		c.JSON(http.StatusOK, s.forViewer(ctx, board, namespace, sessionUser, items))
 		return
 	}
 
@@ -416,7 +428,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 	workFeedPut(key, items)
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, s.forViewer(ctx, board, namespace, sessionUser, items))
 }
 
 // buildBoardWork assembles the feed universe from one GraphQL request

@@ -63,6 +63,12 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("no %s draft on #%d", strings.ToLower(req.Kind), number)})
 		return
 	}
+	if req.Kind == "Triage" {
+		ctx := c.Request.Context()
+		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+		perms := s.repoPermissions(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), repoURL)
+		actions = triageActionsFor(actions, perms)
+	}
 	action, offered := findWorkAction(actions, req.Verb, req.Run)
 	if !offered {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not offer %s", strings.ToLower(req.Kind), strings.TrimSpace(req.Verb+" "+req.Run))})
@@ -150,6 +156,45 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 			}
 		}
 	}
+}
+
+// needsTriageAccess is why a viewer who may not label the repo's issues
+// cannot add a triage's labels. Its comment needs nothing: anyone may
+// comment on a public issue.
+const needsTriageAccess = "needs triage access on the repo"
+
+// forViewer is the feed as the viewer may act on it. The feed is built and
+// cached per board, for whoever polls; what a viewer may write to GitHub
+// is theirs, so it is applied here, on a copy, as the feed is served.
+func (s *Server) forViewer(ctx context.Context, board *unstructured.Unstructured, namespace, sessionUser string, items []models.WorkItem) []models.WorkItem {
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	perms := s.repoPermissions(ctx, namespace, sessionUser, repoURL)
+	if perms.triage {
+		return items
+	}
+	out := make([]models.WorkItem, len(items))
+	for i := range items {
+		out[i] = items[i]
+		if len(items[i].TriageActions) > 0 {
+			out[i].TriageActions = triageActionsFor(items[i].TriageActions, perms)
+		}
+	}
+	return out
+}
+
+// triageActionsFor is a copy of a triage's actions with what perms say of
+// each: without triage access, its labels cannot be added.
+func triageActionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkAction {
+	out := append([]models.WorkAction(nil), actions...)
+	if perms.triage {
+		return out
+	}
+	for i := range out {
+		if out[i].Verb == "label" && out[i].Enabled {
+			out[i].Enabled, out[i].Reason = false, needsTriageAccess
+		}
+	}
+	return out
 }
 
 // rebody replaces the request's body, for a handler that binds its own.
