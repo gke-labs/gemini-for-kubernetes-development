@@ -498,3 +498,95 @@ describe('WorkRow Deploy', () => {
         expect(link.getAttribute('href')).toContain('agent-runs/gke-pr42');
     });
 });
+
+// A draft's controls are the actions its task output offers: labeled by
+// the document, disabled with the reason when the draft's state rules one
+// out, and taken through the one action endpoint.
+describe('WorkRow draft actions', () => {
+    const triage = {
+        type: 'issue', number: 7, stage: 'triage-ready', group: 'issues', title: 'crash on start',
+        htmlURL: 'https://github.com/o/r/issues/7', updatedAt: '2026-10-04T10:00:00Z',
+        draft: 'triage:\n  labels: [bug]\n  assessment: A crash.',
+        triageActions: [
+            { verb: 'edit', field: 'spec', format: 'yaml', enabled: true },
+            { verb: 'label', label: 'Add labels', enabled: false, reason: 'labels added' },
+            { verb: 'comment', label: 'Post assessment', enabled: true },
+            { verb: 'reject', enabled: true },
+        ],
+    };
+    const plan = {
+        type: 'issue', number: 8, stage: 'plan-ready', group: 'issues', title: 'needs a plan',
+        htmlURL: 'https://github.com/o/r/issues/8', updatedAt: '2026-10-04T10:00:00Z',
+        plan: '## Summary\nDo the thing.',
+        planActions: [
+            { verb: 'comment', label: 'Post plan', enabled: true },
+            { verb: 'run', run: 'fix', label: 'Fix with this plan', enabled: true },
+            { verb: 'reject', enabled: true },
+        ],
+    };
+    const ok = () => jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') }));
+    const posted = () => global.fetch.mock.calls
+        .filter(([, opts]) => opts && opts.method === 'POST')
+        .map(([url, opts]) => [url, JSON.parse(opts.body)]);
+    const open = async (item, props = {}) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}} onRefresh={() => {}}
+                    runState={{ repoRunbooks: [], instances: [] }} {...props} />
+            </tbody></table>);
+        });
+        await act(async () => { findButton(item.stage === 'plan-ready' ? 'Plan ready' : 'Triage ready').click(); });
+        await flush();
+    };
+
+    beforeEach(() => { window.confirm = jest.fn(() => true); });
+
+    test('a triage offers what its document does, a done one disabled with why', async () => {
+        global.fetch = ok();
+        await open(triage);
+        expect(findButton('Publish')).toBeUndefined();
+        expect(findButton('Add labels').disabled).toBe(true);
+        expect(findButton('Add labels').title).toBe('Not now: labels added');
+        await act(async () => { findButton('Post assessment').click(); });
+        await flush();
+        expect(posted()).toEqual([['/api/board/myboard/issues/7/actions/comment', { kind: 'Triage', run: '', text: '' }]]);
+    });
+
+    test('a read-only board does not offer writing to GitHub', async () => {
+        global.fetch = ok();
+        await open(triage, { readOnly: true });
+        expect(findButton('Add labels')).toBeUndefined();
+        expect(findButton('Post assessment')).toBeUndefined();
+        expect(findButton('Reject')).toBeDefined();
+    });
+
+    test('saving an edit is the edit action', async () => {
+        global.fetch = ok();
+        await open(triage);
+        await act(async () => { findButton('Edit').click(); });
+        await act(async () => { findButton('Save').click(); });
+        await flush();
+        expect(posted()).toEqual([['/api/board/myboard/issues/7/actions/edit', { kind: 'Triage', run: '', text: triage.draft }]]);
+    });
+
+    test('a plan runs its follow-up by the document\'s label, and offers no edit it does not declare', async () => {
+        global.fetch = ok();
+        await open(plan);
+        expect(findButton('Edit')).toBeUndefined();
+        expect(findButton('Approve & Fix')).toBeUndefined();
+        await act(async () => { findButton('Fix with this plan').click(); });
+        await flush();
+        expect(window.confirm).toHaveBeenCalled();
+        expect(posted()).toContainEqual(['/api/board/myboard/issues/8/actions/run', { kind: 'Plan', run: 'fix', text: '' }]);
+    });
+
+    test('a refusal shows in the panel', async () => {
+        global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST' && url.includes('/actions/')
+            ? Promise.resolve({ ok: false, status: 409, text: () => Promise.resolve('{"error":"cannot comment now: plan posted"}') })
+            : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })));
+        await open(plan);
+        await act(async () => { findButton('Post plan').click(); });
+        await flush();
+        expect(container.textContent).toContain('cannot comment now: plan posted');
+    });
+});
