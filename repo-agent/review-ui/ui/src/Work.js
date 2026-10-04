@@ -260,6 +260,15 @@ const DRAFT_VERBS = {
 // draft's state rules out just now stays, disabled, saying why.
 // A write is the controller's (factory apply): filed, it shows as posting
 // until done; failed, it says why and can be clicked again.
+// POSTING_POLL_EVERY is the feed's cadence while a write stands.
+const POSTING_POLL_EVERY = 3000;
+
+// anyPosting is whether a row has a write standing.
+function anyPosting(items) {
+  return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]
+    .some(a => a.reason === 'posting'));
+}
+
 function DraftActions({ kind, actions, number, onEdit, onTake }) {
   const verbs = DRAFT_VERBS[kind];
   const shown = (actions || []).filter(a => verbs[a.verb]);
@@ -1742,6 +1751,17 @@ function Work({ onBack, namespace }) {
     };
   }, [fetchWork, fetchBoards, activeBoard]);
 
+  // A write the controller is doing (a row reading "posting") is done in
+  // seconds; at the twenty-second cadence the button would keep saying
+  // posting long after it was. The server keeps such a feed fresh for
+  // seconds too, so polling faster while one stands shows it done.
+  const posting = anyPosting(work);
+  useEffect(() => {
+    if (!posting) return undefined;
+    const t = setInterval(() => { if (!document.hidden) fetchWork(); }, POSTING_POLL_EVERY);
+    return () => clearInterval(t);
+  }, [posting, fetchWork]);
+
   const handleAction = (path, label, boardName) => {
     fetch(`/api/board/${boardName || activeBoard}/${path}`, {
       method: 'POST',
@@ -2247,5 +2267,5 @@ function Work({ onBack, namespace }) {
   );
 }
 
-export { TryPanel, WorkRow, PRDeploy, prRunName };
+export { TryPanel, WorkRow, PRDeploy, prRunName, anyPosting };
 export default Work;

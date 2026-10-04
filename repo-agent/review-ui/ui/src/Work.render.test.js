@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel, WorkRow, prRunName } = require('./Work');
+const { TryPanel, WorkRow, prRunName, anyPosting } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -502,6 +502,15 @@ describe('WorkRow Deploy', () => {
 // A draft's controls are the actions its task output offers: labeled by
 // the document, disabled with the reason when the draft's state rules one
 // out, and taken through the one action endpoint.
+describe('anyPosting', () => {
+    test('is whether a row has a write standing, on either draft', () => {
+        expect(anyPosting([])).toBe(false);
+        expect(anyPosting([{ triageActions: [{ verb: 'comment', reason: 'assessment posted' }] }])).toBe(false);
+        expect(anyPosting([{ number: 1 }, { planActions: [{ verb: 'comment', reason: 'posting' }] }])).toBe(true);
+        expect(anyPosting([{ triageActions: [{ verb: 'label', reason: 'posting' }] }])).toBe(true);
+    });
+});
+
 describe('WorkRow draft actions', () => {
     const triage = {
         type: 'issue', number: 7, stage: 'triage-ready', group: 'issues', title: 'crash on start',

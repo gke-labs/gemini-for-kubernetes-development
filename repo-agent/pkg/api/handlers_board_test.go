@@ -1840,6 +1840,32 @@ func TestTheBlockLiftsAndTheBoardRefreshesAgain(t *testing.T) {
 	}
 }
 
+// A write the controller is doing ends on the sandbox, which nothing here
+// hears of: while one stands, the feed goes stale in seconds rather than a
+// minute, or the done write keeps reading "posting" — and a second click
+// gets a 409 for a button that should not have been there.
+func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
+	key := "alice/posting"
+	workFeedPut(key, []models.WorkItem{{Number: 1, TriageActions: []models.WorkAction{
+		{Verb: "comment", Reason: postingReason},
+	}}})
+	defer invalidateWorkFeed("alice", "posting")
+	ageFeedEntry(t, key, workFeedPostingFreshFor+time.Second, time.Time{})
+	if _, ok, needsRefresh := workFeedGet(key); !ok || !needsRefresh {
+		t.Fatalf("a feed with a write standing must rebuild after %v, got ok=%v needsRefresh=%v", workFeedPostingFreshFor, ok, needsRefresh)
+	}
+
+	quiet := "alice/quiet"
+	workFeedPut(quiet, []models.WorkItem{{Number: 1, PlanActions: []models.WorkAction{
+		{Verb: "comment", Reason: "plan posted"},
+	}}})
+	defer invalidateWorkFeed("alice", "quiet")
+	ageFeedEntry(t, quiet, workFeedPostingFreshFor+time.Second, time.Time{})
+	if _, ok, needsRefresh := workFeedGet(quiet); !ok || needsRefresh {
+		t.Fatalf("a feed with no write standing keeps its minute, got ok=%v needsRefresh=%v", ok, needsRefresh)
+	}
+}
+
 // The click records the executor NAMESPACE — boardWriteContext's fifth
 // return is the member token, and writing it into a CR was a live
 // credential leak (iterate-1324 → ghp_…). The controller fetches the
