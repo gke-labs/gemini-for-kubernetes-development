@@ -425,13 +425,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	taskType := "recipe-" + rec.Name
 	// In an issue's sandbox a recipe is a side task, and last-task-* stay
 	// the plan's or fix's, unless it is the sandbox's main task itself.
-	markRunning, update := factorysandbox.MarkSandboxTaskRunning, factorysandbox.UpdateSandboxTaskAnnotation
+	side, update := false, factorysandbox.UpdateSandboxTaskAnnotation
 	if rec.TaskType != "" {
 		taskType = rec.TaskType
 	} else if !it.IsPR {
-		markRunning, update = factorysandbox.MarkSandboxSideTaskRunning, factorysandbox.UpdateSandboxSideTaskAnnotation
+		side, update = true, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
-	_ = markRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
+	run := factorysandbox.RecordedRun{Name: runName, Task: task.ID, StartedAt: time.Now().UTC()}
+	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, run)
 	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return fmt.Errorf("running recipe: %w", err)

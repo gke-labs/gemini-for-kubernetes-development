@@ -156,6 +156,7 @@ func Fail(taskDir string, cause error) {
 	tf := envd.NewTaskFiles(taskDir)
 	_ = os.WriteFile(tf.LogFile, []byte(fmt.Sprintf("spool: the task could not start: %v\n", cause)), 0o644)
 	_ = os.WriteFile(tf.ExitCodeFile, []byte("127\n"), 0o644)
+	failStatus(taskDir, cause)
 }
 
 // FailUnstarted fails spooled tasks in tasksDir that were claimed but
@@ -181,26 +182,42 @@ func FailUnstarted(ctx context.Context, tasksDir string) {
 // PID 1, running factory (this binary) in the task directory.
 func ExecLauncher(ctx context.Context, factory, workDir string) Launcher {
 	return func(taskDir string, env map[string]string) error {
-		tf := envd.NewTaskFiles(taskDir)
-		cmd := exec.Command("sh", "-c", envd.TaskScript(tf, ExecCmd(factory, taskDir)))
-		cmd.Dir = workDir
-		cmd.Env = os.Environ()
-		for k, v := range env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-		// Its own process group: the quota kill signals the task's whole
-		// group, which must not be PID 1's.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		go func() {
-			// Reap it; the script records the exit code itself.
-			_ = cmd.Wait()
-			klog.FromContext(ctx).Info("spool: task exited", "task", filepath.Base(taskDir))
-		}()
-		return nil
+		return Start(ctx, taskDir, ExecCmd(factory, taskDir), workDir, env)
 	}
+}
+
+// Start runs cmdStr as the task in taskDir, a child of this process in a
+// process group of its own, and records its start and, once it has reaped
+// it, its end in the task's status.
+func Start(ctx context.Context, taskDir, cmdStr, workDir string, env map[string]string) error {
+	log := klog.FromContext(ctx)
+	tf := envd.NewTaskFiles(taskDir)
+	cmd := exec.Command("sh", "-c", envd.TaskScript(tf, cmdStr))
+	cmd.Dir = workDir
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	// Its own process group: the quota kill signals the task's whole
+	// group, which must not be PID 1's.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	st := TaskStatus{State: Running, PID: cmd.Process.Pid, StartedAt: time.Now().UTC()}
+	if err := writeStatus(taskDir, st); err != nil {
+		log.Error(err, "spool: recording a task's start", "task", filepath.Base(taskDir))
+	}
+	go func() {
+		// Reap it, and record how it ended.
+		err := cmd.Wait()
+		st := recordExit(taskDir, st, err, cmd.ProcessState)
+		if err := writeStatus(taskDir, st); err != nil {
+			log.Error(err, "spool: recording a task's end", "task", filepath.Base(taskDir))
+		}
+		log.Info("spool: task exited", "task", filepath.Base(taskDir), "exitCode", st.ExitCode)
+	}()
+	return nil
 }
 
 func exists(path string) bool {
