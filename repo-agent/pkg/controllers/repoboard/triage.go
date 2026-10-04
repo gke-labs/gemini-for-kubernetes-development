@@ -120,6 +120,8 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		if res.Err == nil && sb != nil {
 			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
 				annotations[factorycli.AnnotationTriageDraft] = report
+				setOrDelete(annotations, factorycli.AnnotationTriageOutput, factorycli.TriageTaskOutput(res.Output))
+				delete(annotations, factorycli.AnnotationTriageLabeled)
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				sb.SetAnnotations(annotations)

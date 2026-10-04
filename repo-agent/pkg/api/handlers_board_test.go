@@ -331,6 +331,7 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.POST("/board/:board/issues/:id/triage-reject", server.rejectBoardTriage)
 	r.PUT("/board/:board/issues/:id/plan-draft", server.putBoardPlanDraft)
 	r.PUT("/board/:board/issues/:id/draft", server.putBoardTriageDraft)
+	r.POST("/board/:board/issues/:id/actions/:verb", server.boardIssueAction)
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)

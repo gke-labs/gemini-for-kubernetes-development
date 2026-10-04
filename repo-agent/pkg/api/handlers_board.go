@@ -787,25 +787,25 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	planDraft := ""
 	planApproved := false
 	planRevising := false
+	var planActions []models.WorkAction
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		state = annotations[annoTaskState]
 		taskType = annotations[annoLastTaskType]
 		planDraft = annotations[annoPlanDraft]
 		planApproved = annotations[annoPlanApproved] != ""
-		// Feedback newer than the stored plan means a refinement round is
-		// queued or running: agent motion, not the member's move.
-		if fb, err := time.Parse(time.RFC3339, annotations[annoPlanFeedbackAt]); err == nil {
-			planned, err := time.Parse(time.RFC3339, annotations[annoPlannedAt])
-			planRevising = err != nil || fb.After(planned)
-		}
+		planRevising = planIsRevising(annotations)
 		if u := annotations["htmlURL"]; strings.Contains(u, "/pull/") {
 			prURL = u
+		}
+		if planDraft != "" && !planApproved {
+			planActions = planWorkActions(annotations, planRevising, state == "Running")
 		}
 	}
 	triageDraft := ""
 	triageState := ""
 	triagePublished := false
+	var triageActions []models.WorkAction
 	triageSB := factorycli.TriageSandbox(slices.Values(allSandboxes), repo, issue.GetNumber())
 	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
 		return
@@ -814,6 +814,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		triageDraft = factorycli.TriageDraft(triageSB)
 		triageState = factorycli.TriageState(triageSB)
 		triagePublished = triageSB.GetAnnotations()[annoTriagePublished] != ""
+		if triageDraft != "" {
+			triageActions = triageWorkActions(triageSB.GetAnnotations())
+		}
 	}
 
 	stage, attention := "open", ""
@@ -885,6 +888,8 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		TriagePublished: triagePublished,
 		Plan:            planDraft,
 		PlanApproved:    planApproved,
+		TriageActions:   triageActions,
+		PlanActions:     planActions,
 		Sandbox:         workSandbox(sb, autoDefault),
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
@@ -1836,7 +1841,7 @@ func (s *Server) planBoardReject(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to reject"})
 		return
 	}
-	for _, key := range []string{annoPlanDraft, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt, annoPlanApproved} {
+	for _, key := range []string{annoPlanDraft, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt, annoPlanApproved, factorycli.AnnotationPlanOutput, factorycli.AnnotationPlanCommented} {
 		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, ""); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear plan", "details": err.Error()})
 			return
@@ -1861,7 +1866,7 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 	}
 	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
 		name := sb.GetName()
-		for _, key := range []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished} {
+		for _, key := range []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished, factorycli.AnnotationTriageOutput, factorycli.AnnotationTriageLabeled} {
 			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
 				return
@@ -2044,6 +2049,13 @@ type triageSuggestion struct {
 // the clicker's token: labels plus an assessment comment. The suggestion
 // stays viewable; the row settles to the quiet triaged stage.
 func (s *Server) publishBoardTriage(c *gin.Context) {
+	s.applyBoardTriage(c, true, true)
+}
+
+// applyBoardTriage applies a stored triage suggestion's labels, its
+// assessment comment, or both. Labels stamp the suggestion labeled; the
+// comment publishes it, and parks the sandbox.
+func (s *Server) applyBoardTriage(c *gin.Context, labels, comment bool) {
 	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
 	if !ok {
 		return
@@ -2062,11 +2074,20 @@ func (s *Server) publishBoardTriage(c *gin.Context) {
 	}
 
 	gh := githubClientForToken(ctx, token)
-	if len(suggestion.Triage.Labels) > 0 {
+	if labels && len(suggestion.Triage.Labels) > 0 {
 		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, suggestion.Triage.Labels); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply labels", "details": err.Error()})
 			return
 		}
+	}
+	if labels {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), factorycli.AnnotationTriageLabeled, nowRFC3339()); err != nil {
+			klog.FromContext(ctx).Info("failed to mark triage labeled", "issue", number, "err", err)
+		}
+	}
+	if !comment {
+		c.Status(http.StatusOK)
+		return
 	}
 	if suggestion.Triage.Assessment != "" {
 		body := "**Triage:** " + suggestion.Triage.Assessment

@@ -849,15 +849,40 @@ const TaskOutputFile = "task-output.yaml"
 // of a completed triage, or "": the agent's `triage:` block as `factory
 // triage` prints it, or the same made from a Triage task output.
 func ExtractTriageYAML(output string) string {
+	rest, ok := triageSection(output)
+	if !ok {
+		return ""
+	}
+	return NormalizeTriageDraft(rest)
+}
+
+// TriageTaskOutput is the Triage task output after the ISSUE TRIAGE banner
+// of a completed triage without its spec, or "": kept for the actions it
+// offers (OfferedActions) and its source; the draft is the spec.
+func TriageTaskOutput(output string) string {
+	rest, ok := triageSection(output)
+	if !ok {
+		return ""
+	}
+	if i := strings.Index(rest, "\napiVersion:"); !strings.HasPrefix(rest, "apiVersion:") && i >= 0 {
+		rest = rest[i+1:]
+	}
+	if triageFromTaskOutput(rest) == "" {
+		return ""
+	}
+	return withoutSpec(rest)
+}
+
+func triageSection(output string) (string, bool) {
 	start := strings.Index(output, triageBanner)
 	if start < 0 {
-		return ""
+		return "", false
 	}
 	rest := output[start+len(triageBanner):]
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}
-	return NormalizeTriageDraft(strings.TrimSpace(rest))
+	return strings.TrimSpace(rest), true
 }
 
 // triageFromTaskOutput is a Triage task output's spec as the `triage:`
@@ -887,6 +912,21 @@ const planBanner = "================== ISSUE PLAN =================="
 // ExtractPlan returns the plan markdown after the ISSUE PLAN banner of a
 // completed plan, or "": a Plan task output's.
 func ExtractPlan(output string) string {
+	return planFromTaskOutput(planSection(output))
+}
+
+// PlanTaskOutput is the Plan task output after the ISSUE PLAN banner of a
+// completed plan without its spec, or "": kept for the actions it offers
+// (OfferedActions) and its source; the draft is the spec.
+func PlanTaskOutput(output string) string {
+	rest := planSection(output)
+	if planFromTaskOutput(rest) == "" {
+		return ""
+	}
+	return withoutSpec(rest)
+}
+
+func planSection(output string) string {
 	start := strings.Index(output, planBanner)
 	if start < 0 {
 		return ""
@@ -897,7 +937,7 @@ func ExtractPlan(output string) string {
 	if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
 		rest = rest[:end]
 	}
-	return planFromTaskOutput(rest)
+	return strings.TrimSpace(rest)
 }
 
 // planFromTaskOutput is a Plan task output's markdown, or "".

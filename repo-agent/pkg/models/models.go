@@ -77,6 +77,20 @@ type WorkSandbox struct {
 	AutoIterateOverridden bool   `json:"autoIterateOverridden,omitempty"` // per-PR override set (vs board default)
 }
 
+// WorkAction is one action a draft's task output offers, as the row can
+// take it: POST /board/:board/issues/:id/actions/:verb {kind, run}.
+type WorkAction struct {
+	Verb   string `json:"verb"`
+	Run    string `json:"run,omitempty"`
+	Label  string `json:"label,omitempty"`
+	Field  string `json:"field,omitempty"`  // what an edit edits
+	Format string `json:"format,omitempty"` // yaml | markdown, for an edit
+	// Enabled is false for an action the draft's state rules out just now
+	// (done already, or the agent is busy); Reason says why.
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason,omitempty"`
+}
+
 // WorkItem is one row of the board work feed: an issue or PR merged with
 // its agent/sandbox state.
 type WorkItem struct {
@@ -97,6 +111,8 @@ type WorkItem struct {
 	Error           string       `json:"error,omitempty"`           // why the last agent run failed, human-readable
 	Plan            string       `json:"plan,omitempty"`            // implementation-plan draft awaiting refine/approve
 	PlanApproved    bool         `json:"planApproved,omitempty"`    // approved plan rides the row as a done-state receipt
+	TriageActions   []WorkAction `json:"triageActions,omitempty"`   // what can be done with Draft, from its task output
+	PlanActions     []WorkAction `json:"planActions,omitempty"`     // what can be done with Plan, from its task output
 	DraftPR         bool         `json:"draftPR,omitempty"`         // PR is a GitHub draft (promotable)
 	Fixes           []int        `json:"fixes,omitempty"`           // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
