@@ -40,7 +40,7 @@ const ATTENTION_STYLE = {
 // under the content they judge. Amber = your verdict is the bottleneck;
 // purple = your saved review awaits finalize.
 const STAGE_BUTTON = {
-  'triage-ready': { label: 'Triage ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'Triage suggestions await your verdict — open to edit, publish, or reject' },
+  'triage-ready': { label: 'Triage ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'Triage suggestions await your verdict — open to edit, post, or reject' },
   'plan-ready': { label: 'Plan ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' },
   'review-pending': { label: 'Review ready', color: '#8250df', bg: 'rgba(130,80,223,0.14)', title: 'Your draft review is saved on GitHub — open to finalize or abandon' },
 };
@@ -217,32 +217,94 @@ function prRunChip(run) {
   ) : <span key={run.name} style={{ marginLeft: '6px' }}>{chip}</span>;
 }
 
+// DRAFT_VERBS: what a verb a draft's task output offers looks like on
+// the board when the document gives it no label, and what to confirm
+// before taking it. writes marks a verb that writes to GitHub as you, not
+// offered on a read-only board.
+const DRAFT_VERBS = {
+  Triage: {
+    edit: { label: 'Edit', title: 'Edit the suggestion before it is posted' },
+    label: {
+      label: 'Add labels', writes: true, title: 'Adds the suggested labels to the issue under your identity',
+      confirm: n => `Add the suggested labels to issue #${n} as you?`,
+    },
+    comment: {
+      label: 'Post assessment', writes: true, title: 'Posts the assessment as a comment on the issue under your identity',
+      confirm: n => `Post the triage assessment on issue #${n} as you?`,
+    },
+    reject: {
+      label: 'Reject', title: 'Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will',
+      confirm: n => `Discard the triage suggestions for issue #${n}?`,
+    },
+  },
+  Plan: {
+    edit: { label: 'Edit', title: 'Edit the plan text directly' },
+    comment: {
+      label: 'Post plan', writes: true, title: 'Posts the plan as a comment on the issue under your identity',
+      confirm: n => `Post this plan on issue #${n} as you?`,
+    },
+    run: {
+      label: 'Approve & Fix', title: 'Approves the plan and launches the fix — the plan ships in the PR description',
+      confirm: n => `Approve this plan and launch the fix for issue #${n} as you?`,
+    },
+    reject: {
+      label: 'Reject', title: 'Discards this plan draft',
+      confirm: n => `Discard the plan for issue #${n}?`,
+    },
+  },
+};
+
+// DraftActions: the buttons for what a draft's task output offers (a work
+// item's triageActions or planActions), in the document's order. One the
+// draft's state rules out just now stays, disabled, saying why.
+function DraftActions({ kind, actions, number, readOnly, onEdit, onTake }) {
+  const verbs = DRAFT_VERBS[kind];
+  return (actions || []).filter(a => verbs[a.verb] && !(readOnly && verbs[a.verb].writes)).map(a => {
+    const v = verbs[a.verb];
+    return (
+      <button key={a.verb + (a.run || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
+        disabled={!a.enabled} title={a.enabled ? v.title : `Not now: ${a.reason}`}
+        onClick={() => {
+          if (a.verb === 'edit') { onEdit(); return; }
+          if (v.confirm && !window.confirm(v.confirm(number))) return;
+          onTake(a);
+        }}>{a.label || v.label}</button>
+    );
+  });
+}
+
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly, runState, onRunStarted }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [draftErr, setDraftErr] = useState('');
 
-  // Edits are validated server-side against the publish schema; a rejected
-  // save keeps the editor open with the reason.
-  const saveDraft = () => {
-    fetch(`/api/board/${boardName}/issues/${item.number}/draft`, {
-      method: 'PUT',
+  // takeAction takes one action a draft's task output offers; text is an
+  // edit's new draft. A refusal shows in the panel, with the reason.
+  const takeAction = (kind, verb, { run = '', text = '', onOk, setErr }) => {
+    fetch(`/api/board/${boardName}/issues/${item.number}/actions/${verb}`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ draft: draftText }),
+      body: JSON.stringify({ kind, run, text }),
     }).then(async res => {
       if (res.ok) {
-        setEditingDraft(false);
-        setDraftErr('');
+        setErr('');
+        if (onOk) onOk();
         if (onRefresh) onRefresh();
       } else {
         const t = await res.text();
         let msg = t;
         try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw text */ }
-        setDraftErr(msg);
+        setErr(msg);
       }
-    }).catch(err => setDraftErr(String(err)));
+    }).catch(err => setErr(String(err)));
   };
+
+  // Edits are validated server-side against the publish schema; a rejected
+  // save keeps the editor open with the reason.
+  const saveDraft = () => takeAction('Triage', 'edit', {
+    text: draftText, setErr: setDraftErr, onOk: () => setEditingDraft(false),
+  });
 
   const [showPlan, setShowPlan] = useState(false);
   const [showReview, setShowReview] = useState(false);
@@ -268,24 +330,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPlan]);
   const planShown = freshPlan || item.plan;
-  const planPut = (path, body, label, onOk) => {
-    fetch(`/api/board/${boardName}/issues/${item.number}/${path}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {}),
-    }).then(async res => {
-      if (res.ok) {
-        setPlanErr('');
-        if (onOk) onOk();
-        if (onRefresh) onRefresh();
-      } else {
-        const t = await res.text();
-        let msg = t;
-        try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw */ }
-        setPlanErr(`${label} failed: ${msg}`);
-      }
-    }).catch(err => setPlanErr(`${label} failed: ${err}`));
-  };
 
   const group = groupOf(item);
 
@@ -567,25 +611,19 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 textAlign: 'left',
               }}>{item.draft}</pre>
               {item.type === 'issue' && (
-                <div style={{ marginTop: '4px', textAlign: 'right' }}>
-                  <button className="btn btn-sm" title="Edit the suggestion before publishing"
-                    onClick={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}>Edit</button>
-                  {item.stage === 'triage-ready' && !readOnly && (
-                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                      title="Applies suggested labels and posts the assessment comment under your identity"
-                      onClick={() => {
-                        if (!window.confirm(`Apply the suggested labels and post the triage comment on issue #${item.number} as you?`)) return;
-                        onAction(`issues/${item.number}/publish-triage`, 'Publish triage');
-                      }}>Publish</button>
+                <div style={{ marginTop: '4px' }}>
+                  {draftErr && (
+                    <div style={{
+                      fontSize: 'small', marginBottom: '4px', padding: '6px 10px', borderRadius: '6px',
+                      backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
+                      textAlign: 'left', whiteSpace: 'pre-wrap',
+                    }}>{draftErr}</div>
                   )}
-                  {item.stage === 'triage-ready' && (
-                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                      title="Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will"
-                      onClick={() => {
-                        if (!window.confirm(`Discard the triage suggestions for issue #${item.number}?`)) return;
-                        onAction(`issues/${item.number}/triage-reject`, 'Reject triage');
-                      }}>Reject</button>
-                  )}
+                  <div style={{ textAlign: 'right' }}>
+                    <DraftActions kind="Triage" actions={item.triageActions} number={item.number} readOnly={readOnly}
+                      onEdit={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}
+                      onTake={a => takeAction('Triage', a.verb, { run: a.run, setErr: setDraftErr })} />
+                  </div>
                 </div>
               )}
             </div>
@@ -618,7 +656,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               )}
               <div style={{ marginTop: '6px', textAlign: 'right' }}>
                 <button className="btn btn-sm" title="Save your edits as the plan"
-                  onClick={() => planPut('plan-draft', { plan: planText }, 'Save plan', () => setEditingPlan(false))}>Save</button>
+                  onClick={() => takeAction('Plan', 'edit', { text: planText, setErr: setPlanErr, onOk: () => setEditingPlan(false) })}>Save</button>
                 <button className="btn btn-sm" style={{ marginLeft: '4px' }}
                   onClick={() => { setEditingPlan(false); setPlanErr(''); }}>Cancel</button>
               </div>
@@ -631,7 +669,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
                 textAlign: 'left',
               }}>{planShown}</pre>
-              {item.stage === 'plan-ready' && (
+              {(item.stage === 'plan-ready' || (item.planActions || []).length > 0) && (
                 <div style={{ marginTop: '6px' }}>
                   {planErr && (
                     <div style={{
@@ -641,27 +679,15 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     }}>{planErr}</div>
                   )}
                   <div style={{ textAlign: 'right' }}>
-                    {item.sandbox && (
+                    {item.stage === 'plan-ready' && item.sandbox && (
                       <a className="btn btn-sm" href={`#/terminal/${namespace}/${item.sandbox.name}?chat=plan`}
                         target="_blank" rel="noopener noreferrer"
                         title="Continue the planning conversation — opens a terminal tab resuming the same agent session; changes to the plan file ride into Approve & Fix"
                       >Continue session ↗</a>
                     )}
-                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                      title="Edit the plan text directly"
-                      onClick={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}>Edit</button>
-                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                      title="Approves the plan and launches the fix — the plan ships in the PR description"
-                      onClick={() => {
-                        if (!window.confirm(`Approve this plan and launch the fix for issue #${item.number} as you?`)) return;
-                        onAction(`issues/${item.number}/plan-approve`, 'Approve & Fix');
-                      }}>Approve & Fix</button>
-                    <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                      title="Discards this plan draft"
-                      onClick={() => {
-                        if (!window.confirm(`Discard the plan for issue #${item.number}?`)) return;
-                        onAction(`issues/${item.number}/plan-reject`, 'Reject plan');
-                      }}>Reject</button>
+                    <DraftActions kind="Plan" actions={item.planActions} number={item.number} readOnly={readOnly}
+                      onEdit={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}
+                      onTake={a => takeAction('Plan', a.verb, { run: a.run, setErr: setPlanErr })} />
                   </div>
                 </div>
               )}
