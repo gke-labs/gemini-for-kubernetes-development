@@ -117,6 +117,9 @@ func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, num
 	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
 }
 
+// postingReason is a write's action's reason while it stands.
+const postingReason = "posting"
+
 // markApplies says on each row's actions what the apply Requests say of
 // them: a write filed and not yet done is "posting"; one whose last
 // attempt failed carries why, and stays clickable — a retry is a click.
@@ -150,7 +153,7 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 			}
 			switch {
 			case req.Active() && a.Enabled:
-				a.Enabled, a.Reason = false, "posting"
+				a.Enabled, a.Reason = false, postingReason
 			case req.Status.Phase == boardv1alpha1.RequestFailed:
 				a.Error = req.Status.Message
 			}

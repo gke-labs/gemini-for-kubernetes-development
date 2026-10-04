@@ -286,6 +286,9 @@ var workFeedCache = struct {
 type workFeedEntry struct {
 	items []models.WorkItem
 	at    time.Time
+	// posting is whether any row's write was standing when the feed was
+	// built (workFeedPostingFreshFor).
+	posting bool
 	// blockedUntil is when GitHub said this board's token gets its budget
 	// back. Until then a rebuild cannot learn anything the entry does not
 	// already know, so the entry keeps being served however old it is.
@@ -301,6 +304,12 @@ const (
 	// budget is shared with the member's own GitHub use.
 	workFeedFreshFor      = time.Minute
 	workFeedServeStaleFor = 3 * time.Minute
+	// workFeedPostingFreshFor is how long a feed with a write standing
+	// ("posting") stays fresh. The controller does the write, in another
+	// process, and says so only on the sandbox: nothing here hears of it,
+	// so a minute's freshness kept a done write reading "posting" for as
+	// long. A write takes seconds; so does this, while one stands.
+	workFeedPostingFreshFor = 3 * time.Second
 )
 
 // workFeedGet returns cached items when usable; needsRefresh asks the
@@ -314,7 +323,11 @@ func workFeedGet(key string) (items []models.WorkItem, ok, needsRefresh bool) {
 		return nil, false, false
 	}
 	age := time.Since(e.at)
-	if age <= workFeedFreshFor {
+	freshFor := workFeedFreshFor
+	if e.posting {
+		freshFor = workFeedPostingFreshFor
+	}
+	if age <= freshFor {
 		return e.items, true, false
 	}
 	if time.Now().Before(e.blockedUntil) {
@@ -349,9 +362,23 @@ func workFeedPeek(key string) ([]models.WorkItem, bool) {
 // block: the budget is demonstrably back.
 func workFeedPut(key string, items []models.WorkItem) {
 	workFeedCache.Lock()
-	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now()}
+	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now(), posting: anyPosting(items)}
 	delete(workFeedCache.refreshing, key)
 	workFeedCache.Unlock()
+}
+
+// anyPosting is whether a row has a write standing.
+func anyPosting(items []models.WorkItem) bool {
+	for i := range items {
+		for _, actions := range [][]models.WorkAction{items[i].TriageActions, items[i].PlanActions} {
+			for _, a := range actions {
+				if a.Reason == postingReason {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // workFeedBlock records that a rebuild could not reach GitHub because the
