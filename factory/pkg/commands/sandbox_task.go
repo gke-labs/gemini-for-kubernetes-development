@@ -241,6 +241,12 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			fmt.Fprintf(w, "Run name:\t%s\n", orDash(e.RunName))
 			fmt.Fprintf(w, "State:\t%s\n", taskState(e))
 			fmt.Fprintf(w, "Started:\t%s\n", taskStarted(e))
+			if !e.Ended.IsZero() {
+				fmt.Fprintf(w, "Ended:\t%s\n", e.Ended.Local().Format("2006-01-02 15:04:05"))
+			}
+			if e.Reason != "" {
+				fmt.Fprintf(w, "Reason:\t%s\n", e.Reason)
+			}
 			return w.Flush()
 		},
 	}

@@ -21,20 +21,9 @@ import (
 )
 
 // shellLauncher runs the task's CMD env var in the task directory as the
-// task script would run the recipe, in a process group of its own.
+// daemon runs a recipe.
 func shellLauncher(taskDir string, env map[string]string) error {
-	cmd := exec.Command("sh", "-c", envd.TaskScript(envd.NewTaskFiles(taskDir), "("+env["CMD"]+")"))
-	cmd.Dir = taskDir
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	return spool.Start(context.Background(), taskDir, "("+env["CMD"]+")", taskDir, env)
 }
 
 func newTestServer(t *testing.T) (*Client, string) {
@@ -102,7 +91,7 @@ func TestPostFollowAndRead(t *testing.T) {
 		t.Fatalf("log from 4 = %q", got)
 	}
 	e, err := c.Get(ctx, resp.Task.ID)
-	if err != nil || e.ExitCode != "3" {
+	if err != nil || e.ExitCode != "3" || e.Ended.IsZero() {
 		t.Fatalf("Get = %+v, %v", e, err)
 	}
 

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -699,13 +700,39 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 const AnnotationTaskEngine = "sandbox.gemini.google.com/last-task-engine"
 
 func UpdateSandboxTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", false)
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", false, nil)
+}
+
+// RunAnnotation is where a task type records the run it last started in
+// the sandbox (RecordedRun, as JSON), so that whoever started it can find
+// it again by its run name — after a restart, say — instead of guessing
+// which task is its own.
+func RunAnnotation(taskType string) string {
+	return "sandbox.gemini.google.com/" + taskType + "-run"
+}
+
+// RecordedRun is what RunAnnotation holds.
+type RecordedRun struct {
+	// Name is the run name the task was started under, if any.
+	Name      string    `json:"name,omitempty"`
+	Task      string    `json:"task"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
+// MarkSandboxRunStarted is MarkSandboxTaskRunning (or, side, its side-task
+// form) that also records the run at RunAnnotation, in the same update.
+func MarkSandboxRunStarted(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string, side bool, run RecordedRun) error {
+	data, err := json.Marshal(run)
+	if err != nil {
+		return err
+	}
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, side, map[string]string{RunAnnotation(taskType): string(data)})
 }
 
 // MarkSandboxTaskRunning records a task of taskType starting in the
 // sandbox, on engine.
 func MarkSandboxTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, false)
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, false, nil)
 }
 
 // SideTaskStateAnnotation is where a task that borrows an issue's sandbox
@@ -719,16 +746,16 @@ func SideTaskStateAnnotation(taskType string) string {
 // MarkSandboxSideTaskRunning is MarkSandboxTaskRunning for a side task:
 // it records the state at SideTaskStateAnnotation.
 func MarkSandboxSideTaskRunning(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, engine string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, true)
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, "Running", engine, true, nil)
 }
 
 // UpdateSandboxSideTaskAnnotation is UpdateSandboxTaskAnnotation for a side
 // task.
 func UpdateSandboxSideTaskAnnotation(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState string) error {
-	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", true)
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, taskState, "", true, nil)
 }
 
-func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState, engine string, side bool) error {
+func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType, taskState, engine string, side bool, extra map[string]string) error {
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
@@ -766,6 +793,9 @@ func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient
 		}
 		if engine != "" {
 			annotations[AnnotationTaskEngine] = engine
+		}
+		for k, v := range extra {
+			annotations[k] = v
 		}
 		if taskState == "Completed" || taskState == "Failed" {
 			nowStr := time.Now().UTC().Format(time.RFC3339)

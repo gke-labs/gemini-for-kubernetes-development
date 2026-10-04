@@ -97,7 +97,13 @@ func (s *Server) list(ctx context.Context) ([]spool.Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing tasks: %w", err)
 	}
-	return spool.ParseList(string(out)), nil
+	entries := spool.ParseList(string(out))
+	for i := range entries {
+		if entries[i].State != spool.Pending {
+			spool.Overlay(&entries[i], filepath.Join(s.tasksDir, entries[i].ID))
+		}
+	}
+	return entries, nil
 }
 
 func (s *Server) find(ctx context.Context, id string) (spool.Entry, bool, error) {
@@ -282,7 +288,8 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		if !follow {
 			return
 		}
-		if nonEmpty(tf.ExitCodeFile) {
+		st, hasStatus := spool.ReadStatus(taskDir)
+		if (hasStatus && st.State == spool.Exited) || (!hasStatus && nonEmpty(tf.ExitCodeFile)) {
 			// What the task wrote between the last read and its end.
 			n, _ := copyFrom(w, tf.LogFile, offset)
 			if n > 0 {
@@ -290,7 +297,9 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if nonEmpty(tf.PIDFile) && !alive(tf) {
+		// The daemon records the end of a task it started; only one it
+		// did not, started through envd, is judged by its pid.
+		if !hasStatus && nonEmpty(tf.PIDFile) && !alive(tf) {
 			if goneSince.IsZero() {
 				goneSince = time.Now()
 			} else if time.Since(goneSince) > s.deadGrace {
@@ -334,7 +343,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	names := []string{}
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() != spool.EnvFile {
+		if !e.IsDir() && e.Name() != spool.EnvFile && !strings.HasPrefix(e.Name(), ".") {
 			names = append(names, e.Name())
 		}
 	}
@@ -423,6 +432,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Kill {
 		_ = os.WriteFile(tf.ExitCodeFile, []byte(fmt.Sprintf("%d\n", code)), 0o644)
+		spool.RecordKill(taskDir)
 	} else {
 		writeIfMissing(tf.ExitCodeFile, code)
 	}

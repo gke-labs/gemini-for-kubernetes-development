@@ -150,6 +150,9 @@ type Entry struct {
 	Started  time.Time `json:"started,omitempty"`
 	State    State     `json:"state"`
 	ExitCode string    `json:"exit_code,omitempty"`
+	// Ended and Reason are from the task's status, when it has one.
+	Ended  time.Time `json:"ended,omitzero"`
+	Reason string    `json:"reason,omitempty"`
 }
 
 // taskName splits a task directory name into its kind and the time in it.

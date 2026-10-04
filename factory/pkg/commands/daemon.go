@@ -60,6 +60,10 @@ func runDaemon(ctx context.Context) error {
 
 	// Mark any tasks interrupted by a previous container crash/eviction/restart
 	// before envd starts or any new processes/threads can reuse old PIDs.
+	// Tasks with a status first, so theirs records why they ended.
+	for _, id := range spool.MarkInterrupted(envd.DefaultTasksDir) {
+		log.Info("Marked a task of the previous container ended (exit_code=137)", "task", id)
+	}
 	reconcileInterruptedTasks(ctx, envd.DefaultTasksDir)
 
 	// Recipes a client left in the spool: claimed and started here, so the
