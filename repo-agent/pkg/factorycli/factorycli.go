@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -626,7 +627,7 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 			if err != nil {
 				return out, err
 			}
-			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
+			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
 			if err != nil {
 				return out + "\n" + doc, fmt.Errorf("reading the triage's task output: %w", err)
 			}
@@ -676,7 +677,7 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 			if err != nil {
 				return out, err
 			}
-			doc, err := r.exec(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
+			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
 			if err != nil {
 				return out + "\n" + doc, fmt.Errorf("reading the plan's task output: %w", err)
 			}
@@ -783,14 +784,30 @@ func (r *Runner) run(key string, args []string, githubToken string, timeout time
 // exec runs one factory command to its end and returns what it printed,
 // stdout and stderr together.
 func (r *Runner) exec(ctx context.Context, args []string, githubToken string) (string, error) {
+	var out bytes.Buffer
+	err := r.command(ctx, args, githubToken, &out, &out).Run()
+	return out.String(), err
+}
+
+// execStdout runs one factory command to its end and returns its stdout:
+// a document to parse, without the progress factory writes to stderr
+// (waking the sandbox, connecting to it). On failure the stderr follows,
+// for the error's output.
+func (r *Runner) execStdout(ctx context.Context, args []string, githubToken string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	if err := r.command(ctx, args, githubToken, &stdout, &stderr).Run(); err != nil {
+		return stdout.String() + stderr.String(), err
+	}
+	return stdout.String(), nil
+}
+
+func (r *Runner) command(ctx context.Context, args []string, githubToken string, stdout, stderr io.Writer) *exec.Cmd {
 	args = append(args[:len(args):len(args)], "--launcher="+LauncherName)
 	cmd := exec.CommandContext(ctx, r.Binary, args...)
 	cmd.Env = append(os.Environ(), "GITHUB_TOKEN="+githubToken)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd
 }
 
 func tail(s string, n int) string {
@@ -840,11 +857,7 @@ func ExtractTriageYAML(output string) string {
 	if end := strings.Index(rest, "================"); end >= 0 {
 		rest = rest[:end]
 	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, "apiVersion:") {
-		return triageFromTaskOutput(rest)
-	}
-	return rest
+	return NormalizeTriageDraft(strings.TrimSpace(rest))
 }
 
 // triageFromTaskOutput is a Triage task output's spec as the `triage:`

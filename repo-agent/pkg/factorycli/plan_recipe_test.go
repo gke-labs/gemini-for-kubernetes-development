@@ -40,7 +40,7 @@ func startPlan(t *testing.T, bin string, opts PlanOptions) (Result, *fakeProber)
 // the markdown drafts are kept in.
 func TestStartPlanRunsTheRecipe(t *testing.T) {
 	bin, argsLog := fakeFactory(t, `recipe) echo "Running recipe plan..." ;;
-sandbox) cat <<'DOC'
+sandbox) echo "Waiting for sandbox pod fix-repo-5 to become ready..." >&2; cat <<'DOC'
 `+planTaskOutput+`DOC
 ;;
 *) exit 9 ;;`)
