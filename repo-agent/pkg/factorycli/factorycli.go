@@ -442,16 +442,14 @@ type Runner struct {
 // the target sandbox. A busy sandbox is SKIPPED (the reconcile loop is
 // the requeue); an orphaned finished task — the annotation still claims
 // Running because the invocation that launched it died with the old
-// controller — is ADOPTED (its output becomes the result; nothing
-// re-executes) or, for task types with host-side completion steps,
-// corrected and released for a normal launch. Nil disables preflight.
+// controller — has its annotation corrected and launches normally, its
+// task type finishing host-side (fix, review). Recipe runs (triage, plan)
+// are not probed: they are resumed by run name. Nil disables preflight.
 type TaskProber interface {
-	// Probe inspects the newest <dirPrefix>-* task in the sandbox against
+	// Probe inspects the newest <taskType>-* task in the sandbox against
 	// the sandbox's recorded task state for taskType, correcting stale
 	// annotations as a side effect (the watch IsTaskRunning discipline).
-	// An empty dirPrefix is taskType: a recipe's task directories are
-	// recipe-<name>-*, whatever task type it records.
-	Probe(ctx context.Context, namespace, sandboxName, taskType, dirPrefix, outputFile string) (TaskProbe, error)
+	Probe(ctx context.Context, namespace, sandboxName, taskType string) (TaskProbe, error)
 }
 
 // TaskProbe is a probe verdict.
@@ -462,9 +460,6 @@ type TaskProbe struct {
 	// present).
 	State    string
 	ExitCode string
-	// Output is the collected output file content (orphan-completed with
-	// a requested outputFile only).
-	Output string
 }
 
 const (
@@ -473,18 +468,11 @@ const (
 	ProbeOrphanCompleted = "orphan-completed"
 )
 
-// preflight describes the probe for one invocation. When outputFile is
-// set the task type is adoptable (its harvest contract is a file: plan,
-// triage); review and fix finish host-side, so their orphans are
-// corrected and relaunched normally.
+// preflight describes the probe for one invocation, and its harvest.
 type preflight struct {
 	namespace string
 	sandbox   string
 	prefix    string
-	// dirPrefix names the task's directories, when not prefix.
-	dirPrefix  string
-	outputFile string
-	banner     string
 	// harvest, when set, turns the invocation's output and error into the
 	// result's, running more factory commands if it needs to.
 	harvest func(ctx context.Context, out string, err error) (string, error)
@@ -623,9 +611,9 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 	if sandbox == "" {
 		sandbox = opts.IssueURL
 	}
+	// No probe: the run name is the run. Invoked again with it, factory
+	// follows the run or reads its result, and refuses a busy sandbox.
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "recipe-triage",
-		outputFile: TaskOutputFile, banner: triageBanner,
 		harvest: func(ctx context.Context, out string, err error) (string, error) {
 			if err != nil {
 				return out, err
@@ -643,7 +631,7 @@ func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
 // `factory sandbox task output --run-name`, as a typed Plan task output.
 // The result's Output has it between planBanner and a closer, for
 // ExtractPlan. The recipe is the sandbox's main task, of type plan, so
-// last-task-type stays plan; its task directories are recipe-plan-*.
+// last-task-type stays plan.
 func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -673,9 +661,8 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 	if sandbox == "" {
 		sandbox = opts.IssueURL
 	}
+	// No probe, as for triage.
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "plan", dirPrefix: "recipe-plan",
-		outputFile: TaskOutputFile, banner: planBanner,
 		harvest: func(ctx context.Context, out string, err error) (string, error) {
 			if err != nil {
 				return out, err
@@ -702,36 +689,15 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 	r.mu.Unlock()
 
 	// dispatchTask discipline, before taking the slot: busy sandbox →
-	// skip (the next reconcile is the requeue); orphaned finished task →
-	// adopt its output as the result instead of re-executing.
+	// skip (the next reconcile is the requeue). An orphaned finished task
+	// has had its annotation corrected by Probe and launches normally.
 	if pre != nil && r.Prober != nil && pre.sandbox != "" {
 		probeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix, pre.dirPrefix, pre.outputFile)
+		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix)
 		cancel()
-		if err == nil {
-			switch probe.State {
-			case ProbeRunning:
-				klog.Infof("factorycli: sandbox %s/%s busy with an in-flight %s task; skipping launch (key %s)", pre.namespace, pre.sandbox, pre.prefix, key)
-				return false
-			case ProbeOrphanCompleted:
-				if pre.outputFile != "" {
-					klog.Infof("factorycli: adopting orphaned %s result in %s/%s (key %s)", pre.prefix, pre.namespace, pre.sandbox, key)
-					res := Result{FinishedAt: time.Now()}
-					if probe.ExitCode == "0" {
-						res.Output = pre.banner + "\n" + probe.Output + "\n" + bannerCloser + "\n"
-					} else {
-						res.Err = fmt.Errorf("adopted %s task exited %s", pre.prefix, probe.ExitCode)
-						res.Output = probe.Output
-					}
-					r.mu.Lock()
-					r.results[key] = res
-					r.mu.Unlock()
-					return true
-				}
-				// Host-side task types: the annotation correction already
-				// happened in Probe; fall through to a normal launch
-				// against the settled sandbox.
-			}
+		if err == nil && probe.State == ProbeRunning {
+			klog.Infof("factorycli: sandbox %s/%s busy with an in-flight %s task; skipping launch (key %s)", pre.namespace, pre.sandbox, pre.prefix, key)
+			return false
 		}
 	}
 

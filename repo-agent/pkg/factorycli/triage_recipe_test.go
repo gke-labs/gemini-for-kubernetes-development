@@ -93,22 +93,6 @@ func TestStartTriageRecipeFailure(t *testing.T) {
 	}
 }
 
-// A recipe triage that finished while no repo-agent was waiting is
-// adopted from its task output.
-func TestAdoptedRecipeTriage(t *testing.T) {
-	r := &Runner{Binary: "/nonexistent-factory",
-		Prober:  &fakeProber{probe: TaskProbe{State: ProbeOrphanCompleted, ExitCode: "0", Output: triageTaskOutput}},
-		running: map[string]struct{}{}, results: map[string]Result{}}
-	r.StartTriage("alice/triage-repo-5", TriageOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u", RunName: "auto/b/5"})
-	res, ok := r.LastResult("alice/triage-repo-5")
-	if !ok || res.Err != nil {
-		t.Fatalf("result = %+v, %v", res, ok)
-	}
-	if got := ExtractTriageYAML(res.Output); !strings.Contains(got, "assessment: A crash on start.") {
-		t.Errorf("draft = %q", got)
-	}
-}
-
 // A Triage task output, whole or behind lines that are not YAML, becomes
 // the triage: block; any other draft is left as it is.
 func TestNormalizeTriageDraft(t *testing.T) {
