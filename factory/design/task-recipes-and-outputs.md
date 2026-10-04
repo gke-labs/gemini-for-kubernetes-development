@@ -275,9 +275,9 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 4. Declare actions in `triage.yaml` and `plan.yaml`, and print them in `sandbox task output`.
 
 **Phase 2: repo-agent.**
-1. Keep the task output document itself as the draft (a `task-output` annotation), instead of converting it to a `triage:` block or plan markdown. Editing writes back into the document's `field`.
-2. Return `actions: [{verb, label, enabled, reason}]` on each work item: the document's actions intersected with the board's state (published, rejected, approved, a task running, the viewer's access).
-3. One endpoint, `POST /board/:board/issues/:id/actions/:verb`. Draft verbs act on the annotation. Apply and follow-up verbs file a Request that the controller executes with `factory apply --action`, using the clicker's token, as clicks already are executed. The review-api image does not carry the factory binary.
+1. **Built.** Keep the task output document next to the draft: the harvest stores it without its spec (`board.gemini.google.com/triage-output`, `…/plan-output`), since the draft is the spec and edits change the draft. A draft stored before documents were kept, or a document that declares no actions, offers the kind's defaults. `apply` (step 3) reassembles the document from the two.
+2. **Built.** Return `triageActions` and `planActions: [{verb, run, label, field, format, enabled, reason}]` on each issue row (a row can carry both drafts): the document's actions the board executes, with what the board's state says of each (labels added, posted, being revised, a task running).
+3. One endpoint, `POST /board/:board/issues/:id/actions/:verb` with `{kind, run, text}`. **Built:** it refuses an action that is not offered (400) or not enabled (409), and runs the handler the board's buttons already call; plan `comment` is new and marks its comment as `factory apply` does, so neither posts it twice. **Next:** apply and follow-up verbs file a Request that the controller executes with `factory apply --action`, using the clicker's token, as clicks already are executed. The review-api image does not carry the factory binary.
 4. The UI renders buttons and the editor from `actions`, replacing the hard-coded triage and plan controls. Board-only steps that are not about the result, such as plan feedback (a rerun with `--feedback`), stay board verbs.
 5. Remove the board's own GitHub writes for triage publish once `comment` and `label` run through `apply`.
 

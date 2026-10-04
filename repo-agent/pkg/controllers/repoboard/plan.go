@@ -68,6 +68,9 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		if res.Err == nil && sb != nil {
 			if plan := factorycli.ExtractPlan(res.Output); plan != "" {
 				annotations[AnnotationPlanDraft] = plan
+				setOrDelete(annotations, factorycli.AnnotationPlanOutput, factorycli.PlanTaskOutput(res.Output))
+				// A new plan has not been posted.
+				delete(annotations, factorycli.AnnotationPlanCommented)
 				annotations[AnnotationPlannedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				annotations[AnnotationExecutor] = req.member
@@ -164,4 +167,13 @@ func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 		}
 		r.ensurePlan(ctx, work, planRequest{issue: n, member: sb.GetNamespace()})
 	}
+}
+
+// setOrDelete sets key to value, or removes it for "".
+func setOrDelete(annotations map[string]string, key, value string) {
+	if value == "" {
+		delete(annotations, key)
+		return
+	}
+	annotations[key] = value
 }

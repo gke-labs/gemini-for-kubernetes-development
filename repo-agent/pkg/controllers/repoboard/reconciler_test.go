@@ -1103,6 +1103,8 @@ func TestPlanLifecycle(t *testing.T) {
 				"htmlURL": "https://github.com/test/repo/issues/42",
 				"sandbox.gemini.google.com/last-task-type":  "plan",
 				"sandbox.gemini.google.com/last-task-state": "Completed",
+				// The last plan was posted; this one is not.
+				factorycli.AnnotationPlanCommented: "2026-10-01T00:00:00Z",
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -1110,7 +1112,7 @@ func TestPlanLifecycle(t *testing.T) {
 	fake2 := newFakeLauncher()
 	fake2.results["alice/plan-repo-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "banner\n================== ISSUE PLAN ==================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
+		Output:     "banner\n================== ISSUE PLAN ==================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nactions:\n  - verb: comment\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
 	}
 	planReq := click(boardv1alpha1.VerbPlan, 42)
 	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
@@ -1123,6 +1125,11 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationPlanDraft]).To(gomega.ContainSubstring("Do the thing."))
 	g.Expect(updated.GetAnnotations()[AnnotationPlannedAt]).NotTo(gomega.BeEmpty())
+	// The task output is kept for its actions, without the spec the draft
+	// already is.
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationPlanOutput]).To(gomega.And(
+		gomega.ContainSubstring("verb: comment"), gomega.Not(gomega.ContainSubstring("Do the thing."))))
+	g.Expect(updated.GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationPlanCommented))
 
 	// Draft stored: the click is settled and the next reconcile does not
 	// relaunch.

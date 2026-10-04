@@ -66,6 +66,9 @@ sandbox) echo "Waiting for sandbox pod fix-repo-5 to become ready..." >&2; cat <
 	if got, want := ExtractTriageYAML(res.Output), "triage:\n  labels:\n    - bug\n  assessment: A crash on start."; got != want {
 		t.Errorf("draft = %q, want %q", got, want)
 	}
+	if doc := TriageTaskOutput(res.Output); !strings.HasPrefix(doc, "apiVersion: ") || strings.Contains(doc, "spec:") {
+		t.Errorf("kept document = %q, want it without its spec", doc)
+	}
 	args := readArgs(t, argsLog)
 	if len(args) != 2 {
 		t.Fatalf("commands run = %q, want recipe then sandbox task output", args)
