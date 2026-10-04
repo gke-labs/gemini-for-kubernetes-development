@@ -137,7 +137,7 @@ actions:
   - {verb: reject}
 ```
 
-**Verbs come from a closed registry in `pkg/taskoutput`.** An action names a verb; it never carries code, a command line, or a URL. There are three classes of verb:
+**Verbs come from a registry.** An action names a verb; it never carries code, a command line, or a URL. The registry starts as the built-in verbs in `pkg/taskoutput`; operators can extend it with verbs defined as REST calls (see *Extensible verbs* below), but a task output can only name them. There are three classes of verb:
 
 | Class | Verbs | Who executes it | Meaning |
 |---|---|---|---|
@@ -162,6 +162,36 @@ A UI shows the intersection. A verb it doesn't know is hidden, as the runner ign
 - **Defaults.** A document without `actions:` (from an older runner, or written by hand) gets its kind's defaults from the registry: Triage `edit, label, comment, reject`; Plan `edit, comment, run fix, reject`.
 - **`factory apply -f` without `--action`** runs the document's apply-class actions, which is today's behaviour: a Triage still gets labels and a comment.
 - **Agent-filled parameters are later.** An agent may eventually fill in a declared verb's parameters, for example `close-duplicate: {of: 123}`. It may never add a verb the recipe didn't declare; the runner enforces that when it writes `task-output.yaml`.
+
+**Extensible verbs (follow-up).** A verb is, at bottom, a REST call against the target: which endpoint to call, with which parameters. Rather than adding Go code for each new verb, the registry accepts verb definitions of that shape:
+
+```yaml
+# A verb definition: in factory's config, or a recipe's verbs:. Never in a task output.
+verbs:
+  close-duplicate:
+    class: apply
+    kinds: [Triage]
+    label: Close as duplicate
+    params:
+      of: {type: integer, required: true}    # from the action, or filled by the agent
+    auth: github                             # the caller's GitHub token
+    calls:
+      - method: POST
+        path: /repos/{{ .Target.Owner }}/{{ .Target.Repo }}/issues/{{ .Target.Number }}/comments
+        body: {body: "Duplicate of #{{ .Params.of }}"}
+        idempotency: marker                  # skip if the marker comment exists
+      - method: PATCH
+        path: /repos/{{ .Target.Owner }}/{{ .Target.Repo }}/issues/{{ .Target.Number }}
+        body: {state: closed, state_reason: duplicate}
+```
+
+- **Where definitions live.** In config the operator controls (factory's config; a board's verb set for repo-agent), or in a recipe, which is as trusted as whoever runs it. Never in the task output, which is written next to an agent that read untrusted text.
+- **What a template may read.** The document's `target` (owner, repo, number, URL), its `spec` fields, and the action's typed `params`. Values are escaped for where they go: path segments are path-escaped, and bodies are built as JSON, never by string concatenation.
+- **Where calls may go.** `auth: github` sends the caller's token only to the GitHub API host, and `path` is relative to it. A verb that calls another service names a host the operator has allowed and a credential of its own; the GitHub token never leaves for another host.
+- **Parameters are typed and validated** before any call: the type, `required`, and an optional `enum` or pattern. A document or click that supplies a parameter the definition doesn't declare is refused.
+- **Idempotency is declared**, for example `marker` (a hidden comment marker, as part 4) or `natural` (the call is idempotent itself, as adding labels is). A verb without either is offered only for explicit clicks, never by `apply -f` without `--action`.
+- **Dry run** prints each resolved call, method, path and body, without sending it.
+- **Built-in verbs stay Go code** where they need logic a template can't express (finding an existing marker comment, refusing a PR target), but are described by the same definition shape, so callers render built-in and defined verbs alike.
 
 ### Addressing: one sandbox per issue
 
@@ -251,6 +281,11 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 4. The UI renders buttons and the editor from `actions`, replacing the hard-coded triage and plan controls. Board-only steps that are not about the result, such as plan feedback (a rerun with `--feedback`), stay board verbs.
 5. Remove the board's own GitHub writes for triage publish once `comment` and `label` run through `apply`.
 
+**Phase 3: extensible verbs (follow-up).**
+1. In factory: the verb definition schema, loading definitions from config and from a recipe's `verbs:`, the template and parameter validation, the host and credential rules, and `apply --action` executing defined verbs (with `--dry-run` printing the resolved calls).
+2. Describe the built-in verbs in the same shape, so `sandbox task output` and callers list every verb the same way.
+3. In repo-agent: a board's verb set (which defined verbs its documents may offer), and the work item's `actions` carrying each verb's label and parameters, so the UI can prompt for a parameter such as `of`.
+
 ---
 
 ## Pitfalls & Mitigations
@@ -260,7 +295,8 @@ Factory first, then repo-agent. The factory phase stands alone: `apply --action`
 | **Image skew.** A reused sandbox keeps the image it was created with. An image without `factory recipe exec`, or with an older recipe schema, fails the task. | Decided: recreate the sandbox. There is no fallback to old task scripts, and recipes are not stripped down for old runners. The spool falls back to envd only for sandboxes whose daemon doesn't claim tasks. |
 | **The applied marker is best-effort.** `task-output.applied` is written after apply. If writing it fails, a rerun applies again. | Apply is idempotent through the comment marker and label semantics, so applying twice is harmless. |
 | **Agent output is untrusted.** | Apply acts only on the parsed fields of a known kind, against the document's `target`, using the caller's token. A dry run shows exactly what would be written. |
-| **Actions in an untrusted document.** An agent, or an injected issue, could try to offer a destructive action. | Actions name verbs from a closed registry and carry no code. A document can only narrow what its recipe declares, `apply --action` re-checks the verb against the kind, and the caller still decides what is available. |
+| **Actions in an untrusted document.** An agent, or an injected issue, could try to offer a destructive action. | Actions name verbs from the registry and carry no code. A document can only narrow what its recipe declares, `apply --action` re-checks the verb against the kind, and the caller still decides what is available. |
+| **Defined verbs make REST calls.** A definition, or values interpolated into it, could reach an unintended endpoint or leak the token. | Definitions come only from operator config or a recipe, never a task output. Values are escaped and typed. The GitHub token goes only to the GitHub API host; other hosts need the operator's allowance and their own credential. |
 | **Two tasks in one sandbox.** | The busy check refuses to start a second one. Side-task state annotations keep each task's status separate. |
 | **"Newest" is ambiguous** when several runs exist. | Programs use `--run-name`. "Newest run of this recipe and URL" is only the human `--apply` resume rule. |
 
