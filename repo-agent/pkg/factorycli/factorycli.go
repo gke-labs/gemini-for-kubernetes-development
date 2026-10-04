@@ -416,6 +416,9 @@ type Launcher interface {
 	// to a conversation's existing sandbox and pushes the notes that
 	// conversation wrote to the member's fork.
 	StartSaveNotes(key string, opts SaveNotesOptions) bool
+	// StartApply launches `factory apply --action`: one write of a draft's
+	// task output to its issue, with the member's token.
+	StartApply(key string, opts ApplyOptions) bool
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.

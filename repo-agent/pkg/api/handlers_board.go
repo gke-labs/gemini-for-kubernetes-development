@@ -628,6 +628,8 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 	}
 
+	s.markApplies(ctx, board, items)
+
 	work := make([]models.WorkItem, 0, len(items))
 	for _, item := range items {
 		work = append(work, *item)
@@ -2043,68 +2045,6 @@ type triageSuggestion struct {
 		Duplicates []string `yaml:"duplicates"`
 		Assessment string   `yaml:"assessment"`
 	} `yaml:"triage"`
-}
-
-// publishBoardTriage applies a stored triage suggestion to the issue under
-// the clicker's token: labels plus an assessment comment. The suggestion
-// stays viewable; the row settles to the quiet triaged stage.
-func (s *Server) publishBoardTriage(c *gin.Context) {
-	s.applyBoardTriage(c, true, true)
-}
-
-// applyBoardTriage applies a stored triage suggestion's labels, its
-// assessment comment, or both. Labels stamp the suggestion labeled; the
-// comment publishes it, and parks the sandbox.
-func (s *Server) applyBoardTriage(c *gin.Context, labels, comment bool) {
-	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-
-	draftSB, _ := s.findTriageDraft(c, board, owner, repo, number)
-	if draftSB == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to publish"})
-		return
-	}
-
-	suggestion := &triageSuggestion{}
-	if err := yamlv3.Unmarshal([]byte(factorycli.TriageDraft(draftSB)), suggestion); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "triage suggestion is not parseable", "details": err.Error()})
-		return
-	}
-
-	gh := githubClientForToken(ctx, token)
-	if labels && len(suggestion.Triage.Labels) > 0 {
-		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, suggestion.Triage.Labels); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply labels", "details": err.Error()})
-			return
-		}
-	}
-	if labels {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), factorycli.AnnotationTriageLabeled, nowRFC3339()); err != nil {
-			klog.FromContext(ctx).Info("failed to mark triage labeled", "issue", number, "err", err)
-		}
-	}
-	if !comment {
-		c.Status(http.StatusOK)
-		return
-	}
-	if suggestion.Triage.Assessment != "" {
-		body := "**Triage:** " + suggestion.Triage.Assessment
-		if suggestion.Triage.Priority != "" {
-			body += "\n\nSuggested priority: " + suggestion.Triage.Priority
-		}
-		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{Body: &body}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to post triage comment", "details": err.Error()})
-			return
-		}
-	}
-
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, draftSB.GetNamespace(), draftSB.GetName(), annoTriagePublished, nowRFC3339()); err != nil {
-		klog.FromContext(ctx).Info("failed to mark triage published", "issue", number, "err", err)
-	}
-	s.scaledownTriaged(ctx, draftSB)
-	c.Status(http.StatusOK)
 }
 
 // findTriageDraft locates the sandbox holding issue number's triage draft:

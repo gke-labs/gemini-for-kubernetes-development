@@ -89,6 +89,9 @@ type WorkAction struct {
 	// (done already, or the agent is busy); Reason says why.
 	Enabled bool   `json:"enabled"`
 	Reason  string `json:"reason,omitempty"`
+	// Error is why the last attempt at this write failed, until one
+	// succeeds.
+	Error string `json:"error,omitempty"`
 }
 
 // WorkItem is one row of the board work feed: an issue or PR merged with

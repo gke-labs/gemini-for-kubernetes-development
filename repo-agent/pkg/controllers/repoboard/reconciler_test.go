@@ -57,6 +57,7 @@ type fakeLaunch struct {
 	RunOpts       *factorycli.RunOptions
 	ResearchOpts  *factorycli.ResearchOptions
 	SaveNotesOpts *factorycli.SaveNotesOptions
+	ApplyOpts     *factorycli.ApplyOptions
 }
 
 type fakeLauncher struct {
@@ -170,6 +171,16 @@ func (f *fakeLauncher) StartSaveNotes(key string, opts factorycli.SaveNotesOptio
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, SaveNotesOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartApply(key string, opts factorycli.ApplyOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, ApplyOpts: &opts})
 	return true
 }
 

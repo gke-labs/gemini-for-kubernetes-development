@@ -108,6 +108,7 @@ const (
 	AnnotationEngine        = "board.gemini.google.com/engine"
 	reviewStatePending      = "pending"
 	defaultRequeue          = time.Minute
+	applyRequeue            = 5 * time.Second
 	launchRetryBackoff      = 30 * time.Minute
 	prWatchRelaunchInterval = 10 * time.Minute
 	draftPRInstruction      = "Open the pull request as a draft pull request."
@@ -316,6 +317,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, claim := range mail.research {
 		namespaces[claim.member] = true
 	}
+	for _, req := range mail.applies {
+		namespaces[req.Spec.Member] = true
+	}
 	for _, plan := range reviews {
 		if plan.executor != "" {
 			namespaces[plan.executor] = true
@@ -348,6 +352,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
 	}
+	r.ensureApplies(ctx, work, mail.applies)
 
 	// PR follow-up claims convert (or launch) BEFORE the resume passes:
 	// the ownership annotations they stamp are what stops resumeReviews
@@ -395,6 +400,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	r.updateCounts(ctx, work)
+	// A write is a GitHub call or two, and nothing wakes the board when
+	// the runner finishes it: come back for its result in seconds rather
+	// than leave the button saying "posting" for a minute.
+	if len(mail.applies) > 0 {
+		return ctrl.Result{RequeueAfter: applyRequeue}, nil
+	}
 	return ctrl.Result{RequeueAfter: defaultRequeue}, nil
 }
 
@@ -620,6 +631,7 @@ type mailbox struct {
 	prTasks  []prTaskClaim
 	runbooks []runbookClaim
 	research []researchClaim
+	applies  []*boardv1alpha1.Request
 }
 
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet

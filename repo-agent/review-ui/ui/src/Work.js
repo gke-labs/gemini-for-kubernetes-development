@@ -257,10 +257,14 @@ const DRAFT_VERBS = {
 // DraftActions: the buttons for what a draft's task output offers (a work
 // item's triageActions or planActions), in the document's order. One the
 // draft's state rules out just now stays, disabled, saying why.
+// A write is the controller's (factory apply): filed, it shows as posting
+// until done; failed, it says why and can be clicked again.
 function DraftActions({ kind, actions, number, readOnly, onEdit, onTake }) {
   const verbs = DRAFT_VERBS[kind];
-  return (actions || []).filter(a => verbs[a.verb] && !(readOnly && verbs[a.verb].writes)).map(a => {
+  const shown = (actions || []).filter(a => verbs[a.verb] && !(readOnly && verbs[a.verb].writes));
+  const buttons = shown.map(a => {
     const v = verbs[a.verb];
+    const label = a.label || v.label;
     return (
       <button key={a.verb + (a.run || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
         disabled={!a.enabled} title={a.enabled ? v.title : `Not now: ${a.reason}`}
@@ -268,9 +272,15 @@ function DraftActions({ kind, actions, number, readOnly, onEdit, onTake }) {
           if (a.verb === 'edit') { onEdit(); return; }
           if (v.confirm && !window.confirm(v.confirm(number))) return;
           onTake(a);
-        }}>{a.label || v.label}</button>
+        }}>{a.reason === 'posting' ? `${label}…` : label}</button>
     );
   });
+  const failures = shown.filter(a => a.error).map(a => (
+    <div key={`err-${a.verb}`} style={{ color: '#c62828', fontSize: '12px', marginTop: '4px' }}>
+      {a.label || verbs[a.verb].label} failed: {a.error}
+    </div>
+  ));
+  return [...buttons, ...failures];
 }
 
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, readOnly, runState, onRunStarted }) {

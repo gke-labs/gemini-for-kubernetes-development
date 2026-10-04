@@ -552,6 +552,19 @@ describe('WorkRow draft actions', () => {
         expect(posted()).toEqual([['/api/board/myboard/issues/7/actions/comment', { kind: 'Triage', run: '', text: '' }]]);
     });
 
+    test('a write in flight says so, and a failed one says why', async () => {
+        global.fetch = ok();
+        await open({
+            ...triage, triageActions: [
+                { verb: 'label', label: 'Add labels', enabled: false, reason: 'posting' },
+                { verb: 'comment', label: 'Post assessment', enabled: true, error: '403 Resource not accessible' },
+            ],
+        });
+        expect(findButton('Add labels…').disabled).toBe(true);
+        expect(findButton('Post assessment').disabled).toBe(false);
+        expect(container.textContent).toContain('Post assessment failed: 403 Resource not accessible');
+    });
+
     test('a read-only board does not offer writing to GitHub', async () => {
         global.fetch = ok();
         await open(triage, { readOnly: true });
