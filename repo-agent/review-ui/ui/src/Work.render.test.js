@@ -565,11 +565,14 @@ describe('WorkRow draft actions', () => {
         expect(container.textContent).toContain('Post assessment failed: 403 Resource not accessible');
     });
 
-    test('a read-only board does not offer writing to GitHub', async () => {
+    test('a draft\'s writes are what the API says the viewer may do', async () => {
         global.fetch = ok();
-        await open(triage, { readOnly: true });
-        expect(findButton('Add labels')).toBeUndefined();
-        expect(findButton('Post assessment')).toBeUndefined();
+        const noTriage = { ...triage, triageActions: triage.triageActions.map(a => (a.verb === 'label'
+            ? { ...a, enabled: false, reason: 'needs triage access on the repo' } : a)) };
+        await open(noTriage);
+        expect(findButton('Add labels').disabled).toBe(true);
+        expect(findButton('Add labels').title).toBe('Not now: needs triage access on the repo');
+        expect(findButton('Post assessment').disabled).toBe(false);
         expect(findButton('Reject')).toBeDefined();
     });
 

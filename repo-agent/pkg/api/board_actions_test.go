@@ -29,6 +29,8 @@ func issueFeed(number int) map[string]string {
 			{"number": ` + itoa(number) + `, "title": "an issue", "html_url": "https://github.com/test/repo/issues/` + itoa(number) + `", "updated_at": "2026-09-16T09:00:00Z"}
 		]`,
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
+		// Triage, not push: labelling an issue needs no more.
+		"https://api.github.com/repos/test/repo": `{"permissions": {"triage": true, "pull": true}}`,
 	}
 }
 
@@ -262,5 +264,42 @@ func TestTriageActions(t *testing.T) {
 	}
 	if a := h.annotations(); a[factorycli.AnnotationTriageDraft] != "" || a[factorycli.AnnotationTriageLabeled] != "" {
 		t.Errorf("reject left %v", a)
+	}
+}
+
+// Without triage access the viewer may still post a triage's assessment —
+// anyone may comment on a public issue — but not add its labels, which
+// the feed says and the endpoint holds to.
+func TestTriageActionsWithoutTriageAccess(t *testing.T) {
+	triageSandbox := sandboxCR("fix-repo-20",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			factorycli.AnnotationTriageDraft:     "triage:\n  labels: [bug]\n  assessment: A crash.",
+			"board.gemini.google.com/triaged-at": "2026-09-17T00:00:00Z",
+			"htmlURL":                            "https://github.com/test/repo/issues/20",
+		}, 1)
+	gh := issueFeed(20)
+	gh["https://api.github.com/repos/test/repo"] = `{"permissions": {"pull": true}}`
+	_, r, dyn, rt := boardTestServerWithRT(t, gh, boardCR(), triageSandbox)
+	h := actionHarness{t: t, r: r, dyn: dyn, rt: rt, number: 20}
+
+	actions := h.row().TriageActions
+	label, _ := findWorkAction(actions, "label", "")
+	if label.Enabled || label.Reason != needsTriageAccess {
+		t.Errorf("label = %+v, want disabled for want of triage access", label)
+	}
+	if comment, _ := findWorkAction(actions, "comment", ""); !comment.Enabled {
+		t.Errorf("comment = %+v, want enabled", comment)
+	}
+
+	if w := h.act("Triage", "label", "", ""); w.Code != http.StatusConflict {
+		t.Errorf("label: got %d %s, want 409", w.Code, w.Body.String())
+	}
+	if w := h.act("Triage", "comment", "", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("comment: %d %s", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 || reqs[0].Spec.Apply.Action != "comment" {
+		t.Errorf("filed %+v, want the comment only", reqs)
 	}
 }
