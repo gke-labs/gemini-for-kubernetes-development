@@ -11,80 +11,105 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
-// Apply does what a document asks of GitHub, with gh's token. With dryRun
-// it says what it would do and does nothing.
-func Apply(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
-	switch doc.Kind {
-	case "Triage":
-		return applyTriage(ctx, gh, doc, dryRun, out)
-	case "Plan":
-		return applyPlan(ctx, gh, doc, dryRun, out)
-	}
-	return fmt.Errorf("cannot apply task output kind %q", doc.Kind)
-}
+type applyFunc func(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error
 
-func applyTriage(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
-	t, err := doc.TriageSpec()
-	if err != nil {
-		return err
+// Apply does what a document asks of GitHub, with gh's token: each apply
+// action it offers, in order. With dryRun it says what it would do and
+// does nothing.
+func Apply(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	if !Known(doc.Kind) {
+		return fmt.Errorf("cannot apply task output kind %q", doc.Kind)
 	}
-	owner, repo, num, isPR, err := parseItemURL(doc.Target.URL)
-	if err != nil {
-		return err
-	}
-	if isPR {
-		return fmt.Errorf("a Triage targets an issue, not %s", doc.Target.URL)
-	}
-	doing := func(present, conditional string) string {
-		if dryRun {
-			return "Would " + conditional
-		}
-		return present
-	}
-	if len(t.Labels) > 0 {
-		fmt.Fprintf(out, "%s labels %v to %s\n", doing("Adding", "add"), t.Labels, doc.Target.URL)
-		if !dryRun {
-			if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, t.Labels); err != nil {
-				return fmt.Errorf("adding labels: %w", err)
+	for _, a := range doc.Offered() {
+		if v := verbs[a.Verb]; v.class == ClassApply {
+			if err := v.apply(ctx, gh, doc, dryRun, out); err != nil {
+				return err
 			}
 		}
-	}
-	if t.Assessment == "" {
-		return nil
-	}
-	body := TriageComment(t) + marker(doc)
-	if doc.Source.Task != "" {
-		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
-		if err != nil {
-			return err
-		}
-		if posted {
-			fmt.Fprintf(out, "The triage of task %s is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
-			return nil
-		}
-	}
-	fmt.Fprintf(out, "%s on %s:\n%s\n", doing("Commenting", "comment"), doc.Target.URL, indent(TriageComment(t)))
-	if dryRun {
-		return nil
-	}
-	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
-		return fmt.Errorf("posting the triage comment: %w", err)
 	}
 	return nil
 }
 
-// applyPlan posts the plan on its issue, once.
-func applyPlan(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
-	p, err := doc.PlanSpec()
-	if err != nil {
+// ApplyAction does one apply action the document offers.
+func ApplyAction(ctx context.Context, gh *githubv39.Client, doc *Document, verbName string, dryRun bool, out io.Writer) error {
+	if _, err := doc.Offer(verbName, ""); err != nil {
 		return err
 	}
+	v := verbs[verbName]
+	if v.class != ClassApply {
+		return fmt.Errorf("%s is a %s action, not one apply writes", verbName, v.class)
+	}
+	return v.apply(ctx, gh, doc, dryRun, out)
+}
+
+// issueTarget is the document's target, which must be an issue.
+func issueTarget(doc *Document) (owner, repo string, num int, err error) {
 	owner, repo, num, isPR, err := parseItemURL(doc.Target.URL)
 	if err != nil {
-		return err
+		return "", "", 0, err
 	}
 	if isPR {
-		return fmt.Errorf("a Plan targets an issue, not %s", doc.Target.URL)
+		return "", "", 0, fmt.Errorf("a %s targets an issue, not %s", doc.Kind, doc.Target.URL)
+	}
+	return owner, repo, num, nil
+}
+
+func doing(dryRun bool, present, conditional string) string {
+	if dryRun {
+		return "Would " + conditional
+	}
+	return present
+}
+
+// applyLabels adds a Triage's labels to its issue.
+func applyLabels(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	t, err := doc.TriageSpec()
+	if err != nil {
+		return err
+	}
+	owner, repo, num, err := issueTarget(doc)
+	if err != nil {
+		return err
+	}
+	if len(t.Labels) == 0 {
+		return nil
+	}
+	fmt.Fprintf(out, "%s labels %v to %s\n", doing(dryRun, "Adding", "add"), t.Labels, doc.Target.URL)
+	if dryRun {
+		return nil
+	}
+	if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, t.Labels); err != nil {
+		return fmt.Errorf("adding labels: %w", err)
+	}
+	return nil
+}
+
+// applyComment comments the result on its issue, once: a Triage's
+// assessment, a Plan's plan.
+func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	var comment, what string
+	switch doc.Kind {
+	case "Triage":
+		t, err := doc.TriageSpec()
+		if err != nil {
+			return err
+		}
+		if t.Assessment == "" {
+			return nil
+		}
+		comment, what = TriageComment(t), "triage"
+	case "Plan":
+		p, err := doc.PlanSpec()
+		if err != nil {
+			return err
+		}
+		comment, what = PlanComment(p), "plan"
+	default:
+		return fmt.Errorf("cannot comment a %s", doc.Kind)
+	}
+	owner, repo, num, err := issueTarget(doc)
+	if err != nil {
+		return err
 	}
 	if doc.Source.Task != "" {
 		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
@@ -92,18 +117,17 @@ func applyPlan(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun 
 			return err
 		}
 		if posted {
-			fmt.Fprintf(out, "The plan of task %s is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
+			fmt.Fprintf(out, "The %s of task %s is already on %s; not commenting again\n", what, doc.Source.Task, doc.Target.URL)
 			return nil
 		}
 	}
+	fmt.Fprintf(out, "%s on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(comment))
 	if dryRun {
-		fmt.Fprintf(out, "Would comment on %s:\n%s\n", doc.Target.URL, indent(PlanComment(p)))
 		return nil
 	}
-	fmt.Fprintf(out, "Commenting the plan on %s\n", doc.Target.URL)
-	body := PlanComment(p) + marker(doc)
+	body := comment + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
-		return fmt.Errorf("posting the plan comment: %w", err)
+		return fmt.Errorf("posting the %s comment: %w", what, err)
 	}
 	return nil
 }

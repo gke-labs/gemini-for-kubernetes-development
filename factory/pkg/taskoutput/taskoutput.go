@@ -29,11 +29,13 @@ const (
 	APIVersion  = "factory.gemini.google.com/v1alpha1"
 )
 
-// Decl declares a task's result: which kind it is and the task-directory
-// file the agent wrote it to.
+// Decl declares a task's result: which kind it is, the task-directory
+// file the agent wrote it to, and what can be done with it (none: its
+// kind's defaults).
 type Decl struct {
-	Kind string `yaml:"kind" json:"kind"`
-	From string `yaml:"from" json:"from"`
+	Kind    string   `yaml:"kind" json:"kind"`
+	From    string   `yaml:"from" json:"from"`
+	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // Document is one result.
@@ -43,6 +45,8 @@ type Document struct {
 	Target     Target    `yaml:"target" json:"target"`
 	Source     Source    `yaml:"source,omitempty" json:"source,omitempty"`
 	Spec       yaml.Node `yaml:"spec" json:"-"`
+	// Actions are what can be done with the result (Offered).
+	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
 // Target is the issue or PR the result is about.

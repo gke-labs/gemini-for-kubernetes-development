@@ -176,6 +176,9 @@ func (r *Recipe) Validate() error {
 		if !safeFileName(to.From) {
 			return fmt.Errorf("task-output from %q must be a plain file name", to.From)
 		}
+		if err := taskoutput.ValidateActions(to.Kind, to.Actions); err != nil {
+			return fmt.Errorf("task-output: %w", err)
+		}
 	}
 	for _, o := range r.Outputs {
 		if !safeFileName(o) {

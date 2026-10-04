@@ -113,3 +113,15 @@ outputs:
 task-output:
   kind: Plan
   from: plan-output.md
+  # What can be done with the result: whoever shows it builds its controls
+  # from these (factory apply --action does the writes and the fix).
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: comment
+      label: Post plan
+    - verb: run
+      run: fix
+      label: Fix with this plan
+    - verb: reject
