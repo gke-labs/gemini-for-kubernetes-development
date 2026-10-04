@@ -161,7 +161,18 @@ var taskName = regexp.MustCompile(`^(.+)-(\d{8}-\d{6})(?:-[0-9a-f]+)?$`)
 // restarted under it — is given 137, as AttachTask and watch's recovery
 // give it, so it does not look running forever.
 func List(ctx context.Context, r Remote) ([]Entry, error) {
-	script := fmt.Sprintf(`for d in %s/*/ %s/*/; do
+	var out bytes.Buffer
+	if err := r.Exec(ctx, ListScript(IncomingDir, envd.DefaultTasksDir), "/workspaces", nil, nil, &out, nil); err != nil {
+		return nil, err
+	}
+	return ParseList(out.String()), nil
+}
+
+// ListScript is the shell script List runs, printing a line per task in
+// incomingDir and tasksDir for ParseList; the daemon's task server runs
+// it too, so both report a task the same way.
+func ListScript(incomingDir, tasksDir string) string {
+	return fmt.Sprintf(`for d in %s/*/ %s/*/; do
   [ -d "$d" ] || continue
   case "$d" in
   %s/*) s=pending ;;
@@ -174,15 +185,11 @@ func List(ctx context.Context, r Remote) ([]Entry, error) {
     else s=claimed; fi ;;
   esac
   printf '%%s\t%%s\t%%s\n' "$s" "$(basename "$d")" "$(tr -d '\n' < "${d}%s" 2>/dev/null)"
-done`, IncomingDir, envd.DefaultTasksDir, IncomingDir, envd.BuildCheckPidCmd(`"${d}pid"`, `"${d}start_time"`), TaskFile)
-	var out bytes.Buffer
-	if err := r.Exec(ctx, script, "/workspaces", nil, nil, &out, nil); err != nil {
-		return nil, err
-	}
-	return parseList(out.String()), nil
+done`, incomingDir, tasksDir, incomingDir, envd.BuildCheckPidCmd(`"${d}pid"`, `"${d}start_time"`), TaskFile)
 }
 
-func parseList(out string) []Entry {
+// ParseList reads ListScript's output, newest task first.
+func ParseList(out string) []Entry {
 	var entries []Entry
 	for _, line := range strings.Split(out, "\n") {
 		parts := strings.SplitN(line, "\t", 3)

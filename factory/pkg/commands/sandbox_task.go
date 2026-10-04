@@ -1,9 +1,9 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -15,11 +15,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
@@ -44,24 +44,24 @@ func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 // annotation is that URL, or for an issue, the one labelled with it. When
 // several are it asks for the name rather than connect to — and so wake —
 // all of them.
-func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (*envd.Client, string, error) {
+func connectTaskSandbox(ctx context.Context, c *cobra.Command, arg string) (taskapi.Sandbox, error) {
 	if _, err := ResolveRootFlags(c); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	name := arg
 	if strings.HasPrefix(arg, "https://") || strings.HasPrefix(arg, "http://") {
 		var err error
 		if name, err = sandboxForURL(ctx, arg); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 	} else if err := validateSandboxName(name); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	client, err := envd.Connect(ctx, rootFlags.Namespace, name)
+	sb, err := taskapi.Connect(ctx, rootFlags.Namespace, name)
 	if err != nil {
-		return nil, "", fmt.Errorf("connecting to sandbox %s: %w", name, err)
+		return nil, fmt.Errorf("connecting to sandbox %s: %w", name, err)
 	}
-	return client, name, nil
+	return sb, nil
 }
 
 func sandboxForURL(ctx context.Context, itemURL string) (string, error) {
@@ -109,14 +109,14 @@ func (f *taskSelectFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "The --run-name the task was run with")
 }
 
-func (f *taskSelectFlags) find(ctx context.Context, client *envd.Client, sandboxName string) (spool.Entry, error) {
-	entries, err := spool.List(ctx, client)
+func (f *taskSelectFlags) find(ctx context.Context, sb taskapi.Sandbox) (spool.Entry, error) {
+	entries, err := sb.List(ctx)
 	if err != nil {
 		return spool.Entry{}, err
 	}
 	e, err := spool.Find(entries, f.id, f.runName)
 	if err == nil {
-		settleTaskState(ctx, sandboxName, entries, e)
+		settleTaskState(ctx, sb.Name(), entries, e)
 	}
 	return e, err
 }
@@ -164,12 +164,12 @@ func newTaskListCommand(ctx context.Context) *cobra.Command {
   factory sandbox task list fix-repo-123`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, _, err := connectTaskSandbox(ctx, c, args[0])
+			sb, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			defer client.Close()
-			entries, err := spool.List(ctx, client)
+			defer sb.Close()
+			entries, err := sb.List(ctx)
 			if err != nil {
 				return err
 			}
@@ -221,12 +221,12 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if output != "" && output != "json" {
 				return fmt.Errorf("--output must be json or empty, not %q", output)
 			}
-			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
+			sb, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			defer client.Close()
-			e, err := sel.find(ctx, client, sandboxName)
+			defer sb.Close()
+			e, err := sel.find(ctx, sb)
 			if err != nil {
 				return err
 			}
@@ -274,39 +274,37 @@ program to read.`,
 			if len(args) == 2 && !outputFileName.MatchString(args[1]) {
 				return fmt.Errorf("%q is not a file name in the task directory", args[1])
 			}
-			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
+			sb, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			defer client.Close()
-			e, err := sel.find(ctx, client, sandboxName)
+			defer sb.Close()
+			e, err := sel.find(ctx, sb)
 			if err != nil {
 				return err
 			}
 			if e.State != spool.Exited {
 				return fmt.Errorf("task %s is %s; its outputs are not final (wait for it with: factory sandbox task attach %s --task %s)", e.ID, e.State, args[0], e.ID)
 			}
-			taskDir := spool.TaskDir(e.ID)
 			if len(args) == 2 {
-				return printTaskFile(ctx, client, taskDir, args[1])
+				return printTaskFile(ctx, sb, e.ID, args[1])
 			}
-			if doc, err := readTaskOutput(ctx, client, sandboxName, e); err != nil || doc != nil {
+			if doc, err := readTaskOutput(ctx, sb, e); err != nil || doc != nil {
 				if err != nil {
 					return err
 				}
 				_, err = os.Stdout.Write(doc)
 				return err
 			}
-			rec, err := taskRecipe(ctx, client, taskDir)
+			rec, err := taskRecipe(ctx, sb, e.ID)
 			if err != nil {
 				return err
 			}
 			if rec == nil {
-				var ls bytes.Buffer
-				_ = client.Exec(ctx, "ls "+taskDir, "/workspaces", nil, nil, &ls, nil)
-				return fmt.Errorf("task %s is not a recipe task; name the file to print, one of: %s", e.ID, strings.Join(strings.Fields(ls.String()), ", "))
+				files, _ := sb.Files(ctx, e.ID)
+				return fmt.Errorf("task %s is not a recipe task; name the file to print, one of: %s", e.ID, strings.Join(files, ", "))
 			}
-			return printRecipeOutputs(ctx, client, rec, taskDir)
+			return printRecipeOutputs(ctx, sb, rec, e.ID)
 		},
 	}
 	sel.add(cmd)
@@ -317,27 +315,31 @@ program to read.`,
 // wrote, or else one made here from the result it declared — sandboxes
 // whose runner predates task outputs leave none. Nil when the task has no
 // result of a known kind.
-func readTaskOutput(ctx context.Context, client *envd.Client, sandboxName string, e spool.Entry) ([]byte, error) {
-	taskDir := spool.TaskDir(e.ID)
-	var out bytes.Buffer
-	_ = client.Exec(ctx, "cat "+taskDir+"/"+taskoutput.File+" 2>/dev/null", "/workspaces", nil, nil, &out, nil)
+func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]byte, error) {
+	sandboxName := sb.Name()
+	out, err := sb.ReadFile(ctx, e.ID, taskoutput.File)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("reading task %s's %s: %w", e.ID, taskoutput.File, err)
+	}
 	decl := e.Output
-	if out.Len() > 0 {
-		return withDeclaredActions(out.Bytes(), decl)
+	if len(out) > 0 {
+		return withDeclaredActions(out, decl)
 	}
 	if decl == nil {
 		return nil, nil
 	}
-	var raw bytes.Buffer
-	_ = client.Exec(ctx, "cat "+taskDir+"/"+decl.From+" 2>/dev/null", "/workspaces", nil, nil, &raw, nil)
-	if raw.Len() == 0 {
+	raw, err := sb.ReadFile(ctx, e.ID, decl.From)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("reading task %s's %s: %w", e.ID, decl.From, err)
+	}
+	if len(raw) == 0 {
 		return nil, fmt.Errorf("task %s left no %s, its %s result", e.ID, decl.From, decl.Kind)
 	}
 	target := e.URL
 	if target == "" {
 		target = sandboxHTMLURL(ctx, sandboxName)
 	}
-	doc, err := taskoutput.Wrap(decl.Kind, raw.String(), taskoutput.Target{URL: target}, taskoutput.Source{Sandbox: sandboxName, Task: e.ID, Recipe: e.Recipe})
+	doc, err := taskoutput.Wrap(decl.Kind, string(raw), taskoutput.Target{URL: target}, taskoutput.Source{Sandbox: sandboxName, Task: e.ID, Recipe: e.Recipe})
 	if err != nil {
 		return nil, fmt.Errorf("task %s: %w", e.ID, err)
 	}
@@ -373,27 +375,28 @@ func sandboxHTMLURL(ctx context.Context, name string) string {
 	return sb.GetAnnotations()["htmlURL"]
 }
 
-func printTaskFile(ctx context.Context, client *envd.Client, taskDir, name string) error {
-	path := taskDir + "/" + name
-	var out, errOut bytes.Buffer
-	if err := client.Exec(ctx, fmt.Sprintf("if [ -f %[1]s ]; then cat %[1]s; else echo missing >&2; fi", path), "/workspaces", nil, nil, &out, &errOut); err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
-	}
-	if strings.TrimSpace(errOut.String()) == "missing" {
+func printTaskFile(ctx context.Context, sb taskapi.Sandbox, id, name string) error {
+	out, err := sb.ReadFile(ctx, id, name)
+	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("the task left no %s", name)
 	}
-	_, err := os.Stdout.Write(out.Bytes())
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", name, err)
+	}
+	_, err = os.Stdout.Write(out)
 	return err
 }
 
 // taskRecipe is the recipe a task ran, or nil for a task that is not one.
-func taskRecipe(ctx context.Context, client *envd.Client, taskDir string) (*recipe.Recipe, error) {
-	var recipeYAML bytes.Buffer
-	_ = client.Exec(ctx, "cat "+taskDir+"/"+spool.RecipeFile+" 2>/dev/null", "/workspaces", nil, nil, &recipeYAML, nil)
-	if recipeYAML.Len() == 0 {
+func taskRecipe(ctx context.Context, sb taskapi.Sandbox, id string) (*recipe.Recipe, error) {
+	recipeYAML, err := sb.ReadFile(ctx, id, spool.RecipeFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("reading the task's recipe: %w", err)
+	}
+	if len(recipeYAML) == 0 {
 		return nil, nil
 	}
-	rec, err := recipe.Parse(recipeYAML.Bytes())
+	rec, err := recipe.Parse(recipeYAML)
 	if err != nil {
 		return nil, fmt.Errorf("reading the task's recipe: %w", err)
 	}
@@ -412,29 +415,28 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
   factory sandbox task attach recipe-repo-123 --run-name my-run-7`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
+			sb, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			defer client.Close()
-			e, err := sel.find(ctx, client, sandboxName)
+			defer sb.Close()
+			e, err := sel.find(ctx, sb)
 			if err != nil {
 				return err
 			}
-			if err := awaitTaskStart(ctx, client, e); err != nil {
+			if err := awaitTaskStart(ctx, sb, e); err != nil {
 				return err
 			}
-			taskDir := spool.TaskDir(e.ID)
-			fmt.Printf("Attaching to task %s (%s)...\n", e.ID, taskDir)
-			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
+			fmt.Printf("Attaching to task %s (%s)...\n", e.ID, spool.TaskDir(e.ID))
+			if err := sb.Attach(ctx, e.ID, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
-			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, client, sandboxName)
-			rec, err := taskRecipe(ctx, client, taskDir)
+			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, sb)
+			rec, err := taskRecipe(ctx, sb, e.ID)
 			if err != nil || rec == nil {
 				return err
 			}
-			return printRecipeOutputs(ctx, client, rec, taskDir)
+			return printRecipeOutputs(ctx, sb, rec, e.ID)
 		},
 	}
 	sel.add(cmd)
@@ -451,26 +453,25 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
   factory sandbox task logs fix-repo-123 --task fix-20261002-150405 -f`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			client, sandboxName, err := connectTaskSandbox(ctx, c, args[0])
+			sb, err := connectTaskSandbox(ctx, c, args[0])
 			if err != nil {
 				return err
 			}
-			defer client.Close()
-			e, err := sel.find(ctx, client, sandboxName)
+			defer sb.Close()
+			e, err := sel.find(ctx, sb)
 			if err != nil {
 				return err
 			}
-			taskDir := spool.TaskDir(e.ID)
 			if !follow {
-				return client.Exec(ctx, "cat "+envd.NewTaskFiles(taskDir).LogFile+" 2>/dev/null", "/workspaces", nil, nil, os.Stdout, os.Stderr)
+				return sb.Log(ctx, e.ID, os.Stdout)
 			}
-			if err := awaitTaskStart(ctx, client, e); err != nil {
+			if err := awaitTaskStart(ctx, sb, e); err != nil {
 				return err
 			}
-			if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
+			if err := sb.Attach(ctx, e.ID, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
-			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, client, sandboxName)
+			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, sb)
 			return nil
 		},
 	}
@@ -481,10 +482,10 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
 
 // awaitTaskStart waits for a spooled task the daemon has not started yet,
 // so that following it finds its pid. It never withdraws the task.
-func awaitTaskStart(ctx context.Context, client *envd.Client, e spool.Entry) error {
+func awaitTaskStart(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) error {
 	if e.State != spool.Pending && e.State != spool.Claimed {
 		return nil
 	}
 	fmt.Printf("Task %s is %s; waiting for the sandbox to start it...\n", e.ID, e.State)
-	return spool.AwaitStart(ctx, client, e.ID, 365*24*time.Hour, 2*time.Minute)
+	return sb.AwaitStart(ctx, e.ID, 365*24*time.Hour, 2*time.Minute)
 }

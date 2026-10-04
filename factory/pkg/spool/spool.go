@@ -129,7 +129,7 @@ func ClaimAll(ctx context.Context, incomingDir, tasksDir string, launch Launcher
 		log.Info("spool: claimed task", "task", e.Name())
 		if err := start(taskDir, launch); err != nil {
 			log.Error(err, "spool: starting task", "task", e.Name())
-			fail(taskDir, err)
+			Fail(taskDir, err)
 		}
 	}
 }
@@ -150,9 +150,9 @@ func start(taskDir string, launch Launcher) error {
 	return launch(taskDir, env)
 }
 
-// fail gives a task that could not start the exit code and log a client
+// Fail gives a task that could not start the exit code and log a client
 // attached to it reads.
-func fail(taskDir string, cause error) {
+func Fail(taskDir string, cause error) {
 	tf := envd.NewTaskFiles(taskDir)
 	_ = os.WriteFile(tf.LogFile, []byte(fmt.Sprintf("spool: the task could not start: %v\n", cause)), 0o644)
 	_ = os.WriteFile(tf.ExitCodeFile, []byte("127\n"), 0o644)
@@ -172,7 +172,7 @@ func FailUnstarted(ctx context.Context, tasksDir string) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(taskDir, EnvFile))
-		fail(taskDir, fmt.Errorf("claimed but not started before the sandbox restarted"))
+		Fail(taskDir, fmt.Errorf("claimed but not started before the sandbox restarted"))
 		klog.FromContext(ctx).Info("spool: failed a task claimed but never started", "task", e.Name())
 	}
 }

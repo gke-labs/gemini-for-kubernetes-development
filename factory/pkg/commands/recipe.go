@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
@@ -357,14 +357,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 		return fmt.Errorf("ensuring the sandbox: %w", err)
 	}
 
-	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
+	fmt.Printf("Connecting to sandbox %s...\n", sandboxName)
+	sb, err := taskapi.Connect(ctx, rootFlags.Namespace, sandboxName)
 	if err != nil {
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
-	defer client.Close()
+	defer sb.Close()
 	if runName != "" {
-		entries, err := spool.List(ctx, client)
+		entries, err := sb.List(ctx)
 		if err != nil {
 			return err
 		}
@@ -373,23 +373,23 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 			return err
 		}
 		if ok {
-			return resumeNamedRun(ctx, client, ghClient, rec, sandboxName, e, apply)
+			return resumeNamedRun(ctx, sb, ghClient, rec, sandboxName, e, apply)
 		}
 	}
 	if apply.on {
-		e, ok, err := resumableTask(ctx, client, rec.Name, htmlURL)
+		e, ok, err := resumableTask(ctx, sb, rec.Name, htmlURL)
 		if err != nil {
 			return err
 		}
 		if ok {
 			fmt.Printf("Picking up task %s, this recipe's last run on %s (run again once it is applied to start a new one).\n", e.ID, htmlURL)
-			return awaitAndApply(ctx, client, ghClient, sandboxName, e.ID, apply.dryRun)
+			return awaitAndApply(ctx, sb, ghClient, sandboxName, e.ID, apply.dryRun)
 		}
 		// Interrupting stops the waiting; the task runs on, for the
 		// next run to pick up.
 		rootFlags.AbortOnCancel = false
 	}
-	if err := refuseIfBusy(ctx, client, sandboxName); err != nil {
+	if err := refuseIfBusy(ctx, sb, sandboxName); err != nil {
 		return err
 	}
 
@@ -432,7 +432,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 		markRunning, update = factorysandbox.MarkSandboxSideTaskRunning, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	_ = markRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine)
-	if err := spoolRecipe(ctx, client, sandboxName, task, recipeBytes, inputs, envMap); err != nil {
+	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return fmt.Errorf("running recipe: %w", err)
 	}
@@ -447,14 +447,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	} else {
 		meta.Issue = it.Number
 	}
-	usagereport.HarvestTask(ctx, client, taskDir, meta)
+	usagereport.HarvestTaskFiles(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, task.ID, name) }, meta)
 
-	if err := printRecipeOutputs(ctx, client, rec, taskDir); err != nil {
+	if err := printRecipeOutputs(ctx, sb, rec, task.ID); err != nil {
 		return err
 	}
 	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
 	if apply.on {
-		return awaitAndApply(ctx, client, ghClient, sandboxName, task.ID, apply.dryRun)
+		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, apply.dryRun)
 	}
 	if rec.TaskOutput != nil {
 		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
@@ -462,13 +462,13 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	return nil
 }
 
-func printRecipeOutputs(ctx context.Context, client *envd.Client, rec *recipe.Recipe, taskDir string) error {
+func printRecipeOutputs(ctx context.Context, sb taskapi.Sandbox, rec *recipe.Recipe, id string) error {
 	for _, name := range rec.OutputFiles() {
-		var out, errOut bytes.Buffer
-		if err := client.Exec(ctx, "cat "+taskDir+"/"+name, "/workspaces", nil, nil, &out, &errOut); err != nil {
-			return fmt.Errorf("reading %s from sandbox: %w (stderr: %s)", name, err, errOut.String())
+		out, err := sb.ReadFile(ctx, id, name)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("reading %s from sandbox: %w", name, err)
 		}
-		fmt.Printf("\n================= %s =================\n%s\n", name, strings.TrimSpace(out.String()))
+		fmt.Printf("\n================= %s =================\n%s\n", name, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -486,45 +486,41 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 	}
 }
 
-// spoolRecipe hands a recipe to the sandbox's spool and follows it, or,
-// with --detached, returns once the sandbox has started it. A sandbox
-// whose image predates the spool never claims it; the recipe is then
-// started through envd as before, in the same task directory.
-func spoolRecipe(ctx context.Context, client *envd.Client, sandboxName string, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) error {
-	taskDir := spool.TaskDir(task.ID)
+// spoolRecipe hands a recipe to the sandbox and follows it, or, with
+// --detached, returns once the sandbox has started it. A sandbox whose
+// image predates the spool never claims it; the recipe is then started
+// through envd as before, in the same task directory.
+func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) error {
 	recipeBytes, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
 	}
-	if err := spool.Submit(ctx, client, task, recipeBytes, inputs, envMap); err != nil {
-		return err
-	}
-	fmt.Printf("Spooled task %s; waiting for the sandbox to start it...\n", task.ID)
-	err = spool.AwaitStart(ctx, client, task.ID, 20*time.Second, 2*time.Minute)
-	if errors.Is(err, spool.ErrNotClaimed) {
+	err = sb.Start(ctx, task, recipeBytes, inputs, envMap)
+	if es, ok := sb.(*taskapi.EnvdSandbox); ok && errors.Is(err, spool.ErrNotClaimed) {
 		fmt.Println("The sandbox's image has no spool (recreate the sandbox to get one); starting the recipe through envd instead.")
-		cmdStr, err := writeRecipe(ctx, client, taskDir, recipeBytes, inputs)
+		taskDir := spool.TaskDir(task.ID)
+		cmdStr, err := writeRecipe(ctx, es.Client, taskDir, recipeBytes, inputs)
 		if err != nil {
 			return err
 		}
 		// So that task list and attach find it like a spooled one.
 		if taskJSON, err := json.Marshal(task); err == nil {
-			_ = client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
+			_ = es.Client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
 		}
-		if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil || !rootFlags.Detached {
+		if err := es.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil || !rootFlags.Detached {
 			return err
 		}
-		printDetachedHint(sandboxName, task.ID)
+		printDetachedHint(sb.Name(), task.ID)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 	if rootFlags.Detached {
-		printDetachedHint(sandboxName, task.ID)
+		printDetachedHint(sb.Name(), task.ID)
 		return nil
 	}
-	return client.AttachTask(ctx, taskDir, envMap, rootFlags.AbortOnCancel)
+	return sb.Attach(ctx, task.ID, envMap, rootFlags.AbortOnCancel)
 }
 
 func printDetachedHint(sandboxName, taskID string) {
@@ -551,31 +547,31 @@ func runByName(entries []spool.Entry, runName, recipeName, itemURL string) (spoo
 // rather than start another it follows that one, or, if it has ended,
 // prints its outputs or applies its result. A failed run stays failed;
 // retrying takes a new id.
-func resumeNamedRun(ctx context.Context, client *envd.Client, gh *githubv39.Client, rec *recipe.Recipe, sandboxName string, e spool.Entry, apply applyMode) error {
+func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, rec *recipe.Recipe, sandboxName string, e spool.Entry, apply applyMode) error {
 	fmt.Printf("Run name %s is task %s (%s): picking it up instead of starting another.\n", e.RunName, e.ID, e.State)
 	if apply.on {
-		if e.State == spool.Exited && e.ExitCode == "0" && !apply.dryRun && taskApplied(ctx, client, e.ID) {
+		if e.State == spool.Exited && e.ExitCode == "0" && !apply.dryRun && taskApplied(ctx, sb, e.ID) {
 			fmt.Printf("Task %s's result is applied already.\n", e.ID)
 			return nil
 		}
-		return awaitAndApply(ctx, client, gh, sandboxName, e.ID, apply.dryRun)
+		return awaitAndApply(ctx, sb, gh, sandboxName, e.ID, apply.dryRun)
 	}
 	if e.State != spool.Exited {
 		if rootFlags.Detached {
 			printDetachedHint(sandboxName, e.ID)
 			return nil
 		}
-		if err := awaitTaskStart(ctx, client, e); err != nil {
+		if err := awaitTaskStart(ctx, sb, e); err != nil {
 			return err
 		}
-		if err := client.AttachTask(ctx, spool.TaskDir(e.ID), nil, rootFlags.AbortOnCancel); err != nil {
+		if err := sb.Attach(ctx, e.ID, nil, rootFlags.AbortOnCancel); err != nil {
 			return fmt.Errorf("task %s: %w", e.ID, err)
 		}
 	}
 	// Finding it again settles the sandbox's record of it, if it ended
 	// unwatched.
 	sel := taskSelectFlags{id: e.ID}
-	e, err := sel.find(ctx, client, sandboxName)
+	e, err := sel.find(ctx, sb)
 	if err != nil {
 		return err
 	}
@@ -588,7 +584,7 @@ func resumeNamedRun(ctx context.Context, client *envd.Client, gh *githubv39.Clie
 	if rootFlags.Detached {
 		fmt.Printf("Task %s has finished.\n", e.ID)
 	}
-	if err := printRecipeOutputs(ctx, client, rec, spool.TaskDir(e.ID)); err != nil {
+	if err := printRecipeOutputs(ctx, sb, rec, e.ID); err != nil {
 		return err
 	}
 	if rec.TaskOutput != nil {
@@ -604,8 +600,8 @@ type applyMode struct{ on, dryRun bool }
 // when it is one `--apply` picks up: still pending or running, or
 // finished well and not applied yet. Anything else — failed, applied, no
 // run — starts a new one.
-func resumableTask(ctx context.Context, client *envd.Client, recipeName, itemURL string) (spool.Entry, bool, error) {
-	entries, err := spool.List(ctx, client)
+func resumableTask(ctx context.Context, sb taskapi.Sandbox, recipeName, itemURL string) (spool.Entry, bool, error) {
+	entries, err := sb.List(ctx)
 	if err != nil {
 		return spool.Entry{}, false, err
 	}
@@ -613,7 +609,7 @@ func resumableTask(ctx context.Context, client *envd.Client, recipeName, itemURL
 	if !ok || e.State != spool.Exited {
 		return e, ok, nil
 	}
-	if e.ExitCode != "0" || taskApplied(ctx, client, e.ID) {
+	if e.ExitCode != "0" || taskApplied(ctx, sb, e.ID) {
 		return spool.Entry{}, false, nil
 	}
 	return e, true, nil
@@ -631,31 +627,29 @@ func lastRun(entries []spool.Entry, recipeName, itemURL string) (spool.Entry, bo
 	return spool.Entry{}, false
 }
 
-func taskApplied(ctx context.Context, client *envd.Client, id string) bool {
-	var out bytes.Buffer
-	_ = client.Exec(ctx, "cat "+spool.TaskDir(id)+"/"+taskoutput.AppliedFile+" 2>/dev/null", "/workspaces", nil, nil, &out, nil)
-	return out.Len() > 0
+func taskApplied(ctx context.Context, sb taskapi.Sandbox, id string) bool {
+	out, _ := sb.ReadFile(ctx, id, taskoutput.AppliedFile)
+	return len(out) > 0
 }
 
 // awaitAndApply follows task id to its end, unless it has ended, and
 // applies its result with gh, as `factory apply` does. Applying again is
 // harmless: a triage's comment is not posted twice.
-func awaitAndApply(ctx context.Context, client *envd.Client, gh *githubv39.Client, sandboxName, id string, dryRun bool) error {
+func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, sandboxName, id string, dryRun bool) error {
 	sel := taskSelectFlags{id: id}
-	e, err := sel.find(ctx, client, sandboxName)
+	e, err := sel.find(ctx, sb)
 	if err != nil {
 		return err
 	}
-	taskDir := spool.TaskDir(e.ID)
 	if e.State != spool.Exited {
 		fmt.Printf("Waiting for task %s to finish; interrupting stops the waiting, not the task...\n", e.ID)
-		if err := awaitTaskStart(ctx, client, e); err != nil {
+		if err := awaitTaskStart(ctx, sb, e); err != nil {
 			return err
 		}
-		if err := client.AttachTask(ctx, taskDir, nil, false); err != nil {
+		if err := sb.Attach(ctx, e.ID, nil, false); err != nil {
 			return fmt.Errorf("task %s: %w", e.ID, err)
 		}
-		if e, err = sel.find(ctx, client, sandboxName); err != nil {
+		if e, err = sel.find(ctx, sb); err != nil {
 			return err
 		}
 	}
@@ -665,7 +659,7 @@ func awaitAndApply(ctx context.Context, client *envd.Client, gh *githubv39.Clien
 	if e.ExitCode != "0" {
 		return fmt.Errorf("task %s failed (exit %s); nothing applied. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
 	}
-	data, err := readTaskOutput(ctx, client, sandboxName, e)
+	data, err := readTaskOutput(ctx, sb, e)
 	if err != nil {
 		return err
 	}
@@ -685,7 +679,7 @@ func awaitAndApply(ctx context.Context, client *envd.Client, gh *githubv39.Clien
 	if dryRun {
 		return nil
 	}
-	if err := client.WriteFile(ctx, taskDir+"/"+taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n")); err != nil {
+	if err := sb.WriteFile(ctx, e.ID, taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n")); err != nil {
 		fmt.Fprintf(os.Stderr, "Applied, but could not mark task %s applied (%v): running this again applies it again, which posts nothing twice.\n", e.ID, err)
 	}
 	return nil
@@ -845,8 +839,8 @@ const instructionSeparator = "\n\n---\n\n"
 // refuseIfBusy fails when a task is waiting or running in the sandbox. An
 // issue's triage, recipes, plan and fix share its sandbox, and two agents
 // in one workspace would trip over each other.
-func refuseIfBusy(ctx context.Context, client *envd.Client, sandboxName string) error {
-	entries, err := spool.List(ctx, client)
+func refuseIfBusy(ctx context.Context, sb taskapi.Sandbox, sandboxName string) error {
+	entries, err := sb.List(ctx)
 	if err != nil {
 		return fmt.Errorf("listing the tasks in sandbox %s: %w", sandboxName, err)
 	}

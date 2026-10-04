@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -67,7 +68,18 @@ func runDaemon(ctx context.Context) error {
 	if err != nil {
 		factoryBin = "factory"
 	}
-	go spool.Watch(ctx, spool.IncomingDir, envd.DefaultTasksDir, 2*time.Second, spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath))
+	launch := spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath)
+	go spool.Watch(ctx, spool.IncomingDir, envd.DefaultTasksDir, 2*time.Second, launch)
+
+	// The same tasks over HTTP, on the loopback only: clients come in
+	// through a port-forward, which the API server authorises, rather
+	// than through envd, which nothing does.
+	go func() {
+		server := taskapi.NewServer(spool.IncomingDir, envd.DefaultTasksDir, launch)
+		if err := taskapi.Serve(ctx, fmt.Sprintf("127.0.0.1:%d", taskapi.Port), server); err != nil {
+			log.Error(err, "task server exited")
+		}
+	}()
 
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)
