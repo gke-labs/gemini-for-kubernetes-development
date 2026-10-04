@@ -107,6 +107,8 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if needRefine {
 		feedback = annotations[AnnotationPlanFeedback]
 	}
+	runName := r.resumableRun(key, annotations, factorycli.AnnotationPlanRun, planRunName(work.board.Name, req.issue),
+		AnnotationPlannedAt, AnnotationPlanFeedbackAt, AnnotationPlanRejected)
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartPlan(key, factorycli.PlanOptions{
@@ -118,7 +120,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
 		Engine:            boardEngine(work.board),
-		RunName:           planRunName(work.board.Name, req.issue),
+		RunName:           runName,
 	}) {
 		logger.Info("launched factory recipe plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)
 	}
@@ -126,11 +128,36 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 
 // planRunName is what a plan's task is recorded under in the sandbox
 // (factory --run-name), to read its result by. factory runs a name once,
-// so it names one launch: a failed plan is retried, not returned. A
-// launch's in-flight or orphaned plan is the prober's to find, not the
-// name's. Identifiers only: anyone in the sandbox can read it.
+// so it names one launch: a failed plan is retried, not returned. A run
+// this controller did not start (a restart's) is resumed under its
+// recorded name instead (resumableRun). Identifiers only: anyone in the
+// sandbox can read it.
 func planRunName(board string, issue int) string {
 	return fmt.Sprintf("plan/%s/%d/%d", board, issue, time.Now().Unix())
+}
+
+// resumableRun is the run name to invoke factory with for key: the run
+// recorded on the sandbox under runKey, when this controller has no
+// result for key (it restarted, or another replica started the run) and
+// the run started after every marker — a run older than the last harvest,
+// feedback or reject is not the one wanted. Invoking factory with it
+// follows the run to its end, or reads its result if it has one; a run
+// that failed fails again at once, and the retry after the backoff, with
+// a result now in memory, gets fresh. Otherwise, fresh.
+func (r *Reconciler) resumableRun(key string, annotations map[string]string, runKey, fresh string, markers ...string) string {
+	if _, ok := r.Factory.LastResult(key); ok {
+		return fresh
+	}
+	var since time.Time
+	for _, m := range markers {
+		if at, err := time.Parse(time.RFC3339, annotations[m]); err == nil && at.After(since) {
+			since = at
+		}
+	}
+	if name, ok := factorycli.RecordedRunName(annotations, runKey, since); ok {
+		return name
+	}
+	return fresh
 }
 
 // planResultStale reports whether a remembered plan result predates a

@@ -11,11 +11,11 @@ import (
 type fakeProber struct {
 	probe TaskProbe
 	// What it was last asked to probe.
-	taskType, dirPrefix, outputFile string
+	taskType string
 }
 
-func (f *fakeProber) Probe(_ context.Context, _, _, taskType, dirPrefix, outputFile string) (TaskProbe, error) {
-	f.taskType, f.dirPrefix, f.outputFile = taskType, dirPrefix, outputFile
+func (f *fakeProber) Probe(_ context.Context, _, _, taskType string) (TaskProbe, error) {
+	f.taskType = taskType
 	return f.probe, nil
 }
 
@@ -38,27 +38,34 @@ func TestRunnerSkipsBusySandbox(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory", Prober: &fakeProber{probe: TaskProbe{State: ProbeRunning}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	if r.StartPlan("alice/plan-repo-1", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-1", IssueURL: "u"}) {
+	if r.StartFix("alice/fix-repo-1", FixOptions{Namespace: "alice", SandboxName: "fix-repo-1", IssueURL: "u"}) {
 		t.Fatal("busy sandbox must not launch")
 	}
-	if _, ok := r.LastResult("alice/plan-repo-1"); ok {
+	if _, ok := r.LastResult("alice/fix-repo-1"); ok {
 		t.Fatal("no result should be recorded for a skipped launch")
 	}
-	if r.IsRunning("alice/plan-repo-1") {
+	if r.IsRunning("alice/fix-repo-1") {
 		t.Fatal("skip must not hold the running slot")
 	}
 }
 
-// An orphaned FAILED task records the failure without re-executing.
-func TestRunnerAdoptsOrphanedFailure(t *testing.T) {
-	r := &Runner{Binary: "/nonexistent-factory",
-		Prober:  &fakeProber{probe: TaskProbe{State: ProbeOrphanCompleted, ExitCode: "1", Output: "boom"}},
+// Recipe runs are not probed: their run name is the run, and factory
+// follows or reads it when invoked with the name again.
+func TestRecipeRunsAreNotProbed(t *testing.T) {
+	p := &fakeProber{probe: TaskProbe{State: ProbeRunning}}
+	r := &Runner{Binary: "/nonexistent-factory", Prober: p,
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	r.StartTriage("alice/triage-repo-3", TriageOptions{Namespace: "alice", SandboxName: "triage-repo-3", IssueURL: "u"})
-	res := waitResult(t, r, "alice/triage-repo-3")
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "exited 1") {
-		t.Errorf("expected adopted-failure error, got %+v", res)
+	if !r.StartTriage("alice/triage-repo-3", TriageOptions{Namespace: "alice", SandboxName: "fix-repo-3", IssueURL: "u", RunName: "auto/b/3/1"}) {
+		t.Fatal("triage did not launch")
+	}
+	if !r.StartPlan("alice/plan-repo-3", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-3", IssueURL: "u", RunName: "plan/b/3/1"}) {
+		t.Fatal("plan did not launch")
+	}
+	waitResult(t, r, "alice/triage-repo-3")
+	waitResult(t, r, "alice/plan-repo-3")
+	if p.taskType != "" {
+		t.Errorf("probed %q", p.taskType)
 	}
 }
 

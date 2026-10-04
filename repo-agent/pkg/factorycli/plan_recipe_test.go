@@ -63,9 +63,8 @@ sandbox) echo "Waiting for sandbox pod fix-repo-5 to become ready..." >&2; cat <
 	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --run-name plan/b/5/1") {
 		t.Errorf("output args = %q", args[1])
 	}
-	// The plan records last-task-type=plan, in recipe-plan-* task dirs.
-	if p.taskType != "plan" || p.dirPrefix != "recipe-plan" || p.outputFile != TaskOutputFile {
-		t.Errorf("probed %q %q %q", p.taskType, p.dirPrefix, p.outputFile)
+	if p.taskType != "" {
+		t.Errorf("probed %q: a plan is resumed by its run name", p.taskType)
 	}
 }
 
@@ -78,22 +77,6 @@ func TestStartPlanRecipeFailure(t *testing.T) {
 	}
 	if args := readArgs(t, argsLog); len(args) != 1 {
 		t.Errorf("commands run = %q, want only the recipe", args)
-	}
-}
-
-// A recipe plan that finished while no repo-agent was waiting is adopted
-// from its task output.
-func TestAdoptedRecipePlan(t *testing.T) {
-	r := &Runner{Binary: "/nonexistent-factory",
-		Prober:  &fakeProber{probe: TaskProbe{State: ProbeOrphanCompleted, ExitCode: "0", Output: planTaskOutput}},
-		running: map[string]struct{}{}, results: map[string]Result{}}
-	r.StartPlan("alice/plan-repo-5", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-5", IssueURL: "u", RunName: "plan/b/5/1"})
-	res, ok := r.LastResult("alice/plan-repo-5")
-	if !ok || res.Err != nil {
-		t.Fatalf("result = %+v, %v", res, ok)
-	}
-	if got := ExtractPlan(res.Output); got != planMarkdown {
-		t.Errorf("draft = %q", got)
 	}
 }
 

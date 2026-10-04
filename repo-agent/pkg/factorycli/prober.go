@@ -24,7 +24,7 @@ import (
 //   - annotation Running + pid alive        → running   (skip, requeue)
 //   - annotation Running + exit_code present → orphan    (the invocation
 //     died with the old controller before it could stamp or harvest —
-//     adopt the result, correct the annotation)
+//     correct the annotation)
 //   - anything else                          → none      (launch normally;
 //     a properly finished run was stamped by its own live invocation)
 type PodTaskProber struct {
@@ -39,11 +39,8 @@ func NewPodTaskProber() (*PodTaskProber, error) {
 	return &PodTaskProber{kube: kube}, nil
 }
 
-func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix, dirPrefix, outputFile string) (TaskProbe, error) {
+func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix string) (TaskProbe, error) {
 	none := TaskProbe{State: ProbeNone}
-	if dirPrefix == "" {
-		dirPrefix = prefix
-	}
 
 	sb, err := p.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
 	if err != nil {
@@ -74,12 +71,12 @@ func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefi
 	}
 
 	// One round-trip: newest <prefix>-* dir → running / finished verdict
-	// plus exit code and (when finished) the requested output file.
+	// plus exit code.
 	// The busy verdict is sandbox-WIDE: one task per sandbox is the
 	// invariant (tasks share a workspace), so ANY live task — regardless
 	// of type — makes every launcher skip; the next reconcile requeues.
-	// Orphan adoption below stays prefix-scoped: only our own task type's
-	// leftovers are ours to harvest.
+	// Orphan correction below stays prefix-scoped: only our own task
+	// type's leftovers are ours to settle.
 	script := fmt.Sprintf(`is_alive() {
   t="$1"
   pid=$(cat "$t/pid" 2>/dev/null)
@@ -99,13 +96,12 @@ d=$(ls -dt /workspaces/tasks/%s-* 2>/dev/null | head -1)
 if [ -z "$d" ]; then echo "none|"; exit 0; fi
 if [ -s "$d/exit_code" ]; then
   echo "finished|$(cat "$d/exit_code")"
-  %s
 elif [ -f "$d/pid" ] && is_alive "$d"; then
   echo "running|"
 else
   echo 137 > "$d/exit_code" 2>/dev/null || true
   echo "dead|"
-fi`, dirPrefix, collectCmd(outputFile))
+fi`, prefix)
 	var stdout, stderr bytes.Buffer
 	if err := sandbox.ExecInPod(ctx, p.kube, *podID, sandbox.ExecOptions{
 		Command: []string{"sh", "-c", script},
@@ -116,7 +112,7 @@ fi`, dirPrefix, collectCmd(outputFile))
 	}
 
 	out := stdout.String()
-	head, rest, _ := strings.Cut(out, "\n")
+	head, _, _ := strings.Cut(out, "\n")
 	verdict, exitCode, _ := strings.Cut(strings.TrimSpace(head), "|")
 	switch verdict {
 	case "running":
@@ -130,7 +126,7 @@ fi`, dirPrefix, collectCmd(outputFile))
 			state = "Failed"
 		}
 		stamp(state)
-		return TaskProbe{State: ProbeOrphanCompleted, ExitCode: exitCode, Output: strings.TrimSpace(rest)}, nil
+		return TaskProbe{State: ProbeOrphanCompleted, ExitCode: exitCode}, nil
 	case "dead":
 		// Launched but died without an exit code (pod restart mid-task).
 		stamp("Failed")
@@ -138,13 +134,6 @@ fi`, dirPrefix, collectCmd(outputFile))
 	default:
 		return none, nil
 	}
-}
-
-func collectCmd(outputFile string) string {
-	if outputFile == "" {
-		return ""
-	}
-	return fmt.Sprintf(`cat "$d/%s" 2>/dev/null`, outputFile)
 }
 
 // stampTaskState is the watch IsTaskRunning side effect: the invocation

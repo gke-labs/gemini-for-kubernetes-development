@@ -147,6 +147,9 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 			return
 		}
 	}
+	if !clicked {
+		runName = r.resumableRun(key, annotations, factorycli.AnnotationTriageRun, runName, AnnotationTriageRejected)
+	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	if r.Factory.StartTriage(key, factorycli.TriageOptions{
@@ -163,9 +166,10 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 
 // resumeTriages re-drives triages whose suggestions have not been
 // harvested: a clicked triage's Request settles when the sandbox
-// appears, minutes before the run completes, so without this pass the
-// finished invocation's output would never be stored (and the row would
-// show Triaging… forever). Only sandboxes a triage has touched count: an
+// appears, minutes before the run completes, and a restarted controller
+// has no invocation waiting on the run at all. ensureTriage picks the
+// sandbox's recorded run up by name, so its result is stored rather than
+// the triage run again. Only sandboxes a triage has touched count: an
 // issue's sandbox that only planned or fixed is not one to triage.
 func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 	seen := map[string]bool{}
@@ -204,8 +208,9 @@ type triageClick struct {
 // (factory --run-name), to read its result by. factory runs a name
 // once — running it again returns that run — so it names one attempt:
 // one per click, by its Request; one per launch for auto-triage, so that
-// a failed run is retried rather than returned. Identifiers only: anyone
-// in the sandbox can read it.
+// a failed run is retried rather than returned. A run this controller
+// did not start (a restart's) is resumed under its recorded name instead
+// (resumableRun). Identifiers only: anyone in the sandbox can read it.
 func triageRunName(board string, issue int, click triageClick) string {
 	if click.request != "" {
 		return "request/" + click.request

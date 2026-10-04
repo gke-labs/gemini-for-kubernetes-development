@@ -1578,3 +1578,69 @@ func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
 		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "follow-up-owned sandbox must not resume a review")
 	}
 }
+
+// A controller that restarted mid-triage has no result in memory: it
+// invokes factory again with the run recorded on the sandbox, which
+// follows that run instead of starting another.
+func TestResumeTriageByRecordedRun(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	run := `{"name":"auto/test-board/32/1700000000","task":"recipe-triage-20261004-1","startedAt":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`
+	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "fix-repo-32", "namespace": "alice",
+			"labels": map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/32",
+				"sandbox.gemini.google.com/recipe-triage-task-state": "Running",
+				factorycli.AnnotationTriageRun:                       run,
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].TriageOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].TriageOpts.RunName).To(gomega.Equal("auto/test-board/32/1700000000"))
+}
+
+// The recorded run is taken only while it is the one the board waits on:
+// not once this controller has a result for the key (a failed resume
+// retries fresh), nor when it started before a marker.
+func TestResumableRun(t *testing.T) {
+	start := time.Date(2026, 10, 4, 12, 0, 0, 500, time.UTC)
+	recorded := `{"name":"plan/b/5/1","task":"recipe-plan-1","startedAt":"` + start.Format(time.RFC3339Nano) + `"}`
+	for name, tc := range map[string]struct {
+		annotations map[string]string
+		result      bool
+		want        string
+	}{
+		"recorded":           {map[string]string{factorycli.AnnotationPlanRun: recorded}, false, "plan/b/5/1"},
+		"none recorded":      {map[string]string{}, false, "fresh"},
+		"result in memory":   {map[string]string{factorycli.AnnotationPlanRun: recorded}, true, "fresh"},
+		"after the feedback": {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanFeedbackAt: start.Add(-time.Minute).Format(time.RFC3339)}, false, "plan/b/5/1"},
+		"before the reject":  {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(time.Minute).Format(time.RFC3339)}, false, "fresh"},
+		"same second":        {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlannedAt: start.Format(time.RFC3339)}, false, "fresh"},
+		"unreadable":         {map[string]string{factorycli.AnnotationPlanRun: "{"}, false, "fresh"},
+	} {
+		fake := newFakeLauncher()
+		if tc.result {
+			fake.results["alice/plan-repo-5"] = factorycli.Result{FinishedAt: time.Now()}
+		}
+		r := &Reconciler{Factory: fake}
+		got := r.resumableRun("alice/plan-repo-5", tc.annotations, factorycli.AnnotationPlanRun, "fresh",
+			AnnotationPlannedAt, AnnotationPlanFeedbackAt, AnnotationPlanRejected)
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
+	}
+}
