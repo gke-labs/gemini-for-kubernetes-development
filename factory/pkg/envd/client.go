@@ -436,8 +436,7 @@ func (c *Client) AttachTask(ctx context.Context, taskDir string, envs map[string
 
 	// 2. Tailing & status loop
 	var offset int64
-	var lastModelTried string
-	quotaTracker := geminitokens.NewQuotaStreamTracker()
+	quota := NewQuotaWatch(envs)
 
 	// Set up signal channel for Ctrl+C
 	sigChan := make(chan os.Signal, 1)
@@ -469,16 +468,11 @@ func (c *Client) AttachTask(ctx context.Context, taskDir string, envs map[string
 				offset += int64(len(finalData))
 			}
 		}
-		isFatalQuota := quotaTracker.ObserveFinal(finalData, processFailed)
-		evidence := quotaEvidence(finalData, quotaTracker.Window())
-		if model := c.recordExceededModels(evidence, quotaTracker, envs); model != "" {
-			lastModelTried = model
-		}
-		if isFatalQuota {
+		if err := quota.Final(finalData, processFailed); err != nil {
 			killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer killCancel()
 			_ = c.Exec(killCtx, BuildWriteExitCodeCmd(taskFiles.ExitCodeFile, 137), "/workspaces", nil, nil, nil, nil)
-			return handleQuotaOrSuspensionError(evidence, lastModelTried, envs)
+			return err
 		}
 		return nil
 	}
@@ -515,20 +509,13 @@ func (c *Client) AttachTask(ctx context.Context, taskDir string, envs map[string
 					_, _ = os.Stdout.Write(newData)
 					offset += int64(len(newData))
 				}
-				isFatal, isTransient := quotaTracker.ObservePoll(newData)
-				evidence := quotaEvidence(newData, quotaTracker.Window())
-				if model := c.recordExceededModels(evidence, quotaTracker, envs); model != "" {
-					lastModelTried = model
-				}
-				if isFatal {
+				if err := quota.Poll(newData); err != nil {
 					klog.Warningf("Fatal quota/suspension error detected in task output. Terminating task process group in sandbox pod immediately...")
 					killCtx, killCancel := context.WithTimeout(context.Background(), 15*time.Second)
 					defer killCancel()
 					killCmd := BuildQuotaKillCmd(taskFiles.PIDFile, taskFiles.StartTimeFile, taskFiles.ExitCodeFile)
 					_ = c.Exec(killCtx, killCmd, "/workspaces", nil, nil, nil, nil)
-					return handleQuotaOrSuspensionError(evidence, lastModelTried, envs)
-				} else if isTransient {
-					klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
+					return err
 				}
 			} else {
 				klog.Warningf("Log streaming connection flaked: %v. Reconnecting...", err)
@@ -627,7 +614,55 @@ func (c *Client) AttachTask(ctx context.Context, taskDir string, envs map[string
 
 var modelRegexp = regexp.MustCompile(`(?i)Trying model:\s*([a-zA-Z0-9\-\._\/]+)`)
 
-func (c *Client) recordExceededModels(evidence []byte, quotaTracker *geminitokens.QuotaStreamTracker, envs map[string]string) string {
+// QuotaWatch reads a task's log as it arrives for the quota and
+// suspension errors that end it, recording the exceeded models and keys
+// on the way, so that the next task does not pick them.
+type QuotaWatch struct {
+	tracker   *geminitokens.QuotaStreamTracker
+	envs      map[string]string
+	lastModel string
+}
+
+// NewQuotaWatch watches a task run with envs, whose API key is the one
+// recorded when an error does not name its own.
+func NewQuotaWatch(envs map[string]string) *QuotaWatch {
+	return &QuotaWatch{tracker: geminitokens.NewQuotaStreamTracker(), envs: envs}
+}
+
+// Poll observes a chunk of the log read while the task runs. An error is
+// a fatal quota or suspension error: the caller kills the task's process
+// group and returns it.
+func (q *QuotaWatch) Poll(chunk []byte) error {
+	isFatal, isTransient := q.tracker.ObservePoll(chunk)
+	evidence := quotaEvidence(chunk, q.tracker.Window())
+	if model := recordExceededModels(evidence, q.tracker, q.envs); model != "" {
+		q.lastModel = model
+	}
+	if isFatal {
+		return handleQuotaOrSuspensionError(evidence, q.lastModel, q.envs)
+	}
+	if isTransient {
+		klog.V(2).Infof("Transient rate limit (RPM/TPM) detected in task output; allowing CLI to retry with backoff...")
+	}
+	return nil
+}
+
+// Final observes the rest of the log once the task has ended, failed or
+// not. An error is a quota or suspension error that ended it: the caller
+// records the task as killed (137) and returns it.
+func (q *QuotaWatch) Final(chunk []byte, failed bool) error {
+	isFatal := q.tracker.ObserveFinal(chunk, failed)
+	evidence := quotaEvidence(chunk, q.tracker.Window())
+	if model := recordExceededModels(evidence, q.tracker, q.envs); model != "" {
+		q.lastModel = model
+	}
+	if isFatal {
+		return handleQuotaOrSuspensionError(evidence, q.lastModel, q.envs)
+	}
+	return nil
+}
+
+func recordExceededModels(evidence []byte, quotaTracker *geminitokens.QuotaStreamTracker, envs map[string]string) string {
 	newlyExceeded := quotaTracker.NewlyExceededModels()
 
 	key := geminitokens.ExtractAPIKeyFromError(evidence)

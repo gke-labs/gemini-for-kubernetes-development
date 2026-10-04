@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -62,12 +63,41 @@ func collectorURL() string {
 // ReadTaskUsage reads the accumulated usage stats file from a task dir
 // inside the sandbox. Returns (nil, nil) when the task wrote no usage file.
 func ReadTaskUsage(ctx context.Context, client *envd.Client, taskDir string) (*Stats, error) {
-	var stdout, stderr bytes.Buffer
-	catCmd := fmt.Sprintf("cat %[1]s/token-usage.json 2>/dev/null || cat %[1]s/llm-usage.json 2>/dev/null || true", taskDir)
-	if err := client.Exec(ctx, catCmd, "/workspaces", nil, nil, &stdout, &stderr); err != nil {
-		return nil, fmt.Errorf("reading usage file from %s: %w (stderr: %s)", taskDir, err, stderr.String())
+	return readTaskUsage(envdReader(ctx, client, taskDir), taskDir)
+}
+
+// TaskFileReader reads a file of one task directory by name; a file
+// that is not there is empty, or os.ErrNotExist.
+type TaskFileReader func(name string) ([]byte, error)
+
+// envdReader reads the files of taskDir through envd.
+func envdReader(ctx context.Context, client *envd.Client, taskDir string) TaskFileReader {
+	return func(name string) ([]byte, error) {
+		var stdout, stderr bytes.Buffer
+		if err := client.Exec(ctx, fmt.Sprintf("cat %s/%s 2>/dev/null || true", taskDir, name), "/workspaces", nil, nil, &stdout, &stderr); err != nil {
+			return nil, fmt.Errorf("%w (stderr: %s)", err, stderr.String())
+		}
+		return stdout.Bytes(), nil
 	}
-	data := strings.TrimSpace(stdout.String())
+}
+
+// readFile is a task file's content, "" when it is not there.
+func readFile(read TaskFileReader, name string) (string, error) {
+	data, err := read(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func readTaskUsage(read TaskFileReader, taskDir string) (*Stats, error) {
+	data, err := readFile(read, "token-usage.json")
+	if err == nil && data == "" {
+		data, err = readFile(read, "llm-usage.json")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading usage file from %s: %w", taskDir, err)
+	}
 	if data == "" {
 		return nil, nil
 	}
@@ -171,13 +201,12 @@ func postJSON(ctx context.Context, path string, v any) error {
 
 // ReadTaskToolTelemetry reads tool-telemetry.json from a task dir inside the sandbox.
 func ReadTaskToolTelemetry(ctx context.Context, client *envd.Client, taskDir string) (*ToolTelemetry, error) {
-	var stdout, stderr bytes.Buffer
-	catCmd := fmt.Sprintf("cat %s/tool-telemetry.json 2>/dev/null || true", taskDir)
-	if err := client.Exec(ctx, catCmd, "/workspaces", nil, nil, &stdout, &stderr); err != nil {
-		return nil, nil
-	}
-	data := strings.TrimSpace(stdout.String())
-	if data == "" {
+	return readTaskToolTelemetry(envdReader(ctx, client, taskDir))
+}
+
+func readTaskToolTelemetry(read TaskFileReader) (*ToolTelemetry, error) {
+	data, err := readFile(read, "tool-telemetry.json")
+	if err != nil || data == "" {
 		return nil, nil
 	}
 	var telemetry ToolTelemetry
@@ -190,10 +219,16 @@ func ReadTaskToolTelemetry(ctx context.Context, client *envd.Client, taskDir str
 // HarvestTask reads one task dir's usage and publishes it. Best-effort:
 // failures are logged, never returned.
 func HarvestTask(ctx context.Context, client *envd.Client, taskDir string, meta Meta) {
+	HarvestTaskFiles(ctx, taskDir, envdReader(ctx, client, taskDir), meta)
+}
+
+// HarvestTaskFiles is HarvestTask reading the task directory's files with
+// read, whichever way it reaches the sandbox.
+func HarvestTaskFiles(ctx context.Context, taskDir string, read TaskFileReader, meta Meta) {
 	if !Enabled() {
 		return
 	}
-	stats, err := ReadTaskUsage(ctx, client, taskDir)
+	stats, err := readTaskUsage(read, taskDir)
 	if err != nil {
 		klog.Warningf("usagereport: %v", err)
 		return
@@ -220,7 +255,7 @@ func HarvestTask(ctx context.Context, client *envd.Client, taskDir string, meta 
 		Stats:        *stats,
 	}
 
-	if tt, err := ReadTaskToolTelemetry(ctx, client, taskDir); err == nil && tt != nil {
+	if tt, err := readTaskToolTelemetry(read); err == nil && tt != nil {
 		for i := range tt.ShellCalls {
 			if tt.ShellCalls[i].Repo == "" {
 				tt.ShellCalls[i].Repo = meta.Repo

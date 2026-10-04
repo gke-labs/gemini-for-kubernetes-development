@@ -115,7 +115,6 @@ func TestModelExtractionCaseInsensitive(t *testing.T) {
 }
 
 func TestRecordExceededModelsAcknowledgesPendingModels(t *testing.T) {
-	c := &Client{}
 	tracker := geminitokens.NewQuotaStreamTracker()
 	tracker.ObservePoll([]byte("trying model: gemini-3.7-flash\n"))
 	tracker.ObservePoll([]byte("status: 429 RESOURCE_EXHAUSTED\n"))
@@ -124,7 +123,7 @@ func TestRecordExceededModelsAcknowledgesPendingModels(t *testing.T) {
 	// Case 1: Key cannot be resolved -> models should still be acknowledged to prevent repeat polling loops,
 	// and recordExceededModels returns the model that failed (gemini-3.7-flash)
 	evidence := tracker.Window()
-	model := c.recordExceededModels(evidence, tracker, nil)
+	model := recordExceededModels(evidence, tracker, nil)
 	if model != "gemini-3.7-flash" {
 		t.Fatalf("expected failed model gemini-3.7-flash, got %s", model)
 	}
@@ -133,7 +132,7 @@ func TestRecordExceededModelsAcknowledgesPendingModels(t *testing.T) {
 	}
 
 	// Case 2: Subsequent poll tick returns the last exceeded model (gemini-3.7-flash), avoiding falsely attributing to gemini-2.5-flash
-	nextModel := c.recordExceededModels(evidence, tracker, nil)
+	nextModel := recordExceededModels(evidence, tracker, nil)
 	if nextModel != "gemini-3.7-flash" {
 		t.Fatalf("expected last exceeded model gemini-3.7-flash, got %s", nextModel)
 	}
@@ -142,7 +141,7 @@ func TestRecordExceededModelsAcknowledgesPendingModels(t *testing.T) {
 	freshTracker := geminitokens.NewQuotaStreamTracker()
 	freshTracker.ObservePoll([]byte("Trying model: gemini-2.5-pro\n"))
 	freshTracker.ObservePoll([]byte("Working on task...\n"))
-	if got := c.recordExceededModels(freshTracker.Window(), freshTracker, nil); got != "" {
+	if got := recordExceededModels(freshTracker.Window(), freshTracker, nil); got != "" {
 		t.Fatalf("expected empty model string when no quota exceeded, got %s", got)
 	}
 }
