@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic/fake"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
@@ -71,6 +72,50 @@ func (h actionHarness) annotations() map[string]string {
 	return sb.GetAnnotations()
 }
 
+// requestOf is the one Request of verb filed.
+func (h actionHarness) requestOf(verb string) boardv1alpha1.Request {
+	h.t.Helper()
+	var found []boardv1alpha1.Request
+	for _, req := range filedRequests(h.t, h.dyn, "alice") {
+		if req.Spec.Verb == verb {
+			found = append(found, req)
+		}
+	}
+	if len(found) != 1 {
+		h.t.Fatalf("filed %d %s requests, want one: %+v", len(found), verb, found)
+	}
+	return found[0]
+}
+
+// settle does what the controller does once the write has run: the
+// Request's verdict, and on success the draft's stamp.
+func (h actionHarness) settle(req boardv1alpha1.Request, phase, message, stamp string) {
+	h.t.Helper()
+	ctx := context.Background()
+	obj, err := h.dyn.Resource(requestGVR).Namespace("alice").Get(ctx, req.Name, v1.GetOptions{})
+	if err != nil {
+		h.t.Fatalf("get request: %v", err)
+	}
+	_ = unstructured.SetNestedField(obj.Object, phase, "status", "phase")
+	_ = unstructured.SetNestedField(obj.Object, message, "status", "message")
+	if _, err := h.dyn.Resource(requestGVR).Namespace("alice").Update(ctx, obj, v1.UpdateOptions{}); err != nil {
+		h.t.Fatalf("update request: %v", err)
+	}
+	if stamp != "" {
+		sb, err := h.dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(ctx, "fix-repo-"+itoa(h.number), v1.GetOptions{})
+		if err != nil {
+			h.t.Fatalf("get sandbox: %v", err)
+		}
+		a := sb.GetAnnotations()
+		a[stamp] = "2026-10-03T00:00:00Z"
+		sb.SetAnnotations(a)
+		if _, err := h.dyn.Resource(k8s.SandboxGVR).Namespace("alice").Update(ctx, sb, v1.UpdateOptions{}); err != nil {
+			h.t.Fatalf("update sandbox: %v", err)
+		}
+	}
+	invalidateWorkFeed("alice", "myboard")
+}
+
 func verbsOf(actions []models.WorkAction) (verbs []string, enabled []bool) {
 	for _, a := range actions {
 		verbs = append(verbs, a.Verb)
@@ -84,7 +129,6 @@ func verbsOf(actions []models.WorkAction) (verbs []string, enabled []bool) {
 // it.
 func TestPlanActions(t *testing.T) {
 	gh := issueFeed(42)
-	gh["https://api.github.com/repos/test/repo/issues/42/comments?per_page=100"] = `[]`
 	planSandbox := sandboxCR("fix-repo-42",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{
@@ -117,13 +161,35 @@ actions:
 		t.Errorf("edit, not offered: got %d %s", w.Code, w.Body.String())
 	}
 
-	if w := h.act("Plan", "comment", "", ""); w.Code != http.StatusOK {
+	// Posting is the controller's: the click files the write, and the
+	// board writes nothing to GitHub itself.
+	if w := h.act("Plan", "comment", "", ""); w.Code != http.StatusAccepted {
 		t.Fatalf("comment: %d %s", w.Code, w.Body.String())
 	}
-	if !slices.Contains(rt.writes, "POST /repos/test/repo/issues/42/comments") || h.annotations()[factorycli.AnnotationPlanCommented] == "" {
-		t.Errorf("comment: writes %q, annotations %v", rt.writes, h.annotations())
+	if len(rt.writes) != 0 {
+		t.Errorf("comment wrote to GitHub: %q", rt.writes)
 	}
-	if a := h.row().PlanActions[0]; a.Enabled || a.Reason != "plan posted" {
+	filed := h.requestOf(boardv1alpha1.VerbApply)
+	if filed.Spec.Number != 42 || filed.Spec.Member != "alice" || filed.Spec.Apply == nil ||
+		*filed.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Plan", Action: "comment"}) {
+		t.Errorf("comment filed %+v", filed.Spec)
+	}
+	if a := h.row().PlanActions[0]; a.Enabled || a.Reason != "posting" {
+		t.Errorf("comment while posting = %+v", a)
+	}
+	// A second click lands on the standing write.
+	if w := h.act("Plan", "comment", "", ""); w.Code != http.StatusAccepted {
+		t.Errorf("comment while posting: got %d", w.Code)
+	}
+	h.requestOf(boardv1alpha1.VerbApply)
+
+	// A failed write says why, and can be clicked again.
+	h.settle(filed, boardv1alpha1.RequestFailed, "403 Resource not accessible", "")
+	if a := h.row().PlanActions[0]; !a.Enabled || a.Error != "403 Resource not accessible" {
+		t.Errorf("comment after a failure = %+v", a)
+	}
+	h.settle(filed, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationPlanCommented)
+	if a := h.row().PlanActions[0]; a.Enabled || a.Reason != "plan posted" || a.Error != "" {
 		t.Errorf("comment after posting = %+v", a)
 	}
 	if w := h.act("Plan", "comment", "", ""); w.Code != http.StatusConflict {
@@ -136,7 +202,7 @@ actions:
 	if h.annotations()["board.gemini.google.com/plan-approved-at"] == "" {
 		t.Error("run fix did not approve the plan")
 	}
-	if filed := theRequest(t, dyn, "alice"); filed.Spec.Verb != boardv1alpha1.VerbFix || filed.Spec.Number != 42 {
+	if filed := h.requestOf(boardv1alpha1.VerbFix); filed.Spec.Number != 42 {
 		t.Errorf("run fix filed %+v", filed.Spec)
 	}
 	// Approved: nothing left to do with the draft.
@@ -157,7 +223,6 @@ func TestTriageActions(t *testing.T) {
 			"htmlURL": "https://github.com/test/repo/issues/20",
 		}, 1)
 	gh := issueFeed(20)
-	gh["POST https://api.github.com/repos/test/repo/issues/20/labels"] = `[{"name": "bug"}]`
 	_, r, dyn, rt := boardTestServerWithRT(t, gh, boardCR(), triageSandbox)
 	h := actionHarness{t: t, r: r, dyn: dyn, rt: rt, number: 20}
 
@@ -166,21 +231,28 @@ func TestTriageActions(t *testing.T) {
 		t.Fatalf("triage actions = %+v", h.row().TriageActions)
 	}
 
-	if w := h.act("Triage", "label", "", ""); w.Code != http.StatusOK {
+	if w := h.act("Triage", "label", "", ""); w.Code != http.StatusAccepted {
 		t.Fatalf("label: %d %s", w.Code, w.Body.String())
 	}
-	if !reflect.DeepEqual(rt.writes, []string{"POST /repos/test/repo/issues/20/labels"}) {
-		t.Errorf("label wrote %q", rt.writes)
+	label := h.requestOf(boardv1alpha1.VerbApply)
+	if *label.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Triage", Action: "label"}) {
+		t.Errorf("label filed %+v", label.Spec)
 	}
-	if a := h.annotations(); a[factorycli.AnnotationTriageLabeled] == "" || a[annoTriagePublished] != "" {
-		t.Errorf("label: annotations %v", a)
-	}
-
-	if w := h.act("Triage", "comment", "", ""); w.Code != http.StatusOK {
+	// Labeling and commenting are separate writes, so both can stand.
+	if w := h.act("Triage", "comment", "", ""); w.Code != http.StatusAccepted {
 		t.Fatalf("comment: %d %s", w.Code, w.Body.String())
 	}
-	if !slices.Contains(rt.writes, "POST /repos/test/repo/issues/20/comments") || h.annotations()[annoTriagePublished] == "" {
-		t.Errorf("comment: writes %q", rt.writes)
+	if n := len(filedRequests(t, dyn, "alice")); n != 2 {
+		t.Errorf("filed %d requests, want label and comment", n)
+	}
+	if len(rt.writes) != 0 {
+		t.Errorf("triage wrote to GitHub: %q", rt.writes)
+	}
+	h.settle(label, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationTriageLabeled)
+	for _, req := range filedRequests(t, dyn, "alice") {
+		if req.Spec.Apply.Action == "comment" {
+			h.settle(req, boardv1alpha1.RequestSucceeded, "", annoTriagePublished)
+		}
 	}
 	if w := h.act("Triage", "edit", "", "triage:\n  labels: [x]"); w.Code != http.StatusConflict {
 		t.Errorf("edit after posting: got %d", w.Code)

@@ -44,6 +44,22 @@ spec:
             type: object
           spec:
             properties:
+              apply:
+                properties:
+                  action:
+                    enum:
+                    - label
+                    - comment
+                    type: string
+                  kind:
+                    enum:
+                    - Triage
+                    - Plan
+                    type: string
+                required:
+                - action
+                - kind
+                type: object
               board:
                 type: string
               instruction:
@@ -103,6 +119,7 @@ spec:
                 - investigate
                 - run
                 - research
+                - apply
                 type: string
             required:
             - board

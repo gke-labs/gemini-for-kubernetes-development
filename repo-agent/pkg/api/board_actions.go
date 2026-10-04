@@ -2,17 +2,20 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/go-github/v39/github"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
@@ -74,17 +77,13 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	case "Triage/edit":
 		rebody(c, gin.H{"draft": req.Text})
 		s.putBoardTriageDraft(c)
-	case "Triage/label":
-		s.applyBoardTriage(c, true, false)
-	case "Triage/comment":
-		s.applyBoardTriage(c, false, true)
+	case "Triage/label", "Triage/comment", "Plan/comment":
+		s.fileApply(c, board, number, req.Kind, req.Verb)
 	case "Triage/reject":
 		s.rejectBoardTriage(c)
 	case "Plan/edit":
 		rebody(c, gin.H{"plan": req.Text})
 		s.putBoardPlanDraft(c)
-	case "Plan/comment":
-		s.commentBoardPlan(c)
 	case "Plan/run":
 		// The only follow-up offered is fix: approving the plan launches
 		// it.
@@ -94,75 +93,62 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	}
 }
 
-// commentBoardPlan posts a plan draft on its issue under the clicker's
-// token, marked as factory apply marks it so that neither posts it twice.
-func (s *Server) commentBoardPlan(c *gin.Context) {
-	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
-	if !ok {
+// fileApply files the write for the controller, which runs factory apply
+// --action with the clicker's token and marks the draft once it is done:
+// the board writes nothing to GitHub itself. 202, since the write is the
+// controller's next pass.
+func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, number int, kind, action string) {
+	filed, err := s.fileRequest(c.Request.Context(), board, boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbApply,
+		Member: s.Auth.GetNamespaceFromContext(c),
+		Number: number,
+		Apply:  &boardv1alpha1.ApplyRequest{Kind: kind, Action: action},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the write", "details": err.Error()})
 		return
 	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil || sb.GetAnnotations()[annoPlanDraft] == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to post"})
+	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
+}
+
+// markApplies says on each row's actions what the apply Requests say of
+// them: a write filed and not yet done is "posting"; one whose last
+// attempt failed carries why, and stays clickable — a retry is a click.
+func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructured, items map[string]*models.WorkItem) {
+	reqs, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," + boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbApply,
+	})
+	if err != nil {
 		return
 	}
-	a := sb.GetAnnotations()
-	mark := planCommentMarker(factorycli.TaskOutputTask("Plan", a[factorycli.AnnotationPlanOutput]))
-	gh := githubClientForToken(ctx, token)
-	posted := false
-	if mark != "" {
-		var err error
-		if posted, err = hasIssueComment(c, gh, owner, repo, number, mark); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read the issue's comments", "details": err.Error()})
-			return
+	seen := map[string]bool{}
+	// Newest first: the newest Request for a write is the word on it.
+	for _, req := range reqs {
+		spec := req.Spec
+		if spec.Apply == nil || seen[spec.Key()] {
+			continue
 		}
-	}
-	if !posted {
-		body := planComment(a[annoPlanDraft]) + mark
-		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{Body: &body}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to post the plan", "details": err.Error()})
-			return
+		seen[spec.Key()] = true
+		item := items["issue-"+strconv.Itoa(spec.Number)]
+		if item == nil {
+			continue
 		}
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AnnotationPlanCommented, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark the plan posted", "details": err.Error()})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
-// planComment is the comment a plan is posted as, as factory apply posts
-// it (taskoutput.PlanComment).
-func planComment(plan string) string {
-	return "**Implementation plan**\n\n" + strings.TrimSpace(plan)
-}
-
-// planCommentMarker is factory apply's hidden marker for a plan of task,
-// or "" without one.
-func planCommentMarker(task string) string {
-	if task == "" {
-		return ""
-	}
-	return fmt.Sprintf("\n\n<!-- factory:task-output kind=Plan task=%s -->", task)
-}
-
-func hasIssueComment(c *gin.Context, gh *github.Client, owner, repo string, number int, mark string) (bool, error) {
-	mark = strings.TrimSpace(mark)
-	opts := &github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		comments, resp, err := gh.Issues.ListComments(c.Request.Context(), owner, repo, number, opts)
-		if err != nil {
-			return false, err
+		actions := item.TriageActions
+		if spec.Apply.Kind == "Plan" {
+			actions = item.PlanActions
 		}
-		for _, cm := range comments {
-			if strings.Contains(cm.GetBody(), mark) {
-				return true, nil
+		for i := range actions {
+			a := &actions[i]
+			if a.Verb != spec.Apply.Action {
+				continue
+			}
+			switch {
+			case req.Active() && a.Enabled:
+				a.Enabled, a.Reason = false, "posting"
+			case req.Status.Phase == boardv1alpha1.RequestFailed:
+				a.Error = req.Status.Message
 			}
 		}
-		if resp.NextPage == 0 {
-			return false, nil
-		}
-		opts.Page = resp.NextPage
 	}
 }
 

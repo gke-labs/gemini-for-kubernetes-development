@@ -81,6 +81,12 @@ const (
 	VerbInvestigate = "investigate"
 	VerbRun         = "run"
 	VerbResearch    = "research"
+	// VerbApply writes a draft's task output to its issue: factory apply
+	// --action, with the clicker's token. The one verb that launches no
+	// agent and needs no sandbox — the draft is read off the sandbox it
+	// is stored on when the write happens, so an edit made before the
+	// click is the one written.
+	VerbApply = "apply"
 )
 
 // LabelBoard selects every Request filed against one board. Requests
@@ -136,6 +142,18 @@ type RunRequest struct {
 	Target int `json:"target,omitempty"`
 }
 
+// ApplyRequest is which draft of the issue, and which of its actions.
+type ApplyRequest struct {
+	// Kind is the task output: Triage | Plan.
+	// +kubebuilder:validation:Enum=Triage;Plan
+	Kind string `json:"kind"`
+
+	// Action is the write: label (a Triage's labels) | comment (a
+	// Triage's assessment, or a Plan).
+	// +kubebuilder:validation:Enum=label;comment
+	Action string `json:"action"`
+}
+
 // ResearchRequest is one deep-research conversation: its identity, and
 // the opening turn it starts with.
 //
@@ -180,7 +198,7 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=fix;review;triage;plan;iterate;address;investigate;run;research
+	// +kubebuilder:validation:Enum=fix;review;triage;plan;iterate;address;investigate;run;research;apply
 	Verb string `json:"verb"`
 
 	// Member is the namespace whose identity, token and sandbox quota
@@ -207,6 +225,10 @@ type RequestSpec struct {
 	// Research is set for verb=research.
 	// +kubebuilder:validation:Optional
 	Research *ResearchRequest `json:"research,omitempty"`
+
+	// Apply is set for verb=apply.
+	// +kubebuilder:validation:Optional
+	Apply *ApplyRequest `json:"apply,omitempty"`
 }
 
 // RequestStatus is what came of the click.
@@ -292,6 +314,13 @@ func (s RequestSpec) Subject() string {
 			return ""
 		}
 		return s.Research.SessionID
+	case VerbApply:
+		// Labeling and commenting the same issue are two clicks, and so
+		// are a triage's comment and a plan's.
+		if s.Apply == nil {
+			return ""
+		}
+		return strconv.Itoa(s.Number) + "/" + s.Apply.Kind + "/" + s.Apply.Action
 	default:
 		return strconv.Itoa(s.Number)
 	}

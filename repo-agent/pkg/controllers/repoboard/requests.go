@@ -150,6 +150,8 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			if claim, ok := researchClaimFrom(req); ok {
 				box.research = append(box.research, claim)
 			}
+		case boardv1alpha1.VerbApply:
+			box.applies = append(box.applies, req)
 		}
 	}
 	return box
@@ -397,6 +399,9 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 
 	case boardv1alpha1.VerbRun:
 		return r.settleRun(work, req, now)
+
+	case boardv1alpha1.VerbApply:
+		return r.settleApply(ctx, work, req, now)
 
 	case boardv1alpha1.VerbResearch:
 		claim, ok := researchClaimFrom(req)

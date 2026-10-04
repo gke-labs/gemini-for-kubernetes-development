@@ -61,7 +61,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/work", s.getBoardWork)
 		api.POST("/board/:board/issues/:id/fix", s.kickoffFix)
 		api.POST("/board/:board/issues/:id/triage", s.kickoffTriage)
-		api.POST("/board/:board/issues/:id/publish-triage", s.publishBoardTriage)
 		api.POST("/board/:board/issues/:id/triage-reject", s.rejectBoardTriage)
 		api.PUT("/board/:board/issues/:id/plan-draft", s.putBoardPlanDraft)
 		api.PUT("/board/:board/issues/:id/draft", s.putBoardTriageDraft)
