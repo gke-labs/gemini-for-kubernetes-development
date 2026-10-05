@@ -109,14 +109,16 @@ func (s *Server) startResearchSession(c *gin.Context) {
 		return
 	}
 
-	// An empty body is the plain "New conversation" click, which is how
-	// this endpoint was called before kickoffs existed.
+	// A conversation starts with a question: `factory recipe research`
+	// asks it as the task, and there is no task without one.
 	var kickoff research.Kickoff
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&kickoff); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
-			return
-		}
+	if err := c.ShouldBindJSON(&kickoff); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+	if kickoff.Kind == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a research conversation needs a question"})
+		return
 	}
 	if err := kickoff.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

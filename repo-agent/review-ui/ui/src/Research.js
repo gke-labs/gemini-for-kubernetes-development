@@ -1488,7 +1488,9 @@ export function ResearchConversation({
               On the bar and not in the menu because saving is something
               you do *while* reading, at the moment the answer lands,
               which is exactly the boundary the ⋯ menu draws. */}
-          {!task && (
+          {/* Not on a recipe's conversation (info.task): its notes are
+              saved by a revise, not a capture, and that is not wired yet. */}
+          {!task && !(info && info.task) && (
             <button className="btn btn-sm" onClick={captureNotes} disabled={captureDisabled}
               aria-label="Save notes"
               title={phase !== 'live' ? 'Not connected'

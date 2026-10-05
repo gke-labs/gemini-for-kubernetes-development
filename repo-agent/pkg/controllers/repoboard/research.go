@@ -28,14 +28,13 @@ package repoboard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -152,10 +151,9 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		// The pass that settles Requests reads the same receipt and runs
 		// later in this very reconcile, so the claim is gone by the next
 		// one. The stamp has to happen in the pass that first sees the
-		// receipt, or the session comes up untitled with nothing ever
-		// asked.
+		// receipt, or the session comes up untitled.
 		if r.researchClaimServed(claim, work) {
-			r.stampResearchKickoff(ctx, work, claim)
+			r.stampResearchTitle(ctx, work, claim)
 			continue
 		}
 		if r.Factory.IsRunning(key) {
@@ -167,10 +165,17 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
 			continue
 		}
-		// The token is for the checkout only. The engine credential is
-		// deliberately absent: it reaches the engine in acpd's
-		// X-Engine-Api-Key header at session create, so that it never
-		// lands on the sandbox's disk.
+		// The question is what the recipe's start asks. A canned kind is
+		// asked as the text it renders to, which is also what the board's
+		// fill controls put in the box.
+		topic, err := researchTopic(claim.kickoff, work)
+		if err != nil {
+			logger.Info("research claim has no question to ask", "session", claim.sessionID, "reason", err.Error())
+			continue
+		}
+		// The token is for the clone only: the recipe is credentials:
+		// clone, so factory hands it to that one step and the agent never
+		// holds it.
 		token, err := r.executorToken(ctx, claim.member)
 		if err != nil {
 			continue
@@ -179,23 +184,16 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 			Namespace:   claim.member,
 			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
 			SessionID:   claim.sessionID,
+			Topic:       topic,
 			GithubToken: token,
 			// Read at launch, like a task's engine: switching the board
 			// changes the next session, not the ones already running.
 			Engine: acpd.ResearchEngineFor(boardEngine(work.board)),
 		}) {
-			logger.Info("launched factory research", "session", claim.sessionID, "board", work.board.Name)
+			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
 		}
 	}
 }
-
-// researchKickoffTTL bounds how long the opening turn stays owed.
-//
-// Measured from the sandbox's creation, because that is when the clock
-// the member is watching starts. A pod that has not come up in an hour
-// is not coming up, and the alternative — retrying forever — means a
-// dead session costs a pod list a minute for as long as it is kept.
-const researchKickoffTTL = time.Hour
 
 // researchACPD is the dial seam, mirroring the API's. Production talks
 // to the pod, over a forward or on its IP; tests point it at an httptest
@@ -204,18 +202,36 @@ var researchACPD = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.Pod)
 	return d.Client(ctx, pod)
 }
 
-// stampResearchKickoff copies a claim's title and canned opening onto
-// the sandbox that now exists for it.
+// researchTopic is the question a claim's conversation opens with: the
+// member's, or the text a canned kind renders to for the board's repo.
+func researchTopic(k research.Kickoff, work *workState) (string, error) {
+	if k.Kind == research.KindTopic {
+		if t := strings.TrimSpace(k.Topic); t != "" {
+			return t, nil
+		}
+		return "", fmt.Errorf("a topic session needs a topic")
+	}
+	prompt, err := k.Prompt(work.repo, fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "", fmt.Errorf("the claim asks nothing")
+	}
+	return prompt, nil
+}
+
+// stampResearchTitle copies a claim's title onto the sandbox that now
+// exists for it.
 //
 // This is the handoff from the claim to the sandbox, and it has to
-// happen in the pass that notices the sandbox: the Request settles
-// later in the same reconcile and the claim goes with it, so anything
-// still only on the claim at that point is lost. The sandbox outlives
-// the claim by as long as the conversation does, which is exactly the
-// lifetime the opening prompt needs.
-func (r *Reconciler) stampResearchKickoff(ctx context.Context, work *workState, claim researchClaim) {
-	if claim.kickoff == (research.Kickoff{}) {
-		return // a session the member will type into themselves
+// happen in the pass that notices the sandbox: the Request settles later
+// in the same reconcile and the claim goes with it, so a title still only
+// on the claim at that point is lost.
+func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, claim researchClaim) {
+	title := claim.kickoff.ResolvedTitle()
+	if title == "" {
+		return
 	}
 	sb := work.findSandbox(claim.member, factorycli.ResearchSandboxName(work.repo, claim.sessionID))
 	if sb == nil {
@@ -225,208 +241,14 @@ func (r *Reconciler) stampResearchKickoff(ctx context.Context, work *workState, 
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	// Only ever written once. A second stamp could resurrect an opening
-	// that was already sent and deleted, and the send is not free — it
-	// is a turn of engine time in someone's transcript.
-	if annotations[research.KickoffAnnotation] != "" || annotations[research.TitleAnnotation] != "" {
+	// Only ever written once: a member's rename wins.
+	if annotations[research.TitleAnnotation] != "" {
 		return
 	}
-	annotations[research.KickoffAnnotation] = claim.kickoff.Encode()
-	if title := claim.kickoff.ResolvedTitle(); title != "" {
-		annotations[research.TitleAnnotation] = title
-	}
+	annotations[research.TitleAnnotation] = title
 	sb.SetAnnotations(annotations)
 	if err := r.Update(ctx, sb); err != nil {
-		log.FromContext(ctx).Error(err, "unable to record the research kickoff", "session", claim.sessionID)
-	}
-}
-
-// sendResearchKickoffs delivers the opening turn of every session that
-// is still owed one.
-//
-// Driven from the sandboxes rather than the Requests because the
-// Request is settled by the time this can succeed. It runs on the
-// reconcile loop, so a sandbox that is still pulling its image is
-// simply retried a minute later; nothing here waits.
-func (r *Reconciler) sendResearchKickoffs(ctx context.Context, work *workState) {
-	logger := log.FromContext(ctx)
-	for _, sb := range work.sandboxes {
-		annotations := sb.GetAnnotations()
-		if annotations[research.KickoffAnnotation] == "" || annotations[research.KickoffErrorAnnotation] != "" {
-			continue
-		}
-		if sb.GetLabels()[sandboxTypeLabel] != researchSandboxType {
-			continue
-		}
-		// A paused sandbox has no engine to talk to, and un-pausing is
-		// the member's call. The kickoff waits, and expires with the TTL
-		// like any other undeliverable one.
-		if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
-			continue
-		}
-		if err := r.sendResearchKickoff(ctx, work, sb); err != nil {
-			// Expected for most of a sandbox's first minutes: no pod, no
-			// acpd, no engine yet. Logged at info, and only given up on
-			// when the TTL runs out.
-			logger.Info("research kickoff not delivered yet", "sandbox", sb.GetName(), "reason", err.Error())
-			if ts := sb.GetCreationTimestamp(); !ts.IsZero() && time.Since(ts.Time) > researchKickoffTTL {
-				r.abandonResearchKickoff(ctx, sb, err)
-			}
-		}
-	}
-}
-
-// sendResearchKickoff opens the conversation for one sandbox.
-func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, sb *unstructured.Unstructured) error {
-	annotations := sb.GetAnnotations()
-	sessionID := annotations[researchSessionIDAnnotation]
-	if sessionID == "" {
-		return fmt.Errorf("the sandbox carries no session id")
-	}
-	kickoff := research.DecodeKickoff(annotations[research.KickoffAnnotation])
-	repo := annotations["repo"]
-	if repo == "" {
-		repo = work.repo
-	}
-	htmlURL := annotations["htmlURL"]
-	if htmlURL == "" {
-		htmlURL = fmt.Sprintf("https://github.com/%s/%s", work.owner, repo)
-	}
-	prompt, err := kickoff.Prompt(repo, htmlURL)
-	if err != nil {
-		return err
-	}
-	if prompt == "" {
-		// Nothing to say — a kickoff that decoded to the zero value.
-		// Clearing it is the honest outcome: the session is a typed one.
-		return r.clearResearchKickoff(ctx, sb)
-	}
-
-	pod, err := r.researchPod(ctx, sb.GetNamespace(), sb.GetName())
-	if err != nil {
-		return err
-	}
-	if pod == nil {
-		return fmt.Errorf("no running pod yet")
-	}
-	client := researchACPD(ctx, r.ACPD, pod)
-
-	// Bounded: this runs inline on the reconcile loop, and a sandbox
-	// whose acpd is wedged must not hold the board's other work up.
-	ctx, cancel := context.WithTimeout(ctx, researchKickoffTimeout)
-	defer cancel()
-
-	// The opening turn goes only into a conversation that has never had
-	// one. Everything else here is idempotent by construction, but a
-	// prompt is not: if the annotation survived a delivery whose receipt
-	// failed to write, this is what stops the engine being asked twice.
-	session, err := client.GetSession(ctx, sessionID)
-	if err == nil {
-		prompted, perr := researchSessionPrompted(ctx, client, session)
-		if perr != nil {
-			return perr
-		}
-		if prompted {
-			return r.clearResearchKickoff(ctx, sb)
-		}
-	}
-	switch {
-	case err == nil:
-		// A live session nobody has asked anything yet: created by
-		// someone opening the tab before the kickoff was stamped. Its
-		// transcript may not be empty — the mode banner, and whatever
-		// the engine announces at start — but none of that is a turn.
-		// Prompt it as it stands.
-	case errors.Is(err, acpd.ErrNotFound):
-		apiKey, kerr := r.engineAPIKey(ctx, sb.GetNamespace())
-		if kerr != nil {
-			return kerr
-		}
-		// The key is supplied here and nowhere else: acpd holds it only
-		// until the engine child is spawned, and it never touches the
-		// sandbox's disk.
-		if _, cerr := client.CreateSession(ctx, acpd.CreateSessionRequest{
-			ID:     sessionID,
-			Engine: acpd.ResearchEngine(annotations),
-			CWD:    "/workspaces/" + repo,
-			// Nobody is watching this one. A canned opening that stops to
-			// ask permission blocks until acpd's permission timeout and
-			// is then cancelled, so the digest the member clicked for
-			// never arrives. The mode is not enough on its own to stop
-			// that happening — see ResearchAutoApprove.
-			Mode:        acpd.ResearchMode,
-			AutoApprove: acpd.ResearchAutoApprove,
-		}, apiKey); cerr != nil {
-			return cerr
-		}
-	default:
-		return err
-	}
-
-	if _, err := client.Prompt(ctx, sessionID, prompt); err != nil {
-		return err
-	}
-	log.FromContext(ctx).Info("sent the research kickoff", "sandbox", sb.GetName(), "kind", kickoff.Kind)
-	return r.clearResearchKickoff(ctx, sb)
-}
-
-// researchSessionPrompted reports whether a live session has already
-// been asked something, which is what makes the opening turn no longer
-// ours to send: a delivery whose receipt failed to write, or the member
-// typing first.
-//
-// Not the transcript's length. Creating a session writes into it before
-// anyone says a word — acpd's mode banner, and antigravity's list of
-// slash commands — so a browser that attached between the ready receipt
-// and the kickoff stamp left a non-empty transcript that read as
-// "already prompted", and the question the member asked was dropped.
-func researchSessionPrompted(ctx context.Context, client *acpd.Client, session *acpd.Session) (bool, error) {
-	if session.Busy {
-		return true, nil // a turn is in flight, so somebody sent one
-	}
-	if session.Offset == 0 {
-		return false, nil
-	}
-	stream, err := client.Events(ctx, session.ID, 0, false)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = stream.Close() }()
-	for stream.Next() {
-		if stream.Event().Kind == acpd.KindUserPrompt {
-			return true, nil
-		}
-	}
-	return false, stream.Err()
-}
-
-// researchKickoffTimeout bounds one delivery attempt. Generous, because
-// creating a session spawns the engine and waits for its handshake.
-const researchKickoffTimeout = 30 * time.Second
-
-// clearResearchKickoff records that the opening turn is no longer owed.
-func (r *Reconciler) clearResearchKickoff(ctx context.Context, sb *unstructured.Unstructured) error {
-	annotations := sb.GetAnnotations()
-	delete(annotations, research.KickoffAnnotation)
-	sb.SetAnnotations(annotations)
-	return r.Update(ctx, sb)
-}
-
-// abandonResearchKickoff gives up, visibly.
-//
-// The kickoff annotation stays: together with the error it says "this
-// session was supposed to open with something, and here is why it did
-// not", which is what the member needs to decide whether to ask it
-// themselves or throw the session away.
-func (r *Reconciler) abandonResearchKickoff(ctx context.Context, sb *unstructured.Unstructured, cause error) {
-	annotations := sb.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[research.KickoffErrorAnnotation] = cause.Error()
-	sb.SetAnnotations(annotations)
-	if err := r.Update(ctx, sb); err != nil {
-		log.FromContext(ctx).Error(err, "unable to record a failed research kickoff", "sandbox", sb.GetName())
+		log.FromContext(ctx).Error(err, "unable to record the research title", "session", claim.sessionID)
 	}
 }
 
@@ -457,18 +279,4 @@ func (r *Reconciler) podReader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
-}
-
-// engineAPIKey reads the member's engine credential, which this
-// controller put in the factory-user secret in the first place.
-func (r *Reconciler) engineAPIKey(ctx context.Context, namespace string) (string, error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: factoryUserSecretName, Namespace: namespace}, secret); err != nil {
-		return "", fmt.Errorf("reading the factory-user secret: %w", err)
-	}
-	key := string(secret.Data[factoryKeyGeminiAPIKey])
-	if key == "" {
-		return "", fmt.Errorf("no %s in this namespace's factory-user secret", factoryKeyGeminiAPIKey)
-	}
-	return key, nil
 }

@@ -371,13 +371,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	converted := r.ensurePRTaskClaims(ctx, work, mail.prTasks)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
-	// Deliver any opening prompt whose sandbox has come up since. Not
-	// part of the claim pass: by the time a pod is running the claim is
-	// long trimmed, and the sandbox is what carries the request.
-	r.sendResearchKickoffs(ctx, work)
-	// And push the notes of any conversation that was asked to write one
-	// and has since finished the turn. Same shape as the kickoff pass:
-	// the request rides on the sandbox, and this loop is the wait.
+	// Push the notes of any conversation that was asked to write one and
+	// has since finished the turn. Not part of the claim pass: the
+	// request rides on the sandbox, and this loop is the wait.
 	r.completeResearchSaves(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
