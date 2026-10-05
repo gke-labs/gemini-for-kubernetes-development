@@ -47,8 +47,9 @@ func (a Action) String() string {
 type Class string
 
 const (
-	// ClassApply writes to the document's target, with the caller's
-	// token: factory apply --action.
+	// ClassApply writes to GitHub with the caller's token — to the
+	// document's target, or for push-notes to the caller's fork of it: factory
+	// apply --action.
 	ClassApply Class = "apply"
 	// ClassFollowUp starts another task with the result as its input:
 	// factory apply --action run.
@@ -68,12 +69,13 @@ type verb struct {
 }
 
 var verbs = map[string]verb{
-	"comment": {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
-	"label":   {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
-	"run":     {class: ClassFollowUp, kinds: []string{"Plan"}},
-	"revise":  {class: ClassFollowUp, kinds: []string{"Triage", "Plan"}},
-	"edit":    {class: ClassDraft, kinds: []string{"Triage", "Plan"}},
-	"reject":  {class: ClassDraft, kinds: []string{"Triage", "Plan"}},
+	"comment":    {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
+	"label":      {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
+	"push-notes": {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
+	"run":        {class: ClassFollowUp, kinds: []string{"Plan"}},
+	"revise":     {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes"}},
+	"edit":       {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes"}},
+	"reject":     {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes"}},
 }
 
 // followUps are the tasks a run may start, by the kinds whose result they
@@ -96,6 +98,11 @@ var defaultActions = map[string][]Action{
 		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
 		{Verb: "comment"},
 		{Verb: "run", Run: "fix", Label: "Fix with this plan"},
+		{Verb: "reject"},
+	},
+	"Notes": {
+		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
+		{Verb: "push-notes", Label: "Save to research/notes"},
 		{Verb: "reject"},
 	},
 }

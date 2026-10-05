@@ -25,21 +25,24 @@ func NewApplyCommand(ctx context.Context) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "apply -f <file | -> [--action <verb>]",
-		Short: "Apply task outputs (a triage, a plan …) to GitHub",
+		Short: "Apply task outputs (a triage, a plan, notes …) to GitHub",
 		Long: `Apply task outputs to GitHub.
 
 A task output is the result a task leaves in its task directory
-(task-output.yaml): its kind, the issue or PR it is about, the result, and
-the actions it offers. ` + "`factory sandbox task output`" + ` prints it. Applying
-it writes it to the issue or PR with your GitHub credentials (GITHUB_TOKEN,
+(task-output.yaml): its kind, the issue, PR or repository it is about,
+the result, and the actions it offers. ` + "`factory sandbox task output`" + ` prints
+it. Applying it writes it to GitHub with your credentials (GITHUB_TOKEN,
 else gh's).
 
 Without --action, apply does each write the result offers:
   Triage  label: adds the labels; comment: comments the assessment
   Plan    comment: comments the plan
+  Notes   push-notes: commits the notes to docs-exploration/research/<name>.md
+          on the research/notes branch of your fork (made if you have none)
 
 --action does one action the result offers:
   label, comment  that write alone
+  push-notes      that write alone
   run             the follow-up it offers (run:fix names it): for a Plan,
                   writes the plan, as edited, to the issue's sandbox and
                   runs factory fix --with-plan there
@@ -112,7 +115,7 @@ Applying the same task's output again does not comment again.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
