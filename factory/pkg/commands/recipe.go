@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"net/url"
 	"os"
@@ -53,16 +54,17 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 
 // recipeRunFlags are the flags every way of running a recipe takes.
 type recipeRunFlags struct {
-	itemURL, runName string
-	inputArgs        []string
-	apply, dryRun    bool
+	itemURL, runName, session string
+	inputArgs                 []string
+	apply, dryRun             bool
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
 }
 
 func (f *recipeRunFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue or PR URL")
+	cmd.Flags().StringVar(&f.itemURL, "url", "", "GitHub issue, PR or repository URL")
+	cmd.Flags().StringVar(&f.session, "session", "", "With a repository URL: the conversation the run is, which names its sandbox (made if missing). Default: the run name, else a new one")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
@@ -100,7 +102,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, applyMode{f.apply, f.dryRun}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -115,10 +117,11 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	f := recipeRunFlags{instructions: map[string]*[]string{}}
 	inputs := map[string]*string{}
 	cmd := &cobra.Command{
-		Use:     name,
-		Short:   fmt.Sprintf("Run the built-in %s recipe against a GitHub issue or PR", name),
-		Example: fmt.Sprintf(`  factory recipe %s --url https://github.com/owner/repo/issues/123`, name),
-		Args:    cobra.NoArgs,
+		Use:   name,
+		Short: fmt.Sprintf("Run the built-in %s recipe against a GitHub issue, PR or repository", name),
+		Example: fmt.Sprintf(`  factory recipe %[1]s --url https://github.com/owner/repo/issues/123
+  factory recipe %[1]s --url https://github.com/owner/repo --session my-question`, name),
+		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			extra := map[string]string{}
 			for in, v := range inputs {
@@ -142,7 +145,7 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 		inputs[in] = cmd.Flags().String(inputFlagName(in, decl), decl.Default, decl.Description)
 	}
 	if rec.TaskOutput != nil {
-		cmd.Long = fmt.Sprintf("Run the built-in %s recipe against a GitHub issue or PR.\n\nIts result is a %s task output, which `factory apply` acts on.", name, rec.TaskOutput.Kind)
+		cmd.Long = fmt.Sprintf("Run the built-in %s recipe against a GitHub issue, PR or repository.\n\nIts result is a %s task output, which `factory apply` acts on.", name, rec.TaskOutput.Kind)
 	}
 	return cmd
 }
@@ -239,11 +242,30 @@ func parseInputArgs(args []string) (map[string]string, error) {
 	return out, nil
 }
 
-// githubItem is an issue or PR URL taken apart.
+// githubItem is an issue or PR URL taken apart, or a repository's, with
+// Number 0.
 type githubItem struct {
 	Owner, Repo string
 	Number      int
 	IsPR        bool
+}
+
+// IsRepo reports whether it is a repository, not an issue or PR in one.
+func (it githubItem) IsRepo() bool { return it.Number == 0 }
+
+// parseRecipeTarget is what a recipe runs against: an issue, a PR or a
+// repository.
+func parseRecipeTarget(raw string) (githubItem, error) {
+	if it, err := parseGitHubItemURL(raw); err == nil {
+		return it, nil
+	}
+	u, err := url.Parse(raw)
+	if err == nil && u.Host == "github.com" && len(strings.Split(strings.Trim(u.Path, "/"), "/")) == 2 {
+		if owner, repo, err := parseGitHubRepoURL(raw); err == nil {
+			return githubItem{Owner: owner, Repo: repo}, nil
+		}
+	}
+	return githubItem{}, fmt.Errorf("expected https://github.com/owner/repo, …/issues/N or …/pull/N, got %s", raw)
 }
 
 func parseGitHubItemURL(raw string) (githubItem, error) {
@@ -275,6 +297,16 @@ func issueInputs(it githubItem, issue *githubv39.Issue) map[string]string {
 	}
 }
 
+// repoInputs are what a recipe run against a repository gets.
+func repoInputs(it githubItem, repo *githubv39.Repository) map[string]string {
+	return map[string]string{
+		"repo_owner": it.Owner,
+		"repo_name":  it.Repo,
+		"url":        repo.GetHTMLURL(),
+		"repo_url":   repo.GetHTMLURL(),
+	}
+}
+
 func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 	return map[string]string{
 		"repo_owner": it.Owner,
@@ -293,7 +325,7 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // values of instructions-type inputs, each resolved as
 // `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off.
-func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -301,9 +333,12 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
 	}
-	it, err := parseGitHubItemURL(itemURL)
+	it, err := parseRecipeTarget(itemURL)
 	if err != nil {
 		return err
+	}
+	if session != "" && !it.IsRepo() {
+		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -319,13 +354,20 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	}
 	var standard map[string]string
 	var htmlURL string
-	if it.IsPR {
+	switch {
+	case it.IsRepo():
+		repo, _, err := ghClient.Repositories.Get(ctx, it.Owner, it.Repo)
+		if err != nil {
+			return fmt.Errorf("fetching %s/%s: %w", it.Owner, it.Repo, err)
+		}
+		standard, htmlURL = repoInputs(it, repo), repo.GetHTMLURL()
+	case it.IsPR:
 		pr, _, err := ghClient.PullRequests.Get(ctx, it.Owner, it.Repo, it.Number)
 		if err != nil {
 			return fmt.Errorf("fetching PR #%d: %w", it.Number, err)
 		}
 		standard, htmlURL = prInputs(it, pr), pr.GetHTMLURL()
-	} else {
+	default:
 		issue, _, err := ghClient.Issues.Get(ctx, it.Owner, it.Repo, it.Number)
 		if err != nil {
 			return fmt.Errorf("fetching issue #%d: %w", it.Number, err)
@@ -335,6 +377,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	inputs, err := rec.ResolveInputs(standard, overrides)
 	if err != nil {
 		return err
+	}
+	if err := rec.CheckRender(inputs); err != nil {
+		return fmt.Errorf("recipe %s on %s: %w", rec.Name, htmlURL, err)
 	}
 
 	kubeClient, err := clients.NewKubernetesClient()
@@ -348,12 +393,25 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
 	// An issue's recipes run in the issue's sandbox, beside its triage,
-	// plan and fix; a PR's in a sandbox of their own.
-	fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
+	// plan and fix; a PR's in a sandbox of their own; a repository's in
+	// one per conversation, named as a research session's is, since its
+	// transcript is the sandbox's.
 	var sandboxName string
-	if it.IsPR {
+	switch {
+	case it.IsRepo():
+		if session == "" {
+			session = runName
+		}
+		if session == "" {
+			session = fmt.Sprintf("%s-%s-%04x", rec.Name, time.Now().Format("20060102-150405"), rand.Intn(1<<16))
+		}
+		fmt.Printf("Ensuring the sandbox for %s/%s, session %s...\n", it.Owner, it.Repo, session)
+		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+	case it.IsPR:
+		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	} else {
+	default:
+		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	}
 	if err != nil {
@@ -396,37 +454,52 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 		return err
 	}
 
-	envMap, err := recipeEnv(secret, it)
+	envMap, secrets, err := recipeEnv(secret, it, rec.Credentials)
 	if err != nil {
 		return err
 	}
 
 	task := newSpoolTask(rec.Name, runName, itemURL)
-	task.Output = rec.OutputDecl()
+	if rec.StartOutputs() {
+		task.Output = rec.OutputDecl()
+	}
 	task.TaskType = rec.TaskType
 	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets); err != nil || !done {
 		return err
 	}
 	if apply.on {
 		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, apply.dryRun)
 	}
-	if rec.TaskOutput != nil {
-		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
-	}
+	printResultHint(rec, task, sandboxName)
 	return nil
 }
 
-// recipeEnv is the environment a recipe task on it runs with:
-// the member's GitHub identity and engine credentials, from their secret.
-func recipeEnv(secret *corev1.Secret, it githubItem) (map[string]string, error) {
+// printResultHint says where a finished task's result is: its task output,
+// or for a start that leaves none, the revises that write one.
+func printResultHint(rec *recipe.Recipe, task spool.Task, sandboxName string) {
+	switch {
+	case task.Output != nil:
+		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", task.Output.Kind, sandboxName, rootFlags.Namespace, task.ID)
+	case rec.TaskOutput != nil:
+		for _, rv := range rec.Revise {
+			fmt.Printf("%s, once you have talked in its session:\n  factory recipe revise %s %s -n %s\n", rv.Label, sandboxName, rv.ID, rootFlags.Namespace)
+		}
+	}
+}
+
+// recipeEnv is the environment a recipe task on it runs with, and its
+// secrets: the member's GitHub identity and engine credentials, from
+// their secret. The GitHub token is in the environment, or under
+// credentials: clone, the one secret.
+func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap, secrets map[string]string, err error) {
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
-	envMap := map[string]string{
+	token := string(secret.Data[constants.KeyGithubToken])
+	envMap = map[string]string{
 		"HOME":                       "/workspaces/.home",
-		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  it.Repo,
 		"CLONE_URL":                  fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo),
@@ -434,22 +507,29 @@ func recipeEnv(secret *corev1.Secret, it githubItem) (map[string]string, error) 
 		"GITHUB_USER_EMAIL":          string(secret.Data[constants.KeyGithubEmail]),
 		"GITHUB_USER_NAME":           githubLogin,
 	}
-	// What lib.sh's checkout functions read.
-	if it.IsPR {
-		envMap["PR_NUMBER"] = strconv.Itoa(it.Number)
+	if credentials == recipe.CredentialsClone {
+		secrets = map[string]string{"GITHUB_TOKEN": token}
 	} else {
+		envMap["GITHUB_TOKEN"] = token
+	}
+	// What lib.sh's checkout functions read.
+	switch {
+	case it.IsRepo():
+	case it.IsPR:
+		envMap["PR_NUMBER"] = strconv.Itoa(it.Number)
+	default:
 		envMap["ISSUE_NUMBER"] = strconv.Itoa(it.Number)
 	}
 	if err := applyEngineEnv(envMap, secret); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return envMap, nil
+	return envMap, secrets, nil
 }
 
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) (bool, error) {
 	sandboxName := sb.Name()
 	taskType := "recipe-" + rec.Name
 	// In an issue's sandbox a recipe is a side task, and last-task-* stay
@@ -457,14 +537,22 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	side, update := false, factorysandbox.UpdateSandboxTaskAnnotation
 	if rec.TaskType != "" {
 		taskType = rec.TaskType
-	} else if !it.IsPR {
+	} else if !it.IsPR && !it.IsRepo() {
 		side, update = true, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: time.Now().UTC()}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, run)
-	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap); err != nil {
+	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
+	}
+	if it.IsRepo() && task.Revise == "" {
+		// The sandbox is the conversation's from here: the receipt that
+		// keeps EnsureResearchSandbox from taking it for an interrupted
+		// launch's and replacing it.
+		if err := factorysandbox.MarkResearchReady(ctx, kubeClient, rootFlags.Namespace, sandboxName, rootFlags.Engine); err != nil {
+			return false, err
+		}
 	}
 	if rootFlags.Detached {
 		return false, nil
@@ -472,9 +560,11 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
 
 	meta := usagereport.Meta{Repo: it.Owner + "/" + it.Repo, TaskType: taskType, Sandbox: sandboxName}
-	if it.IsPR {
+	switch {
+	case it.IsRepo():
+	case it.IsPR:
 		meta.PR = it.Number
-	} else {
+	default:
 		meta.Issue = it.Number
 	}
 	taskDir := spool.TaskDir(task.ID)
@@ -490,7 +580,10 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 func printRecipeOutputs(ctx context.Context, sb taskapi.Sandbox, rec *recipe.Recipe, id string) error {
 	for _, name := range rec.OutputFiles() {
 		out, err := sb.ReadFile(ctx, id, name)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
+			continue // not written by this part: a start before any revise
+		}
+		if err != nil {
 			return fmt.Errorf("reading %s from sandbox: %w", name, err)
 		}
 		fmt.Printf("\n================= %s =================\n%s\n", name, strings.TrimSpace(string(out)))
@@ -515,12 +608,12 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 // --detached, returns once the sandbox has started it. A sandbox whose
 // image predates the spool never claims it; the recipe is then started
 // through envd as before, in the same task directory.
-func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) error {
+func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) error {
 	recipeBytes, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
 	}
-	err = sb.Start(ctx, task, recipeBytes, inputs, envMap)
+	err = sb.Start(ctx, task, recipeBytes, inputs, envMap, secrets)
 	if es, ok := sb.(*taskapi.EnvdSandbox); ok && errors.Is(err, spool.ErrNotClaimed) {
 		fmt.Println("The sandbox's image has no spool (recreate the sandbox to get one); starting the recipe through envd instead.")
 		taskDir := spool.TaskDir(task.ID)
@@ -750,6 +843,11 @@ func newRecipeExecCommand(ctx context.Context) *cobra.Command {
 }
 
 func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) error {
+	// First, so that no failure below leaves them on disk.
+	secrets, err := takeSecrets(taskDir)
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(recipePath)
 	if err != nil {
 		return err
@@ -757,6 +855,16 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	rec, err := recipe.Parse(data)
 	if err != nil {
 		return err
+	}
+	if rec.Credentials == recipe.CredentialsClone {
+		// The token in the environment is readable by the agent from
+		// /proc for as long as this process lives; the caller hands it
+		// over as a secret instead.
+		for _, k := range recipe.GitHubTokenEnv {
+			if os.Getenv(k) != "" {
+				return fmt.Errorf("recipe %s is credentials: clone, but the task's environment carries %s; it goes in the task's secrets", rec.Name, k)
+			}
+		}
 	}
 	inputs := map[string]string{}
 	if inputsPath != "" {
@@ -792,10 +900,12 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	task := readSpoolTask(taskDir)
 	r := &recipe.Runner{
 		Exec: &recipe.SandboxExecutor{
-			StepScript: stepScript,
-			TaskDir:    taskDir,
-			RepoDir:    repoDir,
-			Env:        os.Environ(),
+			StepScript:  stepScript,
+			TaskDir:     taskDir,
+			RepoDir:     repoDir,
+			Env:         os.Environ(),
+			Credentials: rec.Credentials,
+			Secrets:     secrets,
 		},
 		StartSession: func(ctx context.Context) (recipe.Session, error) {
 			apiKey := os.Getenv("GEMINI_API_KEY")
@@ -824,6 +934,32 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		return err
 	}
 	return writeTaskOutput(taskDir, inputs, engine)
+}
+
+// takeSecrets reads the task's secrets (spool.SecretsFile) as KEY=VALUE
+// and deletes the file: from here on they are in this process's memory
+// only, until the step allowed them has run.
+func takeSecrets(taskDir string) ([]string, error) {
+	path := filepath.Join(taskDir, spool.SecretsFile)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if rerr := os.Remove(path); rerr != nil && err == nil {
+		return nil, fmt.Errorf("removing %s: %w", spool.SecretsFile, rerr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", spool.SecretsFile, err)
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", spool.SecretsFile, err)
+	}
+	out := make([]string, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		out = append(out, k+"="+m[k])
+	}
+	return out, nil
 }
 
 // readSpoolTask is the task's task.json, empty for a task started without
@@ -876,7 +1012,7 @@ func writeTaskOutput(taskDir string, inputs map[string]string, engine string) er
 	return os.WriteFile(filepath.Join(taskDir, taskoutput.File), out, 0o644)
 }
 
-// taskTarget is the issue or PR a task's result is about.
+// taskTarget is the issue, PR or repository a task's result is about.
 func taskTarget(task spool.Task, inputs map[string]string) taskoutput.Target {
 	for _, u := range []string{task.URL, inputs["url"], inputs["issue_url"], inputs["pr_url"]} {
 		if u != "" {

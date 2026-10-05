@@ -403,6 +403,24 @@ function checkoutDefaultBranch {
     (cd "/workspaces/${REPO_NAME}" && SRC_REMOTE=upstream && { git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE=origin; } && BASE_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name) && git reset --hard HEAD && git clean -fd && git checkout "${BASE_BRANCH}" && git fetch "${SRC_REMOTE}" "${BASE_BRANCH}" && git reset --hard "${SRC_REMOTE}/${BASE_BRANCH}")
 }
 
+# cloneRepo clones the repository, or fetches it if it is there, for a
+# credentials: clone recipe (pkg/recipe): the GitHub token is in this
+# step's environment and nowhere else. git is pointed at gh, which reads
+# it from there, with -c for these commands only, so it is written into no
+# config file and no remote URL; the empty helper before it drops any
+# inherited one. Nothing here forks, sets a default repo or configures
+# git, as setupGitRepos does: those leave the token's reach behind.
+function cloneRepo {
+    echo "Running cloneRepo..."
+    git_auth() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"; }
+    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
+        rm -rf "/workspaces/${REPO_NAME}"
+        (cd /workspaces && git_auth clone "${CLONE_URL}")
+    else
+        (cd "/workspaces/${REPO_NAME}" && git_auth fetch origin)
+    fi
+}
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating ${USER_HOME}/.gemini directory"

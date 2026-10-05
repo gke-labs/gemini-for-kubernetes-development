@@ -36,7 +36,14 @@ type Version struct {
 	// /v1/sessions, 0 when it is not: a separate number so that a client
 	// of tasks alone keeps working with a server that has none.
 	Sessions int `json:"sessions,omitempty"`
+	// Secrets is the version of PostRequest.Secrets this server honours, 0
+	// when it does not: a client must not send secrets to a server that
+	// would put them in the task's environment, or leave them on disk.
+	Secrets int `json:"secrets,omitempty"`
 }
+
+// SecretsVersion is the PostRequest.Secrets this server honours.
+const SecretsVersion = 1
 
 // PostRequest is a recipe task to start. The server builds the command
 // from the recipe and inputs, as the spool does: it never runs one it is
@@ -46,6 +53,11 @@ type PostRequest struct {
 	Recipe []byte            `json:"recipe"`
 	Inputs map[string]string `json:"inputs"`
 	Env    map[string]string `json:"env,omitempty"`
+	// Secrets reach only the recipe steps allowed them, never the task's
+	// environment, where the agent could read them back from /proc:
+	// written to the task directory as spool.SecretsFile, mode 0600, for
+	// the runner to read and delete as it starts, and never served.
+	Secrets map[string]string `json:"secrets,omitempty"`
 }
 
 // PostResponse is the task as started, or as found when Existed: a task

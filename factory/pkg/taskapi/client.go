@@ -39,12 +39,10 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("task server: %d %s", e.Code, e.Message)
 }
 
-func (c *Client) Version(ctx context.Context) (int, error) {
+func (c *Client) Version(ctx context.Context) (Version, error) {
 	var v Version
-	if err := c.do(ctx, http.MethodGet, "/v1/version", nil, &v); err != nil {
-		return 0, err
-	}
-	return v.API, nil
+	err := c.do(ctx, http.MethodGet, "/v1/version", nil, &v)
+	return v, err
 }
 
 func (c *Client) List(ctx context.Context) ([]spool.Entry, error) {

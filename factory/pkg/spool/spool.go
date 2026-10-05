@@ -43,6 +43,10 @@ const (
 	// EnvFile holds the task's environment, tokens included. The daemon
 	// deletes it as soon as it has read it.
 	EnvFile = "env.json"
+	// SecretsFile holds what reaches only the recipe steps allowed it (a
+	// credentials: clone recipe's GitHub token), outside the task's
+	// environment. The runner deletes it as it starts.
+	SecretsFile = "secrets.json"
 )
 
 // Task describes a spooled task. It stays in the task directory, so a
@@ -159,6 +163,7 @@ func start(taskDir string, launch Launcher) error {
 // Fail gives a task that could not start the exit code and log a client
 // attached to it reads.
 func Fail(taskDir string, cause error) {
+	_ = os.Remove(filepath.Join(taskDir, SecretsFile))
 	tf := envd.NewTaskFiles(taskDir)
 	_ = os.WriteFile(tf.LogFile, []byte(fmt.Sprintf("spool: the task could not start: %v\n", cause)), 0o644)
 	_ = os.WriteFile(tf.ExitCodeFile, []byte("127\n"), 0o644)

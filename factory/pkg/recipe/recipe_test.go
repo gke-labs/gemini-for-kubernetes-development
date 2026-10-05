@@ -637,3 +637,94 @@ func TestPlanUseAsPlan(t *testing.T) {
 		t.Errorf("revise plan = %+v", steps)
 	}
 }
+
+func TestCredentialsCloneValidated(t *testing.T) {
+	const ok = "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: configure-engine}, {ask: x}]}"
+	if _, err := Parse([]byte(ok)); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for name, y := range map[string]string{
+		"unknown":           "name: a\ncredentials: some\nstart: {steps: [{uses: clone}]}",
+		"no clone":          "name: a\ncredentials: clone\nstart: {steps: [{ask: x}]}",
+		"two clones":        "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: clone}, {ask: x}]}",
+		"clone after ask":   "name: a\ncredentials: clone\nstart: {steps: [{ask: x}, {uses: clone}]}",
+		"setup-git":         "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: setup-git}, {ask: x}]}",
+		"checkout":          "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: checkout-default-branch}, {ask: x}]}",
+		"clone in a revise": "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {ask: x, capture: o.md}]}\nrevise: [{id: r, label: R, steps: [{uses: clone}, {ask: y, capture: o.md}]}]",
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: parsed, want an error", name)
+		}
+	}
+}
+
+// Under credentials: clone no step gets the token from the environment,
+// and the clone step alone gets the task's secrets, once.
+func TestSandboxUsesGivesTheSecretsToTheCloneAlone(t *testing.T) {
+	taskDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(taskDir, "steps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := &SandboxExecutor{
+		StepScript: []byte(`echo "$RECIPE_STEP_FUNCTION token=${GITHUB_TOKEN:-none}/${GH_TOKEN:-none}"`),
+		TaskDir:    taskDir,
+		RepoDir:    filepath.Join(t.TempDir(), "repo"),
+		Env:        []string{"PATH=" + os.Getenv("PATH"), "GH_TOKEN=leaked"},
+		// Credentials and Secrets as runRecipeExec sets them.
+		Credentials: CredentialsClone,
+		Secrets:     []string{"GITHUB_TOKEN=tok"},
+	}
+	var out strings.Builder
+	for _, step := range []string{"configure-engine", "clone", "clone"} {
+		if err := e.Uses(context.Background(), step, nil, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "configureGemini token=none/none\ncloneRepo token=tok/none\ncloneRepo token=none/none\n"
+	if out.String() != want {
+		t.Errorf("got\n%s\nwant\n%s", out.String(), want)
+	}
+}
+
+func TestBuiltinResearch(t *testing.T) {
+	data, rec, err := Builtin("research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Credentials != CredentialsClone || rec.TaskType != "research" || rec.StartOutputs() {
+		t.Fatalf("research = credentials %q, task-type %q, start outputs %v", rec.Credentials, rec.TaskType, rec.StartOutputs())
+	}
+	if d := rec.OutputDecl(); d == nil || d.Kind != "Notes" || d.Actions[len(d.Actions)-1].Revise != "notes" {
+		t.Fatalf("output decl = %+v", d)
+	}
+	// What a repository target sets, and the member's question.
+	repo := map[string]string{"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r", "repo_url": "https://github.com/o/r"}
+	inputs, err := rec.ResolveInputs(repo, map[string]string{"topic": "How are deletes reconciled?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.CheckRender(inputs); err != nil {
+		t.Fatalf("CheckRender: %v", err)
+	}
+	if _, err := rec.ResolveInputs(repo, nil); err == nil {
+		t.Error("resolved without a topic")
+	}
+	// The runner enforces credentials, so it reaches the sandbox.
+	out, err := ForSandbox(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Parse(out); err != nil || got.Credentials != CredentialsClone {
+		t.Errorf("sandbox recipe = %+v, %v; want credentials kept", got, err)
+	}
+	// An issue's recipe on a repository fails before anything runs.
+	_, plan, err := Builtin("plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs, err := plan.ResolveInputs(repo, nil); err != nil {
+		t.Fatal(err)
+	} else if err := plan.CheckRender(inputs); err == nil || !strings.Contains(err.Error(), "issue_url") {
+		t.Errorf("plan on a repository: CheckRender = %v, want issue_url missing", err)
+	}
+}

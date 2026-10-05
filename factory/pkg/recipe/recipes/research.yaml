@@ -1,0 +1,90 @@
+# factory recipe research --url <repository> --topic "…" [--session ID]:
+# a conversation about a repository, in a sandbox of its own (one per
+# session). The start clones the repository and asks the member's
+# question; the member keeps talking in the task's session afterwards
+# (Continue session). Save notes writes the conversation up as a Notes
+# task output, which `factory apply` pushes to research/notes on the
+# member's fork.
+#
+# The session runs with nobody approving its tools, so the GitHub token
+# reaches the clone and nothing else (credentials: clone): the agent has
+# no credentials, and nothing in the sandbox holds one.
+name: research
+task-type: research
+credentials: clone
+
+inputs:
+  topic:
+    description: What the member wants to understand
+    required: true
+
+context: |
+  You are helping a member of the project understand the repository
+  checked out in the current directory. Answer from the code, and say
+  plainly when you are guessing.
+
+  You must not change anything: do NOT modify or create files in the
+  repository, do NOT run git write operations (commit, branch, push), and
+  do NOT post anything to GitHub. You have no GitHub credentials.
+
+start:
+  steps:
+    - uses: clone
+    - uses: configure-engine
+    - ask: |
+        {{ .Inputs.topic }}
+
+        For context: the repository {{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}
+        ({{ .Inputs.url }}) is checked out in front of you, and that is what
+        the question is about.
+
+        Investigate it in the source — read the relevant packages and trace
+        the flows rather than answering from general knowledge. Use web
+        search where the question calls for comparison with another project
+        or for ecosystem context the checkout cannot supply.
+
+        Answer here in the conversation. Tables for comparisons, a Mermaid
+        diagram where structure is the point, and file:line references for
+        anything you assert about this code. Say plainly what you could not
+        determine.
+
+# Save notes writes up the whole conversation so far, as a new task in the
+# same session with a result of its own; clicked again, it writes them
+# again from everything said since.
+revise:
+  - id: notes
+    label: Save notes
+    steps:
+      - ask: |
+          Write up this conversation as a note for someone who was not here,
+          reading it months from now.
+
+          Respond with ONLY the note as markdown — no prose before or after
+          it, no code fences around the whole note. Open with a `#` heading
+          that names what it is about, then a short summary, then the
+          findings.
+
+          Markdown prose, self-contained: no "as discussed above", no
+          reference to turns or to this instruction. Keep the file:line
+          references, command lines and concrete names — they are the part
+          worth saving. Fold in what the conversation later corrected rather
+          than repeating the first answer. Say plainly what is still
+          unresolved rather than rounding it off into a conclusion.
+
+          Put no tokens, keys or other credentials into it: the note is
+          pushed to a branch on the member's fork on GitHub.
+        capture: notes.md
+
+outputs:
+  - notes.md
+
+task-output:
+  kind: Notes
+  from: notes.md
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: push-notes
+      label: Save to research/notes
+    - verb: reject

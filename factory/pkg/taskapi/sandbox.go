@@ -35,8 +35,10 @@ type Sandbox interface {
 	List(ctx context.Context) ([]spool.Entry, error)
 	// Start hands the sandbox a recipe task and returns once it has
 	// started. spool.ErrNotClaimed: the sandbox has no daemon to start it,
-	// and nothing of it runs.
-	Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env map[string]string) error
+	// and nothing of it runs. secrets go to the task outside its
+	// environment (PostRequest.Secrets); a sandbox that cannot keep them
+	// so refuses them, and nothing of the task runs.
+	Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error
 	// AwaitStart waits for a task in the spool to start.
 	AwaitStart(ctx context.Context, id string, claimTimeout, startTimeout time.Duration) error
 	// Attach follows a started task's log to stdout until it ends, and
@@ -95,17 +97,26 @@ func ConnectServer(ctx context.Context, namespace, name string) (*ServerSandbox,
 		s.Close()
 		return nil, err
 	}
-	if v < APIVersion {
+	if v.API < APIVersion {
 		s.Close()
-		return nil, fmt.Errorf("its task server serves version %d, this factory needs %d", v, APIVersion)
+		return nil, fmt.Errorf("its task server serves version %d, this factory needs %d", v.API, APIVersion)
 	}
+	s.secrets = v.Secrets >= SecretsVersion
 	return s, nil
+}
+
+// errNoSecrets is a sandbox whose image predates task secrets.
+func errNoSecrets(name string) error {
+	return fmt.Errorf("sandbox %s's image cannot keep a task's GitHub token out of its environment; recreate the sandbox", name)
 }
 
 // ServerSandbox reaches a sandbox's tasks through its task server.
 type ServerSandbox struct {
 	name, namespace string
 	kc              *clients.KubernetesClient
+
+	// secrets: the server keeps a task's secrets out of its environment.
+	secrets bool
 
 	mu  sync.Mutex
 	fwd *forward
@@ -191,10 +202,13 @@ func (s *ServerSandbox) get(ctx context.Context, id string) (spool.Entry, error)
 	return e, err
 }
 
-func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env map[string]string) error {
+func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error {
+	if len(secrets) > 0 && !s.secrets {
+		return errNoSecrets(s.name)
+	}
 	var resp PostResponse
 	err := s.call(ctx, func(c *Client) (err error) {
-		resp, err = c.Post(ctx, PostRequest{Task: task, Recipe: recipe, Inputs: inputs, Env: env})
+		resp, err = c.Post(ctx, PostRequest{Task: task, Recipe: recipe, Inputs: inputs, Env: env, Secrets: secrets})
 		return err
 	})
 	if err != nil {
@@ -413,7 +427,11 @@ func (s *EnvdSandbox) List(ctx context.Context) ([]spool.Entry, error) {
 	return spool.List(ctx, s.Client)
 }
 
-func (s *EnvdSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env map[string]string) error {
+func (s *EnvdSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error {
+	// The spool has only the environment to carry them in.
+	if len(secrets) > 0 {
+		return errNoSecrets(s.name)
+	}
 	if err := spool.Submit(ctx, s.Client, task, recipe, inputs, env); err != nil {
 		return err
 	}

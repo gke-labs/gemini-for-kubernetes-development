@@ -62,7 +62,7 @@ func NewServer(incomingDir, tasksDir string, launch spool.Launcher) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		v := Version{API: APIVersion}
+		v := Version{API: APIVersion, Secrets: SecretsVersion}
 		if s.sessions != nil {
 			v.Sessions = SessionsVersion
 		}
@@ -214,7 +214,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeTask writes what the task's process reads, as a claimed spooled
-// task has it, minus its environment.
+// task has it, minus its environment, and its secrets if any.
 func writeTask(taskDir string, req PostRequest) error {
 	if err := os.MkdirAll(filepath.Dir(taskDir), 0o755); err != nil {
 		return err
@@ -238,7 +238,22 @@ func writeTask(taskDir string, req PostRequest) error {
 			return fmt.Errorf("writing %s: %w", f.name, err)
 		}
 	}
+	if len(req.Secrets) > 0 {
+		data, err := json.Marshal(req.Secrets)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(taskDir, spool.SecretsFile), data, 0o600); err != nil {
+			return fmt.Errorf("writing %s: %w", spool.SecretsFile, err)
+		}
+	}
 	return nil
+}
+
+// unserved is a task file that holds credentials: listed and read by
+// nobody but the task.
+func unserved(name string) bool {
+	return name == spool.EnvFile || name == spool.SecretsFile
 }
 
 // awaitStarted waits for the task script to record its pid, or its exit,
@@ -357,7 +372,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	names := []string{}
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() != spool.EnvFile && !strings.HasPrefix(e.Name(), ".") {
+		if !e.IsDir() && !unserved(e.Name()) && !strings.HasPrefix(e.Name(), ".") {
 			names = append(names, e.Name())
 		}
 	}
@@ -373,8 +388,8 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if file == spool.EnvFile {
-		writeError(w, http.StatusForbidden, "a task's environment is not served")
+	if unserved(file) {
+		writeError(w, http.StatusForbidden, "a task's environment and secrets are not served")
 		return
 	}
 	data, err := os.ReadFile(filepath.Join(taskDir, file))

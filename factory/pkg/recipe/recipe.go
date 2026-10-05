@@ -61,7 +61,31 @@ type Recipe struct {
 	// already look for that type. Unset, it is a side task,
 	// recipe-<name>, beside them. Like TaskOutput it is factory's.
 	TaskType string `yaml:"task-type,omitempty"`
+	// Credentials is how far the GitHub token reaches: CredentialsFull
+	// (unset) or CredentialsClone. Unlike task-type it is the runner's,
+	// which enforces it, so it reaches the sandbox.
+	Credentials string `yaml:"credentials,omitempty"`
 }
+
+const (
+	// CredentialsFull: every uses step runs with the token, and setup-git
+	// leaves it in gh's hosts.yml for the agent's gh to use.
+	CredentialsFull = "full"
+	// CredentialsClone: the token reaches the clone step and nothing else.
+	// The caller hands it over outside the task's environment (the task's
+	// secrets), the runner gives it to that one step, which runs before
+	// the first ask, and forgets it; nothing writes it to disk. For a
+	// session nobody approves (yolo), which could read back anything the
+	// sandbox holds.
+	CredentialsClone = "clone"
+	// CloneStep is the named step that clones the repository with the
+	// token in its environment alone.
+	CloneStep = "clone"
+)
+
+// fullCredentialSteps are the named steps that put the token where the
+// agent can reach it later: on disk, or in the checkout's remote.
+var fullCredentialSteps = []string{"setup-git", "setup-repo", "checkout-default-branch", "checkout-pr-branch"}
 
 // Part is a list of steps run in order: the recipe's start, or a revise.
 type Part struct {
@@ -157,6 +181,7 @@ var NamedSteps = map[string]string{
 	"checkout-default-branch": "checkoutDefaultBranch",
 	"checkout-pr-branch":      "checkoutPRBranch",
 	"configure-engine":        "configureGemini",
+	CloneStep:                 "cloneRepo",
 }
 
 var (
@@ -226,6 +251,9 @@ func (r *Recipe) Validate() error {
 	if err := validateSteps(r.Start.Steps); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
+	if err := r.validateCredentials(); err != nil {
+		return err
+	}
 	if len(r.Revise) > 0 && !slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Kind() == "ask" }) {
 		return fmt.Errorf("recipe %s has revises but its start asks nothing: there is no session to revise in", r.Name)
 	}
@@ -256,6 +284,48 @@ func (r *Recipe) Validate() error {
 		if to := r.TaskOutput; to != nil && !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture == to.From }) {
 			return fmt.Errorf("revise %s does not capture %s, the task output's", rv.ID, to.From)
 		}
+	}
+	return nil
+}
+
+// validateCredentials holds a credentials: clone recipe to its rule: one
+// clone, in start, before the first ask, and none of the steps that leave
+// the token behind.
+func (r *Recipe) validateCredentials() error {
+	switch r.Credentials {
+	case "", CredentialsFull:
+		return nil
+	case CredentialsClone:
+	default:
+		return fmt.Errorf("credentials %q is not one of: %s, %s", r.Credentials, CredentialsFull, CredentialsClone)
+	}
+	parts := map[string][]Step{"start": r.Start.Steps}
+	for _, rv := range r.Revise {
+		parts["revise "+rv.ID] = rv.Steps
+	}
+	for part, steps := range parts {
+		for i, s := range steps {
+			if slices.Contains(fullCredentialSteps, s.Uses) {
+				return fmt.Errorf("%s: step %d: %s leaves the GitHub token behind; credentials: clone allows only %s", part, i+1, s.Uses, CloneStep)
+			}
+			if s.Uses == CloneStep && part != "start" {
+				return fmt.Errorf("%s: step %d: a revise has no token to clone with", part, i+1)
+			}
+		}
+	}
+	clones, asked := 0, false
+	for i, s := range r.Start.Steps {
+		switch {
+		case s.Uses == CloneStep && asked:
+			return fmt.Errorf("start: step %d: %s must come before the first ask, so no agent runs while the token is held", i+1, CloneStep)
+		case s.Uses == CloneStep:
+			clones++
+		case s.Kind() == "ask":
+			asked = true
+		}
+	}
+	if clones != 1 {
+		return fmt.Errorf("start: credentials: clone needs one %s step, not %d", CloneStep, clones)
 	}
 	return nil
 }
@@ -357,6 +427,13 @@ func (r *Recipe) OutputDecl() *taskoutput.Decl {
 		decl.Actions = append(decl.Actions, taskoutput.Action{Verb: "revise", Revise: rv.ID, Label: rv.Label})
 	}
 	return &decl
+}
+
+// StartOutputs reports whether start leaves the task output: a recipe
+// whose result only a revise writes (research's notes) has none until
+// then.
+func (r *Recipe) StartOutputs() bool {
+	return r.TaskOutput != nil && slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Capture == r.TaskOutput.From })
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an

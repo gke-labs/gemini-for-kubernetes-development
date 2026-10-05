@@ -143,6 +143,34 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 	return nil
 }
 
+// CheckRender renders every ask of every part with inputs, as far as can
+// be done before anything has run (step results and files empty), so an
+// ask reading an input its target does not set — an issue's, on a
+// repository — fails before a sandbox is made rather than in it.
+func (r *Recipe) CheckRender(inputs map[string]string) error {
+	parts := map[string][]Step{"start": r.Start.Steps}
+	for _, rv := range r.Revise {
+		parts["revise "+rv.ID] = rv.Steps
+	}
+	for part, steps := range parts {
+		data := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
+		for _, s := range steps {
+			if s.ID != "" {
+				data.Steps[s.ID] = &StepResult{}
+			}
+		}
+		for i, s := range steps {
+			if s.Kind() != "ask" {
+				continue
+			}
+			if _, err := render(s.Label(i), s.Ask, data, ""); err != nil {
+				return fmt.Errorf("%s: step %s: %w", part, s.Label(i), err)
+			}
+		}
+	}
+	return nil
+}
+
 // render fills one ask. `file "name"` reads a file a step left in the task
 // directory, so a turn can quote a log without the recipe inlining it.
 func render(label, text string, data templateData, taskDir string) (string, error) {
@@ -150,6 +178,9 @@ func render(label, text string, data templateData, taskDir string) (string, erro
 		"file": func(name string) (string, error) {
 			if !safeFileName(name) {
 				return "", fmt.Errorf("file %q must be a plain file name", name)
+			}
+			if taskDir == "" {
+				return "", nil // CheckRender: nothing has run
 			}
 			b, err := os.ReadFile(filepath.Join(taskDir, name))
 			return string(b), err
