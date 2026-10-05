@@ -43,6 +43,9 @@ Without --action, apply does each write the result offers:
   run             the follow-up it offers (run:fix names it): for a Plan,
                   writes the plan, as edited, to the issue's sandbox and
                   runs factory fix --with-plan there
+  revise          one of the recipe's revises (revise:plan names it):
+                  factory recipe revise, into the conversation the result
+                  came from; it writes a new result and posts nothing
 
 edit and reject are for whoever keeps the result as a draft: edit the
 file before applying it, or don't apply it.
@@ -52,7 +55,8 @@ Applying the same task's output again does not comment again.`,
   factory sandbox task output fix-repo-123 > triage.yaml   # look, edit
   factory apply -f triage.yaml
   factory apply -f plan.yaml --action comment
-  factory apply -f plan.yaml --action run:fix`,
+  factory apply -f plan.yaml --action run:fix
+  factory apply -f plan.yaml --action revise:plan`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			var data []byte
@@ -83,6 +87,9 @@ Applying the same task's output again does not comment again.`,
 						return fmt.Errorf("%s: %w", d.Target.URL, err)
 					}
 				}
+				if verb == "revise" {
+					return runRevises(ctx, c, docs, run, dryRun)
+				}
 				if class == taskoutput.ClassFollowUp {
 					return runFollowUps(ctx, c, docs, run, dryRun)
 				}
@@ -105,7 +112,7 @@ Applying the same task's output again does not comment again.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, run[:<follow-up>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
@@ -123,6 +130,33 @@ func runFollowUps(ctx context.Context, c *cobra.Command, docs []*taskoutput.Docu
 			return fmt.Errorf("%s: follow-up %q is not one this factory runs", d.Target.URL, a.Run)
 		}
 		if err := fixWithPlan(ctx, d, dryRun); err != nil {
+			return fmt.Errorf("%s: %w", d.Target.URL, err)
+		}
+	}
+	return nil
+}
+
+// runRevises runs the revise each document offers, in the conversation of
+// the task it came from: in the sandbox it names, or else its target's.
+func runRevises(ctx context.Context, c *cobra.Command, docs []*taskoutput.Document, revise string, dryRun bool) error {
+	for _, d := range docs {
+		a, _ := d.Offer("revise", revise)
+		task := d.Source.Session
+		if task == "" {
+			task = d.Source.Task
+		}
+		if task == "" {
+			return fmt.Errorf("%s: the %s names no task to revise", d.Target.URL, d.Kind)
+		}
+		where := d.Source.Sandbox
+		if where == "" {
+			where = d.Target.URL
+		}
+		if dryRun {
+			fmt.Printf("Would run: factory recipe revise %s %s --task %s\n", where, a.Revise, task)
+			continue
+		}
+		if err := runRevise(ctx, c, where, a.Revise, reviseFlags{task: task}); err != nil {
 			return fmt.Errorf("%s: %w", d.Target.URL, err)
 		}
 	}

@@ -17,6 +17,7 @@ import (
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -41,8 +42,10 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
+	cmd.AddCommand(newRecipeReviseCommand(ctx))
 	for _, name := range recipe.BuiltinNames() {
-		// run and exec are taken; TestBuiltinRecipeCommands keeps them so.
+		// run, exec and revise are taken; TestBuiltinRecipeCommands keeps
+		// them so.
 		cmd.AddCommand(newBuiltinRecipeCommand(ctx, name))
 	}
 	return cmd
@@ -393,13 +396,40 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 		return err
 	}
 
+	envMap, err := recipeEnv(secret, it)
+	if err != nil {
+		return err
+	}
+
+	task := newSpoolTask(rec.Name, runName, itemURL)
+	task.Output = rec.OutputDecl()
+	task.TaskType = rec.TaskType
+	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
+	if apply.on {
+		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
+	}
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap); err != nil || !done {
+		return err
+	}
+	if apply.on {
+		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, apply.dryRun)
+	}
+	if rec.TaskOutput != nil {
+		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
+	}
+	return nil
+}
+
+// recipeEnv is the environment a recipe task on it runs with:
+// the member's GitHub identity and engine credentials, from their secret.
+func recipeEnv(secret *corev1.Secret, it githubItem) (map[string]string, error) {
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	envMap := map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
 		"REPO_NAME":                  it.Repo,
-		"CLONE_URL":                  cloneURL,
+		"CLONE_URL":                  fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo),
 		"GITHUB_USER_ID":             githubLogin,
 		"GITHUB_USER_EMAIL":          string(secret.Data[constants.KeyGithubEmail]),
 		"GITHUB_USER_NAME":           githubLogin,
@@ -411,17 +441,16 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 		envMap["ISSUE_NUMBER"] = strconv.Itoa(it.Number)
 	}
 	if err := applyEngineEnv(envMap, secret); err != nil {
-		return err
+		return nil, err
 	}
+	return envMap, nil
+}
 
-	task := newSpoolTask(rec.Name, runName, itemURL)
-	task.Output = rec.TaskOutput
-	task.TaskType = rec.TaskType
-	taskDir := spool.TaskDir(task.ID)
-	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
-	if apply.on {
-		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
-	}
+// startRecipeTask records the task on its sandbox and hands it over.
+// Unless --detached it follows the task to its end and prints its
+// outputs, and returns true.
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap map[string]string) (bool, error) {
+	sandboxName := sb.Name()
 	taskType := "recipe-" + rec.Name
 	// In an issue's sandbox a recipe is a side task, and last-task-* stay
 	// the plan's or fix's, unless it is the sandbox's main task itself.
@@ -431,14 +460,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	} else if !it.IsPR {
 		side, update = true, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
-	run := factorysandbox.RecordedRun{Name: runName, Task: task.ID, StartedAt: time.Now().UTC()}
+	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: time.Now().UTC()}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, run)
 	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
-		return fmt.Errorf("running recipe: %w", err)
+		return false, fmt.Errorf("running recipe: %w", err)
 	}
 	if rootFlags.Detached {
-		return nil
+		return false, nil
 	}
 	_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Completed")
 
@@ -448,19 +477,14 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName string, apply ap
 	} else {
 		meta.Issue = it.Number
 	}
+	taskDir := spool.TaskDir(task.ID)
 	usagereport.HarvestTaskFiles(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, task.ID, name) }, meta)
 
 	if err := printRecipeOutputs(ctx, sb, rec, task.ID); err != nil {
-		return err
+		return false, err
 	}
 	fmt.Printf("\nRecipe %s completed. Step logs and the session transcript: %s:%s\n", rec.Name, sandboxName, taskDir)
-	if apply.on {
-		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, apply.dryRun)
-	}
-	if rec.TaskOutput != nil {
-		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", rec.TaskOutput.Kind, sandboxName, rootFlags.Namespace, task.ID)
-	}
-	return nil
+	return true, nil
 }
 
 func printRecipeOutputs(ctx context.Context, sb taskapi.Sandbox, rec *recipe.Recipe, id string) error {
@@ -765,6 +789,7 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		model = models[0]
 	}
 
+	task := readSpoolTask(taskDir)
 	r := &recipe.Runner{
 		Exec: &recipe.SandboxExecutor{
 			StepScript: stepScript,
@@ -778,13 +803,21 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			// daemon's, so it can be watched and continued after the task.
 			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
 				base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
+				// A revise continues the conversation of the task it
+				// revises.
+				if task.Session != "" {
+					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir)
+				}
 				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir)
+			}
+			if task.Session != "" {
+				return nil, fmt.Errorf("a revise needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
 			}
 			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir)
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,
-		Revise:  taskRevise(taskDir),
+		Revise:  task.Revise,
 		Log:     os.Stdout,
 	}
 	if err := r.Run(ctx, rec); err != nil {
@@ -793,18 +826,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	return writeTaskOutput(taskDir, inputs, engine)
 }
 
-// taskRevise is the part task.json says the task runs, "" (start) for a
-// task started without one.
-func taskRevise(taskDir string) string {
-	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
-	if err != nil {
-		return ""
-	}
+// readSpoolTask is the task's task.json, empty for a task started without
+// one: which part of the recipe it runs, and whose session.
+func readSpoolTask(taskDir string) spool.Task {
 	var task spool.Task
-	if err := json.Unmarshal(data, &task); err != nil {
-		return ""
+	if data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile)); err == nil {
+		_ = json.Unmarshal(data, &task)
 	}
-	return task.Revise
+	return task
 }
 
 // writeTaskOutput wraps the result the task declared (task.json's output)
@@ -830,9 +859,10 @@ func writeTaskOutput(taskDir string, inputs map[string]string, engine string) er
 		return nil
 	}
 	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), taskTarget(task, inputs), taskoutput.Source{
-		Task:   filepath.Base(taskDir),
-		Recipe: task.Recipe,
-		Engine: engine,
+		Task:    filepath.Base(taskDir),
+		Session: task.Session,
+		Recipe:  task.Recipe,
+		Engine:  engine,
 	})
 	if err != nil {
 		return err

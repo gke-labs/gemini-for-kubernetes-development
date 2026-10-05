@@ -26,17 +26,60 @@ type DaemonSession struct {
 	id    string
 	token string
 	hc    *http.Client
+	// created is whether this task started the engine, and so ends it: a
+	// revise leaves a session it found open to the member using it.
+	created bool
 }
 
 // StartDaemonSession creates the task's session on the task server at
 // base (http://127.0.0.1:<port>/v1), named after the task, as the task:
 // token is the one the daemon gave it.
 func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey, repoDir, taskDir string) (*DaemonSession, error) {
-	id := filepath.Base(taskDir)
-	d := &DaemonSession{base: strings.TrimSuffix(base, "/"), id: id, token: token, hc: &http.Client{}}
+	d := newDaemonSession(base, filepath.Base(taskDir), token)
+	if err := d.create(ctx, engine, model, apiKey, repoDir); err != nil {
+		return nil, err
+	}
+	d.created = true
+	return d, nil
+}
+
+// OpenDaemonSession is a revise's way in to the session of the task it
+// revises, session: the daemon holds it for the revise, whose token is
+// token. Open already — a member is talking in it — it is used as it is,
+// unless a turn is in flight, which refuses the revise before it sends
+// anything. Otherwise it is created, which loads the conversation.
+func OpenDaemonSession(ctx context.Context, base, token, session, engine, model, apiKey, repoDir string) (*DaemonSession, error) {
+	d := newDaemonSession(base, session, token)
+	var state struct {
+		Busy bool `json:"busy"`
+	}
+	err := d.call(ctx, http.MethodGet, "/sessions/"+session, nil, http.StatusOK, &state)
+	var status statusError
+	switch {
+	case err == nil && state.Busy:
+		return nil, fmt.Errorf("session %s is busy: a turn is in flight; revise once it has ended", session)
+	case err == nil:
+		return d, nil
+	case errors.As(err, &status) && status.code == http.StatusNotFound:
+	default:
+		return nil, err
+	}
+	if err := d.create(ctx, engine, model, apiKey, repoDir); err != nil {
+		return nil, err
+	}
+	d.created = true
+	return d, nil
+}
+
+func newDaemonSession(base, id, token string) *DaemonSession {
+	return &DaemonSession{base: strings.TrimSuffix(base, "/"), id: id, token: token, hc: &http.Client{}}
+}
+
+// create starts the session's engine, named after its task.
+func (d *DaemonSession) create(ctx context.Context, engine, model, apiKey, repoDir string) error {
 	body, err := json.Marshal(map[string]any{
-		"id":     id,
-		"task":   id,
+		"id":     d.id,
+		"task":   d.id,
 		"engine": engine,
 		"model":  model,
 		"cwd":    repoDir,
@@ -45,17 +88,17 @@ func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey,
 		"autoApprove": true,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	resp, err := d.send(ctx, http.MethodPost, "/sessions", bytes.NewReader(body), apiKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("starting the task's session: %s", failure(resp))
+		return fmt.Errorf("starting the task's session: %s", failure(resp))
 	}
-	return d, nil
+	return nil
 }
 
 // Ask sends one turn and returns the agent's reply, as ACPSession.Ask.
@@ -112,9 +155,13 @@ func (d *DaemonSession) cancelled(ctx context.Context, err error) error {
 	return err
 }
 
-// Close ends the engine. The transcript and the record stay in the task's
-// directory, for whoever continues the conversation.
+// Close ends the engine, if this task started it. The transcript and the
+// record stay in the task's directory, for whoever continues the
+// conversation.
 func (d *DaemonSession) Close() error {
+	if !d.created {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	err := d.call(ctx, http.MethodDelete, "/sessions/"+d.id, nil, http.StatusNoContent, nil)

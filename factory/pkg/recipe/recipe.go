@@ -214,6 +214,9 @@ func (r *Recipe) Validate() error {
 		if err := taskoutput.ValidateActions(to.Kind, to.Actions); err != nil {
 			return fmt.Errorf("task-output: %w", err)
 		}
+		if slices.ContainsFunc(to.Actions, func(a taskoutput.Action) bool { return a.Verb == "revise" }) {
+			return fmt.Errorf("task-output: revise actions come from the recipe's revises, one each; declare them there")
+		}
 	}
 	for _, o := range r.Outputs {
 		if !safeFileName(o) {
@@ -248,6 +251,10 @@ func (r *Recipe) Validate() error {
 		// A revise that captures none of the outputs would change nothing.
 		if !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture != "" && slices.Contains(outputs, s.Capture) }) {
 			return fmt.Errorf("revise %s captures none of the outputs (%s)", rv.ID, strings.Join(outputs, ", "))
+		}
+		// Its result is a task output too, written from the same file.
+		if to := r.TaskOutput; to != nil && !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture == to.From }) {
+			return fmt.Errorf("revise %s does not capture %s, the task output's", rv.ID, to.From)
 		}
 	}
 	return nil
@@ -329,6 +336,27 @@ func (r *Recipe) ResolveInputs(standard, overrides map[string]string) (map[strin
 		}
 	}
 	return out, nil
+}
+
+// OutputDecl is the task output a task of the recipe declares, start or
+// revise: TaskOutput, with an action for each revise after the actions
+// it declares (its kind's, when it declares none). Nil without one.
+func (r *Recipe) OutputDecl() *taskoutput.Decl {
+	if r.TaskOutput == nil {
+		return nil
+	}
+	decl := *r.TaskOutput
+	if len(r.Revise) == 0 {
+		return &decl
+	}
+	decl.Actions = slices.Clone(decl.Actions)
+	if len(decl.Actions) == 0 {
+		decl.Actions = taskoutput.DefaultActions(decl.Kind)
+	}
+	for _, rv := range r.Revise {
+		decl.Actions = append(decl.Actions, taskoutput.Action{Verb: "revise", Revise: rv.ID, Label: rv.Label})
+	}
+	return &decl
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an

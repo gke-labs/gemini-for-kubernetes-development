@@ -5,7 +5,8 @@
 # `factory apply` (or --apply) posts on the issue.
 #
 # Run again, it revises the plan it finds there, against --feedback if
-# given.
+# given. After a conversation in its session, `factory recipe revise
+# <issue> plan` rewrites the plan from that conversation.
 name: plan
 task-type: plan
 
@@ -104,9 +105,24 @@ start:
 
     # Where a fix (factory fix --with-plan), the board and a continued chat
     # read the plan, without a fence around all of it.
-    - run: |
+    - run: &save |
         test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty" >&2; exit 1; }
         sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
+
+# After the task, a member can keep talking to the agent in its session
+# (Continue session). Use as plan rewrites the plan from that conversation,
+# into the same session, as a new task with its own result.
+revise:
+  - id: plan
+    label: Use as plan
+    steps:
+      - ask: |
+          Rewrite the plan to reflect our conversation. Respond with ONLY the
+          plan as markdown — no prose before or after it, no top-level title
+          heading, no code fences around the whole plan — with the same
+          sections as before: Summary, Approach, Steps, Risks, Test plan.
+        capture: plan-output.md
+      - run: *save
 
 outputs:
   - plan-output.md
