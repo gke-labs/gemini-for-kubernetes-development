@@ -49,7 +49,7 @@ type Document struct {
 	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 }
 
-// Target is the issue or PR the result is about.
+// Target is the issue, PR or repository the result is about.
 type Target struct {
 	URL string `yaml:"url" json:"url"`
 }
@@ -76,6 +76,7 @@ type kind struct {
 var kinds = map[string]kind{
 	"Triage": {parse: parseTriage},
 	"Plan":   {parse: parsePlan},
+	"Notes":  {parse: parseNotes},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.

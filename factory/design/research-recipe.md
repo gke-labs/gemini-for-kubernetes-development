@@ -1,8 +1,8 @@
 # Design Note: Research as a Recipe
 
-**Status:** Proposed.
+**Status:** Phase 1 in progress: the Notes kind and `push-notes` built.
 
-A research conversation is a member talking to an agent about a repository: "how does the reconciler handle deletes?", "what changed in the last two weeks?". It runs in its own sandbox, and its notes can be saved to the member's fork on `research/notes`. Today it is built on a separate mechanism from recipes. This note moves it onto one: a built-in **`research` recipe** whose start clones the repo and asks the kickoff, whose conversation is the task session, and whose **Save notes** is a revise that produces a **Notes** task output with a **`push`** action.
+A research conversation is a member talking to an agent about a repository: "how does the reconciler handle deletes?", "what changed in the last two weeks?". It runs in its own sandbox, and its notes can be saved to the member's fork on `research/notes`. Today it is built on a separate mechanism from recipes. This note moves it onto one: a built-in **`research` recipe** whose start clones the repo and asks the kickoff, whose conversation is the task session, and whose **Save notes** is a revise that produces a **Notes** task output with a **`push-notes`** action.
 
 ---
 
@@ -60,7 +60,7 @@ task-output:
   from: notes.md
   actions:
     - {verb: edit, field: spec.markdown, format: markdown}
-    - {verb: push, label: Save to research/notes}
+    - {verb: push-notes, label: Save to research/notes}
 ```
 
 - **The kickoff prompts move into the recipe.** `kind` picks among onboard / activity / topic, the three templates `repo-agent/pkg/research` has today. The board only sends inputs.
@@ -91,7 +91,7 @@ A recipe declares which rule it holds:
 
 `env.json` is already deleted once the daemon claims the task (`spool.go`), and the daemon holds the engine key in memory, as it does for plan sessions. Phase 1 checks that `configure-engine` writes no key to disk. If it does, a `credentials: clone` recipe passes the key only when the session is created, as research's header does today.
 
-### The Notes output and `push`
+### The Notes output and `push-notes`
 
 ```yaml
 kind: Notes
@@ -104,10 +104,10 @@ source: {task: …, session: …}
 actions: …
 ```
 
-- **`push` is an apply verb,** like `comment`: `factory apply --action push` publishes. It writes `spec.markdown` to `docs-exploration/research/<name>.md` on `research/notes` in the member's fork and pushes. That is today's `save_notes.sh`, given the content on stdin instead of reading the checkout, and run as one exec with the token in its environment, as `save-notes` does.
-- **`name`** is the conversation's title (the board's rename or auto-title), passed by the caller as `--set spec.name=…`, and defaults to the session id, as `NOTES_FILE` does today.
+- **`push-notes` is an apply verb,** like `comment`: `factory apply --action push-notes` publishes. It writes `spec.markdown` to `docs-exploration/research/<name>.md` on `research/notes` in the member's fork, as one commit through GitHub's git data API, with the caller's token. It forks if the member has none, and starts the branch with no parent, as `save_notes.sh` does. Nothing runs in the sandbox, so the token never gets near it and a paused sandbox needn't wake. A branch that moved meanwhile (another conversation saved) is rebuilt on, a few times. Saving the same notes again changes nothing.
+- **`name`** is the conversation's title (the board's rename or auto-title), which whoever keeps the draft sets in the document before applying it. Unset, it is the conversation's id (`source.session`, else `source.task`), as `NOTES_FILE` defaults to the session id today.
 - **Saving needs two clicks:** Save notes writes the draft (a revise; never publishes), then Save to research/notes pushes it. This matches plan's Update plan → Post plan. A one-click mode (revise, then apply automatically) can come later if two clicks feel heavy.
-- **Permissions:** `push` writes to the member's own fork, so any member may apply it to their own conversation.
+- **Permissions:** `push-notes` writes to the member's own fork, so any member may apply it to their own conversation.
 
 ### repo-agent
 
@@ -135,6 +135,6 @@ actions: …
 
 ## Phases
 
-1. **factory.** Repo targets in `factory recipe`; `credentials: clone` and the `clone` named step; the built-in `research` recipe with its kickoff templates; the Notes kind; the `push` verb in `factory apply`.
+1. **factory.** Repo targets in `factory recipe`; `credentials: clone` and the `clone` named step; the built-in `research` recipe with its kickoff templates; the Notes kind; the `push-notes` verb in `factory apply`.
 2. **repo-agent.** Launch research through the recipe; rail and open on task sessions; Save notes as revise + apply; revises keyed by sandbox.
 3. **Delete the old path.** `factory research start` / `save-notes`, the kickoff and capture code in repo-agent, `repo-agent/pkg/research` prompts. Then step 6 of the task rearchitecture: drop `ACPD_ENABLE` and the :49984 listener.
