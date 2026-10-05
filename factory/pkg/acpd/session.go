@@ -186,6 +186,8 @@ type Session struct {
 	CWD       string
 	Engine    string
 	CreatedAt time.Time
+	// Task is the task the session belongs to, if any; set by the server.
+	Task string
 
 	transcript *Transcript
 	client     *acp.Client

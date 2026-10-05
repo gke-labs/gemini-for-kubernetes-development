@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
@@ -42,6 +43,11 @@ type Server struct {
 	// code before it is given 137: the script writes the code just after.
 	deadGrace time.Duration
 
+	// sessions, when set, serves agent conversations under /v1/sessions,
+	// and tokens holds the tokens the tasks drive theirs with.
+	sessions *acpd.Server
+	tokens   *Tokens
+
 	// mu makes finding a task by id or run name and starting it one step,
 	// so the same task posted twice starts once.
 	mu sync.Mutex
@@ -56,7 +62,11 @@ func NewServer(incomingDir, tasksDir string, launch spool.Launcher) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, Version{API: APIVersion})
+		v := Version{API: APIVersion}
+		if s.sessions != nil {
+			v.Sessions = SessionsVersion
+		}
+		writeJSON(w, http.StatusOK, v)
 	})
 	mux.HandleFunc("GET /v1/tasks", s.handleList)
 	mux.HandleFunc("POST /v1/tasks", s.handlePost)
@@ -66,6 +76,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/tasks/{id}/files/{name}", s.handleReadFile)
 	mux.HandleFunc("PUT /v1/tasks/{id}/files/{name}", s.handleWriteFile)
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", s.handleCancel)
+	if s.sessions != nil {
+		mux.Handle("/v1/sessions", s.sessionsHandler())
+		mux.Handle("/v1/sessions/", s.sessionsHandler())
+	}
 	return mux
 }
 
@@ -437,6 +451,10 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		writeIfMissing(tf.ExitCodeFile, code)
 	}
 	id := filepath.Base(taskDir)
+	// The task's agent goes with it.
+	if s.sessions != nil {
+		s.sessions.CloseTask(id)
+	}
 	klog.FromContext(r.Context()).Info("task server: cancelled task", "task", id, "kill", req.Kill)
 	e, found, err := s.find(r.Context(), id)
 	if err != nil || !found {
