@@ -111,6 +111,11 @@ var acpdClientForPod = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.
 // answer to "what sessions do I have" even when no pod is reachable.
 type researchSandboxView struct {
 	SessionID string `json:"sessionId"`
+	// Task is the factory task whose agent session the conversation is,
+	// for a sandbox `factory recipe research` made: the conversation is
+	// then the daemon's task session, not acpd's. Empty for a sandbox
+	// `factory research start` made.
+	Task      string `json:"task,omitempty"`
 	Sandbox   string `json:"sandbox"`
 	Namespace string `json:"namespace"`
 	Repo      string `json:"repo"`
@@ -162,6 +167,9 @@ type researchSandboxView struct {
 	// stopped on a permission request. Waiting implies Busy.
 	Busy    bool `json:"busy,omitempty"`
 	Waiting bool `json:"waiting,omitempty"`
+	// Held is a task session whose task is still running (the recipe's
+	// start, asking the opening question): it can be watched, not driven.
+	Held bool `json:"held,omitempty"`
 	// Unreachable is why the pod's acpd could not be asked. The row still
 	// renders from what Kubernetes said — the sandbox is the durable
 	// thing and the conversation survives a daemon that is briefly not
@@ -174,13 +182,32 @@ type researchSandboxView struct {
 	Pod *corev1.Pod `json:"-"`
 }
 
-// cwd is the checkout the conversation is about, matching what `factory
-// research start` cloned.
+// cwd is the checkout the conversation is about, matching what factory
+// cloned.
 func (v researchSandboxView) cwd() string {
 	if v.Repo == "" {
 		return ""
 	}
 	return "/workspaces/" + v.Repo
+}
+
+// acpSession is the conversation's id on the server that hosts it: the
+// task, for a task session, else the session id acpd was given.
+func (v researchSandboxView) acpSession() string {
+	if v.Task != "" {
+		return v.Task
+	}
+	return v.SessionID
+}
+
+// researchClient reaches the server that hosts the conversation: the
+// daemon's task sessions for a recipe's, acpd for the rest. False when the
+// sandbox's image keeps no task sessions.
+func (s *Server) researchClient(ctx context.Context, view researchSandboxView, pod *corev1.Pod) (*acpd.Client, bool) {
+	if view.Task != "" {
+		return taskSessionClientForPod(ctx, s.ACPD, pod)
+	}
+	return acpdClientForPod(ctx, s.ACPD, pod), true
 }
 
 // researchViewFromSandbox reads one sandbox object, or reports false if
@@ -197,6 +224,7 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 	}
 	view := researchSandboxView{
 		SessionID:    sessionID,
+		Task:         factorycli.ResearchTask(annotations),
 		Sandbox:      sb.GetName(),
 		Namespace:    sb.GetNamespace(),
 		Repo:         annotations["repo"],
@@ -459,12 +487,18 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 		// and merging — is a second pass for nothing.
 		go func(view *researchSandboxView) {
 			defer wg.Done()
-			session, err := acpdClientForPod(ctx, s.ACPD, view.Pod).GetSession(ctx, view.SessionID)
+			client, ok := s.researchClient(ctx, *view, view.Pod)
+			if !ok {
+				view.Unreachable = "the sandbox's image keeps no agent sessions for its tasks"
+				return
+			}
+			session, err := client.GetSession(ctx, view.acpSession())
 			switch {
 			case err == nil:
 				view.Live = true
 				view.Busy = session.Busy
 				view.Waiting = session.Waiting
+				view.Held = session.Held
 			case errors.Is(err, acpd.ErrNotFound):
 				// A running pod with no engine in it: the resting state of
 				// every session nobody has opened yet, and of every one
@@ -545,7 +579,15 @@ func (s *Server) resolveResearch(c *gin.Context) (*researchConn, bool) {
 	}
 	view.Pod = pod
 
-	return &researchConn{view: view, client: acpdClientForPod(ctx, s.ACPD, pod)}, true
+	client, ok := s.researchClient(ctx, view, pod)
+	if !ok {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":   "this sandbox's image keeps no agent sessions for its tasks",
+			"sandbox": view.Sandbox, "namespace": namespace, "legacy": true,
+		})
+		return nil, false
+	}
+	return &researchConn{view: view, client: client}, true
 }
 
 // engineAPIKey reads the member's engine credential.
@@ -577,7 +619,7 @@ func (s *Server) engineAPIKey(ctx context.Context, namespace string) (string, er
 // but the recovery path, and making them the same code means the
 // recovery is exercised every time anyone opens a conversation.
 func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) (*acpd.Session, error) {
-	session, err := conn.client.GetSession(ctx, conn.view.SessionID)
+	session, err := conn.client.GetSession(ctx, conn.view.acpSession())
 	if err == nil {
 		return session, nil
 	}
@@ -602,8 +644,11 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 	if err != nil {
 		return nil, err
 	}
+	// A task session is continued: the daemon loads what the recipe's
+	// start said, and refuses while the start is still running (409).
 	return conn.client.CreateSession(ctx, acpd.CreateSessionRequest{
-		ID:     conn.view.SessionID,
+		ID:     conn.view.acpSession(),
+		Task:   conn.view.Task,
 		Engine: conn.view.Engine,
 		CWD:    conn.view.cwd(),
 		// Set here as well as on the controller's create because either
@@ -652,6 +697,7 @@ func (s *Server) getResearchSession(c *gin.Context) {
 	}
 	body := gin.H{
 		"sessionId": conn.view.SessionID,
+		"task":      conn.view.Task,
 		"sandbox":   conn.view.Sandbox,
 		"namespace": conn.view.Namespace,
 		"repo":      conn.view.Repo,
@@ -675,10 +721,15 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		"capturing":    conn.view.Capturing,
 		"captureError": conn.view.CaptureError,
 	}
-	session, err := conn.client.GetSession(c.Request.Context(), conn.view.SessionID)
+	session, err := conn.client.GetSession(c.Request.Context(), conn.view.acpSession())
 	switch {
 	case err == nil:
 		body["live"] = true
+		// A task session's two facts: held, the recipe's start is still
+		// running and only it may drive the session; loaded, the agent
+		// remembers what the start said.
+		body["held"] = session.Held
+		body["loaded"] = session.Loaded
 		body["busy"] = session.Busy
 		// Reported here as well as on the list so the two cannot disagree
 		// about the same session. The conversation itself learns this from
@@ -731,7 +782,7 @@ func (s *Server) promptResearchSession(c *gin.Context) {
 		researchError(c, err)
 		return
 	}
-	offset, err := conn.client.Prompt(ctx, conn.view.SessionID, req.Text)
+	offset, err := conn.client.Prompt(ctx, conn.view.acpSession(), req.Text)
 	if err != nil {
 		// A 409 from acpd means a turn is already in flight. It travels
 		// through researchError unchanged, so the UI can disable the
@@ -840,7 +891,7 @@ func (s *Server) resolveResearchPermission(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid permission resolution", "details": err.Error()})
 		return
 	}
-	if err := conn.client.ResolvePermission(c.Request.Context(), conn.view.SessionID, res); err != nil {
+	if err := conn.client.ResolvePermission(c.Request.Context(), conn.view.acpSession(), res); err != nil {
 		researchError(c, err)
 		return
 	}
@@ -855,7 +906,7 @@ func (s *Server) cancelResearchSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := conn.client.Cancel(c.Request.Context(), conn.view.SessionID); err != nil {
+	if err := conn.client.Cancel(c.Request.Context(), conn.view.acpSession()); err != nil {
 		researchError(c, err)
 		return
 	}
@@ -882,7 +933,7 @@ func (s *Server) setResearchSessionMode(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mode is required"})
 		return
 	}
-	session, err := conn.client.SetMode(c.Request.Context(), conn.view.SessionID, req.Mode)
+	session, err := conn.client.SetMode(c.Request.Context(), conn.view.acpSession(), req.Mode)
 	if err != nil {
 		// A 400 from acpd names the modes the engine does offer, and it
 		// travels through unchanged: the UI built its list from the same
@@ -997,7 +1048,7 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(c.Request.Context()))
 	defer cancel()
 
-	followSession(ctx, cancel, ws, conn.client, conn.view.SessionID, offset, func(ctx context.Context) (*acpd.Session, error) {
+	followSession(ctx, cancel, ws, conn.client, conn.view.acpSession(), offset, func(ctx context.Context) (*acpd.Session, error) {
 		session, err := s.ensureResearchSession(ctx, conn)
 		// A session still waiting for its opening turn closes quietly. The
 		// socket's onclose falls back to probing, which reports `opening`,

@@ -410,10 +410,9 @@ type Launcher interface {
 	// already running. The triage YAML is recovered from the result's
 	// output (see ExtractTriageYAML) via LastResult.
 	StartTriage(key string, opts TriageOptions) bool
-	// StartResearch launches `factory research start` (the sandbox one
-	// deep-research conversation runs in). Unlike the verbs above it
-	// runs no agent task: it makes a sandbox and clones into it, and
-	// the conversation happens afterwards over acpd's HTTP port.
+	// StartResearch launches `factory recipe research`, detached: the
+	// sandbox one deep-research conversation runs in, and its start (the
+	// clone and the opening question), whose session the conversation is.
 	StartResearch(key string, opts ResearchOptions) bool
 	// StartSaveNotes launches `factory research save-notes`: it attaches
 	// to a conversation's existing sandbox and pushes the notes that

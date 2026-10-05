@@ -99,6 +99,10 @@ func researchRequest(sessionID string, claimedAt time.Time, kickoff research.Kic
 	return req
 }
 
+// aQuestion is what a click asks: the board sends the box's text as a
+// topic.
+var aQuestion = research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
+
 func researchLaunches(fake *fakeLauncher) []fakeLaunch {
 	var out []fakeLaunch
 	for _, l := range fake.launches() {
@@ -193,11 +197,12 @@ func TestResearchClaimExpiry(t *testing.T) {
 	}
 }
 
-// A standing click launches `factory research start` with the session
-// it names, and stays standing until a sandbox exists.
+// A standing click launches `factory recipe research` with the session
+// it names and the question it asks, and stays standing until a sandbox
+// exists.
 func TestResearchClaimLaunches(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
@@ -210,6 +215,7 @@ func TestResearchClaimLaunches(t *testing.T) {
 	g.Expect(opts.SessionID).To(gomega.Equal(testSession))
 	g.Expect(opts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(opts.RepoURL).To(gomega.Equal("https://github.com/test/repo"))
+	g.Expect(opts.Topic).To(gomega.Equal("where does the retry loop live?"))
 	g.Expect(opts.GithubToken).NotTo(gomega.BeEmpty(), "the clone needs the member's token")
 	// The key has to name the sandbox the invocation will create, or a
 	// second claim for the same session would launch a second engine.
@@ -231,7 +237,7 @@ func TestResearchClaimLaunchesForTheBoardEngine(t *testing.T) {
 	} {
 		t.Run(engine, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+			req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 			board := testBoard(nil)
 			board.Spec.Sandbox.Engine = engine
 			fake := newFakeLauncher()
@@ -252,7 +258,7 @@ func TestResearchClaimLaunchesForTheBoardEngine(t *testing.T) {
 // conversation that already has one.
 func TestResearchClaimServedBySandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	sb := researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
@@ -274,7 +280,7 @@ func TestResearchClaimServedBySandbox(t *testing.T) {
 // on "opening…" for good.
 func TestResearchClaimNotServedByAnUnfinishedSandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	sb := researchSandboxUnfinished(researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession)))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
@@ -293,7 +299,7 @@ func TestResearchClaimNotServedByAnUnfinishedSandbox(t *testing.T) {
 // member is told to start another rather than left watching a spinner.
 func TestResearchClaimWithAnUnfinishedSandboxStillExpires(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	sb := researchSandboxUnfinished(researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", testSession)))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
@@ -311,7 +317,7 @@ func TestResearchClaimWithAnUnfinishedSandboxStillExpires(t *testing.T) {
 func TestResearchClaimNotServedByAnotherSession(t *testing.T) {
 	g := gomega.NewWithT(t)
 	fake := newFakeLauncher()
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	other := researchSandboxObj("alice", factorycli.ResearchSandboxName("repo", "some-other-session"))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), other, req)
 
@@ -327,7 +333,7 @@ func TestResearchClaimNotServedByAnotherSession(t *testing.T) {
 // entry left no record that anything had been asked for.
 func TestResearchClaimExpires(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-researchClaimTTL-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
@@ -344,7 +350,7 @@ func TestResearchClaimExpires(t *testing.T) {
 // invocations, and it must not settle while one is in flight.
 func TestResearchClaimWaitsWhileRunning(t *testing.T) {
 	g := gomega.NewWithT(t)
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	fake := newFakeLauncher()
 	fake.running["alice/"+factorycli.ResearchSandboxName("repo", testSession)] = true
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
@@ -365,7 +371,7 @@ func TestResearchClaimBacksOffAfterFailure(t *testing.T) {
 
 	fake := newFakeLauncher()
 	fake.results[key] = factorycli.Result{Err: context.DeadlineExceeded, FinishedAt: time.Now()}
-	req := researchRequest(testSession, claimAt, research.Kickoff{})
+	req := researchRequest(testSession, claimAt, aQuestion)
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -378,7 +384,7 @@ func TestResearchClaimBacksOffAfterFailure(t *testing.T) {
 	fake2 := newFakeLauncher()
 	fake2.results[key] = factorycli.Result{Err: context.DeadlineExceeded, FinishedAt: time.Now().Add(-launchRetryBackoff - time.Minute)}
 	r2 := newTestReconciler(fake2, testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		researchRequest(testSession, claimAt, research.Kickoff{}))
+		researchRequest(testSession, claimAt, aQuestion))
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(researchLaunches(fake2)).To(gomega.HaveLen(1), "past the backoff the click must retry")
@@ -390,7 +396,7 @@ func TestResearchClaimBacksOffAfterFailure(t *testing.T) {
 func TestResearchClaimMalformedFails(t *testing.T) {
 	g := gomega.NewWithT(t)
 	fake := newFakeLauncher()
-	req := researchRequest("x y", time.Now(), research.Kickoff{})
+	req := researchRequest("x y", time.Now(), aQuestion)
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -408,7 +414,7 @@ func TestResearchClaimMalformedFails(t *testing.T) {
 func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 	g := gomega.NewWithT(t)
 	fake := newFakeLauncher()
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{})
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -419,7 +425,7 @@ func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 	}
 }
 
-// --- the opening turn -------------------------------------------------
+// --- the conversation's acpd (the capture path) -----------------------
 
 // fakeACPD is an acpd that records what it was asked.
 type fakeACPD struct {
@@ -431,7 +437,6 @@ type fakeACPD struct {
 	// order. offset is what says it is non-empty.
 	transcript []string
 	created    []acpd.CreateSessionRequest
-	apiKeys    []string
 	prompts    []string
 	promptNo   int
 }
@@ -447,7 +452,6 @@ func (f *fakeACPD) server(t *testing.T) *httptest.Server {
 			var in acpd.CreateSessionRequest
 			_ = json.NewDecoder(req.Body).Decode(&in)
 			f.created = append(f.created, in)
-			f.apiKeys = append(f.apiKeys, req.Header.Get(acpd.APIKeyHeader))
 			f.exists = true
 			_ = json.NewEncoder(w).Encode(acpd.Session{ID: in.ID, Engine: in.Engine, CWD: in.CWD})
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/events"):
@@ -487,15 +491,9 @@ func (f *fakeACPD) sent() []string {
 	return append([]string(nil), f.prompts...)
 }
 
-func (f *fakeACPD) keys() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.apiKeys...)
-}
-
 // engineSecret is the member's own engine credential. The controller
 // copies it into factory-user on every reconcile, which is where the
-// kickoff reads it from — so the fixture is the source, not the copy.
+// capture reads it from — so the fixture is the source, not the copy.
 func engineSecret() *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: geminiSecretName, Namespace: "alice"},
@@ -525,28 +523,33 @@ func sandboxAnnotations(t *testing.T, r *Reconciler, name string) map[string]str
 	return sb.GetAnnotations()
 }
 
-// The Request carries the kickoff only until the sandbox exists; the
-// handoff has to happen in the same reconcile that settles the click,
-// or the opening prompt is lost with it.
-func TestResearchKickoffMovesFromClaimToSandbox(t *testing.T) {
+// A canned kind is asked as the text it renders to, and named as before;
+// the title moves to the sandbox in the reconcile that settles the click,
+// or it is lost with it.
+func TestResearchCannedKindIsAskedAndTitled(t *testing.T) {
 	g := gomega.NewWithT(t)
 	kickoff := research.Kickoff{Kind: research.KindOnboard}
-	req := researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	// No pod: the sandbox exists but is still booting, which is the
-	// state this handoff is for.
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		researchSandboxObj("alice", name), req)
-
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchRequest(testSession, time.Now().Add(-time.Minute), kickoff))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := researchLaunches(fake)
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ResearchOpts.Topic).To(gomega.ContainSubstring("Overview of the repo"))
+	g.Expect(launches[0].ResearchOpts.Topic).To(gomega.ContainSubstring("https://github.com/test/repo"))
 
-	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded),
-		"the click is served and must settle")
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
+	name := factorycli.ResearchSandboxName("repo", testSession)
+	r = newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
+		researchSandboxObj("alice", name), req)
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	annotations := sandboxAnnotations(t, r, name)
-	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff),
-		"the kickoff must outlive the click, on the sandbox")
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
+	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),
+		"the recipe asks the question; nothing is owed on the sandbox")
 }
 
 // The bug that made the whole feature look broken in the cluster: the
@@ -585,13 +588,10 @@ func TestSandboxesOfAPrefixSharingRepoAreStillFilteredOut(t *testing.T) {
 	g.Expect(work.findSandbox("alice", name)).To(gomega.BeNil())
 }
 
-// The window this was actually lost in: `factory research start`
-// creates the Sandbox and then clones for minutes, so the launch is
-// still running while the sandbox already exists — and the trim pass
-// reads that existence as served. Skipping the stamp because the runner
-// is busy dropped the claim with the kickoff still on it, and the
-// session came up untitled with nothing ever asked.
-func TestResearchKickoffIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
+// The title is stamped in the pass that first sees the receipt, even
+// while the launch that made it is still running: the trim pass reads the
+// receipt as served and drops the claim with the title on it.
+func TestResearchTitleIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
 	g := gomega.NewWithT(t)
 	kickoff := research.Kickoff{Kind: research.KindActivity, Since: "2 weeks"}
 	name := factorycli.ResearchSandboxName("repo", testSession)
@@ -605,234 +605,17 @@ func TestResearchKickoffIsStampedWhileTheLaunchIsStillRunning(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty(), "a sandbox that exists must not be launched again")
-	annotations := sandboxAnnotations(t, r, name)
-	g.Expect(research.DecodeKickoff(annotations[research.KickoffAnnotation])).To(gomega.Equal(kickoff))
-	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("Changes in the last 2 weeks"))
+	g.Expect(sandboxAnnotations(t, r, name)[research.TitleAnnotation]).To(gomega.Equal("Changes in the last 2 weeks"))
 }
 
-// Once the pod is up the controller opens the conversation itself: the
-// member may be minutes and a closed tab away.
-func TestResearchKickoffIsSentAndCleared(t *testing.T) {
+// A click with no question has nothing for the recipe to ask: it is not
+// launched, and runs out its TTL.
+func TestResearchWithoutAQuestionIsNotLaunched(t *testing.T) {
 	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
-	sb.SetAnnotations(map[string]string{
-		"repo":                      "repo",
-		researchSessionIDAnnotation: testSession,
-		research.KickoffAnnotation:  kickoff.Encode(),
-		research.TitleAnnotation:    kickoff.ResolvedTitle(),
-	})
-	acp := &fakeACPD{}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	sent := acp.sent()
-	g.Expect(sent).To(gomega.HaveLen(1))
-	g.Expect(sent[0]).To(gomega.ContainSubstring("where does the retry loop live?"))
-	g.Expect(sent[0]).To(gomega.ContainSubstring("repo"), "the prompt names the checkout it is about")
-	// The key reaches acpd in a header at create, and nowhere else.
-	g.Expect(acp.keys()).To(gomega.Equal([]string{"AIza-test"}))
-	g.Expect(acp.created[0].CWD).To(gomega.Equal("/workspaces/repo"))
-	// Auto-approving, because nobody is watching this one. A canned
-	// opening that stops to ask blocks until acpd's permission timeout
-	// and is then cancelled, so the answer never arrives at all.
-	g.Expect(acp.created[0].Mode).To(gomega.Equal(acpd.ResearchMode))
-	// No engine recorded on the sandbox: one from before the choice
-	// existed, which was gemini.
-	g.Expect(acp.created[0].Engine).To(gomega.Equal(acpd.EngineGemini))
-
-	annotations := sandboxAnnotations(t, r, name)
-	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),
-		"a delivered kickoff must be cleared, or it would be sent again")
-	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("where does the retry loop live?"))
-}
-
-// The receipt is the annotation's absence, so the second reconcile must
-// be silent. This is the loop that would otherwise spend engine time on
-// every pass.
-func TestResearchKickoffIsSentOnce(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	for i := 0; i < 3; i++ {
-		_, err := r.Reconcile(context.Background(), boardRequest())
-		g.Expect(err).NotTo(gomega.HaveOccurred())
-	}
-	g.Expect(acp.sent()).To(gomega.HaveLen(1))
-}
-
-// A conversation that has already been talked to keeps its history: the
-// opening turn belongs at the start or not at all. This is what makes a
-// lost receipt survivable.
-func TestResearchKickoffSkipsAConversationInProgress(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{exists: true, offset: 4096,
-		transcript: []string{acpd.KindModeChanged, acpd.KindUserPrompt, "agent_message_chunk", acpd.KindTurnEnd}}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.BeEmpty())
-	g.Expect(sandboxAnnotations(t, r, name)).NotTo(gomega.HaveKey(research.KickoffAnnotation),
-		"an opening that can no longer be sent must stop being owed")
-}
-
-// A browser that attaches between the ready receipt and the kickoff
-// stamp creates the session itself, and creating one writes into the
-// transcript before anyone speaks: acpd's mode banner, and antigravity's
-// list of slash commands. That is not a turn. Reading it as one dropped
-// the member's question on the floor.
-func TestResearchKickoffPromptsASessionThatHasOnlyItsBanner(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{exists: true, offset: 261,
-		transcript: []string{"available_commands_update", acpd.KindModeChanged}}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.HaveLen(1))
-	g.Expect(acp.created).To(gomega.BeEmpty(), "the live session is prompted as it stands")
-	g.Expect(sandboxAnnotations(t, r, name)).NotTo(gomega.HaveKey(research.KickoffAnnotation))
-}
-
-// A turn in flight is somebody's prompt, whether or not its event is
-// on disk yet.
-func TestResearchKickoffSkipsABusySession(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{exists: true, busy: true}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.BeEmpty())
-}
-
-// No pod yet is the normal state for a sandbox's first minutes. It is
-// not an error, and nothing about it is recorded.
-func TestResearchKickoffWaitsForThePod(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.BeEmpty())
-	got := sandboxAnnotations(t, r, name)
-	g.Expect(got).To(gomega.HaveKey(research.KickoffAnnotation), "still owed")
-	g.Expect(got).NotTo(gomega.HaveKey(research.KickoffErrorAnnotation), "and not yet given up on")
-}
-
-// A pod that never comes up eventually stops being retried, and says
-// so: a session that was supposed to open with a question should not
-// sit there silently looking answered.
-func TestResearchKickoffGivesUpAndSaysWhy(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
-	sb.SetAnnotations(annotations)
-	sb.SetCreationTimestamp(metav1.NewTime(time.Now().Add(-researchKickoffTTL - time.Minute)))
-	acp := &fakeACPD{}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	got := sandboxAnnotations(t, r, name)
-	g.Expect(got[research.KickoffErrorAnnotation]).To(gomega.ContainSubstring("pod"))
-	g.Expect(got).To(gomega.HaveKey(research.KickoffAnnotation),
-		"what was owed stays readable next to why it was not delivered")
-
-	// And it is not retried after that.
-	_, err = r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.BeEmpty())
-}
-
-// A plain "new conversation" click files no kickoff, and the sandbox it
-// produces must be left exactly as factory made it.
-func TestResearchWithoutAKickoffStampsNothing(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	acp := &fakeACPD{}
-	acp.server(t)
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), researchSandboxObj("alice", name), researchPod(name),
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(),
 		researchRequest(testSession, time.Now().Add(-time.Minute), research.Kickoff{}))
-
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(acp.sent()).To(gomega.BeEmpty(), "nobody asked for an opening turn")
-	got := sandboxAnnotations(t, r, name)
-	g.Expect(got).NotTo(gomega.HaveKey(research.KickoffAnnotation))
-	g.Expect(got).NotTo(gomega.HaveKey(research.TitleAnnotation))
-}
-
-// The opening turn goes to the engine the sandbox was set up for, read
-// off the sandbox rather than the board, which may have moved on.
-func TestResearchKickoffUsesTheSandboxEngine(t *testing.T) {
-	g := gomega.NewWithT(t)
-	name := factorycli.ResearchSandboxName("repo", testSession)
-	sb := researchSandboxObj("alice", name)
-	kickoff := research.Kickoff{Kind: research.KindTopic, Topic: "where does the retry loop live?"}
-	sb.SetAnnotations(map[string]string{
-		"repo":                        "repo",
-		researchSessionIDAnnotation:   testSession,
-		research.KickoffAnnotation:    kickoff.Encode(),
-		acpd.ResearchEngineAnnotation: acpd.EngineAntigravity,
-	})
-	acp := &fakeACPD{}
-	acp.server(t)
-	// The board says gemini; the sandbox wins.
-	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(),
-		engineSecret(), sb, researchPod(name))
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	g.Expect(acp.created).To(gomega.HaveLen(1))
-	g.Expect(acp.created[0].Engine).To(gomega.Equal(acpd.EngineAntigravity))
+	g.Expect(researchLaunches(fake)).To(gomega.BeEmpty())
 }

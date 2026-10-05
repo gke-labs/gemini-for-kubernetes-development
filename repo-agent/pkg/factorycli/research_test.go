@@ -22,21 +22,10 @@ import (
 	"time"
 )
 
-// realFactoryOutput is a verbatim `factory research start` run against
-// the cluster. The name mirror and the parser are both pinned to it: if
-// factory's derivation or its marker line changes, mirroring it here by
-// hand is the thing that silently rots, and only a recorded real output
-// catches that.
-const realFactoryOutput = `Ensuring research sandbox for kubernetes-sigs/agent-sandbox (session acpd-smoke-2026-09-26)...
-Connecting to sandbox rsch-agent-sandbox-8a3e2fbc via envd...
-Waiting for sandbox pod rsch-agent-sandbox-8a3e2fbc to become ready (and any terminating pods to exit)...
-Preparing checkout of agent-sandbox...
-RESEARCH_SANDBOX_READY {"sandbox":"rsch-agent-sandbox-8a3e2fbc","namespace":"barney-s","sessionId":"acpd-smoke-2026-09-26","repo":"agent-sandbox","podIP":"10.68.129.221","port":49984,"cwd":"/workspaces/agent-sandbox"}
-`
-
 // The name is mirrored from factory rather than imported, so nothing but
 // a matching value proves the two agree. This case is the one the
-// cluster actually produced.
+// cluster actually produced (rsch-agent-sandbox-8a3e2fbc, session
+// acpd-smoke-2026-09-26).
 func TestResearchSandboxNameMatchesFactory(t *testing.T) {
 	got := ResearchSandboxName("agent-sandbox", "acpd-smoke-2026-09-26")
 	const want = "rsch-agent-sandbox-8a3e2fbc"
@@ -108,98 +97,28 @@ func TestResearchSandboxNameSeparatesSessions(t *testing.T) {
 	}
 }
 
-// The parser is what turns a finished invocation into a dialable
-// address, so it has to work on exactly what factory prints — progress
-// narration and all.
-func TestParseResearchReadyOnRealOutput(t *testing.T) {
-	got, err := ParseResearchReady(realFactoryOutput)
-	if err != nil {
-		t.Fatalf("parsing real factory output: %v", err)
-	}
-	want := ResearchSandbox{
-		Sandbox:   "rsch-agent-sandbox-8a3e2fbc",
-		Namespace: "barney-s",
-		SessionID: "acpd-smoke-2026-09-26",
-		Repo:      "agent-sandbox",
-		PodIP:     "10.68.129.221",
-		Port:      49984,
-		CWD:       "/workspaces/agent-sandbox",
-	}
-	if got != want {
-		t.Errorf("parsed\n %+v\nwant\n %+v", got, want)
-	}
-	if got.Addr() != "10.68.129.221:49984" {
-		t.Errorf("Addr() = %q", got.Addr())
-	}
-	// The sandbox factory named has to be the one this package would
-	// have predicted, or a caller cannot find it from the session id.
-	if predicted := ResearchSandboxName(got.Repo, got.SessionID); predicted != got.Sandbox {
-		t.Errorf("predicted %q but factory created %q", predicted, got.Sandbox)
-	}
-}
-
-// An output with no marker means the invocation did not get as far as a
-// running sandbox. Reporting that as an error beats handing back a zero
-// value that reads as a sandbox at ":0".
-func TestParseResearchReadyRejectsUnusableOutput(t *testing.T) {
-	cases := []struct {
-		name   string
-		output string
-	}{
-		{"empty", ""},
-		{"progress only", "Ensuring research sandbox for foo/bar...\nError: creating sandbox CR: forbidden\n"},
-		{"marker but not json", "RESEARCH_SANDBOX_READY not json at all\n"},
-		{"no address", `RESEARCH_SANDBOX_READY {"sandbox":"rsch-x-1","namespace":"n","port":49984}`},
-		{"no port", `RESEARCH_SANDBOX_READY {"sandbox":"rsch-x-1","podIP":"10.0.0.1"}`},
-		{"no sandbox name", `RESEARCH_SANDBOX_READY {"podIP":"10.0.0.1","port":49984}`},
-		// The marker ends with a separator, so a longer word starting
-		// with the same stem is not the marker.
-		{"longer word with the same stem", `RESEARCH_SANDBOX_READY_V2 {"sandbox":"rsch-x-1","podIP":"10.0.0.1","port":49984}`},
-		// Nor is a mention of it partway through a narration line.
-		{"marker mentioned in prose", "waiting for RESEARCH_SANDBOX_READY to appear\n"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ParseResearchReady(tc.output); err == nil {
-				t.Errorf("accepted unusable output %q", tc.output)
-			}
-		})
-	}
-}
-
-// If an output somehow carries two markers, the live address is the
-// last one; returning the first would dial a pod that has been replaced.
-func TestParseResearchReadyTakesTheLastMarker(t *testing.T) {
-	output := `RESEARCH_SANDBOX_READY {"sandbox":"rsch-x-1","podIP":"10.0.0.1","port":49984}
-RESEARCH_SANDBOX_READY {"sandbox":"rsch-x-1","podIP":"10.0.0.2","port":49984}
-`
-	got, err := ParseResearchReady(output)
-	if err != nil {
-		t.Fatalf("parsing: %v", err)
-	}
-	if got.PodIP != "10.0.0.2" {
-		t.Errorf("podIP = %q, want the later 10.0.0.2", got.PodIP)
-	}
-}
-
 // The command line is the whole contract with factory. The flags have to
-// be the ones `factory research start` defines, and --secret must not be
-// among them: mounting the member secret would put the engine key on the
-// sandbox's disk, which is exactly what the header exists to avoid.
+// be the ones `factory recipe research` defines (--topic is the recipe's
+// input), and --secret must not be among them: mounting the member secret
+// would put the engine key on the sandbox's disk.
 func TestResearchArgs(t *testing.T) {
 	args := researchArgs(ResearchOptions{
 		Namespace: "barney-s",
 		RepoURL:   "https://github.com/kubernetes-sigs/agent-sandbox",
 		SessionID: "s1",
+		Topic:     "how are deletes handled?",
 	}, 20*time.Minute)
 
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
-		"research start",
+		"recipe research",
 		"--url https://github.com/kubernetes-sigs/agent-sandbox",
 		"--session s1",
+		"--run-name research/s1",
+		"--topic how are deletes handled?",
 		"--namespace barney-s",
 		"--timeout 20m0s",
+		"--detached",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args %q missing %q", joined, want)
@@ -218,16 +137,22 @@ func TestResearchArgs(t *testing.T) {
 		WorkspaceDiskSize: "50Gi",
 	}, time.Minute)
 	joined = strings.Join(withOverrides, " ")
-	if !strings.Contains(joined, "--image ghcr.io/example/img:tag") {
-		t.Errorf("image override missing from %q", joined)
+	for _, want := range []string{"--image ghcr.io/example/img:tag", "--workspace-disk-size 50Gi", "--engine antigravity"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("%q missing from %q", want, joined)
+		}
 	}
-	if !strings.Contains(joined, "--workspace-disk-size 50Gi") {
-		t.Errorf("disk size override missing from %q", joined)
+}
+
+// The conversation is the session of the task factory recorded the start
+// under; a sandbox `factory research start` made has none.
+func TestResearchTask(t *testing.T) {
+	a := map[string]string{ResearchRunAnnotation: `{"name":"research/s1","task":"recipe-research-1","startedAt":"2026-10-05T10:00:00Z"}`}
+	if got := ResearchTask(a); got != "recipe-research-1" {
+		t.Errorf("ResearchTask = %q, want recipe-research-1", got)
 	}
-	// The sandbox is prepared for the engine: antigravity's ACP server
-	// is installed by research start, not at session create.
-	if !strings.Contains(joined, "--engine antigravity") {
-		t.Errorf("engine missing from %q", joined)
+	if got := ResearchTask(map[string]string{}); got != "" {
+		t.Errorf("ResearchTask without a run = %q, want empty", got)
 	}
 }
 

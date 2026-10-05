@@ -32,10 +32,12 @@ import (
 // with the identity of the session and the sandbox that will host it —
 // both derivable before anything exists, which is what lets the UI
 // start polling straight away.
+const aQuestionBody = `{"kind":"topic","topic":"where does the retry loop live?"}`
+
 func TestStartResearchSessionFilesRequest(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 
-	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(aQuestionBody))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusAccepted {
@@ -143,7 +145,7 @@ func TestStartResearchSessionMintsADistinctSessionEachTime(t *testing.T) {
 
 	ids := map[string]bool{}
 	for i := 0; i < 2; i++ {
-		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{}`))
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(aQuestionBody))
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusAccepted {
@@ -216,24 +218,20 @@ func TestStartResearchSessionCarriesTheKickoff(t *testing.T) {
 	}
 }
 
-// The plain "new conversation" click carries no opening turn: the
-// kickoff fields stay empty rather than being defaulted to a canned
-// prompt nobody asked for.
-func TestStartResearchSessionWithoutAKickoff(t *testing.T) {
-	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
-
-	req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
-	}
-	spec := theRequest(t, dyn, "alice").Spec.Research
-	if spec == nil {
-		t.Fatal("no research request was filed")
-	}
-	if spec.Kind != "" || spec.Topic != "" || spec.Since != "" || spec.Title != "" {
-		t.Errorf("request carries a kickoff nobody asked for: %+v", spec)
+// A conversation starts with a question: the recipe asks it as the
+// task, so a click without one is refused and files nothing.
+func TestStartResearchSessionWithoutAQuestionIsRefused(t *testing.T) {
+	for _, body := range []string{``, `{}`} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q: status = %d, want 400: %s", body, w.Code, w.Body.String())
+		}
+		if filed := filedRequests(t, dyn, "alice"); len(filed) != 0 {
+			t.Errorf("%q: a refused click must file nothing, got %+v", body, filed)
+		}
 	}
 }
 
