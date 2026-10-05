@@ -51,7 +51,7 @@ func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured
 }
 
 // taskSessionTestServer is researchTestServer, whose task session seam reaches acp when hosts is true and finds no sessions when not.
-func taskSessionTestServer(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) *gin.Engine {
+func taskSessionTestServer(t *testing.T, acp *fakeSessions, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) *gin.Engine {
 	t.Helper()
 	r, _ := taskSessionTestServerDyn(t, acp, hosts, sandboxes, pods...)
 	return r
@@ -59,14 +59,14 @@ func taskSessionTestServer(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []
 
 // taskSessionTestServerDyn is taskSessionTestServer with its cluster, for
 // a test that files Requests.
-func taskSessionTestServerDyn(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) (*gin.Engine, *fake.FakeDynamicClient) {
+func taskSessionTestServerDyn(t *testing.T, acp *fakeSessions, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	var objs []runtime.Object
 	for _, p := range pods {
 		objs = append(objs, p)
 	}
 	if acp == nil {
-		acp = &fakeACPD{}
+		acp = &fakeSessions{}
 	}
 	r, dyn := researchTestServer(t, acp, sandboxes, objs...)
 	srv := httptest.NewServer(acp.handler())
@@ -83,7 +83,7 @@ func taskSessionTestServerDyn(t *testing.T, acp *fakeACPD, hosts bool, sandboxes
 }
 
 func TestContinuingATaskSessionLoadsItWhereTheTaskRan(t *testing.T) {
-	acp := &fakeACPD{}
+	acp := &fakeSessions{}
 	r := taskSessionTestServer(t, acp, true, []*unstructured.Unstructured{issueSandboxCR("alice", 1)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 
@@ -110,7 +110,7 @@ func TestContinuingATaskSessionLoadsItWhereTheTaskRan(t *testing.T) {
 }
 
 func TestATaskSessionStatusReportsHeldAndLoadedWithoutStartingIt(t *testing.T) {
-	acp := &fakeACPD{}
+	acp := &fakeSessions{}
 	r := taskSessionTestServer(t, acp, true, []*unstructured.Unstructured{issueSandboxCR("alice", 1)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
@@ -171,7 +171,7 @@ func TestATaskSessionRejectsMalformedNames(t *testing.T) {
 // A running task's session is the task's to start; the member's prompt is
 // refused, and the stream closes without an error for the UI to retry.
 func TestARunningTasksSessionIsNotTheMembersToStart(t *testing.T) {
-	acp := &fakeACPD{createStatus: http.StatusConflict}
+	acp := &fakeSessions{createStatus: http.StatusConflict}
 	r := taskSessionTestServer(t, acp, true, []*unstructured.Unstructured{issueSandboxCR("alice", 1)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	if w := doJSON(t, r, http.MethodPost, taskSessionAt+"/prompt", `{"text":"hi"}`); w.Code != http.StatusConflict {

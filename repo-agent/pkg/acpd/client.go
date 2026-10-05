@@ -45,7 +45,7 @@ func WithHTTPClient(h *http.Client) Option {
 	}
 }
 
-// New returns a Client for a base URL such as http://10.1.2.3:49984.
+// New returns a Client for a base URL such as http://127.0.0.1:41234/v1.
 func New(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		baseURL: trimSlash(baseURL),
@@ -56,17 +56,6 @@ func New(baseURL string, opts ...Option) *Client {
 		opt(c)
 	}
 	return c
-}
-
-// NewForPodIP returns a Client dialling a sandbox pod directly.
-//
-// Pod IP rather than the <sandbox>-lb Service because acpd's port is not
-// on that Service, and adding it would change the manifest shared by
-// every sandbox type. A pod IP goes stale when the pod restarts, but an
-// acpd restart already loses the session, so the staleness costs nothing
-// that was not lost anyway.
-func NewForPodIP(ip string, opts ...Option) *Client {
-	return New(fmt.Sprintf("http://%s:%d", ip, DefaultPort), opts...)
 }
 
 // Error is a non-2xx reply from acpd.

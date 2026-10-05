@@ -23,9 +23,6 @@ import (
 // and because acpd writes conversation bodies to an on-disk transcript.
 const APIKeyHeader = "X-Engine-Api-Key"
 
-// DefaultPort is acpd's listener, adjacent to envd's 49983.
-const DefaultPort = 49984
-
 // Engine names an agent binary acpd knows how to spawn. gemini and
 // antigravity (Google's agy_acp_server) are registered server-side; an
 // unknown engine fails at create. Both read the same GEMINI_API_KEY.

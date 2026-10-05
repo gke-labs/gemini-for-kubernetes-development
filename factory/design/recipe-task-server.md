@@ -72,7 +72,7 @@ The server uses REST and JSON on `net/http`, with no code generation. This is th
 
 The daemon holds one acpd session registry.
 
-- **Who reaches it:** the task server mounts it under `/v1/sessions`. Research sandboxes (`ACPD_ENABLE`) also keep it on the pod IP's `:49984`, the same registry, until clients move to the port-forward.
+- **Who reaches it:** the task server mounts it under `/v1/sessions`, and nothing else serves it. Clients reach it over the port-forward.
 - **Sessions that belong to a task:** a create with `"task":"<id>"`:
   - is named after the task;
   - keeps its transcript and session record in `<taskDir>/session`.
@@ -123,7 +123,6 @@ Existing sandboxes keep their image until they are recreated (see the recipe-ske
 
 - **Same-pod processes can call the server.** The agent in the sandbox can reach `127.0.0.1:49990`. It already shares the pod with the daemon, its files and its processes, so the server gives it nothing new. A token or a Unix socket could close this later.
 - **Classic tasks are unchanged** (fix, explore, review…). They still run through envd's resilient path.
-- **acpd** still listens on the pod IP on `:49984`, unauthenticated.
 
 ---
 
@@ -136,5 +135,5 @@ Existing sandboxes keep their image until they are recreated (see the recipe-ske
 4. **acpd behind the same surface:**
    - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, `session/load`, and recipes driving their asks through it.
    - **Done:** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage, which opens the task's session in the research view (`/api/task-sessions/<sandbox>/<task>`), a watch while the task runs. A sandbox on an older image falls back to the terminal.
-   - **Last:** drop the `:49984` listener.
+   - **Done:** drop the `:49984` listener (`ACPD_ENABLE`, `factory acpd`, and repo-agent's pod-IP fallback). A sandbox whose daemon hosts no sessions can no longer be reached for one.
 5. **Retire envd for factory:** once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.

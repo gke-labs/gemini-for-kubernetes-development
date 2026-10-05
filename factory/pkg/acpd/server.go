@@ -25,10 +25,6 @@ import (
 // their own. Authorization is left free for real caller auth.
 const APIKeyHeader = "X-Engine-Api-Key"
 
-// DefaultPort is acpd's listen port, adjacent to envd's 49983 so the two
-// in-pod daemons are recognisably a family.
-const DefaultPort = 49984
-
 // DefaultStateDir is where transcripts live. Under /workspaces because
 // that is the PVC: durability lasts as long as the sandbox and no longer,
 // which is the whole retention policy.

@@ -159,54 +159,6 @@ func TestResearchLabelsMatchTheSandboxName(t *testing.T) {
 	}
 }
 
-// A research sandbox that does not run acpd is a sandbox nothing can
-// talk to, and the caller's own --env must survive alongside it.
-func TestResearchEnvAddsACPDWithoutDroppingCallerEnv(t *testing.T) {
-	caller := []EnvVar{
-		{Name: "FOO", Value: "bar"},
-		{Name: "GOFLAGS", Value: "-mod=mod"},
-	}
-	got := researchEnv(caller)
-
-	if len(got) != len(caller)+1 {
-		t.Fatalf("got %d vars, want %d", len(got), len(caller)+1)
-	}
-	for i, want := range caller {
-		if got[i] != want {
-			t.Errorf("caller env %d = %+v, want %+v", i, got[i], want)
-		}
-	}
-	last := got[len(got)-1]
-	if last.Name != EnvACPDEnable || last.Value != "1" {
-		t.Errorf("last var = %+v, want %s=1", last, EnvACPDEnable)
-	}
-}
-
-// Appending must not write through the caller's backing array; a shared
-// slice reused for a second sandbox would otherwise accumulate
-// duplicates.
-func TestResearchEnvDoesNotMutateCallerSlice(t *testing.T) {
-	caller := make([]EnvVar, 1, 8) // spare capacity: append would write in place
-	caller[0] = EnvVar{Name: "FOO", Value: "bar"}
-
-	researchEnv(caller)
-
-	if len(caller) != 1 || caller[0].Name != "FOO" {
-		t.Errorf("caller slice was mutated: %+v", caller)
-	}
-}
-
-// ACPD_ENABLE goes last so that a caller passing it explicitly cannot
-// switch acpd off: the pod spec takes the final value for a repeated
-// name.
-func TestResearchEnvWinsOverCallerOverride(t *testing.T) {
-	got := researchEnv([]EnvVar{{Name: EnvACPDEnable, Value: ""}})
-	last := got[len(got)-1]
-	if last.Name != EnvACPDEnable || last.Value != "1" {
-		t.Errorf("last var = %+v, want %s=1", last, EnvACPDEnable)
-	}
-}
-
 // researchSB is a sandbox of a given age, with or without the receipt
 // that says its setup finished.
 func researchSB(age time.Duration, ready bool) *unstructured.Unstructured {

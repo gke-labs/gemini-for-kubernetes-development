@@ -1,10 +1,10 @@
-// Package podacpd finds the way to a sandbox pod's acpd.
+// Package podacpd finds the way to a sandbox pod's agent sessions.
 //
 // A sandbox whose factory daemon hosts agent sessions serves them on its
 // loopback task server (127.0.0.1:49990, /v1/sessions), reached through a
 // port-forward: the API server authenticates the caller and checks
-// pods/portforward, so nothing in the pod listens unauthenticated. Older
-// images only have acpd on the pod IP's :49984, which stays the fallback.
+// pods/portforward, so nothing in the pod listens unauthenticated. A pod
+// on an older image hosts none and cannot be reached for one.
 package podacpd
 
 import (
@@ -40,7 +40,7 @@ const (
 	// that will not answer.
 	probeTimeout = 10 * time.Second
 	// retryAfter is how long a pod that could not be forwarded to is
-	// dialled on its IP before the forward is tried again: missing RBAC
+	// reported unreachable before the forward is tried again: missing RBAC
 	// or a flaky API server should not cost every ten-second poll a
 	// failed forward.
 	retryAfter = time.Minute
@@ -54,8 +54,6 @@ type Dialer struct {
 	// open starts a forward to the pod's task server and returns its base
 	// URL. A seam for tests.
 	open func(ctx context.Context, pod *corev1.Pod) (*forward, error)
-	// byIP is the fallback, the pod IP's acpd. A seam for tests.
-	byIP func(ip string) *acpd.Client
 
 	mu    sync.Mutex
 	pods  map[types.UID]*podState
@@ -75,11 +73,9 @@ type podState struct {
 }
 
 // New returns a Dialer that port-forwards with config. A nil config, or
-// one that cannot build a clientset, gives a Dialer that only dials pod
-// IPs, which is what every caller did before.
+// one that cannot build a clientset, gives a Dialer that reaches no pod.
 func New(config *rest.Config) *Dialer {
 	d := &Dialer{
-		byIP:  func(ip string) *acpd.Client { return acpd.NewForPodIP(ip) },
 		pods:  map[types.UID]*podState{},
 		clock: time.Now,
 	}
@@ -93,23 +89,8 @@ func New(config *rest.Config) *Dialer {
 	return d
 }
 
-// Client is the acpd client for pod: over its forward when the pod's
-// daemon hosts sessions, else on the pod IP. It never fails; a pod that
-// cannot be reached either way fails on the client's first call, as it
-// always did.
-func (d *Dialer) Client(ctx context.Context, pod *corev1.Pod) *acpd.Client {
-	if c, ok := d.Sessions(ctx, pod); ok {
-		return c
-	}
-	if d == nil {
-		return acpd.NewForPodIP(pod.Status.PodIP)
-	}
-	return d.byIP(pod.Status.PodIP)
-}
-
 // Sessions is the client for the sessions pod's daemon hosts, false when
-// it hosts none or cannot be forwarded to. Task sessions are only there:
-// the pod IP's acpd, where there is one, knows nothing of tasks.
+// it hosts none or cannot be forwarded to.
 func (d *Dialer) Sessions(ctx context.Context, pod *corev1.Pod) (*acpd.Client, bool) {
 	if d == nil {
 		return nil, false

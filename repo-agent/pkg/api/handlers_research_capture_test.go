@@ -55,7 +55,7 @@ func recipeSandboxFor(sessionID string) *unstructured.Unstructured {
 // file name than a name but a much better one than an empty path
 // component.
 func TestCaptureFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
-	r, dyn := recipeResearchServerWith(t, &fakeACPD{}, &fakeACPD{}, true, recipeSandboxFor(researchSession))
+	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true, recipeSandboxFor(researchSession))
 	seedNotesBoard(t, dyn)
 
 	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
@@ -68,7 +68,7 @@ func TestCaptureFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
 
 // A named session saves under its name.
 func TestCaptureNamesTheNoteAfterTheSession(t *testing.T) {
-	r, dyn := recipeResearchServerWith(t, &fakeACPD{}, &fakeACPD{}, true,
+	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true,
 		titled(recipeSandboxFor(researchSession), "Where the retry loop terminates"))
 	seedNotesBoard(t, dyn)
 
@@ -91,7 +91,7 @@ func TestCaptureDoesNotTakeAnotherSessionsNote(t *testing.T) {
 	annotations[research.NoteAnnotation] = "first-read.md"
 	taken.SetAnnotations(annotations)
 
-	r, dyn := recipeResearchServerWith(t, &fakeACPD{}, &fakeACPD{}, true,
+	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true,
 		titled(recipeSandboxFor(researchSession), "First read"), taken)
 	seedNotesBoard(t, dyn)
 

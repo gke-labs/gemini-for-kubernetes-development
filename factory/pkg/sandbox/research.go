@@ -232,38 +232,11 @@ func slugifyName(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// EnvACPDEnable gates the listener started by `factory daemon`.
-//
-// Opt-in rather than always-on: acpd is an unauthenticated port that
-// starts agent processes, and only research sandboxes have any use for
-// it. Every other sandbox keeps the surface it has today.
-//
-// It lives here, next to the code that writes it into a pod spec,
-// because the writer and the reader must not be able to drift: pkg/commands
-// imports this package to start the daemon, so both sides share one
-// definition.
-const EnvACPDEnable = "ACPD_ENABLE"
-
-// researchEnv adds ACPD_ENABLE to the caller's environment.
-//
-// Appended rather than assigned, so a caller's --env still reaches the
-// sandbox. Appended last because the pod spec takes the final value for
-// a repeated name: a caller cannot switch acpd off by accident, and a
-// research sandbox without acpd is a sandbox nothing can talk to.
-func researchEnv(envs []EnvVar) []EnvVar {
-	out := make([]EnvVar, 0, len(envs)+1)
-	out = append(out, envs...)
-	return append(out, EnvVar{Name: EnvACPDEnable, Value: "1"})
-}
-
 // EnsureResearchSandbox ensures the sandbox for one research session.
 //
 // One per conversation rather than one per repo: the transcript lives
 // on the PVC and dies with the sandbox, so sharing one between sessions
 // would mean sharing a transcript.
-//
-// The sandbox runs acpd because ACPD_ENABLE is set here. Nothing else
-// turns it on, so every other sandbox type is unaffected.
 func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, sessionID, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("research sandbox needs a session id")
@@ -327,7 +300,7 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 			WorkspaceStorageClass: storageClass,
 			EphemeralStorage:      ephemeralStorage,
 			Secrets:               secrets,
-			Env:                   researchEnv(envs),
+			Env:                   envs,
 			ServiceAccountName:    DeployerServiceAccount,
 		},
 	}

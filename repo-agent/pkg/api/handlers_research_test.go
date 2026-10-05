@@ -60,10 +60,10 @@ var fakeModes = []acpd.SessionMode{
 	{ID: acpd.ModeYolo, Name: "YOLO", Description: "Auto-approves all tools"},
 }
 
-// fakeACPD stands in for the conversation server in the sandbox. It
+// fakeSessions stands in for the daemon's sessions in the sandbox. It
 // records what arrived so the tests can assert on the wire, not on the
 // handler's intentions.
-type fakeACPD struct {
+type fakeSessions struct {
 	mu sync.Mutex
 	// calls is "METHOD /path", in order.
 	calls []string
@@ -98,13 +98,13 @@ type fakeACPD struct {
 	transcript string
 }
 
-func (f *fakeACPD) record(method, path string) {
+func (f *fakeSessions) record(method, path string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, method+" "+path)
 }
 
-func (f *fakeACPD) sawCall(want string) bool {
+func (f *fakeSessions) sawCall(want string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, c := range f.calls {
@@ -115,7 +115,7 @@ func (f *fakeACPD) sawCall(want string) bool {
 	return false
 }
 
-func (f *fakeACPD) handler() http.Handler {
+func (f *fakeSessions) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions/"+r.PathValue("id"))
@@ -288,9 +288,9 @@ func researchPod(namespace, sandboxName, ip string, phase corev1.PodPhase) *core
 	}
 }
 
-// researchTestServer wires the handlers to fakes and to a stand-in acpd.
-// Pass a nil fake to leave acpd unreachable.
-func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.Unstructured, kubeObjs ...runtime.Object) (*gin.Engine, *fake.FakeDynamicClient) {
+// researchTestServer wires the handlers to fakes and to stand-in daemon
+// sessions. A nil fake is an empty one.
+func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstructured.Unstructured, kubeObjs ...runtime.Object) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
@@ -324,10 +324,10 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	// happens to be and waits out the timeout when nothing answers. An
 	// empty fake 404s every session, which is the truthful stand-in — a
 	// pod that is up with no engine in it.
-	if acp == nil {
-		acp = &fakeACPD{}
+	if daemon == nil {
+		daemon = &fakeSessions{}
 	}
-	srv := httptest.NewServer(acp.handler())
+	srv := httptest.NewServer(daemon.handler())
 	t.Cleanup(srv.Close)
 	prev := taskSessionClientForPod
 	taskSessionClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) (*acpd.Client, bool) {
@@ -457,14 +457,14 @@ func TestResearchListReportsWhatEachEngineIsDoing(t *testing.T) {
 	working := researchSandboxCR("alice", thinking, researchRepo, false)
 	blocked := researchSandboxCR("alice", asking, researchRepo, false)
 
-	acp := &fakeACPD{live: map[string]acpd.Session{
+	daemon := &fakeSessions{live: map[string]acpd.Session{
 		researchTaskOf(researchSession): {ID: researchTaskOf(researchSession)},
 		researchTaskOf(thinking):        {ID: researchTaskOf(thinking), Busy: true},
 		// Waiting comes with Busy, because it is a turn in flight that has
 		// stopped — not a third thing instead of being busy.
 		researchTaskOf(asking): {ID: researchTaskOf(asking), Busy: true, Waiting: true},
 	}}
-	r, _ := researchTestServer(t, acp,
+	r, _ := researchTestServer(t, daemon,
 		[]*unstructured.Unstructured{idle, working, blocked},
 		researchPod("alice", idle.GetName(), "10.0.0.1", corev1.PodRunning),
 		researchPod("alice", working.GetName(), "10.0.0.2", corev1.PodRunning),
@@ -508,7 +508,7 @@ func TestResearchListReportsWhatEachEngineIsDoing(t *testing.T) {
 // error and must not read as one.
 func TestResearchListSeparatesNoEngineFromNoAnswer(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	r, _ := researchTestServer(t, &fakeACPD{sessionExists: false},
+	r, _ := researchTestServer(t, &fakeSessions{sessionExists: false},
 		[]*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
 
@@ -533,7 +533,7 @@ func TestResearchListSeparatesNoEngineFromNoAnswer(t *testing.T) {
 // and "broken" are not the same answer.
 func TestResearchListSaysWhenAPodCouldNotBeAsked(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	r, _ := researchTestServer(t, &fakeACPD{},
+	r, _ := researchTestServer(t, &fakeSessions{},
 		[]*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
 
@@ -568,8 +568,8 @@ func TestResearchListSaysWhenAPodCouldNotBeAsked(t *testing.T) {
 // about them would be one doomed connection per row, every ten seconds.
 func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
 	paused := researchSandboxCR("alice", researchSession, researchRepo, true)
-	acp := &fakeACPD{live: map[string]acpd.Session{}}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{paused})
+	daemon := &fakeSessions{live: map[string]acpd.Session{}}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{paused})
 
 	got := listResearch(t, r)
 	if len(got) != 1 {
@@ -578,7 +578,7 @@ func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
 	if got[0].Live || got[0].Unreachable != "" {
 		t.Errorf("a paused row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
 	}
-	if acp.sawCall("GET /sessions/" + researchTaskOf(researchSession)) {
+	if daemon.sawCall("GET /sessions/" + researchTaskOf(researchSession)) {
 		t.Error("the list dialled a paused session's pod, which does not exist")
 	}
 }
@@ -587,8 +587,8 @@ func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
 // deleted, marked legacy and never dialled.
 func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
 	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{live: map[string]acpd.Session{}}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{live: map[string]acpd.Session{}}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
 
 	got := listResearch(t, r)
@@ -598,8 +598,8 @@ func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
 	if got[0].Live || got[0].Unreachable != "" {
 		t.Errorf("a legacy row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
 	}
-	if len(acp.calls) != 0 {
-		t.Errorf("the list dialled a legacy sandbox: %v", acp.calls)
+	if len(daemon.calls) != 0 {
+		t.Errorf("the list dialled a legacy sandbox: %v", daemon.calls)
 	}
 }
 
@@ -607,8 +607,8 @@ func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
 // recreate it; delete still works.
 func TestResearchLegacySandboxIsConflict(t *testing.T) {
 	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
 
 	for _, call := range []struct{ method, path, body string }{
@@ -622,8 +622,8 @@ func TestResearchLegacySandboxIsConflict(t *testing.T) {
 			t.Errorf("%s %s = %d %s; want 409 legacy", call.method, call.path, w.Code, w.Body.String())
 		}
 	}
-	if len(acp.calls) != 0 {
-		t.Errorf("a legacy sandbox was dialled: %v", acp.calls)
+	if len(daemon.calls) != 0 {
+		t.Errorf("a legacy sandbox was dialled: %v", daemon.calls)
 	}
 	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession, ""); w.Code >= 300 {
 		t.Errorf("delete = %d %s; a legacy sandbox must still be deletable", w.Code, w.Body.String())
@@ -657,7 +657,7 @@ func TestResearchSessionListSkipsSandboxesWithNoSessionID(t *testing.T) {
 // this scoping is the whole of the access control on a conversation.
 func TestResearchSessionInAnotherNamespaceIsInvisible(t *testing.T) {
 	sb := researchSandboxCR("bob", researchSession, researchRepo, false)
-	r, _ := researchTestServer(t, &fakeACPD{}, []*unstructured.Unstructured{sb},
+	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
 		researchPod("bob", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodGet, "/api/research", ""); !strings.Contains(w.Body.String(), `"sessions":[]`) {
@@ -679,7 +679,7 @@ func TestResearchShortIDCollisionIsRejected(t *testing.T) {
 	annotations[researchSessionIDAnnotation] = "a-different-session"
 	sb.SetAnnotations(annotations)
 
-	r, _ := researchTestServer(t, &fakeACPD{}, []*unstructured.Unstructured{sb},
+	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, ""); w.Code != http.StatusNotFound {
@@ -714,7 +714,7 @@ func TestResearchSessionStillStartingIsConflict(t *testing.T) {
 			if pod != nil {
 				objs = append(objs, pod)
 			}
-			r, _ := researchTestServer(t, &fakeACPD{}, []*unstructured.Unstructured{sb}, objs...)
+			r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb}, objs...)
 			w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
 			if w.Code != http.StatusConflict {
 				t.Errorf("status = %d, want 409: %s", w.Code, w.Body.String())
@@ -725,7 +725,7 @@ func TestResearchSessionStillStartingIsConflict(t *testing.T) {
 
 func TestResearchPausedSessionIsConflict(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, true)
-	r, _ := researchTestServer(t, &fakeACPD{}, []*unstructured.Unstructured{sb})
+	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb})
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
 	if w.Code != http.StatusConflict {
@@ -740,8 +740,8 @@ func TestResearchPausedSessionIsConflict(t *testing.T) {
 // start every conversation in it.
 func TestResearchStatusDoesNotCreateASession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
@@ -762,7 +762,7 @@ func TestResearchStatusDoesNotCreateASession(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"htmlUrl":"https://github.com/kubernetes/`+researchRepo+`"`) {
 		t.Errorf("htmlUrl missing from the status: %s", w.Body.String())
 	}
-	if acp.sawCall("POST /sessions") {
+	if daemon.sawCall("POST /sessions") {
 		t.Error("a status call spawned an engine")
 	}
 }
@@ -772,8 +772,8 @@ func TestResearchStatusDoesNotCreateASession(t *testing.T) {
 // API's own request logger prints them.
 func TestResearchPromptCreatesSessionWithKeyInHeader(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"what does this repo do?"}`)
@@ -783,20 +783,20 @@ func TestResearchPromptCreatesSessionWithKeyInHeader(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"offset":512`) {
 		t.Errorf("prompt offset not returned: %s", w.Body.String())
 	}
-	if !acp.sawCall("POST /sessions") {
-		t.Fatalf("no session was created; calls: %v", acp.calls)
+	if !daemon.sawCall("POST /sessions") {
+		t.Fatalf("no session was created; calls: %v", daemon.calls)
 	}
-	if acp.createKey != "engine-key-value" {
-		t.Errorf("%s = %q, want the member's key", acpd.APIKeyHeader, acp.createKey)
+	if daemon.createKey != "engine-key-value" {
+		t.Errorf("%s = %q, want the member's key", acpd.APIKeyHeader, daemon.createKey)
 	}
-	if strings.Contains(acp.createBody, "engine-key-value") {
-		t.Errorf("key leaked into the create body: %s", acp.createBody)
+	if strings.Contains(daemon.createBody, "engine-key-value") {
+		t.Errorf("key leaked into the create body: %s", daemon.createBody)
 	}
-	if !strings.Contains(acp.createBody, `"cwd":"/workspaces/`+researchRepo+`"`) {
-		t.Errorf("session was not pointed at the checkout: %s", acp.createBody)
+	if !strings.Contains(daemon.createBody, `"cwd":"/workspaces/`+researchRepo+`"`) {
+		t.Errorf("session was not pointed at the checkout: %s", daemon.createBody)
 	}
-	if !strings.Contains(acp.promptBody, "what does this repo do?") {
-		t.Errorf("the prompt text did not reach the engine: %s", acp.promptBody)
+	if !strings.Contains(daemon.promptBody, "what does this repo do?") {
+		t.Errorf("the prompt text did not reach the engine: %s", daemon.promptBody)
 	}
 }
 
@@ -805,15 +805,15 @@ func TestResearchPromptCreatesSessionWithKeyInHeader(t *testing.T) {
 // same transcript.
 func TestResearchPromptReusesALiveSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	if acp.sawCall("POST /sessions") {
-		t.Errorf("created a second session for a live conversation; calls: %v", acp.calls)
+	if daemon.sawCall("POST /sessions") {
+		t.Errorf("created a second session for a live conversation; calls: %v", daemon.calls)
 	}
 }
 
@@ -822,8 +822,8 @@ func TestResearchPromptReusesALiveSession(t *testing.T) {
 // becoming a generic 502.
 func TestResearchPromptPassesBusyThrough(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true, promptStatus: http.StatusConflict}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true, promptStatus: http.StatusConflict}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`)
@@ -837,8 +837,8 @@ func TestResearchPromptPassesBusyThrough(t *testing.T) {
 // from a broken sandbox.
 func TestResearchPromptWithoutAnEngineKeyFails(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning),
 		// A factory-user secret with no engine key: an onboarded member
 		// who never supplied one.
@@ -848,8 +848,8 @@ func TestResearchPromptWithoutAnEngineKeyFails(t *testing.T) {
 	if w.Code == http.StatusAccepted {
 		t.Fatalf("prompt succeeded without an engine key: %s", w.Body.String())
 	}
-	if acp.sawCall("POST /sessions") {
-		t.Errorf("tried to spawn an engine with no key; calls: %v", acp.calls)
+	if daemon.sawCall("POST /sessions") {
+		t.Errorf("tried to spawn an engine with no key; calls: %v", daemon.calls)
 	}
 	if !strings.Contains(w.Body.String(), "GEMINI_API_KEY") {
 		t.Errorf("the reason is not diagnosable: %s", w.Body.String())
@@ -858,21 +858,21 @@ func TestResearchPromptWithoutAnEngineKeyFails(t *testing.T) {
 
 func TestResearchPermissionAndCancelReachTheEngine(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/permission", `{"requestId":"r1","optionId":"allow"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("permission status = %d: %s", w.Code, w.Body.String())
 	}
-	if !acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/permission") {
-		t.Errorf("permission did not reach acpd; calls: %v", acp.calls)
+	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/permission") {
+		t.Errorf("permission did not reach acpd; calls: %v", daemon.calls)
 	}
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/cancel", ""); w.Code != http.StatusNoContent {
 		t.Fatalf("cancel status = %d: %s", w.Code, w.Body.String())
 	}
-	if !acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/cancel") {
-		t.Errorf("cancel did not reach acpd; calls: %v", acp.calls)
+	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/cancel") {
+		t.Errorf("cancel did not reach acpd; calls: %v", daemon.calls)
 	}
 }
 
@@ -881,13 +881,13 @@ func TestResearchPermissionAndCancelReachTheEngine(t *testing.T) {
 // spawning one here would answer a question nobody asked.
 func TestResearchPermissionDoesNotCreateASession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/permission", `{"requestId":"r1","optionId":"allow"}`)
-	if acp.sawCall("POST /sessions") {
-		t.Errorf("a permission answer spawned an engine; calls: %v", acp.calls)
+	if daemon.sawCall("POST /sessions") {
+		t.Errorf("a permission answer spawned an engine; calls: %v", daemon.calls)
 	}
 }
 
@@ -929,8 +929,8 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	line1 := `{"seq":1,"kind":"user_prompt","data":{"text":"hi"}}` + "\n"
 	line2 := `{"seq":2,"kind":"turn_end","data":{"stopReason":"end_turn"}}` + "\n"
-	acp := &fakeACPD{sessionExists: true, transcript: line1 + line2}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true, transcript: line1 + line2}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	srv := httptest.NewServer(r)
@@ -974,8 +974,8 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 	if frames[3].Type != researchFrameClosed {
 		t.Errorf("last frame = %+v, want closed", frames[3])
 	}
-	if !acp.sawCall("GET /sessions/" + researchTaskOf(researchSession) + "/events?offset=100") {
-		t.Errorf("the requested offset did not reach acpd; calls: %v", acp.calls)
+	if !daemon.sawCall("GET /sessions/" + researchTaskOf(researchSession) + "/events?offset=100") {
+		t.Errorf("the requested offset did not reach acpd; calls: %v", daemon.calls)
 	}
 }
 
@@ -984,8 +984,8 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 // recovery path after an acpd restart drops the session.
 func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false, transcript: ""}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false, transcript: ""}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	srv := httptest.NewServer(r)
@@ -1004,8 +1004,8 @@ func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 	if frame.Type != researchFrameOpen {
 		t.Fatalf("first frame = %+v, want open", frame)
 	}
-	if !acp.sawCall("POST /sessions") {
-		t.Errorf("the stream did not start an engine; calls: %v", acp.calls)
+	if !daemon.sawCall("POST /sessions") {
+		t.Errorf("the stream did not start an engine; calls: %v", daemon.calls)
 	}
 }
 
@@ -1263,8 +1263,8 @@ func TestResearchRenameRejectsAnEmptyTitle(t *testing.T) {
 // alternative is a list of identical rows.
 func TestResearchFirstPromptTitlesTheSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{}
-	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{}
+	r, dyn := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt",
@@ -1288,8 +1288,8 @@ func TestResearchLaterPromptsDoNotRetitle(t *testing.T) {
 	annotations := sb.GetAnnotations()
 	annotations[research.TitleAnnotation] = "overview"
 	sb.SetAnnotations(annotations)
-	acp := &fakeACPD{}
-	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{}
+	r, dyn := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"and the backoff?"}`)
@@ -1312,15 +1312,15 @@ func TestResearchLaterPromptsDoNotRetitle(t *testing.T) {
 // acpd's permission timeout and is then cancelled.
 func TestResearchSessionIsCreatedAutoApproving(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(acp.createBody, `"mode":"`+acpd.ResearchMode+`"`) {
-		t.Errorf("session was not created in the research mode: %s", acp.createBody)
+	if !strings.Contains(daemon.createBody, `"mode":"`+acpd.ResearchMode+`"`) {
+		t.Errorf("session was not created in the research mode: %s", daemon.createBody)
 	}
 }
 
@@ -1328,8 +1328,8 @@ func TestResearchSessionIsCreatedAutoApproving(t *testing.T) {
 // first paint, without a second round trip to find out what it is on.
 func TestResearchStatusReportsTheMode(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
@@ -1353,10 +1353,10 @@ func TestResearchStatusReportsTheMode(t *testing.T) {
 // something before anybody opened it has no event left to send.
 func TestResearchStatusReportsAWaitingSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{live: map[string]acpd.Session{
+	daemon := &fakeSessions{live: map[string]acpd.Session{
 		researchTaskOf(researchSession): {ID: researchTaskOf(researchSession), Busy: true, Waiting: true},
 	}}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
@@ -1373,12 +1373,12 @@ func TestResearchStatusReportsAWaitingSession(t *testing.T) {
 // the refusal was over before anybody attached to this conversation.
 func TestResearchStatusCarriesWhyTheModeDidNotStick(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{
+	daemon := &fakeSessions{
 		sessionExists: true,
 		mode:          acpd.ModeDefault,
 		modeError:     `session/set_mode "yolo": Cannot enable privileged approval modes in an untrusted folder.`,
 	}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
@@ -1392,16 +1392,16 @@ func TestResearchStatusCarriesWhyTheModeDidNotStick(t *testing.T) {
 
 func TestResearchModeCanBeSwitchedMidConversation(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(acp.modeBody, `"mode":"default"`) {
-		t.Errorf("the mode did not reach acpd: %s", acp.modeBody)
+	if !strings.Contains(daemon.modeBody, `"mode":"default"`) {
+		t.Errorf("the mode did not reach acpd: %s", daemon.modeBody)
 	}
 	if !strings.Contains(w.Body.String(), `"mode":"default"`) {
 		t.Errorf("the reply does not report the new mode: %s", w.Body.String())
@@ -1410,14 +1410,14 @@ func TestResearchModeCanBeSwitchedMidConversation(t *testing.T) {
 
 func TestResearchModeRejectsAnEmptyBody(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: true, mode: acpd.ModeYolo}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: true, mode: acpd.ModeYolo}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{}`); w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
-	if acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/mode") {
+	if daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/mode") {
 		t.Error("an empty mode reached acpd")
 	}
 }
@@ -1427,15 +1427,15 @@ func TestResearchModeRejectsAnEmptyBody(t *testing.T) {
 // would hand the member a conversation as a side effect of adjusting one.
 func TestSettingTheModeDoesNotCreateASession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	daemon := &fakeSessions{sessionExists: false}
+	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for a session with no engine", w.Code)
 	}
-	if acp.sawCall("POST /sessions") {
-		t.Errorf("setting the mode spawned an engine; calls: %v", acp.calls)
+	if daemon.sawCall("POST /sessions") {
+		t.Errorf("setting the mode spawned an engine; calls: %v", daemon.calls)
 	}
 }
 
@@ -1455,16 +1455,16 @@ func TestResearchSessionIsCreatedOnTheSandboxEngine(t *testing.T) {
 				annotations[acpd.ResearchEngineAnnotation] = tc.annotation
 				sb.SetAnnotations(annotations)
 			}
-			acp := &fakeACPD{sessionExists: false}
-			r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+			daemon := &fakeSessions{sessionExists: false}
+			r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 				researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
 			w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hi"}`)
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 			}
-			if !strings.Contains(acp.createBody, `"engine":"`+tc.want+`"`) {
-				t.Errorf("create body %s, want engine %q", acp.createBody, tc.want)
+			if !strings.Contains(daemon.createBody, `"engine":"`+tc.want+`"`) {
+				t.Errorf("create body %s, want engine %q", daemon.createBody, tc.want)
 			}
 		})
 	}

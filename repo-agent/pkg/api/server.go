@@ -14,9 +14,8 @@ import (
 type Server struct {
 	K8sManager *k8s.Manager
 	Auth       *auth.Authenticator
-	// ACPD reaches research sandboxes' acpd: over a port-forward to the
-	// daemon's sessions, or on the pod IP for older images. Nil dials the
-	// pod IP only.
+	// ACPD reaches sandboxes' agent sessions, over a port-forward to the
+	// daemon's /v1/sessions. Nil reaches none.
 	ACPD *podacpd.Dialer
 }
 
