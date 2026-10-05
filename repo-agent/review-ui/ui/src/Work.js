@@ -264,6 +264,12 @@ const DRAFT_VERBS = {
 const POSTING_POLL_EVERY = 3000;
 
 // anyPosting is whether a row has a write standing.
+// taskSessionHref opens a task's agent session (plan, triage) in its own
+// tab: watched while the task runs, continued after.
+function taskSessionHref(session) {
+  return `#/task-session/${session.sandbox}/${session.task}`;
+}
+
 function anyPosting(items) {
   return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]
     .some(a => a.reason === 'posting'));
@@ -364,6 +370,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     return m ? m[1] : null;
   };
   const stageBtn = STAGE_BUTTON[item.stage];
+  const liveSession = item.stage === 'planning' ? item.planSession
+    : item.stage === 'triaging' ? item.triageSession : null;
   const actions = [];
   if (!stageBtn && item.type === 'issue') {
     if (['untriaged', 'open', 'triaged', 'plan-failed'].includes(item.stage)) {
@@ -536,6 +544,15 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               bg={(AGENT_STYLE[item.stage] || { bg: 'rgba(176,136,0,0.12)' }).bg} />
           </span>
         ) : null}
+        {/* The agent at work, in the conversation it is asking in. A
+            running task's session can be watched, not driven. */}
+        {liveSession && (
+          <a href={taskSessionHref(liveSession)} target="_blank" rel="noopener noreferrer"
+            style={{ textDecoration: 'none', marginLeft: '4px' }}
+            title="Watch the agent's conversation as it runs">
+            <Chip text="watch ↗" color="var(--text-secondary)" bg="var(--bg-secondary)" />
+          </a>
+        )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {receipts.map(r => r.href ? (
@@ -640,6 +657,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     }}>{draftErr}</div>
                   )}
                   <div style={{ textAlign: 'right' }}>
+                    {item.triageSession && (
+                      <a className="btn btn-sm" href={taskSessionHref(item.triageSession)}
+                        target="_blank" rel="noopener noreferrer"
+                        title="Continue the triage conversation where it left off, in its own tab"
+                      >Continue session ↗</a>
+                    )}
                     <DraftActions kind="Triage" actions={item.triageActions} number={item.number}
                       onEdit={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}
                       onTake={a => takeAction('Triage', a.verb, { run: a.run, setErr: setDraftErr })} />
@@ -699,7 +722,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     }}>{planErr}</div>
                   )}
                   <div style={{ textAlign: 'right' }}>
-                    {item.stage === 'plan-ready' && item.sandbox && (
+                    {item.stage === 'plan-ready' && item.planSession ? (
+                      <a className="btn btn-sm" href={taskSessionHref(item.planSession)}
+                        target="_blank" rel="noopener noreferrer"
+                        title="Continue the planning conversation where the plan left it, in its own tab"
+                      >Continue session ↗</a>
+                    ) : item.stage === 'plan-ready' && item.sandbox && (
+                      // A plan from before task sessions: the terminal
+                      // resumes it in the agent's own CLI.
                       <a className="btn btn-sm" href={`#/terminal/${namespace}/${item.sandbox.name}?chat=plan`}
                         target="_blank" rel="noopener noreferrer"
                         title="Continue the planning conversation — opens a terminal tab resuming the same agent session; changes to the plan file ride into Approve & Fix"

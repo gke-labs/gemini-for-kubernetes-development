@@ -618,6 +618,19 @@ export function normaliseView(stored) {
   }
 }
 
+// taskSessionHash is where a task's session opens in its own tab.
+export function taskSessionHash(task) {
+  return `#/task-session/${task.sandbox}/${task.task}`;
+}
+
+// taskSessionFallback is the terminal for a task whose sandbox keeps no
+// session: a plan's resumes in the agent's own CLI, anything else is a
+// shell.
+function taskSessionFallback(namespace, task) {
+  const chat = task.task.startsWith('recipe-plan-') ? '?chat=plan' : '';
+  return `#/terminal/${namespace}/${task.sandbox}${chat}`;
+}
+
 // ResearchConversation is one conversation: the transcript, the
 // composer, and the machinery that keeps a websocket attached to it.
 //
@@ -640,9 +653,21 @@ export function normaliseView(stored) {
 // therefore mounts full screen, and the two ways out of full screen —
 // Escape and the header's button — go back to that list instead of
 // shrinking into a pane the panel no longer has.
+//
+// `task` makes this a factory task's session (plan, triage) instead of a
+// research one: `{ sandbox, task }`. It is reached at its own routes,
+// named by the task rather than renamed, and has no notes or sandbox of
+// its own to save or delete. While the task runs it is the task's, so
+// the composer stays shut and the member watches.
 export function ResearchConversation({
-  sessionId, pending, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt,
+  sessionId, pending, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task,
 }) {
+  const api = task
+    ? `/api/task-sessions/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
+    : `/api/research/${encodeURIComponent(sessionId)}`;
+  const eventsPath = task
+    ? `/api/task-session-events/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
+    : `/api/research-events/${encodeURIComponent(sessionId)}`;
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
   //   starting — it exists but has no running pod yet
@@ -690,6 +715,11 @@ export function ResearchConversation({
   // the server's, and a UI that re-derived it would go on claiming the
   // session asks first the moment the server's rule changed.
   const [modeState, setModeState] = useState({ current: '', available: [], problem: '', auto: false });
+  // A task session's two facts, from the session we attached to: held,
+  // the task is still running and only it may drive the session; loaded,
+  // the agent remembers what the task said (false: it starts fresh, and
+  // the transcript above is only for the member to read).
+  const [taskState, setTaskState] = useState({ held: false, loaded: true });
   const [switching, setSwitching] = useState(false);
   // The overflow menu behind ⋯. Open state and nothing else: what is in
   // it are the three things you reach for once a session and never
@@ -798,7 +828,7 @@ export function ResearchConversation({
     const attach = () => {
       if (state.closed) return;
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${proto}//${window.location.host}/api/research-events/${encodeURIComponent(sessionId)}?offset=${offsetRef.current}`;
+      const url = `${proto}//${window.location.host}${eventsPath}?offset=${offsetRef.current}`;
       const ws = new WebSocket(url);
       state.ws = ws;
       ws.onmessage = (ev) => {
@@ -814,6 +844,7 @@ export function ResearchConversation({
           setError('');
           setOpenBusy(!!session.busy);
           setCaughtUp(false);
+          setTaskState({ held: !!session.held, loaded: !session.task || !!session.loaded });
           setModeState(m => ({
             current: session.mode || m.current,
             available: session.availableModes || m.available,
@@ -859,7 +890,7 @@ export function ResearchConversation({
 
     const probe = () => {
       if (state.closed) return;
-      fetch(`/api/research/${encodeURIComponent(sessionId)}`)
+      fetch(api)
         .then(res => res.json().then(body => ({ status: res.status, body })))
         .then(({ status, body }) => {
           if (state.closed) return;
@@ -887,6 +918,14 @@ export function ResearchConversation({
             }
             setDetail('');
             attach();
+            return;
+          }
+          if (status === 409 && body.legacy) {
+            // An image whose daemon keeps no sessions for its tasks. Not
+            // worth retrying: an image does not change under a pod.
+            setInfo(body);
+            setPhase('legacy');
+            setDetail(body.error || '');
             return;
           }
           if (status === 409) {
@@ -925,6 +964,7 @@ export function ResearchConversation({
     setTranscript(emptyTranscript);
     setCaughtUp(false);
     setModeState({ current: '', available: [], problem: '', auto: false });
+    setTaskState({ held: false, loaded: true });
     setPhase('probing');
     setDetail('');
     probe();
@@ -934,7 +974,7 @@ export function ResearchConversation({
       if (state.timer) clearTimeout(state.timer);
       if (state.ws) { try { state.ws.close(); } catch (e) { /* already gone */ } }
     };
-  }, [sessionId, pending]);
+  }, [sessionId, pending, api, eventsPath]);
 
   // Follow the tail, but only for a reader who is already at it —
   // yanking the view down while someone is reading back is worse than
@@ -988,7 +1028,7 @@ export function ResearchConversation({
     if (!text || sending || busy || phase !== 'live') return;
     setSending(true);
     setError('');
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/prompt`, {
+    fetch(`${api}/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -1022,7 +1062,7 @@ export function ResearchConversation({
     const next = (raw || '').trim();
     if (!next || next === name) return;
     if (optimistic) setName(next);
-    fetch(`/api/research/${encodeURIComponent(sessionId)}`, {
+    fetch(api, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: next }),
@@ -1065,7 +1105,8 @@ export function ResearchConversation({
   // brief in topic.txt from ever becoming somebody's session name.
   const namedRef = useRef(false);
   useEffect(() => {
-    if (namedRef.current || !caughtUp) return;
+    // A task's session is named by the task.
+    if (namedRef.current || !caughtUp || task) return;
     if (!info || info.title || renamingRef.current !== null) return;
     const first = transcript.items.find(i => i.role === 'user' && (i.text || '').trim());
     if (!first) return;
@@ -1076,7 +1117,7 @@ export function ResearchConversation({
 
   const resolve = (resolution) => {
     setResolving(true);
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/permission`, {
+    fetch(`${api}/permission`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(resolution),
@@ -1097,7 +1138,7 @@ export function ResearchConversation({
     if (!next || switching) return;
     setSwitching(true);
     setError('');
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/mode`, {
+    fetch(`${api}/mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: next }),
@@ -1124,7 +1165,7 @@ export function ResearchConversation({
   };
 
   const cancel = () => {
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' })
+    fetch(`${api}/cancel`, { method: 'POST' })
       .then(async res => {
         if (res.ok) return;
         const body = await res.json().catch(() => ({}));
@@ -1135,7 +1176,7 @@ export function ResearchConversation({
 
   const destroy = () => {
     if (!window.confirm('Delete this conversation? The sandbox and its transcript go with it.')) return;
-    fetch(`/api/research/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    fetch(api, { method: 'DELETE' })
       .then(res => {
         if (res.ok || res.status === 404) { if (onDeleted) onDeleted(sessionId); return; }
         res.json().catch(() => ({})).then(body => setError(body.error || `delete failed: HTTP ${res.status}`));
@@ -1156,7 +1197,7 @@ export function ResearchConversation({
     if (saving || busy || phase !== 'live') return;
     setSaving(true);
     setError('');
-    fetch(`/api/research/${encodeURIComponent(sessionId)}/capture`, { method: 'POST' })
+    fetch(`${api}/capture`, { method: 'POST' })
       .then(async res => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -1185,6 +1226,7 @@ export function ResearchConversation({
     unreachable: { text: 'not answering', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
     gone: { text: 'gone', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
     failed: { text: 'unavailable', color: 'var(--text-danger)', bg: 'var(--bg-danger-light)' },
+    legacy: { text: 'no session', color: 'var(--text-secondary)', bg: 'var(--bg-secondary)' },
     // A blocked turn is busy, so "agent working" is true and useless: it
     // reads as progress when in fact nothing will happen until someone
     // scrolls down and clicks. The pill is the one part of this panel
@@ -1197,7 +1239,7 @@ export function ResearchConversation({
   }[phase];
 
   const repo = (info && info.repo) || '';
-  const composerDisabled = phase !== 'live' || busy || sending;
+  const composerDisabled = phase !== 'live' || busy || sending || taskState.held;
 
   // A capture is a prompt, so it is refused for the same reasons one is
   // — acpd will not take a second one mid-turn.
@@ -1211,6 +1253,7 @@ export function ResearchConversation({
   // null is the ordinary case, where the placeholder's invitation is
   // the whole story and a second line would only be noise.
   const composerState = phase !== 'live' ? { text: 'Not connected', urgent: false }
+    : taskState.held ? { text: 'The task is still running — watch it here, and continue once it ends', urgent: false }
     : waiting ? { text: 'Waiting for you to answer the permission above', urgent: true }
       : busy ? { text: 'The agent is working — Stop to interrupt', urgent: false }
         : null;
@@ -1273,9 +1316,9 @@ export function ResearchConversation({
               click a word that gave no sign it was clickable. The repo is
               a link two inches to the right; saying it twice bought
               nothing and cost the empty box that asks for a name. */}
-          {renaming === null && name ? (
-            <strong onClick={() => beginRename(name)} style={{ cursor: 'text' }}
-              title="Click to rename this conversation">
+          {task || (renaming === null && name) ? (
+            <strong onClick={task ? undefined : () => beginRename(name)} style={{ cursor: task ? 'default' : 'text' }}
+              title={task ? task.task : 'Click to rename this conversation'}>
               {name}
             </strong>
           ) : (
@@ -1360,7 +1403,7 @@ export function ResearchConversation({
               ⚠ not applied
             </span>
           )}
-          {phase === 'live' && busy && (
+          {phase === 'live' && busy && !taskState.held && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
           )}
           {/* The one way anything said here outlives the sandbox's disk,
@@ -1374,13 +1417,15 @@ export function ResearchConversation({
               On the bar and not in the menu because saving is something
               you do *while* reading, at the moment the answer lands,
               which is exactly the boundary the ⋯ menu draws. */}
-          <button className="btn btn-sm" onClick={captureNotes} disabled={captureDisabled}
-            aria-label="Save notes"
-            title={phase !== 'live' ? 'Not connected'
-              : busy ? 'The agent is working — save once the turn ends'
-                : 'Write this conversation up as a note and push it to your fork'}>
-            {saving ? '⋯' : '💾'}
-          </button>
+          {!task && (
+            <button className="btn btn-sm" onClick={captureNotes} disabled={captureDisabled}
+              aria-label="Save notes"
+              title={phase !== 'live' ? 'Not connected'
+                : busy ? 'The agent is working — save once the turn ends'
+                  : 'Write this conversation up as a note and push it to your fork'}>
+              {saving ? '⋯' : '💾'}
+            </button>
+          )}
           {/* Two ways to get more room, and they are different enough to
               both be here rather than one behind the other. Full screen
               keeps the conversation you are in — same socket, same draft,
@@ -1408,7 +1453,7 @@ export function ResearchConversation({
                   : expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
                 {onClose ? 'esc ⤢' : expanded ? '⤢' : '⛶'}
               </button>
-              <a className="btn btn-sm" href={`#/research/${sessionId}`}
+              <a className="btn btn-sm" href={task ? taskSessionHash(task) : `#/research/${sessionId}`}
                 target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
                 title="Open this conversation in its own tab">↗</a>
             </>
@@ -1442,11 +1487,15 @@ export function ResearchConversation({
                       style={{ fontSize: 'x-small', padding: '4px 6px' }}
                       title={`Shell into ${info.sandbox}`}>terminal ↗</a>
                   )}
-                  <button role="menuitem" className="btn btn-delete btn-sm"
-                    onClick={() => { setMenuOpen(false); destroy(); }}
-                    title="Delete the sandbox — the transcript lives on its disk and goes with it">
-                    Delete
-                  </button>
+                  {/* A task's sandbox is the issue's, and not this
+                      conversation's to delete. */}
+                  {!task && (
+                    <button role="menuitem" className="btn btn-delete btn-sm"
+                      onClick={() => { setMenuOpen(false); destroy(); }}
+                      title="Delete the sandbox — the transcript lives on its disk and goes with it">
+                      Delete
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -1545,6 +1594,22 @@ export function ResearchConversation({
             )}
             {phase === 'failed' && (
               <p style={{ color: 'var(--term-red)' }}>Cannot reach this session: {detail}</p>
+            )}
+            {phase === 'legacy' && (
+              <p style={{ color: 'var(--term-dim)' }}>
+                This sandbox runs an image that keeps no agent session for its tasks.{' '}
+                {info && info.namespace && task && (
+                  <a href={taskSessionFallback(info.namespace, task)} target="_blank" rel="noopener noreferrer">
+                    Continue in the terminal ↗
+                  </a>
+                )}
+              </p>
+            )}
+            {phase === 'live' && task && !taskState.loaded && (
+              <p style={{ color: 'var(--term-yellow)', fontSize: 'x-small' }}>
+                The agent could not pick this conversation back up, so it starts fresh: what is above is
+                for you to read, and it does not remember it.
+              </p>
             )}
             {phase === 'live' && !transcript.items.length && (
               info && info.openingError ? (

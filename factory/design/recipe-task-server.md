@@ -3,7 +3,8 @@
 **Status:**
 - **Phase 1 built:** the task server in `factory daemon`, the client over a port-forward, and recipe commands moved to it with envd as the fallback.
 - **Phase 4 in part:** the daemon serves acpd's sessions under `/v1/sessions`, including sessions that belong to a task, and recipe asks go through them.
-- **Proposals:** the other phases, and the clients for those sessions.
+- **Phase 4 clients built:** repo-agent's research and "Continue session" on plan and triage use those sessions over the port-forward.
+- **Proposals:** the other phases.
 
 Recipe tasks (plan, triage) already run independently of whoever starts them. The daemon claims them from the spool and runs them in their own task directories (see [task-recipes-and-outputs.md](task-recipes-and-outputs.md)). But every client still talks to them through **envd**:
 
@@ -134,6 +135,6 @@ Existing sandboxes keep their image until they are recreated (see the recipe-ske
 3. **Classic tasks:** start them through the server too, with attach as a stream. Then the polling attach and the `kill` scripts go.
 4. **acpd behind the same surface:**
    - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, `session/load`, and recipes driving their asks through it.
-   - **Next:** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage.
+   - **Done:** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage, which opens the task's session in the research view (`/api/task-sessions/<sandbox>/<task>`), a watch while the task runs. A sandbox on an older image falls back to the terminal.
    - **Last:** drop the `:49984` listener.
 5. **Retire envd for factory:** once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.

@@ -38,3 +38,13 @@ func RecordedRunName(annotations map[string]string, key string, since time.Time)
 	}
 	return run.Name, true
 }
+
+// RecordedRunTask is the task id of the run recorded under key, empty
+// when there is none. The task's agent session is named after it.
+func RecordedRunTask(annotations map[string]string, key string) string {
+	var run RecordedRun
+	if err := json.Unmarshal([]byte(annotations[key]), &run); err != nil {
+		return ""
+	}
+	return run.Task
+}

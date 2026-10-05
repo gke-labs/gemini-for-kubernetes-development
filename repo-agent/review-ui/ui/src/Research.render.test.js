@@ -1823,3 +1823,57 @@ describe('mermaid fences', () => {
         expect(mockMermaid.parse).not.toHaveBeenCalled();
     });
 });
+
+describe('ResearchConversation on a task session', () => {
+    const task = { sandbox: 'fix-granule-42', task: 'recipe-plan-20261004-120000-ab12' };
+    const render = async (body, status = 200) => {
+        global.fetch = jest.fn(() => reply(status, body));
+        await act(async () => {
+            root.render(<ResearchConversation sessionId={task.task} task={task} title="plan · fix-granule-42" />);
+        });
+        await flush();
+    };
+
+    test('is reached at the task session routes, with no rename, notes or delete', async () => {
+        await render({ sessionId: task.task, sandbox: task.sandbox, namespace: 'ns', repo: 'granule' });
+        expect(global.fetch).toHaveBeenCalledWith('/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12');
+        expect(FakeSocket.instances[0].url)
+            .toContain('/api/task-session-events/fix-granule-42/recipe-plan-20261004-120000-ab12?offset=0');
+        expect(container.textContent).toContain('plan · fix-granule-42');
+        expect(container.querySelector('input[aria-label="Session title"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Save notes"]')).toBeNull();
+        await act(async () => { container.querySelector('[aria-label="More actions"]').click(); });
+        expect(container.textContent).not.toContain('Delete');
+    });
+
+    test('a running task is watched, not driven', async () => {
+        await render({ sessionId: task.task, repo: 'granule' });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: true, held: true, task: task.task, offset: 0 } });
+        });
+        const box = container.querySelector('textarea');
+        await act(async () => {
+            nativeSet(box, 'why this approach?');
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(container.querySelector('.term-send').disabled).toBe(true);
+        expect(container.textContent).toContain('The task is still running');
+        expect(container.textContent).not.toContain('Stop');
+    });
+
+    test('says when the agent starts fresh', async () => {
+        await render({ sessionId: task.task, repo: 'granule' });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, loaded: false, offset: 0 } });
+        });
+        expect(container.textContent).toContain('starts fresh');
+        expect(container.textContent).not.toContain('The task is still running');
+    });
+
+    test('an older image falls back to the terminal', async () => {
+        await render({ error: 'no sessions', legacy: true, sandbox: task.sandbox, namespace: 'ns' }, 409);
+        expect(FakeSocket.instances).toHaveLength(0);
+        const link = [...container.querySelectorAll('a')].find(a => a.textContent.includes('terminal'));
+        expect(link.getAttribute('href')).toBe('#/terminal/ns/fix-granule-42?chat=plan');
+    });
+});
