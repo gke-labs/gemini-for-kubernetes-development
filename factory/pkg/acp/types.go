@@ -150,6 +150,14 @@ type LoadSessionRequest struct {
 	MCPServers []MCPServer `json:"mcpServers"`
 }
 
+// LoadSessionResponse is the agent's response to session/load. The
+// session's id is the one asked for; the modes are as they stand now,
+// which a replayed current_mode_update may not be.
+type LoadSessionResponse struct {
+	Modes  *SessionModeState `json:"modes,omitempty"`
+	Models map[string]any    `json:"models,omitempty"`
+}
+
 // ContentBlock is a piece of prompt or message content. Only text content
 // is used by this example; the ACP specification also defines image, audio,
 // and resource content.

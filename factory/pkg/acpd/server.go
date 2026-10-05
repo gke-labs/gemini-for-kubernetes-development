@@ -135,6 +135,10 @@ type sessionResponse struct {
 	// requests itself. A browser that attaches to one of these is a
 	// spectator: it will see requests in the transcript, already resolved.
 	AutoApprove bool `json:"autoApprove,omitempty"`
+	// Loaded says the session continues a conversation an earlier engine
+	// had, so the agent remembers the transcript above; false, it starts
+	// from nothing whatever the transcript holds.
+	Loaded bool `json:"loaded,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +199,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	mode, _ := sess.Modes()
-	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD, "mode", mode)
+	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD, "mode", mode, "loaded", sess.Loaded())
 	writeJSON(w, http.StatusCreated, describe(sess))
 }
 
@@ -453,6 +457,7 @@ func describe(sess *Session) sessionResponse {
 		AvailableModes: available,
 		ModeError:      sess.ModeError(),
 		AutoApprove:    sess.AutoApprove(),
+		Loaded:         sess.Loaded(),
 	}
 }
 

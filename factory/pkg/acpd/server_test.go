@@ -35,12 +35,29 @@ import (
 // and report the answer it got, which is the only way to see what acpd
 // does with a request from the far side. "!ask always" offers no
 // allow_once, "!ask deny" offers no way to allow at all.
+//
+// With --load it advertises loadSession and keeps each session's prompts
+// in a file under $FAKE_HISTORY, as gemini keeps chats under its home:
+// session/load replays them and the prompt echo counts them, so a test can
+// tell an agent that remembers from one that merely shares an id.
 const fakeAgent = `
 import json, os, sys
 
 modes = "--modes" in sys.argv[1:]
 refuse = "--refuse" in sys.argv[1:]
+load = "--load" in sys.argv[1:]
 current = "default"
+sid = "agent-side-id"
+
+def history_path(session_id):
+    return os.path.join(os.environ["FAKE_HISTORY"], session_id)
+
+def history(session_id):
+    try:
+        with open(history_path(session_id)) as f:
+            return f.read().splitlines()
+    except FileNotFoundError:
+        return []
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -57,17 +74,38 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": 1,
             "agentInfo": {"name": "fake"},
+            "agentCapabilities": {"loadSession": load},
             "authMethods": [{"id": "fake-auth", "name": "Fake"}]}})
     elif method == "authenticate":
         send({"jsonrpc": "2.0", "id": mid, "result": {}})
     elif method == "session/new":
-        result = {"sessionId": "agent-side-id"}
+        if load:
+            sid = "sid-%d" % os.getpid()
+            open(history_path(sid), "w").close()
+        result = {"sessionId": sid}
         if modes:
             result["modes"] = {
                 "currentModeId": current,
                 "availableModes": [
                     {"id": "default", "name": "Default", "description": "Prompts for approval"},
                     {"id": "yolo", "name": "YOLO", "description": "Auto-approves all tools"}]}
+        send({"jsonrpc": "2.0", "id": mid, "result": result})
+    elif method == "session/load":
+        wanted = msg["params"]["sessionId"]
+        if not load or not os.path.exists(history_path(wanted)):
+            send({"jsonrpc": "2.0", "id": mid,
+                  "error": {"code": -32603, "message": "no session %s" % wanted}})
+            continue
+        sid = wanted
+        for said in history(sid):
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": sid,
+                "update": {"sessionUpdate": "user_message_chunk",
+                           "content": {"type": "text", "text": "replay:%s" % said}}}})
+        result = {}
+        if modes:
+            result["modes"] = {"currentModeId": current, "availableModes": [
+                {"id": "default", "name": "Default"}, {"id": "yolo", "name": "YOLO"}]}
         send({"jsonrpc": "2.0", "id": mid, "result": result})
     elif method == "session/set_mode":
         wanted = msg["params"]["modeId"]
@@ -113,6 +151,11 @@ for line in sys.stdin:
                            "content": {"type": "text", "text": "permission:%s" % answer}}}})
             send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
             continue
+        remembered = ""
+        if load:
+            remembered = " sid:%s history:%s" % (sid, ",".join(history(sid)))
+            with open(history_path(sid), "a") as f:
+                f.write(prompt + "\n")
         if prompt.startswith("!mode "):
             current = prompt.split(" ", 1)[1]
             send({"jsonrpc": "2.0", "method": "session/update", "params": {
@@ -122,9 +165,10 @@ for line in sys.stdin:
             "sessionId": "agent-side-id",
             "update": {"sessionUpdate": "agent_message_chunk",
                        "content": {"type": "text",
-                                   "text": "saw:%s key:%s mode:%s extra:%s" % (
+                                   "text": "saw:%s key:%s mode:%s extra:%s%s" % (
                                        prompt, os.environ.get("FAKE_KEY", "<unset>"),
-                                       current, os.environ.get("FAKE_EXTRA", "<unset>"))}}}})
+                                       current, os.environ.get("FAKE_EXTRA", "<unset>"),
+                                       remembered)}}}})
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
     elif mid is not None:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": method}})
@@ -132,8 +176,9 @@ for line in sys.stdin:
 
 // registerFakeEngine installs the python-backed agent under three names
 // for the duration of the test: "fake", which knows nothing about modes,
-// "fake-modes", which implements them, and "fake-untrusted", which
-// advertises them and then refuses to leave the one it starts in.
+// "fake-modes", which implements them, "fake-untrusted", which
+// advertises them and then refuses to leave the one it starts in, and
+// "fake-load", which loads sessions.
 func registerFakeEngine(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
@@ -163,7 +208,15 @@ func registerFakeEngine(t *testing.T) {
 		APIKeyEnv:    "FAKE_KEY",
 		AuthMethodID: "fake-auth",
 	}
+	Engines["fake-load"] = Engine{
+		Command:      "python3",
+		Args:         []string{script, "--modes", "--load"},
+		APIKeyEnv:    "FAKE_KEY",
+		AuthMethodID: "fake-auth",
+		Env:          []string{"FAKE_HISTORY=" + t.TempDir()},
+	}
 	t.Cleanup(func() {
+		delete(Engines, "fake-load")
 		delete(Engines, "fake")
 		delete(Engines, "fake-modes")
 		delete(Engines, "fake-untrusted")
