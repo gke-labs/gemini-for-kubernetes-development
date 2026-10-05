@@ -102,6 +102,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// writes the note; the push to the fork is the controller's, and
 		// happens once that turn ends.
 		api.POST("/research/:session/capture", s.captureResearchNotes)
+		// A recipe conversation's notes draft, which capture (Save
+		// notes) writes: save it to research/notes, edit it, discard it.
+		api.POST("/research/:session/notes/save", s.saveResearchNotes)
+		api.PUT("/research/:session/notes", s.editResearchNotes)
+		api.DELETE("/research/:session/notes", s.discardResearchNotes)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)

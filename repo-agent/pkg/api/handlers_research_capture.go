@@ -74,11 +74,10 @@ func (s *Server) captureResearchNotes(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	// A recipe's session saves its notes as a revise and an apply, not a
-	// capture: the controller's push goes through acpd, which does not
-	// host it.
+	// A recipe's conversation writes its notes with the recipe's revise,
+	// into a draft (saveRecipeNotes), not with a capture.
 	if conn.view.Task != "" {
-		c.JSON(http.StatusConflict, gin.H{"error": "saving notes from a recipe research session is not supported yet"})
+		s.saveRecipeNotes(c, conn.view)
 		return
 	}
 

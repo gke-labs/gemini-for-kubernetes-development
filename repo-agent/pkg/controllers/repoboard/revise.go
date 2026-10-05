@@ -83,6 +83,10 @@ func (r *Reconciler) ensureRevises(ctx context.Context, work *workState, reqs []
 		if spec.Revise == "" {
 			continue
 		}
+		if spec.Sandbox != "" {
+			r.ensureNotesRevise(ctx, work, req)
+			continue
+		}
 		key := reviseKey(work, spec.Member, spec.Number)
 		if r.Factory.IsRunning(key) || r.Factory.IsRunning(planKey(work, spec.Member, spec.Number)) {
 			continue
@@ -101,7 +105,8 @@ func (r *Reconciler) ensureRevises(ctx context.Context, work *workState, reqs []
 		}
 		annotations := sb.GetAnnotations()
 		runName := reviseRunName(work.board.Name, spec.Number, spec.Revise)
-		if name, ok := r.resumableRevise(key, annotations, req); ok {
+		prefix := fmt.Sprintf("revise/%s/%d/%s/", req.Spec.Board, spec.Number, spec.Revise)
+		if name, ok := r.resumableReviseRun(key, annotations, factorycli.AnnotationPlanRun, prefix, req); ok {
 			runName = name
 		}
 		if err := r.wake(ctx, sb); err != nil {
@@ -121,17 +126,18 @@ func (r *Reconciler) ensureRevises(ctx context.Context, work *workState, reqs []
 	}
 }
 
-// resumableRevise is the revise run recorded on the sandbox for req, when
-// this controller has no result for key (it restarted): one started since
-// the click. Invoking factory with its name follows it to its end.
-func (r *Reconciler) resumableRevise(key string, annotations map[string]string, req *boardv1alpha1.Request) (string, bool) {
+// resumableReviseRun is the revise run recorded on the sandbox under runKey for
+// req, named with prefix, when this controller has no result for key (it
+// restarted): one started since the click. Invoking factory with its name
+// follows it to its end.
+func (r *Reconciler) resumableReviseRun(key string, annotations map[string]string, runKey, prefix string, req *boardv1alpha1.Request) (string, bool) {
 	if _, ok := r.Factory.LastResult(key); ok {
 		return "", false
 	}
 	// A second early: the click and the launch can share one.
 	since := req.CreationTimestamp.Add(-time.Second)
-	name, ok := factorycli.RecordedRunName(annotations, factorycli.AnnotationPlanRun, since)
-	if !ok || !strings.HasPrefix(name, fmt.Sprintf("revise/%s/%d/%s/", req.Spec.Board, req.Spec.Number, req.Spec.Revise)) {
+	name, ok := factorycli.RecordedRunName(annotations, runKey, since)
+	if !ok || !strings.HasPrefix(name, prefix) {
 		return "", false
 	}
 	return name, true
@@ -164,6 +170,9 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 			reason:  "Malformed",
 			message: "a revise names the recipe revise to run",
 		}
+	}
+	if spec.Sandbox != "" {
+		return r.settleNotesRevise(ctx, work, req, now)
 	}
 	sb := reviseDraftSandbox(work, spec)
 	key := reviseKey(work, spec.Member, spec.Number)

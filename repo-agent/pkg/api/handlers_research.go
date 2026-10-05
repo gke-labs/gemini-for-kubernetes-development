@@ -147,6 +147,10 @@ type researchSandboxView struct {
 	// browser never picks it, and a name the member has not been shown
 	// is not one they can be surprised by.
 	Note string `json:"-"`
+	// Notes is the conversation's notes draft, for a recipe's: what its
+	// last Save notes wrote, edits included. Internal: the conversation's
+	// status reports it, with the clicks standing on it.
+	Notes researchNotesDraft `json:"-"`
 	// Requested marks a session that has been asked for but has no
 	// sandbox yet: a standing claim on the board, not an object.
 	Requested bool `json:"requested,omitempty"`
@@ -238,6 +242,11 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 	}
 	if pending, ok := research.DecodePending(annotations[research.CaptureAnnotation]); ok {
 		view.Capturing = pending.Note
+	}
+	view.Notes = researchNotesDraft{
+		Markdown:  annotations[annoNotesDraft],
+		DraftedAt: annotations[annoNotesDraftedAt],
+		SavedAt:   annotations[annoNotesSaved],
 	}
 	if ts := sb.GetCreationTimestamp(); !ts.IsZero() {
 		view.CreatedAt = ts.UTC().Format(time.RFC3339)
@@ -720,6 +729,9 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		// they look to find out whether it happened.
 		"capturing":    conn.view.Capturing,
 		"captureError": conn.view.CaptureError,
+	}
+	if conn.view.Task != "" {
+		body["notes"] = s.researchNotes(c.Request.Context(), conn.view)
 	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.view.acpSession())
 	switch {

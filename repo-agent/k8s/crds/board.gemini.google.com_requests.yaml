@@ -50,11 +50,13 @@ spec:
                     enum:
                     - label
                     - comment
+                    - push-notes
                     type: string
                   kind:
                     enum:
                     - Triage
                     - Plan
+                    - Notes
                     type: string
                 required:
                 - action
@@ -111,6 +113,10 @@ spec:
                 - mode
                 - name
                 type: object
+              sandbox:
+                maxLength: 63
+                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+                type: string
               verb:
                 enum:
                 - fix

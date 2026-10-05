@@ -27,6 +27,25 @@ func ComposeTaskOutput(kind, header, draft, issueURL, task string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	return composeTaskOutput(kind, header, spec, issueURL, task)
+}
+
+// ComposeNotes is the Notes task output factory apply --action push-notes
+// takes for a research conversation's notes draft: as ComposeTaskOutput,
+// with the note's file name, the conversation's (empty leaves it to
+// factory: the session's id).
+func ComposeNotes(header, markdown, name, repoURL, task string) (string, error) {
+	if strings.TrimSpace(markdown) == "" {
+		return "", fmt.Errorf("the notes are empty")
+	}
+	spec := map[string]string{"markdown": strings.TrimSpace(markdown)}
+	if name != "" {
+		spec["name"] = name
+	}
+	return composeTaskOutput("Notes", header, spec, repoURL, task)
+}
+
+func composeTaskOutput(kind, header string, spec any, targetURL, task string) (string, error) {
 	root := headerNode(kind, header)
 	if root == nil {
 		root = &yaml.Node{Kind: yaml.MappingNode}
@@ -35,7 +54,7 @@ func ComposeTaskOutput(kind, header, draft, issueURL, task string) (string, erro
 		setKey(root, "source", mapping("task", task))
 	}
 	if !hasTarget(root) {
-		setKey(root, "target", mapping("url", issueURL))
+		setKey(root, "target", mapping("url", targetURL))
 	}
 	specNode := &yaml.Node{}
 	if err := specNode.Encode(spec); err != nil {
@@ -135,7 +154,7 @@ func mapping(key, value string) *yaml.Node {
 type ApplyOptions struct {
 	// Doc is the task output to apply (ComposeTaskOutput).
 	Doc string
-	// Action is the write: label or comment.
+	// Action is the write: label, comment or push-notes.
 	Action      string
 	GithubToken string
 	Timeout     time.Duration

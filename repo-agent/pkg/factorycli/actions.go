@@ -11,6 +11,9 @@ import (
 const (
 	AnnotationTriageOutput = "board.gemini.google.com/triage-output"
 	AnnotationPlanOutput   = "board.gemini.google.com/plan-output"
+	// AnnotationNotesOutput is a research sandbox's Notes task output
+	// without its spec, as AnnotationPlanOutput is a plan's.
+	AnnotationNotesOutput = "board.gemini.google.com/notes-output"
 
 	// AnnotationTriageLabeled stamps a triage whose labels were added, and
 	// AnnotationPlanCommented a plan that was posted: each a verb done.
@@ -37,6 +40,7 @@ type Action struct {
 var boardVerbs = map[string][]string{
 	"Triage": {"edit", "label", "comment", "reject"},
 	"Plan":   {"edit", "comment", "run", "revise", "reject"},
+	"Notes":  {"edit", "push-notes", "reject"},
 }
 
 // defaultActions are a kind's actions when its document declares none (or
@@ -53,6 +57,11 @@ var defaultActions = map[string][]Action{
 		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
 		{Verb: "comment"},
 		{Verb: "run", Run: "fix", Label: "Fix with this plan"},
+		{Verb: "reject"},
+	},
+	"Notes": {
+		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
+		{Verb: "push-notes", Label: "Save to research/notes"},
 		{Verb: "reject"},
 	},
 }

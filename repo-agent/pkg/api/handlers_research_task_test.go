@@ -27,11 +27,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic/fake"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	podacpd "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // researchTaskID is the task `factory recipe research` started in the
@@ -56,8 +61,15 @@ func recipeResearchSandboxCR() *unstructured.Unstructured {
 // image whose daemon keeps no task sessions.
 func recipeResearchServer(t *testing.T, acp, daemon *fakeACPD, hosts bool) *gin.Engine {
 	t.Helper()
+	r, _ := recipeResearchServerDyn(t, acp, daemon, hosts)
+	return r
+}
+
+// recipeResearchServerDyn is recipeResearchServer with its cluster.
+func recipeResearchServerDyn(t *testing.T, acp, daemon *fakeACPD, hosts bool) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
 	sb := recipeResearchSandboxCR()
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 	srv := httptest.NewServer(daemon.handler())
 	t.Cleanup(srv.Close)
@@ -69,7 +81,7 @@ func recipeResearchServer(t *testing.T, acp, daemon *fakeACPD, hosts bool) *gin.
 		return acpd.New(srv.URL), true
 	}
 	t.Cleanup(func() { taskSessionClientForPod = prev })
-	return r
+	return r, dyn
 }
 
 // A recipe's conversation is continued in the daemon's session for its
@@ -144,17 +156,169 @@ func TestRecipeResearchOnAnImageWithoutTaskSessionsIsConflict(t *testing.T) {
 	}
 }
 
-// Saving a recipe session's notes is not a capture: the controller's
-// push reads acpd, which does not host it. Refused, with nothing stamped.
-func TestRecipeResearchCaptureIsRefused(t *testing.T) {
+// 💾 on a recipe session files the recipe's notes revise for its sandbox
+// and pins the note's name; no engine is asked from the API.
+func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
 	acp, daemon := &fakeACPD{}, &fakeACPD{}
-	r := recipeResearchServer(t, acp, daemon, true)
+	r, dyn := recipeResearchServerDyn(t, acp, daemon, true)
+	seedNotesBoard(t, dyn)
+
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
+	}
+	req := theRequest(t, dyn, "alice")
+	if req.Spec.Verb != boardv1alpha1.VerbRevise || req.Spec.Revise != notesRevise ||
+		req.Spec.Sandbox != recipeResearchSandboxCR().GetName() || req.Spec.Member != "alice" || req.Spec.Number != 0 {
+		t.Errorf("filed %+v, want the notes revise of the sandbox", req.Spec)
+	}
+	if note := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; note == "" {
+		t.Error("the note's name was not pinned")
+	}
+	if len(daemon.calls) != 0 || len(acp.calls) != 0 {
+		t.Errorf("the save reached an engine: daemon %v, acpd %v", daemon.calls, acp.calls)
+	}
+}
+
+// Without a board for the repository there is no controller to run the
+// revise: a 409, and nothing filed.
+func TestRecipeResearchCaptureWithoutABoardIsConflict(t *testing.T) {
+	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, body %s; want 409", w.Code, w.Body.String())
 	}
-	if len(daemon.calls) != 0 || len(acp.calls) != 0 {
-		t.Errorf("a refused save reached an engine: daemon %v, acpd %v", daemon.calls, acp.calls)
+	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+		t.Errorf("filed %+v without a board", reqs)
+	}
+}
+
+// The status carries the draft and what the newest clicks on it say.
+func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
+	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	setNotesAnnotations(t, dyn, map[string]string{annoNotesDraft: "# Findings", annoNotesDraftedAt: "2026-10-05T10:00:00Z"})
+	failed := requestCR(boardv1alpha1.RequestSpec{
+		Verb: boardv1alpha1.VerbApply, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(),
+		Apply: &boardv1alpha1.ApplyRequest{Kind: "Notes", Action: "push-notes"},
+	})
+	_ = unstructured.SetNestedField(failed.Object, string(boardv1alpha1.RequestFailed), "status", "phase")
+	_ = unstructured.SetNestedField(failed.Object, "push refused", "status", "message")
+	writing := requestCR(boardv1alpha1.RequestSpec{
+		Verb: boardv1alpha1.VerbRevise, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(), Revise: notesRevise,
+	})
+	writing.SetName("writing")
+	for _, obj := range []*unstructured.Unstructured{failed, writing} {
+		if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(context.Background(), obj, v1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Notes researchNotesState `json:"notes"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Notes.Markdown != "# Findings" || !got.Notes.Writing || got.Notes.SaveError != "push refused" || got.Notes.Saving {
+		t.Errorf("notes = %+v, want the draft, writing, and the save's failure", got.Notes)
+	}
+}
+
+// Save to research/notes files the push of the draft; with no draft there
+// is nothing to push.
+func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
+	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	seedNotesBoard(t, dyn)
+
+	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/notes/save", `{}`); w.Code != http.StatusNotFound {
+		t.Fatalf("save without a draft: status = %d, body %s; want 404", w.Code, w.Body.String())
+	}
+	setNotesAnnotations(t, dyn, map[string]string{annoNotesDraft: "# Findings"})
+	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/notes/save", `{}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
+	}
+	req := theRequest(t, dyn, "alice")
+	if req.Spec.Verb != boardv1alpha1.VerbApply || req.Spec.Apply == nil ||
+		req.Spec.Apply.Kind != "Notes" || req.Spec.Apply.Action != "push-notes" || req.Spec.Sandbox != recipeResearchSandboxCR().GetName() {
+		t.Errorf("filed %+v, want push-notes of the sandbox", req.Spec)
+	}
+}
+
+// An edit replaces the draft and makes it unsaved; a discard drops it all.
+func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
+	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	setNotesAnnotations(t, dyn, map[string]string{
+		annoNotesDraft: "# Findings", annoNotesDraftedAt: "2026-10-05T10:00:00Z", annoNotesSaved: "2026-10-05T10:05:00Z",
+		factorycli.AnnotationNotesOutput: "kind: Notes",
+	})
+
+	if w := doJSON(t, r, http.MethodPut, "/api/research/"+researchSession+"/notes", `{"markdown":"  "}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty edit: status = %d, want 400", w.Code)
+	}
+	if w := doJSON(t, r, http.MethodPut, "/api/research/"+researchSession+"/notes", `{"markdown":"# Edited\n"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("edit: status = %d, body %s", w.Code, w.Body.String())
+	}
+	a := notesSandboxAnnotations(t, dyn)
+	if a[annoNotesDraft] != "# Edited" || a[annoNotesSaved] != "" {
+		t.Errorf("after the edit: draft %q, saved %q", a[annoNotesDraft], a[annoNotesSaved])
+	}
+
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("discard: status = %d, body %s", w.Code, w.Body.String())
+	}
+	a = notesSandboxAnnotations(t, dyn)
+	for _, k := range []string{annoNotesDraft, annoNotesDraftedAt, annoNotesSaved, factorycli.AnnotationNotesOutput} {
+		if a[k] != "" {
+			t.Errorf("after the discard %s = %q", k, a[k])
+		}
+	}
+	if _, ok := a[factorycli.ResearchRunAnnotation]; !ok {
+		t.Error("the discard dropped the recorded run")
+	}
+}
+
+// A conversation acpd hosts saves with a capture, not with these routes.
+func TestLegacyResearchNotesRoutesAreConflict(t *testing.T) {
+	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusConflict {
+		t.Errorf("status = %d, body %s; want 409", w.Code, w.Body.String())
+	}
+}
+
+func seedNotesBoard(t *testing.T, dyn *fake.FakeDynamicClient) {
+	t.Helper()
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(), researchBoardCR(), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func notesSandboxAnnotations(t *testing.T, dyn *fake.FakeDynamicClient) map[string]string {
+	t.Helper()
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), recipeResearchSandboxCR().GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sb.GetAnnotations()
+}
+
+func setNotesAnnotations(t *testing.T, dyn *fake.FakeDynamicClient, set map[string]string) {
+	t.Helper()
+	sbs := dyn.Resource(k8s.SandboxGVR).Namespace("alice")
+	sb, err := sbs.Get(context.Background(), recipeResearchSandboxCR().GetName(), v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := sb.GetAnnotations()
+	for k, v := range set {
+		a[k] = v
+	}
+	sb.SetAnnotations(a)
+	if _, err := sbs.Update(context.Background(), sb, v1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
 	}
 }

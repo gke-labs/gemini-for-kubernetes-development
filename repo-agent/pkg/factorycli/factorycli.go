@@ -685,15 +685,16 @@ func (r *Runner) planHarvest(sandbox, namespace, runName, githubToken string) *p
 }
 
 // ReviseOptions are the inputs for a `factory recipe revise` invocation:
-// one of a plan recipe's revises (Update plan), asked into the agent
-// session a plan ran in, as the next turn of the conversation a member
-// continued there. Its result is a Plan task output, as a plan's; nothing
-// is written to GitHub.
+// one of a recipe's revises, asked into the agent session its task ran
+// in, as the next turn of the conversation a member continued there — a
+// plan's Update plan (a Plan task output, as a plan's) or a research
+// conversation's Save notes (a Notes task output). Nothing is written to
+// GitHub.
 type ReviseOptions struct {
-	// SandboxName is the sandbox the plan ran in.
+	// SandboxName is the sandbox the task ran in.
 	SandboxName string
 	Namespace   string
-	// Revise is the revise's id in the recipe ("plan").
+	// Revise is the revise's id in the recipe ("plan", "notes").
 	Revise string
 	// Session is the task whose session to revise in; empty lets factory
 	// pick the sandbox's newest task with the revise.
@@ -706,9 +707,9 @@ type ReviseOptions struct {
 }
 
 // StartRevise runs `factory recipe revise` and reads its result back as
-// StartPlan does: a Plan task output, for ExtractPlan. The revise runs on
-// the sandbox's disk and engine as the plan left them, so it takes no
-// image, disk or engine.
+// StartPlan does, after planBanner: for ExtractPlan, or ExtractNotes. The
+// revise runs on the sandbox's disk and engine as its task left them, so
+// it takes no image, disk or engine.
 func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -961,14 +962,35 @@ func planSection(output string) string {
 }
 
 // planFromTaskOutput is a Plan task output's markdown, or "".
-func planFromTaskOutput(doc string) string {
+func planFromTaskOutput(doc string) string { return markdownFromTaskOutput("Plan", doc) }
+
+// ExtractNotes returns the notes markdown of a completed Save notes revise
+// (a research recipe's), or "": a Notes task output's. StartRevise puts
+// any revise's result after planBanner.
+func ExtractNotes(output string) string {
+	return markdownFromTaskOutput("Notes", planSection(output))
+}
+
+// NotesTaskOutput is the Notes task output of a completed Save notes
+// revise without its spec, or "", as PlanTaskOutput is a plan's.
+func NotesTaskOutput(output string) string {
+	rest := planSection(output)
+	if markdownFromTaskOutput("Notes", rest) == "" {
+		return ""
+	}
+	return withoutSpec(rest)
+}
+
+// markdownFromTaskOutput is the spec.markdown of a task output of kind,
+// or "".
+func markdownFromTaskOutput(kind, doc string) string {
 	var d struct {
 		Kind string `yaml:"kind"`
 		Spec struct {
 			Markdown string `yaml:"markdown"`
 		} `yaml:"spec"`
 	}
-	if err := yaml.Unmarshal([]byte(doc), &d); err != nil || d.Kind != "Plan" {
+	if err := yaml.Unmarshal([]byte(doc), &d); err != nil || d.Kind != kind {
 		return ""
 	}
 	return strings.TrimSpace(d.Spec.Markdown)

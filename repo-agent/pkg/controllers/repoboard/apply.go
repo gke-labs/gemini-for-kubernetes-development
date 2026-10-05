@@ -37,6 +37,9 @@ var applyWrites = map[string]map[string]string{
 	"Plan": {
 		"comment": factorycli.AnnotationPlanCommented,
 	},
+	"Notes": {
+		"push-notes": AnnotationNotesSaved,
+	},
 }
 
 // applyStamp is the annotation an apply's write stamps, or "" for a write
@@ -50,12 +53,16 @@ func applyStamp(spec boardv1alpha1.RequestSpec) string {
 
 // applyKey is the runner key of one write.
 func applyKey(work *workState, spec boardv1alpha1.RequestSpec) string {
+	if spec.Sandbox != "" {
+		return fmt.Sprintf("%s/apply-%s-%s-%s", spec.Member, spec.Sandbox, strings.ToLower(spec.Apply.Kind), spec.Apply.Action)
+	}
 	return fmt.Sprintf("%s/apply-%s-%d-%s-%s", spec.Member, work.repo, spec.Number, strings.ToLower(spec.Apply.Kind), spec.Apply.Action)
 }
 
 // applyDraftSandbox is the sandbox holding the draft an apply writes: for
 // a triage, the member's, else the board's, where auto-triage runs; for a
-// plan, the member's issue sandbox.
+// plan, the member's issue sandbox; for notes, the research sandbox the
+// Request names.
 func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured.Unstructured {
 	switch spec.Apply.Kind {
 	case "Triage":
@@ -68,6 +75,8 @@ func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstruc
 		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlanDraft] != "" {
 			return sb
 		}
+	case "Notes":
+		return notesDraftSandbox(work, spec)
 	}
 	return nil
 }
@@ -75,6 +84,9 @@ func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstruc
 // applyDoc is the task output to apply: the draft on sb, as it is now —
 // edits included — under the document its task left.
 func applyDoc(work *workState, spec boardv1alpha1.RequestSpec, sb *unstructured.Unstructured) (string, error) {
+	if spec.Apply.Kind == "Notes" {
+		return notesDoc(work, sb)
+	}
 	a := sb.GetAnnotations()
 	header, draft, draftAt := a[factorycli.AnnotationTriageOutput], factorycli.TriageDraft(sb), a[AnnotationTriagedAt]
 	if spec.Apply.Kind == "Plan" {
@@ -139,7 +151,7 @@ func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boar
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "Malformed",
-			message: "an apply is a Triage's label or comment, or a Plan's comment",
+			message: "an apply is a Triage's label or comment, a Plan's comment, or Notes' push-notes",
 		}
 	}
 	sb := applyDraftSandbox(work, spec)
@@ -170,7 +182,7 @@ func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boar
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "NoDraft",
-			message: fmt.Sprintf("there is no %s draft on #%d to post", strings.ToLower(spec.Apply.Kind), spec.Number),
+			message: fmt.Sprintf("there is no %s draft on %s to post", strings.ToLower(spec.Apply.Kind), applyTarget(spec)),
 		}
 	}
 	return pendingOutcome(req, now)
@@ -207,4 +219,13 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// applyTarget is what an apply writes from, for a message: its issue, or
+// its sandbox.
+func applyTarget(spec boardv1alpha1.RequestSpec) string {
+	if spec.Sandbox != "" {
+		return spec.Sandbox
+	}
+	return fmt.Sprintf("#%d", spec.Number)
 }
