@@ -189,6 +189,8 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 			// Read at launch, like a task's engine: switching the board
 			// changes the next session, not the ones already running.
 			Engine: acpd.ResearchEngineFor(boardEngine(work.board)),
+			// The board's sandbox image, as for its tasks.
+			Image: work.board.Spec.Sandbox.Image,
 		}) {
 			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
 		}

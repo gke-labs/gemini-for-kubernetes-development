@@ -253,6 +253,23 @@ func TestResearchClaimLaunchesForTheBoardEngine(t *testing.T) {
 	}
 }
 
+// A board that overrides its sandbox image gets it for research too.
+func TestResearchClaimLaunchesOnTheBoardImage(t *testing.T) {
+	g := gomega.NewWithT(t)
+	req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+	board := testBoard(nil)
+	board.Spec.Sandbox.Image = "registry.example/factory-golang:abc"
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), req)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	launches := researchLaunches(fake)
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ResearchOpts.Image).To(gomega.Equal("registry.example/factory-golang:abc"))
+}
+
 // The finished sandbox is the receipt. This is the anti-loop property:
 // without it every reconcile would start another engine for a
 // conversation that already has one.
