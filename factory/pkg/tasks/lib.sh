@@ -426,13 +426,22 @@ function configureGemini {
     echo "creating ${USER_HOME}/.gemini directory"
     mkdir -p "${USER_HOME}/.gemini"
 
+    # sessionRetention is on by default, and its cleanup at every gemini
+    # start deletes a resumed conversation: session/load leaves an empty
+    # chat file under the same short id, the cleanup counts it corrupt and
+    # unlinks every file with that id, the real one too, so the next
+    # session/load finds "No previous sessions found for this project".
+    # A sandbox's chats go with the sandbox anyway.
     echo "writing gemini config"
     cat <<EOF > "${USER_HOME}/.gemini/settings.json"
 {
   "general": {
     "enableAutoUpdate": false,
     "retryFetchErrors": true,
-    "previewFeatures": true
+    "previewFeatures": true,
+    "sessionRetention": {
+      "enabled": false
+    }
   }
 }
 EOF
