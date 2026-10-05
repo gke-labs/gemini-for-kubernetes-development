@@ -82,6 +82,7 @@ type WorkSandbox struct {
 type WorkAction struct {
 	Verb   string `json:"verb"`
 	Run    string `json:"run,omitempty"`
+	Revise string `json:"revise,omitempty"` // the recipe revise a revise runs
 	Label  string `json:"label,omitempty"`
 	Field  string `json:"field,omitempty"`  // what an edit edits
 	Format string `json:"format,omitempty"` // yaml | markdown, for an edit

@@ -20,20 +20,23 @@ const (
 
 // Action is one thing a task output offers to do with its result, as
 // factory declares it (factory/pkg/taskoutput): a verb, what an edit
-// edits, the follow-up a run starts, and a label for a button.
+// edits, the follow-up a run starts, the recipe revise a revise runs, and
+// a label for a button.
 type Action struct {
 	Verb   string `yaml:"verb" json:"verb"`
 	Field  string `yaml:"field,omitempty" json:"field,omitempty"`
 	Format string `yaml:"format,omitempty" json:"format,omitempty"`
 	Run    string `yaml:"run,omitempty" json:"run,omitempty"`
+	Revise string `yaml:"revise,omitempty" json:"revise,omitempty"`
 	Label  string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
 // boardVerbs are the verbs the board executes, by kind; a run, only the
-// fix follow-up. Anything else a document offers is not shown.
+// fix follow-up. Anything else a document offers is not shown. Only a
+// plan's revises so far: triage's are factory's phase 4.
 var boardVerbs = map[string][]string{
 	"Triage": {"edit", "label", "comment", "reject"},
-	"Plan":   {"edit", "comment", "run", "reject"},
+	"Plan":   {"edit", "comment", "run", "revise", "reject"},
 }
 
 // defaultActions are a kind's actions when its document declares none (or
@@ -59,7 +62,8 @@ var defaultActions = map[string][]Action{
 type taskOutputMeta struct {
 	Kind   string `yaml:"kind"`
 	Source struct {
-		Task string `yaml:"task"`
+		Task    string `yaml:"task"`
+		Session string `yaml:"session"`
 	} `yaml:"source"`
 	Actions []Action `yaml:"actions"`
 }
@@ -82,7 +86,7 @@ func OfferedActions(kind, doc string) []Action {
 	}
 	var out []Action
 	for _, a := range actions {
-		if !slices.Contains(boardVerbs[kind], a.Verb) || (a.Verb == "run" && a.Run != "fix") {
+		if !slices.Contains(boardVerbs[kind], a.Verb) || (a.Verb == "run" && a.Run != "fix") || (a.Verb == "revise" && a.Revise == "") {
 			continue
 		}
 		out = append(out, a)
@@ -94,6 +98,17 @@ func OfferedActions(kind, doc string) []Action {
 // factory marks the comments it posts with.
 func TaskOutputTask(kind, doc string) string {
 	m, _ := parseTaskOutputMeta(kind, doc)
+	return m.Source.Task
+}
+
+// TaskOutputSession is the agent session a kind's task output came from,
+// or "": its task's, or for a revise's output, the session it revised in.
+// A revise of it revises in the same one.
+func TaskOutputSession(kind, doc string) string {
+	m, _ := parseTaskOutputMeta(kind, doc)
+	if m.Source.Session != "" {
+		return m.Source.Session
+	}
 	return m.Source.Task
 }
 

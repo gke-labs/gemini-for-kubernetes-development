@@ -43,7 +43,8 @@ type actionHarness struct {
 }
 
 func (h actionHarness) act(kind, verb, run, text string) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(map[string]string{"kind": kind, "run": run, "text": text})
+	// run is a revise's id, too.
+	body, _ := json.Marshal(map[string]string{"kind": kind, "run": run, "revise": run, "text": text})
 	req, _ := http.NewRequest("POST", "/board/myboard/issues/"+itoa(h.number)+"/actions/"+verb, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -210,6 +211,73 @@ actions:
 	// Approved: nothing left to do with the draft.
 	if acts := h.row().PlanActions; len(acts) != 0 {
 		t.Errorf("approved plan offers %+v", acts)
+	}
+}
+
+// A plan's revises are offered by id; a click files a revise for the
+// controller, and the draft's other actions wait for the plan it writes.
+func TestPlanRevise(t *testing.T) {
+	gh := issueFeed(42)
+	planSandbox := sandboxCR("fix-repo-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{
+			"htmlURL": "https://github.com/test/repo/issues/42",
+			"sandbox.gemini.google.com/last-task-type":  "plan",
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"board.gemini.google.com/plan":              "## Summary\nDo the thing.",
+			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
+			factorycli.AnnotationPlanOutput: `apiVersion: factory.gemini.google.com/v1alpha1
+kind: Plan
+source:
+  task: recipe-plan-1
+actions:
+  - verb: comment
+    label: Post plan
+  - verb: reject
+  - verb: revise
+    revise: plan
+    label: Use as plan
+`,
+		}, 1)
+	_, r, dyn, rt := boardTestServerWithRT(t, gh, boardCR(), planSandbox)
+	h := actionHarness{t: t, r: r, dyn: dyn, rt: rt, number: 42}
+
+	acts := h.row().PlanActions
+	if len(acts) != 3 || acts[2].Verb != "revise" || acts[2].Revise != "plan" || acts[2].Label != "Use as plan" || !acts[2].Enabled {
+		t.Fatalf("plan actions = %+v", acts)
+	}
+	if w := h.act("Plan", "revise", "other", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("a revise not offered: got %d %s", w.Code, w.Body.String())
+	}
+	if w := h.act("Plan", "revise", "plan", ""); w.Code != http.StatusAccepted {
+		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
+	}
+	if len(rt.writes) != 0 {
+		t.Errorf("revise wrote to GitHub: %q", rt.writes)
+	}
+	filed := h.requestOf(boardv1alpha1.VerbRevise)
+	if filed.Spec.Number != 42 || filed.Spec.Member != "alice" || filed.Spec.Revise != "plan" {
+		t.Errorf("revise filed %+v", filed.Spec)
+	}
+	acts = h.row().PlanActions
+	if a := acts[2]; a.Enabled || a.Reason != "revising" {
+		t.Errorf("revise while revising = %+v", a)
+	}
+	if a := acts[0]; a.Enabled || a.Reason != "the plan is being revised" {
+		t.Errorf("comment while revising = %+v", a)
+	}
+	if a := acts[1]; !a.Enabled {
+		t.Errorf("reject while revising = %+v", a)
+	}
+
+	// A failed revise says why, and can be clicked again.
+	h.settle(filed, boardv1alpha1.RequestFailed, "a turn is in flight", "")
+	acts = h.row().PlanActions
+	if a := acts[2]; !a.Enabled || a.Error != "a turn is in flight" {
+		t.Errorf("revise after a failure = %+v", a)
+	}
+	if a := acts[0]; !a.Enabled {
+		t.Errorf("comment after a failed revise = %+v", a)
 	}
 }
 

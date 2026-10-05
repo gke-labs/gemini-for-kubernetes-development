@@ -87,6 +87,11 @@ const (
 	// is stored on when the write happens, so an edit made before the
 	// click is the one written.
 	VerbApply = "apply"
+	// VerbRevise rewrites a plan draft from the conversation a member
+	// continued in the plan's agent session: factory recipe revise, into
+	// that session, harvested into the draft as a plan is. It posts
+	// nothing.
+	VerbRevise = "revise"
 )
 
 // LabelBoard selects every Request filed against one board. Requests
@@ -198,7 +203,7 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=fix;review;triage;plan;iterate;address;investigate;run;research;apply
+	// +kubebuilder:validation:Enum=fix;review;triage;plan;iterate;address;investigate;run;research;apply;revise
 	Verb string `json:"verb"`
 
 	// Member is the namespace whose identity, token and sandbox quota
@@ -229,6 +234,13 @@ type RequestSpec struct {
 	// Apply is set for verb=apply.
 	// +kubebuilder:validation:Optional
 	Apply *ApplyRequest `json:"apply,omitempty"`
+
+	// Revise is the recipe revise to run, for verb=revise: the id of one
+	// of the revise actions the draft's task output offers ("plan"). It
+	// becomes an argument to the factory CLI.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	Revise string `json:"revise,omitempty"`
 }
 
 // RequestStatus is what came of the click.
@@ -321,6 +333,8 @@ func (s RequestSpec) Subject() string {
 			return ""
 		}
 		return strconv.Itoa(s.Number) + "/" + s.Apply.Kind + "/" + s.Apply.Action
+	case VerbRevise:
+		return strconv.Itoa(s.Number) + "/" + s.Revise
 	default:
 		return strconv.Itoa(s.Number)
 	}

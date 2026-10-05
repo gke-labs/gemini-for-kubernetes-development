@@ -1174,6 +1174,31 @@ export function ResearchConversation({
       .catch(err => setError(`cancel failed: ${err}`));
   };
 
+  // A revise of the plan this session wrote (Use as plan): filed on the
+  // plan's board row, as its draft's button is. The controller runs it
+  // into this session, so it shows here as the next turn, and the plan
+  // it writes becomes the draft. revising is the POST in flight; once the
+  // revise runs, the session is held for it.
+  const [revising, setRevising] = useState('');
+  const [revised, setRevised] = useState('');
+  const revise = (r) => {
+    setRevising(r.revise);
+    setRevised('');
+    fetch(`/api/board/${encodeURIComponent(info.board)}/issues/${info.number}/actions/revise`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'Plan', revise: r.revise }),
+    })
+      .then(async res => {
+        if (res.ok) { setRevised(r.label || r.revise); return; }
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || `${r.label || 'revise'} failed: HTTP ${res.status}`);
+      })
+      .catch(err => setError(`${r.label || 'revise'} failed: ${err}`))
+      .finally(() => setRevising(''));
+  };
+  const revises = (task && info && info.board && info.revises) || [];
+
   const destroy = () => {
     if (!window.confirm('Delete this conversation? The sandbox and its transcript go with it.')) return;
     fetch(api, { method: 'DELETE' })
@@ -1406,6 +1431,19 @@ export function ResearchConversation({
           {phase === 'live' && busy && !taskState.held && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
           )}
+          {/* The plan's revises: write it again from this conversation.
+              Not while a turn is in flight or the session is a task's —
+              factory would refuse it — and not twice at once. */}
+          {revises.map(r => (
+            <button key={r.revise} className="btn btn-sm"
+              disabled={busy || taskState.held || !!revising}
+              onClick={() => revise(r)}
+              title={taskState.held ? 'The session is a task\'s until it ends'
+                : busy ? 'The agent is working — once the turn ends'
+                  : 'Write the plan again from this conversation; it becomes the draft on the board, and nothing is posted'}>
+              {revising === r.revise ? `${r.label || r.revise}…` : (r.label || r.revise)}
+            </button>
+          ))}
           {/* The one way anything said here outlives the sandbox's disk,
               and it takes no answers: the note is the session's one
               document and what goes in it is the conversation. It was a
@@ -1505,6 +1543,12 @@ export function ResearchConversation({
         {error && (
           <div className="warning-banner" style={{ cursor: 'pointer', flex: '0 0 auto' }}
             onClick={() => setError('')} title="Dismiss">{error}</div>
+        )}
+        {revised && (
+          <div role="status" style={{ cursor: 'pointer', flex: '0 0 auto', fontSize: 'small', padding: '4px 10px' }}
+            onClick={() => setRevised('')} title="Dismiss">
+            {revised}: the agent writes the plan here next, and it becomes the draft on the board.
+          </div>
         )}
 
         {/* A save that failed, said until somebody asks for another one.

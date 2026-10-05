@@ -21,8 +21,8 @@ import (
 )
 
 // boardIssueAction takes one action a draft's task output offers:
-// POST …/actions/:verb {kind: Triage|Plan, run, text}, text being an
-// edit's new draft.
+// POST …/actions/:verb {kind: Triage|Plan, run, revise, text}, text being
+// an edit's new draft.
 // The action must be on the row (offered, and enabled just now); each is
 // the handler the board's buttons already call.
 func (s *Server) boardIssueAction(c *gin.Context) {
@@ -30,7 +30,9 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		Kind string `json:"kind"`
 		Verb string `json:"-"`
 		Run  string `json:"run"`
-		Text string `json:"text"`
+		// Revise is which of the output's revises, for a revise.
+		Revise string `json:"revise"`
+		Text   string `json:"text"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
@@ -69,9 +71,13 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		perms := s.repoPermissions(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), repoURL)
 		actions = triageActionsFor(actions, perms)
 	}
-	action, offered := findWorkAction(actions, req.Verb, req.Run)
+	arg := req.Run
+	if req.Verb == "revise" {
+		arg = req.Revise
+	}
+	action, offered := findWorkAction(actions, req.Verb, arg)
 	if !offered {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not offer %s", strings.ToLower(req.Kind), strings.TrimSpace(req.Verb+" "+req.Run))})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not offer %s", strings.ToLower(req.Kind), strings.TrimSpace(req.Verb+" "+arg))})
 		return
 	}
 	if !action.Enabled {
@@ -96,7 +102,26 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		s.planBoardApprove(c)
 	case "Plan/reject":
 		s.planBoardReject(c)
+	case "Plan/revise":
+		s.fileRevise(c, board, number, action.Revise)
 	}
+}
+
+// fileRevise files a revise for the controller, which runs factory recipe
+// revise in the plan's session and stores the plan it writes as the
+// draft. 202, as for a write.
+func (s *Server) fileRevise(c *gin.Context, board *unstructured.Unstructured, number int, revise string) {
+	filed, err := s.fileRequest(c.Request.Context(), board, boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbRevise,
+		Member: s.Auth.GetNamespaceFromContext(c),
+		Number: number,
+		Revise: revise,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
 }
 
 // fileApply files the write for the controller, which runs factory apply
@@ -120,12 +145,18 @@ func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, num
 // postingReason is a write's action's reason while it stands.
 const postingReason = "posting"
 
-// markApplies says on each row's actions what the apply Requests say of
-// them: a write filed and not yet done is "posting"; one whose last
-// attempt failed carries why, and stays clickable — a retry is a click.
+// revisingReason is a revise's action's reason while it stands; the
+// draft's other actions wait for the plan it writes (planRevisingReason).
+const revisingReason = "revising"
+
+// markApplies says on each row's actions what the apply and revise
+// Requests say of them: a write filed and not yet done is "posting", a
+// revise "revising"; one whose last attempt failed carries why, and stays
+// clickable — a retry is a click.
 func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructured, items map[string]*models.WorkItem) {
 	reqs, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
-		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," + boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbApply,
+		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," +
+			boardv1alpha1.LabelVerb + " in (" + boardv1alpha1.VerbApply + "," + boardv1alpha1.VerbRevise + ")",
 	})
 	if err != nil {
 		return
@@ -134,12 +165,19 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 	// Newest first: the newest Request for a write is the word on it.
 	for _, req := range reqs {
 		spec := req.Spec
-		if spec.Apply == nil || seen[spec.Key()] {
+		if seen[spec.Key()] {
 			continue
 		}
 		seen[spec.Key()] = true
 		item := items["issue-"+strconv.Itoa(spec.Number)]
 		if item == nil {
+			continue
+		}
+		if spec.Verb == boardv1alpha1.VerbRevise {
+			markRevise(item.PlanActions, req)
+			continue
+		}
+		if spec.Apply == nil {
 			continue
 		}
 		actions := item.TriageActions
@@ -157,6 +195,24 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 			case req.Status.Phase == boardv1alpha1.RequestFailed:
 				a.Error = req.Status.Message
 			}
+		}
+	}
+}
+
+// markRevise says on a plan's actions what a revise Request says: while
+// it stands, the revise is "revising" and the rest wait for the plan it
+// writes; failed, the revise carries why.
+func markRevise(actions []models.WorkAction, req boardv1alpha1.Request) {
+	for i := range actions {
+		a := &actions[i]
+		mine := a.Verb == "revise" && a.Revise == req.Spec.Revise
+		switch {
+		case req.Active() && mine:
+			a.Enabled, a.Reason = false, revisingReason
+		case req.Active() && a.Enabled && a.Verb != "reject":
+			a.Enabled, a.Reason = false, planRevisingReason
+		case req.Status.Phase == boardv1alpha1.RequestFailed && mine:
+			a.Error = req.Status.Message
 		}
 	}
 }
@@ -207,9 +263,11 @@ func rebody(c *gin.Context, body any) {
 	c.Request.ContentLength = int64(len(b))
 }
 
-func findWorkAction(actions []models.WorkAction, verb, run string) (models.WorkAction, bool) {
+// findWorkAction is the offered action verb, with arg its run or revise
+// when given.
+func findWorkAction(actions []models.WorkAction, verb, arg string) (models.WorkAction, bool) {
 	for _, a := range actions {
-		if a.Verb == verb && (run == "" || a.Run == run) {
+		if a.Verb == verb && (arg == "" || a.Run == arg || a.Revise == arg) {
 			return a, true
 		}
 	}
@@ -248,6 +306,10 @@ func triageWorkActions(annotations map[string]string) []models.WorkAction {
 	})
 }
 
+// planRevisingReason is why a plan's actions wait while the agent
+// rewrites it.
+const planRevisingReason = "the plan is being revised"
+
 // planWorkActions are the actions a plan draft's task output offers, with
 // what its sandbox's annotations and task say of each just now.
 func planWorkActions(annotations map[string]string, revising, running bool) []models.WorkAction {
@@ -257,8 +319,8 @@ func planWorkActions(annotations map[string]string, revising, running bool) []mo
 		case a.Verb == "reject":
 			return ""
 		case revising:
-			return "the plan is being revised"
-		case a.Verb == "run" && running:
+			return planRevisingReason
+		case (a.Verb == "run" || a.Verb == "revise") && running:
 			return "a task is running"
 		case a.Verb == "comment" && commented:
 			return "plan posted"
@@ -272,7 +334,7 @@ func workActions(offered []factorycli.Action, disabled func(factorycli.Action) s
 	for _, a := range offered {
 		reason := disabled(a)
 		out = append(out, models.WorkAction{
-			Verb: a.Verb, Run: a.Run, Label: a.Label, Field: a.Field, Format: a.Format,
+			Verb: a.Verb, Run: a.Run, Revise: a.Revise, Label: a.Label, Field: a.Field, Format: a.Format,
 			Enabled: reason == "", Reason: reason,
 		})
 	}

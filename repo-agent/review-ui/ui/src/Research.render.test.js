@@ -1870,6 +1870,46 @@ describe('ResearchConversation on a task session', () => {
         expect(container.textContent).not.toContain('The task is still running');
     });
 
+    test('the draft\'s revises are buttons that file the revise on its board row', async () => {
+        await render({
+            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan' }],
+        });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
+        });
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Use as plan');
+        expect(button.disabled).toBe(false);
+        global.fetch = jest.fn(() => reply(202, { request: 'r' }));
+        await act(async () => { button.click(); });
+        await flush();
+        expect(global.fetch).toHaveBeenCalledWith('/api/board/granule/issues/42/actions/revise', expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ kind: 'Plan', revise: 'plan' }),
+        }));
+        expect(container.textContent).toContain('becomes the draft on the board');
+    });
+
+    test('a revise waits for the turn in flight, and for a running task', async () => {
+        await render({
+            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan' }],
+        });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: true, held: true, task: task.task, offset: 0 } });
+        });
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Use as plan');
+        expect(button.disabled).toBe(true);
+    });
+
+    test('a session that wrote no draft offers no revise', async () => {
+        await render({ sessionId: task.task, repo: 'granule' });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
+        });
+        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Use as plan')).toBe(false);
+    });
+
     test('an older image falls back to the terminal', async () => {
         await render({ error: 'no sessions', legacy: true, sandbox: task.sandbox, namespace: 'ns' }, 409);
         expect(FakeSocket.instances).toHaveLength(0);

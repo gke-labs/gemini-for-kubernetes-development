@@ -83,6 +83,8 @@ const (
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	annoTriagePublished = "board.gemini.google.com/triage-published-at"
+	// annoBoard is the board whose controller stored the sandbox's draft.
+	annoBoard = "board.gemini.google.com/board"
 )
 
 // nowRFC3339 timestamps re-run request annotations.
@@ -789,7 +791,7 @@ func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession 
 	if sb == nil {
 		return nil
 	}
-	task := factorycli.RecordedRunTask(sb.GetAnnotations(), key)
+	task := factorycli.RecordedRunSession(sb.GetAnnotations(), key)
 	if task == "" {
 		return nil
 	}

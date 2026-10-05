@@ -395,6 +395,9 @@ type Launcher interface {
 	// running; a controller pass harvests the finished invocation's output
 	// (see ExtractPlan) via LastResult.
 	StartPlan(key string, opts PlanOptions) bool
+	// StartRevise launches `factory recipe revise` for key unless one is
+	// already running; harvested as a plan is.
+	StartRevise(key string, opts ReviseOptions) bool
 	// StartRun launches `factory run <mode>` (plan, deploy or teardown
 	// of one run, in that run's sandbox) unless one is already running.
 	StartRun(key string, opts RunOptions) bool
@@ -662,18 +665,67 @@ func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
 		sandbox = opts.IssueURL
 	}
 	// No probe, as for triage.
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.planHarvest(sandbox, opts.Namespace, opts.RunName, opts.GithubToken))
+}
+
+// planHarvest reads a finished plan run's Plan task output back by its run
+// name, between planBanner and a closer, for ExtractPlan.
+func (r *Runner) planHarvest(sandbox, namespace, runName, githubToken string) *preflight {
+	return &preflight{
 		harvest: func(ctx context.Context, out string, err error) (string, error) {
 			if err != nil {
 				return out, err
 			}
-			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
+			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
 			if err != nil {
 				return out + "\n" + doc, fmt.Errorf("reading the plan's task output: %w", err)
 			}
 			return planBanner + "\n" + doc + "\n" + bannerCloser + "\n", nil
 		},
-	})
+	}
+}
+
+// ReviseOptions are the inputs for a `factory recipe revise` invocation:
+// one of a plan recipe's revises (Use as plan), asked into the agent
+// session a plan ran in, as the next turn of the conversation a member
+// continued there. Its result is a Plan task output, as a plan's; nothing
+// is written to GitHub.
+type ReviseOptions struct {
+	// SandboxName is the sandbox the plan ran in.
+	SandboxName string
+	Namespace   string
+	// Revise is the revise's id in the recipe ("plan").
+	Revise string
+	// Session is the task whose session to revise in; empty lets factory
+	// pick the sandbox's newest task with the revise.
+	Session     string
+	GithubToken string
+	Timeout     time.Duration
+	// RunName records the revise's task in the sandbox, to read its
+	// result back by.
+	RunName string
+}
+
+// StartRevise runs `factory recipe revise` and reads its result back as
+// StartPlan does: a Plan task output, for ExtractPlan. The revise runs on
+// the sandbox's disk and engine as the plan left them, so it takes no
+// image, disk or engine.
+func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	args := []string{
+		"recipe", "revise", opts.SandboxName, opts.Revise,
+		"--run-name", opts.RunName,
+		"--namespace", opts.Namespace,
+		"--timeout", timeout.String(),
+		"--abort-on-cancel=false",
+	}
+	if opts.Session != "" {
+		args = append(args, "--task", opts.Session)
+	}
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.planHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
 }
 
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
