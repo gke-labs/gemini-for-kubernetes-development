@@ -773,7 +773,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			Env:        os.Environ(),
 		},
 		StartSession: func(ctx context.Context) (recipe.Session, error) {
-			return recipe.StartACPSession(ctx, engine, model, os.Getenv("GEMINI_API_KEY"), repoDir, taskDir)
+			apiKey := os.Getenv("GEMINI_API_KEY")
+			// Started by a daemon that hosts sessions: the session is the
+			// daemon's, so it can be watched and continued after the task.
+			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
+				base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
+				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir)
+			}
+			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir)
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,

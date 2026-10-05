@@ -2,7 +2,7 @@
 
 **Status:**
 - **Phase 1 built:** the task server in `factory daemon`, the client over a port-forward, and recipe commands moved to it with envd as the fallback.
-- **Phase 4 in part:** the daemon serves acpd's sessions under `/v1/sessions`, including sessions that belong to a task.
+- **Phase 4 in part:** the daemon serves acpd's sessions under `/v1/sessions`, including sessions that belong to a task, and recipe asks go through them.
 - **Proposals:** the other phases, and the clients for those sessions.
 
 Recipe tasks (plan, triage) already run independently of whoever starts them. The daemon claims them from the spool and runs them in their own task directories (see [task-recipes-and-outputs.md](task-recipes-and-outputs.md)). But every client still talks to them through **envd**:
@@ -81,6 +81,7 @@ The daemon holds one acpd session registry.
   - Everyone else can read the session and follow its events. A refused call answers 409.
 - **Once the task has ended,** the session is anybody's. Creating it again loads the recorded conversation (`session/load`), so a member can continue a plan or triage where the task left off.
 - **Cancelling the task** closes its session.
+- **Recipes use it.** A recipe task with `FACTORY_TASK_TOKEN` in its environment creates its session on the daemon (`yolo`, auto-approve) and asks through `/v1/sessions/<task>/prompt` and `/events`. Without the token (a task envd started, or an older daemon), it runs the engine in its own process as before. `run:` steps do not get the token.
 
 **Rules the server follows:**
 
@@ -132,7 +133,7 @@ Existing sandboxes keep their image until they are recreated (see the recipe-ske
 2. **Verify in cluster:** a factory image with the server, recreated sandboxes, and repo-agent's RBAC applied. Then confirm that plan and triage from the board run over the forward.
 3. **Classic tasks:** start them through the server too, with attach as a stream. Then the polling attach and the `kill` scripts go.
 4. **acpd behind the same surface:**
-   - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, and `session/load`.
-   - **Next:** recipes drive their asks through it. repo-agent then reaches sessions over the port-forward: research first, then "Continue session" on plan and triage.
+   - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, `session/load`, and recipes driving their asks through it.
+   - **Next:** repo-agent reaches sessions over the port-forward: research first, then "Continue session" on plan and triage.
    - **Last:** drop the `:49984` listener.
 5. **Retire envd for factory:** once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.
