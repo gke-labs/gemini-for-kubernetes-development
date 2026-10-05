@@ -980,14 +980,9 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 		return
 	}
 
-	offset := int64(0)
-	if raw := c.Query("offset"); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || parsed < 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid offset"})
-			return
-		}
-		offset = parsed
+	offset, ok := eventOffset(c)
+	if !ok {
+		return
 	}
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -1002,17 +997,49 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(c.Request.Context()))
 	defer cancel()
 
-	out := &wsJSON{ws: ws}
-
-	session, err := s.ensureResearchSession(ctx, conn)
-	if err != nil {
+	followSession(ctx, cancel, ws, conn.client, conn.view.SessionID, offset, func(ctx context.Context) (*acpd.Session, error) {
+		session, err := s.ensureResearchSession(ctx, conn)
 		// A session still waiting for its opening turn closes quietly. The
 		// socket's onclose falls back to probing, which reports `opening`,
 		// and the pane says so in its own words — an error frame here
 		// would put a red banner over a session doing exactly what it
 		// should.
+		if errors.Is(err, errResearchOpening) {
+			return nil, errQuietClose
+		}
+		return session, err
+	})
+}
+
+// eventOffset is the ?offset= to follow events from, answering 400 when
+// it is not one.
+func eventOffset(c *gin.Context) (int64, bool) {
+	raw := c.Query("offset")
+	if raw == "" {
+		return 0, true
+	}
+	offset, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || offset < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid offset"})
+		return 0, false
+	}
+	return offset, true
+}
+
+// errQuietClose ends an event stream with a closed frame that carries no
+// error.
+var errQuietClose = errors.New("closed quietly")
+
+// followSession sends a session's events down ws from offset, after the
+// open frame for the session ensure returns. It returns when the stream
+// ends or the browser goes; cancel ends ctx.
+func followSession(ctx context.Context, cancel context.CancelFunc, ws *websocket.Conn, client *acpd.Client, sessionID string, offset int64, ensure func(context.Context) (*acpd.Session, error)) {
+	out := &wsJSON{ws: ws}
+
+	session, err := ensure(ctx)
+	if err != nil {
 		frame := researchFrame{Type: researchFrameClosed}
-		if !errors.Is(err, errResearchOpening) {
+		if !errors.Is(err, errQuietClose) {
 			frame.Error = err.Error()
 		}
 		_ = out.send(frame)
@@ -1057,7 +1084,7 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 	// Events rather than Follow: Follow hands the callback an event but
 	// not the offset after it, and the offset is what makes a reconnect
 	// exact.
-	stream, err := conn.client.Events(ctx, conn.view.SessionID, offset, true)
+	stream, err := client.Events(ctx, sessionID, offset, true)
 	if err != nil {
 		_ = out.send(researchFrame{Type: researchFrameClosed, Offset: offset, Error: err.Error()})
 		return

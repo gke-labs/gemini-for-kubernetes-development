@@ -33,6 +33,32 @@ function researchRoute() {
   return m ? { sessionId: m[1] } : null;
 }
 
+// Hash route #/task-session/<sandbox>/<task>: a factory task's agent
+// session (plan, triage) in the research view, watched while the task
+// runs and continued after. The patterns mirror the server's
+// (handlers_task_session.go).
+function taskSessionRoute() {
+  const m = window.location.hash.match(/^#\/task-session\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})$/);
+  return m ? { sandbox: m[1], task: m[2] } : null;
+}
+
+// taskSessionTitle names a task's session by what the task is:
+// recipe-plan-20261004-… on fix-granule-42 reads "plan · fix-granule-42".
+function taskSessionTitle(route) {
+  const m = route.task.match(/^recipe-([a-z0-9]+)-/);
+  return `${m ? m[1] : route.task} · ${route.sandbox}`;
+}
+
+function TaskSessionPage({ route }) {
+  const title = taskSessionTitle(route);
+  useEffect(() => { document.title = title; }, [title]);
+  return (
+    <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <ResearchConversation sessionId={route.task} task={route} title={title} fill standalone />
+    </div>
+  );
+}
+
 function ResearchPage({ route }) {
   useEffect(() => {
     document.title = `research ${route.sessionId.slice(0, 8)}`;
@@ -74,6 +100,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
   const [rschRoute] = useState(researchRoute());
+  const [taskRoute] = useState(taskSessionRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [providersError, setProvidersError] = useState(false);
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
@@ -252,6 +279,7 @@ function App() {
   // (auth still applies: the websocket endpoint sits behind the session).
   if (termRoute && isAuthenticated) return <TerminalPage route={termRoute} />;
   if (rschRoute && isAuthenticated) return <ResearchPage route={rschRoute} />;
+  if (taskRoute && isAuthenticated) return <TaskSessionPage route={taskRoute} />;
 
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;
 

@@ -120,4 +120,15 @@ type WorkItem struct {
 	Fixes           []int        `json:"fixes,omitempty"`           // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt       string       `json:"updatedAt,omitempty"`
+	// PlanSession and TriageSession are the agent sessions of the last
+	// plan and triage runs, to watch while they run and continue after.
+	PlanSession   *TaskSession `json:"planSession,omitempty"`
+	TriageSession *TaskSession `json:"triageSession,omitempty"`
+}
+
+// TaskSession names a factory task's agent session: the sandbox it ran in
+// and the task, whose id is the session's.
+type TaskSession struct {
+	Sandbox string `json:"sandbox"`
+	Task    string `json:"task"`
 }

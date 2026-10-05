@@ -155,6 +155,14 @@ type Session struct {
 	// requests itself, so the ones in the transcript arrive already
 	// resolved and there is nothing for a reader to click.
 	AutoApprove bool `json:"autoApprove,omitempty"`
+	// Loaded says the session continues a conversation an earlier engine
+	// had, so the agent remembers the transcript; false, it starts from
+	// nothing whatever the transcript holds.
+	Loaded bool `json:"loaded,omitempty"`
+	// Task is the factory task the session belongs to, and Held says that
+	// task is still running: the session can be watched, not driven.
+	Task string `json:"task,omitempty"`
+	Held bool   `json:"held,omitempty"`
 }
 
 // SessionMode is one approval mode the engine will accept.
@@ -186,6 +194,10 @@ type CreateSessionRequest struct {
 	// so it should answer permission requests itself instead of letting
 	// each one wait out its timeout. See ResearchAutoApprove.
 	AutoApprove bool `json:"autoApprove,omitempty"`
+	// Task makes the session a factory task's (ID must be the task's id).
+	// Created again once the task has ended, it continues the task's
+	// conversation, provided Engine and CWD are the ones it ran with.
+	Task string `json:"task,omitempty"`
 }
 
 // Event is one line of the NDJSON transcript.

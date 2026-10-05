@@ -90,6 +90,10 @@ type fakeACPD struct {
 	live map[string]acpd.Session
 	// promptStatus overrides the prompt reply, for the busy case.
 	promptStatus int
+	// createStatus overrides the create reply, for a refused create.
+	createStatus int
+	// session is what GET answers for an existing session, when set.
+	session *acpd.Session
 	// transcript is what the event stream serves.
 	transcript string
 }
@@ -134,6 +138,13 @@ func (f *fakeACPD) handler() http.Handler {
 			_, _ = w.Write([]byte(`{"error":"no such session"}`))
 			return
 		}
+		f.mu.Lock()
+		session := f.session
+		f.mu.Unlock()
+		if session != nil {
+			_ = json.NewEncoder(w).Encode(session)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(acpd.Session{
 			ID: researchSession, Engine: acpd.EngineGemini, CWD: "/workspaces/" + researchRepo, Offset: 128,
 			Mode: mode, AvailableModes: fakeModes, ModeError: modeError,
@@ -147,6 +158,12 @@ func (f *fakeACPD) handler() http.Handler {
 		f.mu.Lock()
 		f.createKey = r.Header.Get(acpd.APIKeyHeader)
 		f.createBody = string(body)
+		if status := f.createStatus; status != 0 {
+			f.mu.Unlock()
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":"task is running: only the task may start its session"}`))
+			return
+		}
 		f.sessionExists = true
 		f.mode = req.Mode
 		f.mu.Unlock()
@@ -313,6 +330,9 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	r.POST("/api/research/:session/mode", server.setResearchSessionMode)
 	r.POST("/api/research/:session/capture", server.captureResearchNotes)
 	r.GET("/api/research-events/:session", server.streamResearchEvents)
+	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
+	r.GET("/api/task-session-events/:sandbox/:task", server.streamTaskSessionEvents)
 	return r, dynamicClient
 }
 

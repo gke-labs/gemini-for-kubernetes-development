@@ -174,3 +174,21 @@ func TestANilDialerDialsTheIP(t *testing.T) {
 		t.Fatal("no client")
 	}
 }
+
+func TestSessionsAreOnlyOnTheForward(t *testing.T) {
+	srv := taskServer(t, `{"api":1,"sessions":1}`)
+	f := newFixture(t, func() (string, error) { return srv.URL, nil })
+	if _, ok := f.d.Sessions(context.Background(), pod); !ok {
+		t.Error("a daemon that hosts sessions has none")
+	}
+
+	old := taskServer(t, `{"api":1}`)
+	f = newFixture(t, func() (string, error) { return old.URL, nil })
+	if _, ok := f.d.Sessions(context.Background(), pod); ok {
+		t.Error("an older daemon's pod IP was offered as its sessions")
+	}
+	var d *Dialer
+	if _, ok := d.Sessions(context.Background(), pod); ok {
+		t.Error("a nil Dialer has sessions")
+	}
+}

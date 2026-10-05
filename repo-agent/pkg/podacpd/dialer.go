@@ -98,13 +98,27 @@ func New(config *rest.Config) *Dialer {
 // cannot be reached either way fails on the client's first call, as it
 // always did.
 func (d *Dialer) Client(ctx context.Context, pod *corev1.Pod) *acpd.Client {
+	if c, ok := d.Sessions(ctx, pod); ok {
+		return c
+	}
 	if d == nil {
 		return acpd.NewForPodIP(pod.Status.PodIP)
 	}
-	if base, ok := d.forwarded(ctx, pod); ok {
-		return acpd.New(base + "/v1")
-	}
 	return d.byIP(pod.Status.PodIP)
+}
+
+// Sessions is the client for the sessions pod's daemon hosts, false when
+// it hosts none or cannot be forwarded to. Task sessions are only there:
+// the pod IP's acpd, where there is one, knows nothing of tasks.
+func (d *Dialer) Sessions(ctx context.Context, pod *corev1.Pod) (*acpd.Client, bool) {
+	if d == nil {
+		return nil, false
+	}
+	base, ok := d.forwarded(ctx, pod)
+	if !ok {
+		return nil, false
+	}
+	return acpd.New(base + "/v1"), true
 }
 
 // forwarded is the base URL of a live forward to a pod that hosts

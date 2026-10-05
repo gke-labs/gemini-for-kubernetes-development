@@ -783,6 +783,19 @@ func workSandbox(sb *unstructured.Unstructured, autoIterateDefault bool) *models
 	}
 }
 
+// taskSession is the agent session of the run recorded on sb under key,
+// nil when there is none.
+func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession {
+	if sb == nil {
+		return nil
+	}
+	task := factorycli.RecordedRunTask(sb.GetAnnotations(), key)
+	if task == "" {
+		return nil
+	}
+	return &models.TaskSession{Sandbox: sb.GetName(), Task: task}
+}
+
 func hasLabel(labels []*github.Label, name string) bool {
 	for _, l := range labels {
 		if strings.EqualFold(l.GetName(), name) {
@@ -822,6 +835,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	}
 
 	sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue.GetNumber())
+	// The plan's sandbox, kept apart from sb, which a triage-only sandbox
+	// is taken off the row as.
+	planSB := sb
 	state := ""
 	prURL := ""
 	taskType := ""
@@ -934,6 +950,8 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Sandbox:         workSandbox(sb, autoDefault),
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
+	items[key].PlanSession = taskSession(planSB, factorycli.AnnotationPlanRun)
+	items[key].TriageSession = taskSession(triageSB, factorycli.AnnotationTriageRun)
 	if ws := items[key].Sandbox; ws != nil && sb == triageSB && ws.TaskState == "" {
 		ws.TaskState = triageState
 	}

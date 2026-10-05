@@ -91,6 +91,13 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/research/:session/permission", s.resolveResearchPermission)
 		api.POST("/research/:session/cancel", s.cancelResearchSession)
 		api.POST("/research/:session/mode", s.setResearchSessionMode)
+		// A factory task's agent session (plan, triage): watched while the
+		// task runs, continued once it has ended.
+		api.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
+		api.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
+		api.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
+		api.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
+		api.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
 		// Writing a conversation down. The POST sends the turn that
 		// writes the note; the push to the fork is the controller's, and
 		// happens once that turn ends.
@@ -157,6 +164,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	research.Use(s.Auth.Middleware())
 	{
 		research.GET("/:session", s.streamResearchEvents)
+	}
+	taskSessions := router.Group("/api/task-session-events")
+	taskSessions.Use(s.Auth.Middleware())
+	{
+		taskSessions.GET("/:sandbox/:task", s.streamTaskSessionEvents)
 	}
 
 	// Protected sandbox proxy routes
