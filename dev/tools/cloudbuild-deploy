@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Copyright 2026 The Gemini For Kubernetes Development Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Builds and deploys repo-agent without the GitHub runners: Cloud Build
+# builds the images from a git ref into Artifact Registry, and the
+# manifest is rendered and applied as deploy-autopush.yaml does, with the
+# Artifact Registry prefix in place of ghcr. The overseer is not touched.
+#
+# The next CI deploy puts the cluster back on ghcr images.
+#
+#   dev/tools/cloudbuild-deploy --project cnrm-barni-1 [--ref upstream/main] \
+#     [--board barney-s/gemini-for-kubernetes-development] [--build-only|--deploy-only] [--only <image>]...
+#
+# --board points that RepoBoard's sandboxes at the factory-golang just
+# built (spec.image); sandboxes made from then on use it. Clear it with
+#   kubectl patch repoboard -n <ns> <name> --type=json -p='[{"op":"remove","path":"/spec/image"}]'
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+PROJECT=""
+REGION="us-central1"
+AR_REPO="g4k"
+REF="upstream/main"
+BOARDS=()
+ONLY=()
+BUILD=true
+DEPLOY=true
+# image name → Dockerfile, as in build-images.yaml. The five in the
+# repo-agent manifest, and the sandbox base image.
+IMAGES=(
+  "review-api=repo-agent/images/review-api/Dockerfile"
+  "review-ui=repo-agent/images/review-ui/Dockerfile"
+  "repowatch-controller=repo-agent/images/repowatch-controller/Dockerfile"
+  "github-mcp-server=repo-agent/images/github-mcp-server/Dockerfile"
+  "syncer=repo-agent/images/syncer/Dockerfile"
+  "factory-golang=factory/images/factory-golang/Dockerfile"
+)
+
+usage() { sed -n '/^# Builds and deploys/,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --region) REGION="$2"; shift 2 ;;
+    --repo) AR_REPO="$2"; shift 2 ;;
+    --ref) REF="$2"; shift 2 ;;
+    --board) BOARDS+=("$2"); shift 2 ;;
+    --only) ONLY+=("$2"); shift 2 ;;
+    --build-only) DEPLOY=false; shift ;;
+    --deploy-only) BUILD=false; shift ;;
+    -h|--help) usage ;;
+    *) echo "unknown flag $1" >&2; usage 1 ;;
+  esac
+done
+[[ -n "${PROJECT}" ]] || { echo "--project is required" >&2; exit 1; }
+# Checked before the builds, which take a while.
+if ${DEPLOY}; then
+  python3 -c 'import yaml' 2>/dev/null || { echo "deploy-to-kube needs PyYAML: pip install pyyaml (a venv is fine)" >&2; exit 1; }
+fi
+
+SHA="$(git -C "${ROOT}" rev-parse --verify "${REF}^{commit}")"
+REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}"
+echo "ref ${REF} = ${SHA}; registry ${REGISTRY}"
+
+# The ref's tree, not the working tree: what is built and what is
+# rendered are both exactly the commit.
+WORK="$(mktemp -d)"
+trap 'git -C "${ROOT}" worktree remove --force "${WORK}/src" >/dev/null 2>&1 || true; rm -rf "${WORK}"' EXIT
+git -C "${ROOT}" worktree add --detach "${WORK}/src" "${SHA}" >/dev/null
+
+if ${BUILD}; then
+  if ! gcloud artifacts repositories describe "${AR_REPO}" --project "${PROJECT}" --location "${REGION}" >/dev/null 2>&1; then
+    echo "--- creating Artifact Registry repository ${AR_REPO}"
+    gcloud artifacts repositories create "${AR_REPO}" --project "${PROJECT}" --location "${REGION}" \
+      --repository-format docker --description "images built by dev/tools/cloudbuild-deploy"
+  fi
+
+  # Uploaded once and read by every build: parallel submits of a local
+  # file race to create the staging bucket, and upload it once each.
+  BUCKET="gs://${PROJECT}_cloudbuild"
+  gcloud storage buckets describe "${BUCKET}" --project "${PROJECT}" >/dev/null 2>&1 ||
+    gcloud storage buckets create "${BUCKET}" --project "${PROJECT}" --location "${REGION}"
+  SOURCE="${BUCKET}/source/cloudbuild-deploy-${SHA}.tar.gz"
+  git -C "${ROOT}" archive --format=tar.gz -o "${WORK}/source.tar.gz" "${SHA}"
+  gcloud storage cp --quiet "${WORK}/source.tar.gz" "${SOURCE}"
+  echo "--- building in Cloud Build (logs under ${WORK}/logs until this exits)"
+  mkdir -p "${WORK}/logs"
+  pids=()
+  for entry in "${IMAGES[@]}"; do
+    name="${entry%%=*}" dockerfile="${entry#*=}"
+    if [[ ${#ONLY[@]} -gt 0 && " ${ONLY[*]} " != *" ${name} "* ]]; then continue; fi
+    gcloud builds submit "${SOURCE}" --project "${PROJECT}" --region "${REGION}" \
+      --config "${ROOT}/dev/cloudbuild/image.yaml" \
+      --substitutions "_REGISTRY=${REGISTRY},_IMAGE=${name},_DOCKERFILE=${dockerfile},_TAG=${SHA}" \
+      >"${WORK}/logs/${name}.log" 2>&1 &
+    pids+=("$!:${name}")
+  done
+  failed=()
+  for p in "${pids[@]}"; do
+    if wait "${p%%:*}"; then echo "built ${p#*:}"; else failed+=("${p#*:}"); fi
+  done
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    for name in "${failed[@]}"; do echo "=== ${name} failed:"; tail -40 "${WORK}/logs/${name}.log"; done
+    exit 1
+  fi
+fi
+
+if ${DEPLOY}; then
+  # Kept as the cluster has them, rather than taken from CI's variables.
+  CLUSTER_NAME="$(kubectl get syncers.syncer.gemini.google.com -n repo-agent-system repo-agent-sandboxes -o jsonpath='{.spec.installationName}')"
+  GW_CLASS="$(kubectl get gateway -n repo-agent-system repo-agent-gateway -o jsonpath='{.spec.gatewayClassName}')"
+  echo "--- deploying ${SHA} to $(kubectl config current-context) (installation ${CLUSTER_NAME}, gateway class ${GW_CLASS})"
+  (
+    cd "${WORK}/src/repo-agent"
+    mkdir -p bin
+    ../dev/tools/deploy-to-kube --image-prefix="${REGISTRY}/" --image-tag="${SHA}" \
+      --replace ".spec.installationName=${CLUSTER_NAME}" \
+      --replace ".spec.gatewayClassName=${GW_CLASS}" \
+      --working-dir . --output-file=bin/repo-agent-manifest.yaml
+    kubectl apply -f bin/repo-agent-manifest.yaml
+  )
+  kubectl rollout status statefulset -n repo-agent-system --timeout=10m
+  kubectl rollout status deployment -n repo-agent-system --timeout=10m
+fi
+
+for board in "${BOARDS[@]+"${BOARDS[@]}"}"; do
+  ns="${board%%/*}" name="${board#*/}"
+  echo "--- ${board}: sandboxes use ${REGISTRY}/factory-golang:${SHA}"
+  kubectl patch repoboard -n "${ns}" "${name}" --type=merge -p "{\"spec\":{\"image\":\"${REGISTRY}/factory-golang:${SHA}\"}}"
+done
