@@ -6,7 +6,6 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
@@ -45,6 +44,12 @@ func newRefIssues(gh *github.Client, pr *githubv39.PullRequest) *refIssues {
 // the lot: the callers each degrade sensibly on a partial answer, and a single
 // unreadable parent issue is not a reason to stop evaluating the pull request.
 // It is not retried within the evaluation, so one failure costs one request.
+//
+// Only closing references count (see github.GetClosingIssues), not every #N
+// the pull request mentions. A body that merely lists other changes - release
+// notes linking every merged pull request, say - is not asking to be steered by
+// them, and resolving each mention cost one request per #N on every evaluation
+// and copied their labels onto the pull request.
 func (r *refIssues) all(ctx context.Context) []*githubv39.Issue {
 	if r.loaded {
 		return r.resolved
@@ -54,7 +59,7 @@ func (r *refIssues) all(ctx context.Context) []*githubv39.Issue {
 	if r.gh == nil || r.pr == nil {
 		return r.resolved
 	}
-	for num := range common.GetReferencedIssues(r.pr) {
+	for num := range github.GetClosingIssues(r.pr) {
 		issue, err := r.gh.GetIssue(ctx, num)
 		if err != nil {
 			klog.Warningf("Failed to fetch referenced parent issue #%d for PR #%d: %v", num, r.pr.GetNumber(), err)
