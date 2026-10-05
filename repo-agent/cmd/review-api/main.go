@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 
 	"k8s.io/klog/v2"
 )
@@ -58,6 +59,7 @@ func main() {
 
 	// API Server
 	server := api.NewServer(k8sManager, authenticator)
+	server.ACPD = podacpd.New(kube.RestConfig)
 
 	// Gin router
 	router := gin.Default()

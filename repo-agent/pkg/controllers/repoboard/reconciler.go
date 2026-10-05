@@ -44,6 +44,7 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 )
 
 const (
@@ -128,6 +129,11 @@ type Reconciler struct {
 	// every pod in the cluster to answer that. Optional — a Reconciler
 	// built without one falls back to the cached client.
 	APIReader client.Reader
+
+	// ACPD reaches research sandboxes' acpd: over a port-forward to the
+	// daemon's sessions, or on the pod IP for older images. Nil dials the
+	// pod IP only.
+	ACPD *podacpd.Dialer
 
 	// NewGithubClient is injectable for tests; defaults to
 	// memberGithubClient (token from the namespace's github-pat secret).

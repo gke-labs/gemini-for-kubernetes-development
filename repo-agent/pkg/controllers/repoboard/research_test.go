@@ -35,6 +35,7 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -475,7 +476,7 @@ func (f *fakeACPD) server(t *testing.T) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	prev := researchACPD
-	researchACPD = func(string) *acpd.Client { return acpd.New(srv.URL) }
+	researchACPD = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client { return acpd.New(srv.URL) }
 	t.Cleanup(func() { researchACPD = prev })
 	return srv
 }
