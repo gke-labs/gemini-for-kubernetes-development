@@ -163,27 +163,3 @@ func TestTruncate(t *testing.T) {
 		t.Errorf("collapsed whitespace expected: %q", got)
 	}
 }
-
-func TestEncodeRoundTrip(t *testing.T) {
-	// The pipe and the newline are the point: a claim value is split on
-	// "|", and a topic comes from a textarea.
-	k := Kickoff{Kind: KindTopic, Topic: "compare a|b\nand c", Title: "a|b"}
-	got := DecodeKickoff(k.Encode())
-	if got != k {
-		t.Errorf("round trip lost data: %+v -> %+v", k, got)
-	}
-}
-
-func TestEncodeOfNothingIsNothing(t *testing.T) {
-	if got := (Kickoff{}).Encode(); got != "" {
-		t.Errorf("the zero kickoff should not add a field, got %q", got)
-	}
-}
-
-func TestDecodeRejectsJunk(t *testing.T) {
-	for _, in := range []string{"not base64!!", "", "eyJraW5kIjoib25iYW9yZCJ9"} {
-		if got := DecodeKickoff(in); got != (Kickoff{}) {
-			t.Errorf("DecodeKickoff(%q) = %+v, want the zero kickoff", in, got)
-		}
-	}
-}

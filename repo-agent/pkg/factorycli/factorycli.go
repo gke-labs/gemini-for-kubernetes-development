@@ -414,10 +414,6 @@ type Launcher interface {
 	// sandbox one deep-research conversation runs in, and its start (the
 	// clone and the opening question), whose session the conversation is.
 	StartResearch(key string, opts ResearchOptions) bool
-	// StartSaveNotes launches `factory research save-notes`: it attaches
-	// to a conversation's existing sandbox and pushes the notes that
-	// conversation wrote to the member's fork.
-	StartSaveNotes(key string, opts SaveNotesOptions) bool
 	// StartApply launches `factory apply --action`: one write of a draft's
 	// task output to its issue, with the member's token.
 	StartApply(key string, opts ApplyOptions) bool

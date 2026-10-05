@@ -79,10 +79,10 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - `run teardown` removes what the run created, preferring the generated `teardown.sh`.
 - If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. The branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`.
 
-### Research conversations (`factory research`, `factory acpd`)
-- **Start a sandbox.** `research start --url --session` creates a research sandbox and clones the repository, private repos included. The token is never written to the volume. It then prints a `RESEARCH_SANDBOX_READY {json}` receipt with the pod IP and port of the conversation server.
+### Research conversations (`factory recipe research`, `factory acpd`)
+- **Start a conversation.** `recipe research --url --session --topic` creates a research sandbox, clones the repository (private repos included; the token is never written to the volume) and hands the topic to a task session in the sandbox's daemon. The sandbox carries a `research-ready` receipt once setup has finished, and the conversation continues through `recipe revise`.
 - **Conversation server.** `acpd` serves agent conversations over HTTP using the Agent Client Protocol on `:49984`. It handles sessions, prompts, streamed events, permission prompts, cancel and modes (`default`, `auto_edit`, `yolo`), and keeps transcripts under `/workspaces/.acpd/sessions`. It drives `gemini --acp` or Antigravity's `agy_acp_server`; Claude is not supported for research yet.
-- **Save notes.** `research save-notes` pushes `docs-exploration/research/<note>.md` to the `research/notes` branch of your fork. This command holds the GitHub credential, not the agent session.
+- **Save notes.** The notes are a task output, and `apply --action push-notes` pushes them to `docs-exploration/research/<note>.md` on the `research/notes` branch of your fork. `apply` holds the GitHub credential, not the agent session.
 
 ### Engines and models
 - **Choosing an engine.** `--engine gemini|claude|antigravity` (config key `engine`) picks the agent:
@@ -215,6 +215,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
+| `recipe research` | Start a research conversation in a sandbox; `recipe revise` continues it |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `pr review` | Review a PR; `--publish no\|ask\|yes\|draft` |
 | `pr investigate` | Investigate and fix CI failures on a PR |
@@ -224,8 +225,6 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |
 | `run plan\|deploy\|teardown` | Runbook-driven deployments (`--runbook`, `--target`) |
-| `research start` | Create a research sandbox and report its conversation server |
-| `research save-notes` | Push research notes to your fork's `research/notes` branch |
 | `watch` | The autonomous scan / dispatch / GC loop |
 | `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
 | `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |

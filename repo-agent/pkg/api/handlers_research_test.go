@@ -231,7 +231,26 @@ func (f *fakeACPD) handler() http.Handler {
 	return mux
 }
 
+// researchTaskOf is the recipe task researchSandboxCR records for a
+// session: the id of its conversation on the daemon.
+func researchTaskOf(sessionID string) string { return "recipe-research-" + sessionID }
+
+// researchSandboxCR is a research sandbox `factory recipe research` made:
+// it records its start, whose task session the conversation is.
 func researchSandboxCR(namespace, sessionID, repo string, paused bool) *unstructured.Unstructured {
+	sb := legacyResearchSandboxCR(namespace, sessionID, repo, paused)
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: factorycli.ResearchRunName(sessionID), Task: researchTaskOf(sessionID), StartedAt: time.Now().UTC(),
+	})
+	annotations := sb.GetAnnotations()
+	annotations[factorycli.ResearchRunAnnotation] = string(run)
+	sb.SetAnnotations(annotations)
+	return sb
+}
+
+// legacyResearchSandboxCR is one the old research path made: no recorded
+// start, so no task session.
+func legacyResearchSandboxCR(namespace, sessionID, repo string, paused bool) *unstructured.Unstructured {
 	name := factorycli.ResearchSandboxName(repo, sessionID)
 	spec := map[string]interface{}{"replicas": int64(1)}
 	if paused {
@@ -310,9 +329,11 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	}
 	srv := httptest.NewServer(acp.handler())
 	t.Cleanup(srv.Close)
-	prev := acpdClientForPod
-	acpdClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client { return acpd.New(srv.URL) }
-	t.Cleanup(func() { acpdClientForPod = prev })
+	prev := taskSessionClientForPod
+	taskSessionClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) (*acpd.Client, bool) {
+		return acpd.New(srv.URL), true
+	}
+	t.Cleanup(func() { taskSessionClientForPod = prev })
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -437,11 +458,11 @@ func TestResearchListReportsWhatEachEngineIsDoing(t *testing.T) {
 	blocked := researchSandboxCR("alice", asking, researchRepo, false)
 
 	acp := &fakeACPD{live: map[string]acpd.Session{
-		researchSession: {ID: researchSession},
-		thinking:        {ID: thinking, Busy: true},
+		researchTaskOf(researchSession): {ID: researchTaskOf(researchSession)},
+		researchTaskOf(thinking):        {ID: researchTaskOf(thinking), Busy: true},
 		// Waiting comes with Busy, because it is a turn in flight that has
 		// stopped — not a third thing instead of being busy.
-		asking: {ID: asking, Busy: true, Waiting: true},
+		researchTaskOf(asking): {ID: researchTaskOf(asking), Busy: true, Waiting: true},
 	}}
 	r, _ := researchTestServer(t, acp,
 		[]*unstructured.Unstructured{idle, working, blocked},
@@ -519,11 +540,11 @@ func TestResearchListSaysWhenAPodCouldNotBeAsked(t *testing.T) {
 	// Port 1 refuses immediately, which is what a pod with no acpd
 	// listening does — and unlike an unroutable address it does not make
 	// the test wait out the timeout to prove it.
-	prev := acpdClientForPod
-	acpdClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client {
-		return acpd.New("http://127.0.0.1:1")
+	prev := taskSessionClientForPod
+	taskSessionClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) (*acpd.Client, bool) {
+		return acpd.New("http://127.0.0.1:1"), true
 	}
-	t.Cleanup(func() { acpdClientForPod = prev })
+	t.Cleanup(func() { taskSessionClientForPod = prev })
 
 	got := listResearch(t, r)
 	if len(got) != 1 {
@@ -557,8 +578,55 @@ func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
 	if got[0].Live || got[0].Unreachable != "" {
 		t.Errorf("a paused row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
 	}
-	if acp.sawCall("GET /sessions/" + researchSession) {
+	if acp.sawCall("GET /sessions/" + researchTaskOf(researchSession)) {
 		t.Error("the list dialled a paused session's pod, which does not exist")
+	}
+}
+
+// A sandbox the old research path made stays on the list, so it can be
+// deleted, marked legacy and never dialled.
+func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
+	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{live: map[string]acpd.Session{}}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
+
+	got := listResearch(t, r)
+	if len(got) != 1 || !got[0].Legacy {
+		t.Fatalf("got %+v, want the one legacy row", got)
+	}
+	if got[0].Live || got[0].Unreachable != "" {
+		t.Errorf("a legacy row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
+	}
+	if len(acp.calls) != 0 {
+		t.Errorf("the list dialled a legacy sandbox: %v", acp.calls)
+	}
+}
+
+// Every conversation route on a legacy sandbox is 409 legacy, saying to
+// recreate it; delete still works.
+func TestResearchLegacySandboxIsConflict(t *testing.T) {
+	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
+	acp := &fakeACPD{sessionExists: true}
+	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
+
+	for _, call := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/research/" + researchSession, ""},
+		{http.MethodPost, "/api/research/" + researchSession + "/prompt", `{"text":"hi"}`},
+		{http.MethodPost, "/api/research/" + researchSession + "/cancel", ""},
+	} {
+		w := doJSON(t, r, call.method, call.path, call.body)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"legacy":true`) ||
+			!strings.Contains(w.Body.String(), "start a new one") {
+			t.Errorf("%s %s = %d %s; want 409 legacy", call.method, call.path, w.Code, w.Body.String())
+		}
+	}
+	if len(acp.calls) != 0 {
+		t.Errorf("a legacy sandbox was dialled: %v", acp.calls)
+	}
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession, ""); w.Code >= 300 {
+		t.Errorf("delete = %d %s; a legacy sandbox must still be deletable", w.Code, w.Body.String())
 	}
 }
 
@@ -797,13 +865,13 @@ func TestResearchPermissionAndCancelReachTheEngine(t *testing.T) {
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/permission", `{"requestId":"r1","optionId":"allow"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("permission status = %d: %s", w.Code, w.Body.String())
 	}
-	if !acp.sawCall("POST /sessions/" + researchSession + "/permission") {
+	if !acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/permission") {
 		t.Errorf("permission did not reach acpd; calls: %v", acp.calls)
 	}
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/cancel", ""); w.Code != http.StatusNoContent {
 		t.Fatalf("cancel status = %d: %s", w.Code, w.Body.String())
 	}
-	if !acp.sawCall("POST /sessions/" + researchSession + "/cancel") {
+	if !acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/cancel") {
 		t.Errorf("cancel did not reach acpd; calls: %v", acp.calls)
 	}
 }
@@ -906,7 +974,7 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 	if frames[3].Type != researchFrameClosed {
 		t.Errorf("last frame = %+v, want closed", frames[3])
 	}
-	if !acp.sawCall("GET /sessions/" + researchSession + "/events?offset=100") {
+	if !acp.sawCall("GET /sessions/" + researchTaskOf(researchSession) + "/events?offset=100") {
 		t.Errorf("the requested offset did not reach acpd; calls: %v", acp.calls)
 	}
 }
@@ -917,106 +985,6 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	acp := &fakeACPD{sessionExists: false, transcript: ""}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
-
-	srv := httptest.NewServer(r)
-	t.Cleanup(srv.Close)
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var frame researchFrame
-	if err := conn.ReadJSON(&frame); err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if frame.Type != researchFrameOpen {
-		t.Fatalf("first frame = %+v, want open", frame)
-	}
-	if !acp.sawCall("POST /sessions") {
-		t.Errorf("the stream did not start an engine; calls: %v", acp.calls)
-	}
-}
-
-// --- the opening turn is the controller's to deliver -------------------
-
-// owingAnOpeningTurn marks a sandbox the way the controller does between
-// serving a claim and delivering the question that came with it.
-func owingAnOpeningTurn(sb *unstructured.Unstructured) *unstructured.Unstructured {
-	annotations := sb.GetAnnotations()
-	annotations[research.KickoffAnnotation] = research.Kickoff{
-		Kind: research.KindTopic, Topic: "what does this repo do?",
-	}.Encode()
-	sb.SetAnnotations(annotations)
-	return sb
-}
-
-// Creating the session is what writes the mode banner into an empty
-// transcript, and the controller reads a non-zero offset as "already
-// prompted". So an attach that creates the session while the opening turn
-// is still owed does not just arrive early — it makes the controller drop
-// the question on the floor, and the member gets a conversation that
-// never asked what they typed.
-func TestAttachDoesNotCreateASessionThatIsOwedItsOpeningTurn(t *testing.T) {
-	sb := owingAnOpeningTurn(researchSandboxCR("alice", researchSession, researchRepo, false))
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
-
-	srv := httptest.NewServer(r)
-	t.Cleanup(srv.Close)
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var frame researchFrame
-	if err := conn.ReadJSON(&frame); err != nil {
-		t.Fatalf("read: %v", err)
-	}
-
-	if acp.sawCall("POST /sessions") {
-		t.Fatalf("the attach created the session the kickoff was waiting to create; calls: %v", acp.calls)
-	}
-	if frame.Type != researchFrameClosed {
-		t.Fatalf("first frame = %+v, want closed so the socket falls back to probing", frame)
-	}
-	// Quietly: the pane says "Sending the opening question…" off the
-	// probe, and an error here would put a banner over a session that is
-	// working exactly as intended.
-	if frame.Error != "" {
-		t.Errorf("closed frame carried an error %q, want none — this is not a failure", frame.Error)
-	}
-}
-
-// Same rule on the prompt route. 409 rather than 502: the UI already
-// reads that as "not yet" and keeps what was typed.
-func TestPromptDoesNotCreateASessionThatIsOwedItsOpeningTurn(t *testing.T) {
-	sb := owingAnOpeningTurn(researchSandboxCR("alice", researchSession, researchRepo, false))
-	acp := &fakeACPD{sessionExists: false}
-	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
-
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
-	}
-	if acp.sawCall("POST /sessions") {
-		t.Errorf("the prompt created the session the kickoff was waiting to create; calls: %v", acp.calls)
-	}
-}
-
-// Once the kickoff is delivered the annotation is gone, and the attach
-// goes back to being the thing that starts an engine — including after an
-// acpd restart drops the session, which is the same code path.
-func TestAttachStillCreatesTheSessionOnceNoOpeningTurnIsOwed(t *testing.T) {
-	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	acp := &fakeACPD{sessionExists: false}
 	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
@@ -1102,7 +1070,6 @@ func TestResearchListCarriesTheTitle(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	annotations := sb.GetAnnotations()
 	annotations[research.TitleAnnotation] = "overview"
-	annotations[research.KickoffAnnotation] = research.Kickoff{Kind: research.KindOnboard}.Encode()
 	sb.SetAnnotations(annotations)
 	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
 
@@ -1112,9 +1079,6 @@ func TestResearchListCarriesTheTitle(t *testing.T) {
 	}
 	if sessions[0].Title != "overview" {
 		t.Errorf("title = %q, want overview", sessions[0].Title)
-	}
-	if !sessions[0].Opening {
-		t.Error("a session whose opening turn is still owed must say so")
 	}
 }
 
@@ -1161,7 +1125,7 @@ func TestResearchListDoesNotDoubleAServedClaim(t *testing.T) {
 }
 
 // The sandbox object exists minutes before the controller stamps a
-// title on it — `factory research start` creates it and then clones —
+// title on it — `factory recipe research` creates it and then clones —
 // and the click is hidden as served for that whole window. Reading the
 // row's name off the sandbox alone is what made a session flip from
 // "Changes in the last 2 weeks" to "untitled" and back a minute later.
@@ -1390,7 +1354,7 @@ func TestResearchStatusReportsTheMode(t *testing.T) {
 func TestResearchStatusReportsAWaitingSession(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	acp := &fakeACPD{live: map[string]acpd.Session{
-		researchSession: {ID: researchSession, Busy: true, Waiting: true},
+		researchTaskOf(researchSession): {ID: researchTaskOf(researchSession), Busy: true, Waiting: true},
 	}}
 	r, _ := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
@@ -1453,7 +1417,7 @@ func TestResearchModeRejectsAnEmptyBody(t *testing.T) {
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{}`); w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
-	if acp.sawCall("POST /sessions/" + researchSession + "/mode") {
+	if acp.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/mode") {
 		t.Error("an empty mode reached acpd")
 	}
 }

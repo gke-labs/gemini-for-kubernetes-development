@@ -68,8 +68,14 @@ func recipeResearchServer(t *testing.T, acp, daemon *fakeACPD, hosts bool) *gin.
 // recipeResearchServerDyn is recipeResearchServer with its cluster.
 func recipeResearchServerDyn(t *testing.T, acp, daemon *fakeACPD, hosts bool) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
-	sb := recipeResearchSandboxCR()
-	r, dyn := researchTestServer(t, acp, []*unstructured.Unstructured{sb},
+	return recipeResearchServerWith(t, acp, daemon, hosts, recipeResearchSandboxCR())
+}
+
+// recipeResearchServerWith serves sb, running, beside the others in the
+// namespace.
+func recipeResearchServerWith(t *testing.T, acp, daemon *fakeACPD, hosts bool, sb *unstructured.Unstructured, others ...*unstructured.Unstructured) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
+	r, dyn := researchTestServer(t, acp, append([]*unstructured.Unstructured{sb}, others...),
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 	srv := httptest.NewServer(daemon.handler())
 	t.Cleanup(srv.Close)
@@ -281,12 +287,14 @@ func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 	}
 }
 
-// A conversation acpd hosts saves with a capture, not with these routes.
+// A sandbox the old research path made has no task session: its notes
+// routes answer 409 legacy, like every conversation route.
 func TestLegacyResearchNotesRoutesAreConflict(t *testing.T) {
-	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
+	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
 	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
-	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusConflict {
-		t.Errorf("status = %d, body %s; want 409", w.Code, w.Body.String())
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), `"legacy":true`) {
+		t.Errorf("status = %d, body %s; want 409 legacy", w.Code, w.Body.String())
 	}
 }
 

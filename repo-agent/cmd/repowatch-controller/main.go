@@ -40,7 +40,6 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/controllers/repoboard"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -105,11 +104,9 @@ func main() {
 	}
 
 	if err = (&repoboard.Reconciler{
-		Client:    mgr.GetClient(),
-		APIReader: mgr.GetAPIReader(),
-		Scheme:    mgr.GetScheme(),
-		Factory:   newRunnerWithProber(),
-		ACPD:      podacpd.New(mgr.GetConfig()),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Factory: newRunnerWithProber(),
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoBoard")
 		os.Exit(1)

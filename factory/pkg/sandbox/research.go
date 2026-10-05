@@ -40,7 +40,7 @@ const (
 	// to session survives.
 	AnnotationResearchSessionID = "sandbox.gemini.google.com/research-session-id"
 	// AnnotationResearchReady is the receipt for a finished setup:
-	// written last by `factory research start`, holding the time it
+	// written last by `factory recipe research`, holding the time it
 	// finished.
 	//
 	// The sandbox object is created in the first second of a launch that
@@ -51,8 +51,7 @@ const (
 	// a running pod, an empty workspace, and an engine that cannot chdir
 	// into a checkout that was never made.
 	//
-	// So completion gets its own mark, under the rule the kickoff and the
-	// capture already use: the annotation IS the receipt. Absent means
+	// So completion gets its own mark: the annotation IS the receipt. Absent means
 	// the setup did not finish and whoever was doing it is gone.
 	AnnotationResearchReady = "sandbox.gemini.google.com/research-ready"
 	// AnnotationResearchEngine is the acpd engine the sandbox was set up
@@ -71,7 +70,7 @@ const (
 // it instead.
 //
 // Set to the launch's own timeout, which is a bound rather than a
-// guess: the board kills `factory research start` after twenty minutes,
+// guess: the board kills `factory recipe research` after twenty minutes,
 // so a sandbox that has gone this long without a receipt cannot still
 // have anyone working on it. (The timeout itself is repo-agent's
 // factorycli.researchTimeout, and these two modules do not import each

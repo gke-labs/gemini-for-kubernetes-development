@@ -18,16 +18,11 @@ package repoboard
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,7 +30,6 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -56,7 +50,7 @@ func researchSandboxObj(namespace, name string) *unstructured.Unstructured {
 			},
 			"annotations": map[string]interface{}{
 				"repo": "repo",
-				// The bare repo URL, as `factory research start` writes
+				// The bare repo URL, as `factory recipe research` writes
 				// it. Leaving it out of this fixture hid a filter that
 				// dropped every real research sandbox on the floor.
 				"htmlURL": "https://github.com/test/repo",
@@ -442,94 +436,6 @@ func TestResearchClaimIsNotAReviewClaim(t *testing.T) {
 	}
 }
 
-// --- the conversation's acpd (the capture path) -----------------------
-
-// fakeACPD is an acpd that records what it was asked.
-type fakeACPD struct {
-	mu     sync.Mutex
-	exists bool  // a session is already live
-	offset int64 // its transcript length, when it is
-	busy   bool  // a turn is in flight in it
-	// transcript is what its events endpoint returns: the kinds, in
-	// order. offset is what says it is non-empty.
-	transcript []string
-	created    []acpd.CreateSessionRequest
-	prompts    []string
-	promptNo   int
-}
-
-func (f *fakeACPD) server(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case req.Method == http.MethodPost && req.URL.Path == "/sessions":
-			var in acpd.CreateSessionRequest
-			_ = json.NewDecoder(req.Body).Decode(&in)
-			f.created = append(f.created, in)
-			f.exists = true
-			_ = json.NewEncoder(w).Encode(acpd.Session{ID: in.ID, Engine: in.Engine, CWD: in.CWD})
-		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/events"):
-			for i, kind := range f.transcript {
-				_ = json.NewEncoder(w).Encode(acpd.Event{Seq: int64(i + 1), Kind: kind})
-			}
-		case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/sessions/"):
-			if !f.exists {
-				w.WriteHeader(http.StatusNotFound)
-				_, _ = w.Write([]byte(`{"error":"no such session"}`))
-				return
-			}
-			_ = json.NewEncoder(w).Encode(acpd.Session{ID: testSession, Offset: f.offset, Busy: f.busy})
-		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/prompt"):
-			var in struct {
-				Text string `json:"text"`
-			}
-			_ = json.NewDecoder(req.Body).Decode(&in)
-			f.prompts = append(f.prompts, in.Text)
-			f.promptNo++
-			_ = json.NewEncoder(w).Encode(map[string]int64{"offset": 128})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"unexpected ` + req.Method + " " + req.URL.Path + `"}`))
-		}
-	}))
-	t.Cleanup(srv.Close)
-	prev := researchACPD
-	researchACPD = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client { return acpd.New(srv.URL) }
-	t.Cleanup(func() { researchACPD = prev })
-	return srv
-}
-
-func (f *fakeACPD) sent() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.prompts...)
-}
-
-// engineSecret is the member's own engine credential. The controller
-// copies it into factory-user on every reconcile, which is where the
-// capture reads it from — so the fixture is the source, not the copy.
-func engineSecret() *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: geminiSecretName, Namespace: "alice"},
-		Data:       map[string][]byte{"gemini": []byte("AIza-test")},
-	}
-}
-
-// researchPod is the sandbox's pod, running and addressable.
-func researchPod(sandboxName string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sandboxName + "-0",
-			Namespace: "alice",
-			Labels:    map[string]string{"sandbox": sandboxName},
-		},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.1.2.3"},
-	}
-}
-
 func sandboxAnnotations(t *testing.T, r *Reconciler, name string) map[string]string {
 	t.Helper()
 	sb := &unstructured.Unstructured{}
@@ -565,8 +471,6 @@ func TestResearchCannedKindIsAskedAndTitled(t *testing.T) {
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	annotations := sandboxAnnotations(t, r, name)
 	g.Expect(annotations[research.TitleAnnotation]).To(gomega.Equal("overview"))
-	g.Expect(annotations).NotTo(gomega.HaveKey(research.KickoffAnnotation),
-		"the recipe asks the question; nothing is owed on the sandbox")
 }
 
 // The bug that made the whole feature look broken in the cluster: the

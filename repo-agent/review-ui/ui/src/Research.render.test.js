@@ -479,14 +479,15 @@ describe('ResearchConversation', () => {
         expect(container.querySelector('strong').textContent).toBe('overview');
     });
 
-    test('an opening turn still owed is said rather than left blank', async () => {
-        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview', opening: true }));
+    test('a session the old research path made says to start a new one and opens no socket', async () => {
+        const error = 'this conversation was made by the old research path and can no longer be opened: delete it and start a new one';
+        global.fetch = jest.fn(() => reply(409, { error, legacy: true, sandbox: 'rsch-x', namespace: 'ns' }));
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
-        await act(async () => { FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } }); });
 
-        expect(container.textContent).toContain('Sending the opening question');
-        expect(container.textContent).not.toContain('Nothing said yet');
+        expect(container.textContent).toContain('start a new one');
+        expect(FakeSocket.instances).toHaveLength(0);
+        expect(container.querySelector('[aria-label="Save notes"]')).toBeNull();
     });
 
     test('a paused session says so and opens no socket', async () => {
@@ -886,12 +887,12 @@ describe('ResearchConversation', () => {
                 posts.push({ body: opts && opts.body, method: opts && opts.method });
                 return reply(202, { sessionId: 's1', note: 'notes.md', path: 'x', offset: 10 });
             }
-            return reply(200, { sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'ns', ...status });
+            return reply(200, { sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'ns', task: 'research-1', ...status });
         });
         await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
         await flush();
         await act(async () => {
-            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: !!status.busyTurn, offset: 0 } });
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: !!status.busyTurn, task: 'research-1', offset: 0 } });
         });
         return posts;
     };
@@ -928,39 +929,11 @@ describe('ResearchConversation', () => {
     });
 
     test('a capture will not go while the agent is working, and says so', async () => {
-        // A capture is a prompt, and acpd refuses a second one mid-turn.
+        // The write-up is a turn, and the session takes one at a time.
         await liveSession({ status: { busyTurn: true } });
 
         expect(saveButton().disabled).toBe(true);
         expect(saveButton().title).toContain('The agent is working');
-    });
-
-    test('an owed save is read off the sandbox, not remembered here', async () => {
-        // Which is what makes it survive a reload, show up in the second
-        // tab, and outlive the API replica that took the click.
-        global.fetch = jest.fn(() => reply(200, {
-            sessionId: 's1', repo: 'repo-agent', capturing: 'notes.md',
-        }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
-        await flush();
-
-        expect(container.textContent).toContain('Writing this conversation up');
-        expect(container.textContent).toContain('pushed to your fork when this turn finishes');
-    });
-
-    test('a push that failed says so until another one is asked for', async () => {
-        // Not dismissible: it is written on the sandbox, and a banner
-        // the member could wave away would leave the session looking
-        // like it had saved.
-        global.fetch = jest.fn(() => reply(200, {
-            sessionId: 's1', repo: 'repo-agent', captureError: 'pushing the notes: no notes were written',
-        }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
-        await flush();
-
-        const banner = container.querySelector('.warning-banner');
-        expect(banner.textContent).toContain('no notes were written');
-        expect(banner.textContent).toContain('Ask for it again to retry');
     });
 
 });
@@ -1076,16 +1049,15 @@ describe('ResearchPanel', () => {
         expect(silent.querySelector('[title*="connection refused"]')).toBeTruthy();
     });
 
-    // A canned first turn that stopped to ask something is still an
-    // unanswered question with your name on it. "opening…" reads as
-    // "wait", which is how a session sits there until the permission
-    // timeout takes its turn away.
-    test('a first turn that stopped to ask something says so, not that it is opening', async () => {
-        await liveList([{ title: 'the overview', opening: true, live: true, busy: true, waiting: true }]);
+    // A turn that stopped to ask something is an unanswered question
+    // with your name on it. "working…" reads as "wait", which is how a
+    // session sits there until the permission timeout takes its turn away.
+    test('a turn that stopped to ask something says so, not that it is working', async () => {
+        await liveList([{ title: 'the overview', live: true, busy: true, waiting: true }]);
 
         const row = rowFor('the overview');
         expect(row.textContent).toContain('needs you');
-        expect(row.textContent).not.toContain('opening');
+        expect(row.textContent).not.toContain('working');
     });
 
     // Live state is the last thing the row is allowed to say. A sandbox
@@ -1564,31 +1536,28 @@ describe('ResearchPanel', () => {
         expect(container.textContent).toContain('requested');
     });
 
-    test('an opening that never landed says so on the row', async () => {
+    test('a sandbox the old research path made says to delete it', async () => {
         global.fetch = jest.fn(() => reply(200, {
             sessions: [{
                 sessionId: 'dddddddd-4444', sandbox: 'rsch-repo-agent-4', repo: 'repo-agent',
-                title: 'overview', openingError: 'no running pod yet', createdAt: '2026-09-26T10:00:00Z',
+                title: 'overview', legacy: true, createdAt: '2026-09-26T10:00:00Z',
             }],
         }));
 
         await renderPanel();
-        expect(container.textContent).toContain('opening failed');
+        expect(container.textContent).toContain('old — delete');
     });
 
     test('a sandbox whose pod is not up yet is starting, not up', async () => {
         global.fetch = jest.fn(() => reply(200, {
             sessions: [{
                 sessionId: 'eeeeeeee-5555', sandbox: 'rsch-repo-agent-5', repo: 'repo-agent',
-                title: 'overview', starting: true, opening: true, createdAt: '2026-09-26T10:00:00Z',
+                title: 'overview', starting: true, createdAt: '2026-09-26T10:00:00Z',
             }],
         }));
 
         await renderPanel();
-        // Starting wins over opening: the prompt cannot land on a pod
-        // that does not exist, and the wait is the thing being reported.
         expect(container.textContent).toContain('starting…');
-        expect(container.textContent).not.toContain('opening…');
     });
 
     test('the notes branch is a footnote link to the member\'s fork', async () => {

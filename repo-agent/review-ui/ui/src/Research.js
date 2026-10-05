@@ -1288,15 +1288,11 @@ export function ResearchConversation({
       .catch(err => setError(`delete failed: ${err}`));
   };
 
-  // captureNotes asks the conversation to write itself up, and the
-  // server records on the sandbox that a push is owed once the turn
-  // ends. One POST with nothing in it.
-  //
-  // Nothing in it is the point. What to write is the conversation and
-  // where it goes is the session — both of which the server already
-  // knows — so this is a button and not the form it used to be. A
-  // member who wants something narrower says so to the agent, in the
-  // conversation, and then saves.
+  // captureNotes asks the recipe's notes revise to write the
+  // conversation up into a draft. One POST with nothing in it: what to
+  // write is the conversation and where it goes is the session, both of
+  // which the server already knows. A member who wants something
+  // narrower says so to the agent, in the conversation, and then saves.
   const captureNotes = () => {
     if (saving || busy || phase !== 'live') return;
     setSaving(true);
@@ -1304,21 +1300,15 @@ export function ResearchConversation({
     fetch(`${api}/capture`, { method: 'POST' })
       .then(async res => {
         if (!res.ok) {
+          // A 409 is no board for the repository, said in the body.
           const body = await res.json().catch(() => ({}));
-          // 409 is acpd refusing a second prompt while a turn is in
-          // flight. Said as the thing to do about it: the button's own
-          // guard closes the gap between the last frame and the click,
-          // not the race with another tab.
-          // A recipe's 409 is no board for the repository, said in the body.
-          setError(res.status === 409 && !recipeNotes
-            ? 'The agent is mid-turn — wait for it to finish, then save again.'
-            : (body.error || `save notes failed: HTTP ${res.status}`));
+          setError(body.error || `save notes failed: HTTP ${res.status}`);
           return;
         }
         // The write-up is a turn like any other, so it scrolls in below
         // — and the member should be looking at it.
         stickRef.current = true;
-        if (recipeNotes) refreshNotes();
+        refreshNotes();
       })
       .catch(err => setError(`save notes failed: ${err}`))
       .finally(() => setSaving(false));
@@ -1538,20 +1528,18 @@ export function ResearchConversation({
               On the bar and not in the menu because saving is something
               you do *while* reading, at the moment the answer lands,
               which is exactly the boundary the ⋯ menu draws. */}
-          {/* On a recipe's conversation (info.task) it writes a draft
-              rather than pushing: the push is Save to research/notes on
-              the draft, below. */}
-          {!task && (
+          {/* It writes a draft rather than pushing: the push is Save to
+              research/notes on the draft, below. */}
+          {recipeNotes && (
             <button className="btn btn-sm" onClick={captureNotes}
-              disabled={captureDisabled || (recipeNotes && (taskState.held || !!notes.writing))}
+              disabled={captureDisabled || taskState.held || !!notes.writing}
               aria-label="Save notes"
               title={phase !== 'live' ? 'Not connected'
                 : busy ? 'The agent is working — save once the turn ends'
-                  : recipeNotes && taskState.held ? 'The session is the recipe\'s until its start ends'
-                    : recipeNotes && notes.writing ? 'Writing the notes from this conversation'
-                      : recipeNotes ? 'Write this conversation up as notes; they become a draft here to save to research/notes'
-                        : 'Write this conversation up as a note and push it to your fork'}>
-              {saving || (recipeNotes && notes.writing) ? '⋯' : '💾'}
+                  : taskState.held ? 'The session is the recipe\'s until its start ends'
+                    : notes.writing ? 'Writing the notes from this conversation'
+                      : 'Write this conversation up as notes; they become a draft here to save to research/notes'}>
+              {saving || notes.writing ? '⋯' : '💾'}
             </button>
           )}
           {/* Two ways to get more room, and they are different enough to
@@ -1646,19 +1634,6 @@ export function ResearchConversation({
           </div>
         )}
 
-        {/* A save that failed, said until somebody asks for another one.
-            Not dismissible, because it is not this tab's state: it is
-            written on the sandbox, and the thing that clears it is the
-            next capture. A push fails for reasons that outlast a click
-            — no notes branch, a token that expired, a note the turn
-            never wrote — and a banner the member could wave away
-            would leave the session looking like it had saved. */}
-        {info && info.captureError && (
-          <div className="warning-banner" style={{ flex: '0 0 auto' }}>
-            The last note was not pushed: {info.captureError}. Ask for it again to retry.
-          </div>
-        )}
-
         {recipeNotes && notes.writeError && (
           <div className="warning-banner" style={{ flex: '0 0 auto' }}>
             Save notes failed: {notes.writeError}. Click 💾 again to retry.
@@ -1730,19 +1705,6 @@ export function ResearchConversation({
           </div>
         )}
 
-        {/* What is owed. Read off the sandbox by the probe rather than
-            remembered here, so it survives a reload, shows up in the
-            second tab, and outlives the API replica that took the
-            click. */}
-        {info && info.capturing && (
-          <div style={{
-            flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'x-small',
-            color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)',
-          }}>
-            Writing this conversation up — the note is pushed to your fork when this turn finishes.
-          </div>
-        )}
-
         {/* The canvas: log, prompt and status line, all one colour and one
             face. The class carries the palette, so nothing in here may set
             a background inline — an inline one would win over it. */}
@@ -1805,7 +1767,10 @@ export function ResearchConversation({
             {phase === 'failed' && (
               <p style={{ color: 'var(--term-red)' }}>Cannot reach this session: {detail}</p>
             )}
-            {phase === 'legacy' && (
+            {phase === 'legacy' && !task && (
+              <p style={{ color: 'var(--term-dim)' }}>{detail}</p>
+            )}
+            {phase === 'legacy' && task && (
               <p style={{ color: 'var(--term-dim)' }}>
                 This sandbox runs an image that keeps no agent session for its tasks.{' '}
                 {info && info.namespace && task && (
@@ -1822,21 +1787,10 @@ export function ResearchConversation({
               </p>
             )}
             {phase === 'live' && !transcript.items.length && (
-              info && info.openingError ? (
-                <p style={{ color: 'var(--term-red)' }}>
-                  The opening question was never delivered: {info.openingError}. Ask it yourself below —
-                  the sandbox itself is fine.
-                </p>
-              ) : info && info.opening ? (
-                <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
-                  Sending the opening question…
-                </p>
-              ) : (
-                <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
-                  Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
-                  checkout in front of it.
-                </p>
-              )
+              <p style={{ color: 'var(--term-dim)', fontStyle: 'italic' }}>
+                Nothing said yet. Ask about {repo ? `${repo}` : 'the repository'} — the agent has the
+                checkout in front of it.
+              </p>
             )}
             {transcript.items.map(item => (
               <TerminalItem key={item.key} item={item} rendered={view === 'rendered'}
@@ -1987,28 +1941,25 @@ function sessionState(s) {
     return <Pill text="paused" color="var(--text-secondary)" bg="var(--bg-secondary)"
       title="Scaled to zero — the transcript survives, the engine does not" />;
   }
-  if (s.openingError) {
-    return <Pill text="opening failed" color="var(--text-danger)" bg="var(--bg-danger-light)"
-      title={s.openingError} />;
+  // Made by the old research path: nothing can open it any more.
+  if (s.legacy) {
+    return <Pill text="old — delete" color="var(--text-secondary)" bg="var(--bg-secondary)"
+      title="Made by the old research path and can no longer be opened: delete it and start a new one" />;
   }
-  // Before opening…: the sandbox object exists for minutes before its
+  // Before working…: the sandbox object exists for minutes before its
   // pod does, and "up" on a session nothing can reach yet is a lie
   // that costs a click.
   if (s.starting) {
     return <Pill text="starting…" color="#b08800" bg="rgba(176,136,0,0.12)"
       title="The sandbox exists; its pod is still coming up — image, disk, clone" />;
   }
-  // Above `opening…` deliberately. A first turn that stopped to ask
-  // something is still an unanswered question with your name on it, and
-  // "opening…" reads as "wait" — which is how a session sits there until
-  // the permission timeout takes the turn away.
+  // Above `working…` deliberately: a turn that stopped to ask something
+  // is an unanswered question with your name on it, and "working…" reads
+  // as "wait" — which is how a session sits there until the permission
+  // timeout takes the turn away.
   if (s.waiting) {
     return <Pill text="needs you" color="var(--text-danger)" bg="var(--bg-danger-light)"
       title="Stopped on a permission request. Open it and answer, or the turn is cancelled after ten minutes." />;
-  }
-  if (s.opening) {
-    return <Pill text="opening…" color="#b08800" bg="rgba(176,136,0,0.12)"
-      title="The first question has not reached the agent yet" />;
   }
   if (s.busy) {
     return <Pill text="working…" color="var(--link-color, #0969da)" bg="rgba(9,105,218,0.12)"

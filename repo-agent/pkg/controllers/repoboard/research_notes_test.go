@@ -136,7 +136,7 @@ func TestSaveNotesFailureIsNotRetried(t *testing.T) {
 	g.Expect(status.Message).To(gomega.ContainSubstring("a turn is in flight"))
 }
 
-// A sandbox `factory research start` made has no task session to revise
+// A sandbox the recipe did not start has no task session to revise
 // in: nothing is launched for it.
 func TestSaveNotesNeedsARecipeConversation(t *testing.T) {
 	g := gomega.NewWithT(t)

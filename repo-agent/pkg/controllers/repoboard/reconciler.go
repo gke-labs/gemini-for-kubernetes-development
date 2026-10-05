@@ -44,7 +44,6 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 )
 
 const (
@@ -123,18 +122,6 @@ type Reconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
 	Factory factorycli.Launcher
-
-	// APIReader reads straight from the API server, bypassing the
-	// controller's cache. Used for pods: they are needed only to find a
-	// research sandbox's address, and caching them would mean watching
-	// every pod in the cluster to answer that. Optional — a Reconciler
-	// built without one falls back to the cached client.
-	APIReader client.Reader
-
-	// ACPD reaches research sandboxes' acpd: over a port-forward to the
-	// daemon's sessions, or on the pod IP for older images. Nil dials the
-	// pod IP only.
-	ACPD *podacpd.Dialer
 
 	// NewGithubClient is injectable for tests; defaults to
 	// memberGithubClient (token from the namespace's github-pat secret).
@@ -371,10 +358,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	converted := r.ensurePRTaskClaims(ctx, work, mail.prTasks)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
-	// Push the notes of any conversation that was asked to write one and
-	// has since finished the turn. Not part of the claim pass: the
-	// request rides on the sandbox, and this loop is the wait.
-	r.completeResearchSaves(ctx, work)
 
 	// Resume in-flight reviews: harvest finished results and reattach after
 	// controller restarts, independent of how the review was triggered.
