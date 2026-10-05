@@ -51,12 +51,21 @@ type Runner struct {
 	// TaskDir is where step logs and captured replies are written.
 	TaskDir string
 	Inputs  map[string]string
+	// Revise selects the part to run: "" for start, else a revise's id.
+	// A revise asks in a session that already has the recipe's context,
+	// so it is not sent again.
+	Revise string
 	// Log receives a line per step and everything the steps print.
 	Log io.Writer
 }
 
-// Run runs every step in order and stops at the first failure.
+// Run runs the selected part's steps in order and stops at the first
+// failure.
 func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
+	steps, err := rec.Steps(r.Revise)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Join(r.TaskDir, "steps"), 0o755); err != nil {
 		return err
 	}
@@ -70,9 +79,9 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			_ = session.Close()
 		}
 	}()
-	contextSent := false
+	contextSent := r.Revise != ""
 
-	for i, step := range rec.Steps {
+	for i, step := range steps {
 		label := step.Label(i)
 		fmt.Fprintf(r.Log, "::step %s (%s)\n", label, step.Kind())
 		res := &StepResult{}

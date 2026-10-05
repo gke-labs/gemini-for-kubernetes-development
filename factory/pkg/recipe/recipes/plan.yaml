@@ -28,84 +28,85 @@ context: |
 
   The repository is already cloned in the current directory.
 
-steps:
-  - uses: setup-git
-  - uses: setup-repo
-  - run: sleep 5 # lib.sh's HACK: avoid git lock issues
-  - uses: checkout-default-branch
-  - uses: configure-engine
-  # The plan a previous run left, revised rather than started over.
-  - run: cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+    # The plan a previous run left, revised rather than started over.
+    - run: cp "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md" "$TASK_DIR/prior-plan.md" 2>/dev/null || touch "$TASK_DIR/prior-plan.md"
 
-  - ask: |
-      Investigate this issue. Do not write the plan yet.
+    - ask: |
+        Investigate this issue. Do not write the plan yet.
 
-      <issue_url>{{ .Inputs.issue_url }}</issue_url>
-      <issue_number>{{ .Inputs.issue_number }}</issue_number>
-      <issue_title>{{ .Inputs.issue_title }}</issue_title>
-      <issue_body>
-      {{ .Inputs.issue_body }}
-      </issue_body>
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+        <issue_body>
+        {{ .Inputs.issue_body }}
+        </issue_body>
 
-      1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
-      2. Explore the relevant parts of the codebase: find the files,
-         functions, and tests the change would touch. Ground every step of
-         your plan in the actual code, not in guesses.
-      3. Where the issue references other issues or PRs, read those too:
-         `gh issue view <n>` / `gh pr view <n>`.
-      {{ with file "prior-plan.md" }}
-      A previous version of your plan exists. Revise it: keep what the
-      feedback does not dispute, change what it does, and do not silently
-      drop plan sections.
-      <previous_plan>
-      {{ . }}
-      </previous_plan>
-      {{ end }}
-      {{- with .Inputs.feedback }}
-      The maintainer's feedback:
-      <feedback>
-      {{ . }}
-      </feedback>
-      {{ end }}
-      {{- with .Inputs.instructions }}
-      Additional planning instructions you MUST follow:
-      <instructions>
-      {{ . }}
-      </instructions>
-      {{ end }}
-      Summarise what you found in a few lines.
+        1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        2. Explore the relevant parts of the codebase: find the files,
+           functions, and tests the change would touch. Ground every step of
+           your plan in the actual code, not in guesses.
+        3. Where the issue references other issues or PRs, read those too:
+           `gh issue view <n>` / `gh pr view <n>`.
+        {{ with file "prior-plan.md" }}
+        A previous version of your plan exists. Revise it: keep what the
+        feedback does not dispute, change what it does, and do not silently
+        drop plan sections.
+        <previous_plan>
+        {{ . }}
+        </previous_plan>
+        {{ end }}
+        {{- with .Inputs.feedback }}
+        The maintainer's feedback:
+        <feedback>
+        {{ . }}
+        </feedback>
+        {{ end }}
+        {{- with .Inputs.instructions }}
+        Additional planning instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        Summarise what you found in a few lines.
 
-  - ask: |
-      Now write the plan. Respond with ONLY the plan as markdown — no prose
-      before or after it, no top-level title heading, no code fences around
-      the whole plan. Use exactly these sections:
+    - ask: |
+        Now write the plan. Respond with ONLY the plan as markdown — no prose
+        before or after it, no top-level title heading, no code fences around
+        the whole plan. Use exactly these sections:
 
-      ## Summary
-      2-3 sentences: what the issue asks for and the shape of the fix.
+        ## Summary
+        2-3 sentences: what the issue asks for and the shape of the fix.
 
-      ## Approach
-      The chosen approach and why, including alternatives you rejected and
-      the reason. Name the actual packages/files involved.
+        ## Approach
+        The chosen approach and why, including alternatives you rejected and
+        the reason. Name the actual packages/files involved.
 
-      ## Steps
-      A numbered list of concrete implementation steps. Each step names the
-      files it touches. Keep steps small enough that a reviewer can veto one
-      step without invalidating the rest.
+        ## Steps
+        A numbered list of concrete implementation steps. Each step names the
+        files it touches. Keep steps small enough that a reviewer can veto one
+        step without invalidating the rest.
 
-      ## Risks
-      What could go wrong: behavior changes, migration concerns, blast
-      radius.
+        ## Risks
+        What could go wrong: behavior changes, migration concerns, blast
+        radius.
 
-      ## Test plan
-      How the change will be verified: which tests to add or update, and any
-      manual verification worth doing.
-    capture: plan-output.md
+        ## Test plan
+        How the change will be verified: which tests to add or update, and any
+        manual verification worth doing.
+      capture: plan-output.md
 
-  # Where a fix (factory fix --with-plan), the board and a continued chat
-  # read the plan, without a fence around all of it.
-  - run: |
-      test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty" >&2; exit 1; }
-      sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
+    # Where a fix (factory fix --with-plan), the board and a continued chat
+    # read the plan, without a fence around all of it.
+    - run: |
+        test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty" >&2; exit 1; }
+        sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
 
 outputs:
   - plan-output.md

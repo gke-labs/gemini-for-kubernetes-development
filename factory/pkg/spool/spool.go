@@ -53,6 +53,9 @@ type Task struct {
 	// by later; factory does not interpret it.
 	RunName string `json:"run_name,omitempty"`
 	Recipe  string `json:"recipe"`
+	// Revise is the recipe's part the task runs: "" for start, else the
+	// id of one of its revises.
+	Revise string `json:"revise,omitempty"`
 	// TaskType is the recipe's task-type, when it is its sandbox's main
 	// task; unset, the task's kind is recipe-<Recipe>.
 	TaskType    string    `json:"task_type,omitempty"`

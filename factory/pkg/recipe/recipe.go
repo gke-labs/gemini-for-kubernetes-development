@@ -23,6 +23,7 @@ import (
 	"embed"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,7 +42,12 @@ type Recipe struct {
 	// Inputs declares what the recipe takes beyond what its caller always
 	// sets, so a missing or misspelt one fails before a sandbox is made.
 	Inputs map[string]Input `yaml:"inputs,omitempty"`
-	Steps  []Step           `yaml:"steps"`
+	// Start is what runs when the task is launched.
+	Start Part `yaml:"start"`
+	// Revise are parts that run later, into the started task's session,
+	// to write its output again from the conversation since: each one a
+	// button for whoever continued it.
+	Revise []Revise `yaml:"revise,omitempty"`
 	// Outputs are the task-directory files `recipe run` prints when the
 	// recipe ends, in order. Unset, they are the capture files.
 	Outputs []string `yaml:"outputs,omitempty"`
@@ -55,6 +61,34 @@ type Recipe struct {
 	// already look for that type. Unset, it is a side task,
 	// recipe-<name>, beside them. Like TaskOutput it is factory's.
 	TaskType string `yaml:"task-type,omitempty"`
+}
+
+// Part is a list of steps run in order: the recipe's start, or a revise.
+type Part struct {
+	Steps []Step `yaml:"steps"`
+}
+
+// Steps is the part to run: start's for "", else the named revise's.
+func (r *Recipe) Steps(revise string) ([]Step, error) {
+	if revise == "" {
+		return r.Start.Steps, nil
+	}
+	for _, rv := range r.Revise {
+		if rv.ID == revise {
+			return rv.Steps, nil
+		}
+	}
+	return nil, fmt.Errorf("recipe %s has no revise %q", r.Name, revise)
+}
+
+// Revise is a part that writes the task's output again, asking in the
+// started task's session.
+type Revise struct {
+	// ID names it, for `factory recipe revise` and its action.
+	ID string `yaml:"id"`
+	// Label is the button's text.
+	Label string `yaml:"label"`
+	Steps []Step `yaml:"steps"`
 }
 
 // Input is one declared input.
@@ -127,6 +161,7 @@ var NamedSteps = map[string]string{
 
 var (
 	stepIDRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	reviseIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	inputRE    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	taskTypeRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	withKeyRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -152,8 +187,8 @@ func (r *Recipe) Validate() error {
 	if r.Name == "" {
 		return fmt.Errorf("recipe has no name")
 	}
-	if len(r.Steps) == 0 {
-		return fmt.Errorf("recipe %s has no steps", r.Name)
+	if len(r.Start.Steps) == 0 {
+		return fmt.Errorf("recipe %s has no start steps", r.Name)
 	}
 	for name, in := range r.Inputs {
 		if !inputRE.MatchString(name) {
@@ -185,8 +220,44 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("output %q must be a plain file name", o)
 		}
 	}
+	if err := validateSteps(r.Start.Steps); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+	if len(r.Revise) > 0 && !slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Kind() == "ask" }) {
+		return fmt.Errorf("recipe %s has revises but its start asks nothing: there is no session to revise in", r.Name)
+	}
+	outputs := r.OutputFiles()
+	revises := map[string]bool{}
+	for _, rv := range r.Revise {
+		if !reviseIDRE.MatchString(rv.ID) {
+			return fmt.Errorf("revise id %q must match %s", rv.ID, reviseIDRE)
+		}
+		if revises[rv.ID] {
+			return fmt.Errorf("duplicate revise %q", rv.ID)
+		}
+		revises[rv.ID] = true
+		if rv.Label == "" {
+			return fmt.Errorf("revise %s has no label", rv.ID)
+		}
+		if len(rv.Steps) == 0 {
+			return fmt.Errorf("revise %s has no steps", rv.ID)
+		}
+		if err := validateSteps(rv.Steps); err != nil {
+			return fmt.Errorf("revise %s: %w", rv.ID, err)
+		}
+		// A revise that captures none of the outputs would change nothing.
+		if !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture != "" && slices.Contains(outputs, s.Capture) }) {
+			return fmt.Errorf("revise %s captures none of the outputs (%s)", rv.ID, strings.Join(outputs, ", "))
+		}
+	}
+	return nil
+}
+
+// validateSteps checks one part's steps. Step ids are the part's own:
+// {{ .Steps.<id> }} reaches steps of the same part only.
+func validateSteps(steps []Step) error {
 	ids := map[string]bool{}
-	for i, s := range r.Steps {
+	for i, s := range steps {
 		set := 0
 		for _, v := range []string{s.Uses, s.Run, s.Ask} {
 			if v != "" {
@@ -261,13 +332,13 @@ func (r *Recipe) ResolveInputs(standard, overrides map[string]string) (map[strin
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an
-// ask captures, in step order.
+// ask in start captures, in step order.
 func (r *Recipe) OutputFiles() []string {
 	if len(r.Outputs) > 0 {
 		return r.Outputs
 	}
 	var out []string
-	for _, s := range r.Steps {
+	for _, s := range r.Start.Steps {
 		if s.Capture != "" {
 			out = append(out, s.Capture)
 		}

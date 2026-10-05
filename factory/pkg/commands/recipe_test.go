@@ -55,7 +55,7 @@ func TestLoadRecipe(t *testing.T) {
 		t.Error("unknown built-in loaded")
 	}
 	path := filepath.Join(t.TempDir(), "mine.yaml")
-	if err := os.WriteFile(path, []byte("name: mine\nsteps: [{run: 'true'}]\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("name: mine\nstart: {steps: [{run: 'true'}]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, r, err := loadRecipe(path); err != nil || r.Name != "mine" {

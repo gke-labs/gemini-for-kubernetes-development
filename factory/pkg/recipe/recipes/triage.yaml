@@ -19,49 +19,50 @@ context: |
 
   The repository is already cloned in the current directory.
 
-steps:
-  - uses: setup-git
-  - uses: setup-repo
-  - run: sleep 5 # lib.sh's HACK: avoid git lock issues
-  - uses: checkout-default-branch
-  - uses: configure-engine
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
 
-  - ask: |
-      Investigate this issue. Do not write the triage yet.
+    - ask: |
+        Investigate this issue. Do not write the triage yet.
 
-      <issue_url>{{ .Inputs.issue_url }}</issue_url>
-      <issue_number>{{ .Inputs.issue_number }}</issue_number>
-      <issue_title>{{ .Inputs.issue_title }}</issue_title>
-      <issue_body>
-      {{ .Inputs.issue_body }}
-      </issue_body>
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+        <issue_body>
+        {{ .Inputs.issue_body }}
+        </issue_body>
 
-      1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
-      2. List the repository's existing labels: `gh label list --limit 100`.
-      3. Search for likely duplicates among open issues, for example:
-         `gh issue list --search "<key terms from the issue>" --state open --limit 10`.
-      4. Skim the relevant parts of the codebase to judge scope, the likely
-         cause or affected area, and the difficulty of a fix.
-      {{ with .Inputs.instructions }}
-      Additional triage instructions you MUST follow:
-      <instructions>
-      {{ . }}
-      </instructions>
-      {{ end }}
-      Summarise what you found in a few lines.
+        1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        2. List the repository's existing labels: `gh label list --limit 100`.
+        3. Search for likely duplicates among open issues, for example:
+           `gh issue list --search "<key terms from the issue>" --state open --limit 10`.
+        4. Skim the relevant parts of the codebase to judge scope, the likely
+           cause or affected area, and the difficulty of a fix.
+        {{ with .Inputs.instructions }}
+        Additional triage instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        Summarise what you found in a few lines.
 
-  - ask: |
-      Now write the triage. Respond with EXACTLY the following YAML
-      structure and nothing else — no prose before or after, no markdown
-      fences:
+    - ask: |
+        Now write the triage. Respond with EXACTLY the following YAML
+        structure and nothing else — no prose before or after, no markdown
+        fences:
 
-      triage:
-        labels: []        # suggested labels, only from the repo's existing labels
-        priority: ""      # low | medium | high
-        duplicates: []    # issue numbers that look like duplicates, if any
-        assessment: ""    # 2-4 sentences: what the issue is, the likely cause or
-                          # affected area, and a suggested next step
-    capture: triage-output.yaml
+        triage:
+          labels: []        # suggested labels, only from the repo's existing labels
+          priority: ""      # low | medium | high
+          duplicates: []    # issue numbers that look like duplicates, if any
+          assessment: ""    # 2-4 sentences: what the issue is, the likely cause or
+                            # affected area, and a suggested next step
+      capture: triage-output.yaml
 
 outputs:
   - triage-output.yaml
