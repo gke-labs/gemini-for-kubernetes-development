@@ -260,11 +260,15 @@ func (c *Client) NewSession(ctx context.Context, req NewSessionRequest) (*NewSes
 
 // LoadSession resumes a previous session by ID. The agent replays the
 // session history as session/update notifications before returning.
-func (c *Client) LoadSession(ctx context.Context, req LoadSessionRequest) error {
+func (c *Client) LoadSession(ctx context.Context, req LoadSessionRequest) (*LoadSessionResponse, error) {
 	if req.MCPServers == nil {
 		req.MCPServers = []MCPServer{}
 	}
-	return c.Call(ctx, "session/load", req, nil)
+	var resp LoadSessionResponse
+	if err := c.Call(ctx, "session/load", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // SetSessionMode switches the session's approval mode. The agent answers

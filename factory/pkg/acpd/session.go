@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acp"
@@ -195,6 +196,11 @@ type Session struct {
 	// names the sandbox and the HTTP route, the agent's is what goes on
 	// the wire in every session/* call.
 	acpSessionID string
+	// loaded says acpSessionID came from the record, fixed at handshake.
+	loaded bool
+	// replaying is set while session/load replays the conversation, whose
+	// updates the transcript already has.
+	replaying atomic.Bool
 
 	permissionTimeout time.Duration
 
@@ -345,7 +351,8 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	return nil
 }
 
-// handshake runs initialize, authenticate where required, and session/new.
+// handshake runs initialize, authenticate where required, and session/load
+// or session/new.
 func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfig) error {
 	init, err := s.client.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersion,
@@ -365,14 +372,25 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 		}
 	}
 
-	resp, err := s.client.NewSession(ctx, acp.NewSessionRequest{CWD: cfg.CWD})
-	if err != nil {
-		return fmt.Errorf("session/new: %w", err)
+	var modes *acp.SessionModeState
+	if loaded, ok := s.load(ctx, init, cfg); ok {
+		modes = loaded
+	} else {
+		resp, err := s.client.NewSession(ctx, acp.NewSessionRequest{CWD: cfg.CWD})
+		if err != nil {
+			return fmt.Errorf("session/new: %w", err)
+		}
+		s.acpSessionID = resp.SessionID
+		modes = resp.Modes
+		// Without a record the conversation is still there, under the
+		// engine's home, but nothing says which one it was.
+		if err := writeRecord(cfg.Dir, Record{ACPSessionID: resp.SessionID, Engine: cfg.Engine, CWD: cfg.CWD}); err != nil {
+			klog.FromContext(ctx).Error(err, "session will not be loadable after a restart", "session", s.ID)
+		}
 	}
-	s.acpSessionID = resp.SessionID
-	if resp.Modes != nil {
-		s.availableModes = resp.Modes.AvailableModes
-		s.currentMode = resp.Modes.CurrentModeID
+	if modes != nil {
+		s.availableModes = modes.AvailableModes
+		s.currentMode = modes.CurrentModeID
 	}
 
 	if cfg.Mode == "" {
@@ -409,6 +427,45 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 	}
 	return nil
 }
+
+// load continues the conversation recorded in cfg.Dir, when there is one
+// the engine can load. It reports false to start a fresh one instead: no
+// record, a record for another engine or directory, an engine that does
+// not load sessions, or one that tried and failed.
+//
+// The engine replays the conversation as session/update notifications
+// before it answers. The transcript already holds them — it is appended
+// to across restarts — so they are dropped rather than written twice.
+func (s *Session) load(ctx context.Context, init *acp.InitializeResponse, cfg SessionConfig) (*acp.SessionModeState, bool) {
+	rec, ok := ReadRecord(cfg.Dir)
+	if !ok || rec.Engine != cfg.Engine || rec.CWD != cfg.CWD {
+		return nil, false
+	}
+	if can, _ := init.AgentCapabilities["loadSession"].(bool); !can {
+		klog.FromContext(ctx).Info("engine does not load sessions; starting a fresh one", "session", s.ID, "engine", cfg.Engine)
+		return nil, false
+	}
+	s.replaying.Store(true)
+	resp, err := s.client.LoadSession(ctx, acp.LoadSessionRequest{SessionID: rec.ACPSessionID, CWD: cfg.CWD})
+	s.replaying.Store(false)
+	if err != nil {
+		klog.FromContext(ctx).Error(err, "loading the recorded session; starting a fresh one", "session", s.ID, "acpSession", rec.ACPSessionID)
+		// Said in the transcript too: the next turn is talking to an
+		// agent that remembers none of what is above it.
+		_ = s.transcript.AppendValue(KindError, map[string]string{
+			"message": fmt.Sprintf("could not continue the earlier conversation (%v); this is a new one, and the agent does not remember the turns above", err),
+		})
+		return nil, false
+	}
+	s.acpSessionID = rec.ACPSessionID
+	s.loaded = true
+	_ = s.transcript.AppendValue(KindSessionLoaded, map[string]string{"acpSessionId": rec.ACPSessionID})
+	return resp.Modes, true
+}
+
+// Loaded reports whether the session continues a recorded conversation
+// rather than starting a fresh one.
+func (s *Session) Loaded() bool { return s.loaded }
 
 // Modes reports the session's current mode and the set it may be switched
 // to. Both are empty for an engine that does not implement modes.
@@ -563,7 +620,7 @@ func allowOnceOption(options []acp.PermissionOption) (string, bool) {
 // browser, which can ignore it without acpd having to be taught about it
 // first.
 func (s *Session) onNotification(method string, params json.RawMessage) {
-	if method != acp.MethodSessionUpdate {
+	if method != acp.MethodSessionUpdate || s.replaying.Load() {
 		return
 	}
 	var notif acp.SessionUpdateNotification

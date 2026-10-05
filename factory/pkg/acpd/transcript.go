@@ -50,6 +50,10 @@ const (
 	// because the engine does not notify on its own set_mode, and a
 	// session that stopped prompting owes the transcript a reason.
 	KindModeChanged = "mode_changed"
+	// KindSessionLoaded marks where a restarted session picked the
+	// conversation up again: the engine was gone, and the turns below are
+	// with one that loaded the turns above.
+	KindSessionLoaded = "session_loaded"
 )
 
 // Transcript is an append-only NDJSON file plus the means to follow it.
