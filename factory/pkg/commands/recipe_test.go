@@ -4,8 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
@@ -175,5 +179,95 @@ func TestRevisedTask(t *testing.T) {
 	mine.Name = "triage"
 	if e, err := revisedTask(entries, "", "plan", mine); err != nil || e.ID != "recipe-triage-3" {
 		t.Errorf("with --recipe = %s, %v; want the newest task of that recipe", e.ID, err)
+	}
+}
+
+func TestParseRecipeTarget(t *testing.T) {
+	for raw, want := range map[string]githubItem{
+		"https://github.com/o/r":           {Owner: "o", Repo: "r"},
+		"https://github.com/o/r.git":       {Owner: "o", Repo: "r"},
+		"https://github.com/o/r/":          {Owner: "o", Repo: "r"},
+		"https://github.com/o/r/issues/12": {Owner: "o", Repo: "r", Number: 12},
+		"https://github.com/o/r/pull/34":   {Owner: "o", Repo: "r", Number: 34, IsPR: true},
+	} {
+		got, err := parseRecipeTarget(raw)
+		if err != nil || got != want {
+			t.Errorf("%s = %+v, %v; want %+v", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"https://github.com/o",
+		"https://github.com/o/r/tree/main",
+		"https://github.com/o/r;x",
+		"https://example.com/o/r",
+	} {
+		if _, err := parseRecipeTarget(raw); err == nil {
+			t.Errorf("%s parsed, want an error", raw)
+		}
+	}
+}
+
+func TestRecipeEnvKeepsACloneTokenOutOfTheEnvironment(t *testing.T) {
+	secret := &corev1.Secret{Data: map[string][]byte{
+		constants.KeyGithubToken: []byte("tok"),
+		constants.KeyGithubLogin: []byte("member"),
+	}}
+	repo := githubItem{Owner: "o", Repo: "r"}
+	env, secrets, err := recipeEnv(secret, repo, recipe.CredentialsClone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range recipe.GitHubTokenEnv {
+		if env[k] != "" {
+			t.Errorf("env has %s", k)
+		}
+	}
+	if secrets["GITHUB_TOKEN"] != "tok" || env["ISSUE_NUMBER"] != "" || env["PR_NUMBER"] != "" || env["REPO_NAME"] != "r" {
+		t.Errorf("env %v, secrets %v", env, secrets)
+	}
+	env, secrets, err = recipeEnv(secret, githubItem{Owner: "o", Repo: "r", Number: 3}, "")
+	if err != nil || env["GITHUB_TOKEN"] != "tok" || env["ISSUE_NUMBER"] != "3" || secrets != nil {
+		t.Errorf("full: env %v, secrets %v, %v", env, secrets, err)
+	}
+}
+
+func TestTakeSecrets(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := takeSecrets(dir); err != nil || got != nil {
+		t.Fatalf("none: %v, %v", got, err)
+	}
+	path := filepath.Join(dir, spool.SecretsFile)
+	if err := os.WriteFile(path, []byte(`{"GITHUB_TOKEN":"tok","A":"1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := takeSecrets(dir)
+	if err != nil || len(got) != 2 || got[0] != "A=1" || got[1] != "GITHUB_TOKEN=tok" {
+		t.Fatalf("takeSecrets = %v, %v", got, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("%s left on disk: %v", spool.SecretsFile, err)
+	}
+}
+
+func TestRecipeExecRefusesACloneRecipeWithATokenInItsEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	data, _, err := recipe.Builtin("research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, spool.RecipeFile)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, spool.SecretsFile), []byte(`{"GITHUB_TOKEN":"tok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_TOKEN", "leaked")
+	err = runRecipeExec(context.Background(), path, "", dir)
+	if err == nil || !strings.Contains(err.Error(), "GH_TOKEN") {
+		t.Fatalf("runRecipeExec = %v, want refused for GH_TOKEN", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, spool.SecretsFile)); !os.IsNotExist(err) {
+		t.Errorf("the refused task left its secrets on disk: %v", err)
 	}
 }

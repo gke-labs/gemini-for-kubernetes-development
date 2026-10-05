@@ -66,8 +66,38 @@ func readLog(t *testing.T, c *Client, id string, offset int64) string {
 func TestVersion(t *testing.T) {
 	c, _ := newTestServer(t)
 	v, err := c.Version(context.Background())
-	if err != nil || v != APIVersion {
-		t.Fatalf("Version = %d, %v", v, err)
+	if err != nil || v.API != APIVersion || v.Secrets != SecretsVersion {
+		t.Fatalf("Version = %+v, %v", v, err)
+	}
+}
+
+// Secrets reach the task directory for the runner, and nobody else: not
+// the task's environment, not the file API.
+func TestPostSecrets(t *testing.T) {
+	c, tasks := newTestServer(t)
+	ctx := context.Background()
+	req := post("research-20261005-120000", "", `env > env.txt; cat secrets.json > seen.txt`)
+	req.Secrets = map[string]string{"GITHUB_TOKEN": "tok3n"}
+	resp, err := c.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	readLog(t, c, resp.Task.ID, 0)
+	dir := filepath.Join(tasks, resp.Task.ID)
+	if env, _ := os.ReadFile(filepath.Join(dir, "env.txt")); strings.Contains(string(env), "tok3n") || !strings.Contains(string(env), "SECRET=s3cret") {
+		t.Errorf("the task's environment:\n%s", env)
+	}
+	if seen, _ := os.ReadFile(filepath.Join(dir, "seen.txt")); string(seen) != `{"GITHUB_TOKEN":"tok3n"}` {
+		t.Errorf("the task read %q from %s", seen, spool.SecretsFile)
+	}
+	if info, err := os.Stat(filepath.Join(dir, spool.SecretsFile)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("%s mode = %v, %v", spool.SecretsFile, info, err)
+	}
+	if _, err := c.ReadFile(ctx, resp.Task.ID, spool.SecretsFile); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ReadFile %s = %v, want refused", spool.SecretsFile, err)
+	}
+	if names, err := c.Files(ctx, resp.Task.ID); err != nil || contains(names, spool.SecretsFile) {
+		t.Errorf("Files = %v, %v", names, err)
 	}
 }
 

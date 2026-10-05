@@ -35,14 +35,31 @@ type SandboxExecutor struct {
 	RepoDir string
 	// Env is the task's environment, tokens included; Run strips them.
 	Env []string
+	// Credentials is the recipe's. Under CredentialsClone no step gets a
+	// token from Env, and the clone step alone gets Secrets.
+	Credentials string
+	// Secrets are the task's (spool.SecretsFile) as KEY=VALUE: what the
+	// clone step clones with. Forgotten once it has run.
+	Secrets []string
 }
 
-// Uses runs NamedSteps[name] from lib.sh with the task's full environment.
-// The function name and with values go in as variables, never as source.
+// Uses runs NamedSteps[name] from lib.sh with the task's full environment,
+// or under CredentialsClone without its tokens, the clone step with the
+// task's secrets. The function name and with values go in as variables,
+// never as source.
 func (e *SandboxExecutor) Uses(ctx context.Context, name string, with map[string]string, log io.Writer) error {
 	fn, ok := NamedSteps[name]
 	if !ok {
 		return fmt.Errorf("unknown step %q", name)
+	}
+	base := e.Env
+	if e.Credentials == CredentialsClone {
+		base = withoutTokens(e.Env)
+	}
+	if name == CloneStep {
+		base = append(append([]string(nil), base...), e.Secrets...)
+		// One clone per task (Validate): the token is not kept for later.
+		defer func() { e.Secrets = nil }()
 	}
 	script := filepath.Join(e.TaskDir, "steps", "uses.sh")
 	if _, err := os.Stat(script); err != nil {
@@ -50,7 +67,7 @@ func (e *SandboxExecutor) Uses(ctx context.Context, name string, with map[string
 			return err
 		}
 	}
-	env := append(append([]string(nil), e.Env...), "RECIPE_STEP_FUNCTION="+fn)
+	env := append(append([]string(nil), base...), "RECIPE_STEP_FUNCTION="+fn)
 	for k, v := range with {
 		env = append(env, "WITH_"+envName(k)+"="+v)
 	}

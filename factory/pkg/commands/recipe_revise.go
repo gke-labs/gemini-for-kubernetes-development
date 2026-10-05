@@ -100,7 +100,7 @@ func runRevise(ctx context.Context, c *cobra.Command, target, reviseID string, f
 	if session == "" {
 		session = started.ID
 	}
-	it, err := parseGitHubItemURL(started.URL)
+	it, err := parseRecipeTarget(started.URL)
 	if err != nil {
 		return fmt.Errorf("task %s: %w", started.ID, err)
 	}
@@ -135,7 +135,9 @@ func runRevise(ctx context.Context, c *cobra.Command, target, reviseID string, f
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	envMap, err := recipeEnv(secret, it)
+	// No secrets: a revise has no clone step (recipe.Validate), so a
+	// credentials: clone recipe's token has nowhere to go.
+	envMap, _, err := recipeEnv(secret, it, rec.Credentials)
 	if err != nil {
 		return err
 	}
@@ -145,7 +147,7 @@ func runRevise(ctx context.Context, c *cobra.Command, target, reviseID string, f
 	task.Output = rec.OutputDecl()
 	task.TaskType = rec.TaskType
 	fmt.Printf("Revising %s in the session of task %s (task %s)...\n", reviseID, session, task.ID)
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, nil); err != nil || !done {
 		return err
 	}
 	if rec.TaskOutput != nil {

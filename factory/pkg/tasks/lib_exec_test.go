@@ -569,6 +569,27 @@ echo "HEAD=$(git log -1 --format=%s)"`
 	})
 }
 
+// TestCloneRepo: a credentials: clone recipe's clone leaves the token
+// nowhere: no git config written, no credential in the remote URL.
+func TestCloneRepo(t *testing.T) {
+	setup := `git init -q -b main "$HOME/up" && (builtin cd "$HOME/up" && git -c user.email=x@x -c user.name=x commit -q --allow-empty -m first)
+export CLONE_URL="$HOME/up"`
+	report := `
+echo "CLONED=$(git -C "$REPO_DIR/up" log -1 --format=%s)"
+echo "URL=$(git -C "$REPO_DIR/up" remote get-url origin)"
+echo "GLOBAL=$(git config --global --list 2>/dev/null | tr '\n' ' ')"`
+	out, _, err := runLib(t, []string{"GITHUB_TOKEN=tok3n"}, setup, "cloneRepo"+report)
+	if err != nil {
+		t.Fatalf("cloneRepo failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "CLONED=first") {
+		t.Errorf("not cloned:\n%s", out)
+	}
+	if strings.Contains(out, "tok3n") || !strings.Contains(out, "GLOBAL=\n") {
+		t.Errorf("the clone left the token or git config behind:\n%s", out)
+	}
+}
+
 // TestResetRepoGitConfig pins the repository-level settings left behind on a
 // long-lived workspace that broke later tasks: diff.external=false made
 // every `git diff` fail (fix-k8s-config-connector-13580), and a repository's

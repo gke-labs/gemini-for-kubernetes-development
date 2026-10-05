@@ -1,6 +1,6 @@
 # Design Note: Research as a Recipe
 
-**Status:** Phase 1 in progress: the Notes kind and `push-notes` built.
+**Status:** Phase 1 built: the Notes kind and `push-notes` (#1753); repo targets, `credentials: clone` and the `research` recipe.
 
 A research conversation is a member talking to an agent about a repository: "how does the reconciler handle deletes?", "what changed in the last two weeks?". It runs in its own sandbox, and its notes can be saved to the member's fork on `research/notes`. Today it is built on a separate mechanism from recipes. This note moves it onto one: a built-in **`research` recipe** whose start clones the repo and asks the kickoff, whose conversation is the task session, and whose **Save notes** is a revise that produces a **Notes** task output with a **`push-notes`** action.
 
@@ -31,18 +31,19 @@ name: research
 task-type: research
 credentials: clone          # see "Credentials" below
 context: |
-  You are helping a member understand the repository checked out in the
-  current directory. Answer from the code; say when you are guessing. …
+  You are helping a member of the project understand the repository
+  checked out in the current directory. Answer from the code, and say
+  plainly when you are guessing. …
 inputs:
-  topic: {description: What the member wants to understand, required: false}
-  kind:  {description: "topic | onboard | activity", default: topic}
-  since: {description: For activity, how far back, required: false}
+  topic: {description: What the member wants to understand, required: true}
 start:
   steps:
     - uses: clone
     - uses: configure-engine
     - ask: |
-        {{ template "kickoff" . }}
+        {{ .Inputs.topic }}
+
+        For context: the repository {{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }} … (topic.txt)
 revise:
   - id: notes
     label: Save notes
@@ -63,9 +64,9 @@ task-output:
     - {verb: push-notes, label: Save to research/notes}
 ```
 
-- **The kickoff prompts move into the recipe.** `kind` picks among onboard / activity / topic, the three templates `repo-agent/pkg/research` has today. The board only sends inputs.
+- **The kickoff prompt moves into the recipe.** Only topic's: the board sends kind topic and nothing else, so onboard and activity are not carried over. The board only sends inputs.
 - **The conversation is the task session.** The start ends after the kickoff's reply; the session is closed and the member continues it, as Continue session does for plans (session/load). Nothing research-specific is needed to keep talking.
-- **Start captures nothing.** A research task has no output until **Save notes**. The validation rule "a recipe with revises asks at least once in `start`" holds; `outputs` is only what revises capture.
+- **Start captures nothing.** A research task has no output until **Save notes**: a start that doesn't capture the task output's `from` gets no task output (and `recipe research` prints the revise to run instead). The validation rule "a recipe with revises asks at least once in `start`" holds; `outputs` is only what revises capture.
 - **Save notes can be clicked again.** Each click is a revise, a new task with its own `notes.md` and task output, written from the whole conversation so far.
 
 ### A repo target
@@ -73,11 +74,11 @@ task-output:
 `runRecipe` needs an issue or PR URL today and fills `issue_*`. Research targets a repository:
 
 ```
-factory recipe research <repo url> --input topic=… [--sandbox NAME] [--run-name NAME]
+factory recipe research --url <repo url> --topic … [--session ID] [--run-name NAME]
 ```
 
-- **The URL may be a repo.** `githubItem` gains a repo-only form (`Number` 0); `issue_*` inputs are left unset, and a recipe that references them fails validation for a repo target.
-- **One sandbox per conversation.** An issue recipe goes in the issue's sandbox (`fix-<repo>-N`). A repo recipe gets a new sandbox per run unless `--sandbox` names one. The board passes the name it gives the conversation today (`rsch-<slug>-<hash8>`), so rows, rename and delete keep their keys.
+- **The URL may be a repo.** `githubItem` gains a repo-only form (`Number` 0) with the inputs `repo_owner`, `repo_name`, `url` and `repo_url`. Every ask is rendered with the inputs before a sandbox is made, so a recipe that reads `issue_*` fails then for a repo target.
+- **One sandbox per conversation.** An issue recipe goes in the issue's sandbox (`fix-<repo>-N`). A repo recipe goes in the sandbox of its `--session`, named as a research session's is (`rsch-<slug>-<hash8>`, made by `EnsureResearchSandbox`), so the board passes the session id it has today and rows, rename and delete keep their keys. Without `--session` the run name is the session, else a new one. Once the task is handed over the sandbox gets the `research-ready` receipt, so it isn't taken for an interrupted launch's; both go in phase 3.
 - **Not a side task.** `task-type: research` makes it the sandbox's main task, so `last-task-*` reports research.
 
 ### Credentials
@@ -87,9 +88,15 @@ Research holds a stricter rule than plan: **the GitHub token is never on the san
 A recipe declares which rule it holds:
 
 - **`credentials: full`** (the default; plan, triage): as today.
-- **`credentials: clone`**: the token reaches only the `clone` named step, for that one exec. `clone` is a new lib.sh function (`cloneRepo`), today's `researchCheckoutScript`: clone or fetch with `-c credential.helper='!gh auth git-credential'`, the token in the environment, and nothing written to disk. In such a recipe, `setup-git`, `setup-repo` and `checkout-*` are refused at load time, and the runner gives the token to no other step.
+- **`credentials: clone`**: the token reaches only the `clone` named step, for that one exec. `clone` is a new lib.sh function (`cloneRepo`), today's `researchCheckoutScript`: clone or fetch with `-c credential.helper='!gh auth git-credential'`, the token in the environment, and nothing written to disk. In such a recipe `setup-git`, `setup-repo` and `checkout-*` are refused at load time, and so is any recipe without exactly one `clone`, in start, before the first ask: no agent runs while the token is held.
 
-`env.json` is already deleted once the daemon claims the task (`spool.go`), and the daemon holds the engine key in memory, as it does for plan sessions. Phase 1 checks that `configure-engine` writes no key to disk. If it does, a `credentials: clone` recipe passes the key only when the session is created, as research's header does today.
+**Not in the task's environment either.** A task's env becomes the runner's process environment, which the agent could read back from `/proc/<pid>/environ` for as long as the runner lives. So the CLI sends the token as the task's **secrets** (`PostRequest.Secrets`), not its env:
+
+- The task server writes them to `secrets.json` (0600) in the task directory, never serves it, and doesn't export it to the process. A server that doesn't advertise `secrets` in `/v1/version`, and the envd spool, refuse a task with secrets: recreate the sandbox.
+- The runner reads and deletes `secrets.json` first thing, refuses a `credentials: clone` recipe whose environment carries any GitHub token variable, gives the secrets to the `clone` step alone and forgets them once it has run.
+- A revise sends no secrets: it has no `clone`.
+
+The engine key stays in the environment: the agent holds it anyway. `configure-engine` writes `settings.json` only, no key.
 
 ### The Notes output and `push-notes`
 
@@ -111,7 +118,7 @@ actions: …
 
 ### repo-agent
 
-- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research <repo> --sandbox rsch-… --run-name research/<session>/<ts> --input …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits).
+- **Launch.** The Request verb `research` stays. The controller runs `factory recipe research --url <repo> --session <session> --run-name research/<session>/<ts> --topic …` instead of `factory research start` plus a kickoff. The kickoff annotation, its TTL, the 409, the `research-ready` receipt and `research-engine` all go. The recorded run says what ran, and the engine is the board's (claude still maps to gemini; see Known limits).
 - **The rail.** `GET /api/research` lists research sandboxes as today. Live state (busy / waiting / held) comes from the daemon's sessions, as the task-session view's does. Pending rows still come from Requests.
 - **Open.** A row opens the task-session view on its session. The research view's landing pane (box, overview, recent changes), terminal and mermaid rendering are kept and become how a research task session is shown.
 - **Rename, delete, title.** Kept as they are: annotations on the sandbox, and deleting the sandbox.
@@ -124,7 +131,7 @@ actions: …
 
 - **maxActive and idle pause.** Research sandboxes count toward `maxActive` today, although comments say they don't, and they are never paused. As recipe tasks they are paused when idle like issue sandboxes, and woken when opened (session/load brings the conversation back). They still count toward `maxActive` while awake.
 - **Mode.** `yolo` and auto-approve stay the research default, set on the session when it is created, as a recipe's are. `credentials: clone` is what makes that safe.
-- **The warm pool is orthogonal.** A pooled sandbox is a `--sandbox` name the controller hands over; the recipe doesn't change.
+- **The warm pool is orthogonal.** A pooled sandbox needs a way to hand over a sandbox not named after the session (a `--sandbox` flag then); the recipe doesn't change.
 - **No back-compat.** Existing research sandboxes are not migrated. They keep working until phase 3, then are deleted (with a yes). Saved notes on `research/notes` are untouched.
 
 ## Known limits
