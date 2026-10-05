@@ -287,6 +287,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 		DraftPR:       false,
 		PRLabel:       prLabel,
 		NoPR:          noPR,
+		TriggerLabel:  resolveTriggerLabel(cfg),
 		Disclose:      rootFlags.Disclose,
 	}
 
@@ -435,10 +436,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 // like "overseer,overseer,overseer/review" that ended up quoted verbatim in
 // agent-written PR descriptions.
 func resolvePRLabels(cfg *config.FactoryConfig, issue *githubv39.Issue, isIssue bool) string {
-	triggerLabel := "factory"
-	if cfg != nil && cfg.TriggerLabel != "" {
-		triggerLabel = cfg.TriggerLabel
-	}
+	triggerLabel := resolveTriggerLabel(cfg)
 
 	var allLabels []string
 	seen := make(map[string]bool)
@@ -462,4 +460,13 @@ func resolvePRLabels(cfg *config.FactoryConfig, issue *githubv39.Issue, isIssue 
 		}
 	}
 	return strings.Join(allLabels, ",")
+}
+
+// resolveTriggerLabel returns the configured trigger label, defaulting to
+// "factory". It doubles as the agent's name in PR attribution.
+func resolveTriggerLabel(cfg *config.FactoryConfig) string {
+	if cfg != nil && cfg.TriggerLabel != "" {
+		return cfg.TriggerLabel
+	}
+	return "factory"
 }
