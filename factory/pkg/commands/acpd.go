@@ -65,12 +65,20 @@ func NewACPDCommand(ctx context.Context) *cobra.Command {
 }
 
 // RunACPD serves until ctx ends, then stops accepting and ends every
-// session. Exported so `factory daemon` can start it in-process rather
-// than shelling out to a second copy of this binary.
+// session.
 func RunACPD(ctx context.Context, port int, stateDir, cwd string) error {
+	server := acpd.NewServer(stateDir, cwd)
+	defer server.Close()
+	klog.FromContext(ctx).Info("acpd", "stateDir", stateDir, "cwd", cwd)
+	return ServeACPD(ctx, port, server)
+}
+
+// ServeACPD serves server's sessions on port until ctx ends. The sessions
+// are the caller's to close: `factory daemon` serves the same ones on its
+// task server too.
+func ServeACPD(ctx context.Context, port int, server *acpd.Server) error {
 	log := klog.FromContext(ctx)
 
-	server := acpd.NewServer(stateDir, cwd)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: server.Handler(),
@@ -86,10 +94,9 @@ func RunACPD(ctx context.Context, port int, stateDir, cwd string) error {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
-		server.Close()
 	}()
 
-	log.Info("acpd listening", "port", port, "stateDir", stateDir, "cwd", cwd)
+	log.Info("acpd listening", "port", port)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("acpd listen: %w", err)
 	}

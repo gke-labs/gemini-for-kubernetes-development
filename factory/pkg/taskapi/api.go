@@ -13,6 +13,7 @@
 //	GET  /v1/tasks/{id}/files/{name}     one of them
 //	PUT  /v1/tasks/{id}/files/{name}     the applied marker, the only file a client writes
 //	POST /v1/tasks/{id}/cancel           end the task's process group
+//	     /v1/sessions[/...]              acpd's agent sessions, when the daemon hosts them
 //
 // The task directories stay what they are, so a task the server started
 // and one envd started read alike, by either.
@@ -31,6 +32,10 @@ const (
 // Version is what GET /v1/version answers.
 type Version struct {
 	API int `json:"api"`
+	// Sessions is the version of acpd's session API served under
+	// /v1/sessions, 0 when it is not: a separate number so that a client
+	// of tasks alone keeps working with a server that has none.
+	Sessions int `json:"sessions,omitempty"`
 }
 
 // PostRequest is a recipe task to start. The server builds the command

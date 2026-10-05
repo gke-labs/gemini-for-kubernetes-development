@@ -528,3 +528,15 @@ func TestHealthz(t *testing.T) {
 		t.Errorf("healthz returned %d, want 200", resp.StatusCode)
 	}
 }
+
+// A plain acpd, research's on :49984 as `factory acpd` runs it, has no
+// tasks for a session to belong to.
+func TestASessionForATaskNeedsAHostThatRunsTasks(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+	got := createFull(t, ts, `{"id":"plan-1","task":"plan-1","engine":"fake"}`)
+	defer got.Body.Close()
+	if got.StatusCode != http.StatusBadRequest {
+		t.Errorf("create = %d, want 400", got.StatusCode)
+	}
+}

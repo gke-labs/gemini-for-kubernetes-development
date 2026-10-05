@@ -72,14 +72,25 @@ func runDaemon(ctx context.Context) error {
 	if err != nil {
 		factoryBin = "factory"
 	}
-	launch := spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath)
+	// Every task gets a token, which drives its agent session.
+	tokens := taskapi.NewTokens()
+	launch := tokens.Wrap(spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath))
 	go spool.Watch(ctx, spool.IncomingDir, envd.DefaultTasksDir, 2*time.Second, launch)
 
-	// The same tasks over HTTP, on the loopback only: clients come in
-	// through a port-forward, which the API server authorises, rather
-	// than through envd, which nothing does.
+	// One registry of agent sessions, whichever way they are reached: two
+	// would each start an engine for the same id, writing one transcript.
+	sessions := acpd.NewServer(acpd.StateDirFromEnv(), sandbox.WorkspacesPath)
 	go func() {
-		server := taskapi.NewServer(spool.IncomingDir, envd.DefaultTasksDir, launch)
+		<-ctx.Done()
+		sessions.Close()
+	}()
+
+	// The same tasks over HTTP, and the agent sessions with them, on the
+	// loopback only: clients come in through a port-forward, which the
+	// API server authorises, rather than through envd, which nothing does.
+	server := taskapi.NewServer(spool.IncomingDir, envd.DefaultTasksDir, launch)
+	server.HostSessions(sessions, tokens)
+	go func() {
 		if err := taskapi.Serve(ctx, fmt.Sprintf("127.0.0.1:%d", taskapi.Port), server); err != nil {
 			log.Error(err, "task server exited")
 		}
@@ -88,16 +99,17 @@ func runDaemon(ctx context.Context) error {
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)
 
-	// Research sandboxes also serve agent conversations over HTTP. Started
-	// here rather than orchestrated from outside because this process is
-	// the sandbox's PID 1: anything else would need envd to start it, and
-	// acpd exists precisely so a conversation does not go through envd.
+	// Research sandboxes also serve the agent sessions on the pod's IP,
+	// for clients that predate the task server's. Started here rather than
+	// orchestrated from outside because this process is the sandbox's PID
+	// 1: anything else would need envd to start it, and acpd exists
+	// precisely so a conversation does not go through envd.
 	if os.Getenv(sandbox.EnvACPDEnable) != "" {
 		port := acpdPortFromEnv(ctx)
 		go func() {
 			// A failed acpd must not take the sandbox down with it — envd
 			// is what every other task type depends on.
-			if err := RunACPD(ctx, port, acpd.StateDirFromEnv(), sandbox.WorkspacesPath); err != nil {
+			if err := ServeACPD(ctx, port, sessions); err != nil {
 				log.Error(err, "acpd exited", "port", port)
 			}
 		}()

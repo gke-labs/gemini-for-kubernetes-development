@@ -1,6 +1,7 @@
 package acpd
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -33,10 +34,30 @@ const DefaultPort = 49984
 // which is the whole retention policy.
 const DefaultStateDir = "/workspaces/.acpd/sessions"
 
+// TaskTokenHeader carries a task's token. While a task runs, only the
+// task — the one process given its token — may create or drive its
+// session; everyone else watches.
+const TaskTokenHeader = "X-Factory-Task-Token"
+
+// Tasks is what acpd needs from a host that runs tasks, for sessions that
+// belong to one: where the task keeps its files, whether it is still
+// running, and the token it was started with.
+type Tasks interface {
+	// Dir is the task's directory, an error when there is no such task.
+	Dir(task string) (string, error)
+	Running(task string) bool
+	// Token is the token the task was started with, "" when it has none:
+	// it was not started by this host, or not since the host started.
+	Token(task string) string
+}
+
 // Server is acpd: a session registry and the HTTP surface over it.
 type Server struct {
 	stateDir string
 	cwd      string
+	// tasks is nil for an acpd that hosts no tasks, which then refuses
+	// sessions that name one.
+	tasks Tasks
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -51,6 +72,10 @@ func NewServer(stateDir, cwd string) *Server {
 		sessions: make(map[string]*Session),
 	}
 }
+
+// SetTasks lets sessions belong to the host's tasks. Called before the
+// server takes requests.
+func (s *Server) SetTasks(t Tasks) { s.tasks = t }
 
 // Handler builds the route table.
 func (s *Server) Handler() http.Handler {
@@ -108,6 +133,14 @@ type createSessionRequest struct {
 	// controller; see SessionConfig.AutoApprove for why a permissive Mode
 	// is not enough on its own.
 	AutoApprove bool `json:"autoApprove,omitempty"`
+	// Model is the model to start the engine on; empty, its default.
+	Model string `json:"model,omitempty"`
+	// Task makes the session the named task's: it is named after the task
+	// and kept in the task's directory, beside its output. While the task
+	// runs, only the task, sending its token in TaskTokenHeader, may
+	// create or drive it. Created again once the task has ended, by
+	// anybody, it continues the task's conversation.
+	Task string `json:"task,omitempty"`
 }
 
 type sessionResponse struct {
@@ -139,6 +172,11 @@ type sessionResponse struct {
 	// had, so the agent remembers the transcript above; false, it starts
 	// from nothing whatever the transcript holds.
 	Loaded bool `json:"loaded,omitempty"`
+	// Task is the task the session belongs to.
+	Task string `json:"task,omitempty"`
+	// Held says the session's task is running, so only the task may
+	// prompt, answer, switch mode, cancel or close it.
+	Held bool `json:"held,omitempty"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +202,27 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if cwd == "" {
 		cwd = s.cwd
 	}
+	dir := filepath.Join(s.stateDir, req.ID)
+	if req.Task != "" {
+		if s.tasks == nil {
+			writeError(w, http.StatusBadRequest, "this acpd runs no tasks")
+			return
+		}
+		if req.ID != req.Task {
+			writeError(w, http.StatusBadRequest, "a task's session is named after the task")
+			return
+		}
+		taskDir, err := s.tasks.Dir(req.Task)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		dir = filepath.Join(taskDir, "session")
+		if !s.isTask(req.Task, r) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("task %s is running: only the task may start its session", req.Task))
+			return
+		}
+	}
 
 	s.mu.Lock()
 	if _, exists := s.sessions[req.ID]; exists {
@@ -182,9 +241,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		APIKey:       apiKey,
 		AuthMethodID: req.AuthMethodID,
 		CWD:          cwd,
+		Model:        req.Model,
 		Mode:         req.Mode,
 		AutoApprove:  req.AutoApprove,
-		Dir:          filepath.Join(s.stateDir, req.ID),
+		Dir:          dir,
 	})
 	if err != nil {
 		s.mu.Lock()
@@ -194,13 +254,15 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sess.Task = req.Task
+
 	s.mu.Lock()
 	s.sessions[req.ID] = sess
 	s.mu.Unlock()
 
 	mode, _ := sess.Modes()
-	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD, "mode", mode, "loaded", sess.Loaded())
-	writeJSON(w, http.StatusCreated, describe(sess))
+	klog.FromContext(r.Context()).Info("session started", "session", sess.ID, "engine", sess.Engine, "cwd", sess.CWD, "mode", mode, "loaded", sess.Loaded(), "task", sess.Task)
+	writeJSON(w, http.StatusCreated, s.describe(sess))
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
@@ -210,7 +272,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, _ *http.Request) {
 		if sess == nil {
 			continue // reserved, still starting
 		}
-		out = append(out, describe(sess))
+		out = append(out, s.describe(sess))
 	}
 	s.mu.Unlock()
 
@@ -223,13 +285,18 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, describe(sess))
+	writeJSON(w, http.StatusOK, s.describe(sess))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	sess := s.sessions[id]
+	if sess != nil && s.heldFrom(sess, r) {
+		s.mu.Unlock()
+		writeHeld(w, sess)
+		return
+	}
 	delete(s.sessions, id)
 	s.mu.Unlock()
 
@@ -244,7 +311,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.lookup(w, r)
+	sess, ok := s.lookupToDrive(w, r)
 	if !ok {
 		return
 	}
@@ -340,7 +407,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.lookup(w, r)
+	sess, ok := s.lookupToDrive(w, r)
 	if !ok {
 		return
 	}
@@ -378,7 +445,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 // stop the turn first would throw away the work that produced it. The
 // engine applies the new mode to the next tool call either way.
 func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.lookup(w, r)
+	sess, ok := s.lookupToDrive(w, r)
 	if !ok {
 		return
 	}
@@ -410,11 +477,11 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, describe(sess))
+	writeJSON(w, http.StatusOK, s.describe(sess))
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.lookup(w, r)
+	sess, ok := s.lookupToDrive(w, r)
 	if !ok {
 		return
 	}
@@ -437,15 +504,74 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) (*Session, bool)
 	return sess, true
 }
 
+// lookupToDrive is lookup for a call that changes the session, refused to
+// all but its owner while the session's task runs.
+func (s *Server) lookupToDrive(w http.ResponseWriter, r *http.Request) (*Session, bool) {
+	sess, ok := s.lookup(w, r)
+	if !ok {
+		return nil, false
+	}
+	if s.heldFrom(sess, r) {
+		writeHeld(w, sess)
+		return nil, false
+	}
+	return sess, true
+}
+
+// held reports whether sess's task is running, which makes the session
+// the task's to drive.
+func (s *Server) held(sess *Session) bool {
+	return sess.Task != "" && s.tasks != nil && s.tasks.Running(sess.Task)
+}
+
+// heldFrom reports whether sess is held from the caller: its task runs and
+// the caller is not the task.
+func (s *Server) heldFrom(sess *Session, r *http.Request) bool {
+	return sess.Task != "" && !s.isTask(sess.Task, r)
+}
+
+// isTask reports whether the request may act for task: the task has ended,
+// so its session is anybody's, or the request carries its token.
+func (s *Server) isTask(task string, r *http.Request) bool {
+	if !s.tasks.Running(task) {
+		return true
+	}
+	token := s.tasks.Token(task)
+	return token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get(TaskTokenHeader)), []byte(token)) == 1
+}
+
+func writeHeld(w http.ResponseWriter, sess *Session) {
+	writeError(w, http.StatusConflict, fmt.Sprintf("session %s belongs to task %s, which is running: it can be watched, not driven", sess.ID, sess.Task))
+}
+
+// CloseTask ends the sessions that belong to task: it was cancelled, and
+// its agent goes with it.
+func (s *Server) CloseTask(task string) {
+	s.mu.Lock()
+	var closing []*Session
+	for id, sess := range s.sessions {
+		if sess != nil && sess.Task == task {
+			closing = append(closing, sess)
+			delete(s.sessions, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, sess := range closing {
+		_ = sess.Close()
+	}
+}
+
 func (s *Server) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.sessions)
 }
 
-func describe(sess *Session) sessionResponse {
+func (s *Server) describe(sess *Session) sessionResponse {
 	mode, available := sess.Modes()
 	return sessionResponse{
+		Task:           sess.Task,
+		Held:           s.held(sess),
 		ID:             sess.ID,
 		Engine:         sess.Engine,
 		CWD:            sess.CWD,

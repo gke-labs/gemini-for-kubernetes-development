@@ -1,6 +1,9 @@
 # Design Note: A Task Server for Recipe Tasks
 
-**Status:** Phase 1 built: the task server in `factory daemon`, the client over a port-forward, and recipe commands moved to it with envd as the fallback. Phases 2–5 are proposals.
+**Status:**
+- **Phase 1 built:** the task server in `factory daemon`, the client over a port-forward, and recipe commands moved to it with envd as the fallback.
+- **Phase 4 in part:** the daemon serves acpd's sessions under `/v1/sessions`, including sessions that belong to a task.
+- **Proposals:** the other phases, and the clients for those sessions.
 
 Recipe tasks (plan, triage) already run independently of whoever starts them. The daemon claims them from the spool and runs them in their own task directories (see [task-recipes-and-outputs.md](task-recipes-and-outputs.md)). But every client still talks to them through **envd**:
 
@@ -61,7 +64,23 @@ The server uses REST and JSON on `net/http`, with no code generation. This is th
 | `GET /v1/tasks/{id}/files` | The task directory's files, never `env.json`. |
 | `GET /v1/tasks/{id}/files/{name}` | One file. `env.json` returns 403. |
 | `PUT /v1/tasks/{id}/files/{name}` | Only the applied marker (`taskoutput.AppliedFile`) may be written. |
-| `POST /v1/tasks/{id}/cancel` `{"kill":bool}` | Ends the task's **process group**: SIGTERM with exit 143, or SIGKILL with exit 137 (a quota kill). |
+| `POST /v1/tasks/{id}/cancel` `{"kill":bool}` | Ends the task's **process group**: SIGTERM with exit 143, or SIGKILL with exit 137 (a quota kill). Also closes the task's agent session. |
+| `/v1/sessions[/...]` | acpd's session API (create, prompt, events, permission, mode, cancel, delete), served by the daemon. `GET /v1/version` reports `"sessions":1` when it is there. |
+
+### Agent sessions
+
+The daemon holds one acpd session registry.
+
+- **Who reaches it:** the task server mounts it under `/v1/sessions`. Research sandboxes (`ACPD_ENABLE`) also keep it on the pod IP's `:49984`, the same registry, until clients move to the port-forward.
+- **Sessions that belong to a task:** a create with `"task":"<id>"`:
+  - is named after the task;
+  - keeps its transcript and session record in `<taskDir>/session`.
+- **While the task runs, only the task may drive the session:**
+  - The daemon mints a token per task at launch and passes it in the task's environment as `FACTORY_TASK_TOKEN`. It is kept in memory and never written to disk.
+  - Creating the session, prompting, answering a permission, switching mode, cancelling and deleting need the token in `X-Factory-Task-Token`.
+  - Everyone else can read the session and follow its events. A refused call answers 409.
+- **Once the task has ended,** the session is anybody's. Creating it again loads the recorded conversation (`session/load`), so a member can continue a plan or triage where the task left off.
+- **Cancelling the task** closes its session.
 
 **Rules the server follows:**
 
@@ -112,5 +131,8 @@ Existing sandboxes keep their image until they are recreated (see the recipe-ske
 1. **Recipe tasks** (built): the server in the daemon, the client over a port-forward, recipe commands and `sandbox task` moved to it, envd fallback, and the RBAC marker in repo-agent.
 2. **Verify in cluster:** a factory image with the server, recreated sandboxes, and repo-agent's RBAC applied. Then confirm that plan and triage from the board run over the forward.
 3. **Classic tasks:** start them through the server too, with attach as a stream. Then the polling attach and the `kill` scripts go.
-4. **acpd behind the same surface:** proxy ACP sessions under `/v1/acp/...` on the loopback server and drop the `:49984` listener, so research sessions also go through the API server.
+4. **acpd behind the same surface:**
+   - **Done:** sessions under `/v1/sessions` on the loopback server, task-owned sessions, and `session/load`.
+   - **Next:** recipes drive their asks through it. repo-agent then reaches sessions over the port-forward: research first, then "Continue session" on plan and triage.
+   - **Last:** drop the `:49984` listener.
 5. **Retire envd for factory:** once no supported image lacks the server, remove the fallback and the envd Service from sandboxes.
