@@ -784,12 +784,27 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,
+		Revise:  taskRevise(taskDir),
 		Log:     os.Stdout,
 	}
 	if err := r.Run(ctx, rec); err != nil {
 		return err
 	}
 	return writeTaskOutput(taskDir, inputs, engine)
+}
+
+// taskRevise is the part task.json says the task runs, "" (start) for a
+// task started without one.
+func taskRevise(taskDir string) string {
+	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
+	if err != nil {
+		return ""
+	}
+	var task spool.Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		return ""
+	}
+	return task.Revise
 }
 
 // writeTaskOutput wraps the result the task declared (task.json's output)

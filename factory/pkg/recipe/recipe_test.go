@@ -21,7 +21,7 @@ func TestBuiltinTriageParses(t *testing.T) {
 	if len(data) == 0 || r.Name != "triage" || r.Context == "" {
 		t.Fatalf("recipe = %+v", r)
 	}
-	last := r.Steps[len(r.Steps)-1]
+	last := r.Start.Steps[len(r.Start.Steps)-1]
 	if last.Capture != "triage-output.yaml" || fmt.Sprint(r.Outputs) != "[triage-output.yaml]" {
 		t.Errorf("captures %q, outputs %v; want triage-output.yaml as both (what the CLI reads)", last.Capture, r.Outputs)
 	}
@@ -29,24 +29,24 @@ func TestBuiltinTriageParses(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	for name, y := range map[string]string{
-		"no name":          "steps: [{run: x}]",
+		"no name":          "start: {steps: [{run: x}]}",
 		"no steps":         "name: a",
-		"two kinds":        "name: a\nsteps: [{run: x, ask: y}]",
-		"no kind":          "name: a\nsteps: [{id: x}]",
-		"unknown uses":     "name: a\nsteps: [{uses: curl-the-token}]",
-		"with on run":      "name: a\nsteps: [{run: x, with: {a: b}}]",
-		"capture on run":   "name: a\nsteps: [{run: x, capture: out.txt}]",
-		"capture path":     "name: a\nsteps: [{ask: x, capture: ../out.txt}]",
-		"capture dotfile":  "name: a\nsteps: [{ask: x, capture: .bashrc}]",
-		"duplicate id":     "name: a\nsteps: [{id: a, run: x}, {id: a, run: y}]",
-		"bad id":           "name: a\nsteps: [{id: A-1, run: x}]",
-		"unknown field":    "name: a\nsteps: [{run: x, shell: zsh}]",
-		"continue on uses": "name: a\nsteps: [{uses: setup-git, continue-on-error: true}]",
-		"bad input name":   "name: a\ninputs: {Focus: {}}\nsteps: [{run: x}]",
-		"output path":      "name: a\noutputs: [../x]\nsteps: [{run: x}]",
-		"output dotfile":   "name: a\noutputs: [.env]\nsteps: [{run: x}]",
-		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nsteps: [{run: x}]",
-		"bad task type":    "name: a\ntask-type: Plan_1\nsteps: [{run: x}]",
+		"two kinds":        "name: a\nstart: {steps: [{run: x, ask: y}]}",
+		"no kind":          "name: a\nstart: {steps: [{id: x}]}",
+		"unknown uses":     "name: a\nstart: {steps: [{uses: curl-the-token}]}",
+		"with on run":      "name: a\nstart: {steps: [{run: x, with: {a: b}}]}",
+		"capture on run":   "name: a\nstart: {steps: [{run: x, capture: out.txt}]}",
+		"capture path":     "name: a\nstart: {steps: [{ask: x, capture: ../out.txt}]}",
+		"capture dotfile":  "name: a\nstart: {steps: [{ask: x, capture: .bashrc}]}",
+		"duplicate id":     "name: a\nstart: {steps: [{id: a, run: x}, {id: a, run: y}]}",
+		"bad id":           "name: a\nstart: {steps: [{id: A-1, run: x}]}",
+		"unknown field":    "name: a\nstart: {steps: [{run: x, shell: zsh}]}",
+		"continue on uses": "name: a\nstart: {steps: [{uses: setup-git, continue-on-error: true}]}",
+		"bad input name":   "name: a\ninputs: {Focus: {}}\nstart: {steps: [{run: x}]}",
+		"output path":      "name: a\noutputs: [../x]\nstart: {steps: [{run: x}]}",
+		"output dotfile":   "name: a\noutputs: [.env]\nstart: {steps: [{run: x}]}",
+		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nstart: {steps: [{run: x}]}",
+		"bad task type":    "name: a\ntask-type: Plan_1\nstart: {steps: [{run: x}]}",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
@@ -60,7 +60,7 @@ name: a
 inputs:
   focus: {default: all}
   target: {required: true}
-steps: [{run: x}]
+start: {steps: [{run: x}]}
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
-	for i, s := range r.Steps {
+	for i, s := range r.Start.Steps {
 		if s.Ask == "" {
 			continue
 		}
@@ -112,7 +112,7 @@ func TestBuiltinTriageRendersFromIssueInputs(t *testing.T) {
 }
 
 func TestOutputs(t *testing.T) {
-	r, err := Parse([]byte("name: a\noutputs: [diff.txt, reply.md]\nsteps: [{ask: x, capture: reply.md}]\n"))
+	r, err := Parse([]byte("name: a\noutputs: [diff.txt, reply.md]\nstart: {steps: [{ask: x, capture: reply.md}]}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,14 +177,15 @@ func TestRunnerRunsStepsAroundOneSession(t *testing.T) {
 	rec, err := Parse([]byte(`
 name: demo
 context: RULES
-steps:
-  - uses: setup-git
-  - id: tests
-    run: exit 3
-    continue-on-error: true
-  - ask: "fix {{ .Inputs.issue }}"
-  - ask: "tests exited {{ .Steps.tests.ExitCode }}; {{ file \"note.txt\" }}"
-    capture: out.txt
+start:
+  steps:
+    - uses: setup-git
+    - id: tests
+      run: exit 3
+      continue-on-error: true
+    - ask: "fix {{ .Inputs.issue }}"
+    - ask: "tests exited {{ .Steps.tests.ExitCode }}; {{ file \"note.txt\" }}"
+      capture: out.txt
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -217,9 +218,9 @@ steps:
 
 func TestRunnerStopsAtTheFirstFailure(t *testing.T) {
 	for name, y := range map[string]string{
-		"uses":     "name: a\nsteps: [{uses: setup-repo, with: {fail: \"yes\"}}, {ask: never}]",
-		"run":      "name: a\nsteps: [{run: exit 1}, {ask: never}]",
-		"template": "name: a\nsteps: [{ask: \"{{ .Inputs.missing }}\"}, {run: never}]",
+		"uses":     "name: a\nstart: {steps: [{uses: setup-repo, with: {fail: \"yes\"}}, {ask: never}]}",
+		"run":      "name: a\nstart: {steps: [{run: exit 1}, {ask: never}]}",
+		"template": "name: a\nstart: {steps: [{ask: \"{{ .Inputs.missing }}\"}, {run: never}]}",
 	} {
 		r, ex, sess, starts := newTestRunner(t)
 		rec, err := Parse([]byte(y))
@@ -380,7 +381,7 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.TaskOutput != nil || len(got.Steps) != len(rec.Steps) || got.Context != rec.Context {
+	if got.TaskOutput != nil || len(got.Start.Steps) != len(rec.Start.Steps) || got.Context != rec.Context {
 		t.Errorf("sandbox recipe differs beyond task-output: %+v", got)
 	}
 	if in := got.Inputs["instructions"]; in.Type != "" || in.Description != rec.Inputs["instructions"].Description {
@@ -389,7 +390,7 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 }
 
 func TestInputTypeValidated(t *testing.T) {
-	r := &Recipe{Name: "x", Steps: []Step{{Run: "true"}}, Inputs: map[string]Input{"a": {Type: "number"}}}
+	r := &Recipe{Name: "x", Start: Part{Steps: []Step{{Run: "true"}}}, Inputs: map[string]Input{"a": {Type: "number"}}}
 	if err := r.Validate(); err == nil {
 		t.Error("an unknown input type validated")
 	}
@@ -401,7 +402,7 @@ func TestInputTypeValidated(t *testing.T) {
 
 func TestTaskOutputValidated(t *testing.T) {
 	for _, to := range []string{"{kind: Poem, from: x.yaml}", "{kind: Triage, from: ../x}"} {
-		if _, err := Parse([]byte("name: x\nsteps: [{run: 'true'}]\ntask-output: " + to + "\n")); err == nil {
+		if _, err := Parse([]byte("name: x\nstart: {steps: [{run: 'true'}]}\ntask-output: " + to + "\n")); err == nil {
 			t.Errorf("task-output %s accepted", to)
 		}
 	}
@@ -432,7 +433,7 @@ func TestBuiltinPlanRenders(t *testing.T) {
 			t.Fatal(err)
 		}
 		var all strings.Builder
-		for i, s := range r.Steps {
+		for i, s := range r.Start.Steps {
 			if s.Ask == "" {
 				continue
 			}
@@ -464,7 +465,7 @@ func TestBuiltinPlanRenders(t *testing.T) {
 
 func TestTaskOutputActionsValidated(t *testing.T) {
 	for _, acts := range []string{"[{verb: merge}]", "[{verb: label}]", "[{verb: run, run: deploy}]"} {
-		if _, err := Parse([]byte("name: x\nsteps: [{run: 'true'}]\ntask-output: {kind: Plan, from: p.md, actions: " + acts + "}\n")); err == nil {
+		if _, err := Parse([]byte("name: x\nstart: {steps: [{run: 'true'}]}\ntask-output: {kind: Plan, from: p.md, actions: " + acts + "}\n")); err == nil {
 			t.Errorf("task-output actions %s accepted", acts)
 		}
 	}
@@ -484,5 +485,92 @@ func TestBuiltinActions(t *testing.T) {
 		if got := strings.Join(verbs, " "); got != want {
 			t.Errorf("%s actions = %s, want %s", name, got, want)
 		}
+	}
+}
+
+const reviseRecipe = `
+name: demo
+context: RULES
+outputs: [plan.md]
+start:
+  steps:
+    - ask: investigate
+    - id: write
+      ask: write it
+      capture: plan.md
+    - id: save
+      run: &save cp plan.md /somewhere
+revise:
+  - id: plan
+    label: Use as plan
+    steps:
+      - ask: "rewrite it for {{ .Inputs.issue }}"
+        capture: plan.md
+      - run: *save
+`
+
+func TestARevisePartRunsItsOwnStepsWithoutTheContext(t *testing.T) {
+	rec, err := Parse([]byte(reviseRecipe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ex, sess, _ := newTestRunner(t)
+	r.Revise = "plan"
+	if err := r.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(sess.prompts, "|"); got != "rewrite it for #7" {
+		t.Errorf("prompts = %q, want only the revise's ask, without the context the session already has", got)
+	}
+	if got := strings.Join(ex.ran, ","); got != "run:cp plan.md /somewhere" {
+		t.Errorf("ran %s, want the anchored save step", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.TaskDir, "plan.md")); string(b) != "reply 1" {
+		t.Errorf("plan.md = %q", b)
+	}
+
+	r, _, _, _ = newTestRunner(t)
+	r.Revise = "nope"
+	if err := r.Run(context.Background(), rec); err == nil || !strings.Contains(err.Error(), `no revise "nope"`) {
+		t.Errorf("an unknown revise: %v", err)
+	}
+}
+
+func TestRevisesAreValidated(t *testing.T) {
+	start := "name: a\noutputs: [p.md]\nstart: {steps: [{ask: x, capture: p.md}]}\n"
+	for name, y := range map[string]string{
+		"top-level steps":  "name: a\nsteps: [{run: x}]",
+		"bad id":           start + "revise: [{id: Plan, label: L, steps: [{ask: y, capture: p.md}]}]",
+		"duplicate id":     start + "revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}, {id: p, label: M, steps: [{ask: z, capture: p.md}]}]",
+		"no label":         start + "revise: [{id: p, steps: [{ask: y, capture: p.md}]}]",
+		"no steps":         start + "revise: [{id: p, label: L}]",
+		"bad step":         start + "revise: [{id: p, label: L, steps: [{run: y, capture: p.md}]}]",
+		"captures nothing": start + "revise: [{id: p, label: L, steps: [{ask: y}]}]",
+		"captures another": start + "revise: [{id: p, label: L, steps: [{ask: y, capture: other.md}]}]",
+		"start asks nothing": "name: a\noutputs: [p.md]\nstart: {steps: [{run: x}]}\n" +
+			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+	// Step ids are each part's own.
+	if _, err := Parse([]byte(start + "revise: [{id: redo-labels, label: L, steps: [{id: x, ask: y, capture: p.md}, {id: x2, run: z}]}]")); err != nil {
+		t.Errorf("a valid revise: %v", err)
+	}
+}
+
+func TestForSandboxKeepsAnchoredSteps(t *testing.T) {
+	data, err := ForSandbox([]byte(reviseRecipe + "task-output: {kind: Plan, from: plan.md}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Parse(data)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, data)
+	}
+	steps, _ := rec.Steps("plan")
+	if rec.TaskOutput != nil || len(steps) != 2 || steps[1].Run != "cp plan.md /somewhere" {
+		t.Errorf("revise steps = %+v\n%s", steps, data)
 	}
 }

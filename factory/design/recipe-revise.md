@@ -1,6 +1,6 @@
 # Design Note: Revising a Task's Output from Its Conversation
 
-**Status:** Proposal.
+**Status:** Phase 1 (the recipe shape) built; phases 2–4 not yet.
 
 A recipe task (plan, triage) runs its asks in one agent session. Since #1746 a member can open that session after the task ends and keep talking to the agent: "why this approach?", "make step 3 smaller". This note covers turning that conversation into a new version of the task's output. The recipe declares **revise** parts, each a short list of steps that write the output again. factory runs a revise into the same session. Each revise appears as an action on the task output, so the board shows it as a button, for example **Use as plan**.
 
@@ -84,7 +84,7 @@ task-output:
 - **`steps` at the top level is gone.** Recipes move under `start`, the built-in ones included. Sandboxes on older images are recreated, not supported.
 
 **Validation** (when a recipe is loaded):
-- `start` has at least one ask, so there is a session to revise into.
+- A recipe with revises asks at least once in `start`, so there is a session to revise into. A recipe without revises may be all `run` steps.
 - Each revise has a unique `id`, a `label`, and at least one ask whose `capture` is a file in `outputs`. A revise that captures nothing would change nothing.
 - `{{ .Steps.<id> }}` reaches steps of the same part only.
 
@@ -144,7 +144,7 @@ actions:
 
 ## Phases
 
-1. **factory, recipe shape.** `start` / `revise` in `pkg/recipe`, validation, the built-in recipes moved under `start`, the runner running a selected part.
+1. **factory, recipe shape (built).** `start` / `revise` in `pkg/recipe`, validation, the built-in recipes moved under `start`, the runner running the part `task.json`'s `revise` names (start when unset).
 2. **factory, revise.** `session` in `task.json`, the daemon holding a started task's session for a running revise, `factory recipe revise`, revise actions in task outputs, `session` in `source`. Plan gets **Use as plan**.
 3. **repo-agent.** Request verb `revise`, launch and harvest, `session` in the recorded run, the buttons.
 4. **Triage revises,** once plan's has been used.
