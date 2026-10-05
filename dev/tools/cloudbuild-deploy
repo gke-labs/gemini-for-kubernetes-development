@@ -24,8 +24,8 @@
 #     [--board barney-s/gemini-for-kubernetes-development] [--build-only|--deploy-only] [--only <image>]...
 #
 # --board points that RepoBoard's sandboxes at the factory-golang just
-# built (spec.image); sandboxes made from then on use it. Clear it with
-#   kubectl patch repoboard -n <ns> <name> --type=json -p='[{"op":"remove","path":"/spec/image"}]'
+# built (spec.sandbox.image); sandboxes made from then on use it. Clear it with
+#   kubectl patch repoboard -n <ns> <name> --type=json -p='[{"op":"remove","path":"/spec/sandbox/image"}]'
 
 set -o errexit
 set -o nounset
@@ -142,5 +142,5 @@ fi
 for board in "${BOARDS[@]+"${BOARDS[@]}"}"; do
   ns="${board%%/*}" name="${board#*/}"
   echo "--- ${board}: sandboxes use ${REGISTRY}/factory-golang:${SHA}"
-  kubectl patch repoboard -n "${ns}" "${name}" --type=merge -p "{\"spec\":{\"image\":\"${REGISTRY}/factory-golang:${SHA}\"}}"
+  kubectl patch repoboard -n "${ns}" "${name}" --type=merge -p "{\"spec\":{\"sandbox\":{\"image\":\"${REGISTRY}/factory-golang:${SHA}\"}}}"
 done
