@@ -51,7 +51,7 @@ func TestWriteTaskOutputOfARevise(t *testing.T) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}}
+	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}}
 	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Revise: "plan", Session: "recipe-plan-20261004-101010-0001",
 		Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
 		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})

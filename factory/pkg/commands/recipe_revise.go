@@ -30,7 +30,7 @@ func newRecipeReviseCommand(ctx context.Context) *cobra.Command {
 
 A member can keep talking to a recipe task's agent once the task has ended
 (the board's Continue session). A revise — one of the recipe's revise:
-parts, such as the plan recipe's "plan" (Use as plan) — asks into that
+parts, such as the plan recipe's "plan" (Update plan) — asks into that
 same session, as the next turn, and captures the result again.
 
 It runs as a new task in the same sandbox, with the started task's inputs,

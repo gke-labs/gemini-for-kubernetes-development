@@ -236,14 +236,14 @@ actions:
   - verb: reject
   - verb: revise
     revise: plan
-    label: Use as plan
+    label: Update plan
 `,
 		}, 1)
 	_, r, dyn, rt := boardTestServerWithRT(t, gh, boardCR(), planSandbox)
 	h := actionHarness{t: t, r: r, dyn: dyn, rt: rt, number: 42}
 
 	acts := h.row().PlanActions
-	if len(acts) != 3 || acts[2].Verb != "revise" || acts[2].Revise != "plan" || acts[2].Label != "Use as plan" || !acts[2].Enabled {
+	if len(acts) != 3 || acts[2].Verb != "revise" || acts[2].Revise != "plan" || acts[2].Label != "Update plan" || !acts[2].Enabled {
 		t.Fatalf("plan actions = %+v", acts)
 	}
 	if w := h.act("Plan", "revise", "other", ""); w.Code != http.StatusBadRequest {

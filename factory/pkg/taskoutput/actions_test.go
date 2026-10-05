@@ -67,7 +67,7 @@ func TestOffered(t *testing.T) {
 
 // Each revise is an action of its own, offered by its id.
 func TestRevisesAreOfferedByID(t *testing.T) {
-	acts := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}, {Verb: "revise", Revise: "shorter"}}
+	acts := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}, {Verb: "revise", Revise: "shorter"}}
 	if err := ValidateActions("Plan", acts); err != nil {
 		t.Fatal(err)
 	}

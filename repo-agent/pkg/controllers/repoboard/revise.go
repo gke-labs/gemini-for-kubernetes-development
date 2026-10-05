@@ -30,7 +30,7 @@ import (
 )
 
 // Revises: a plan draft rewritten from the conversation a member
-// continued in the plan's agent session (Use as plan). `factory recipe
+// continued in the plan's agent session (Update plan). `factory recipe
 // revise` asks the recipe's revise into that session, as its next turn,
 // and its result is a Plan task output, stored as the draft as a plan's
 // is. It posts nothing. The Request stands until the new draft is stored,

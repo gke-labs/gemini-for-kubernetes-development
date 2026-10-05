@@ -605,25 +605,22 @@ describe('WorkRow draft actions', () => {
         expect(posted()).toContainEqual(['/api/board/myboard/issues/8/actions/run', { kind: 'Plan', run: 'fix', text: '' }]);
     });
 
-    test('a plan\'s revise is filed by its id, with nothing to confirm', async () => {
+    test('a plan\'s revise is the session\'s to click, not the row\'s', async () => {
         global.fetch = ok();
-        const revisable = { ...plan, planActions: [...plan.planActions, { verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: true }] };
-        await open(revisable);
-        await act(async () => { findButton('Use as plan').click(); });
-        await flush();
-        expect(window.confirm).not.toHaveBeenCalled();
-        expect(posted()).toContainEqual(['/api/board/myboard/issues/8/actions/revise', { kind: 'Plan', run: '', text: '', revise: 'plan' }]);
+        await open({ ...plan, planActions: [...plan.planActions, { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true }] });
+        expect(findButton('Update plan')).toBeUndefined();
+        expect(findButton('Post plan')).toBeDefined();
     });
 
-    test('a revise in flight holds the plan\'s other writes', async () => {
+    test('a revise in flight holds the plan\'s writes on the row', async () => {
         global.fetch = ok();
         await open({
             ...plan, planActions: [
                 { verb: 'comment', label: 'Post plan', enabled: false, reason: 'the plan is being revised' },
-                { verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: false, reason: 'revising' },
+                { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: false, reason: 'revising' },
             ],
         });
-        expect(findButton('Use as plan…').disabled).toBe(true);
+        expect(findButton('Post plan').disabled).toBe(true);
         expect(findButton('Post plan').title).toBe('Not now: the plan is being revised');
     });
 

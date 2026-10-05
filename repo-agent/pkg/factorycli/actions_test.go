@@ -72,10 +72,10 @@ actions:
   - verb: comment
   - verb: revise
     revise: plan
-    label: Use as plan
+    label: Update plan
   - verb: revise
 `
-	want := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}}
+	want := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}}
 	if got := OfferedActions("Plan", doc); !reflect.DeepEqual(got, want) {
 		t.Errorf("OfferedActions = %+v, want %+v", got, want)
 	}

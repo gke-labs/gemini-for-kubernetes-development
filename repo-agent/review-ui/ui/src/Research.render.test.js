@@ -1870,35 +1870,57 @@ describe('ResearchConversation on a task session', () => {
         expect(container.textContent).not.toContain('The task is still running');
     });
 
-    test('the draft\'s revises are buttons that file the revise on its board row', async () => {
-        await render({
-            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan' }],
-        });
+    test('the draft\'s revises are buttons that file the revise on its board row, and follow it', async () => {
+        const offered = { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true };
+        await render({ sessionId: task.task, repo: 'granule', board: 'granule', number: 42, revises: [offered] });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Use as plan');
-        expect(button.disabled).toBe(false);
-        global.fetch = jest.fn(() => reply(202, { request: 'r' }));
-        await act(async () => { button.click(); });
-        await flush();
-        expect(global.fetch).toHaveBeenCalledWith('/api/board/granule/issues/42/actions/revise', expect.objectContaining({
-            method: 'POST',
-            body: JSON.stringify({ kind: 'Plan', revise: 'plan' }),
-        }));
-        expect(container.textContent).toContain('becomes the draft on the board');
+        const button = () => [...container.querySelectorAll('button')].find(b => b.textContent.startsWith('Update plan'));
+        expect(button().disabled).toBe(false);
+
+        let status = { ...offered, enabled: false, reason: 'revising' };
+        global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST'
+            ? reply(202, { request: 'r' })
+            : reply(200, { sessionId: task.task, board: 'granule', number: 42, revises: [status] })));
+        jest.useFakeTimers();
+        try {
+            await act(async () => { button().click(); });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+            expect(global.fetch).toHaveBeenCalledWith('/api/board/granule/issues/42/actions/revise', expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ kind: 'Plan', revise: 'plan' }),
+            }));
+            expect(button().textContent).toBe('Update plan…');
+            expect(button().disabled).toBe(true);
+
+            status = offered;
+            await act(async () => { jest.advanceTimersByTime(3000); });
+            await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+        } finally {
+            jest.useRealTimers();
+        }
+        expect(button().disabled).toBe(false);
+        expect(container.textContent).toContain('now the draft on the board');
+    });
+
+    test('a revise that failed says why', async () => {
+        await render({
+            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true, error: 'the session is busy' }],
+        });
+        expect(container.textContent).toContain('Update plan failed: the session is busy');
     });
 
     test('a revise waits for the turn in flight, and for a running task', async () => {
         await render({
             sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan' }],
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan' }],
         });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: true, held: true, task: task.task, offset: 0 } });
         });
-        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Use as plan');
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Update plan');
         expect(button.disabled).toBe(true);
     });
 
@@ -1907,7 +1929,7 @@ describe('ResearchConversation on a task session', () => {
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Use as plan')).toBe(false);
+        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Update plan')).toBe(false);
     });
 
     test('an older image falls back to the terminal', async () => {

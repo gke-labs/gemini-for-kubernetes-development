@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
@@ -183,6 +184,7 @@ func (s *Server) getTaskSession(c *gin.Context) {
 	if revises := planRevises(conn.sandbox, conn.task); len(revises) > 0 {
 		// Where to file them: the plan draft's row.
 		n, _ := factorycli.IssueOf(conn.sandbox, conn.repo())
+		s.markRevises(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), annotations[annoBoard], n, revises)
 		body["revises"], body["board"], body["number"] = revises, annotations[annoBoard], n
 	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.task)
@@ -211,7 +213,7 @@ func (s *Server) getTaskSession(c *gin.Context) {
 
 // planRevises are the revises the sandbox's plan draft offers, when task
 // is the session the draft came from: rewriting the plan from this
-// conversation (Use as plan). None once the plan is approved, or for a
+// conversation (Update plan). None once the plan is approved, or for a
 // session that is not the draft's.
 func planRevises(sb *unstructured.Unstructured, task string) []models.WorkAction {
 	a := sb.GetAnnotations()
@@ -232,6 +234,28 @@ func planRevises(sb *unstructured.Unstructured, task string) []models.WorkAction
 		}
 	}
 	return out
+}
+
+// markRevises says on a session's revises what the revise Requests filed
+// on the draft's row say, as markApplies does on the row: one standing is
+// "revising", and the last one failed carries why. This view is where a
+// revise is clicked, so it is where it is followed.
+func (s *Server) markRevises(ctx context.Context, namespace, board string, number int, revises []models.WorkAction) {
+	reqs, err := s.listRequests(ctx, namespace, v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelBoard + "=" + board + "," + boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRevise,
+	})
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	// Newest first: the newest Request for a revise is the word on it.
+	for _, req := range reqs {
+		if req.Spec.Number != number || seen[req.Spec.Key()] {
+			continue
+		}
+		seen[req.Spec.Key()] = true
+		markRevise(revises, req)
+	}
 }
 
 // promptTaskSession sends one turn, continuing the session first if need
