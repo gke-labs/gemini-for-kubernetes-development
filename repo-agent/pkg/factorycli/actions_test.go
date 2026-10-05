@@ -61,3 +61,32 @@ actions:
 		t.Errorf("run deploy offered: %+v", got)
 	}
 }
+
+// A plan's revises are offered by id; one without an id is no action.
+func TestOfferedRevises(t *testing.T) {
+	doc := `kind: Plan
+source:
+  task: recipe-plan-2
+  session: recipe-plan-1
+actions:
+  - verb: comment
+  - verb: revise
+    revise: plan
+    label: Use as plan
+  - verb: revise
+`
+	want := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}}
+	if got := OfferedActions("Plan", doc); !reflect.DeepEqual(got, want) {
+		t.Errorf("OfferedActions = %+v, want %+v", got, want)
+	}
+	if got := TaskOutputSession("Plan", doc); got != "recipe-plan-1" {
+		t.Errorf("session = %q, want the one the revise revised in", got)
+	}
+	if got := TaskOutputSession("Plan", "kind: Plan\nsource:\n  task: recipe-plan-1\n"); got != "recipe-plan-1" {
+		t.Errorf("session of a start = %q, want its task", got)
+	}
+	// Not yet a triage's.
+	if got := OfferedActions("Triage", "kind: Triage\nactions:\n  - verb: revise\n    revise: comment\n"); len(got) != 0 {
+		t.Errorf("triage revise offered: %+v", got)
+	}
+}

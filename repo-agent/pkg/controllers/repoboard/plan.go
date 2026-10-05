@@ -44,7 +44,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if sb != nil {
 		name = sb.GetName()
 	}
-	key := fmt.Sprintf("%s/plan-%s-%d", req.member, work.repo, req.issue)
+	key := planKey(work, req.member, req.issue)
 
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
@@ -60,7 +60,8 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if !needFresh && !needRefine {
 		return
 	}
-	if r.Factory.IsRunning(key) {
+	// Nor while a revise rewrites the draft.
+	if r.Factory.IsRunning(key) || r.Factory.IsRunning(reviseKey(work, req.member, req.issue)) {
 		return
 	}
 

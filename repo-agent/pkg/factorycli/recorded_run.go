@@ -18,8 +18,11 @@ const (
 
 // RecordedRun is the run factory recorded on a sandbox.
 type RecordedRun struct {
-	Name      string    `json:"name,omitempty"`
-	Task      string    `json:"task"`
+	Name string `json:"name,omitempty"`
+	Task string `json:"task"`
+	// Session is the task whose agent session a revise ran in; empty for
+	// a task that ran in its own.
+	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 }
 
@@ -39,12 +42,17 @@ func RecordedRunName(annotations map[string]string, key string, since time.Time)
 	return run.Name, true
 }
 
-// RecordedRunTask is the task id of the run recorded under key, empty
-// when there is none. The task's agent session is named after it.
-func RecordedRunTask(annotations map[string]string, key string) string {
+// RecordedRunSession is the agent session of the run recorded under key,
+// empty when there is none: the run's task's, or for a revise, the
+// session it revised in, so every revise of a plan is one conversation.
+// A session is named after the task that started it.
+func RecordedRunSession(annotations map[string]string, key string) string {
 	var run RecordedRun
 	if err := json.Unmarshal([]byte(annotations[key]), &run); err != nil {
 		return ""
+	}
+	if run.Session != "" {
+		return run.Session
 	}
 	return run.Task
 }

@@ -110,6 +110,7 @@ const (
 	reviewStatePending      = "pending"
 	defaultRequeue          = time.Minute
 	applyRequeue            = 5 * time.Second
+	reviseRequeue           = 15 * time.Second
 	launchRetryBackoff      = 30 * time.Minute
 	prWatchRelaunchInterval = 10 * time.Minute
 	draftPRInstruction      = "Open the pull request as a draft pull request."
@@ -361,6 +362,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensurePlan(ctx, work, req)
 	}
 	r.ensureApplies(ctx, work, mail.applies)
+	r.ensureRevises(ctx, work, mail.revises)
 
 	// PR follow-up claims convert (or launch) BEFORE the resume passes:
 	// the ownership annotations they stamp are what stops resumeReviews
@@ -413,6 +415,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// than leave the button saying "posting" for a minute.
 	if len(mail.applies) > 0 {
 		return ctrl.Result{RequeueAfter: applyRequeue}, nil
+	}
+	// A revise is a turn or two of the agent: a minute is long to wait
+	// for its plan after watching the agent write it.
+	if len(mail.revises) > 0 {
+		return ctrl.Result{RequeueAfter: reviseRequeue}, nil
 	}
 	return ctrl.Result{RequeueAfter: defaultRequeue}, nil
 }
@@ -640,6 +647,7 @@ type mailbox struct {
 	runbooks []runbookClaim
 	research []researchClaim
 	applies  []*boardv1alpha1.Request
+	revises  []*boardv1alpha1.Request
 }
 
 // prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet

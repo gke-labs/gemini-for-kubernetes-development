@@ -52,6 +52,7 @@ type fakeLaunch struct {
 	PRWatchOpts   *factorycli.PRWatchOptions
 	TriageOpts    *factorycli.TriageOptions
 	PlanOpts      *factorycli.PlanOptions
+	ReviseOpts    *factorycli.ReviseOptions
 	PRTaskOpts    *factorycli.PRTaskOptions
 	PRTaskKind    string
 	RunOpts       *factorycli.RunOptions
@@ -117,6 +118,16 @@ func (f *fakeLauncher) StartPlan(key string, opts factorycli.PlanOptions) bool {
 		return false
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, PlanOpts: &opts})
+	return true
+}
+
+func (f *fakeLauncher) StartRevise(key string, opts factorycli.ReviseOptions) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, fakeLaunch{Key: key, ReviseOpts: &opts})
 	return true
 }
 

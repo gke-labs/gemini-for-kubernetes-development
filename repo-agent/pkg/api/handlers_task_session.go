@@ -44,7 +44,9 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 )
 
@@ -178,6 +180,11 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		"cwd":     conn.cwd(),
 		"live":    false,
 	}
+	if revises := planRevises(conn.sandbox, conn.task); len(revises) > 0 {
+		// Where to file them: the plan draft's row.
+		n, _ := factorycli.IssueOf(conn.sandbox, conn.repo())
+		body["revises"], body["board"], body["number"] = revises, annotations[annoBoard], n
+	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.task)
 	switch {
 	case err == nil:
@@ -200,6 +207,31 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		body["unreachable"] = err.Error()
 	}
 	c.JSON(http.StatusOK, body)
+}
+
+// planRevises are the revises the sandbox's plan draft offers, when task
+// is the session the draft came from: rewriting the plan from this
+// conversation (Use as plan). None once the plan is approved, or for a
+// session that is not the draft's.
+func planRevises(sb *unstructured.Unstructured, task string) []models.WorkAction {
+	a := sb.GetAnnotations()
+	if a[annoPlanDraft] == "" || a[annoPlanApproved] != "" || a[annoBoard] == "" {
+		return nil
+	}
+	session := factorycli.TaskOutputSession("Plan", a[factorycli.AnnotationPlanOutput])
+	if session == "" {
+		session = factorycli.RecordedRunSession(a, factorycli.AnnotationPlanRun)
+	}
+	if session != task {
+		return nil
+	}
+	var out []models.WorkAction
+	for _, act := range factorycli.OfferedActions("Plan", a[factorycli.AnnotationPlanOutput]) {
+		if act.Verb == "revise" {
+			out = append(out, models.WorkAction{Verb: act.Verb, Revise: act.Revise, Label: act.Label, Enabled: true})
+		}
+	}
+	return out
 }
 
 // promptTaskSession sends one turn, continuing the session first if need

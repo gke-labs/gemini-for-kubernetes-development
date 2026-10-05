@@ -85,3 +85,36 @@ func TestExtractPlanOtherKind(t *testing.T) {
 		t.Errorf("a Triage document read as a plan: %q", got)
 	}
 }
+
+// A revise runs in the plan's sandbox and session and is read back as a
+// plan is, by its run name.
+func TestStartReviseRunsTheRecipeRevise(t *testing.T) {
+	bin, argsLog := fakeFactory(t, `recipe) echo "Revising plan in the session of task recipe-plan-1..." ;;
+sandbox) cat <<'DOC'
+`+planTaskOutput+`DOC
+;;
+*) exit 9 ;;`)
+	r := &Runner{Binary: bin, running: map[string]struct{}{}, results: map[string]Result{}}
+	r.StartRevise("alice/revise-plan-repo-5", ReviseOptions{
+		Namespace: "alice", SandboxName: "fix-repo-5", Revise: "plan", Session: "recipe-plan-1", RunName: "revise/b/5/plan/1",
+	})
+	res := waitResult(t, r, "alice/revise-plan-repo-5")
+	if res.Err != nil {
+		t.Fatalf("run: %v\n%s", res.Err, res.Output)
+	}
+	if got := ExtractPlan(res.Output); got != planMarkdown {
+		t.Errorf("draft = %q, want %q", got, planMarkdown)
+	}
+	args := readArgs(t, argsLog)
+	if len(args) != 2 {
+		t.Fatalf("commands run = %q, want recipe revise then sandbox task output", args)
+	}
+	for _, want := range []string{"--task recipe-plan-1", "--namespace alice", "--abort-on-cancel=false"} {
+		if !strings.HasPrefix(args[0], "recipe revise fix-repo-5 plan --run-name revise/b/5/plan/1 ") || !strings.Contains(args[0], want) {
+			t.Errorf("revise args = %q, want %q", args[0], want)
+		}
+	}
+	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --run-name revise/b/5/plan/1") {
+		t.Errorf("output args = %q", args[1])
+	}
+}

@@ -195,4 +195,50 @@ func TestTheBoardNamesTheRecordedRunsSession(t *testing.T) {
 	if got := taskSession(nil, factorycli.AnnotationPlanRun); got != nil {
 		t.Errorf("no sandbox, yet %+v", got)
 	}
+
+	// After a revise, the recorded run is the revise's; the session is
+	// still the plan's, the one conversation.
+	run, _ := json.Marshal(factorycli.RecordedRun{Name: "revise/b/42/plan/2", Task: "recipe-plan-2", Session: planTask, StartedAt: time.Unix(1_000_100, 0)})
+	a := sb.GetAnnotations()
+	a[factorycli.AnnotationPlanRun] = string(run)
+	sb.SetAnnotations(a)
+	if got := taskSession(sb, factorycli.AnnotationPlanRun); got == nil || got.Task != planTask {
+		t.Errorf("plan session after a revise = %+v", got)
+	}
+}
+
+// The session a plan draft came from offers its revises, with where to
+// file them; another session, or an approved plan, offers none.
+func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
+	withDraft := func(approved bool) *unstructured.Unstructured {
+		sb := issueSandboxCR("alice", 1)
+		a := sb.GetAnnotations()
+		a[annoPlanDraft] = "## Summary\nA plan."
+		a[annoBoard] = "myboard"
+		a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
+			"source:\n  task: recipe-plan-2\n  session: " + planTask + "\n" +
+			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Use as plan\n"
+		if approved {
+			a[annoPlanApproved] = "2026-10-04T00:00:00Z"
+		}
+		sb.SetAnnotations(a)
+		return sb
+	}
+	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(false)},
+		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
+	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
+	for _, want := range []string{`"revises":[{"verb":"revise","revise":"plan","label":"Use as plan","enabled":true}]`, `"board":"myboard"`, `"number":42`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("status lacks %s: %s", want, w.Body.String())
+		}
+	}
+	if w := doJSON(t, r, http.MethodGet, "/api/task-sessions/"+issueSandbox+"/recipe-triage-1", ""); strings.Contains(w.Body.String(), `"revises"`) {
+		t.Errorf("another session offers the plan's revises: %s", w.Body.String())
+	}
+
+	r = taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(true)},
+		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
+	if w := doJSON(t, r, http.MethodGet, taskSessionAt, ""); strings.Contains(w.Body.String(), `"revises"`) {
+		t.Errorf("an approved plan offers revises: %s", w.Body.String())
+	}
 }
