@@ -70,8 +70,7 @@ func ResearchSandboxName(repo, sessionID string) string {
 const ResearchRunAnnotation = "sandbox.gemini.google.com/research-run"
 
 // ResearchTask is the task whose session a research sandbox's conversation
-// is, empty for a sandbox `factory research start` made, whose
-// conversation is acpd's.
+// is, empty for a sandbox the recipe did not start.
 func ResearchTask(annotations map[string]string) string {
 	return RecordedRunSession(annotations, ResearchRunAnnotation)
 }
@@ -153,67 +152,5 @@ func researchArgs(opts ResearchOptions, timeout time.Duration) []string {
 	// Deliberately no --secret: mounting the member secret would put the
 	// engine key on the sandbox's disk, where the agent running in it
 	// could read it.
-	return args
-}
-
-// SaveNotesOptions are the inputs for a `factory research save-notes`
-// invocation: push what one conversation wrote to the member's fork.
-type SaveNotesOptions struct {
-	Namespace string
-	RepoURL   string
-	// SessionID names the sandbox to attach to.
-	SessionID string
-	// Note is the file under the notes root that gets pushed. Empty
-	// means <session id>.md, which is what `factory research
-	// save-notes` falls back to on its own.
-	Note string
-	// GithubToken is what the push is made with. It reaches the sandbox
-	// as an environment variable on a single exec and is never written
-	// down there — which is the whole reason this is a separate verb
-	// rather than something the conversation does for itself.
-	GithubToken string
-	Timeout     time.Duration
-}
-
-// StartSaveNotes launches `factory research save-notes` for key unless
-// one is already running.
-//
-// Asynchronous like the rest, and for once that costs nothing: the
-// member asked for the note in the conversation and is watching the
-// conversation, not this. A caller harvests the outcome via LastResult.
-//
-// No preflight probe, for the same reason as StartResearch: this runs a
-// shell script over an exec, not a factory task with an annotation to
-// probe.
-func (r *Runner) StartSaveNotes(key string, opts SaveNotesOptions) bool {
-	timeout := saveNotesTimeout(opts)
-	return r.start(key, saveNotesArgs(opts, timeout), opts.GithubToken, timeout)
-}
-
-// saveNotesTimeout bounds a clone of one prose branch, a copy and a
-// push. Minutes rather than the twenty a sandbox create gets: there is
-// no image pull and no checkout here, so anything this slow is stuck.
-func saveNotesTimeout(opts SaveNotesOptions) time.Duration {
-	if opts.Timeout > 0 {
-		return opts.Timeout
-	}
-	return 5 * time.Minute
-}
-
-// saveNotesArgs is the command line, split out so the contract with
-// factory can be asserted without spawning anything.
-func saveNotesArgs(opts SaveNotesOptions, timeout time.Duration) []string {
-	args := []string{
-		"research", "save-notes",
-		"--url", opts.RepoURL,
-		"--session", opts.SessionID,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-	}
-	// Omitted rather than passed empty, so the CLI's own default is the
-	// one that applies and there is one rule about it, not two.
-	if opts.Note != "" {
-		args = append(args, "--note", opts.Note)
-	}
 	return args
 }

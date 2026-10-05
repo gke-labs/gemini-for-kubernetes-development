@@ -22,9 +22,9 @@ package repoboard
 // The split mirrors the chat terminal's. Creating a sandbox needs the
 // factory CLI, which only this controller's image carries, so creation
 // comes through a Request like every other click. Talking to the
-// conversation needs nothing but HTTP to the sandbox's acpd port, which
-// the API can already reach — so none of the conversation passes
-// through the board. The board's only involvement is this one Request.
+// conversation is the API's: it reaches the recipe's task session in the
+// sandbox's daemon, so none of the conversation passes through the
+// board.
 
 import (
 	"context"
@@ -33,27 +33,19 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // What factory stamps on a research sandbox, mirrored here as it is in
 // the API: the two programs meet over the CLI, never as one.
 const (
-	sandboxTypeLabel    = "sandbox.gemini.google.com/type"
-	researchSandboxType = "research"
-	// researchSessionIDAnnotation holds the full session id — the
-	// authoritative match, since the label carries only a digest of it.
-	researchSessionIDAnnotation = "sandbox.gemini.google.com/research-session-id"
-	// researchReadyAnnotation is written last by `factory research
-	// start`, once the checkout is on the disk. It is the only thing that
+	// researchReadyAnnotation is written last by `factory recipe
+	// research`, once the checkout is on the disk. It is the only thing that
 	// says a sandbox finished being built: factory creates the object in
 	// the first second of a launch that runs for minutes, so existence
 	// says no more than that something began.
@@ -110,7 +102,7 @@ func researchKey(member, repo, sessionID string) string {
 // already has one. It also means a member who deletes their session is
 // not handed it back by a claim that outlived the reap pass.
 //
-// But the object alone is not enough. `factory research start` creates
+// But the object alone is not enough. `factory recipe research` creates
 // it in the first second and then pulls, waits and clones for minutes,
 // so for most of a launch the object exists and the session does not.
 // Reading that as served is what left a conversation stuck on
@@ -140,9 +132,8 @@ func researchClaimExpired(claim researchClaim, now time.Time) bool {
 // ensureResearchClaims creates the sandbox for each standing research
 // claim.
 //
-// No sandbox-wide preflight: `factory research start` runs no agent
-// task, so there is nothing in the sandbox to serialize against — and
-// the sandbox is brand new anyway, made by this very invocation.
+// No sandbox-wide preflight: the sandbox is brand new, made by this
+// very invocation, so there is nothing in it to serialize against.
 func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, claims []researchClaim) {
 	logger := log.FromContext(ctx)
 	for _, claim := range claims {
@@ -197,13 +188,6 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 	}
 }
 
-// researchACPD is the dial seam, mirroring the API's. Production talks
-// to the pod, over a forward or on its IP; tests point it at an httptest
-// server.
-var researchACPD = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.Pod) *acpd.Client {
-	return d.Client(ctx, pod)
-}
-
 // researchTopic is the question a claim's conversation opens with: the
 // member's, or the text a canned kind renders to for the board's repo.
 func researchTopic(k research.Kickoff, work *workState) (string, error) {
@@ -252,33 +236,4 @@ func (r *Reconciler) stampResearchTitle(ctx context.Context, work *workState, cl
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to record the research title", "session", claim.sessionID)
 	}
-}
-
-// researchPod returns the sandbox's running pod, or nil when there is
-// none to dial.
-//
-// Read straight from the API server rather than the controller's cache:
-// caching pods would mean an informer over every pod in the cluster to
-// answer a question asked once per new research session.
-func (r *Reconciler) researchPod(ctx context.Context, namespace, sandboxName string) (*corev1.Pod, error) {
-	pods := &corev1.PodList{}
-	if err := r.podReader().List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"sandbox": sandboxName}); err != nil {
-		return nil, err
-	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			return pod, nil
-		}
-	}
-	return nil, nil
-}
-
-// podReader is the uncached reader, falling back to the cached client so
-// that a Reconciler built by hand in a test needs no extra wiring.
-func (r *Reconciler) podReader() client.Reader {
-	if r.APIReader != nil {
-		return r.APIReader
-	}
-	return r.Client
 }

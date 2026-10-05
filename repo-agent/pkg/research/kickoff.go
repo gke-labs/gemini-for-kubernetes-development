@@ -16,23 +16,16 @@ limitations under the License.
 
 // Package research holds what the API and the controller both need to
 // know about a research conversation before it exists: the canned
-// opening prompts, the title rules, and how a kickoff rides from the
-// click to the sandbox that owes it.
+// opening prompts, the title rules, and where its notes are saved.
 //
-// The prompts live here rather than in factory because factory cannot
-// send them. Creating an acpd session takes the engine credential, and
-// `factory research start` must never hold one — it would land on the
-// sandbox's disk, where the agent running in it could read it. So the
-// opening turn is sent from the cluster side, by whoever has the key,
-// and the text has to be somewhere the cluster side can reach. repo-agent
-// does not import factory (the two meet over the CLI and HTTP, never as
-// one Go program), so "somewhere" is here.
+// The controller renders a canned opening into the topic it hands
+// `factory recipe research`, so the prompts live on this side.
+// repo-agent does not import factory (the two meet over the CLI and
+// HTTP, never as one Go program).
 package research
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
@@ -62,15 +55,6 @@ const (
 	// TitleAnnotation is what the session is called. Absent means the
 	// list should fall back to the first line of the transcript.
 	TitleAnnotation = "sandbox.gemini.google.com/research-title"
-	// KickoffAnnotation is an encoded Kickoff, present only while the
-	// opening turn is still owed. Its absence IS the receipt: the
-	// controller deletes it once the prompt is in, so nothing can send
-	// the same opening twice.
-	KickoffAnnotation = "sandbox.gemini.google.com/research-kickoff"
-	// KickoffErrorAnnotation says why an owed opening turn was given up
-	// on. A session whose kickoff never landed should say so rather than
-	// sit empty looking like a question nobody answered.
-	KickoffErrorAnnotation = "sandbox.gemini.google.com/research-kickoff-error"
 )
 
 //go:embed onboard.txt
@@ -232,47 +216,4 @@ func Truncate(text string) string {
 	return strings.TrimRightFunc(line, func(r rune) bool {
 		return unicode.IsSpace(r) || strings.ContainsRune(".,;:", r)
 	})
-}
-
-// Encode renders the kickoff for the sandbox annotation that owes it.
-//
-// Base64 of JSON rather than the fields spelled out: a topic is free
-// text from a textarea, so it can hold a newline or anything else a
-// person can type, and an annotation is one string. The request that
-// starts a session carries the same four fields as typed fields on a
-// Request — this encoding is only for the handoff to the sandbox, which
-// is where the opening turn waits for a pod to come up.
-//
-// The zero kickoff encodes to "", so a session the member will type into
-// themselves is annotated with nothing at all.
-func (k Kickoff) Encode() string {
-	if k == (Kickoff{}) {
-		return ""
-	}
-	buf, err := json.Marshal(k)
-	if err != nil {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString(buf)
-}
-
-// DecodeKickoff reads back what Encode wrote. A value that is missing
-// or malformed yields the zero kickoff: a hand-edited annotation should
-// cost the session its opening prompt, not stop it being created.
-func DecodeKickoff(field string) Kickoff {
-	if field == "" {
-		return Kickoff{}
-	}
-	buf, err := base64.RawURLEncoding.DecodeString(field)
-	if err != nil {
-		return Kickoff{}
-	}
-	var k Kickoff
-	if err := json.Unmarshal(buf, &k); err != nil {
-		return Kickoff{}
-	}
-	if err := k.Validate(); err != nil {
-		return Kickoff{}
-	}
-	return k
 }

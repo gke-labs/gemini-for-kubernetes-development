@@ -21,11 +21,11 @@ package api
 //
 // Creating one goes through a Request on the board, because only the
 // controller's image carries the factory CLI (see
-// handlers_board_research.go). Talking to one does not: acpd is plain
-// HTTP on the sandbox pod, so this process dials it directly and the
-// board is never involved again. That is the same split the chat
-// terminal uses — create elsewhere, attach from here — with a lighter
-// attach: an HTTP request instead of pods/exec.
+// handlers_board_research.go). Talking to one does not: the conversation
+// is the recipe's task session in the sandbox's daemon, reached over a
+// port-forward, so the board is never involved again. That is the same
+// split the chat terminal uses — create elsewhere, attach from here —
+// with a lighter attach: HTTP instead of pods/exec.
 //
 // Routes are keyed by session id alone, with no board and no sandbox
 // name in the path. The sandbox carries the session's short id as a
@@ -55,7 +55,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -92,13 +91,6 @@ const engineAPIKeySecretKey = "GEMINI_API_KEY"
 // it is validated before either.
 var safeResearchSessionID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 
-// acpdClientForPod is the dial seam. Production reaches the pod, over a
-// forward or on its IP; tests point it at an httptest server, which is
-// the only way to exercise these handlers without a cluster.
-var acpdClientForPod = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.Pod) *acpd.Client {
-	return d.Client(ctx, pod)
-}
-
 // researchSandboxView is one session as the board sees it: what the
 // sandbox object says, and — for the ones with a pod to ask — what the
 // engine inside it is doing.
@@ -111,11 +103,14 @@ var acpdClientForPod = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.
 // answer to "what sessions do I have" even when no pod is reachable.
 type researchSandboxView struct {
 	SessionID string `json:"sessionId"`
-	// Task is the factory task whose agent session the conversation is,
-	// for a sandbox `factory recipe research` made: the conversation is
-	// then the daemon's task session, not acpd's. Empty for a sandbox
-	// `factory research start` made.
-	Task      string `json:"task,omitempty"`
+	// Task is the factory task whose agent session the conversation is:
+	// `factory recipe research` records it on the sandbox, and the
+	// conversation is the daemon's task session for it.
+	Task string `json:"task,omitempty"`
+	// Legacy is a sandbox with no recorded task: one the old research
+	// path (the removed `factory research start`, acpd) made. Nothing here talks to
+	// it any more; it is listed so it can be deleted.
+	Legacy    bool   `json:"legacy,omitempty"`
 	Sandbox   string `json:"sandbox"`
 	Namespace string `json:"namespace"`
 	Repo      string `json:"repo"`
@@ -128,22 +123,8 @@ type researchSandboxView struct {
 	// name, the topic it was started with, or the first thing the member
 	// said. Empty until one of those has happened.
 	Title string `json:"title,omitempty"`
-	// Opening reports that a canned first turn is still owed — the
-	// controller sends it once the pod is up, which is a minute or two
-	// after the row first appears.
-	Opening bool `json:"opening,omitempty"`
-	// OpeningError is why an owed first turn was given up on.
-	OpeningError string `json:"openingError,omitempty"`
-	// Capturing names the note the conversation has been asked to write
-	// and the controller has not yet pushed to the fork. The wait spans
-	// a turn, so this can be true for minutes, and a member who asked
-	// for a note and sees nothing on the branch should be able to tell
-	// "still working" from "never happened".
-	Capturing string `json:"capturing,omitempty"`
-	// CaptureError is why an owed save was given up on.
-	CaptureError string `json:"captureError,omitempty"`
 	// Note is the file on the notes branch this session writes to,
-	// fixed at its first capture. Empty until then. Internal: the
+	// fixed at its first save. Empty until then. Internal: the
 	// browser never picks it, and a name the member has not been shown
 	// is not one they can be surprised by.
 	Note string `json:"-"`
@@ -195,23 +176,19 @@ func (v researchSandboxView) cwd() string {
 	return "/workspaces/" + v.Repo
 }
 
-// acpSession is the conversation's id on the server that hosts it: the
-// task, for a task session, else the session id acpd was given.
+// acpSession is the conversation's id on the daemon: the recipe's task.
 func (v researchSandboxView) acpSession() string {
-	if v.Task != "" {
-		return v.Task
-	}
-	return v.SessionID
+	return v.Task
 }
 
-// researchClient reaches the server that hosts the conversation: the
-// daemon's task sessions for a recipe's, acpd for the rest. False when the
-// sandbox's image keeps no task sessions.
-func (s *Server) researchClient(ctx context.Context, view researchSandboxView, pod *corev1.Pod) (*acpd.Client, bool) {
-	if view.Task != "" {
-		return taskSessionClientForPod(ctx, s.ACPD, pod)
-	}
-	return acpdClientForPod(ctx, s.ACPD, pod), true
+// researchLegacyMessage is what a sandbox the old research path made
+// answers to every conversation route.
+const researchLegacyMessage = "this conversation was made by the old research path and can no longer be opened: delete it and start a new one"
+
+// researchClient reaches the daemon's task sessions, which host the
+// conversation. False when the sandbox's image keeps none.
+func (s *Server) researchClient(ctx context.Context, pod *corev1.Pod) (*acpd.Client, bool) {
+	return taskSessionClientForPod(ctx, s.ACPD, pod)
 }
 
 // researchViewFromSandbox reads one sandbox object, or reports false if
@@ -227,22 +204,17 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		return researchSandboxView{}, false
 	}
 	view := researchSandboxView{
-		SessionID:    sessionID,
-		Task:         factorycli.ResearchTask(annotations),
-		Sandbox:      sb.GetName(),
-		Namespace:    sb.GetNamespace(),
-		Repo:         annotations["repo"],
-		HTMLURL:      annotations["htmlURL"],
-		Engine:       acpd.ResearchEngine(annotations),
-		Title:        annotations[research.TitleAnnotation],
-		Opening:      annotations[research.KickoffAnnotation] != "",
-		OpeningError: annotations[research.KickoffErrorAnnotation],
-		CaptureError: annotations[research.CaptureErrorAnnotation],
-		Note:         annotations[research.NoteAnnotation],
+		SessionID: sessionID,
+		Task:      factorycli.ResearchTask(annotations),
+		Sandbox:   sb.GetName(),
+		Namespace: sb.GetNamespace(),
+		Repo:      annotations["repo"],
+		HTMLURL:   annotations["htmlURL"],
+		Engine:    acpd.ResearchEngine(annotations),
+		Title:     annotations[research.TitleAnnotation],
+		Note:      annotations[research.NoteAnnotation],
 	}
-	if pending, ok := research.DecodePending(annotations[research.CaptureAnnotation]); ok {
-		view.Capturing = pending.Note
-	}
+	view.Legacy = view.Task == ""
 	view.Notes = researchNotesDraft{
 		Markdown:  annotations[annoNotesDraft],
 		DraftedAt: annotations[annoNotesDraftedAt],
@@ -293,7 +265,7 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 	views = append(views, requested...)
 	// Fill an untitled sandbox from the claim that asked for it.
 	//
-	// `factory research start` creates the Sandbox object early and then
+	// `factory recipe research` creates the Sandbox object early and then
 	// clones for minutes, while the title is stamped onto it by the
 	// controller in the pass that first notices it exists. Those are
 	// different moments, and between them the row has a sandbox (so the
@@ -396,7 +368,6 @@ func (s *Server) requestedResearchSessions(ctx context.Context, namespace string
 			HTMLURL:   repoURL,
 			CreatedAt: req.CreationTimestamp.UTC().Format(time.RFC3339),
 			Title:     kickoff.ResolvedTitle(),
-			Opening:   kickoff != research.Kickoff{},
 			Requested: true,
 		})
 	}
@@ -487,7 +458,7 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 
 	var wg sync.WaitGroup
 	for i := range views {
-		if views[i].Pod == nil {
+		if views[i].Pod == nil || views[i].Legacy {
 			continue
 		}
 		wg.Add(1)
@@ -496,7 +467,7 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 		// and merging — is a second pass for nothing.
 		go func(view *researchSandboxView) {
 			defer wg.Done()
-			client, ok := s.researchClient(ctx, *view, view.Pod)
+			client, ok := s.researchClient(ctx, view.Pod)
 			if !ok {
 				view.Unreachable = "the sandbox's image keeps no agent sessions for its tasks"
 				return
@@ -509,10 +480,11 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 				view.Waiting = session.Waiting
 				view.Held = session.Held
 			case errors.Is(err, acpd.ErrNotFound):
-				// A running pod with no engine in it: the resting state of
-				// every session nobody has opened yet, and of every one
-				// whose acpd has restarted. Not an error, and not
-				// unreachable either — acpd answered.
+				// A running pod with no session loaded: the resting state of
+				// every conversation nobody has opened since its start
+				// ended, and of every one whose daemon has restarted. Not
+				// an error, and not unreachable either — the daemon
+				// answered.
 			default:
 				view.Unreachable = err.Error()
 			}
@@ -572,6 +544,13 @@ func (s *Server) resolveResearch(c *gin.Context) (*researchConn, bool) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "research session not found"})
 		return nil, false
 	}
+	if view.Legacy {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":   researchLegacyMessage,
+			"sandbox": view.Sandbox, "namespace": namespace, "legacy": true,
+		})
+		return nil, false
+	}
 	if view.Paused {
 		c.JSON(http.StatusConflict, gin.H{"error": "research session is paused", "sandbox": view.Sandbox, "paused": true})
 		return nil, false
@@ -588,7 +567,7 @@ func (s *Server) resolveResearch(c *gin.Context) (*researchConn, bool) {
 	}
 	view.Pod = pod
 
-	client, ok := s.researchClient(ctx, view, pod)
+	client, ok := s.researchClient(ctx, pod)
 	if !ok {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":   "this sandbox's image keeps no agent sessions for its tasks",
@@ -617,16 +596,13 @@ func (s *Server) engineAPIKey(ctx context.Context, namespace string) (string, er
 	return key, nil
 }
 
-// ensureResearchSession returns the live acpd session, creating it if
-// acpd does not have one.
+// ensureResearchSession returns the live task session, continuing it if
+// the daemon has none loaded.
 //
-// Lazily, rather than at sandbox creation, for two reasons. `factory
-// research start` has no engine key and must not be given one — it would
-// land on the sandbox's disk. And a session does not survive an acpd
-// restart, because the key is fixed in the engine child's environment at
-// exec time; re-creating on demand is therefore not just the first path
-// but the recovery path, and making them the same code means the
-// recovery is exercised every time anyone opens a conversation.
+// Lazily, rather than when the recipe's start ends: a session does not
+// survive a daemon restart, because the key is fixed in the engine
+// child's environment at exec time, so continuing on demand is the
+// recovery path as well as the first one.
 func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) (*acpd.Session, error) {
 	session, err := conn.client.GetSession(ctx, conn.view.acpSession())
 	if err == nil {
@@ -635,48 +611,20 @@ func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) 
 	if !errors.Is(err, acpd.ErrNotFound) {
 		return nil, err
 	}
-	// An opening turn is still owed, so this is not the side that gets to
-	// create the session: the controller creates it and asks the question
-	// in one go. An attach that gets in first is not fatal any more — the
-	// controller prompts any session that has had no turn, whatever else
-	// its transcript holds — and it cannot be fully prevented, since the
-	// kickoff is stamped a reconcile after the sandbox becomes reachable.
-	//
-	// Nothing hangs on this forever: the controller clears Opening when it
-	// delivers, and the kickoff TTL and its error annotation clear it when
-	// it never can.
-	if conn.view.Opening {
-		return nil, errResearchOpening
-	}
-
 	apiKey, err := s.engineAPIKey(ctx, conn.view.Namespace)
 	if err != nil {
 		return nil, err
 	}
-	// A task session is continued: the daemon loads what the recipe's
-	// start said, and refuses while the start is still running (409).
+	// The daemon loads what the recipe's start said, and refuses while
+	// the start is still running (409).
 	return conn.client.CreateSession(ctx, acpd.CreateSessionRequest{
-		ID:     conn.view.acpSession(),
-		Task:   conn.view.Task,
-		Engine: conn.view.Engine,
-		CWD:    conn.view.cwd(),
-		// Set here as well as on the controller's create because either
-		// side can be the one that gets there first: a member who opens
-		// the tab before the kickoff is delivered creates the session
-		// through this path. These have to be the same either way, or
-		// whether you are prompted would depend on who was quicker.
+		ID:          conn.view.acpSession(),
+		Task:        conn.view.Task,
+		Engine:      conn.view.Engine,
+		CWD:         conn.view.cwd(),
 		Mode:        acpd.ResearchMode,
 		AutoApprove: acpd.ResearchAutoApprove,
 	}, apiKey)
-}
-
-// errResearchOpening reports that the opening turn has not been
-// delivered yet. Shaped as an acpd error so it travels the same route
-// every other refusal here does: 409, the status the UI already reads as
-// "not yet" rather than "broken".
-var errResearchOpening = &acpd.Error{
-	StatusCode: http.StatusConflict,
-	Message:    "the opening question is still being delivered",
 }
 
 // researchError maps an acpd failure onto a status for the caller.
@@ -718,20 +666,10 @@ func (s *Server) getResearchSession(c *gin.Context) {
 		"htmlUrl": conn.view.HTMLURL,
 		"cwd":     conn.view.cwd(),
 		"live":    false,
-		// The title and the state of any owed opening turn, so a
-		// conversation opened straight from a click can name itself and
-		// say what it is waiting for without also fetching the list.
-		"title":        conn.view.Title,
-		"opening":      conn.view.Opening,
-		"openingError": conn.view.OpeningError,
-		// And the state of any owed note, for the same reason: the
-		// conversation is where the member asked for it, so it is where
-		// they look to find out whether it happened.
-		"capturing":    conn.view.Capturing,
-		"captureError": conn.view.CaptureError,
-	}
-	if conn.view.Task != "" {
-		body["notes"] = s.researchNotes(c.Request.Context(), conn.view)
+		// The title, so a conversation opened straight from a click can
+		// name itself without also fetching the list.
+		"title": conn.view.Title,
+		"notes": s.researchNotes(c.Request.Context(), conn.view),
 	}
 	session, err := conn.client.GetSession(c.Request.Context(), conn.view.acpSession())
 	switch {
@@ -1061,16 +999,7 @@ func (s *Server) streamResearchEvents(c *gin.Context) {
 	defer cancel()
 
 	followSession(ctx, cancel, ws, conn.client, conn.view.acpSession(), offset, func(ctx context.Context) (*acpd.Session, error) {
-		session, err := s.ensureResearchSession(ctx, conn)
-		// A session still waiting for its opening turn closes quietly. The
-		// socket's onclose falls back to probing, which reports `opening`,
-		// and the pane says so in its own words — an error frame here
-		// would put a red banner over a session doing exactly what it
-		// should.
-		if errors.Is(err, errResearchOpening) {
-			return nil, errQuietClose
-		}
-		return session, err
+		return s.ensureResearchSession(ctx, conn)
 	})
 }
 

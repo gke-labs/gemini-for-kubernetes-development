@@ -16,24 +16,13 @@ limitations under the License.
 
 package api
 
-// Turning a conversation into a note on the fork.
-//
-// Two steps with a wait between them, and they are split across two
-// processes for the same reason everything else here is. Asking the
-// conversation to write the note is a prompt, and this process can send
-// prompts — so it does, immediately, and the member watches it happen in
-// the terminal they are already looking at. Pushing what it wrote needs
-// the factory CLI and the member's GitHub token, and it cannot start
-// until the turn finishes, which is minutes away. That half is left as
-// an annotation on the sandbox for the controller to pick up: the API is
-// replicated and stateless, so a wait held in memory here would not
-// survive the replica that served the request going away.
+// Saving a conversation's notes: 💾 asks the recipe's notes revise to
+// write them into a draft (saveRecipeNotes), and the note's file name is
+// picked here.
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
@@ -44,98 +33,21 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// captureResearchNotes asks the conversation to write itself down, and
-// records that the result is owed a push.
-//
-// No inputs. The note is the session's one document and what goes in it
-// is the conversation, both of which this end already knows — so the
-// member's whole part in this is one click, and the form that used to
-// ask them which file and which part is gone. A member who wants
-// something narrower has a better way of saying so than a text box:
-// they can say it to the agent, in the conversation, and then click
-// save.
-//
-// The prompt is sent from here rather than handed to the controller with
-// the rest of the work. A kickoff can wait a reconcile because nobody is
-// watching an empty session yet; this one is a reply to something the
-// member just did, in a conversation they have open, and up to a minute
-// of nothing happening reads as a lost click.
+// captureResearchNotes is 💾: the conversation writes its notes with
+// the recipe's revise, into a draft. No inputs — what goes in the note is
+// the conversation, and a member who wants something narrower says so to
+// the agent first.
 func (s *Server) captureResearchNotes(c *gin.Context) {
 	conn, ok := s.resolveResearch(c)
 	if !ok {
 		return
 	}
-	// Every field is optional and the UI sends none of them, so a body
-	// that will not parse is not a failure — it is the empty body the
-	// button posts. `what` survives for a caller that does have
-	// something specific to ask for.
-	var req struct {
-		What string `json:"what"`
-	}
-	_ = c.ShouldBindJSON(&req)
-
-	// A recipe's conversation writes its notes with the recipe's revise,
-	// into a draft (saveRecipeNotes), not with a capture.
-	if conn.view.Task != "" {
-		s.saveRecipeNotes(c, conn.view)
-		return
-	}
-
-	ctx := c.Request.Context()
-	capture := research.Capture{
-		Note: s.researchNoteName(ctx, conn.view, s.Auth.GetUserFromContext(c)),
-		What: req.What,
-	}
-	prompt, err := capture.Prompt()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if _, err := s.ensureResearchSession(ctx, conn); err != nil {
-		researchError(c, err)
-		return
-	}
-	// Stamped before the prompt is sent, not after.
-	//
-	// The two orders fail differently and only one of them is
-	// recoverable. Annotate-then-prompt can leave a pending save for a
-	// turn that never happened: the controller waits for a session that
-	// is not busy, finds one, pushes whatever the file already held —
-	// at worst a no-op, and the script exits 1 if there is no file.
-	// Prompt-then-annotate can leave a turn that writes a note nobody
-	// ever pushes, which looks to the member exactly like the feature
-	// not working.
-	if err := s.setResearchPending(ctx, conn.view.Namespace, conn.view.Sandbox, research.Pending{
-		Note: capture.Note,
-		At:   time.Now().UTC(),
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record the pending save", "details": err.Error()})
-		return
-	}
-
-	offset, err := conn.client.Prompt(ctx, conn.view.SessionID, prompt)
-	if err != nil {
-		// Undo the stamp. A 409 here is the common case — the member
-		// asked while a turn was in flight — and leaving a pending save
-		// behind would have the controller push for a capture that was
-		// refused.
-		if cerr := s.clearResearchPending(ctx, conn.view.Namespace, conn.view.Sandbox); cerr != nil {
-			klog.V(2).Infof("research: could not unstamp the pending save on %s: %v", conn.view.Sandbox, cerr)
-		}
-		researchError(c, err)
-		return
-	}
-	c.JSON(http.StatusAccepted, gin.H{
-		"sessionId": conn.view.SessionID,
-		"note":      capture.Note,
-		"path":      capture.Path(),
-		"offset":    offset,
-	})
+	s.saveRecipeNotes(c, conn.view)
 }
 
 // researchNoteName is the file this session's notes go in.
 //
-// Derived from the session's title at the first capture and read off
+// Derived from the session's title at the first save and read off
 // the sandbox every time after that, so saving twice updates one file
 // rather than writing a second copy of it. The name is the member's — a
 // session called "where the retry loop terminates" saves to
@@ -144,7 +56,7 @@ func (s *Server) captureResearchNotes(c *gin.Context) {
 // now, and a session id is not an address, it is a handle.
 //
 // Renaming the session clears the pin (see setResearchTitle), so the
-// next capture derives a fresh name from the new title. The note
+// next save derives a fresh name from the new title. The note
 // already on the branch under the old name is left alone: a duplicate
 // is cheaper than a note saved under a name the member has moved on
 // from, and the branch is an archive.
@@ -218,30 +130,6 @@ func researchNotesOnBranch(ctx context.Context, gh *github.Client, owner, repo s
 		}
 	}
 	return notes, nil
-}
-
-// setResearchPending records that a save is owed, pins the file it is
-// owed into, and clears any earlier failure so a fresh attempt is not
-// reported as the old one's error.
-func (s *Server) setResearchPending(ctx context.Context, namespace, sandboxName string, pending research.Pending) error {
-	encoded := pending.Encode()
-	if encoded == "" {
-		return fmt.Errorf("could not encode the pending save")
-	}
-	return s.updateResearchAnnotations(ctx, namespace, sandboxName, map[string]string{
-		research.CaptureAnnotation:      encoded,
-		research.NoteAnnotation:         pending.Note,
-		research.CaptureErrorAnnotation: "",
-	})
-}
-
-// clearResearchPending removes an owed save. The note name stays: it is
-// where this session writes from now on, including the save a refused
-// capture will ask for again in a minute.
-func (s *Server) clearResearchPending(ctx context.Context, namespace, sandboxName string) error {
-	return s.updateResearchAnnotations(ctx, namespace, sandboxName, map[string]string{
-		research.CaptureAnnotation: "",
-	})
 }
 
 // updateResearchAnnotations applies a set of annotation writes to the

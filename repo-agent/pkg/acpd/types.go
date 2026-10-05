@@ -34,7 +34,7 @@ const (
 	EngineAntigravity = "antigravity"
 )
 
-// ResearchEngineAnnotation is where `factory research start` records the
+// ResearchEngineAnnotation is where `factory recipe research` records the
 // engine it set the sandbox up for, alongside its ready receipt.
 // Mirrored from factory, like the other research sandbox names.
 const ResearchEngineAnnotation = "sandbox.gemini.google.com/research-engine"

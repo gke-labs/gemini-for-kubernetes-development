@@ -163,7 +163,7 @@ func (s *Server) recipeNotesView(c *gin.Context) (researchSandboxView, bool) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "research session not found"})
 		return researchSandboxView{}, false
 	case view.Task == "":
-		c.JSON(http.StatusConflict, gin.H{"error": "this conversation saves its notes with a capture"})
+		c.JSON(http.StatusConflict, gin.H{"error": researchLegacyMessage, "legacy": true})
 		return researchSandboxView{}, false
 	}
 	return view, true
