@@ -14,6 +14,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acp"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 )
 
 // GitHubTokenEnv is every variable a GitHub token travels in; lib.sh's
@@ -92,6 +93,8 @@ func withoutTokens(env []string) []string {
 	for _, k := range GitHubTokenEnv {
 		drop[k] = true
 	}
+	// Nor the task's token: with it a step could talk to the task's agent.
+	drop[taskapi.EnvTaskToken] = true
 	var out []string
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
@@ -143,7 +146,7 @@ func (a *ACPSession) Ask(ctx context.Context, prompt string) (string, error) {
 	if err := a.s.Prompt(prompt); err != nil {
 		return "", err
 	}
-	var reply strings.Builder
+	var turn turn
 	var partial []byte
 	for {
 		if !t.Wait(ctx, offset) {
@@ -167,33 +170,47 @@ func (a *ACPSession) Ask(ctx context.Context, prompt string) (string, error) {
 			}
 			line := partial[:nl]
 			partial = partial[nl+1:]
-			var ev acpd.Event
-			if json.Unmarshal(line, &ev) != nil {
-				continue
-			}
-			switch ev.Kind {
-			case acp.UpdateToolCall:
-				reply.Reset()
-			case acp.UpdateAgentMessageChunk:
-				var u acp.SessionUpdate
-				var c acp.ContentBlock
-				if json.Unmarshal(ev.Data, &u) == nil && json.Unmarshal(u.Content, &c) == nil && c.Type == "text" {
-					reply.WriteString(c.Text)
-				}
-			case acpd.KindError:
-				var e struct{ Message string }
-				_ = json.Unmarshal(ev.Data, &e)
-				return "", fmt.Errorf("agent: %s", e.Message)
-			case acpd.KindTurnEnd:
-				var e struct{ StopReason string }
-				_ = json.Unmarshal(ev.Data, &e)
-				if e.StopReason != "end_turn" {
-					return reply.String(), fmt.Errorf("turn stopped: %s", e.StopReason)
-				}
-				return strings.TrimSpace(reply.String()), nil
+			if reply, done, err := turn.event(line); done {
+				return reply, err
 			}
 		}
 	}
+}
+
+// turn collects one turn's reply from its transcript events.
+type turn struct {
+	reply strings.Builder
+}
+
+// event takes the next transcript line; done once the turn has ended,
+// with the reply or why there is none.
+func (t *turn) event(line []byte) (reply string, done bool, err error) {
+	var ev acpd.Event
+	if json.Unmarshal(line, &ev) != nil {
+		return "", false, nil
+	}
+	switch ev.Kind {
+	case acp.UpdateToolCall:
+		t.reply.Reset()
+	case acp.UpdateAgentMessageChunk:
+		var u acp.SessionUpdate
+		var c acp.ContentBlock
+		if json.Unmarshal(ev.Data, &u) == nil && json.Unmarshal(u.Content, &c) == nil && c.Type == "text" {
+			t.reply.WriteString(c.Text)
+		}
+	case acpd.KindError:
+		var e struct{ Message string }
+		_ = json.Unmarshal(ev.Data, &e)
+		return "", true, fmt.Errorf("agent: %s", e.Message)
+	case acpd.KindTurnEnd:
+		var e struct{ StopReason string }
+		_ = json.Unmarshal(ev.Data, &e)
+		if e.StopReason != "end_turn" {
+			return t.reply.String(), true, fmt.Errorf("turn stopped: %s", e.StopReason)
+		}
+		return strings.TrimSpace(t.reply.String()), true, nil
+	}
+	return "", false, nil
 }
 
 // Close ends the engine.
