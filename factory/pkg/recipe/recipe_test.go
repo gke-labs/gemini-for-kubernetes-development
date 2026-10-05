@@ -504,7 +504,7 @@ start:
       run: &save cp plan.md /somewhere
 revise:
   - id: plan
-    label: Use as plan
+    label: Update plan
     steps:
       - ask: "rewrite it for {{ .Inputs.issue }}"
         capture: plan.md
@@ -590,7 +590,7 @@ func TestOutputDeclOffersEachRevise(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.OutputDecl().Actions
-	want := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}, {Verb: "revise", Revise: "shorter", Label: "Shorter"}}
+	want := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}, {Verb: "revise", Revise: "shorter", Label: "Shorter"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("actions = %+v\nwant      %+v", got, want)
 	}
@@ -611,14 +611,14 @@ func TestOutputDeclOffersEachRevise(t *testing.T) {
 	}
 }
 
-// The built-in plan's Use as plan saves the plan as its start does, in
+// The built-in plan's Update plan saves the plan as its start does, in
 // the recipe as a sandbox gets it.
 func TestPlanUseAsPlan(t *testing.T) {
 	data, rec, err := Builtin("plan")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a := rec.OutputDecl().Actions; a[len(a)-1] != (taskoutput.Action{Verb: "revise", Revise: "plan", Label: "Use as plan"}) {
+	if a := rec.OutputDecl().Actions; a[len(a)-1] != (taskoutput.Action{Verb: "revise", Revise: "plan", Label: "Update plan"}) {
 		t.Errorf("last action = %+v", a[len(a)-1])
 	}
 	data, err = ForSandbox(data)

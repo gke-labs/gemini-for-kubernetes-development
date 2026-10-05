@@ -270,7 +270,7 @@ function taskSessionHref(session) {
 }
 
 // anyPosting is whether a row has a write or a revise standing. A revise
-// (Use as plan) is clicked in the plan's session, not here, but it holds
+// (Update plan) is clicked in the plan's session, not here, but it holds
 // the row's writes until the plan it writes is the draft.
 function anyPosting(items) {
   return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]

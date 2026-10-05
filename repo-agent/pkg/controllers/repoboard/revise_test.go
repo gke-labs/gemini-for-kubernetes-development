@@ -48,7 +48,7 @@ func planDraftSandbox(extra map[string]interface{}) *unstructured.Unstructured {
 		factorycli.AnnotationPlanCommented: "2026-10-01T00:05:00Z",
 		factorycli.AnnotationPlanOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"source:\n  task: recipe-plan-2\n  session: recipe-plan-1\n" +
-			"actions:\n  - verb: revise\n    revise: plan\n    label: Use as plan\n",
+			"actions:\n  - verb: revise\n    revise: plan\n    label: Update plan\n",
 	}
 	for k, v := range extra {
 		annotations[k] = v

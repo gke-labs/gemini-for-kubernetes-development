@@ -607,8 +607,8 @@ describe('WorkRow draft actions', () => {
 
     test('a plan\'s revise is the session\'s to click, not the row\'s', async () => {
         global.fetch = ok();
-        await open({ ...plan, planActions: [...plan.planActions, { verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: true }] });
-        expect(findButton('Use as plan')).toBeUndefined();
+        await open({ ...plan, planActions: [...plan.planActions, { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true }] });
+        expect(findButton('Update plan')).toBeUndefined();
         expect(findButton('Post plan')).toBeDefined();
     });
 
@@ -617,7 +617,7 @@ describe('WorkRow draft actions', () => {
         await open({
             ...plan, planActions: [
                 { verb: 'comment', label: 'Post plan', enabled: false, reason: 'the plan is being revised' },
-                { verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: false, reason: 'revising' },
+                { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: false, reason: 'revising' },
             ],
         });
         expect(findButton('Post plan').disabled).toBe(true);

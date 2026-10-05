@@ -1871,12 +1871,12 @@ describe('ResearchConversation on a task session', () => {
     });
 
     test('the draft\'s revises are buttons that file the revise on its board row, and follow it', async () => {
-        const offered = { verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: true };
+        const offered = { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true };
         await render({ sessionId: task.task, repo: 'granule', board: 'granule', number: 42, revises: [offered] });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        const button = () => [...container.querySelectorAll('button')].find(b => b.textContent.startsWith('Use as plan'));
+        const button = () => [...container.querySelectorAll('button')].find(b => b.textContent.startsWith('Update plan'));
         expect(button().disabled).toBe(false);
 
         let status = { ...offered, enabled: false, reason: 'revising' };
@@ -1891,7 +1891,7 @@ describe('ResearchConversation on a task session', () => {
                 method: 'POST',
                 body: JSON.stringify({ kind: 'Plan', revise: 'plan' }),
             }));
-            expect(button().textContent).toBe('Use as plan…');
+            expect(button().textContent).toBe('Update plan…');
             expect(button().disabled).toBe(true);
 
             status = offered;
@@ -1907,20 +1907,20 @@ describe('ResearchConversation on a task session', () => {
     test('a revise that failed says why', async () => {
         await render({
             sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan', enabled: true, error: 'the session is busy' }],
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true, error: 'the session is busy' }],
         });
-        expect(container.textContent).toContain('Use as plan failed: the session is busy');
+        expect(container.textContent).toContain('Update plan failed: the session is busy');
     });
 
     test('a revise waits for the turn in flight, and for a running task', async () => {
         await render({
             sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Use as plan' }],
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan' }],
         });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: true, held: true, task: task.task, offset: 0 } });
         });
-        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Use as plan');
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Update plan');
         expect(button.disabled).toBe(true);
     });
 
@@ -1929,7 +1929,7 @@ describe('ResearchConversation on a task session', () => {
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Use as plan')).toBe(false);
+        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Update plan')).toBe(false);
     });
 
     test('an older image falls back to the terminal', async () => {

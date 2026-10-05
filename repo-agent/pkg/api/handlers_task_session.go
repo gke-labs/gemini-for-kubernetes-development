@@ -213,7 +213,7 @@ func (s *Server) getTaskSession(c *gin.Context) {
 
 // planRevises are the revises the sandbox's plan draft offers, when task
 // is the session the draft came from: rewriting the plan from this
-// conversation (Use as plan). None once the plan is approved, or for a
+// conversation (Update plan). None once the plan is approved, or for a
 // session that is not the draft's.
 func planRevises(sb *unstructured.Unstructured, task string) []models.WorkAction {
 	a := sb.GetAnnotations()

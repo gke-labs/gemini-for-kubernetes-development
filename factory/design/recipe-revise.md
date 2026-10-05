@@ -2,7 +2,7 @@
 
 **Status:** Phases 1 (the recipe shape), 2 (factory runs revises) and 3 (the board) built; phase 4 not yet.
 
-A recipe task (plan, triage) runs its asks in one agent session. Since #1746 a member can open that session after the task ends and keep talking to the agent: "why this approach?", "make step 3 smaller". This note covers turning that conversation into a new version of the task's output. The recipe declares **revise** parts, each a short list of steps that write the output again. factory runs a revise into the same session. Each revise appears as an action on the task output, so the board shows it as a button, for example **Use as plan**.
+A recipe task (plan, triage) runs its asks in one agent session. Since #1746 a member can open that session after the task ends and keep talking to the agent: "why this approach?", "make step 3 smaller". This note covers turning that conversation into a new version of the task's output. The recipe declares **revise** parts, each a short list of steps that write the output again. factory runs a revise into the same session. Each revise appears as an action on the task output, so the board shows it as a button, for example **Update plan**.
 
 ---
 
@@ -61,7 +61,7 @@ start:
         sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
 revise:
   - id: plan
-    label: Use as plan
+    label: Update plan
     steps:
       - ask: |
           Rewrite the plan to reflect our conversation. Respond with ONLY the
@@ -123,7 +123,7 @@ actions:
   - {verb: edit, field: spec.markdown, format: markdown}
   - {verb: comment, label: Post plan}
   - {verb: run, run: fix, label: Fix with this plan}
-  - {verb: revise, revise: plan, label: Use as plan}
+  - {verb: revise, revise: plan, label: Update plan}
 ```
 
 - **`revise` is a follow-up verb,** like `run`: factory executes it, by `factory recipe revise <source.session> <revise>`.
@@ -149,6 +149,6 @@ actions:
 ## Phases
 
 1. **factory, recipe shape (built).** `start` / `revise` in `pkg/recipe`, validation, the built-in recipes moved under `start`, the runner running the part `task.json`'s `revise` names (start when unset).
-2. **factory, revise (built).** `session` in `task.json`, the daemon holding a started task's session for a running revise, `factory recipe revise`, revise actions in task outputs, `session` in `source` and in the recorded run annotation. Plan gets **Use as plan**.
+2. **factory, revise (built).** `session` in `task.json`, the daemon holding a started task's session for a running revise, `factory recipe revise`, revise actions in task outputs, `session` in `source` and in the recorded run annotation. Plan gets **Update plan**.
 3. **repo-agent (built).** Request verb `revise`, launch and harvest, `session` in the recorded run, the buttons.
 4. **Triage revises,** once plan's has been used.

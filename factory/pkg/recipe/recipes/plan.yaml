@@ -110,11 +110,11 @@ start:
         sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
 
 # After the task, a member can keep talking to the agent in its session
-# (Continue session). Use as plan rewrites the plan from that conversation,
+# (Continue session). Update plan rewrites the plan from that conversation,
 # into the same session, as a new task with its own result.
 revise:
   - id: plan
-    label: Use as plan
+    label: Update plan
     steps:
       - ask: |
           Rewrite the plan to reflect our conversation. Respond with ONLY the

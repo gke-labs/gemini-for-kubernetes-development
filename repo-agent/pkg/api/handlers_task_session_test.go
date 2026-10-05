@@ -229,7 +229,7 @@ func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
 		a[annoBoard] = "myboard"
 		a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"source:\n  task: recipe-plan-2\n  session: " + planTask + "\n" +
-			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Use as plan\n"
+			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
 		if approved {
 			a[annoPlanApproved] = "2026-10-04T00:00:00Z"
 		}
@@ -239,7 +239,7 @@ func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
 	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(false)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	for _, want := range []string{`"revises":[{"verb":"revise","revise":"plan","label":"Use as plan","enabled":true}]`, `"board":"myboard"`, `"number":42`} {
+	for _, want := range []string{`"revises":[{"verb":"revise","revise":"plan","label":"Update plan","enabled":true}]`, `"board":"myboard"`, `"number":42`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("status lacks %s: %s", want, w.Body.String())
 		}
@@ -264,7 +264,7 @@ func TestATaskSessionFollowsItsRevise(t *testing.T) {
 	a[annoBoard] = "myboard"
 	a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 		"source:\n  task: " + planTask + "\n" +
-		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Use as plan\n"
+		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
 	sb.SetAnnotations(a)
 	r, dyn := taskSessionTestServerDyn(t, nil, true, []*unstructured.Unstructured{sb},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))

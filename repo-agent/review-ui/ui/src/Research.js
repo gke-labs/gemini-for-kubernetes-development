@@ -1177,7 +1177,7 @@ export function ResearchConversation({
       .catch(err => setError(`cancel failed: ${err}`));
   };
 
-  // A revise of the plan this session wrote (Use as plan). Only here, not
+  // A revise of the plan this session wrote (Update plan). Only here, not
   // on the board's row: it rewrites the plan from this conversation, so
   // it is clicked where the conversation is. It is filed on the plan's
   // row; the controller runs it into this session, so it shows here as

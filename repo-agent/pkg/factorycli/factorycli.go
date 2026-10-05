@@ -686,7 +686,7 @@ func (r *Runner) planHarvest(sandbox, namespace, runName, githubToken string) *p
 }
 
 // ReviseOptions are the inputs for a `factory recipe revise` invocation:
-// one of a plan recipe's revises (Use as plan), asked into the agent
+// one of a plan recipe's revises (Update plan), asked into the agent
 // session a plan ran in, as the next turn of the conversation a member
 // continued there. Its result is a Plan task output, as a plan's; nothing
 // is written to GitHub.
