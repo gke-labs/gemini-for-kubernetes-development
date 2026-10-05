@@ -1939,3 +1939,66 @@ describe('ResearchConversation on a task session', () => {
         expect(link.getAttribute('href')).toBe('#/terminal/ns/fix-granule-42?chat=plan');
     });
 });
+
+describe('ResearchConversation notes on a recipe conversation', () => {
+    const draft = { markdown: '# Findings\n\nthe backoff is linear', note: 'backoff', draftedAt: '2026-10-05T10:00:00Z' };
+    const open = async (notes, calls = []) => {
+        global.fetch = jest.fn((url, opts) => {
+            if (opts && opts.method) {
+                calls.push({ url, method: opts.method, body: opts.body });
+                return reply(url.endsWith('/capture') || url.endsWith('/notes/save') ? 202 : 204, {});
+            }
+            return reply(200, { sessionId: 's1', repo: 'granule', sandbox: 'rsch-1', namespace: 'ns', task: 'research-1', notes });
+        });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: 'research-1', offset: 0 } });
+        });
+        return calls;
+    };
+    const button = (text) => [...container.querySelectorAll('button')].find(b => b.textContent === text);
+    const click = async (el) => {
+        await act(async () => { el.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+        await flush();
+    };
+
+    test('💾 writes a draft rather than pushing', async () => {
+        const calls = await open({});
+        const save = container.querySelector('[aria-label="Save notes"]');
+        expect(save).toBeTruthy();
+        expect(save.title).toContain('draft');
+        await click(save);
+        expect(calls).toEqual([{ url: '/api/research/s1/capture', method: 'POST', body: undefined }]);
+    });
+
+    test('the draft is shown, saved, edited and discarded', async () => {
+        const calls = await open(draft);
+        expect(container.textContent).toContain('Notes draft');
+        expect(container.textContent).toContain('backoff.md');
+        expect(container.textContent).toContain('the backoff is linear');
+
+        await click(button('Save to research/notes'));
+        await click(button('Edit'));
+        const box = container.querySelector('textarea[aria-label="Edit the notes"]');
+        await act(async () => {
+            nativeSet(box, '# Edited');
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await click(button('Store edit'));
+        await click(button('Discard'));
+
+        expect(calls).toEqual([
+            { url: '/api/research/s1/notes/save', method: 'POST', body: undefined },
+            { url: '/api/research/s1/notes', method: 'PUT', body: JSON.stringify({ markdown: '# Edited' }) },
+            { url: '/api/research/s1/notes', method: 'DELETE', body: undefined },
+        ]);
+    });
+
+    test('what failed is said, and 💾 waits while it writes', async () => {
+        await open({ ...draft, writing: true, saveError: 'push refused' });
+        expect(container.textContent).toContain('push refused');
+        expect(container.textContent).toContain('Writing this conversation up');
+        expect(container.querySelector('[aria-label="Save notes"]').disabled).toBe(true);
+    });
+});

@@ -1213,6 +1213,51 @@ export function ResearchConversation({
     wasRunning.current = '';
     if (done && !done.error) setRevised(done.label || done.revise);
   }, [revises]);
+  // A recipe research conversation's notes (info.task): 💾 files the
+  // recipe's notes revise into this session and the controller stores
+  // what it writes on the sandbox as a draft, shown below the bar. Save
+  // to research/notes pushes the draft as it is then; it can be edited
+  // or discarded first. The status says what the newest click of each
+  // says — writing, saving, or why the last one failed — and is read
+  // again while one runs.
+  const recipeNotes = !task && !!(info && info.task);
+  const [notesNow, setNotesNow] = useState(null);
+  const notes = (recipeNotes && (notesNow || info.notes)) || {};
+  const notesRunning = !!(notes.writing || notes.saving);
+  const [notesBusy, setNotesBusy] = useState(''); // the click in flight
+  const [notesEdit, setNotesEdit] = useState(null); // the edit box, when open
+  const refreshNotes = useCallback(() => {
+    fetch(api)
+      .then(res => (res.ok ? res.json() : null))
+      .then(body => { if (body) setNotesNow(body.notes || {}); })
+      .catch(() => {});
+  }, [api]);
+  useEffect(() => {
+    if (!notesRunning) return undefined;
+    const timer = setInterval(refreshNotes, REVISE_POLL_EVERY);
+    return () => clearInterval(timer);
+  }, [notesRunning, refreshNotes]);
+  const notesCall = (what, method, path, body) => {
+    setNotesBusy(what);
+    setError('');
+    fetch(`${api}/${path}`, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+      .then(async res => {
+        if (res.ok) {
+          if (what === 'edit') setNotesEdit(null);
+          refreshNotes();
+          return;
+        }
+        const b = await res.json().catch(() => ({}));
+        setError(b.error || `${what} failed: HTTP ${res.status}`);
+      })
+      .catch(err => setError(`${what} failed: ${err}`))
+      .finally(() => setNotesBusy(''));
+  };
+
   const revise = (r) => {
     setRevising(r.revise);
     setRevised('');
@@ -1261,7 +1306,8 @@ export function ResearchConversation({
           // flight. Said as the thing to do about it: the button's own
           // guard closes the gap between the last frame and the click,
           // not the race with another tab.
-          setError(res.status === 409
+          // A recipe's 409 is no board for the repository, said in the body.
+          setError(res.status === 409 && !recipeNotes
             ? 'The agent is mid-turn — wait for it to finish, then save again.'
             : (body.error || `save notes failed: HTTP ${res.status}`));
           return;
@@ -1269,6 +1315,7 @@ export function ResearchConversation({
         // The write-up is a turn like any other, so it scrolls in below
         // — and the member should be looking at it.
         stickRef.current = true;
+        if (recipeNotes) refreshNotes();
       })
       .catch(err => setError(`save notes failed: ${err}`))
       .finally(() => setSaving(false));
@@ -1488,15 +1535,20 @@ export function ResearchConversation({
               On the bar and not in the menu because saving is something
               you do *while* reading, at the moment the answer lands,
               which is exactly the boundary the ⋯ menu draws. */}
-          {/* Not on a recipe's conversation (info.task): its notes are
-              saved by a revise, not a capture, and that is not wired yet. */}
-          {!task && !(info && info.task) && (
-            <button className="btn btn-sm" onClick={captureNotes} disabled={captureDisabled}
+          {/* On a recipe's conversation (info.task) it writes a draft
+              rather than pushing: the push is Save to research/notes on
+              the draft, below. */}
+          {!task && (
+            <button className="btn btn-sm" onClick={captureNotes}
+              disabled={captureDisabled || (recipeNotes && (taskState.held || !!notes.writing))}
               aria-label="Save notes"
               title={phase !== 'live' ? 'Not connected'
                 : busy ? 'The agent is working — save once the turn ends'
-                  : 'Write this conversation up as a note and push it to your fork'}>
-              {saving ? '⋯' : '💾'}
+                  : recipeNotes && taskState.held ? 'The session is the recipe\'s until its start ends'
+                    : recipeNotes && notes.writing ? 'Writing the notes from this conversation'
+                      : recipeNotes ? 'Write this conversation up as notes; they become a draft here to save to research/notes'
+                        : 'Write this conversation up as a note and push it to your fork'}>
+              {saving || (recipeNotes && notes.writing) ? '⋯' : '💾'}
             </button>
           )}
           {/* Two ways to get more room, and they are different enough to
@@ -1601,6 +1653,74 @@ export function ResearchConversation({
         {info && info.captureError && (
           <div className="warning-banner" style={{ flex: '0 0 auto' }}>
             The last note was not pushed: {info.captureError}. Ask for it again to retry.
+          </div>
+        )}
+
+        {recipeNotes && notes.writeError && (
+          <div className="warning-banner" style={{ flex: '0 0 auto' }}>
+            Save notes failed: {notes.writeError}. Click 💾 again to retry.
+          </div>
+        )}
+        {recipeNotes && notes.saveError && (
+          <div className="warning-banner" style={{ flex: '0 0 auto' }}>
+            The notes were not saved to research/notes: {notes.saveError}.
+          </div>
+        )}
+        {recipeNotes && notes.writing && (
+          <div style={{
+            flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'x-small',
+            color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)',
+          }}>
+            Writing this conversation up — the notes appear here as a draft when the turn finishes.
+          </div>
+        )}
+        {/* The draft: what Save to research/notes pushes, under the
+            note's name. Folded to a bounded box so it does not push the
+            conversation off the screen. */}
+        {recipeNotes && notes.markdown && (
+          <div style={{
+            flex: '0 0 auto', maxHeight: '40%', overflow: 'auto', padding: '6px 10px', textAlign: 'left',
+            borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: 'x-small' }}>
+              <strong>Notes draft</strong>
+              {notes.note && <code>{notes.note}.md</code>}
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {notes.savedAt ? `saved to research/notes ${new Date(notes.savedAt).toLocaleString()}`
+                  : notes.saving ? 'saving…' : 'not saved yet'}
+              </span>
+              <span style={{ flex: 1 }} />
+              {notesEdit === null ? (
+                <>
+                  <button className="btn btn-sm" disabled={!!notesBusy || notes.saving || notes.writing}
+                    onClick={() => notesCall('save', 'POST', 'notes/save')}
+                    title="Push this draft to research/notes in your fork">
+                    {notesBusy === 'save' || notes.saving ? 'Saving…' : 'Save to research/notes'}
+                  </button>
+                  <button className="btn btn-sm" disabled={!!notesBusy || notes.writing}
+                    onClick={() => setNotesEdit(notes.markdown)}>Edit</button>
+                  <button className="btn btn-sm" disabled={!!notesBusy || notes.writing}
+                    onClick={() => notesCall('discard', 'DELETE', 'notes')}
+                    title="Drop the draft; what was saved to research/notes stays">Discard</button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-sm" disabled={!!notesBusy || !notesEdit.trim()}
+                    onClick={() => notesCall('edit', 'PUT', 'notes', { markdown: notesEdit })}>
+                    {notesBusy === 'edit' ? 'Storing…' : 'Store edit'}
+                  </button>
+                  <button className="btn btn-sm" disabled={!!notesBusy} onClick={() => setNotesEdit(null)}>Cancel</button>
+                </>
+              )}
+            </div>
+            {notesEdit === null ? (
+              <div style={{ fontSize: 'small' }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{notes.markdown}</ReactMarkdown>
+              </div>
+            ) : (
+              <textarea value={notesEdit} onChange={e => setNotesEdit(e.target.value)} aria-label="Edit the notes"
+                style={{ width: '100%', minHeight: '160px', marginTop: '6px', fontFamily: 'monospace', fontSize: 'small' }} />
+            )}
           </div>
         )}
 

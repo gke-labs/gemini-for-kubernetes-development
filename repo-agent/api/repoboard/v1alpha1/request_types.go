@@ -90,7 +90,8 @@ const (
 	// VerbRevise rewrites a plan draft from the conversation a member
 	// continued in the plan's agent session: factory recipe revise, into
 	// that session, harvested into the draft as a plan is. It posts
-	// nothing.
+	// nothing. With Sandbox set it is a research conversation's Save
+	// notes: the revise writes a Notes draft onto that sandbox.
 	VerbRevise = "revise"
 )
 
@@ -147,15 +148,17 @@ type RunRequest struct {
 	Target int `json:"target,omitempty"`
 }
 
-// ApplyRequest is which draft of the issue, and which of its actions.
+// ApplyRequest is which draft of the issue (or, with the spec's Sandbox,
+// of the research conversation), and which of its actions.
 type ApplyRequest struct {
-	// Kind is the task output: Triage | Plan.
-	// +kubebuilder:validation:Enum=Triage;Plan
+	// Kind is the task output: Triage | Plan | Notes.
+	// +kubebuilder:validation:Enum=Triage;Plan;Notes
 	Kind string `json:"kind"`
 
 	// Action is the write: label (a Triage's labels) | comment (a
-	// Triage's assessment, or a Plan).
-	// +kubebuilder:validation:Enum=label;comment
+	// Triage's assessment, or a Plan) | push-notes (Notes, to the
+	// member's research/notes).
+	// +kubebuilder:validation:Enum=label;comment;push-notes
 	Action string `json:"action"`
 }
 
@@ -216,6 +219,14 @@ type RequestSpec struct {
 	// verbs that act on one.
 	// +kubebuilder:validation:Optional
 	Number int `json:"number,omitempty"`
+
+	// Sandbox is the member's sandbox a revise or apply acts on when its
+	// target is the repository, not an issue: a research conversation's.
+	// It becomes an argument to the factory CLI.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Sandbox string `json:"sandbox,omitempty"`
 
 	// Instruction is the member's own words for this invocation (the
 	// Iterate box). Carried here because the sandbox it belongs on may
@@ -332,12 +343,21 @@ func (s RequestSpec) Subject() string {
 		if s.Apply == nil {
 			return ""
 		}
-		return strconv.Itoa(s.Number) + "/" + s.Apply.Kind + "/" + s.Apply.Action
+		return s.target() + "/" + s.Apply.Kind + "/" + s.Apply.Action
 	case VerbRevise:
-		return strconv.Itoa(s.Number) + "/" + s.Revise
+		return s.target() + "/" + s.Revise
 	default:
 		return strconv.Itoa(s.Number)
 	}
+}
+
+// target is what a revise or apply acts on: its sandbox, for a
+// repository's, else its issue.
+func (s RequestSpec) target() string {
+	if s.Sandbox != "" {
+		return s.Sandbox
+	}
+	return strconv.Itoa(s.Number)
 }
 
 // Key is the full dedup identity: verb and subject.

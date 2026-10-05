@@ -53,3 +53,67 @@ func TestComposeTaskOutput(t *testing.T) {
 		t.Error("an empty plan composed")
 	}
 }
+
+// A Notes revise's document is read out of the harvest as a plan's is,
+// and stored without its spec; a plan is not notes.
+func TestNotesTaskOutput(t *testing.T) {
+	doc := `apiVersion: ` + TaskOutputAPIVersion + `
+kind: Notes
+source:
+  task: recipe-revise-notes-1
+spec:
+  markdown: |
+    # Findings
+actions:
+  - verb: push-notes
+    label: Save to research/notes
+`
+	out := "Revising...\n" + planBanner + "\n" + doc + bannerCloser + "\n"
+	if got := ExtractNotes(out); got != "# Findings" {
+		t.Errorf("ExtractNotes = %q", got)
+	}
+	header := NotesTaskOutput(out)
+	if header == "" || strings.Contains(header, "Findings") {
+		t.Fatalf("NotesTaskOutput = %q, want the document without its spec", header)
+	}
+	if acts := OfferedActions("Notes", header); len(acts) != 1 || acts[0].Verb != "push-notes" {
+		t.Errorf("offered = %+v", acts)
+	}
+	if ExtractNotes(planBanner+"\n"+planTaskOutput+bannerCloser+"\n") != "" {
+		t.Error("a plan read as notes")
+	}
+
+	// The stored header is kept; the draft, its name and the repository
+	// are what is pushed.
+	composed, err := ComposeNotes(header, "# Edited\n", "my-notes", "https://github.com/o/r", "board-sb-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Kind   string `yaml:"kind"`
+		Source struct {
+			Task string `yaml:"task"`
+		} `yaml:"source"`
+		Target struct {
+			URL string `yaml:"url"`
+		} `yaml:"target"`
+		Spec map[string]any `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(composed), &got); err != nil {
+		t.Fatalf("%v\n%s", err, composed)
+	}
+	if got.Kind != "Notes" || got.Source.Task != "recipe-revise-notes-1" || got.Target.URL != "https://github.com/o/r" ||
+		got.Spec["markdown"] != "# Edited" || got.Spec["name"] != "my-notes" {
+		t.Errorf("composed:\n%s", composed)
+	}
+	if fresh, err := ComposeNotes("", "x", "", "https://github.com/o/r", "board-sb-1"); err != nil || strings.Contains(fresh, "name:") ||
+		!strings.Contains(fresh, "task: board-sb-1") {
+		t.Errorf("fresh notes = %q, %v", fresh, err)
+	}
+	if _, err := ComposeNotes("", " ", "n", "u", "t"); err == nil {
+		t.Error("empty notes composed")
+	}
+	if acts := OfferedActions("Notes", ""); len(acts) != 3 {
+		t.Errorf("default Notes actions = %+v", acts)
+	}
+}
