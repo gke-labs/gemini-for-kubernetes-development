@@ -1226,6 +1226,9 @@ export function ResearchConversation({
   const notesRunning = !!(notes.writing || notes.saving);
   const [notesBusy, setNotesBusy] = useState(''); // the click in flight
   const [notesEdit, setNotesEdit] = useState(null); // the edit box, when open
+  // The draft folds to its one line unless asked for: open, it took half
+  // the pane from the conversation, and stayed that way after the save.
+  const [notesOpen, setNotesOpen] = useState(false);
   const refreshNotes = useCallback(() => {
     fetch(api)
       .then(res => (res.ok ? res.json() : null))
@@ -1675,11 +1678,12 @@ export function ResearchConversation({
           </div>
         )}
         {/* The draft: what Save to research/notes pushes, under the
-            note's name. Folded to a bounded box so it does not push the
-            conversation off the screen. */}
+            note's name. One line until Show (or Edit) opens it, and then
+            a bounded box, so it never pushes the conversation away. */}
         {recipeNotes && notes.markdown && (
           <div style={{
-            flex: '0 0 auto', maxHeight: '40%', overflow: 'auto', padding: '6px 10px', textAlign: 'left',
+            flex: '0 0 auto', maxHeight: notesOpen || notesEdit !== null ? '40%' : undefined,
+            overflow: 'auto', padding: '6px 10px', textAlign: 'left',
             borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: 'x-small' }}>
@@ -1692,6 +1696,8 @@ export function ResearchConversation({
               <span style={{ flex: 1 }} />
               {notesEdit === null ? (
                 <>
+                  <button className="btn btn-sm" aria-expanded={notesOpen}
+                    onClick={() => setNotesOpen(o => !o)}>{notesOpen ? 'Hide' : 'Show'}</button>
                   <button className="btn btn-sm" disabled={!!notesBusy || notes.saving || notes.writing}
                     onClick={() => notesCall('save', 'POST', 'notes/save')}
                     title="Push this draft to research/notes in your fork">
@@ -1713,11 +1719,11 @@ export function ResearchConversation({
                 </>
               )}
             </div>
-            {notesEdit === null ? (
+            {notesEdit === null ? (notesOpen && (
               <div style={{ fontSize: 'small' }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{notes.markdown}</ReactMarkdown>
               </div>
-            ) : (
+            )) : (
               <textarea value={notesEdit} onChange={e => setNotesEdit(e.target.value)} aria-label="Edit the notes"
                 style={{ width: '100%', minHeight: '160px', marginTop: '6px', fontFamily: 'monospace', fontSize: 'small' }} />
             )}
