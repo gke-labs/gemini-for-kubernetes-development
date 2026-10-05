@@ -12,11 +12,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic/fake"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 )
 
@@ -49,6 +53,14 @@ func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured
 // taskSessionTestServer is researchTestServer, whose task session seam reaches acp when hosts is true and finds no sessions when not.
 func taskSessionTestServer(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) *gin.Engine {
 	t.Helper()
+	r, _ := taskSessionTestServerDyn(t, acp, hosts, sandboxes, pods...)
+	return r
+}
+
+// taskSessionTestServerDyn is taskSessionTestServer with its cluster, for
+// a test that files Requests.
+func taskSessionTestServerDyn(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
 	var objs []runtime.Object
 	for _, p := range pods {
 		objs = append(objs, p)
@@ -56,7 +68,7 @@ func taskSessionTestServer(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []
 	if acp == nil {
 		acp = &fakeACPD{}
 	}
-	r, _ := researchTestServer(t, acp, sandboxes, objs...)
+	r, dyn := researchTestServer(t, acp, sandboxes, objs...)
 	srv := httptest.NewServer(acp.handler())
 	t.Cleanup(srv.Close)
 	prev := taskSessionClientForPod
@@ -67,7 +79,7 @@ func taskSessionTestServer(t *testing.T, acp *fakeACPD, hosts bool, sandboxes []
 		return acpd.New(srv.URL), true
 	}
 	t.Cleanup(func() { taskSessionClientForPod = prev })
-	return r
+	return r, dyn
 }
 
 func TestContinuingATaskSessionLoadsItWhereTheTaskRan(t *testing.T) {
@@ -240,5 +252,59 @@ func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	if w := doJSON(t, r, http.MethodGet, taskSessionAt, ""); strings.Contains(w.Body.String(), `"revises"`) {
 		t.Errorf("an approved plan offers revises: %s", w.Body.String())
+	}
+}
+
+// The session is where a revise is clicked, so it is where it is followed:
+// standing, the button says it is revising; failed, it says why.
+func TestATaskSessionFollowsItsRevise(t *testing.T) {
+	sb := issueSandboxCR("alice", 1)
+	a := sb.GetAnnotations()
+	a[annoPlanDraft] = "## Summary\nA plan."
+	a[annoBoard] = "myboard"
+	a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
+		"source:\n  task: " + planTask + "\n" +
+		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Use as plan\n"
+	sb.SetAnnotations(a)
+	r, dyn := taskSessionTestServerDyn(t, nil, true, []*unstructured.Unstructured{sb},
+		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
+	revises := func() []models.WorkAction {
+		t.Helper()
+		var body struct {
+			Revises []models.WorkAction `json:"revises"`
+		}
+		w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || len(body.Revises) != 1 {
+			t.Fatalf("revises in %s (%v)", w.Body.String(), err)
+		}
+		return body.Revises
+	}
+	if got := revises()[0]; !got.Enabled || got.Reason != "" || got.Error != "" {
+		t.Errorf("with no revise filed: %+v", got)
+	}
+
+	ctx := context.Background()
+	other := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Number: 7, Revise: "plan"})
+	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, other, v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := revises()[0]; !got.Enabled {
+		t.Errorf("another issue's revise holds this one: %+v", got)
+	}
+
+	click := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Number: 42, Revise: "plan"})
+	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, click, v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := revises()[0]; got.Enabled || got.Reason != "revising" {
+		t.Errorf("while the revise stands: %+v", got)
+	}
+
+	click.Object["status"] = map[string]interface{}{"phase": boardv1alpha1.RequestFailed, "message": "the session is busy"}
+	if _, err := dyn.Resource(requestGVR).Namespace("alice").Update(ctx, click, v1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := revises()[0]; !got.Enabled || got.Error != "the session is busy" {
+		t.Errorf("after the revise failed: %+v", got)
 	}
 }

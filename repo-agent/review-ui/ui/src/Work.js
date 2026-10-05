@@ -252,12 +252,6 @@ const DRAFT_VERBS = {
       label: 'Reject', title: 'Discards this plan draft',
       confirm: n => `Discard the plan for issue #${n}?`,
     },
-    // A revise asks the plan's agent, in the conversation continued in
-    // its session, to write the plan again; the draft becomes what it
-    // writes. Nothing is posted.
-    revise: {
-      label: 'Revise', title: 'Rewrites the plan from the conversation in its agent session — nothing is posted',
-    },
   },
 };
 
@@ -275,7 +269,9 @@ function taskSessionHref(session) {
   return `#/task-session/${session.sandbox}/${session.task}`;
 }
 
-// anyPosting is whether a row has a write or a revise standing.
+// anyPosting is whether a row has a write or a revise standing. A revise
+// (Use as plan) is clicked in the plan's session, not here, but it holds
+// the row's writes until the plan it writes is the draft.
 function anyPosting(items) {
   return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]
     .some(a => a.reason === 'posting' || a.reason === 'revising'));
@@ -288,17 +284,17 @@ function DraftActions({ kind, actions, number, onEdit, onTake }) {
     const v = verbs[a.verb];
     const label = a.label || v.label;
     return (
-      <button key={a.verb + (a.run || '') + (a.revise || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
+      <button key={a.verb + (a.run || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
         disabled={!a.enabled} title={a.enabled ? v.title : `Not now: ${a.reason}`}
         onClick={() => {
           if (a.verb === 'edit') { onEdit(); return; }
           if (v.confirm && !window.confirm(v.confirm(number))) return;
           onTake(a);
-        }}>{a.reason === 'posting' || a.reason === 'revising' ? `${label}…` : label}</button>
+        }}>{a.reason === 'posting' ? `${label}…` : label}</button>
     );
   });
   const failures = shown.filter(a => a.error).map(a => (
-    <div key={`err-${a.verb}${a.revise || ''}`} style={{ color: '#c62828', fontSize: '12px', marginTop: '4px' }}>
+    <div key={`err-${a.verb}`} style={{ color: '#c62828', fontSize: '12px', marginTop: '4px' }}>
       {a.label || verbs[a.verb].label} failed: {a.error}
     </div>
   ));
@@ -313,11 +309,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
 
   // takeAction takes one action a draft's task output offers; text is an
   // edit's new draft. A refusal shows in the panel, with the reason.
-  const takeAction = (kind, verb, { run = '', revise = '', text = '', onOk, setErr }) => {
+  const takeAction = (kind, verb, { run = '', text = '', onOk, setErr }) => {
     fetch(`/api/board/${boardName}/issues/${item.number}/actions/${verb}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, run, text, ...(revise ? { revise } : {}) }),
+      body: JSON.stringify({ kind, run, text }),
     }).then(async res => {
       if (res.ok) {
         setErr('');
@@ -743,7 +739,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     )}
                     <DraftActions kind="Plan" actions={item.planActions} number={item.number}
                       onEdit={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}
-                      onTake={a => takeAction('Plan', a.verb, { run: a.run, revise: a.revise, setErr: setPlanErr })} />
+                      onTake={a => takeAction('Plan', a.verb, { run: a.run, setErr: setPlanErr })} />
                   </div>
                 </div>
               )}

@@ -136,7 +136,7 @@ actions:
 - **The recorded run gains `session`.** The board's `planSession` / `triageSession` use `session`, falling back to `task`, so *Continue session* still opens the one conversation after a revise.
 - **One at a time, never retried.** A revise and a plan of one issue take turns. A revise that fails (the session was mid-turn, say) fails its Request; the button is the retry.
 - **The controller wakes a paused sandbox.** `factory recipe revise` reaches the sandbox as it is, so the controller scales it back up first.
-- **Buttons come from the actions.** The task-session view shows each `revise` action of the session's latest output, disabled while the session is busy or held. The draft row shows them too, beside Post plan.
+- **Buttons come from the actions.** The task-session view shows each `revise` action of the session's latest output, disabled while the session is busy or held, and follows the revise it files: revising, or why it failed. Only there: a revise rewrites the plan from the conversation, so it is clicked where the conversation is. The draft row doesn't offer it, but holds its writes while a revise runs.
 
 ---
 
