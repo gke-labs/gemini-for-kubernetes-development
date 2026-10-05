@@ -23,8 +23,24 @@ type Action struct {
 	Format string `yaml:"format,omitempty" json:"format,omitempty"`
 	// Run is the follow-up a run starts, with this result as its input.
 	Run string `yaml:"run,omitempty" json:"run,omitempty"`
+	// Revise is the recipe's revise a revise action runs, into the
+	// conversation the result came from.
+	Revise string `yaml:"revise,omitempty" json:"revise,omitempty"`
 	// Label is what to call it, for a button.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
+}
+
+// arg is what the action's verb acts with: the follow-up a run starts,
+// the revise a revise runs.
+func (a Action) arg() string {
+	if a.Verb == "revise" {
+		return a.Revise
+	}
+	return a.Run
+}
+
+func (a Action) String() string {
+	return strings.TrimSuffix(a.Verb+" "+a.arg(), " ")
 }
 
 // Class is who executes a verb.
@@ -55,6 +71,7 @@ var verbs = map[string]verb{
 	"comment": {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
 	"label":   {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
 	"run":     {class: ClassFollowUp, kinds: []string{"Plan"}},
+	"revise":  {class: ClassFollowUp, kinds: []string{"Triage", "Plan"}},
 	"edit":    {class: ClassDraft, kinds: []string{"Triage", "Plan"}},
 	"reject":  {class: ClassDraft, kinds: []string{"Triage", "Plan"}},
 }
@@ -83,7 +100,10 @@ var defaultActions = map[string][]Action{
 	},
 }
 
-var editFieldRE = regexp.MustCompile(`^spec(\.[a-z][A-Za-z0-9]*)?$`)
+var (
+	editFieldRE = regexp.MustCompile(`^spec(\.[a-z][A-Za-z0-9]*)?$`)
+	reviseRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+)
 
 // VerbClass is verb's class, and false for a verb the registry doesn't
 // have.
@@ -120,9 +140,9 @@ func ValidateActions(kind string, actions []Action) error {
 		if !slices.Contains(v.kinds, kind) {
 			return fmt.Errorf("action %s does not take a %s", a.Verb, kind)
 		}
-		key := a.Verb + "/" + a.Run
+		key := a.Verb + "/" + a.arg()
 		if seen[key] {
-			return fmt.Errorf("action %s declared twice", strings.TrimSuffix(a.Verb+" "+a.Run, " "))
+			return fmt.Errorf("action %s declared twice", a)
 		}
 		seen[key] = true
 		switch a.Verb {
@@ -141,8 +161,15 @@ func ValidateActions(kind string, actions []Action) error {
 			if !slices.Contains(kinds, kind) {
 				return fmt.Errorf("action run %s does not take a %s", a.Run, kind)
 			}
-		default:
+		case "revise":
+			if !reviseRE.MatchString(a.Revise) {
+				return fmt.Errorf("action revise: revise %q must match %s", a.Revise, reviseRE)
+			}
 			if a.Field != "" || a.Format != "" || a.Run != "" {
+				return fmt.Errorf("action revise takes only a revise and a label")
+			}
+		default:
+			if a.Field != "" || a.Format != "" || a.Run != "" || a.Revise != "" {
 				return fmt.Errorf("action %s takes only a label", a.Verb)
 			}
 		}
@@ -167,18 +194,19 @@ func (d *Document) Offered() []Action {
 	return out
 }
 
-// Offer is the action the document offers for verb (and, for a run, the
-// follow-up run), or an error saying what it offers instead.
-func (d *Document) Offer(verbName, run string) (Action, error) {
+// Offer is the action the document offers for verb (and arg: for a run,
+// the follow-up; for a revise, the revise), or an error saying what it
+// offers instead.
+func (d *Document) Offer(verbName, arg string) (Action, error) {
 	var offered []string
 	for _, a := range d.Offered() {
-		if a.Verb == verbName && (run == "" || a.Run == run) {
+		if a.Verb == verbName && (arg == "" || a.arg() == arg) {
 			return a, nil
 		}
-		offered = append(offered, strings.TrimSuffix(a.Verb+" "+a.Run, " "))
+		offered = append(offered, a.String())
 	}
-	if run != "" {
-		verbName += " " + run
+	if arg != "" {
+		verbName += " " + arg
 	}
 	return Action{}, fmt.Errorf("the %s does not offer %s; it offers: %s", d.Kind, verbName, strings.Join(offered, ", "))
 }

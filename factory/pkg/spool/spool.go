@@ -56,6 +56,9 @@ type Task struct {
 	// Revise is the recipe's part the task runs: "" for start, else the
 	// id of one of its revises.
 	Revise string `json:"revise,omitempty"`
+	// Session is the task whose agent session a revise continues: the
+	// task that started the conversation, never another revise.
+	Session string `json:"session,omitempty"`
 	// TaskType is the recipe's task-type, when it is its sandbox's main
 	// task; unset, the task's kind is recipe-<Recipe>.
 	TaskType    string    `json:"task_type,omitempty"`

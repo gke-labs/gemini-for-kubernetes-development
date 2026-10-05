@@ -45,6 +45,36 @@ func TestWriteTaskOutput(t *testing.T) {
 	}
 }
 
+// A revise's result names the conversation it came from beside itself.
+func TestWriteTaskOutputOfARevise(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-plan-20261005-101010-abcd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Revise: "plan", Session: "recipe-plan-20261004-101010-0001",
+		Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
+		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
+	if err := writeTaskOutput(dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := docs[0]
+	if d.Source.Task != filepath.Base(dir) || d.Source.Session != "recipe-plan-20261004-101010-0001" {
+		t.Errorf("source = %+v", d.Source)
+	}
+	if _, err := d.Offer("revise", "plan"); err != nil {
+		t.Error(err)
+	}
+}
+
 // A result apply could not act on fails the task.
 func TestWriteTaskOutputFailsOnABadResult(t *testing.T) {
 	dir := t.TempDir()

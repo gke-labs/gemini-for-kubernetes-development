@@ -2,6 +2,7 @@ package taskapi
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,10 +29,12 @@ const SessionsVersion = 1
 type Tokens struct {
 	mu sync.Mutex
 	m  map[string]string
+	// revises are, by task, the session each revise launched continues.
+	revises map[string]string
 }
 
 func NewTokens() *Tokens {
-	return &Tokens{m: map[string]string{}}
+	return &Tokens{m: map[string]string{}, revises: map[string]string{}}
 }
 
 // Wrap is launch, with the task's token added to its environment.
@@ -43,11 +46,45 @@ func (t *Tokens) Wrap(launch spool.Launcher) spool.Launcher {
 			withToken[k] = v
 		}
 		withToken[EnvTaskToken] = token
+		id := filepath.Base(taskDir)
 		t.mu.Lock()
-		t.m[filepath.Base(taskDir)] = token
+		t.m[id] = token
+		if session := taskSession(taskDir); session != "" {
+			t.revises[id] = session
+		}
 		t.mu.Unlock()
 		return launch(taskDir, withToken)
 	}
+}
+
+// taskSession is the session task.json says the task continues, "" for
+// a task that starts its own.
+func taskSession(taskDir string) string {
+	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
+	if err != nil {
+		return ""
+	}
+	var task spool.Task
+	if json.Unmarshal(data, &task) != nil {
+		return ""
+	}
+	return task.Session
+}
+
+// revisesOf are the revises launched into session's conversation.
+func (t *Tokens) revisesOf(session string) []string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []string
+	for task, s := range t.revises {
+		if s == session {
+			out = append(out, task)
+		}
+	}
+	return out
 }
 
 func (t *Tokens) get(task string) string {
@@ -82,8 +119,24 @@ func (t taskSessions) Dir(task string) (string, error) {
 	return dir, nil
 }
 
-// Running is whether the task has not ended: started or about to be.
+// Running is whether the task's session is a task's to drive: the task
+// has not ended, or a revise of it runs.
 func (t taskSessions) Running(task string) bool {
+	return t.running(task) || t.revising(task) != ""
+}
+
+// revising is the revise running in task's session, if any.
+func (t taskSessions) revising(task string) string {
+	for _, r := range t.s.tokens.revisesOf(task) {
+		if t.running(r) {
+			return r
+		}
+	}
+	return ""
+}
+
+// running is whether the task has not ended: started or about to be.
+func (t taskSessions) running(task string) bool {
 	dir, err := t.Dir(task)
 	if err != nil {
 		return false
@@ -94,7 +147,12 @@ func (t taskSessions) Running(task string) bool {
 	return !nonEmpty(envd.NewTaskFiles(dir).ExitCodeFile)
 }
 
+// Token is the token of whoever drives task's session: a revise running
+// in it, else the task.
 func (t taskSessions) Token(task string) string {
+	if r := t.revising(task); r != "" {
+		return t.s.tokens.get(r)
+	}
 	return t.s.tokens.get(task)
 }
 

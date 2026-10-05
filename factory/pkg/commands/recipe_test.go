@@ -72,7 +72,7 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range recipe.BuiltinNames() {
-		if name == "run" || name == "exec" {
+		if name == "run" || name == "exec" || name == "revise" {
 			t.Errorf("built-in recipe %q takes the name of a recipe command", name)
 			continue
 		}
@@ -141,5 +141,39 @@ func TestRunByName(t *testing.T) {
 	}
 	if _, ok, err := runByName(entries, "request/y", "triage", "https://github.com/o/r/issues/8"); err == nil || ok {
 		t.Errorf("runByName of another issue's id = %v, %v; want an error", ok, err)
+	}
+}
+
+// A revise revises the task named, or the newest that ran a recipe with
+// that revise, a revise of it included.
+func TestRevisedTask(t *testing.T) {
+	entry := func(id, recipeName, session string) spool.Entry {
+		return spool.Entry{Task: spool.Task{ID: id, Recipe: recipeName, Session: session}}
+	}
+	entries := []spool.Entry{ // newest first
+		entry("recipe-triage-3", "triage", ""),
+		entry("fix-2", "", ""),
+		entry("recipe-plan-2", "plan", "recipe-plan-1"),
+		entry("recipe-plan-1", "plan", ""),
+	}
+	if e, err := revisedTask(entries, "", "plan", nil); err != nil || e.ID != "recipe-plan-2" {
+		t.Errorf("newest = %s, %v; want recipe-plan-2", e.ID, err)
+	}
+	if e, err := revisedTask(entries, "recipe-plan-1", "plan", nil); err != nil || e.ID != "recipe-plan-1" {
+		t.Errorf("named = %s, %v", e.ID, err)
+	}
+	if _, err := revisedTask(entries, "fix-2", "plan", nil); err == nil {
+		t.Error("revised a task that ran no recipe")
+	}
+	if _, err := revisedTask(entries, "", "nope", nil); err == nil {
+		t.Error("found a task for a revise no recipe has")
+	}
+	_, mine, err := recipe.Builtin("plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine.Name = "triage"
+	if e, err := revisedTask(entries, "", "plan", mine); err != nil || e.ID != "recipe-triage-3" {
+		t.Errorf("with --recipe = %s, %v; want the newest task of that recipe", e.ID, err)
 	}
 }

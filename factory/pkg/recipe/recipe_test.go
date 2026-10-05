@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
 func TestBuiltinTriageParses(t *testing.T) {
@@ -549,6 +551,10 @@ func TestRevisesAreValidated(t *testing.T) {
 		"captures another": start + "revise: [{id: p, label: L, steps: [{ask: y, capture: other.md}]}]",
 		"start asks nothing": "name: a\noutputs: [p.md]\nstart: {steps: [{run: x}]}\n" +
 			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
+		"declared revise action": start + "task-output: {kind: Plan, from: p.md, actions: [{verb: revise, revise: p}]}\n" +
+			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
+		"misses the task output": "name: a\noutputs: [p.md, q.md]\nstart: {steps: [{ask: x, capture: p.md}, {ask: x2, capture: q.md}]}\n" +
+			"task-output: {kind: Plan, from: p.md}\nrevise: [{id: p, label: L, steps: [{ask: y, capture: q.md}]}]",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -572,5 +578,62 @@ func TestForSandboxKeepsAnchoredSteps(t *testing.T) {
 	steps, _ := rec.Steps("plan")
 	if rec.TaskOutput != nil || len(steps) != 2 || steps[1].Run != "cp plan.md /somewhere" {
 		t.Errorf("revise steps = %+v\n%s", steps, data)
+	}
+}
+
+// A task of a recipe with revises offers each, after the actions declared
+// or, with none declared, the kind's.
+func TestOutputDeclOffersEachRevise(t *testing.T) {
+	base := reviseRecipe + "  - id: shorter\n    label: Shorter\n    steps: [{ask: shorter, capture: plan.md}]\n"
+	rec, err := Parse([]byte(base + "task-output: {kind: Plan, from: plan.md, actions: [{verb: comment}]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rec.OutputDecl().Actions
+	want := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}, {Verb: "revise", Revise: "shorter", Label: "Shorter"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("actions = %+v\nwant      %+v", got, want)
+	}
+	if len(rec.TaskOutput.Actions) != 1 {
+		t.Errorf("the recipe's declaration changed: %+v", rec.TaskOutput.Actions)
+	}
+
+	rec, err = Parse([]byte(base + "task-output: {kind: Plan, from: plan.md}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = rec.OutputDecl().Actions
+	if n := len(taskoutput.DefaultActions("Plan")); len(got) != n+2 || got[0].Verb != "edit" || got[n].Revise != "plan" {
+		t.Errorf("actions = %+v, want Plan's defaults and the revises", got)
+	}
+	if err := taskoutput.ValidateActions("Plan", got); err != nil {
+		t.Error(err)
+	}
+}
+
+// The built-in plan's Use as plan saves the plan as its start does, in
+// the recipe as a sandbox gets it.
+func TestPlanUseAsPlan(t *testing.T) {
+	data, rec, err := Builtin("plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := rec.OutputDecl().Actions; a[len(a)-1] != (taskoutput.Action{Verb: "revise", Revise: "plan", Label: "Use as plan"}) {
+		t.Errorf("last action = %+v", a[len(a)-1])
+	}
+	data, err = ForSandbox(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, err = Parse(data); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := rec.Steps("plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := rec.Start.Steps[len(rec.Start.Steps)-1].Run
+	if len(steps) != 2 || steps[0].Capture != "plan-output.md" || steps[1].Run != save || !strings.Contains(save, "plan-issue-") {
+		t.Errorf("revise plan = %+v", steps)
 	}
 }

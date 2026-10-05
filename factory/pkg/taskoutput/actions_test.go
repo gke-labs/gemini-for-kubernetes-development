@@ -30,6 +30,10 @@ func TestValidateActions(t *testing.T) {
 		"unknown follow-up":    {"Plan", []Action{{Verb: "run", Run: "deploy"}}},
 		"follow-up not a plan": {"Triage", []Action{{Verb: "run", Run: "fix"}}},
 		"comment with a run":   {"Plan", []Action{{Verb: "comment", Run: "fix"}}},
+		"revise without one":   {"Plan", []Action{{Verb: "revise"}}},
+		"revise twice":         {"Plan", []Action{{Verb: "revise", Revise: "plan"}, {Verb: "revise", Revise: "plan"}}},
+		"revise with a run":    {"Plan", []Action{{Verb: "revise", Revise: "plan", Run: "fix"}}},
+		"comment with revise":  {"Plan", []Action{{Verb: "comment", Revise: "plan"}}},
 	} {
 		if err := ValidateActions(tc.kind, tc.acts); err == nil {
 			t.Errorf("%s: accepted %+v", name, tc.acts)
@@ -58,6 +62,25 @@ func TestOffered(t *testing.T) {
 	}
 	if _, err := plan.Offer("run", "deploy"); err == nil {
 		t.Error("Offer(run deploy) on a plan offering run fix")
+	}
+}
+
+// Each revise is an action of its own, offered by its id.
+func TestRevisesAreOfferedByID(t *testing.T) {
+	acts := []Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Use as plan"}, {Verb: "revise", Revise: "shorter"}}
+	if err := ValidateActions("Plan", acts); err != nil {
+		t.Fatal(err)
+	}
+	plan := planDoc(t, "x", "## Summary\nDo it.")
+	plan.Actions = acts
+	if a, err := plan.Offer("revise", "shorter"); err != nil || a.Revise != "shorter" {
+		t.Errorf("Offer(revise shorter) = %+v, %v", a, err)
+	}
+	if _, err := plan.Offer("revise", "longer"); err == nil || !strings.Contains(err.Error(), "revise plan, revise shorter") {
+		t.Errorf("Offer(revise longer) = %v", err)
+	}
+	if class, _ := VerbClass("revise"); class != ClassFollowUp {
+		t.Errorf("revise is %s", class)
 	}
 }
 

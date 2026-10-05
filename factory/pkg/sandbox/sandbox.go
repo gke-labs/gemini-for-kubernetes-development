@@ -714,8 +714,11 @@ func RunAnnotation(taskType string) string {
 // RecordedRun is what RunAnnotation holds.
 type RecordedRun struct {
 	// Name is the run name the task was started under, if any.
-	Name      string    `json:"name,omitempty"`
-	Task      string    `json:"task"`
+	Name string `json:"name,omitempty"`
+	Task string `json:"task"`
+	// Session is the task whose conversation the run continues, for a
+	// revise; unset, the run's task has its own.
+	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 }
 

@@ -105,7 +105,15 @@ func (f *sessionsFixture) createBody(task string) string {
 // task writes to a file so the test can act as it.
 func (f *sessionsFixture) startTask(t *testing.T, id, cmd string) string {
 	t.Helper()
-	if _, err := f.c.Post(context.Background(), post(id, "", `printf %s "$`+EnvTaskToken+`" > token; `+cmd)); err != nil {
+	return f.startRevise(t, id, "", cmd)
+}
+
+// startRevise is startTask for a task continuing session's conversation.
+func (f *sessionsFixture) startRevise(t *testing.T, id, session, cmd string) string {
+	t.Helper()
+	req := post(id, "", `printf %s "$`+EnvTaskToken+`" > token; `+cmd)
+	req.Task.Session = session
+	if _, err := f.c.Post(context.Background(), req); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
 	path := filepath.Join(f.tasks, id, "token")
@@ -186,18 +194,23 @@ func TestARunningTaskDrivesItsSessionAndEverybodyElseWatches(t *testing.T) {
 	}
 }
 
-func TestAnEndedTasksSessionIsAnybodys(t *testing.T) {
-	f := newSessionsServer(t)
-	const task = "triage-20261004-120000"
-	f.startTask(t, task, "exit 0")
+func (f *sessionsFixture) awaitEnd(t *testing.T, task string) {
+	t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 		if e, err := f.c.Get(context.Background(), task); err == nil && e.ExitCode != "" {
-			break
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the task never ended")
 		}
 	}
+}
+
+func TestAnEndedTasksSessionIsAnybodys(t *testing.T) {
+	f := newSessionsServer(t)
+	const task = "triage-20261004-120000"
+	f.startTask(t, task, "exit 0")
+	f.awaitEnd(t, task)
 
 	code, body := f.call(t, http.MethodPost, "/v1/sessions", "", f.createBody(task))
 	if code != http.StatusCreated || strings.Contains(body, `"held":true`) {
@@ -229,5 +242,41 @@ func TestASessionWithoutATaskIsUnchanged(t *testing.T) {
 	}
 	if code, resp := f.call(t, http.MethodPost, "/v1/sessions/research/prompt", "", `{"text":"hi"}`); code != http.StatusAccepted {
 		t.Errorf("prompt: %d %s", code, resp)
+	}
+}
+
+// While a revise runs, the session it continues is the revise's: the
+// member watches, as they do a running task's, and has it back after.
+func TestARunningReviseDrivesTheSessionItContinues(t *testing.T) {
+	f := newSessionsServer(t)
+	const task, revise = "plan-20261004-120000", "plan-20261004-130000"
+	f.startTask(t, task, "exit 0")
+	f.awaitEnd(t, task)
+	token := f.startRevise(t, revise, task, "sleep 30")
+
+	if code, body := f.call(t, http.MethodPost, "/v1/sessions", "", f.createBody(task)); code != http.StatusConflict {
+		t.Fatalf("anybody started a session a revise is running in: %d %s", code, body)
+	}
+	code, body := f.call(t, http.MethodPost, "/v1/sessions", token, f.createBody(task))
+	if code != http.StatusCreated || !strings.Contains(body, `"held":true`) {
+		t.Fatalf("the revise could not start the session: %d %s", code, body)
+	}
+	if _, err := os.Stat(filepath.Join(f.tasks, task, "session", "stream.ndjson")); err != nil {
+		t.Errorf("the conversation is not the started task's: %v", err)
+	}
+	if code, body := f.call(t, http.MethodPost, "/v1/sessions/"+task+"/prompt", "", `{"text":"hi"}`); code != http.StatusConflict {
+		t.Errorf("anybody prompted during the revise: %d %s", code, body)
+	}
+	if code, body := f.call(t, http.MethodPost, "/v1/sessions/"+task+"/prompt", token, `{"text":"rewrite"}`); code != http.StatusAccepted {
+		t.Errorf("the revise could not prompt: %d %s", code, body)
+	}
+
+	// Cancelling the revise leaves the conversation to the member.
+	if _, err := f.c.Cancel(context.Background(), revise, false); err != nil {
+		t.Fatal(err)
+	}
+	code, body = f.call(t, http.MethodGet, "/v1/sessions/"+task, "", "")
+	if code != http.StatusOK || strings.Contains(body, `"held":true`) {
+		t.Errorf("after the revise: %d %s", code, body)
 	}
 }

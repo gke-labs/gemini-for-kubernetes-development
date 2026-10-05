@@ -59,6 +59,9 @@ type Target struct {
 type Source struct {
 	Sandbox string `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 	Task    string `yaml:"task,omitempty" json:"task,omitempty"`
+	// Session is the task whose conversation a revise continued, the one
+	// to revise again or continue; unset, it is Task's own.
+	Session string `yaml:"session,omitempty" json:"session,omitempty"`
 	Recipe  string `yaml:"recipe,omitempty" json:"recipe,omitempty"`
 	Engine  string `yaml:"engine,omitempty" json:"engine,omitempty"`
 }

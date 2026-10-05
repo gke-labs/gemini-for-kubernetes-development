@@ -1,6 +1,6 @@
 # Design Note: Revising a Task's Output from Its Conversation
 
-**Status:** Phase 1 (the recipe shape) built; phases 2–4 not yet.
+**Status:** Phases 1 (the recipe shape) and 2 (factory runs revises) built; phases 3–4 not yet.
 
 A recipe task (plan, triage) runs its asks in one agent session. Since #1746 a member can open that session after the task ends and keep talking to the agent: "why this approach?", "make step 3 smaller". This note covers turning that conversation into a new version of the task's output. The recipe declares **revise** parts, each a short list of steps that write the output again. factory runs a revise into the same session. Each revise appears as an action on the task output, so the board shows it as a button, for example **Use as plan**.
 
@@ -91,8 +91,10 @@ task-output:
 ### Running a revise
 
 ```
-factory recipe revise <task | issue url> <revise id> [--run-name NAME]
+factory recipe revise <sandbox | issue url> <revise id> [--task ID] [--run-name NAME] [--recipe FILE]
 ```
+
+`--task` names the task to revise; by default it is the sandbox's newest task whose recipe has that revise. `factory apply --action revise:<id>` runs the same, with the task output's `source.session` (else `source.task`) as `--task`.
 
 A revise is a **new task** in the same sandbox, not the old task re-entered:
 
@@ -110,7 +112,7 @@ The daemon already gives a running task's session to the task alone (`X-Factory-
 - **While a revise runs, the started task's session is held for the revise.** In the daemon's `Tasks`, `Running(started)` is true while a task whose `session` is `started` runs, and `Token(started)` is that task's token. The browser shows the held state it already has.
 - **A busy session refuses the revise.** If a member's turn is in flight, the revise fails at once with 409 and sends nothing; the button is disabled while the session is busy.
 - **The revise's ask appears in the conversation as the next turn,** as though the member had typed it, followed by the reply. When the revise ends, the session is the member's again, and they can keep talking and revise again.
-- **A session nobody opened since the task ended** is loaded (session/load) by the revise, as the browser would load it.
+- **A session nobody opened since the task ended** is loaded (session/load) by the revise, as the browser would load it, and closed when the revise ends. A session a member has open is used as it is and left open.
 
 ### The action
 
@@ -145,6 +147,6 @@ actions:
 ## Phases
 
 1. **factory, recipe shape (built).** `start` / `revise` in `pkg/recipe`, validation, the built-in recipes moved under `start`, the runner running the part `task.json`'s `revise` names (start when unset).
-2. **factory, revise.** `session` in `task.json`, the daemon holding a started task's session for a running revise, `factory recipe revise`, revise actions in task outputs, `session` in `source`. Plan gets **Use as plan**.
+2. **factory, revise (built).** `session` in `task.json`, the daemon holding a started task's session for a running revise, `factory recipe revise`, revise actions in task outputs, `session` in `source` and in the recorded run annotation. Plan gets **Use as plan**.
 3. **repo-agent.** Request verb `revise`, launch and harvest, `session` in the recorded run, the buttons.
 4. **Triage revises,** once plan's has been used.
