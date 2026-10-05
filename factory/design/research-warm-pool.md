@@ -73,7 +73,7 @@ claim never touches storage.
 
 **The research pod spec contains nothing repo-specific.** Walking
 `EnsureResearchSandbox` (`pkg/sandbox/research.go:146`) field by field —
-image, env (`HOME`, `GOCACHE`, `GOMODCACHE`, `TMPDIR`, `ACPD_ENABLE`),
+image, env (`HOME`, `GOCACHE`, `GOMODCACHE`, `TMPDIR`),
 secrets (member-level, not repo-level), resources,
 `DeployerServiceAccount`, ports, the 10Gi claim at `/workspaces` — every
 one is a global flag or a constant.

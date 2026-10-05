@@ -140,10 +140,6 @@ coding tasks without local side effects or host dependencies.`,
 	sshdCmd.GroupID = "management"
 	cmd.AddCommand(sshdCmd)
 
-	acpdCmd := NewACPDCommand(ctx)
-	acpdCmd.GroupID = "management"
-	cmd.AddCommand(acpdCmd)
-
 	cmd.AddCommand(NewRecipeCommand(ctx))
 
 	applyCmd := NewApplyCommand(ctx)

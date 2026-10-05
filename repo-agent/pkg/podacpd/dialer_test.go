@@ -11,8 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 )
 
 // taskServer answers the version with version, and a session "s" at
@@ -31,16 +29,6 @@ func taskServer(t *testing.T, version string) *httptest.Server {
 	return srv
 }
 
-// podIP is the fallback, answering for any session as not busy.
-func podIP(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"id":"s","engine":"gemini","busy":false}`))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 type fixture struct {
 	d     *Dialer
 	opens int
@@ -50,10 +38,8 @@ type fixture struct {
 
 func newFixture(t *testing.T, open func() (string, error)) *fixture {
 	t.Helper()
-	ip := podIP(t)
 	f := &fixture{now: time.Unix(1_000_000, 0)}
 	f.d = &Dialer{
-		byIP:  func(string) *acpd.Client { return acpd.New(ip.URL) },
 		pods:  map[types.UID]*podState{},
 		clock: func() time.Time { return f.now },
 		open: func(context.Context, *corev1.Pod) (*forward, error) {
@@ -72,26 +58,32 @@ func newFixture(t *testing.T, open func() (string, error)) *fixture {
 
 var pod = &corev1.Pod{
 	ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", UID: "uid-1"},
-	Status:     corev1.PodStatus{PodIP: "10.0.0.1"},
 }
 
-// busy is which way the client went: the task server says busy, the pod
-// IP not.
-func (f *fixture) busy(t *testing.T) bool {
+// reached is whether the pod's sessions were offered; when they were,
+// they must be the task server's.
+func (f *fixture) reached(t *testing.T) bool {
 	t.Helper()
-	s, err := f.d.Client(context.Background(), pod).GetSession(context.Background(), "s")
+	c, ok := f.d.Sessions(context.Background(), pod)
+	if !ok {
+		return false
+	}
+	s, err := c.GetSession(context.Background(), "s")
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	return s.Busy
+	if !s.Busy {
+		t.Fatal("the session is not the task server's")
+	}
+	return true
 }
 
 func TestAPodWhoseDaemonHostsSessionsIsForwardedToOnce(t *testing.T) {
 	srv := taskServer(t, `{"api":1,"sessions":1}`)
 	f := newFixture(t, func() (string, error) { return srv.URL, nil })
 	for range 3 {
-		if !f.busy(t) {
-			t.Fatal("went to the pod IP, not the forward")
+		if !f.reached(t) {
+			t.Fatal("a daemon that hosts sessions was not reached")
 		}
 	}
 	if f.opens != 1 {
@@ -100,16 +92,16 @@ func TestAPodWhoseDaemonHostsSessionsIsForwardedToOnce(t *testing.T) {
 
 	// The forward ended, with its pod say: the next call opens another.
 	close(f.fwds[0].done)
-	if !f.busy(t) || f.opens != 2 {
+	if !f.reached(t) || f.opens != 2 {
 		t.Errorf("a dead forward was not replaced: opens = %d", f.opens)
 	}
 }
 
-func TestAnOlderDaemonIsDialledOnItsIPAndNotAskedAgain(t *testing.T) {
+func TestAnOlderDaemonIsUnreachableAndNotAskedAgain(t *testing.T) {
 	srv := taskServer(t, `{"api":1}`)
 	f := newFixture(t, func() (string, error) { return srv.URL, nil })
 	for range 2 {
-		if f.busy(t) {
+		if f.reached(t) {
 			t.Fatal("used the forward of a daemon that hosts no sessions")
 		}
 	}
@@ -133,8 +125,8 @@ func TestAForwardThatFailsIsRetriedLater(t *testing.T) {
 		return srv.URL, nil
 	})
 	for range 2 {
-		if f.busy(t) {
-			t.Fatal("no forward, yet not the pod IP")
+		if f.reached(t) {
+			t.Fatal("no forward, yet reached")
 		}
 	}
 	if f.opens != 1 {
@@ -143,7 +135,7 @@ func TestAForwardThatFailsIsRetriedLater(t *testing.T) {
 
 	fail = false
 	f.now = f.now.Add(retryAfter + time.Second)
-	if !f.busy(t) {
+	if !f.reached(t) {
 		t.Error("the forward was not tried again")
 	}
 }
@@ -151,9 +143,9 @@ func TestAForwardThatFailsIsRetriedLater(t *testing.T) {
 func TestIdlePodsAreForgotten(t *testing.T) {
 	srv := taskServer(t, `{"api":1,"sessions":1}`)
 	f := newFixture(t, func() (string, error) { return srv.URL, nil })
-	f.busy(t)
+	f.reached(t)
 	f.now = f.now.Add(idleAfter + time.Minute)
-	f.d.Client(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "other"}})
+	f.d.Sessions(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "other"}})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		select {
@@ -168,14 +160,7 @@ func TestIdlePodsAreForgotten(t *testing.T) {
 	}
 }
 
-func TestANilDialerDialsTheIP(t *testing.T) {
-	var d *Dialer
-	if d.Client(context.Background(), pod) == nil {
-		t.Fatal("no client")
-	}
-}
-
-func TestSessionsAreOnlyOnTheForward(t *testing.T) {
+func TestSessionsAreOnlyOnADaemonThatHostsThem(t *testing.T) {
 	srv := taskServer(t, `{"api":1,"sessions":1}`)
 	f := newFixture(t, func() (string, error) { return srv.URL, nil })
 	if _, ok := f.d.Sessions(context.Background(), pod); !ok {
@@ -185,7 +170,7 @@ func TestSessionsAreOnlyOnTheForward(t *testing.T) {
 	old := taskServer(t, `{"api":1}`)
 	f = newFixture(t, func() (string, error) { return old.URL, nil })
 	if _, ok := f.d.Sessions(context.Background(), pod); ok {
-		t.Error("an older daemon's pod IP was offered as its sessions")
+		t.Error("an older daemon was offered as having sessions")
 	}
 	var d *Dialer
 	if _, ok := d.Sessions(context.Background(), pod); ok {

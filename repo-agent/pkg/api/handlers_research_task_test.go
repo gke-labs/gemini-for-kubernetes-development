@@ -56,26 +56,25 @@ func recipeResearchSandboxCR() *unstructured.Unstructured {
 	return sb
 }
 
-// recipeResearchServer stands acpd and the daemon's task sessions up
-// apart, so a test can see which one a call reached. hosts false is an
-// image whose daemon keeps no task sessions.
-func recipeResearchServer(t *testing.T, acp, daemon *fakeACPD, hosts bool) *gin.Engine {
+// recipeResearchServer stands the daemon's task sessions up. hosts false
+// is an image whose daemon keeps no task sessions.
+func recipeResearchServer(t *testing.T, daemon *fakeSessions, hosts bool) *gin.Engine {
 	t.Helper()
-	r, _ := recipeResearchServerDyn(t, acp, daemon, hosts)
+	r, _ := recipeResearchServerDyn(t, daemon, hosts)
 	return r
 }
 
 // recipeResearchServerDyn is recipeResearchServer with its cluster.
-func recipeResearchServerDyn(t *testing.T, acp, daemon *fakeACPD, hosts bool) (*gin.Engine, *fake.FakeDynamicClient) {
+func recipeResearchServerDyn(t *testing.T, daemon *fakeSessions, hosts bool) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
-	return recipeResearchServerWith(t, acp, daemon, hosts, recipeResearchSandboxCR())
+	return recipeResearchServerWith(t, daemon, hosts, recipeResearchSandboxCR())
 }
 
 // recipeResearchServerWith serves sb, running, beside the others in the
 // namespace.
-func recipeResearchServerWith(t *testing.T, acp, daemon *fakeACPD, hosts bool, sb *unstructured.Unstructured, others ...*unstructured.Unstructured) (*gin.Engine, *fake.FakeDynamicClient) {
+func recipeResearchServerWith(t *testing.T, daemon *fakeSessions, hosts bool, sb *unstructured.Unstructured, others ...*unstructured.Unstructured) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
-	r, dyn := researchTestServer(t, acp, append([]*unstructured.Unstructured{sb}, others...),
+	r, dyn := researchTestServer(t, nil, append([]*unstructured.Unstructured{sb}, others...),
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 	srv := httptest.NewServer(daemon.handler())
 	t.Cleanup(srv.Close)
@@ -91,10 +90,10 @@ func recipeResearchServerWith(t *testing.T, acp, daemon *fakeACPD, hosts bool, s
 }
 
 // A recipe's conversation is continued in the daemon's session for its
-// task, loaded where the task left it — acpd is never asked.
+// task, loaded where the task left it.
 func TestRecipeResearchPromptContinuesTheTaskSession(t *testing.T) {
-	acp, daemon := &fakeACPD{}, &fakeACPD{}
-	r := recipeResearchServer(t, acp, daemon, true)
+	daemon := &fakeSessions{}
+	r := recipeResearchServer(t, daemon, true)
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"and the backoff?"}`)
 	if w.Code != http.StatusAccepted {
@@ -113,20 +112,16 @@ func TestRecipeResearchPromptContinuesTheTaskSession(t *testing.T) {
 	if daemon.createKey != "engine-key-value" {
 		t.Errorf("%s = %q, want the member's key", acpd.APIKeyHeader, daemon.createKey)
 	}
-	if len(acp.calls) != 0 {
-		t.Errorf("acpd was asked about a task session: %v", acp.calls)
-	}
 }
 
 // While the recipe's start is still asking the opening question the
 // session is held: the status says so, and the list reads its state off
 // the daemon.
 func TestRecipeResearchHeldWhileTheStartRuns(t *testing.T) {
-	acp := &fakeACPD{}
-	daemon := &fakeACPD{live: map[string]acpd.Session{
+	daemon := &fakeSessions{live: map[string]acpd.Session{
 		researchTaskID: {ID: researchTaskID, Busy: true, Held: true},
 	}}
-	r := recipeResearchServer(t, acp, daemon, true)
+	r := recipeResearchServer(t, daemon, true)
 
 	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
 	if w.Code != http.StatusOK {
@@ -142,31 +137,24 @@ func TestRecipeResearchHeldWhileTheStartRuns(t *testing.T) {
 	if len(views) != 1 || !views[0].Held || !views[0].Busy || views[0].Task != researchTaskID {
 		t.Errorf("list = %+v, want one held, busy task session", views)
 	}
-	if len(acp.calls) != 0 {
-		t.Errorf("acpd was asked about a task session: %v", acp.calls)
-	}
 }
 
 // An image whose daemon keeps no task sessions has nowhere to continue
-// the conversation: a 409 naming it, not a create on acpd.
+// the conversation: a 409 naming it.
 func TestRecipeResearchOnAnImageWithoutTaskSessionsIsConflict(t *testing.T) {
-	acp := &fakeACPD{}
-	r := recipeResearchServer(t, acp, &fakeACPD{}, false)
+	r := recipeResearchServer(t, &fakeSessions{}, false)
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hi"}`)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"legacy":true`) {
 		t.Fatalf("status = %d, body %s; want 409 legacy", w.Code, w.Body.String())
-	}
-	if len(acp.calls) != 0 {
-		t.Errorf("acpd was asked about a task session: %v", acp.calls)
 	}
 }
 
 // 💾 on a recipe session files the recipe's notes revise for its sandbox
 // and pins the note's name; no engine is asked from the API.
 func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
-	acp, daemon := &fakeACPD{}, &fakeACPD{}
-	r, dyn := recipeResearchServerDyn(t, acp, daemon, true)
+	daemon := &fakeSessions{}
+	r, dyn := recipeResearchServerDyn(t, daemon, true)
 	seedNotesBoard(t, dyn)
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
@@ -181,15 +169,15 @@ func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
 	if note := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; note == "" {
 		t.Error("the note's name was not pinned")
 	}
-	if len(daemon.calls) != 0 || len(acp.calls) != 0 {
-		t.Errorf("the save reached an engine: daemon %v, acpd %v", daemon.calls, acp.calls)
+	if len(daemon.calls) != 0 {
+		t.Errorf("the save reached an engine: %v", daemon.calls)
 	}
 }
 
 // Without a board for the repository there is no controller to run the
 // revise: a 409, and nothing filed.
 func TestRecipeResearchCaptureWithoutABoardIsConflict(t *testing.T) {
-	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 
 	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
 	if w.Code != http.StatusConflict {
@@ -202,7 +190,7 @@ func TestRecipeResearchCaptureWithoutABoardIsConflict(t *testing.T) {
 
 // The status carries the draft and what the newest clicks on it say.
 func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
-	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 	setNotesAnnotations(t, dyn, map[string]string{annoNotesDraft: "# Findings", annoNotesDraftedAt: "2026-10-05T10:00:00Z"})
 	failed := requestCR(boardv1alpha1.RequestSpec{
 		Verb: boardv1alpha1.VerbApply, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(),
@@ -236,7 +224,7 @@ func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
 // Save to research/notes files the push of the draft; with no draft there
 // is nothing to push.
 func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
-	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 	seedNotesBoard(t, dyn)
 
 	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/notes/save", `{}`); w.Code != http.StatusNotFound {
@@ -256,7 +244,7 @@ func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 
 // An edit replaces the draft and makes it unsaved; a discard drops it all.
 func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
-	r, dyn := recipeResearchServerDyn(t, &fakeACPD{}, &fakeACPD{}, true)
+	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 	setNotesAnnotations(t, dyn, map[string]string{
 		annoNotesDraft: "# Findings", annoNotesDraftedAt: "2026-10-05T10:00:00Z", annoNotesSaved: "2026-10-05T10:05:00Z",
 		factorycli.AnnotationNotesOutput: "kind: Notes",

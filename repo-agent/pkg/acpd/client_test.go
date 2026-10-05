@@ -328,14 +328,6 @@ func TestBaseURLTrailingSlash(t *testing.T) {
 	}
 }
 
-func TestNewForPodIP(t *testing.T) {
-	c := NewForPodIP("10.1.2.3")
-	want := "http://10.1.2.3:49984"
-	if c.baseURL != want {
-		t.Errorf("baseURL = %q, want %q", c.baseURL, want)
-	}
-}
-
 func TestSetMode(t *testing.T) {
 	client, rec := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(Session{

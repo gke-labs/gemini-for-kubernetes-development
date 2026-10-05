@@ -99,22 +99,6 @@ func runDaemon(ctx context.Context) error {
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)
 
-	// Research sandboxes also serve the agent sessions on the pod's IP,
-	// for clients that predate the task server's. Started here rather than
-	// orchestrated from outside because this process is the sandbox's PID
-	// 1: anything else would need envd to start it, and acpd exists
-	// precisely so a conversation does not go through envd.
-	if os.Getenv(sandbox.EnvACPDEnable) != "" {
-		port := acpdPortFromEnv(ctx)
-		go func() {
-			// A failed acpd must not take the sandbox down with it — envd
-			// is what every other task type depends on.
-			if err := ServeACPD(ctx, port, sessions); err != nil {
-				log.Error(err, "acpd exited", "port", port)
-			}
-		}()
-	}
-
 	log.Info("Starting envd daemon...")
 
 	cmd := exec.CommandContext(ctx, "envd", "--isnotfc")

@@ -20,7 +20,7 @@
  local / Overseer pod                     Kubernetes namespace
 +--------------------+   port-forward   +-------------------------------------------+
 |  factory CLI       | ===============> | Sandbox  factory-issue-917                |
-|  (or factory watch)|   envd :49983    |   envd (Connect-RPC)   acpd :49984 (opt.) |
+|  (or factory watch)|   envd :49983    |   envd (Connect-RPC)   daemon :49990     |
 +--------------------+                  |   /workspaces (PVC)                       |
                                         |     <repo>/                               |
                                         |     tasks/fix-20261002-101500/            |
@@ -79,9 +79,9 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - `run teardown` removes what the run created, preferring the generated `teardown.sh`.
 - If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. The branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`.
 
-### Research conversations (`factory recipe research`, `factory acpd`)
+### Research conversations (`factory recipe research`)
 - **Start a conversation.** `recipe research --url --session --topic` creates a research sandbox, clones the repository (private repos included; the token is never written to the volume) and hands the topic to a task session in the sandbox's daemon. The sandbox carries a `research-ready` receipt once setup has finished, and the conversation continues through `recipe revise`.
-- **Conversation server.** `acpd` serves agent conversations over HTTP using the Agent Client Protocol on `:49984`. It handles sessions, prompts, streamed events, permission prompts, cancel and modes (`default`, `auto_edit`, `yolo`), and keeps transcripts under `/workspaces/.acpd/sessions`. It drives `gemini --acp` or Antigravity's `agy_acp_server`; Claude is not supported for research yet.
+- **Conversation server.** The sandbox daemon serves agent conversations over HTTP using the Agent Client Protocol, under `/v1/sessions` on its loopback task server (`:49990`, reached by port-forward). It handles sessions, prompts, streamed events, permission prompts, cancel and modes (`default`, `auto_edit`, `yolo`), and keeps transcripts under `/workspaces/.acpd/sessions`. It drives `gemini --acp` or Antigravity's `agy_acp_server`; Claude is not supported for research yet.
 - **Save notes.** The notes are a task output, and `apply --action push-notes` pushes them to `docs-exploration/research/<note>.md` on the `research/notes` branch of your fork. `apply` holds the GitHub credential, not the agent session.
 
 ### Engines and models

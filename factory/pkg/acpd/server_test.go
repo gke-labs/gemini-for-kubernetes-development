@@ -529,8 +529,8 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-// A plain acpd, research's on :49984 as `factory acpd` runs it, has no
-// tasks for a session to belong to.
+// A session registry with no task server behind it has no tasks for a
+// session to belong to.
 func TestASessionForATaskNeedsAHostThatRunsTasks(t *testing.T) {
 	registerFakeEngine(t)
 	_, ts := newTestServer(t)
