@@ -43,6 +43,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -292,9 +293,9 @@ func researchTestServer(t *testing.T, acp *fakeACPD, sandboxes []*unstructured.U
 	}
 	srv := httptest.NewServer(acp.handler())
 	t.Cleanup(srv.Close)
-	prev := acpdClientForPodIP
-	acpdClientForPodIP = func(string) *acpd.Client { return acpd.New(srv.URL) }
-	t.Cleanup(func() { acpdClientForPodIP = prev })
+	prev := acpdClientForPod
+	acpdClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client { return acpd.New(srv.URL) }
+	t.Cleanup(func() { acpdClientForPod = prev })
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -495,9 +496,11 @@ func TestResearchListSaysWhenAPodCouldNotBeAsked(t *testing.T) {
 	// Port 1 refuses immediately, which is what a pod with no acpd
 	// listening does — and unlike an unroutable address it does not make
 	// the test wait out the timeout to prove it.
-	prev := acpdClientForPodIP
-	acpdClientForPodIP = func(string) *acpd.Client { return acpd.New("http://127.0.0.1:1") }
-	t.Cleanup(func() { acpdClientForPodIP = prev })
+	prev := acpdClientForPod
+	acpdClientForPod = func(context.Context, *podacpd.Dialer, *corev1.Pod) *acpd.Client {
+		return acpd.New("http://127.0.0.1:1")
+	}
+	t.Cleanup(func() { acpdClientForPod = prev })
 
 	got := listResearch(t, r)
 	if len(got) != 1 {

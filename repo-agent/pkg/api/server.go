@@ -7,12 +7,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"k8s.io/klog/v2"
 )
 
 type Server struct {
 	K8sManager *k8s.Manager
 	Auth       *auth.Authenticator
+	// ACPD reaches research sandboxes' acpd: over a port-forward to the
+	// daemon's sessions, or on the pod IP for older images. Nil dials the
+	// pod IP only.
+	ACPD *podacpd.Dialer
 }
 
 func NewServer(manager *k8s.Manager, authenticator *auth.Authenticator) *Server {

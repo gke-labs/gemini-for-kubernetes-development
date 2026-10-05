@@ -186,17 +186,17 @@ func (r *Reconciler) completeResearchSave(ctx context.Context, work *workState, 
 // stopped on a permission request is correctly still "working": pushing
 // then would save a half-written note.
 func (r *Reconciler) researchTurnFinished(ctx context.Context, sb *unstructured.Unstructured, sessionID string) error {
-	podIP, err := r.researchPodIP(ctx, sb.GetNamespace(), sb.GetName())
+	pod, err := r.researchPod(ctx, sb.GetNamespace(), sb.GetName())
 	if err != nil {
 		return err
 	}
-	if podIP == "" {
+	if pod == nil {
 		return fmt.Errorf("no running pod")
 	}
 	ctx, cancel := context.WithTimeout(ctx, researchCaptureTimeout)
 	defer cancel()
 
-	session, err := researchACPD(podIP).GetSession(ctx, sessionID)
+	session, err := researchACPD(ctx, r.ACPD, pod).GetSession(ctx, sessionID)
 	switch {
 	case err == nil && session.Busy:
 		return fmt.Errorf("the conversation is still working")

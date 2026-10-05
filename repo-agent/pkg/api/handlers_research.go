@@ -55,6 +55,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -91,10 +92,12 @@ const engineAPIKeySecretKey = "GEMINI_API_KEY"
 // it is validated before either.
 var safeResearchSessionID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 
-// acpdClientForPodIP is the dial seam. Production dials the pod; tests
-// point it at an httptest server, which is the only way to exercise
-// these handlers without a cluster.
-var acpdClientForPodIP = func(ip string) *acpd.Client { return acpd.NewForPodIP(ip) }
+// acpdClientForPod is the dial seam. Production reaches the pod, over a
+// forward or on its IP; tests point it at an httptest server, which is
+// the only way to exercise these handlers without a cluster.
+var acpdClientForPod = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.Pod) *acpd.Client {
+	return d.Client(ctx, pod)
+}
 
 // researchSandboxView is one session as the board sees it: what the
 // sandbox object says, and — for the ones with a pod to ask — what the
@@ -166,9 +169,9 @@ type researchSandboxView struct {
 	// and a list that quietly showed them as false would be reporting an
 	// idle session when what it found was a broken one.
 	Unreachable string `json:"unreachable,omitempty"`
-	// PodIP is empty until the pod is running. Its presence is what
+	// Pod is nil until the pod is running. Its presence is what
 	// "reachable" means for every other call here.
-	PodIP string `json:"-"`
+	Pod *corev1.Pod `json:"-"`
 }
 
 // cwd is the checkout the conversation is about, matching what `factory
@@ -242,13 +245,13 @@ func (s *Server) getResearchSessions(c *gin.Context) {
 	exists := map[string]bool{}
 	for i := range list.Items {
 		if view, ok := researchViewFromSandbox(&list.Items[i]); ok {
-			view.PodIP = running[view.Sandbox]
-			view.Starting = !view.Paused && view.PodIP == ""
+			view.Pod = running[view.Sandbox]
+			view.Starting = !view.Paused && view.Pod == nil
 			views = append(views, view)
 			exists[view.SessionID] = true
 		}
 	}
-	attachResearchLiveState(ctx, views)
+	s.attachResearchLiveState(ctx, views)
 	requested, claimed := s.requestedResearchSessions(ctx, namespace, exists)
 	views = append(views, requested...)
 	// Fill an untitled sandbox from the claim that asked for it.
@@ -392,12 +395,12 @@ func (s *Server) findResearchSandbox(ctx context.Context, namespace, sessionID s
 // seconds. A failure is reported as "nothing is running", which reads as
 // starting — the honest answer when the pods cannot be seen at all.
 //
-// The IP comes back rather than a bare yes, because the caller's next
+// The pod comes back rather than a bare yes, because the caller's next
 // question is always "so what is it doing", and that is asked of the pod.
-// Re-deriving it per row would be researchPodIP once per session — the
+// Re-deriving it per row would be researchPod once per session — the
 // list this function exists to avoid.
-func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]string {
-	running := map[string]string{}
+func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]*corev1.Pod {
+	running := map[string]*corev1.Pod{}
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox"})
 	if err != nil {
 		klog.V(2).Infof("research: cannot list sandbox pods in %s: %v", namespace, err)
@@ -406,7 +409,7 @@ func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[s
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			running[pod.Labels["sandbox"]] = pod.Status.PodIP
+			running[pod.Labels["sandbox"]] = pod
 		}
 	}
 	return running
@@ -441,13 +444,13 @@ const researchLiveTimeout = 2 * time.Second
 // reason recorded on its own row and the rest of the page renders — the
 // sandboxes are the durable thing, and they are still there whether or
 // not a daemon inside one is talking.
-func attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
+func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
 	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
 	defer cancel()
 
 	var wg sync.WaitGroup
 	for i := range views {
-		if views[i].PodIP == "" {
+		if views[i].Pod == nil {
 			continue
 		}
 		wg.Add(1)
@@ -456,7 +459,7 @@ func attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
 		// and merging — is a second pass for nothing.
 		go func(view *researchSandboxView) {
 			defer wg.Done()
-			session, err := acpdClientForPodIP(view.PodIP).GetSession(ctx, view.SessionID)
+			session, err := acpdClientForPod(ctx, s.ACPD, view.Pod).GetSession(ctx, view.SessionID)
 			switch {
 			case err == nil:
 				view.Live = true
@@ -475,14 +478,14 @@ func attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
 	wg.Wait()
 }
 
-// researchPodIP returns the sandbox pod's IP, or "" when there is no
-// running pod to dial yet.
-func (s *Server) researchPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
+// researchPod returns the sandbox's running pod, or nil when there is
+// none to dial yet.
+func (s *Server) researchPod(ctx context.Context, namespace, sandboxName string) (*corev1.Pod, error) {
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{
 		LabelSelector: "sandbox=" + sandboxName,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
@@ -490,10 +493,10 @@ func (s *Server) researchPodIP(ctx context.Context, namespace, sandboxName strin
 		// or terminating pod fails on connect, which looks like acpd
 		// being broken rather than the sandbox not being up.
 		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			return pod.Status.PodIP, nil
+			return pod, nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 // researchConn is a resolved, reachable conversation.
@@ -531,18 +534,18 @@ func (s *Server) resolveResearch(c *gin.Context) (*researchConn, bool) {
 		return nil, false
 	}
 
-	podIP, err := s.researchPodIP(ctx, namespace, view.Sandbox)
+	pod, err := s.researchPod(ctx, namespace, view.Sandbox)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find the session's pod", "details": err.Error()})
 		return nil, false
 	}
-	if podIP == "" {
+	if pod == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "research sandbox is still starting", "sandbox": view.Sandbox, "starting": true})
 		return nil, false
 	}
-	view.PodIP = podIP
+	view.Pod = pod
 
-	return &researchConn{view: view, client: acpdClientForPodIP(podIP)}, true
+	return &researchConn{view: view, client: acpdClientForPod(ctx, s.ACPD, pod)}, true
 }
 
 // engineAPIKey reads the member's engine credential.

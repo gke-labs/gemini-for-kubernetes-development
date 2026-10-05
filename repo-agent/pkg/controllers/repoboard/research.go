@@ -41,6 +41,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
@@ -197,8 +198,11 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 const researchKickoffTTL = time.Hour
 
 // researchACPD is the dial seam, mirroring the API's. Production talks
-// to the pod; tests point it at an httptest server.
-var researchACPD = func(ip string) *acpd.Client { return acpd.NewForPodIP(ip) }
+// to the pod, over a forward or on its IP; tests point it at an httptest
+// server.
+var researchACPD = func(ctx context.Context, d *podacpd.Dialer, pod *corev1.Pod) *acpd.Client {
+	return d.Client(ctx, pod)
+}
 
 // stampResearchKickoff copies a claim's title and canned opening onto
 // the sandbox that now exists for it.
@@ -298,14 +302,14 @@ func (r *Reconciler) sendResearchKickoff(ctx context.Context, work *workState, s
 		return r.clearResearchKickoff(ctx, sb)
 	}
 
-	podIP, err := r.researchPodIP(ctx, sb.GetNamespace(), sb.GetName())
+	pod, err := r.researchPod(ctx, sb.GetNamespace(), sb.GetName())
 	if err != nil {
 		return err
 	}
-	if podIP == "" {
+	if pod == nil {
 		return fmt.Errorf("no running pod yet")
 	}
-	client := researchACPD(podIP)
+	client := researchACPD(ctx, r.ACPD, pod)
 
 	// Bounded: this runs inline on the reconcile loop, and a sandbox
 	// whose acpd is wedged must not hold the board's other work up.
@@ -426,24 +430,24 @@ func (r *Reconciler) abandonResearchKickoff(ctx context.Context, sb *unstructure
 	}
 }
 
-// researchPodIP returns the sandbox pod's address, or "" when there is
-// no running pod to dial.
+// researchPod returns the sandbox's running pod, or nil when there is
+// none to dial.
 //
 // Read straight from the API server rather than the controller's cache:
 // caching pods would mean an informer over every pod in the cluster to
 // answer a question asked once per new research session.
-func (r *Reconciler) researchPodIP(ctx context.Context, namespace, sandboxName string) (string, error) {
+func (r *Reconciler) researchPod(ctx context.Context, namespace, sandboxName string) (*corev1.Pod, error) {
 	pods := &corev1.PodList{}
 	if err := r.podReader().List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"sandbox": sandboxName}); err != nil {
-		return "", err
+		return nil, err
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			return pod.Status.PodIP, nil
+			return pod, nil
 		}
 	}
-	return "", nil
+	return nil, nil
 }
 
 // podReader is the uncached reader, falling back to the cached client so

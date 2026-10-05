@@ -34,9 +34,10 @@ rules:
 - apiGroups: [""]
   resources: ["secrets", "configmaps"]
   verbs: ["get", "list", "create", "update"]
-# Can list pods to find sandboxes and exec into them for terminal
+# Can list pods to find sandboxes, exec into them for terminal, and
+# port-forward to the factory daemon's agent sessions (research)
 - apiGroups: [""]
-  resources: ["pods", "pods/exec", "pods/log"]
+  resources: ["pods", "pods/exec", "pods/log", "pods/portforward"]
   verbs: ["get", "list", "create"]
 # Can proxy to nodes for exec
 - apiGroups: [""]
