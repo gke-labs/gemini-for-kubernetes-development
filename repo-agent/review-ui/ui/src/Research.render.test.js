@@ -1976,6 +1976,9 @@ describe('ResearchConversation notes on a recipe conversation', () => {
         const calls = await open(draft);
         expect(container.textContent).toContain('Notes draft');
         expect(container.textContent).toContain('backoff.md');
+        // Folded to its line until asked for.
+        expect(container.textContent).not.toContain('the backoff is linear');
+        await click(button('Show'));
         expect(container.textContent).toContain('the backoff is linear');
 
         await click(button('Save to research/notes'));
