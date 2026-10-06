@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
@@ -80,7 +81,7 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range recipe.BuiltinNames() {
-		if name == "run" || name == "exec" || name == "revise" {
+		if name == "run" || name == "exec" || name == "revise" || name == "list" {
 			t.Errorf("built-in recipe %q takes the name of a recipe command", name)
 			continue
 		}
@@ -294,11 +295,102 @@ func TestRecordedRunCarriesRevises(t *testing.T) {
 	}
 	started := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	run := recordedRun(spool.Task{ID: "t1", RunName: "r1"}, rec, started)
-	if run.Task != "t1" || run.Name != "r1" || !run.StartedAt.Equal(started) {
+	if run.Task != "t1" || run.Name != "r1" || !run.StartedAt.Equal(started) ||
+		run.Recipe != "research" || run.Kind != "Notes" || run.State != "Running" || run.EndedAt != nil {
 		t.Errorf("run = %+v", run)
 	}
-	want := []factorysandbox.RecordedRevise{{ID: "notes", Label: "Save notes"}}
-	if !slices.Equal(run.Revises, want) {
-		t.Errorf("revises = %+v, want %+v", run.Revises, want)
+	if len(run.Revises) != 1 || run.Revises[0].ID != "notes" || run.Revises[0].Label != "Save notes" || run.Revises[0].Inputs != nil {
+		t.Errorf("revises = %+v", run.Revises)
+	}
+
+	// A revise's inputs are recorded with it: fix's iterate asks for an
+	// instruction.
+	_, rec, err = recipe.Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run = recordedRun(spool.Task{ID: "t2"}, rec, started)
+	byID := map[string]factorysandbox.RecordedRevise{}
+	for _, rv := range run.Revises {
+		byID[rv.ID] = rv
+	}
+	if !slices.Equal(byID["iterate"].Inputs, []string{"instruction"}) || byID["rebase"].Label != "Rebase" || byID["rebase"].Inputs != nil || run.Kind != "Change" {
+		t.Errorf("fix run = %+v", run)
+	}
+}
+
+// A recipe runs only on what its on: names; my-pr is a PR the caller
+// authored from their fork.
+func TestCheckOn(t *testing.T) {
+	recipeOn := func(on ...string) *recipe.Recipe { return &recipe.Recipe{Name: "r", On: on} }
+	issue := githubItem{Owner: "o", Repo: "r", Number: 1}
+	prItem := githubItem{Owner: "o", Repo: "r", Number: 2, IsPR: true}
+	repo := githubItem{Owner: "o", Repo: "r"}
+	pr := func(author, headFullName, headOwner string, fork bool) *githubv39.PullRequest {
+		return &githubv39.PullRequest{
+			User: &githubv39.User{Login: githubv39.String(author)},
+			Head: &githubv39.PullRequestBranch{Repo: &githubv39.Repository{FullName: githubv39.String(headFullName), Fork: githubv39.Bool(fork), Owner: &githubv39.User{Login: githubv39.String(headOwner)}}},
+			Base: &githubv39.PullRequestBranch{Repo: &githubv39.Repository{FullName: githubv39.String("o/r")}},
+		}
+	}
+	mine := pr("alice", "alice/r", "alice", true)
+	for _, c := range []struct {
+		name string
+		rec  *recipe.Recipe
+		it   githubItem
+		pr   *githubv39.PullRequest
+		ok   bool
+	}{
+		{"unset runs anywhere", recipeOn(), repo, nil, true},
+		{"issue on issue", recipeOn("issue"), issue, nil, true},
+		{"issue recipe on a PR", recipeOn("issue"), prItem, mine, false},
+		{"issue recipe on a repo", recipeOn("issue"), repo, nil, false},
+		{"pr on anyone's PR", recipeOn("pr"), prItem, pr("bob", "bob/r", "bob", true), true},
+		{"pr recipe on an issue", recipeOn("pr"), issue, nil, false},
+		{"my-pr on mine", recipeOn("my-pr"), prItem, mine, true},
+		{"my-pr on someone else's", recipeOn("my-pr"), prItem, pr("bob", "bob/r", "bob", true), false},
+		{"my-pr on mine from a base branch", recipeOn("my-pr"), prItem, pr("alice", "o/r", "o", false), false},
+		{"my-pr on mine from someone else's fork", recipeOn("my-pr"), prItem, pr("alice", "bob/r", "bob", true), false},
+		{"repo on repo", recipeOn("repo"), repo, nil, true},
+	} {
+		if err := checkOn(c.rec, c.it, c.pr, "alice"); (err == nil) != c.ok {
+			t.Errorf("%s: checkOn = %v, want ok %v", c.name, err, c.ok)
+		}
+	}
+}
+
+// recipe list describes the built-ins as a board reads them: where each
+// runs, its result, and its revises with their inputs.
+func TestBuiltinRecipeInfos(t *testing.T) {
+	infos, err := builtinRecipeInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]RecipeInfo{}
+	for _, info := range infos {
+		byName[info.Name] = info
+	}
+	for name, on := range map[string]string{"triage": "issue", "plan": "issue", "fix": "issue", "review": "pr", "research": "repo"} {
+		if got := byName[name]; !slices.Equal(got.On, []string{on}) || got.Kind == "" || got.Label == "" {
+			t.Errorf("%s = %+v, want on [%s], a kind and a label", name, got, on)
+		}
+	}
+	fix := byName["fix"]
+	if fix.Label != "Fix" || fix.Kind != "Change" {
+		t.Errorf("fix = %+v", fix)
+	}
+	var iterate RecipeReviseInfo
+	for _, rv := range fix.Revises {
+		if rv.ID == "iterate" {
+			iterate = rv
+		}
+	}
+	if !slices.Equal(iterate.Inputs, []string{"instruction"}) {
+		t.Errorf("fix iterate = %+v, want it to ask for instruction", iterate)
+	}
+	for _, in := range fix.Inputs {
+		if in.Name == "instruction" && !in.Revise {
+			t.Errorf("fix's instruction input is not marked revise: %+v", in)
+		}
 	}
 }

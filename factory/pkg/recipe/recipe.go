@@ -35,6 +35,13 @@ import (
 // Recipe is one task.
 type Recipe struct {
 	Name string `yaml:"name"`
+	// Label is the recipe's button text; unset, its name capitalised.
+	// Like On it is factory's.
+	Label string `yaml:"label,omitempty"`
+	// On is what the recipe runs on: OnIssue, OnPR, OnMyPR and OnRepo.
+	// factory refuses any other target, and a board offers the recipe on
+	// those rows. Unset, it runs on any.
+	On []string `yaml:"on,omitempty"`
 	// Context is the standing rules: what the agent may and may not do.
 	// It is sent once, ahead of the first ask, rather than repeated in
 	// every turn.
@@ -65,6 +72,28 @@ type Recipe struct {
 	// (unset) or CredentialsClone. Unlike task-type it is the runner's,
 	// which enforces it, so it reaches the sandbox.
 	Credentials string `yaml:"credentials,omitempty"`
+}
+
+// What a recipe runs on.
+const (
+	OnIssue = "issue"
+	// OnPR is any pull request: the recipe reads it, and writes only
+	// through applies with the caller's token.
+	OnPR = "pr"
+	// OnMyPR is a pull request the caller may push to: authored by them,
+	// its head a branch on their fork, the only place push pushes to.
+	OnMyPR = "my-pr"
+	OnRepo = "repo"
+)
+
+var onTargets = []string{OnIssue, OnPR, OnMyPR, OnRepo}
+
+// DisplayLabel is Label, or the name capitalised.
+func (r *Recipe) DisplayLabel() string {
+	if r.Label != "" {
+		return r.Label
+	}
+	return strings.ToUpper(r.Name[:1]) + r.Name[1:]
 }
 
 const (
@@ -113,7 +142,11 @@ type Revise struct {
 	ID string `yaml:"id"`
 	// Label is the button's text.
 	Label string `yaml:"label"`
-	Steps []Step `yaml:"steps"`
+	// Inputs are the inputs the caller is asked for when running it, such
+	// as fix's iterate instruction. Each is a declared input. Factory's:
+	// ForSandbox drops it.
+	Inputs []string `yaml:"inputs,omitempty"`
+	Steps  []Step   `yaml:"steps"`
 }
 
 // Input is one declared input.
@@ -236,6 +269,11 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
 		}
 	}
+	for _, on := range r.On {
+		if !slices.Contains(onTargets, on) {
+			return fmt.Errorf("on %q is not one of: %s", on, strings.Join(onTargets, ", "))
+		}
+	}
 	if r.TaskType != "" && !taskTypeRE.MatchString(r.TaskType) {
 		return fmt.Errorf("task-type %q must match %s", r.TaskType, taskTypeRE)
 	}
@@ -282,6 +320,11 @@ func (r *Recipe) Validate() error {
 		}
 		if len(rv.Steps) == 0 {
 			return fmt.Errorf("revise %s has no steps", rv.ID)
+		}
+		for _, in := range rv.Inputs {
+			if _, ok := r.Inputs[in]; !ok {
+				return fmt.Errorf("revise %s asks for input %s, which the recipe does not declare", rv.ID, in)
+			}
 		}
 		if err := validateSteps(rv.Steps); err != nil {
 			return fmt.Errorf("revise %s: %w", rv.ID, err)
@@ -485,8 +528,8 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without
-// task-output, task-type and input types, which runners older than them
-// reject as unknown fields.
+// label, on, task-output, task-type, input types and revise inputs, which
+// runners older than them reject as unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -496,9 +539,18 @@ func ForSandbox(data []byte) ([]byte, error) {
 		return data, nil
 	}
 	m := doc.Content[0]
-	changed := dropKey(m, "task-output")
-	if dropKey(m, "task-type") {
-		changed = true
+	changed := false
+	for _, k := range []string{"label", "on", "task-output", "task-type"} {
+		if dropKey(m, k) {
+			changed = true
+		}
+	}
+	if revises := mapValue(m, "revise"); revises != nil && revises.Kind == yaml.SequenceNode {
+		for _, rv := range revises.Content {
+			if rv.Kind == yaml.MappingNode && dropKey(rv, "inputs") {
+				changed = true
+			}
+		}
 	}
 	if inputs := mapValue(m, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
 		for i := 1; i < len(inputs.Content); i += 2 {

@@ -15,6 +15,7 @@
 # pushed, leased against the head last pushed, so the PR follows. Their
 # Change carries the replies and report post-replies posts on the PR.
 name: fix
+on: [issue]
 task-type: fix
 
 inputs:
@@ -26,7 +27,7 @@ inputs:
     type: instructions
     description: Additional instructions the agent must follow
   instruction:
-    description: What the iterate revise changes (factory recipe revise … iterate --input instruction=…)
+    description: What the iterate revise changes, which it asks for (factory recipe revise … iterate --input instruction=…)
     revise: true
   pr_url:
     description: The fix's PR; factory sets it for the revises, from the sandbox's PR alias
@@ -173,6 +174,7 @@ start:
 revise:
   - id: iterate
     label: Iterate
+    inputs: [instruction]
     steps:
       # The branch to push and the head to lease against: a commit someone
       # else pushed to the PR since is never overwritten.

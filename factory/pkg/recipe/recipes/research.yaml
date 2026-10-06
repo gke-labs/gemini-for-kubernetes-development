@@ -10,6 +10,7 @@
 # reaches the clone and nothing else (credentials: clone): the agent has
 # no credentials, and nothing in the sandbox holds one.
 name: research
+on: [repo]
 task-type: research
 credentials: clone
 

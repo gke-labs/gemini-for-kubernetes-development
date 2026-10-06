@@ -693,6 +693,16 @@ type RecordedRun struct {
 	// revise; unset, the run's task has its own.
 	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
+	// Recipe is the recipe the run ran, and Kind its task output's kind,
+	// if it declares one.
+	Recipe string `json:"recipe,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	// State is the run's own: Running, Completed or Failed, written with
+	// the task's state at last-task-state or its side annotation, so an
+	// issue's plan keeps its state once its fix starts. EndedAt is when it
+	// stopped running.
+	State   string     `json:"state,omitempty"`
+	EndedAt *time.Time `json:"endedAt,omitempty"`
 	// Revises are the revises the run's recipe offers, which can run into
 	// its session: what a session view offers as buttons from the start,
 	// before any task output names them (research's notes have none
@@ -705,6 +715,41 @@ type RecordedRun struct {
 type RecordedRevise struct {
 	ID    string `json:"id"`
 	Label string `json:"label,omitempty"`
+	// Inputs are the inputs it asks for.
+	Inputs []string `json:"inputs,omitempty"`
+}
+
+// SettleRecordedRun records the end of task, the run recorded for
+// taskType, found ended by whoever looked after the one that started it
+// stopped watching: a resumed run, an apply that waited for it. A newer
+// run recorded since, or a state already settled, is left alone.
+func SettleRecordedRun(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName, taskType string, side bool, task, state string) error {
+	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+	}
+	var run RecordedRun
+	if json.Unmarshal([]byte(sb.GetAnnotations()[RunAnnotation(taskType)]), &run) != nil || run.Task != task || run.State == state {
+		return nil
+	}
+	return updateSandboxTask(ctx, kubeClient, namespace, sandboxName, taskType, state, "", side, nil)
+}
+
+// withRunState is the run recorded at RunAnnotation(taskType), if any,
+// with its state set to the task's.
+func withRunState(annotations map[string]string, taskType, state string, now time.Time) {
+	key := RunAnnotation(taskType)
+	var run RecordedRun
+	if json.Unmarshal([]byte(annotations[key]), &run) != nil {
+		return
+	}
+	run.State, run.EndedAt = state, nil
+	if state == "Completed" || state == "Failed" {
+		run.EndedAt = &now
+	}
+	if data, err := json.Marshal(run); err == nil {
+		annotations[key] = string(data)
+	}
 }
 
 // MarkSandboxRunStarted is MarkSandboxTaskRunning (or, side, its side-task
@@ -785,6 +830,7 @@ func updateSandboxTask(ctx context.Context, kubeClient *clients.KubernetesClient
 		for k, v := range extra {
 			annotations[k] = v
 		}
+		withRunState(annotations, taskType, taskState, time.Now().UTC().Truncate(time.Second))
 		if taskState == "Completed" || taskState == "Failed" {
 			nowStr := time.Now().UTC().Format(time.RFC3339)
 			annotations["sandbox.gemini.google.com/completion-time"] = nowStr

@@ -45,8 +45,9 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
 	cmd.AddCommand(newRecipeReviseCommand(ctx))
+	cmd.AddCommand(newRecipeListCommand())
 	for _, name := range recipe.BuiltinNames() {
-		// run, exec and revise are taken; TestBuiltinRecipeCommands keeps
+		// run, exec, revise and list are taken; TestBuiltinRecipeCommands keeps
 		// them so.
 		cmd.AddCommand(newBuiltinRecipeCommand(ctx, name))
 	}
@@ -344,6 +345,12 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}
+	if !it.IsPR {
+		// A PR's is checked once it and the caller are known.
+		if err := checkOn(rec, it, nil, ""); err != nil {
+			return err
+		}
+	}
 	if rec.Credentials == recipe.CredentialsClone && !it.IsPR && !it.IsRepo() {
 		// The issue's sandbox is its fix's too, whose setup-git leaves
 		// the token in gh's hosts.yml for the agent to read.
@@ -363,6 +370,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	}
 	var standard map[string]string
 	var htmlURL string
+	var pr *githubv39.PullRequest
 	switch {
 	case it.IsRepo():
 		repo, _, err := ghClient.Repositories.Get(ctx, it.Owner, it.Repo)
@@ -371,7 +379,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		}
 		standard, htmlURL = repoInputs(it, repo), repo.GetHTMLURL()
 	case it.IsPR:
-		pr, _, err := ghClient.PullRequests.Get(ctx, it.Owner, it.Repo, it.Number)
+		pr, _, err = ghClient.PullRequests.Get(ctx, it.Owner, it.Repo, it.Number)
 		if err != nil {
 			return fmt.Errorf("fetching PR #%d: %w", it.Number, err)
 		}
@@ -400,6 +408,11 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+	}
+	if it.IsPR {
+		if err := checkOn(rec, it, pr, string(secret.Data[constants.KeyGithubLogin])); err != nil {
+			return err
+		}
 	}
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
@@ -462,7 +475,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		}
 		if ok {
 			fmt.Printf("Picking up task %s, this recipe's last run on %s (run again once it is applied to start a new one).\n", e.ID, htmlURL)
-			return awaitAndApply(ctx, sb, ghClient, sandboxName, e.ID, "", apply.dryRun)
+			return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, e.ID, "", apply.dryRun)
 		}
 		// Interrupting stops the waiting; the task runs on, for the
 		// next run to pick up.
@@ -494,10 +507,55 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		return err
 	}
 	if apply.on {
-		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, "", apply.dryRun)
+		return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, task.ID, "", apply.dryRun)
 	}
 	printResultHint(rec, task, sandboxName)
 	return nil
+}
+
+// checkOn refuses a target the recipe does not run on (recipe.On; unset,
+// it runs on any). pr and login are a PR target and the caller: a recipe
+// on my-pr runs only on a PR the caller authored whose head is a branch on
+// their fork, the only place push pushes to.
+func checkOn(rec *recipe.Recipe, it githubItem, pr *githubv39.PullRequest, login string) error {
+	if len(rec.On) == 0 {
+		return nil
+	}
+	on := func(target string) bool { return slices.Contains(rec.On, target) }
+	var what string
+	switch {
+	case it.IsRepo():
+		if on(recipe.OnRepo) {
+			return nil
+		}
+		what = "repository"
+	case it.IsPR:
+		if on(recipe.OnPR) {
+			return nil
+		}
+		if on(recipe.OnMyPR) {
+			if pr != nil && isMyPR(pr, login) {
+				return nil
+			}
+			return fmt.Errorf("recipe %s runs on a PR you can push to, one you authored from your fork; #%d is not (factory pr adopt takes it over)", rec.Name, it.Number)
+		}
+		what = "pull request"
+	default:
+		if on(recipe.OnIssue) {
+			return nil
+		}
+		what = "issue"
+	}
+	return fmt.Errorf("recipe %s runs on %s, not on a %s", rec.Name, strings.Join(rec.On, ", "), what)
+}
+
+// isMyPR reports whether login authored pr and its head is a branch on
+// login's fork of the base repository.
+func isMyPR(pr *githubv39.PullRequest, login string) bool {
+	head := pr.GetHead().GetRepo()
+	return login != "" && strings.EqualFold(pr.GetUser().GetLogin(), login) &&
+		head != nil && head.GetFork() && strings.EqualFold(head.GetOwner().GetLogin(), login) &&
+		!strings.EqualFold(head.GetFullName(), pr.GetBase().GetRepo().GetFullName())
 }
 
 // printResultHint says where a finished task's result is: its task output,
@@ -551,11 +609,48 @@ func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap
 // recordedRun is the run recorded on the sandbox for task: with the
 // recipe's revises, so a session view has its buttons before any output.
 func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factorysandbox.RecordedRun {
-	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started}
+	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started, Recipe: rec.Name, State: "Running"}
+	if rec.TaskOutput != nil {
+		run.Kind = rec.TaskOutput.Kind
+	}
 	for _, rv := range rec.Revise {
-		run.Revises = append(run.Revises, factorysandbox.RecordedRevise{ID: rv.ID, Label: rv.Label})
+		run.Revises = append(run.Revises, factorysandbox.RecordedRevise{ID: rv.ID, Label: rv.Label, Inputs: rv.Inputs})
 	}
 	return run
+}
+
+// recipeTaskType is the task type a recipe's task on it records its state
+// under, and whether that is a side task's: in an issue's sandbox a
+// recipe is a side task, and last-task-* stay the plan's or fix's, unless
+// it is the sandbox's main task itself.
+func recipeTaskType(rec *recipe.Recipe, it githubItem) (string, bool) {
+	switch {
+	case rec.TaskType != "":
+		return rec.TaskType, false
+	case !it.IsPR && !it.IsRepo():
+		return "recipe-" + rec.Name, true
+	default:
+		return "recipe-" + rec.Name, false
+	}
+}
+
+// settleRun records the end of e, a recipe task found ended by a run that
+// did not start it, on the run its sandbox recorded for it.
+func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e spool.Entry) {
+	it, err := parseRecipeTarget(e.URL)
+	if err != nil {
+		return
+	}
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return
+	}
+	state := "Completed"
+	if e.ExitCode != "0" {
+		state = "Failed"
+	}
+	taskType, side := recipeTaskType(rec, it)
+	_ = factorysandbox.SettleRecordedRun(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, side, e.ID, state)
 }
 
 // startRecipeTask records the task on its sandbox and hands it over.
@@ -563,14 +658,10 @@ func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factory
 // outputs, and returns true.
 func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) (bool, error) {
 	sandboxName := sb.Name()
-	taskType := "recipe-" + rec.Name
-	// In an issue's sandbox a recipe is a side task, and last-task-* stay
-	// the plan's or fix's, unless it is the sandbox's main task itself.
-	side, update := false, factorysandbox.UpdateSandboxTaskAnnotation
-	if rec.TaskType != "" {
-		taskType = rec.TaskType
-	} else if !it.IsPR && !it.IsRepo() {
-		side, update = true, factorysandbox.UpdateSandboxSideTaskAnnotation
+	taskType, side := recipeTaskType(rec, it)
+	update := factorysandbox.UpdateSandboxTaskAnnotation
+	if side {
+		update = factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
 	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, recordedRun(task, rec, time.Now().UTC()))
 	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets); err != nil {
@@ -703,7 +794,7 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 			fmt.Printf("Task %s's result is applied already.\n", e.ID)
 			return nil
 		}
-		return awaitAndApply(ctx, sb, gh, sandboxName, e.ID, "", apply.dryRun)
+		return awaitAndApply(ctx, sb, gh, rec, sandboxName, e.ID, "", apply.dryRun)
 	}
 	if e.State != spool.Exited {
 		if rootFlags.Detached {
@@ -727,6 +818,7 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 	if e.State != spool.Exited {
 		return fmt.Errorf("task %s is %s; run again to follow it", e.ID, e.State)
 	}
+	settleRun(ctx, rec, sandboxName, e)
 	if e.ExitCode != "0" {
 		return fmt.Errorf("task %s failed (exit %s); a run name is one run's, so retry under a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
 	}
@@ -784,8 +876,8 @@ func taskApplied(ctx context.Context, sb taskapi.Sandbox, id string) bool {
 // awaitAndApply follows task id to its end, unless it has ended, and
 // applies its result with gh, as `factory apply` does: each write it
 // offers, or verb's alone. Applying again is harmless: a triage's comment
-// is not posted twice.
-func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, sandboxName, id, verb string, dryRun bool) error {
+// is not posted twice. rec is the task's recipe; nil, the built-in it ran.
+func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, rec *recipe.Recipe, sandboxName, id, verb string, dryRun bool) error {
 	sel := taskSelectFlags{id: id}
 	e, err := sel.find(ctx, sb)
 	if err != nil {
@@ -805,6 +897,12 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	}
 	if e.State != spool.Exited {
 		return fmt.Errorf("task %s is %s; run again to wait for it", e.ID, e.State)
+	}
+	if rec == nil {
+		_, rec, _ = recipe.Builtin(e.Recipe)
+	}
+	if rec != nil {
+		settleRun(ctx, rec, sandboxName, e)
 	}
 	if e.ExitCode != "0" {
 		return fmt.Errorf("task %s failed (exit %s); nothing applied. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
