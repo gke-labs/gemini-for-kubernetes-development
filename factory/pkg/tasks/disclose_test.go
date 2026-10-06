@@ -57,3 +57,30 @@ func TestFixIssueAttributionNamesTriggerLabel(t *testing.T) {
 		t.Errorf("attribution quotes the PR label list")
 	}
 }
+
+// Ensure prompt templates do not contain hardcoded bot account identities.
+func TestPromptsDoNotHardcodeBotUsers(t *testing.T) {
+	prompts := map[string]func() ([]byte, error){
+		"fix": func() ([]byte, error) {
+			return RenderFixIssuePrompt(FixIssueParams{})
+		},
+		"investigate": func() ([]byte, error) {
+			return RenderInvestigatePrompt(InvestigateParams{})
+		},
+		"address-comments": func() ([]byte, error) {
+			return RenderAddressFeedbackPrompt(AddressFeedbackParams{})
+		},
+	}
+	for name, fn := range prompts {
+		out, err := fn()
+		if err != nil {
+			t.Fatalf("%s: rendering prompt: %v", name, err)
+		}
+		for _, bot := range []string{"codebot-robot", "factorybot-robot"} {
+			if strings.Contains(string(out), bot) {
+				t.Errorf("%s prompt still contains hardcoded bot name %q:\n%s", name, bot, out)
+			}
+		}
+	}
+}
+

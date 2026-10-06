@@ -110,7 +110,7 @@ function constructPrompt {
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         
-        BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
+        BOT_NAME="${GITHUB_USER_ID:-repo-agent}"
         sed -i "s/{{BOT_NAME}}/$BOT_NAME/g" "$PROMPT_FILE"
         
         PROMPT=$(cat "$PROMPT_FILE")
