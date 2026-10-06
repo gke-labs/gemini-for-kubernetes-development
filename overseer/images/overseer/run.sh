@@ -110,6 +110,7 @@ function constructPrompt {
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         
+        # Require an explicit bot identity rather than defaulting to avoid masking missing configuration.
         BOT_NAME="${GITHUB_USER_ID:-}"
         if [ -z "$BOT_NAME" ]; then
             echo "GITHUB_USER_ID environment variable is not set" >&2
