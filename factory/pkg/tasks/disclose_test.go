@@ -58,7 +58,7 @@ func TestFixIssueAttributionNamesTriggerLabel(t *testing.T) {
 	}
 }
 
-// Ensure prompt templates do not contain hardcoded bot account identities.
+// TestPromptsDoNotHardcodeBotUsers verifies that rendered prompts do not contain legacy hardcoded bot usernames.
 func TestPromptsDoNotHardcodeBotUsers(t *testing.T) {
 	prompts := map[string]func() ([]byte, error){
 		"fix": func() ([]byte, error) {
