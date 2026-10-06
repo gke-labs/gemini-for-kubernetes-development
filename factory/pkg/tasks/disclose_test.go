@@ -83,4 +83,3 @@ func TestPromptsDoNotHardcodeBotUsers(t *testing.T) {
 		}
 	}
 }
-
