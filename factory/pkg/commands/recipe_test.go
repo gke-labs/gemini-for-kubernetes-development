@@ -4,13 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
@@ -269,5 +272,21 @@ func TestRecipeExecRefusesACloneRecipeWithATokenInItsEnvironment(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, spool.SecretsFile)); !os.IsNotExist(err) {
 		t.Errorf("the refused task left its secrets on disk: %v", err)
+	}
+}
+
+func TestRecordedRunCarriesRevises(t *testing.T) {
+	_, rec, err := recipe.Builtin("research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	run := recordedRun(spool.Task{ID: "t1", RunName: "r1"}, rec, started)
+	if run.Task != "t1" || run.Name != "r1" || !run.StartedAt.Equal(started) {
+		t.Errorf("run = %+v", run)
+	}
+	want := []factorysandbox.RecordedRevise{{ID: "notes", Label: "Save notes"}}
+	if !slices.Equal(run.Revises, want) {
+		t.Errorf("revises = %+v, want %+v", run.Revises, want)
 	}
 }

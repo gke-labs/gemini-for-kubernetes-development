@@ -526,6 +526,16 @@ func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap
 	return envMap, secrets, nil
 }
 
+// recordedRun is the run recorded on the sandbox for task: with the
+// recipe's revises, so a session view has its buttons before any output.
+func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factorysandbox.RecordedRun {
+	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started}
+	for _, rv := range rec.Revise {
+		run.Revises = append(run.Revises, factorysandbox.RecordedRevise{ID: rv.ID, Label: rv.Label})
+	}
+	return run
+}
+
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
@@ -540,8 +550,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 	} else if !it.IsPR && !it.IsRepo() {
 		side, update = true, factorysandbox.UpdateSandboxSideTaskAnnotation
 	}
-	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: time.Now().UTC()}
-	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, run)
+	_ = factorysandbox.MarkSandboxRunStarted(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, rootFlags.Engine, side, recordedRun(task, rec, time.Now().UTC()))
 	if err := spoolRecipe(ctx, sb, task, recipeBytes, inputs, envMap, secrets); err != nil {
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
