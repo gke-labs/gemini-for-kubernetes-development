@@ -47,12 +47,16 @@ Without --action, apply does each write the result offers:
   Change  open-pr: opens the branch the fix pushed to your fork as a draft
           PR, unless it has one open already, and aliases the fix's
           sandbox to the PR
+          post-replies: posts a revise's replies on the PR, each in the
+          thread of the review comment it answers, or quoting the
+          conversation comment it answers, and its report as a PR comment
 
 --action does one action the result offers:
   label, comment  that write alone
   push-notes      that write alone
   post-review     that write alone
   open-pr         that write alone
+  post-replies    that write alone
   run             the follow-up it offers (run:fix names it): for a Plan,
                   writes the plan, as edited, to the issue's sandbox and
                   runs factory recipe fix --with-plan true there
@@ -64,7 +68,7 @@ edit and reject are for whoever keeps the result as a draft: edit the
 file before applying it, or don't apply it.
 
 Applying the same task's output again does not comment again, nor post
-a review that was submitted, nor open a second PR.`,
+a review that was submitted, nor open a second PR, nor reply twice.`,
 		Example: `  factory sandbox task output fix-repo-123 | factory apply -f - --dry-run
   factory sandbox task output fix-repo-123 > triage.yaml   # look, edit
   factory apply -f triage.yaml
@@ -122,7 +126,7 @@ a review that was submitted, nor open a second PR.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, open-pr, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, open-pr, post-replies, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd

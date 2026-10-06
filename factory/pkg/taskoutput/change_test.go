@@ -58,7 +58,7 @@ func TestWrapChange(t *testing.T) {
 	if strings.Join(c.Labels, ",") != "bug,factory" {
 		t.Errorf("labels = %v", c.Labels)
 	}
-	if got := docs[0].Offered(); len(got) != 3 || got[1].Verb != "open-pr" {
+	if got := docs[0].Offered(); len(got) != 4 || got[1].Verb != "open-pr" || got[2].Verb != "post-replies" {
 		t.Errorf("offered = %v", got)
 	}
 
@@ -73,10 +73,23 @@ func TestWrapChange(t *testing.T) {
 	if err := raw.SetPushed(Pushed{Fork: "me/r"}); err == nil {
 		t.Error("a push with no branch or head was accepted")
 	}
-	for _, bad := range []string{"no change here", "change:\n  title: \"\"\n  body: x\n"} {
-		if _, err := Wrap("Change", bad, Target{}, Source{}); err == nil {
-			t.Errorf("%q was wrapped", bad)
-		}
+	if _, err := Wrap("Change", "no change here", Target{}, Source{}); err == nil {
+		t.Error("an answer with no change: block was wrapped")
+	}
+	// A revise's may have no title, and keeps the PR's; a Change with
+	// none at all is refused.
+	untitled, err := Wrap("Change", "change:\n  title: \"\"\n  report: r\n", Target{}, Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := untitled.ChangeSpec(); err == nil {
+		t.Error("a Change with no title was accepted")
+	}
+	if err := untitled.KeepTitle(" t0 ", "b0"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := untitled.ChangeSpec(); err != nil || c.Title != "t0" || c.Body != "b0" || c.Report != "r" {
+		t.Errorf("kept %+v, %v", c, err)
 	}
 }
 
@@ -199,6 +212,141 @@ func TestOpenPR(t *testing.T) {
 		var out bytes.Buffer
 		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err == nil || len(f.created) != 0 {
 			t.Errorf("opened a PR with no branch: %v", err)
+		}
+	})
+}
+
+// fakeThreads is GitHub for post-replies on o/r#12: review comment 100 is
+// on the PR, 300 on another; conversation comment 200 is on the PR.
+type fakeThreads struct {
+	review, issue []map[string]any // posted
+}
+
+func (f *fakeThreads) client(t *testing.T) *githubv39.Client {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/comments/100", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"id":100,"pull_request_url":"https://api.github.com/repos/o/r/pulls/12","html_url":"https://github.com/o/r/pull/12#discussion_r100"}`)
+	})
+	mux.HandleFunc("/repos/o/r/pulls/comments/300", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"id":300,"pull_request_url":"https://api.github.com/repos/o/r/pulls/13"}`)
+	})
+	mux.HandleFunc("/repos/o/r/pulls/comments/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/o/r/issues/comments/200", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"id":200,"issue_url":"https://api.github.com/repos/o/r/issues/12","html_url":"https://github.com/o/r/pull/12#issuecomment-200","body":"Why not reuse ensureForkRemote?\nIt does this.","user":{"login":"rev"}}`)
+	})
+	mux.HandleFunc("/repos/o/r/pulls/12/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.review = append(f.review, req)
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(f.review)
+	})
+	mux.HandleFunc("/repos/o/r/issues/12/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.issue = append(f.issue, req)
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(f.issue)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	return gh
+}
+
+func reviseChange(t *testing.T, raw string) *Document {
+	t.Helper()
+	doc, err := Wrap("Change", raw, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "fix-2", Recipe: "fix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.KeepTitle("t", "b"); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+func TestPostReplies(t *testing.T) {
+	ctx := context.Background()
+	const answers = "change:\n  replies:\n    - inReplyTo: 100\n      body: Moved it.\n    - inReplyTo: 200\n      body: Done, it does now.\n  report: All addressed.\n"
+
+	t.Run("a thread reply, a quoted reply and the report, once", func(t *testing.T) {
+		doc := reviseChange(t, answers)
+		f := &fakeThreads{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.review) != 1 || len(f.issue) != 2 {
+			t.Fatalf("posted %d review and %d issue comments:\n%s", len(f.review), len(f.issue), out.String())
+		}
+		if r := f.review[0]; r["in_reply_to"] != float64(100) || !strings.HasPrefix(r["body"].(string), "Moved it.") || !strings.Contains(r["body"].(string), "task=fix-2 reply=100") {
+			t.Errorf("thread reply = %v", r)
+		}
+		quoted := f.issue[0]["body"].(string)
+		if !strings.HasPrefix(quoted, "> Why not reuse ensureForkRemote?\n> It does this.\n\n[In reply to @rev](https://github.com/o/r/pull/12#issuecomment-200)\n\nDone, it does now.") || !strings.Contains(quoted, "reply=200") {
+			t.Errorf("quoted reply = %q", quoted)
+		}
+		if report := f.issue[1]["body"].(string); report != "All addressed."+marker(doc) {
+			t.Errorf("report = %q", report)
+		}
+		// Applied again: everything is there already.
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.review) != 1 || len(f.issue) != 2 {
+			t.Errorf("posted again: %d review and %d issue comments", len(f.review), len(f.issue))
+		}
+	})
+
+	t.Run("dry run posts nothing", func(t *testing.T) {
+		f := &fakeThreads{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), reviseChange(t, answers), "post-replies", true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.review)+len(f.issue) != 0 || !strings.Contains(out.String(), "Would reply") {
+			t.Errorf("posted %d:\n%s", len(f.review)+len(f.issue), out.String())
+		}
+	})
+
+	t.Run("a start's posts nothing", func(t *testing.T) {
+		f := &fakeThreads{}
+		var out bytes.Buffer
+		// At the issue, with no replies: not an error.
+		if err := ApplyAction(ctx, f.client(t), changeDoc(t), "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.review)+len(f.issue) != 0 {
+			t.Errorf("posted %d", len(f.review)+len(f.issue))
+		}
+	})
+
+	t.Run("refused", func(t *testing.T) {
+		for name, doc := range map[string]*Document{
+			"another PR's comment": reviseChange(t, "change:\n  replies:\n    - inReplyTo: 300\n      body: x\n"),
+			"no such comment":      reviseChange(t, "change:\n  replies:\n    - inReplyTo: 400\n      body: x\n"),
+		} {
+			f := &fakeThreads{}
+			var out bytes.Buffer
+			if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err == nil || len(f.review)+len(f.issue) != 0 {
+				t.Errorf("%s: %v, posted %d", name, err, len(f.review)+len(f.issue))
+			}
+		}
+		atIssue := reviseChange(t, answers)
+		atIssue.Target.URL = issueURL
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, (&fakeThreads{}).client(t), atIssue, "post-replies", false, &out); err == nil {
+			t.Error("replies were posted with no PR")
 		}
 	})
 }

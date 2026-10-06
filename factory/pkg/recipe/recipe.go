@@ -124,6 +124,10 @@ type Input struct {
 	// Type is "" for a string, or InstructionsType. Like task-output it is
 	// factory's: ForSandbox drops it.
 	Type string `yaml:"type,omitempty"`
+	// Revise marks an input only revises read: `factory recipe revise
+	// --input` sets it, or factory does, and a built-in's command has no
+	// flag for it. Factory's too: ForSandbox drops it.
+	Revise bool `yaml:"revise,omitempty"`
 }
 
 // InstructionsType is an input given any number of times on the command
@@ -224,6 +228,9 @@ func (r *Recipe) Validate() error {
 		}
 		if in.Required && in.Default != "" {
 			return fmt.Errorf("input %s: required and default are exclusive", name)
+		}
+		if in.Revise && (in.Required || in.Type != "") {
+			return fmt.Errorf("input %s: a revise input is an optional string", name)
 		}
 		if in.Type != "" && in.Type != InstructionsType {
 			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
@@ -495,8 +502,13 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	if inputs := mapValue(m, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
 		for i := 1; i < len(inputs.Content); i += 2 {
-			if inputs.Content[i].Kind == yaml.MappingNode && dropKey(inputs.Content[i], "type") {
-				changed = true
+			if inputs.Content[i].Kind != yaml.MappingNode {
+				continue
+			}
+			for _, k := range []string{"type", "revise"} {
+				if dropKey(inputs.Content[i], k) {
+					changed = true
+				}
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -52,6 +53,17 @@ const PushedFile = "push.json"
 
 // ChangeSpec decodes a Change document's spec.
 func (d *Document) ChangeSpec() (*Change, error) {
+	c, err := d.changeSpec()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(c.Title) == "" {
+		return nil, fmt.Errorf("Change spec has no title")
+	}
+	return c, nil
+}
+
+func (d *Document) changeSpec() (*Change, error) {
 	if d.Kind != "Change" {
 		return nil, fmt.Errorf("%s task output is not a Change", d.Kind)
 	}
@@ -59,10 +71,23 @@ func (d *Document) ChangeSpec() (*Change, error) {
 	if err := d.Spec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("Change spec: %w", err)
 	}
-	if strings.TrimSpace(c.Title) == "" {
-		return nil, fmt.Errorf("Change spec has no title")
-	}
 	return &c, nil
+}
+
+// KeepTitle gives a Change the title and body the PR had, each where the
+// agent wrote none: a revise's agent writes them only to change them.
+func (d *Document) KeepTitle(title, body string) error {
+	c, err := d.changeSpec()
+	if err != nil {
+		return err
+	}
+	if c.Title == "" {
+		c.Title = strings.TrimSpace(title)
+	}
+	if c.Body == "" {
+		c.Body = strings.TrimSpace(body)
+	}
+	return d.setSpec(c)
 }
 
 // SetPushed puts what the push step recorded on a Change: the fork, branch
@@ -137,9 +162,8 @@ func parseChange(raw string) (any, error) {
 		}
 	}
 	c.Replies = replies
-	if c.Title == "" {
-		return nil, fmt.Errorf("the change has no title")
-	}
+	// A revise's may have no title: it keeps the PR's (KeepTitle), and
+	// ChangeSpec refuses a Change that still has none.
 	return c, nil
 }
 
@@ -217,4 +241,151 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		}
 	}
 	return nil
+}
+
+// applyPostReplies posts a Change's replies and report on its PR, with
+// the caller's token: a reply to a review comment in that comment's
+// thread, a reply to a conversation comment as a new comment quoting and
+// linking it (GitHub has no threads there), and the report as a PR
+// comment. Each carries a marker of the task and the comment it answers,
+// so a retried apply posts nothing twice. A Change with neither — a
+// start's — posts nothing.
+func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	c, err := doc.ChangeSpec()
+	if err != nil {
+		return err
+	}
+	if len(c.Replies) == 0 && c.Report == "" {
+		fmt.Fprintln(out, "The Change has no replies or report; nothing to post")
+		return nil
+	}
+	owner, repo, num, err := prTarget(doc)
+	if err != nil {
+		return fmt.Errorf("%w: open the PR first (open-pr)", err)
+	}
+	for _, r := range c.Replies {
+		if err := postReply(ctx, gh, doc, owner, repo, num, r, dryRun, out); err != nil {
+			return fmt.Errorf("replying to comment %d: %w", r.InReplyTo, err)
+		}
+	}
+	if c.Report == "" {
+		return nil
+	}
+	if doc.Source.Task != "" {
+		posted, err := hasComment(ctx, gh, owner, repo, num, marker(doc))
+		if err != nil {
+			return err
+		}
+		if posted {
+			fmt.Fprintf(out, "The report of task %s is already on %s; not commenting again\n", doc.Source.Task, doc.Target.URL)
+			return nil
+		}
+	}
+	fmt.Fprintf(out, "%s the report on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(c.Report))
+	if dryRun {
+		return nil
+	}
+	body := c.Report + marker(doc)
+	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+		return fmt.Errorf("commenting the report on #%d: %w", num, err)
+	}
+	return nil
+}
+
+// replyMarker marks a reply by its task and the comment it answers.
+func replyMarker(doc *Document, inReplyTo int64) string {
+	if doc.Source.Task == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n\n<!-- factory:task-output kind=%s task=%s reply=%d -->", doc.Kind, doc.Source.Task, inReplyTo)
+}
+
+// postReply answers one comment on PR num, which it must be on: a review
+// comment in its thread, a conversation comment with a new comment.
+func postReply(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, r Reply, dryRun bool, out io.Writer) error {
+	mark := replyMarker(doc, r.InReplyTo)
+	rc, resp, err := gh.PullRequests.GetComment(ctx, owner, repo, r.InReplyTo)
+	switch {
+	case err == nil:
+		if !strings.HasSuffix(rc.GetPullRequestURL(), fmt.Sprintf("/pulls/%d", num)) {
+			return fmt.Errorf("it is not on %s", doc.Target.URL)
+		}
+		if mark != "" {
+			posted, err := hasReviewComment(ctx, gh, owner, repo, num, mark)
+			if err != nil {
+				return err
+			}
+			if posted {
+				fmt.Fprintf(out, "Task %s's reply to %s is already posted; not posting it again\n", doc.Source.Task, rc.GetHTMLURL())
+				return nil
+			}
+		}
+		fmt.Fprintf(out, "%s in the thread of %s:\n%s\n", doing(dryRun, "Replying", "reply"), rc.GetHTMLURL(), indent(r.Body))
+		if dryRun {
+			return nil
+		}
+		_, _, err := gh.PullRequests.CreateCommentInReplyTo(ctx, owner, repo, num, r.Body+mark, r.InReplyTo)
+		return err
+	case resp == nil || resp.StatusCode != http.StatusNotFound:
+		return err
+	}
+	ic, _, err := gh.Issues.GetComment(ctx, owner, repo, r.InReplyTo)
+	if err != nil {
+		return fmt.Errorf("it is neither a review comment nor a comment on %s: %w", doc.Target.URL, err)
+	}
+	if !strings.HasSuffix(ic.GetIssueURL(), fmt.Sprintf("/issues/%d", num)) {
+		return fmt.Errorf("it is not on %s", doc.Target.URL)
+	}
+	if mark != "" {
+		posted, err := hasComment(ctx, gh, owner, repo, num, mark)
+		if err != nil {
+			return err
+		}
+		if posted {
+			fmt.Fprintf(out, "Task %s's reply to %s is already posted; not posting it again\n", doc.Source.Task, ic.GetHTMLURL())
+			return nil
+		}
+	}
+	fmt.Fprintf(out, "%s %s with a comment on %s:\n%s\n", doing(dryRun, "Answering", "answer"), ic.GetHTMLURL(), doc.Target.URL, indent(r.Body))
+	if dryRun {
+		return nil
+	}
+	body := quoteComment(ic) + r.Body + mark
+	_, _, err = gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body})
+	return err
+}
+
+// quoteComment heads a reply to a conversation comment: the start of the
+// comment, quoted, and a link to it.
+func quoteComment(ic *githubv39.IssueComment) string {
+	lines := strings.Split(strings.TrimSpace(ic.GetBody()), "\n")
+	if len(lines) > 3 {
+		lines = append(lines[:3], "…")
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString("> " + l + "\n")
+	}
+	fmt.Fprintf(&b, "\n[In reply to @%s](%s)\n\n", ic.GetUser().GetLogin(), ic.GetHTMLURL())
+	return b.String()
+}
+
+func hasReviewComment(ctx context.Context, gh *githubv39.Client, owner, repo string, num int, mark string) (bool, error) {
+	mark = strings.TrimSpace(mark)
+	opts := &githubv39.PullRequestListCommentsOptions{ListOptions: githubv39.ListOptions{PerPage: 100}}
+	for {
+		comments, resp, err := gh.PullRequests.ListComments(ctx, owner, repo, num, opts)
+		if err != nil {
+			return false, fmt.Errorf("listing review comments on #%d: %w", num, err)
+		}
+		for _, c := range comments {
+			if strings.Contains(c.GetBody(), mark) {
+				return true, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			return false, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }

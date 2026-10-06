@@ -12,6 +12,7 @@ import (
 
 	githubv39 "github.com/google/go-github/v39/github"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
@@ -111,13 +112,13 @@ func TestFillChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fillChange(d, dir, nil); err == nil {
+	if err := fillChange(d, spool.Task{}, dir, nil); err == nil {
 		t.Error("a Change with no push was filled")
 	}
 	if err := os.WriteFile(filepath.Join(dir, taskoutput.PushedFile), []byte(`{"fork":"me/r","branch":"issue-7-1","base":"b0","head":"h1"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := fillChange(d, dir, map[string]string{"labels": " factory, x ,"}); err != nil {
+	if err := fillChange(d, spool.Task{}, dir, map[string]string{"labels": " factory, x ,"}); err != nil {
 		t.Fatal(err)
 	}
 	c, err := d.ChangeSpec()
@@ -126,5 +127,32 @@ func TestFillChange(t *testing.T) {
 	}
 	if c.Fork != "me/r" || c.Branch != "issue-7-1" || c.Base != "b0" || d.Target.Commit != "h1" || fmt.Sprint(c.Labels) != "[x factory]" {
 		t.Errorf("filled %+v, commit %s", c, d.Target.Commit)
+	}
+
+	// A revise's is about the PR, and keeps the PR's title and body where
+	// the agent wrote none.
+	rev, err := taskoutput.Wrap("Change", "change:\n  report: fixed the lint\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fillChange(rev, spool.Task{}, dir, nil); err == nil {
+		t.Error("a start's Change with no title was filled")
+	}
+	inputs := map[string]string{"pr_url": "https://github.com/o/r/pull/9", "pushed_title": "t0", "pushed_body": "b0"}
+	if err := fillChange(rev, spool.Task{Revise: "fix-ci"}, dir, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = rev.ChangeSpec(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "t0" || c.Body != "b0" || c.Report != "fixed the lint" || rev.Target.URL != "https://github.com/o/r/pull/9" || rev.Target.Commit != "h1" {
+		t.Errorf("revise filled %+v, target %+v", c, rev.Target)
+	}
+	retitled, _ := taskoutput.Wrap("Change", "change:\n  title: t1\n", taskoutput.Target{}, taskoutput.Source{})
+	if err := fillChange(retitled, spool.Task{Revise: "iterate"}, dir, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" {
+		t.Errorf("retitled %+v", c)
 	}
 }
