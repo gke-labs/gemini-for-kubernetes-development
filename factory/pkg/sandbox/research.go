@@ -308,17 +308,8 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
-	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-	// An already-existing Service is not a failure. It carries no owner
-	// reference, so a sandbox deleted by any path other than
-	// discardUnfinishedResearchSandbox — a `kubectl delete sandbox`, the
-	// terminating branch above — leaves its Service behind, and the name
-	// and selector are derived from the sandbox name, so the one that
-	// survived is the one we would have made.
-	if _, err := kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 	return name, nil
 }

@@ -196,11 +196,8 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 	}
 	sbObj, svc := NewAgentSandbox(opt)
 
-	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-	if _, err := kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 	return name, nil
 }
@@ -305,14 +302,8 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 
 	return name, nil
@@ -374,14 +365,8 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 
 	return name, nil
@@ -435,14 +420,8 @@ func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 
 	return name, nil
@@ -679,14 +658,8 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 	fillEnvResources(&opt.DevSandboxOptions)
 	sb, svc := NewReviewSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sb, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating review sandbox CR: %w", err)
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating review sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sb, svc); err != nil {
+		return "", err
 	}
 
 	return name, nil
