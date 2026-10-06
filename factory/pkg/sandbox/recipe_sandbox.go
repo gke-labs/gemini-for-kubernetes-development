@@ -75,14 +75,8 @@ func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient
 	fillEnvResources(&opt.DevSandboxOptions)
 	sbObj, svc := NewAgentSandbox(opt)
 
-	_, err = kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox CR: %w", err)
-	}
-
-	_, err = kubeClient.Clientset.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
-	if err != nil {
-		return "", fmt.Errorf("creating sandbox service: %w", err)
+	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
+		return "", err
 	}
 
 	return name, nil
