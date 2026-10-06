@@ -102,7 +102,7 @@ type WorkAction struct {
 // its agent/sandbox state.
 type WorkItem struct {
 	Type            string       `json:"type"`            // issue | pr
-	Group           string       `json:"group,omitempty"` // review | fix | mine-pr | mine-issue
+	Group           string       `json:"group,omitempty"` // issues | prs
 	Number          int          `json:"number"`
 	Title           string       `json:"title"`
 	HTMLURL         string       `json:"htmlURL"`
@@ -135,6 +135,12 @@ type WorkItem struct {
 	// row and on the PR it opened: watch while it runs, Continue session
 	// after, and its revises (Iterate, Address comments, Fix CI).
 	FixSession *TaskSession `json:"fixSession,omitempty"`
+	// FixRevises are the fix run's revises, the PR row's follow-ups.
+	FixRevises []WorkAction `json:"fixRevises,omitempty"`
+	// Mine is a PR the member authored; MyPR one they authored whose head
+	// is on their fork, which a recipe may push to.
+	Mine bool `json:"mine,omitempty"`
+	MyPR bool `json:"myPR,omitempty"`
 }
 
 // TaskSession names a factory task's agent session: the sandbox it ran in

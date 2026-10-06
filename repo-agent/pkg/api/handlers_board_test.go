@@ -190,6 +190,7 @@ func (m *boardMockRT) graphqlAnswer(req *http.Request) (string, bool) {
 			"updatedAt":      pr["updated_at"],
 			"isDraft":        pr["draft"],
 			"author":         gqlLoginObj(pr["user"]),
+			"headRepository": gqlHeadRepo(pr["head"]),
 			"labels":         map[string]any{"nodes": gqlNameList(pr["labels"])},
 			"reviewRequests": map[string]any{"nodes": requested},
 			"reviews":        map[string]any{"nodes": mine},
@@ -210,6 +211,17 @@ func (m *boardMockRT) graphqlAnswer(req *http.Request) (string, bool) {
 		return "", false
 	}
 	return string(out), true
+}
+
+// gqlHeadRepo is nil when the fixture names no head repository, as GitHub
+// reports a deleted fork.
+func gqlHeadRepo(v any) any {
+	head, _ := v.(map[string]any)
+	repo, _ := head["repo"].(map[string]any)
+	if repo == nil {
+		return nil
+	}
+	return map[string]any{"nameWithOwner": repo["full_name"], "isFork": repo["fork"], "owner": gqlLoginObj(repo["owner"])}
 }
 
 func gqlSlice(v any) []any {
@@ -818,8 +830,9 @@ func TestPromoteBoardPR(t *testing.T) {
 }
 
 // Grouping and issue→PR folding: an issue with an open fix PR disappears in
-// favor of the PR row (which records the linkage); authored PRs land in
-// mine-pr, incoming reviews in review, self-filed issues in mine-issue.
+// favor of the PR row (which records the linkage); every PR lands in the
+// PRs group, marked mine when authored and myPR when its head is on the
+// member's fork.
 func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[
@@ -834,7 +847,9 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 		]`,
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 50, "title": "my fix", "html_url": "https://github.com/test/repo/pull/50", "updated_at": "2026-09-16T12:00:00Z",
-			 "user": {"login": "alice"}, "draft": true, "body": "This change...\n\nFixes #10"},
+			 "user": {"login": "alice"}, "draft": true, "body": "This change...\n\nFixes #10",
+			 "head": {"repo": {"full_name": "alice/repo", "fork": true, "owner": {"login": "alice"}}},
+			 "base": {"repo": {"full_name": "test/repo", "owner": {"login": "test"}}}},
 			{"number": 42, "title": "review me", "html_url": "https://github.com/test/repo/pull/42", "updated_at": "2026-09-16T11:00:00Z",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
 			{"number": 60, "title": "bot fix for 13", "html_url": "https://github.com/test/repo/pull/60", "updated_at": "2026-09-16T07:00:00Z",
@@ -864,11 +879,11 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 		t.Errorf("issue-10 should be folded into PR 50: %s", w.Body.String())
 	}
 	pr50 := byKey["pr-50"]
-	if pr50.Group != "mine-pr" || !pr50.DraftPR || len(pr50.Fixes) != 1 || pr50.Fixes[0] != 10 {
+	if pr50.Group != "prs" || !pr50.Mine || !pr50.MyPR || !pr50.DraftPR || len(pr50.Fixes) != 1 || pr50.Fixes[0] != 10 {
 		t.Errorf("pr-50 row wrong: %+v", pr50)
 	}
-	if row := byKey["pr-42"]; row.Group != "review" {
-		t.Errorf("pr-42 should be group review: %+v", row)
+	if row := byKey["pr-42"]; row.Group != "prs" || row.Mine || row.MyPR {
+		t.Errorf("pr-42 should be a PRs row that is not mine: %+v", row)
 	}
 	if row := byKey["issue-12"]; row.Group != "issues" {
 		t.Errorf("issue-12 should be group issues: %+v", row)
@@ -880,7 +895,7 @@ func TestGetBoardWorkGroupsAndFolding(t *testing.T) {
 		t.Errorf("issue-13 should be folded into bot PR 60: %s", w.Body.String())
 	}
 	pr60 := byKey["pr-60"]
-	if pr60.Group != "review" || len(pr60.Fixes) != 1 || pr60.Fixes[0] != 13 {
+	if pr60.Group != "prs" || pr60.Mine || len(pr60.Fixes) != 1 || pr60.Fixes[0] != 13 {
 		t.Errorf("pr-60 row wrong: %+v", pr60)
 	}
 
@@ -1146,7 +1161,7 @@ func TestFeedIncludesUninvolvedPRs(t *testing.T) {
 	var work []models.WorkItem
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
-		if item.Number == 300 && item.Group == "review" && !item.ReviewRequested {
+		if item.Number == 300 && item.Group == "prs" && !item.Mine && !item.ReviewRequested {
 			return
 		}
 	}
@@ -2113,5 +2128,45 @@ func TestReviewClicksFindTheReviewSandbox(t *testing.T) {
 	}
 	if annotations("factory-pr-repo-42")[annoReviewAbandoned] != "" {
 		t.Error("abandon stamped the PR's follow-up sandbox")
+	}
+}
+
+// A PR is the member's to push to only when its head is their fork, not a
+// branch of the base repository.
+func TestHeadOnMemberFork(t *testing.T) {
+	pr := func(full, owner string, fork bool) *github.PullRequest {
+		return &github.PullRequest{
+			Head: &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String(full), Fork: github.Bool(fork), Owner: &github.User{Login: github.String(owner)}}},
+			Base: &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String("test/repo")}},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		pr   *github.PullRequest
+		want bool
+	}{
+		{"own fork", pr("Alice/repo", "Alice", true), true},
+		{"someone else's fork", pr("bob/repo", "bob", true), false},
+		{"branch of the base repo", pr("test/repo", "alice", false), false},
+		{"no head repo (fork deleted)", &github.PullRequest{}, false},
+	} {
+		if got := headOnMemberFork(tc.pr, "alice"); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The PR row's follow-ups are the fix run's recorded revises, each with the
+// inputs it asks for.
+func TestFixRevisesFromTheRecordedRun(t *testing.T) {
+	if got := fixRevises(nil); got != nil {
+		t.Errorf("no sandbox, no revises: %+v", got)
+	}
+	sb := &unstructured.Unstructured{}
+	sb.SetAnnotations(map[string]string{factorycli.AnnotationFixRun: `{"name":"fix/repo/1/1","task":"t","revises":[{"id":"iterate","label":"Iterate"},{"id":"rebase","label":"Rebase"}]}`})
+	got := fixRevises(sb)
+	if len(got) != 2 || got[0].Revise != "iterate" || len(got[0].Inputs) != 1 || got[0].Inputs[0] != "instruction" ||
+		got[1].Revise != "rebase" || got[1].Label != "Rebase" || len(got[1].Inputs) != 0 || !got[1].Enabled || got[1].Verb != "revise" {
+		t.Errorf("revises wrong: %+v", got)
 	}
 }

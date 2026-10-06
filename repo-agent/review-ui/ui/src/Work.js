@@ -100,24 +100,19 @@ const RUN_STATE_EVERY = 2 * 60 * 1000;
 const UP_NEXT = 'up-next';
 const GROUPS = [
   { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
-  { key: 'review', label: 'Review', hint: 'Incoming PRs to review' },
   { key: 'issues', label: 'Issues', hint: 'All open issues — yours, unclaimed, and filed by you; actions follow each row' },
-  { key: 'mine-pr', label: 'My PRs', hint: 'PRs you authored — monitor and refine' },
+  { key: 'prs', label: 'PRs', hint: 'Open pull requests — review others\' and refine your own; actions follow each row' },
 ];
 
 function groupOf(item) {
-  return item.group || (item.type === 'issue' ? 'issues' : 'review');
+  return item.group || (item.type === 'issue' ? 'issues' : 'prs');
 }
 
-// Per-group accent (CSS vars so dark mode derives automatically).
-const GROUP_ACCENT = {
-  review: 'var(--group-review)',
-  issues: 'var(--group-fix)',
-  'mine-pr': 'var(--group-mine-pr)',
-};
-
+// Per-row accent (CSS vars so dark mode derives automatically): your own
+// PRs keep their colour inside the one PRs group.
 function accentOf(item) {
-  return GROUP_ACCENT[groupOf(item)] || 'var(--text-secondary)';
+  if (groupOf(item) === 'issues') return 'var(--group-fix)';
+  return item.mine ? 'var(--group-mine-pr)' : 'var(--group-review)';
 }
 
 function tintOf(item) {
@@ -341,7 +336,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const [showReview, setShowReview] = useState(false);
   const [showIterate, setShowIterate] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
-  const [iterateText, setIterateText] = useState('');
+  // Text for the fix revises that take an input, by revise id.
+  const [reviseText, setReviseText] = useState({});
   const [editingPlan, setEditingPlan] = useState(false);
   const [planText, setPlanText] = useState('');
   const [planErr, setPlanErr] = useState('');
@@ -415,7 +411,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
       }
     }
-  } else if (!stageBtn && group === 'mine-pr') {
+  } else if (!stageBtn && item.mine) {
     if (item.draftPR) {
       // Promoting your own draft PR is an author right, not a repo write.
       actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
@@ -424,10 +420,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // single owed action (Promote) plus one door. Hidden while a
     // follow-up runs; a failed one re-opens the door — the verb is the
     // retry.
-    // They are revises of the fix's session, so a PR the board's fix did
-    // not open (a hand-made one) has none.
-    if (item.fixSession && !FIX_STAGES.includes(item.stage)) {
-      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent to this PR — address review comments, fix CI, or iterate with an instruction. Each is a turn in the fix\'s conversation.' });
+    // They are the revises the fix's run recorded, and they push to the
+    // PR's branch: a PR the board's fix did not open (a hand-made one), or
+    // one not on the member's fork, has none.
+    if (item.myPR && item.fixSession && (item.fixRevises || []).length && !FIX_STAGES.includes(item.stage)) {
+      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: `Send the agent to this PR — ${item.fixRevises.map(r => r.label).join(', ')}. Each is a turn in the fix's conversation.` });
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.
@@ -506,7 +503,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             />
           </span>
         )}
-        {item.author && group === 'review' && (
+        {item.author && item.type !== 'issue' && !item.mine && (
           <span style={{ marginRight: '6px' }}>
             <Chip
               text={`⦿ ${item.author}`}
@@ -805,7 +802,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-    {showIterate && group === 'mine-pr' && item.fixSession && (
+    {showIterate && item.myPR && item.fixSession && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
@@ -815,12 +812,13 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 title="Continue the fix's conversation where it left off, in its own tab"
               >Continue session ↗</a>
               <span style={{ marginLeft: 'auto' }} />
-              <button className="btn btn-sm"
-                title="Agent answers the review comments on this PR, pushes to the branch and replies — a turn in the fix's conversation"
-                onClick={() => reviseFix('address-comments', 'Address comments')}>Address review comments</button>
-              <button className="btn btn-sm"
-                title="Agent reads the failing checks, pushes a fix and reports on the PR"
-                onClick={() => reviseFix('fix-ci', 'Fix CI')}>Fix failing CI</button>
+              {/* The fix's recorded revises: the ones that need no input are
+                  one click; the rest get a box below. */}
+              {(item.fixRevises || []).filter(r => !(r.inputs || []).length).map(r => (
+                <button key={r.revise} className="btn btn-sm"
+                  title={`${r.label} — the agent works on this PR and pushes to its branch, a turn in the fix's conversation`}
+                  onClick={() => reviseFix(r.revise, r.label)}>{r.label}</button>
+              ))}
               {item.sandbox && item.sandbox.autoIterate && (
                 <span
                   onClick={() => {
@@ -838,25 +836,32 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 </span>
               )}
             </div>
-            <textarea
-              value={iterateText}
-              onChange={e => setIterateText(e.target.value)}
-              placeholder="Iterate with an instruction — what should the agent change on this PR?"
-              spellCheck={false}
-              style={{
-                width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
-                padding: '8px', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)',
-                border: '1px solid var(--border-color, #444)', borderRadius: '6px', minHeight: '56px', textAlign: 'left',
-              }}
-            />
-            <div style={{ marginTop: '6px', textAlign: 'right' }}>
-              <button className="btn btn-sm" disabled={!iterateText.trim()}
-                title="Agent changes the PR as the instruction says and pushes to its branch — a turn in the fix's conversation"
-                onClick={() => {
-                  reviseFix('iterate', 'Iterate', { instruction: iterateText.trim() })
-                    .then(ok => { if (ok) setIterateText(''); });
-                }}>Iterate</button>
-            </div>
+            {(item.fixRevises || []).filter(r => (r.inputs || []).length).map(r => {
+              const text = reviseText[r.revise] || '';
+              return (
+                <div key={r.revise} style={{ marginTop: '6px' }}>
+                  <textarea
+                    value={text}
+                    onChange={e => setReviseText(t => ({ ...t, [r.revise]: e.target.value }))}
+                    placeholder={`${r.label} — ${r.inputs[0]} for the agent`}
+                    spellCheck={false}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
+                      padding: '8px', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color, #444)', borderRadius: '6px', minHeight: '56px', textAlign: 'left',
+                    }}
+                  />
+                  <div style={{ marginTop: '6px', textAlign: 'right' }}>
+                    <button className="btn btn-sm" disabled={!text.trim()}
+                      title={`${r.label} — the agent works on this PR as asked and pushes to its branch, a turn in the fix's conversation`}
+                      onClick={() => {
+                        reviseFix(r.revise, r.label, { [r.inputs[0]]: text.trim() })
+                          .then(ok => { if (ok) setReviseText(t => ({ ...t, [r.revise]: '' })); });
+                      }}>{r.label}</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </td>
       </tr>
@@ -1666,7 +1671,7 @@ function Work({ onBack, namespace }) {
   const [error, setError] = useState('');
   // View is fluid per-user UI state (localStorage, per board) — it never
   // touches the board spec, so flipping it can never change what runs.
-  const defaultView = { issues: 'all', reviews: 'requested', labels: '' };
+  const defaultView = { issues: 'all', prs: 'all', labels: '' };
   const [view, setView] = useState(defaultView);
   const [cardSandbox, setCardSandbox] = useState(null);
   const [specOpen, setSpecOpen] = useState(false);
@@ -2077,7 +2082,11 @@ function Work({ onBack, namespace }) {
             // Assignee list is viewer-first, so a simple prefix test works.
             if (!(item.assignee || '').startsWith(namespace) && item.author !== namespace) return false;
           }
-          if (g === 'review' && view.reviews === 'requested' && !item.reviewRequested) return false;
+          if (g === 'prs') {
+            if (view.prs === 'mine' && !item.mine) return false;
+            if (view.prs === 'requested' && !item.reviewRequested) return false;
+            if (view.prs === 'drafts' && !item.draftPR) return false;
+          }
           return true;
         });
         const byGroup = {};
@@ -2088,7 +2097,7 @@ function Work({ onBack, namespace }) {
         // state ("nothing needs you") is the good news, not a dead end.
         const shown = activeGroup || UP_NEXT;
         const rows = byGroup[shown] || [];
-        const groupLabel = { review: 'REVIEW', issues: 'ISSUE', 'mine-pr': 'MY PR' };
+        const groupLabel = item => (groupOf(item) === 'issues' ? 'ISSUE' : item.mine ? 'MY PR' : 'PR');
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
@@ -2150,13 +2159,13 @@ function Work({ onBack, namespace }) {
                     ))}
                   </span>
                 )}
-                {shown === 'review' && (
+                {shown === 'prs' && (
                   <span title="View scope — display only, never changes what runs">
-                    {['requested', 'all'].map(v => (
+                    {[['all', 'All'], ['mine', 'Mine'], ['requested', 'Review requested'], ['drafts', 'Drafts']].map(([v, label]) => (
                       <button key={v} className="btn btn-sm"
-                        style={{ marginLeft: '2px', opacity: view.reviews === v ? 1 : 0.5 }}
-                        onClick={() => updateView({ reviews: v })}
-                      >{v === 'requested' ? 'Requested' : 'All'}</button>
+                        style={{ marginLeft: '2px', opacity: view.prs === v ? 1 : 0.5 }}
+                        onClick={() => updateView({ prs: v })}
+                      >{label}</button>
                     ))}
                   </span>
                 )}
@@ -2192,7 +2201,7 @@ function Work({ onBack, namespace }) {
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
                       onOpenSandbox={setCardSandbox}
                       onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
-                      groupTag={shown === UP_NEXT ? groupLabel[groupOf(item)] : undefined}
+                      groupTag={shown === UP_NEXT ? groupLabel(item) : undefined}
                       runState={runState} onRunStarted={onRunStarted} />
                   ))}
                   {!loadingWork && !rows.length && (
