@@ -271,10 +271,12 @@ func TestARunningReviseDrivesTheSessionItContinues(t *testing.T) {
 		t.Errorf("the revise could not prompt: %d %s", code, body)
 	}
 
-	// Cancelling the revise leaves the conversation to the member.
+	// Cancelling the revise leaves the conversation to the member, once
+	// the revise has exited: the cancel only signals it.
 	if _, err := f.c.Cancel(context.Background(), revise, false); err != nil {
 		t.Fatal(err)
 	}
+	f.awaitEnd(t, revise)
 	code, body = f.call(t, http.MethodGet, "/v1/sessions/"+task, "", "")
 	if code != http.StatusOK || strings.Contains(body, `"held":true`) {
 		t.Errorf("after the revise: %d %s", code, body)
