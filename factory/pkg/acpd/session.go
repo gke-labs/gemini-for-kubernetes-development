@@ -200,8 +200,9 @@ type Session struct {
 	acpSessionID string
 	// loaded says acpSessionID came from the record, fixed at handshake.
 	loaded bool
-	// replaying is set while session/load replays the conversation, whose
-	// updates the transcript already has.
+	// replaying is set from session/load until the session's first prompt:
+	// what the engine sends in between is the conversation it replays,
+	// which the transcript already has.
 	replaying atomic.Bool
 
 	permissionTimeout time.Duration
@@ -435,9 +436,13 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 // record, a record for another engine or directory, an engine that does
 // not load sessions, or one that tried and failed.
 //
-// The engine replays the conversation as session/update notifications
-// before it answers. The transcript already holds them — it is appended
-// to across restarts — so they are dropped rather than written twice.
+// The engine replays the conversation as session/update notifications.
+// The transcript already holds them — it is appended to across restarts —
+// so they are dropped rather than written twice. Not only while the load
+// is in flight: gemini answers session/load first and replays after, so
+// the replay runs until the session's first prompt (see Prompt). Every
+// revise and every Continue session loads the conversation, and each
+// load used to write the whole of it into the transcript again.
 func (s *Session) load(ctx context.Context, init *acp.InitializeResponse, cfg SessionConfig) (*acp.SessionModeState, bool) {
 	rec, ok := ReadRecord(cfg.Dir)
 	if !ok || rec.Engine != cfg.Engine || rec.CWD != cfg.CWD {
@@ -449,8 +454,8 @@ func (s *Session) load(ctx context.Context, init *acp.InitializeResponse, cfg Se
 	}
 	s.replaying.Store(true)
 	resp, err := s.client.LoadSession(ctx, acp.LoadSessionRequest{SessionID: rec.ACPSessionID, CWD: cfg.CWD})
-	s.replaying.Store(false)
 	if err != nil {
+		s.replaying.Store(false)
 		klog.FromContext(ctx).Error(err, "loading the recorded session; starting a fresh one", "session", s.ID, "acpSession", rec.ACPSessionID)
 		// Said in the transcript too: the next turn is talking to an
 		// agent that remembers none of what is above it.
@@ -622,7 +627,7 @@ func allowOnceOption(options []acp.PermissionOption) (string, bool) {
 // browser, which can ignore it without acpd having to be taught about it
 // first.
 func (s *Session) onNotification(method string, params json.RawMessage) {
-	if method != acp.MethodSessionUpdate || s.replaying.Load() {
+	if method != acp.MethodSessionUpdate {
 		return
 	}
 	var notif acp.SessionUpdateNotification
@@ -639,6 +644,12 @@ func (s *Session) onNotification(method string, params json.RawMessage) {
 		s.mu.Lock()
 		s.currentMode = notif.Update.CurrentModeID
 		s.mu.Unlock()
+	}
+	// The mode is followed through a replay, which is where the mode
+	// acpd sets after a load is answered, but nothing replayed is
+	// written: the transcript has it from when it happened.
+	if s.replaying.Load() {
+		return
 	}
 	data, err := json.Marshal(notif.Update)
 	if err != nil {
@@ -783,6 +794,12 @@ func (s *Session) Prompt(text string) error {
 	}
 	s.busy = true
 	s.mu.Unlock()
+
+	// The first prompt ends a load's replay. The engine sends the replay
+	// as it answers the load, and before it answers the set_mode that
+	// StartSession sends next; notifications are dispatched in wire order,
+	// so what arrives from here on is this turn's.
+	s.replaying.Store(false)
 
 	if err := s.transcript.AppendValue(KindUserPrompt, map[string]string{"text": text}); err != nil {
 		s.mu.Lock()
