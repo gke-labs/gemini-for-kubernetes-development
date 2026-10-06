@@ -350,3 +350,26 @@ func TestPostReplies(t *testing.T) {
 		}
 	})
 }
+
+// The title in the repository's own "area: subject" style, unquoted, as
+// the agent wrote it on issue 908.
+func TestWrapChangeUnquotedTitle(t *testing.T) {
+	raw := "change:\n  title: repo-agent: make the cookie's Secure flag configurable #908\n  body: |\n    title: in the body stays as it is.\n\n    Fixes #908\n"
+	doc, err := Wrap("Change", raw, Target{URL: issueURL}, Source{})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	c, err := doc.ChangeSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "repo-agent: make the cookie's Secure flag configurable #908" || c.Body != "title: in the body stays as it is.\n\nFixes #908" {
+		t.Errorf("spec = %+v", c)
+	}
+	// Quoted, block and empty titles are left alone.
+	for _, in := range []string{"change:\n  title: \"a: b\"", "change:\n  title: 'a: b'", "change:\n  title: |", "change:\n  title:"} {
+		if got := quotePlainTitle(in); got != in {
+			t.Errorf("quotePlainTitle(%q) = %q", in, got)
+		}
+	}
+}

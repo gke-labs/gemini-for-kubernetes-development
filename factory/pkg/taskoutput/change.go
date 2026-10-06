@@ -2,6 +2,7 @@ package taskoutput
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -136,8 +137,13 @@ func parseChange(raw string) (any, error) {
 	var out struct {
 		Change *Change `yaml:"change"`
 	}
-	if err := yaml.Unmarshal([]byte(CleanAgentYAML(raw, "change:")), &out); err != nil {
-		return nil, err
+	clean := CleanAgentYAML(raw, "change:")
+	if err := yaml.Unmarshal([]byte(clean), &out); err != nil {
+		// A title in the repository's "area: subject" style, written
+		// unquoted, is not YAML. Quote it and try once more.
+		if yaml.Unmarshal([]byte(quotePlainTitle(clean)), &out) != nil {
+			return nil, err
+		}
 	}
 	c := out.Change
 	if c == nil {
@@ -388,4 +394,28 @@ func hasReviewComment(ctx context.Context, gh *githubv39.Client, owner, repo str
 		}
 		opts.Page = resp.NextPage
 	}
+}
+
+// plainTitle is a title: line whose value is a plain scalar: not quoted,
+// not a block (| or >), not a flow collection, not empty.
+var plainTitle = regexp.MustCompile(`^(\s*)title:[ \t]+([^'"|>\[{\s].*?)[ \t]*$`)
+
+// quotePlainTitle double-quotes the value of the change's own plain
+// title: line, the one indented as the first key under change:. A
+// "title:" further in is a block's text, such as the body's.
+func quotePlainTitle(s string) string {
+	lines := strings.Split(s, "\n")
+	keyIndent := ""
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "" && keyIndent == "" && i > 0 {
+			keyIndent = l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+		}
+		m := plainTitle.FindStringSubmatch(l)
+		if m == nil || m[1] != keyIndent || keyIndent == "" {
+			continue
+		}
+		quoted, _ := json.Marshal(m[2])
+		lines[i] = m[1] + "title: " + string(quoted)
+	}
+	return strings.Join(lines, "\n")
 }
