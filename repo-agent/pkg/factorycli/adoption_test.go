@@ -38,13 +38,13 @@ func TestRunnerSkipsBusySandbox(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory", Prober: &fakeProber{probe: TaskProbe{State: ProbeRunning}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	if r.StartFix("alice/fix-repo-1", FixOptions{Namespace: "alice", SandboxName: "fix-repo-1", IssueURL: "u"}) {
+	if r.StartRun("alice/run-1", RunOptions{Namespace: "alice", SandboxName: "run-1", Mode: "plan", Name: "r1"}) {
 		t.Fatal("busy sandbox must not launch")
 	}
-	if _, ok := r.LastResult("alice/fix-repo-1"); ok {
+	if _, ok := r.LastResult("alice/run-1"); ok {
 		t.Fatal("no result should be recorded for a skipped launch")
 	}
-	if r.IsRunning("alice/fix-repo-1") {
+	if r.IsRunning("alice/run-1") {
 		t.Fatal("skip must not hold the running slot")
 	}
 }

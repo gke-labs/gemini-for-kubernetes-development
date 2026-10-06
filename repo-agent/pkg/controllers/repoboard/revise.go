@@ -87,6 +87,10 @@ func (r *Reconciler) ensureRevises(ctx context.Context, work *workState, reqs []
 			r.ensureReviewRevise(ctx, work, req)
 			continue
 		}
+		if spec.Sandbox != "" && fixRevise(work, spec) {
+			r.ensureFixRevise(ctx, work, req)
+			continue
+		}
 		if spec.Sandbox != "" {
 			r.ensureNotesRevise(ctx, work, req)
 			continue
@@ -177,6 +181,9 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 	}
 	if spec.Sandbox != "" && reviewRevise(work, spec) {
 		return r.settleReviewRevise(ctx, work, req, now)
+	}
+	if spec.Sandbox != "" && fixRevise(work, spec) {
+		return r.settleFixRevise(work, req, now)
 	}
 	if spec.Sandbox != "" {
 		return r.settleNotesRevise(ctx, work, req, now)

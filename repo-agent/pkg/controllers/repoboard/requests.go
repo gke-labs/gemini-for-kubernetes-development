@@ -135,13 +135,6 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID)})
 		case boardv1alpha1.VerbPlan:
 			box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
-		case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
-			box.prTasks = append(box.prTasks, prTaskClaim{
-				pr:          spec.Number,
-				member:      spec.Member,
-				kind:        spec.Verb,
-				instruction: spec.Instruction,
-			})
 		case boardv1alpha1.VerbRun:
 			if claim, ok := runClaimFrom(req); ok {
 				box.runbooks = append(box.runbooks, claim)
@@ -337,10 +330,10 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 		// The issue's sandbox may predate the click — a triage or plan made
 		// it — so it is served by a fix in it: stamped, running, or run
 		// since the click.
-		key := fmt.Sprintf("%s/fix-%s-%d", spec.Member, work.repo, spec.Number)
+		key := fixKey(work, spec.Member, spec.Number)
 		res, ran := r.Factory.LastResult(key)
 		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil &&
-			(strings.HasPrefix(sb.GetAnnotations()[factorycli.AnnotationTaskType], "fix") || r.Factory.IsRunning(key) ||
+			(sb.GetAnnotations()[factorycli.AnnotationTaskType] == "fix" || r.Factory.IsRunning(key) ||
 				(ran && res.FinishedAt.After(req.CreationTimestamp.Time))) {
 			return served(sb.GetName())
 		}
@@ -382,19 +375,6 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 		// Likewise: the fix sandbox may predate the click, so its
 		// existence proves nothing. A stored draft does.
 		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
-			return served(sb.GetName())
-		}
-
-	case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
-		// Served once the claim has converted to the sandbox annotation
-		// the click pass drives from. From there the sandbox is the
-		// durable consent and this Request is only the receipt.
-		reqKey := map[string]string{
-			boardv1alpha1.VerbIterate:     AnnotationIterateRequested,
-			boardv1alpha1.VerbAddress:     AnnotationAddressRequested,
-			boardv1alpha1.VerbInvestigate: AnnotationInvestigateRequested,
-		}[spec.Verb]
-		if sb := work.findPRSandbox(spec.Number); sb != nil && sb.GetAnnotations()[reqKey] != "" {
 			return served(sb.GetName())
 		}
 

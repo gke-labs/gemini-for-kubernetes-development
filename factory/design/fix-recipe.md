@@ -1,6 +1,6 @@
 # Fix as a recipe
 
-**Status:** Proposed. Step 1 (the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, `run:fix` on the recipe) and step 2 but the PR mode (the revises, `post-replies`, revise inputs, `factory pr watch` revising a fix run) are built; see [As built](#as-built).
+**Status:** Steps 1–3 are built, except the PR mode; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -175,6 +175,20 @@ Step 2 deviates where:
 - **Revise inputs are marked `revise: true`** (`instruction`, `pr_url`): a built-in's command has no flag for them, and `ForSandbox` drops the mark. `factory recipe revise --input` overrides the *start's* inputs, read from the session's first task, so one revise's input is not the next's.
 - **`post-replies` adds no disclose footer**, as no other verb does: the asks say whether to state that an agent wrote the replies (the `disclose` input). Each reply carries a marker of the task and the comment it answers (`reply=<id>`); the report carries the task's. It refuses a comment that is not on the PR. A Change with no replies or report posts nothing, wherever it points.
 - **`factory pr watch`** looks for the PR's labelled sandbox with a `fix-run` each poll. With one, failing checks run `fix-ci` and new comments `address-comments`, each followed by `post-replies` (`factory recipe revise` + `factory apply --action post-replies`, in-process), and comments carrying factory's task-output marker are not new feedback. Without one, nothing changed.
+
+Step 3 (repo-agent) deviates where:
+
+- **The draft-PR policy is not passed.** `open-pr` always opens a draft. The board's `policy.draftPR: false` is ignored for now: the PR is opened as a draft and the member promotes it. The draft-PR instruction the board used to append is gone.
+- **The fix's result is kept on the sandbox.** `fix-harvested-at` is when the controller last read a fix's result, and `fix-error` is why it failed. A recorded `fix/<board>/<n>/…` run that started after both `fix-harvested-at` and the last Fix again has not been read. A restarted controller follows it by name, so the runner applies `open-pr` to it. A revise recorded under `fix-run` is never followed as a fix: its name is `revise/…`.
+- **Follow-ups are sandbox-keyed `revise` Requests** (`spec.sandbox`, `spec.revise`, with Iterate's `spec.instruction` as `--input instruction=…`), filed through `POST /api/task-sessions/:sandbox/:task/revise {revise, inputs}`.
+  - They are offered once the fix has a PR (the sandbox's `htmlURL` is a `/pull/` URL) and while the sandbox is idle.
+  - Only one stands at a time per sandbox, since they all push to one branch.
+  - factory does not record a revise's inputs, so the board knows Iterate's (`WorkAction.inputs`).
+  - The session view prompts for inputs. The PR row's drawer has a text box for them.
+- **The `iterate`, `address` and `investigate` verbs are gone** from the Request CRD, along with `/prs/:id/{iterate,address-comments,investigate}`, the `*-requested-at` annotations, `ensurePRTaskClaims`/`ensurePRTaskClicks`, and factorycli's `StartIterate`/`StartAddressComments`/`StartInvestigate`.
+- **A PR with no fix run gets no follow-up buttons**, since the PR mode is not built. Auto (`factory pr watch`) still works on it as before.
+- **The PR row's stage comes from the recorded run.** A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
+- **A fix session has no draft panel.** Its draft is the PR. *Continue session* is on the PR row's drawer and on a failed fix's error.
 
 ## Not planned here
 

@@ -28,7 +28,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,6 +103,26 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 		return revises
 	}
 	if number, board, ok := sessionIssue(sb); ok {
+		if kind == "Change" {
+			// The fix's follow-ups push to its PR and answer on it: there
+			// must be one, and the fix's sandbox must be idle.
+			switch {
+			case a[annoTaskState] == "Running":
+				return disable("the fix is running")
+			case !strings.Contains(a["htmlURL"], "/pull/"):
+				return disable("the fix has no PR yet")
+			}
+			for i := range revises {
+				revises[i].Inputs = reviseInputs[revises[i].Revise]
+			}
+			s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
+			for i := range revises {
+				if revises[i].Reason == planRevisingReason {
+					revises[i].Reason = "another follow-up is running"
+				}
+			}
+			return revises
+		}
 		if kind != "Plan" {
 			return disable(fmt.Sprintf("a %s is not revised from here", kind))
 		}
@@ -151,6 +173,11 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 	}
 	return revises
 }
+
+// reviseInputs are the inputs a recipe's revise asks for. factory does not
+// record them on the run, so the board knows them: the fix's iterate is
+// asked with the member's instruction.
+var reviseInputs = map[string][]string{"iterate": {"instruction"}}
 
 // sessionDraft is task's draft, nil when it has none: an issue's plan, or
 // a research conversation's notes. A triage's draft is YAML for the board
@@ -224,15 +251,16 @@ func (s *Server) asIssueAction(c *gin.Context, board string, number int, verb st
 	s.boardIssueAction(c)
 }
 
-// reviseTaskSession is a session's revise button: POST …/revise {revise}.
-// 202 with the Request filed.
+// reviseTaskSession is a session's revise button: POST …/revise {revise,
+// inputs}. 202 with the Request filed.
 func (s *Server) reviseTaskSession(c *gin.Context) {
 	sb, task, ok := s.taskSessionSandbox(c)
 	if !ok {
 		return
 	}
 	var req struct {
-		Revise string `json:"revise"`
+		Revise string            `json:"revise"`
+		Inputs map[string]string `json:"inputs"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Revise == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "revise is required"})
@@ -247,22 +275,42 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot revise now: %s", action.Reason)})
 		return
 	}
+	// The inputs are the revise's own, all of them given: the one there
+	// is (Iterate's instruction) rides the Request as its Instruction.
+	for name := range req.Inputs {
+		if !slices.Contains(action.Inputs, name) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s takes no input %s", req.Revise, name)})
+			return
+		}
+	}
+	for _, name := range action.Inputs {
+		if strings.TrimSpace(req.Inputs[name]) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s needs %s", req.Revise, name)})
+			return
+		}
+	}
+	if _, kind, _ := factorycli.SessionRun(sb.GetAnnotations(), task); kind == "Change" {
+		_, board, _ := sessionIssue(sb)
+		s.reviseSandbox(c, sb, board, req.Revise, strings.TrimSpace(req.Inputs["instruction"]))
+		return
+	}
 	if number, board, ok := sessionIssue(sb); ok {
 		s.asIssueAction(c, board, number, "revise", gin.H{"kind": "Plan", "revise": req.Revise})
 		return
 	}
 	if _, board, ok := sessionReview(sb); ok {
-		s.reviseReview(c, sb, board, req.Revise)
+		s.reviseSandbox(c, sb, board, req.Revise, "")
 		return
 	}
 	view, _ := sessionResearch(sb)
 	s.saveRecipeNotes(c, view, req.Revise)
 }
 
-// reviseReview files a review's Update review, keyed by its sandbox as a
-// Save notes is: the controller asks the revise into the review's session
-// and posts what it writes over the pending review. 202.
-func (s *Server) reviseReview(c *gin.Context, sb *unstructured.Unstructured, boardName, revise string) {
+// reviseSandbox files a revise keyed by its sandbox, as a Save notes is: a
+// review's Update review, which the controller posts over the pending
+// review, or a fix's follow-up, which pushes to its PR and posts its
+// replies there. 202.
+func (s *Server) reviseSandbox(c *gin.Context, sb *unstructured.Unstructured, boardName, revise, instruction string) {
 	ctx := c.Request.Context()
 	board, member, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
 	if err != nil {
@@ -270,10 +318,11 @@ func (s *Server) reviseReview(c *gin.Context, sb *unstructured.Unstructured, boa
 		return
 	}
 	filed, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
-		Verb:    boardv1alpha1.VerbRevise,
-		Member:  member,
-		Sandbox: sb.GetName(),
-		Revise:  revise,
+		Verb:        boardv1alpha1.VerbRevise,
+		Member:      member,
+		Sandbox:     sb.GetName(),
+		Revise:      revise,
+		Instruction: instruction,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})

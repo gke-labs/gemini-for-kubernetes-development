@@ -197,12 +197,22 @@ func (r *Runner) StartApply(key string, opts ApplyOptions) bool {
 // applyDoc runs `factory apply -f <doc> --action <action>` to its end,
 // within another invocation: a review's post-review, once its run ends.
 func (r *Runner) applyDoc(ctx context.Context, doc, action, githubToken string) (string, error) {
+	return r.applyDocIn(ctx, doc, action, "", githubToken)
+}
+
+// applyDocIn is applyDoc in namespace, where a Change's apply finds the
+// sandbox to alias to the PR it opens.
+func (r *Runner) applyDocIn(ctx context.Context, doc, action, namespace, githubToken string) (string, error) {
 	name, err := writeTaskOutput(doc)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(name)
-	return r.exec(ctx, []string{"apply", "-f", name, "--action", action}, githubToken)
+	args := []string{"apply", "-f", name, "--action", action}
+	if namespace != "" {
+		args = append(args, "--namespace", namespace)
+	}
+	return r.exec(ctx, args, githubToken)
 }
 
 // writeTaskOutput writes doc to a file of its own, for factory apply -f.

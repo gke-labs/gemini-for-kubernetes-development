@@ -73,6 +73,7 @@ const (
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
 	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
 	annoReviewError     = "review.gemini.google.com/error"
+	annoFixError        = "board.gemini.google.com/fix-error"
 	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
 	annoPlanDraft       = "board.gemini.google.com/plan"
 	annoPlannedAt       = "board.gemini.google.com/planned-at"
@@ -656,15 +657,6 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
 					mark(item, "planning")
 				}
-			case boardv1alpha1.VerbIterate, boardv1alpha1.VerbAddress, boardv1alpha1.VerbInvestigate:
-				stageName := map[string]string{
-					boardv1alpha1.VerbIterate:     "iterating",
-					boardv1alpha1.VerbAddress:     "addressing",
-					boardv1alpha1.VerbInvestigate: "investigating",
-				}[req.Spec.Verb]
-				if item, found := items["pr-"+n]; found {
-					item.Stage, item.Attention = stageName, attentionWorking
-				}
 			}
 		}
 	}
@@ -793,6 +785,26 @@ func workSandbox(sb *unstructured.Unstructured, autoIterateDefault bool) *models
 		AutoIterate:           auto,
 		AutoIterateOverridden: override == "on" || override == "off",
 	}
+}
+
+// fixRunStage names what the fix's sandbox is doing by its recorded
+// run: the fix itself, or one of its revises, which the board files under
+// revise/<board>/<sandbox>/<revise>/<unix>. The watch's revises carry no
+// run name, and read as a generic follow-up.
+func fixRunStage(annotations map[string]string) string {
+	var run factorycli.RecordedRun
+	if err := json.Unmarshal([]byte(annotations[factorycli.AnnotationFixRun]), &run); err != nil || run.Session == "" {
+		return "fixing"
+	}
+	if parts := strings.Split(run.Name, "/"); len(parts) == 5 && parts[0] == "revise" {
+		switch parts[3] {
+		case "address-comments":
+			return "addressing"
+		case "fix-ci":
+			return "investigating"
+		}
+	}
+	return "iterating"
 }
 
 // taskSession is the agent session of the run recorded on sb under key,
@@ -963,6 +975,10 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 	items[key].PlanSession = taskSession(planSB, factorycli.AnnotationPlanRun)
+	items[key].FixSession = taskSession(planSB, factorycli.AnnotationFixRun)
+	if (stage == "fix-failed" || stage == "fix-done") && planSB != nil {
+		items[key].Error = planSB.GetAnnotations()[annoFixError]
+	}
 	items[key].TriageSession = taskSession(triageSB, factorycli.AnnotationTriageRun)
 	if ws := items[key].Sandbox; ws != nil && sb == triageSB && ws.TaskState == "" {
 		ws.TaskState = triageState
@@ -1056,18 +1072,19 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
 
-	// PR follow-up verbs (iterate / address-comments / investigate) run in
-	// the fix sandbox; while one runs (or after it fails) the row shows it
-	// as the machine's state, same as fixing/reviewing.
+	// The fix's follow-ups (its revises) run in its sandbox; while one
+	// runs (or after it fails) the row shows it as the machine's state,
+	// same as fixing/reviewing.
 	followUpStage := ""
-	if sb != nil {
-		followUpNames := map[string]string{"iterate": "iterating", "address-comments": "addressing", "investigate": "investigating"}
-		if name, ok := followUpNames[sb.GetAnnotations()["sandbox.gemini.google.com/last-task-type"]]; ok {
-			switch sb.GetAnnotations()[annoTaskState] {
-			case "Running":
-				followUpStage = name
-			case "Failed":
-				followUpStage = name + "-failed"
+	if sb != nil && sb.GetAnnotations()[annoLastTaskType] == "fix" {
+		name := fixRunStage(sb.GetAnnotations())
+		switch sb.GetAnnotations()[annoTaskState] {
+		case "Running":
+			followUpStage = name
+		case "Failed":
+			followUpStage = name + "-failed"
+			if name == "fixing" {
+				followUpStage = "fix-failed"
 			}
 		}
 	}
@@ -1108,15 +1125,8 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// The PR's sandbox is at work: the stage is named by the TASK
 		// TYPE, a fix or a follow-up.
 		stage, attention = "reviewing", attentionWorking
-		switch sb.GetAnnotations()["sandbox.gemini.google.com/last-task-type"] {
-		case "fix-issue":
-			stage = "fixing"
-		case "iterate":
-			stage = "iterating"
-		case "address-comments":
-			stage = "addressing"
-		case "investigate":
-			stage = "investigating"
+		if sb.GetAnnotations()[annoLastTaskType] == "fix" {
+			stage = fixRunStage(sb.GetAnnotations())
 		}
 	case reviewTaskState == "Running":
 		// An active review always wins — stale reviewState from a previous
@@ -1189,8 +1199,11 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
 	itemError := ""
-	if stage == "review-failed" {
+	switch {
+	case stage == "review-failed":
 		itemError = friendlyReviewError(reviewError)
+	case strings.HasSuffix(stage, "-failed") && sb != nil:
+		itemError = sb.GetAnnotations()[annoFixError]
 	}
 	items[key] = &models.WorkItem{
 		Type:            "pr",
@@ -1209,6 +1222,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Fixes:           closingRefs(pr.GetBody()),
 		Sandbox:         workSandbox(sb, autoDefault),
 		ReviewSession:   taskSession(rsb, factorycli.AnnotationReviewRun),
+		FixSession:      taskSession(sb, factorycli.AnnotationFixRun),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 	if sb == nil {
@@ -1750,77 +1764,6 @@ func (s *Server) findPRFixSandbox(c *gin.Context, board *unstructured.Unstructur
 		}
 	}
 	return nil, ""
-}
-
-// kickoffPRTask stamps a follow-up request (Iterate / Address comments /
-// Fix CI) on the PR's fix sandbox. The annotation is the durable consent
-// the controller drives from, so there is no Request left standing to
-// strand on a restart.
-func (s *Server) kickoffPRTask(c *gin.Context, reqKey, instructionKey string) {
-	// boardWriteContext's fifth return is the member TOKEN, not the member
-	// — the Request records the executor namespace (a credential in a CR
-	// annotation was the failure mode this comment guards against).
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	member := s.Auth.GetNamespaceFromContext(c)
-	var req struct {
-		Instruction string `json:"instruction"`
-	}
-	_ = c.ShouldBindJSON(&req) // body optional
-	sb, ns := s.findPRFixSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		// Hand-made PR: no sandbox yet. Bridge with a Request — the
-		// controller launches the factory verb, factory ensures the
-		// factory-pr sandbox itself (gh pr checkout attaches the branch),
-		// and the claim converts to the durable sandbox annotation once
-		// the sandbox exists.
-		//
-		// The instruction rides on the Request rather than a per-PR
-		// board annotation. That annotation was written on the click and
-		// deleted by nothing: it outlived the iteration it was typed for
-		// and steered the next one.
-		verb := map[string]string{
-			"board.gemini.google.com/iterate-requested-at":     boardv1alpha1.VerbIterate,
-			"board.gemini.google.com/address-requested-at":     boardv1alpha1.VerbAddress,
-			"board.gemini.google.com/investigate-requested-at": boardv1alpha1.VerbInvestigate,
-		}[reqKey]
-		if _, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
-			Verb:        verb,
-			Member:      member,
-			Number:      number,
-			Instruction: strings.TrimSpace(req.Instruction),
-		}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record request", "details": err.Error()})
-			return
-		}
-		c.Status(http.StatusOK)
-		return
-	}
-	if instructionKey != "" {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), instructionKey, strings.TrimSpace(req.Instruction)); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record instruction", "details": err.Error()})
-			return
-		}
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), reqKey, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record request", "details": err.Error()})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
-func (s *Server) iterateBoardPR(c *gin.Context) {
-	s.kickoffPRTask(c, "board.gemini.google.com/iterate-requested-at", "board.gemini.google.com/iterate-instruction")
-}
-
-func (s *Server) addressBoardPR(c *gin.Context) {
-	s.kickoffPRTask(c, "board.gemini.google.com/address-requested-at", "")
-}
-
-func (s *Server) investigateBoardPR(c *gin.Context) {
-	s.kickoffPRTask(c, "board.gemini.google.com/investigate-requested-at", "")
 }
 
 // engineOrDefault normalizes the gear's engine choice; anything but an

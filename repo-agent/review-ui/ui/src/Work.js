@@ -265,6 +265,9 @@ const POSTING_POLL_EVERY = 3000;
 
 // taskSessionHref opens a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
+// FIX_STAGES are the fix's sandbox at work: the fix, or a follow-up.
+const FIX_STAGES = ['fixing', 'iterating', 'addressing', 'investigating'];
+
 function taskSessionHref(session) {
   return `#/task-session/${session.sandbox}/${session.task}`;
 }
@@ -374,7 +377,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const stageBtn = STAGE_BUTTON[item.stage];
   const liveSession = item.stage === 'planning' ? item.planSession
     : item.stage === 'triaging' ? item.triageSession
-    : item.stage === 'reviewing' ? item.reviewSession : null;
+    : item.stage === 'reviewing' ? item.reviewSession
+    : FIX_STAGES.includes(item.stage) ? item.fixSession : null;
+  // The fix's follow-ups are revises of its session, filed on it.
+  const reviseFix = (revise, label, inputs) => {
+    const s = item.fixSession;
+    return fetch(`/api/task-sessions/${encodeURIComponent(s.sandbox)}/${encodeURIComponent(s.task)}/revise`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inputs ? { revise, inputs } : { revise }),
+    }).then(async res => {
+      if (res.ok) { setShowIterate(false); if (onRefresh) onRefresh(); return true; }
+      const body = await res.json().catch(() => ({}));
+      window.alert(`${label}: ${body.error || `HTTP ${res.status}`}`);
+      return false;
+    }).catch(err => { window.alert(`${label}: ${err}`); return false; });
+  };
   const actions = [];
   if (!stageBtn && item.type === 'issue') {
     if (['untriaged', 'open', 'triaged', 'plan-failed'].includes(item.stage)) {
@@ -406,10 +424,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // single owed action (Promote) plus one door. Hidden while a
     // follow-up runs; a failed one re-opens the door — the verb is the
     // retry.
-    // No sandbox needed: on a hand-made PR the first verb creates one
-    // (factory ensures it and checks the PR branch out).
-    if (!['iterating', 'addressing', 'investigating'].includes(item.stage)) {
-      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent to this PR — address review comments, fix CI, or iterate with an instruction. First use on a hand-made PR creates its sandbox.' });
+    // They are revises of the fix's session, so a PR the board's fix did
+    // not open (a hand-made one) has none.
+    if (item.fixSession && !FIX_STAGES.includes(item.stage)) {
+      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: 'Send the agent to this PR — address review comments, fix CI, or iterate with an instruction. Each is a turn in the fix\'s conversation.' });
     }
   } else if (!stageBtn) {
     // Stage is the guard — a leftover paused sandbox must not hide Review.
@@ -787,18 +805,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-    {showIterate && group === 'mine-pr' && (
+    {showIterate && group === 'mine-pr' && item.fixSession && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
             <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)}
+                target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
+                title="Continue the fix's conversation where it left off, in its own tab"
+              >Continue session ↗</a>
               <span style={{ marginLeft: 'auto' }} />
               <button className="btn btn-sm"
-                title="Agent addresses review feedback on this PR and pushes to the branch — continues the fix conversation"
-                onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/address-comments`, 'Address comments'); }}>Address review comments</button>
+                title="Agent answers the review comments on this PR, pushes to the branch and replies — a turn in the fix's conversation"
+                onClick={() => reviseFix('address-comments', 'Address comments')}>Address review comments</button>
               <button className="btn btn-sm"
-                title="Agent investigates failing checks and pushes a fix"
-                onClick={() => { setShowIterate(false); onAction(`prs/${item.number}/investigate`, 'Fix CI'); }}>Fix failing CI</button>
+                title="Agent reads the failing checks, pushes a fix and reports on the PR"
+                onClick={() => reviseFix('fix-ci', 'Fix CI')}>Fix failing CI</button>
               {item.sandbox && item.sandbox.autoIterate && (
                 <span
                   onClick={() => {
@@ -819,7 +841,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             <textarea
               value={iterateText}
               onChange={e => setIterateText(e.target.value)}
-              placeholder="Iterate with an instruction — what should the agent change on this PR? Leave empty to resolve conflicts and iterate."
+              placeholder="Iterate with an instruction — what should the agent change on this PR?"
               spellCheck={false}
               style={{
                 width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
@@ -828,16 +850,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               }}
             />
             <div style={{ marginTop: '6px', textAlign: 'right' }}>
-              <button className="btn btn-sm"
-                title="Run factory pr iterate in the PR's sandbox — pushes to the PR branch; empty instruction resolves conflicts and iterates"
+              <button className="btn btn-sm" disabled={!iterateText.trim()}
+                title="Agent changes the PR as the instruction says and pushes to its branch — a turn in the fix's conversation"
                 onClick={() => {
-                  fetch(`/api/board/${boardName}/prs/${item.number}/iterate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instruction: iterateText }),
-                  }).then(res => {
-                    if (res.ok) { setShowIterate(false); setIterateText(''); if (onRefresh) onRefresh(); }
-                  }).catch(() => {});
+                  reviseFix('iterate', 'Iterate', { instruction: iterateText.trim() })
+                    .then(ok => { if (ok) setIterateText(''); });
                 }}>Iterate</button>
             </div>
           </div>
@@ -856,6 +873,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             {item.sandbox && (
               <button className="btn btn-sm" style={{ marginLeft: '8px' }}
                 onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)}>agent logs</button>
+            )}
+            {item.fixSession && !FIX_STAGES.includes(item.stage) && (
+              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)}
+                target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }}
+                title="Continue the fix's conversation where it left off, in its own tab"
+              >Continue session ↗</a>
             )}
           </div>
         </td>
