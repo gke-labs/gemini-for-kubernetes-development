@@ -177,6 +177,45 @@ func TestSyncReferencedIssueLabels_SkipsPullRequestsAndReadyForHuman(t *testing.
 	}
 }
 
+func TestSyncReferencedIssueLabels_IgnoresNonClosingMentions(t *testing.T) {
+	gh, added := adoptionServer(t, map[int]*githubv39.Issue{
+		10: {
+			Number: githubv39.Int(10),
+			Labels: labelsOf("overseer", "area/release"),
+		},
+		30: {
+			Number: githubv39.Int(30),
+			Labels: labelsOf("from-mentioned-issue", "overseer/stop"),
+		},
+	})
+	s, _ := newTestScanner(t, t.TempDir(), testOpts{
+		GitHub:       gh,
+		TriggerLabel: "overseer",
+	})
+
+	pr := &githubv39.PullRequest{
+		Number: githubv39.Int(100),
+		Body:   stringPtr("Fixes #10\n\n| PR |\n| --- |\n| [#30](https://example.com/30) |"),
+	}
+	prIssue := &githubv39.Issue{
+		Number: githubv39.Int(100),
+	}
+
+	refs := newRefIssues(s.gh, pr)
+	s.syncReferencedIssueLabels(context.Background(), pr, prIssue, refs)
+
+	got := added()[100]
+	want := map[string]bool{"overseer": true, "area/release": true}
+	if len(got) != len(want) {
+		t.Fatalf("labels added to PR #100 = %v, want %v", got, want)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected label %q added to PR #100", name)
+		}
+	}
+}
+
 func TestHasReviewLabel(t *testing.T) {
 	labelsWithOverseerReview := []*githubv39.Label{{Name: stringPtr("overseer/review")}}
 	labelsWithCustomReview := []*githubv39.Label{{Name: stringPtr("mybot/review")}}
