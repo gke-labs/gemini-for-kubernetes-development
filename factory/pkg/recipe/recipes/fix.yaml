@@ -142,7 +142,7 @@ start:
         before or after, no markdown fences:
 
         change:
-          title: A brief title, like a commit subject
+          title: "A brief title, like a commit subject, in double quotes"
           body: |
             A brief description of what the change does and why, for the
             reviewer.
@@ -210,7 +210,7 @@ revise:
           change, with new ones in it:
 
           change:
-            title: A brief title, like a commit subject
+            title: "A brief title, like a commit subject, in double quotes"
             body: |
               The whole new description; it keeps the line
               `Fixes #{{ .Inputs.issue_number }}`.
