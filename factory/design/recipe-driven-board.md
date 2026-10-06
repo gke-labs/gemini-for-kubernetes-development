@@ -31,7 +31,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 - **`on:`**, a list of `issue`, `pr`, `my-pr`, `repo`. `factory recipe <name> --url` already refuses a URL of the wrong shape. This makes that rule data the board can read.
   - **`pr`**: any pull request. The recipe reads it and writes only through applies with the caller's token: a review, a comment.
   - **`my-pr`**: a pull request the caller may change. It was **authored by the caller, and its head is a branch on the caller's fork**, the only place `push` pushes to.
-    - The board's *My PRs* tab is "authored by you" alone, so a My PRs row whose head is on the repository or on someone else's fork is not `my-pr`. The button shows there, disabled: "the PR's head is not on your fork".
+    - The board's "mine" is "authored by you" alone, so a PR you authored whose head is on the repository or on someone else's fork is not `my-pr`. The button shows there, disabled: "the PR's head is not on your fork".
     - factory checks the same rule when the recipe runs, since the board's view can be stale. That is fix's rule for a PR it did not open: "adopt it first" (`factory pr adopt`).
   - The built-ins: triage, plan and fix `[issue]`; review `[pr]`; research `[repo]`. Fix's PR mode, deferred in [fix-recipe.md](fix-recipe.md), is `[issue, my-pr]` once it is built.
   - `my-pr` rows also get `pr` recipes: Review shows on your own PR, as it does today.
@@ -74,6 +74,10 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 - **One launch Request**, `{verb: recipe, recipe: <name>, number, inputs}`, and one `StartRecipe(name, inputs)` in factorycli. It runs `factory recipe <name> --url … --run-name …` and records the run like the others.
 - **The rows list sessions, not four fields.** A work item carries `sessions[]` (recipe, label, sandbox, task, state). Each becomes a *Continue session ↗*, a state chip (`<label>: running / ready / failed`), and its revises.
 - **Launch buttons** come from `factory recipe list`, filtered by `on` and by the row. The work item says which it is: `issue`, `pr`, or `my-pr` (authored by the member and headed on their fork, which the API already has from the PR's `head.repo`). The five recipes that have buttons today keep their place and their chips. Others go under a `Run ▾` menu on the row.
+- **One PRs tab.** *Review* and *My PRs* become one *PRs* tab: the same rows, whose actions change with what the row is.
+  - Any PR: the `pr` recipes (Review, Review again; Finalize and Abandon on a pending review) and Deploy ▾.
+  - Your PR: those, plus the `my-pr` recipes, the fix session's revises, Auto, and Promote on a draft.
+  - Filter chips replace the split: *mine*, *review requested*, *drafts*. The tab opens on what *Up Next* would show first. *Up Next* is unchanged: it already mixes the two.
 - **The PR row's follow-ups** are the fix session's revises: Iterate (with its input box, from `inputs`), Address comments, Fix CI, and Rebase.
 - **What stays per recipe in the controller:**
   - `ensureFix`'s apply of `open-pr` when the run ends, and the PR alias;
@@ -84,7 +88,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 
 ## Steps
 
-1. **repo-agent: the PR row's follow-ups from the fix run's revises.** This needs nothing from factory: the run already records ids and labels, and `iterate`'s input stays in `reviseInputs` until step 3. It shows Rebase.
+1. **repo-agent: one PRs tab.** Review and My PRs merge, with the row's actions from whether it is `my-pr`; the API computes that from the PR's author and `head.repo`. The follow-ups come from the fix run's revises, which shows Rebase. This needs nothing from factory: the run already records ids and labels, and `iterate`'s input stays in `reviseInputs` until step 3.
 2. **factory:** `on:`, revise `inputs`, `recipe`/`kind`/`inputs` in the recorded run, and `factory recipe list -o json`.
 3. **repo-agent:** runs found by scanning; one revise path with hooks; `reviseInputs` and `recordedRunKinds` deleted.
 4. **repo-agent:** one stored-output key, `draft` for any kind, `VerbApply` by `{sandbox, run, action}`, permissions per verb.
@@ -93,7 +97,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 
 ## Not planned here
 
-- **The board's tabs, settings, Deploy ▾ and research's landing pane.** They are board features, not recipe surfaces.
+- **The board's other tabs, settings, Deploy ▾ and research's landing pane.** They are board features, not recipe surfaces.
 - **Stage chips for the five recipes.** They keep their wording; only new recipes get the generic chip.
 - **A recipe's own UI.** Triage's label form and review's inline-comment view stay written for them. A new kind's draft is shown as its `markdown`.
 - **Recipes from the watched repository** (e.g. `.agents/recipes/`). factory reads built-ins and local files only. Once it reads a repository's recipes, `factory recipe list` lists them and the board needs nothing more.
