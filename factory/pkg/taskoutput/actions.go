@@ -69,13 +69,14 @@ type verb struct {
 }
 
 var verbs = map[string]verb{
-	"comment":    {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
-	"label":      {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
-	"push-notes": {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
-	"run":        {class: ClassFollowUp, kinds: []string{"Plan"}},
-	"revise":     {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes"}},
-	"edit":       {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes"}},
-	"reject":     {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes"}},
+	"comment":     {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
+	"label":       {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
+	"push-notes":  {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
+	"post-review": {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
+	"run":         {class: ClassFollowUp, kinds: []string{"Plan"}},
+	"revise":      {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
+	"edit":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
+	"reject":      {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
 }
 
 // followUps are the tasks a run may start, by the kinds whose result they
@@ -103,6 +104,11 @@ var defaultActions = map[string][]Action{
 	"Notes": {
 		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
 		{Verb: "push-notes", Label: "Save to research/notes"},
+		{Verb: "reject"},
+	},
+	"Review": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "post-review", Label: "Post as pending review"},
 		{Verb: "reject"},
 	},
 }

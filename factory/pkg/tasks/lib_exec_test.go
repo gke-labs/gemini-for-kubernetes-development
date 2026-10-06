@@ -590,6 +590,32 @@ echo "GLOBAL=$(git config --global --list 2>/dev/null | tr '\n' ' ')"`
 	}
 }
 
+// TestCloneRepoPR: for a PR the clone also fetches its head and base into
+// refs/factory/pr/* and leaves the head checked out, the token still
+// nowhere.
+func TestCloneRepoPR(t *testing.T) {
+	setup := `c() { git -c user.email=x@x -c user.name=x commit -q --allow-empty -m "$1"; }
+git init -q -b main "$HOME/up" && (builtin cd "$HOME/up" && c base && git checkout -q -b feature && c change && git update-ref refs/pull/7/head HEAD && git checkout -q main && c later)
+export CLONE_URL="$HOME/up" PR_NUMBER=7 PR_BASE=main`
+	report := `
+echo "HEAD=$(git -C "$REPO_DIR" log -1 --format=%s)"
+echo "BASE=$(git -C "$REPO_DIR" log -1 --format=%s refs/factory/pr/base)"
+echo "DETACHED=$(git -C "$REPO_DIR" symbolic-ref -q HEAD || echo yes)"
+echo "GLOBAL=$(git config --global --list 2>/dev/null | tr '\n' ' ')"`
+	out, _, err := runLib(t, []string{"GITHUB_TOKEN=tok3n"}, setup, "cloneRepo"+report)
+	if err != nil {
+		t.Fatalf("cloneRepo failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"HEAD=change", "BASE=later", "DETACHED=yes", "GLOBAL=\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "tok3n") {
+		t.Errorf("the clone left the token behind:\n%s", out)
+	}
+}
+
 // TestResetRepoGitConfig pins the repository-level settings left behind on a
 // long-lived workspace that broke later tasks: diff.external=false made
 // every `git diff` fail (fix-k8s-config-connector-13580), and a repository's

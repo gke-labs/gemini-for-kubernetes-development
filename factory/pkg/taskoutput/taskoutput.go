@@ -52,6 +52,9 @@ type Document struct {
 // Target is the issue, PR or repository the result is about.
 type Target struct {
 	URL string `yaml:"url" json:"url"`
+	// Commit is the commit a PR's result is of: the head a Review
+	// reviewed, which its comments are placed on.
+	Commit string `yaml:"commit,omitempty" json:"commit,omitempty"`
 }
 
 // Source is the task that produced the result. Task also marks what apply
@@ -77,6 +80,7 @@ var kinds = map[string]kind{
 	"Triage": {parse: parseTriage},
 	"Plan":   {parse: parsePlan},
 	"Notes":  {parse: parseNotes},
+	"Review": {parse: parseReview},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.

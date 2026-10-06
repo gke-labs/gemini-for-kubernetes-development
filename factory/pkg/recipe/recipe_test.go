@@ -465,6 +465,32 @@ func TestBuiltinPlanRenders(t *testing.T) {
 	}
 }
 
+// TestBuiltinReviewRenders: `recipe review` from a PR URL alone holds the
+// token to the clone, and revises into its session.
+func TestBuiltinReviewRenders(t *testing.T) {
+	_, r, err := Builtin("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Credentials != CredentialsClone || r.TaskType != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Review" || r.TaskOutput.From != "review.yaml" {
+		t.Fatalf("review credentials %q, task-type %q, task-output %+v", r.Credentials, r.TaskType, r.TaskOutput)
+	}
+	std := map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "u",
+		"pr_url": "u", "pr_number": "7", "pr_title": "t", "pr_body": "b", "pr_head": "h", "pr_base": "main",
+	}
+	inputs, err := r.ResolveInputs(std, map[string]string{"instructions": "be brief"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CheckRender(inputs); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.OutputDecl().Actions; got[len(got)-1].Verb != "revise" || got[len(got)-1].Revise != "review" {
+		t.Errorf("actions = %v, want a revise review last", got)
+	}
+}
+
 func TestTaskOutputActionsValidated(t *testing.T) {
 	for _, acts := range []string{"[{verb: merge}]", "[{verb: label}]", "[{verb: run, run: deploy}]"} {
 		if _, err := Parse([]byte("name: x\nstart: {steps: [{run: 'true'}]}\ntask-output: {kind: Plan, from: p.md, actions: " + acts + "}\n")); err == nil {
@@ -475,7 +501,7 @@ func TestTaskOutputActionsValidated(t *testing.T) {
 
 // The built-in recipes declare what their results offer.
 func TestBuiltinActions(t *testing.T) {
-	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject"} {
+	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject", "review": "edit post-review reject"} {
 		_, r, err := Builtin(name)
 		if err != nil {
 			t.Fatal(err)

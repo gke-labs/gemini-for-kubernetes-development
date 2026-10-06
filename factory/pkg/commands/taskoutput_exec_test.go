@@ -3,7 +3,9 @@ package commands
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
@@ -28,7 +30,7 @@ func TestWriteTaskOutput(t *testing.T) {
 	}
 	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "triage", Output: &taskoutput.Decl{Kind: "Triage", From: "triage-output.yaml"}},
 		map[string]string{"triage-output.yaml": "triage:\n  labels: [bug]\n  assessment: x\n"})
-	if err := writeTaskOutput(dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
@@ -55,7 +57,7 @@ func TestWriteTaskOutputOfARevise(t *testing.T) {
 	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Revise: "plan", Session: "recipe-plan-20261004-101010-0001",
 		Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
 		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
-	if err := writeTaskOutput(dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
@@ -80,7 +82,7 @@ func TestWriteTaskOutputFailsOnABadResult(t *testing.T) {
 	dir := t.TempDir()
 	writeTaskFiles(t, dir, spool.Task{ID: "x", Output: &taskoutput.Decl{Kind: "Triage", From: "triage-output.yaml"}},
 		map[string]string{"triage-output.yaml": "I could not decide."})
-	if err := writeTaskOutput(dir, nil, "gemini"); err == nil {
+	if err := writeTaskOutput(dir, dir, nil, "gemini"); err == nil {
 		t.Error("a result that is not a triage was accepted")
 	}
 }
@@ -89,7 +91,7 @@ func TestWriteTaskOutputFailsOnABadResult(t *testing.T) {
 func TestWriteTaskOutputWithoutDeclaration(t *testing.T) {
 	dir := t.TempDir()
 	writeTaskFiles(t, dir, spool.Task{ID: "x"}, map[string]string{})
-	if err := writeTaskOutput(dir, nil, "gemini"); err != nil {
+	if err := writeTaskOutput(dir, dir, nil, "gemini"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
@@ -103,7 +105,7 @@ func TestWriteTaskOutputLeavesAnUnknownKind(t *testing.T) {
 	dir := t.TempDir()
 	writeTaskFiles(t, dir, spool.Task{ID: "x", Output: &taskoutput.Decl{Kind: "Later", From: "later-output.md"}},
 		map[string]string{"later-output.md": "something"})
-	if err := writeTaskOutput(dir, nil, "gemini"); err != nil {
+	if err := writeTaskOutput(dir, dir, nil, "gemini"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
@@ -120,7 +122,7 @@ func TestWriteTaskOutputCopiesActions(t *testing.T) {
 	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "run", Run: "fix", Label: "Fix"}}
 	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
 		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
-	if err := writeTaskOutput(dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
@@ -162,5 +164,49 @@ func TestWithDeclaredActions(t *testing.T) {
 	own, _ := taskoutput.Marshal(doc)
 	if out, _ := withDeclaredActions(own, decl); string(out) != string(own) {
 		t.Errorf("a document's own actions were replaced:\n%s", out)
+	}
+}
+
+// A PR's result is pinned to the head the clone step checked out.
+func TestWriteTaskOutputPinsThePRHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=x@x", "-c", "user.name=x"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "head")
+	head := git("rev-parse", "HEAD")
+	git("update-ref", "refs/factory/pr/head", head)
+	git("commit", "-q", "--allow-empty", "-m", "moved by the agent")
+
+	dir := filepath.Join(t.TempDir(), "recipe-review-20261005-101010-abcd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "review", Output: &taskoutput.Decl{Kind: "Review", From: "review.yaml"}},
+		map[string]string{"review.yaml": "review:\n  body: Fine.\n"})
+	if err := writeTaskOutput(dir, repo, map[string]string{"pr_url": "https://github.com/o/r/pull/2"}, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := docs[0].Target; got.URL != "https://github.com/o/r/pull/2" || got.Commit != head {
+		t.Errorf("target = %+v, want commit %s", got, head)
+	}
+	if prHeadCommit(dir) != "" {
+		t.Error("a directory without the ref has a PR head")
 	}
 }
