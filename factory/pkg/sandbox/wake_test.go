@@ -18,7 +18,7 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 	_ = unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
 	kc := reviewClients(t, ns, sb)
 
-	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, false, "", "", "", "", "", "", nil, nil, "")
+	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "", "", "", "", "", "", "", nil, nil, "")
 	if err != nil {
 		t.Fatalf("EnsureRecipeSandbox: %v", err)
 	}
@@ -34,13 +34,13 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 	}
 }
 
-// A credentials: clone recipe's PR sandbox is one no recipe holding the
-// token runs in.
+// A credentials: clone recipe's PR sandbox is its own, which no recipe
+// holding the token runs in.
 func TestRecipeSandboxName(t *testing.T) {
-	if got := sandbox.RecipeSandboxName("open-rl", 7, false); got != "recipe-open-rl-7" {
-		t.Errorf("full = %s", got)
+	if got := sandbox.RecipeSandboxName("open-rl", 7, ""); got != "recipe-open-rl-7" {
+		t.Errorf("shared = %s", got)
 	}
-	if got := sandbox.RecipeSandboxName("open-rl", 7, true); got != "recipe-open-rl-7-nocreds" {
-		t.Errorf("no credentials = %s", got)
+	if got := sandbox.RecipeSandboxName("open-rl", 7, "review"); got != "review-open-rl-7" {
+		t.Errorf("own = %s", got)
 	}
 }

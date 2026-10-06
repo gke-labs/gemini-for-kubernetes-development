@@ -23,9 +23,9 @@ This note moves review onto recipes too, on two decisions:
 
 The prompt comes from `structured_review.txt`. It drops the parts that contradicted each other (`file`/`comment` in the instructions, `path`/`body` in the schema) and the diff-URL fetching, which needs network access to GitHub.
 
-### Its sandbox: `recipe-<repo>-<n>-nocreds`
+### Its sandbox: `review-<repo>-<n>`
 
-A PR's recipes ran in `recipe-<repo>-<n>`. `credentials: clone` recipes now get `recipe-<repo>-<n>-nocreds` (`RecipeSandboxName`). `setup-git` writes the token into gh's `hosts.yml` on the workspace volume. Once any recipe holding the token has run in a sandbox, that sandbox can no longer promise an agent without one.
+A PR's recipes ran in `recipe-<repo>-<n>`. A `credentials: clone` recipe now gets a sandbox of its own, named after the recipe: `review-<repo>-<n>` (`RecipeSandboxName`), as research's are `rsch-…`. `setup-git` writes the token into gh's `hosts.yml` on the workspace volume. Once any recipe holding the token has run in a sandbox, that sandbox can no longer promise an agent without one.
 
 The PR's legacy review sandbox (`factory-pr-<repo>-<n>`) is ruled out for the same reason. Its review and fix tasks run `setup-git`. It is also the watch's, with `last-task-type` meaning what the watch and board read it as. The new sandbox carries no `factory.gemini.google.com/pr` label, so `EnsureReviewSandbox` never adopts it either.
 
@@ -82,7 +82,7 @@ It does not refuse when the caller has already submitted a different review of t
    - The PR mode of `cloneRepo`, and `PR_BASE` in a PR recipe's environment.
    - `Target.Commit` and the runner pinning it.
    - The Review kind and `post-review` in the registry and in `factory apply`.
-   - `recipe-<repo>-<n>-nocreds`, and the refusal of `credentials: clone` on an issue.
+   - `review-<repo>-<n>` (a `credentials: clone` recipe's own sandbox), and the refusal of `credentials: clone` on an issue.
 2. **repo-agent.** The board's review moves to the recipe:
    - `ensureReview` runs `factory recipe review` instead of `factory pr review --publish no`. The stdout-marker grep and the board's review draft go.
    - The row's actions come from the Review output: *Post as pending review* files an apply Request, which the controller runs as `factory apply --action post-review`. Permissions are those of the PR's commenters, since the review is the caller's own.
