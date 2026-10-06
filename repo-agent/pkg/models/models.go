@@ -86,6 +86,9 @@ type WorkAction struct {
 	Label  string `json:"label,omitempty"`
 	Field  string `json:"field,omitempty"`  // what an edit edits
 	Format string `json:"format,omitempty"` // yaml | markdown, for an edit
+	// Inputs are what a revise asks for before it can be filed
+	// (Iterate's instruction).
+	Inputs []string `json:"inputs,omitempty"`
 	// Enabled is false for an action the draft's state rules out just now
 	// (done already, or the agent is busy); Reason says why.
 	Enabled bool   `json:"enabled"`
@@ -128,6 +131,10 @@ type WorkItem struct {
 	// ReviewSession is a PR's review session (the review recipe's), for
 	// Continue session and Update review.
 	ReviewSession *TaskSession `json:"reviewSession,omitempty"`
+	// FixSession is the fix's session (the fix recipe's), on the issue's
+	// row and on the PR it opened: watch while it runs, Continue session
+	// after, and its revises (Iterate, Address comments, Fix CI).
+	FixSession *TaskSession `json:"fixSession,omitempty"`
 }
 
 // TaskSession names a factory task's agent session: the sandbox it ran in

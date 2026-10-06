@@ -72,15 +72,12 @@ const (
 // The verbs. Each is a button in the UI, and each names the factory
 // invocation the controller makes on the member's behalf.
 const (
-	VerbFix         = "fix"
-	VerbReview      = "review"
-	VerbTriage      = "triage"
-	VerbPlan        = "plan"
-	VerbIterate     = "iterate"
-	VerbAddress     = "address"
-	VerbInvestigate = "investigate"
-	VerbRun         = "run"
-	VerbResearch    = "research"
+	VerbFix      = "fix"
+	VerbReview   = "review"
+	VerbTriage   = "triage"
+	VerbPlan     = "plan"
+	VerbRun      = "run"
+	VerbResearch = "research"
 	// VerbApply writes a draft's task output to its issue: factory apply
 	// --action, with the clicker's token. The one verb that launches no
 	// agent and needs no sandbox — the draft is read off the sandbox it
@@ -90,8 +87,11 @@ const (
 	// VerbRevise rewrites a plan draft from the conversation a member
 	// continued in the plan's agent session: factory recipe revise, into
 	// that session, harvested into the draft as a plan is. It posts
-	// nothing. With Sandbox set it is a research conversation's Save
-	// notes: the revise writes a Notes draft onto that sandbox.
+	// nothing. With Sandbox set it is a revise of that sandbox's
+	// session: a research conversation's Save notes (a Notes draft onto
+	// the sandbox), a review's Update review, or a fix's follow-up
+	// (Iterate, Address comments, Fix CI), which pushes to the PR and
+	// posts its replies.
 	VerbRevise = "revise"
 )
 
@@ -206,7 +206,7 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=fix;review;triage;plan;iterate;address;investigate;run;research;apply;revise
+	// +kubebuilder:validation:Enum=fix;review;triage;plan;run;research;apply;revise
 	Verb string `json:"verb"`
 
 	// Member is the namespace whose identity, token and sandbox quota
@@ -220,17 +220,17 @@ type RequestSpec struct {
 	// +kubebuilder:validation:Optional
 	Number int `json:"number,omitempty"`
 
-	// Sandbox is the member's sandbox a revise or apply acts on when its
-	// target is the repository, not an issue: a research conversation's.
+	// Sandbox is the member's sandbox a revise or apply acts on by its
+	// session: a research conversation's, a review's, or a fix's.
 	// It becomes an argument to the factory CLI.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
 	Sandbox string `json:"sandbox,omitempty"`
 
-	// Instruction is the member's own words for this invocation (the
-	// Iterate box). Carried here because the sandbox it belongs on may
-	// not exist yet.
+	// Instruction is the member's own words for this invocation: the
+	// Iterate box, handed to the fix's iterate revise as its instruction
+	// input.
 	// +kubebuilder:validation:Optional
 	Instruction string `json:"instruction,omitempty"`
 

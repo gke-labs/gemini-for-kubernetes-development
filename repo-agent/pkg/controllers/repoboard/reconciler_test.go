@@ -53,8 +53,6 @@ type fakeLaunch struct {
 	TriageOpts   *factorycli.TriageOptions
 	PlanOpts     *factorycli.PlanOptions
 	ReviseOpts   *factorycli.ReviseOptions
-	PRTaskOpts   *factorycli.PRTaskOptions
-	PRTaskKind   string
 	RunOpts      *factorycli.RunOptions
 	ResearchOpts *factorycli.ResearchOptions
 	ApplyOpts    *factorycli.ApplyOptions
@@ -127,27 +125,6 @@ func (f *fakeLauncher) StartRevise(key string, opts factorycli.ReviseOptions) bo
 		return false
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, ReviseOpts: &opts})
-	return true
-}
-
-func (f *fakeLauncher) StartInvestigate(key string, opts factorycli.PRTaskOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "investigate"})
-	return true
-}
-
-func (f *fakeLauncher) StartAddressComments(key string, opts factorycli.PRTaskOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "address"})
-	return true
-}
-
-func (f *fakeLauncher) StartIterate(key string, opts factorycli.PRTaskOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, PRTaskOpts: &opts, PRTaskKind: "iterate"})
 	return true
 }
 
@@ -369,7 +346,6 @@ func TestFixCarriesTheBoardsDisclose(t *testing.T) {
 		launches := fake.launches()
 		g.Expect(launches).To(gomega.HaveLen(1))
 		g.Expect(launches[0].FixOpts.Disclose).To(gomega.Equal(disclose))
-		g.Expect(launches[0].FixOpts.Instruction).NotTo(gomega.ContainSubstring("AI agent assistance"))
 	}
 }
 
@@ -395,7 +371,8 @@ func TestLabelDiscovery_ExecutorConsent(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-10"))
 	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
-	g.Expect(launches[0].FixOpts.Instruction).To(gomega.ContainSubstring("draft pull request"))
+	g.Expect(launches[0].FixOpts.RunName).To(gomega.HavePrefix("fix/test-board/10/"))
+	g.Expect(launches[0].FixOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].FixOpts.GithubToken).To(gomega.Equal("gho_alice"))
 
 	// factory-user secret materialized for the executor namespace.
@@ -1319,66 +1296,6 @@ func TestWakeStampsUnpaused(t *testing.T) {
 	g.Expect(updated.GetAnnotations()[AnnotationUnpausedAt]).NotTo(gomega.BeEmpty())
 }
 
-// The PR follow-up verbs (Iterate / Address / Investigate) are driven by
-// sandbox annotations — durable consent, no mailbox claim to strand. A
-// request newer than the last completion launches (with instruction and
-// engine); a completion newer than the request means it was served.
-func TestPRTaskClicks(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-
-	sb := func(requestedAt time.Time) *unstructured.Unstructured {
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":      "fix-repo-9",
-				"namespace": "alice",
-				"labels": map[string]interface{}{
-					"factory.gemini.google.com/managed": "true",
-					"factory.gemini.google.com/pr":      "42",
-				},
-				"annotations": map[string]interface{}{
-					"htmlURL":                                   "https://github.com/test/repo/pull/42",
-					AnnotationIterateRequested:                  requestedAt.UTC().Format(time.RFC3339),
-					AnnotationIterateInstruction:                "tighten the error handling",
-					factorycli.AnnotationTaskType:               "fix-issue",
-					factorycli.AnnotationTaskState:              factorycli.TaskStateCompleted,
-					"sandbox.gemini.google.com/completion-time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-				},
-			},
-			"spec": map[string]interface{}{"replicas": int64(1)},
-		}}
-	}
-
-	// Request newer than completion: launches with instruction.
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb(time.Now()))
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	var prTasks []fakeLaunch
-	for _, l := range fake.launches() {
-		if l.PRTaskOpts != nil {
-			prTasks = append(prTasks, l)
-		}
-	}
-	g.Expect(prTasks).To(gomega.HaveLen(1))
-	g.Expect(prTasks[0].PRTaskKind).To(gomega.Equal("iterate"))
-	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the error handling"))
-	g.Expect(prTasks[0].PRTaskOpts.Engine).To(gomega.Equal("gemini"))
-	g.Expect(prTasks[0].PRTaskOpts.Disclose).To(gomega.BeFalse(), "the fixture board does not disclose")
-	g.Expect(prTasks[0].PRTaskOpts.PRURL).To(gomega.ContainSubstring("/pull/42"))
-
-	// Request older than completion: served, no launch.
-	fake2 := newFakeLauncher()
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), sb(time.Now().Add(-2*time.Hour)))
-	_, err = r2.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	for _, l := range fake2.launches() {
-		g.Expect(l.PRTaskOpts).To(gomega.BeNil())
-	}
-}
-
 // The per-PR annotation overrides the board's autoIterate in either
 // direction; absent inherits.
 func TestAutoIterateOverride(t *testing.T) {
@@ -1405,112 +1322,6 @@ func TestAutoIterateOverride(t *testing.T) {
 			t.Errorf("override=%q default=%v: got %v want %v", tc.override, tc.boardDefault, got, tc.want)
 		}
 	}
-}
-
-// One task per sandbox: a fix or plan child still provisioning the
-// sandbox defers a follow-up click (the prober cannot see a task that
-// has not landed in the pod yet).
-func TestPRTaskClickDefersToRunningFix(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-	fake := newFakeLauncher()
-	fake.running["alice/fix-repo-9"] = true
-
-	sb := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name":      "fix-repo-9",
-			"namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{
-				"htmlURL":                  "https://github.com/test/repo/pull/42",
-				AnnotationIterateRequested: time.Now().UTC().Format(time.RFC3339),
-			},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb)
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	for _, l := range fake.launches() {
-		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "follow-up must defer to the running fix")
-	}
-}
-
-// Hand-made PR attach: an iterate Request with no sandbox launches
-// factory directly (it creates the factory-pr sandbox and checks out the
-// branch); once a sandbox carries the PR label, the click converts to
-// the durable request annotation instead.
-func TestPRTaskClaims(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-
-	iterate := func() *boardv1alpha1.Request {
-		return testRequest(boardv1alpha1.RequestSpec{
-			Verb:        boardv1alpha1.VerbIterate,
-			Number:      77,
-			Instruction: "tighten the docs",
-		})
-	}
-
-	// No sandbox: direct launch with constructed PR URL and PRSandboxName.
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), iterate())
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	var prTasks []fakeLaunch
-	for _, l := range fake.launches() {
-		if l.PRTaskOpts != nil {
-			prTasks = append(prTasks, l)
-		}
-	}
-	g.Expect(prTasks).To(gomega.HaveLen(1))
-	g.Expect(prTasks[0].PRTaskKind).To(gomega.Equal("iterate"))
-	g.Expect(prTasks[0].PRTaskOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/77"))
-	g.Expect(prTasks[0].PRTaskOpts.SandboxName).To(gomega.Equal("factory-pr-repo-77"))
-	g.Expect(prTasks[0].PRTaskOpts.Instruction).To(gomega.Equal("tighten the docs"))
-
-	// Sandbox exists (factory created it): the click converts to the
-	// annotation, no duplicate direct launch.
-	prSB := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name":      "factory-pr-repo-77",
-			"namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "77",
-			},
-			"annotations": map[string]interface{}{
-				"htmlURL":                      "https://github.com/test/repo/pull/77",
-				factorycli.AnnotationTaskType:  "iterate",
-				factorycli.AnnotationTaskState: "Running",
-			},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-	fake2 := newFakeLauncher()
-	converting := iterate()
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), prSB, converting)
-	_, err = r2.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	for _, l := range fake2.launches() {
-		g.Expect(l.PRTaskOpts).To(gomega.BeNil(), "the click must convert, not double-launch")
-	}
-	// Converted: the sandbox annotation is the durable consent now, so
-	// the receipt settles.
-	g.Expect(requestStatus(t, r2, converting).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	got := &unstructured.Unstructured{}
-	got.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r2.Get(context.Background(), types.NamespacedName{Namespace: "alice", Name: "factory-pr-repo-77"}, got)).To(gomega.Succeed())
-	g.Expect(got.GetAnnotations()[AnnotationIterateRequested]).NotTo(gomega.BeEmpty())
-	g.Expect(got.GetAnnotations()[AnnotationIterateInstruction]).To(gomega.Equal("tighten the docs"))
-	g.Expect(got.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 }
 
 // The board's reviews live in review sandboxes: a factory-pr sandbox (a

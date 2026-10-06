@@ -326,7 +326,6 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.GET("/board/:board/research/prompts", server.getResearchPrompts)
 	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
-	r.POST("/board/:board/prs/:id/iterate", server.iterateBoardPR)
 	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
 	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
 	r.POST("/board/:board/issues/:id/triage-reject", server.rejectBoardTriage)
@@ -501,6 +500,62 @@ func TestGetBoardWork(t *testing.T) {
 	// needs-you rows sort before working rows.
 	if work[len(work)-1].Attention != "working" {
 		t.Errorf("expected the working row last, got %+v", work)
+	}
+}
+
+// The PR a fix opened carries the fix's session, and names what its
+// sandbox is doing from the recorded run: a revise the board filed by its
+// id, one the watch ran (no run name) as a follow-up, the fix itself as
+// fixing.
+func TestPRRowFromTheFixRun(t *testing.T) {
+	for _, tc := range []struct{ run, state, stage string }{
+		{`{"name":"revise/myboard/fix-repo-7/address-comments/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "addressing"},
+		{`{"name":"revise/myboard/fix-repo-7/fix-ci/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Failed", "investigating-failed"},
+		{`{"task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "iterating"},
+		{`{"name":"fix/myboard/7/1","task":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "fixing"},
+		{`{"name":"revise/myboard/fix-repo-7/iterate/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Completed", "open"},
+	} {
+		ghResponses := map[string]string{
+			"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
+				{"number": 9, "title": "the fix", "html_url": "https://github.com/test/repo/pull/9", "updated_at": "2026-09-16T12:00:00Z",
+				 "user": {"login": "alice"}, "body": "Fixes #7"}
+			]`,
+		}
+		sb := sandboxCR("fix-repo-7",
+			map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "9", factorycli.LabelIssue: "7"},
+			map[string]interface{}{
+				"repo": "repo", "htmlURL": "https://github.com/test/repo/pull/9",
+				"sandbox.gemini.google.com/last-task-type":  "fix",
+				"sandbox.gemini.google.com/last-task-state": tc.state,
+				factorycli.AnnotationFixRun:                 tc.run,
+				annoFixError:                                "push: the branch moved",
+			}, 1)
+		_, r, _ := boardTestServer(t, ghResponses, boardCR(), sb)
+		req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var work []models.WorkItem
+		if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
+			t.Fatalf("bad json: %v: %s", err, w.Body.String())
+		}
+		var row *models.WorkItem
+		for i := range work {
+			if work[i].Type == "pr" && work[i].Number == 9 {
+				row = &work[i]
+			}
+		}
+		if row == nil {
+			t.Fatalf("%s: no PR row: %s", tc.run, w.Body.String())
+		}
+		if row.Stage != tc.stage {
+			t.Errorf("%s %s: stage %q, want %q", tc.run, tc.state, row.Stage, tc.stage)
+		}
+		if fs := row.FixSession; fs == nil || fs.Sandbox != "fix-repo-7" || fs.Task != "recipe-fix-1" {
+			t.Errorf("%s: fix session %+v, want the fix's", tc.run, fs)
+		}
+		if failed := strings.HasSuffix(tc.stage, "-failed"); failed != (row.Error != "") {
+			t.Errorf("%s: error %q on stage %s", tc.run, row.Error, tc.stage)
+		}
 	}
 }
 
@@ -1876,9 +1931,9 @@ func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 // return is the member token, and writing it into a CR was a live
 // credential leak (iterate-1324 → ghp_…). The controller fetches the
 // credential from that namespace itself, at launch time.
-func TestPRTaskKickoffRecordsTheMemberNotTheToken(t *testing.T) {
+func TestKickoffRecordsTheMemberNotTheToken(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
-	req, _ := http.NewRequest("POST", "/board/myboard/prs/1324/iterate", strings.NewReader(`{"instruction":"x"}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/issues/1324/fix", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

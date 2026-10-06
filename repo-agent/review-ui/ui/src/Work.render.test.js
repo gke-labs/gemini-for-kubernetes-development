@@ -671,3 +671,55 @@ describe('WorkRow review', () => {
         expect(link('Continue session')).toBeUndefined();
     });
 });
+
+describe('WorkRow fix follow-ups', () => {
+    const pr = {
+        type: 'pull', number: 9, stage: 'open', group: 'mine-pr', title: 'the fix',
+        htmlURL: 'https://github.com/o/r/pull/9', updatedAt: '2026-10-06T10:00:00Z',
+        fixSession: { sandbox: 'fix-r-7', task: 'recipe-fix-1' },
+    };
+    const renderRow = async (item) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+    };
+    const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+    const ok = () => jest.fn(() => Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({}) }));
+    const posted = () => global.fetch.mock.calls
+        .filter(([, opts]) => opts && opts.method === 'POST')
+        .map(([url, opts]) => [url, JSON.parse(opts.body)]);
+    const reviseAt = '/api/task-sessions/fix-r-7/recipe-fix-1/revise';
+
+    test('the follow-ups are revises of the fix session', async () => {
+        global.fetch = ok();
+        await renderRow(pr);
+        await act(async () => { findButton('Agent ▾').click(); });
+        expect(link('Continue session').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
+        await act(async () => { findButton('Address review comments').click(); });
+        expect(posted()).toEqual([[reviseAt, { revise: 'address-comments' }]]);
+    });
+
+    test('Iterate asks for an instruction and passes it as the input', async () => {
+        global.fetch = ok();
+        await renderRow(pr);
+        await act(async () => { findButton('Agent ▾').click(); });
+        expect(findButton('Iterate').disabled).toBe(true);
+        await act(async () => { setValue(container.querySelector('textarea'), ' rename it '); });
+        await act(async () => { findButton('Iterate').click(); });
+        expect(posted()).toEqual([[reviseAt, { revise: 'iterate', inputs: { instruction: 'rename it' } }]]);
+    });
+
+    test('a PR the board did not fix has no follow-ups', async () => {
+        await renderRow({ ...pr, fixSession: undefined });
+        expect(findButton('Agent ▾')).toBeUndefined();
+    });
+
+    test('a follow-up at work can be watched', async () => {
+        await renderRow({ ...pr, stage: 'addressing' });
+        expect(link('watch').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
+        expect(findButton('Agent ▾')).toBeUndefined();
+    });
+});

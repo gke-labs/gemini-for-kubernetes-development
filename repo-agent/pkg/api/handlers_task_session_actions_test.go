@@ -188,3 +188,84 @@ func TestAReviewSessionRefusesUpdateReviewUntilPosted(t *testing.T) {
 		}
 	}
 }
+
+// fixSessionAt is the fix's session on the board test's issue 42.
+const fixSessionAt = "/api/task-sessions/fix-repo-42/recipe-fix-1"
+
+// fixSessionServer is the board test server with issue 42's sandbox after
+// its fix, whose recorded run offers the follow-ups, in state; aliased to
+// PR 9 when pr is set, as open-pr leaves it.
+func fixSessionServer(t *testing.T, state string, pr bool) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "fix/myboard/42/1", Task: "recipe-fix-1", StartedAt: time.Unix(1_000_000, 0),
+		Revises: []factorycli.RecordedRevise{{ID: "iterate", Label: "Iterate"}, {ID: "address-comments", Label: "Address comments"}, {ID: "fix-ci", Label: "Fix CI"}},
+	})
+	htmlURL := "https://github.com/test/repo/issues/42"
+	if pr {
+		htmlURL = "https://github.com/test/repo/pull/9"
+	}
+	annotations := map[string]interface{}{
+		"repo":    "repo",
+		"htmlURL": htmlURL,
+		annoBoard: "myboard",
+		"sandbox.gemini.google.com/last-task-type":  "fix",
+		"sandbox.gemini.google.com/last-task-state": state,
+		factorycli.AnnotationFixRun:                 string(run),
+	}
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(),
+		sandboxCR("fix-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "42"}, annotations, 1))
+	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
+	return r, dyn
+}
+
+// A fix's follow-ups are filed for its sandbox, Iterate with the member's
+// instruction; it takes no other input, and cannot go without it.
+func TestAFixSessionFilesItsFollowUpsForItsSandbox(t *testing.T) {
+	r, dyn := fixSessionServer(t, "Completed", true)
+	for _, body := range []string{
+		`{"revise":"iterate"}`,
+		`{"revise":"iterate","inputs":{"instruction":"  "}}`,
+		`{"revise":"fix-ci","inputs":{"instruction":"x"}}`,
+		`{"revise":"iterate","inputs":{"instruction":"x","other":"y"}}`,
+	} {
+		if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/revise", body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", body, w.Code, w.Body.String())
+		}
+	}
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/revise", `{"revise":"iterate","inputs":{"instruction":" rename it "}}`); w.Code != http.StatusAccepted {
+		t.Fatalf("iterate: %d %s", w.Code, w.Body.String())
+	}
+	// One follow-up at a time: they push to the same branch.
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/revise", `{"revise":"address-comments"}`); w.Code != http.StatusConflict {
+		t.Errorf("a second follow-up: %d %s, want 409 while the first stands", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/draft/open-pr", `{}`); w.Code != http.StatusNotFound {
+		t.Errorf("a draft action: %d %s, want 404: the fix's draft is the PR", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 {
+		t.Fatalf("filed %+v, want one revise", reqs)
+	}
+	if spec := reqs[0].Spec; spec.Verb != boardv1alpha1.VerbRevise || spec.Sandbox != "fix-repo-42" || spec.Revise != "iterate" ||
+		spec.Number != 0 || spec.Member != "alice" || spec.Instruction != "rename it" {
+		t.Errorf("iterate filed %+v, want alice's revise of fix-repo-42 with the instruction", spec)
+	}
+}
+
+// Not while the fix's sandbox is at work, nor before the fix has a PR.
+func TestAFixSessionRefusesFollowUpsUntilItsPR(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		pr    bool
+	}{{"Running", true}, {"Completed", false}} {
+		r, dyn := fixSessionServer(t, tc.state, tc.pr)
+		if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/revise", `{"revise":"fix-ci"}`); w.Code != http.StatusConflict {
+			t.Errorf("%s/%v: revise %d %s, want 409", tc.state, tc.pr, w.Code, w.Body.String())
+		}
+		if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+			t.Errorf("filed %+v", reqs)
+		}
+	}
+}

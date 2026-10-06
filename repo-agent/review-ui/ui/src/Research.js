@@ -1261,13 +1261,21 @@ export function ResearchConversation({
   }, [revises]);
 
   const revise = (r) => {
+    // A revise that asks for inputs (Iterate's instruction) gets them
+    // asked for, one at a time; cancelling any files nothing.
+    const inputs = {};
+    for (const name of r.inputs || []) {
+      const value = window.prompt(`${r.label || r.revise}: ${name}`);
+      if (!value || !value.trim()) return;
+      inputs[name] = value.trim();
+    }
     setRevising(r.revise);
     setRevised('');
     setError('');
     fetch(`${api}/revise`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ revise: r.revise }),
+      body: JSON.stringify(r.inputs && r.inputs.length ? { revise: r.revise, inputs } : { revise: r.revise }),
     })
       .then(async res => {
         if (res.ok) {

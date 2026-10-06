@@ -27,8 +27,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -265,9 +267,10 @@ type PRWatchOptions struct {
 	Disclose bool
 }
 
-// FixOptions are the inputs for a `factory fix` invocation.
+// FixOptions are the inputs for a `factory recipe fix` invocation.
 type FixOptions struct {
-	// SandboxName enables the in-flight preflight (fix-<repo>-<n>).
+	// SandboxName is the issue's sandbox the fix runs in
+	// (fix-<repo>-<n>), to read its result back from.
 	SandboxName string
 
 	// Namespace the task (and its sandbox) runs in; factory resolves the
@@ -275,8 +278,6 @@ type FixOptions struct {
 	Namespace string
 	// IssueURL is the GitHub issue to fix.
 	IssueURL string
-	// Instruction is an optional custom prompt (factory --instruction).
-	Instruction string
 	// WithPlan folds the approved plan from a prior `factory recipe plan` run
 	// (living in the fix sandbox) into the fix prompt.
 	WithPlan bool
@@ -284,17 +285,21 @@ type FixOptions struct {
 	Image string
 	// WorkspaceDiskSize overrides the workspace PVC size.
 	WorkspaceDiskSize string
-	// GithubToken authenticates factory's host-side GitHub reads.
+	// GithubToken authenticates factory's host-side GitHub reads, and
+	// open-pr's write.
 	GithubToken string
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine string
 	// Timeout bounds the child process; the in-sandbox task itself is not
-	// killed on timeout (--abort-on-cancel=false) and is reattached to by
-	// the next invocation.
+	// killed on timeout (--abort-on-cancel=false) and is followed by the
+	// next invocation, by its run name.
 	Timeout time.Duration
-	// Disclose is factory's --disclose: whether what the agent posts says
+	// Disclose is factory's --disclose: whether what the agent writes says
 	// an agent wrote it. Always passed, because factory defaults it on.
 	Disclose bool
+	// RunName records the fix's task in the sandbox, to read its result
+	// back by (factory --run-name).
+	RunName string
 }
 
 // PlanOptions are the inputs for a `factory recipe plan` invocation: an
@@ -321,68 +326,6 @@ type PlanOptions struct {
 	RunName string
 }
 
-// PRTaskOptions are the inputs for the follow-up verbs on a factory PR:
-// `pr investigate` (CI failures), `pr address-comments` (review feedback),
-// `pr iterate` (free-form instruction / merge conflicts). All three run in
-// the PR's fix sandbox, push to the PR branch under the invoking identity,
-// and continue the fix conversation (--continue-session in the scripts).
-type PRTaskOptions struct {
-	// SandboxName enables the in-flight preflight (fix-<repo>-<n>).
-	SandboxName string
-
-	Namespace string
-	PRURL     string
-	// Instruction overrides factory's default prompt for the task; empty
-	// keeps the default ("Resolve merge conflicts and iterate", ...).
-	Instruction string
-	GithubToken string
-	Timeout     time.Duration
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine string
-	// Disclose is factory's --disclose: whether what the agent posts says
-	// an agent wrote it. Always passed, because factory defaults it on.
-	Disclose bool
-}
-
-func (r *Runner) startPRTask(key, subcommand, prefix string, opts PRTaskOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 45 * time.Minute
-	}
-	args := []string{
-		"pr", subcommand,
-		"--pr-url", opts.PRURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	if opts.Instruction != "" {
-		args = append(args, "--prompt", opts.Instruction)
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: prefix,
-	})
-}
-
-// StartInvestigate launches `factory pr investigate` (CI check failures).
-func (r *Runner) StartInvestigate(key string, opts PRTaskOptions) bool {
-	return r.startPRTask(key, "investigate", "investigate", opts)
-}
-
-// StartAddressComments launches `factory pr address-comments`.
-func (r *Runner) StartAddressComments(key string, opts PRTaskOptions) bool {
-	return r.startPRTask(key, "address-comments", "address", opts)
-}
-
-// StartIterate launches `factory pr iterate`.
-func (r *Runner) StartIterate(key string, opts PRTaskOptions) bool {
-	return r.startPRTask(key, "iterate", "iterate", opts)
-}
-
 // Result records the outcome of a finished invocation.
 type Result struct {
 	Err        error
@@ -392,8 +335,10 @@ type Result struct {
 
 // Launcher is the controller-facing interface (faked in tests).
 type Launcher interface {
-	// StartFix launches `factory fix` for key unless one is already running.
-	// Returns false if an invocation for key is already in flight.
+	// StartFix launches `factory recipe fix` for key unless one is already
+	// running, and opens the PR from what it pushed: a result without an
+	// error is a draft PR open. Returns false if an invocation for key is
+	// already in flight.
 	StartFix(key string, opts FixOptions) bool
 	// StartReview launches `factory recipe review` for key unless one is
 	// already running, and posts the review it writes as the member's
@@ -408,16 +353,12 @@ type Launcher interface {
 	// (see ExtractPlan) via LastResult.
 	StartPlan(key string, opts PlanOptions) bool
 	// StartRevise launches `factory recipe revise` for key unless one is
-	// already running; harvested as a plan is.
+	// already running; harvested as a plan is, or a fix's follow-up's
+	// replies posted (PostReplies).
 	StartRevise(key string, opts ReviseOptions) bool
 	// StartRun launches `factory run <mode>` (plan, deploy or teardown
 	// of one run, in that run's sandbox) unless one is already running.
 	StartRun(key string, opts RunOptions) bool
-	// StartInvestigate / StartAddressComments / StartIterate launch the
-	// PR follow-up verbs in the PR's fix sandbox.
-	StartInvestigate(key string, opts PRTaskOptions) bool
-	StartAddressComments(key string, opts PRTaskOptions) bool
-	StartIterate(key string, opts PRTaskOptions) bool
 	// StartTriage launches `factory recipe triage` for key unless one is
 	// already running. The triage YAML is recovered from the result's
 	// output (see ExtractTriageYAML) via LastResult.
@@ -500,25 +441,30 @@ func NewRunner() *Runner {
 	}
 }
 
+// StartFix runs `factory recipe fix`, reads its Change task output back
+// with `factory sandbox task output --run-name`, and opens the pushed
+// branch as a draft PR with `factory apply --action open-pr`, which
+// aliases the sandbox to the PR. A retried open-pr opens nothing new: it
+// aliases to the branch's open PR. The result's Output has the Change
+// between changeBanner and a closer, then what apply said; a result
+// without an error is a PR open.
 func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 3 * time.Hour
 	}
 	args := []string{
-		"fix",
+		"recipe", "fix",
+		"--run-name", opts.RunName,
 		"--url", opts.IssueURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		// Never kill the in-sandbox task when this process dies; the next
-		// invocation reattaches instead.
+		// invocation follows it instead.
 		"--abort-on-cancel=false",
 	}
-	if opts.Instruction != "" {
-		args = append(args, "--instruction", opts.Instruction)
-	}
 	if opts.WithPlan {
-		args = append(args, "--with-plan")
+		args = append(args, "--with-plan", "true")
 	}
 	if opts.Image != "" {
 		args = append(args, "--image", opts.Image)
@@ -530,9 +476,42 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 		args = append(args, "--engine", opts.Engine)
 	}
 	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "fix",
-	})
+	sandbox := opts.SandboxName
+	if sandbox == "" {
+		sandbox = opts.IssueURL
+	}
+	// No probe, as for triage: the run name is the run.
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.changeHarvest(sandbox, opts.Namespace, opts.RunName, "open-pr", opts.GithubToken))
+}
+
+// changeBanner opens the Change in a fix's or a fix revise's Output.
+const changeBanner = "================= CHANGE ===================="
+
+// changeHarvest reads a finished fix (or fix revise) run's Change task
+// output back by its run name and applies action to it: open-pr for a
+// fix, post-replies for a revise. Both are idempotent in factory (open-pr
+// aliases to the branch's open PR; a reply carries its task's marker), so
+// running it again after a restart repeats nothing. The namespace rides
+// along because the Change names no sandbox: open-pr finds the issue's in
+// it, to alias to the PR.
+func (r *Runner) changeHarvest(sandbox, namespace, runName, action, githubToken string) *preflight {
+	return &preflight{
+		harvest: func(ctx context.Context, out string, err error) (string, error) {
+			if err != nil {
+				return out, err
+			}
+			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
+			if err != nil {
+				return out + "\n" + doc, fmt.Errorf("reading the change's task output: %w", err)
+			}
+			section := changeBanner + "\n" + doc + "\n" + bannerCloser + "\n"
+			applied, err := r.applyDocIn(ctx, doc, action, namespace, githubToken)
+			if err != nil {
+				return section + applied, fmt.Errorf("applying %s: %w", action, err)
+			}
+			return section + applied, nil
+		},
+	}
 }
 
 // StartReview runs `factory recipe review`, reads its Review task output
@@ -744,12 +723,21 @@ type ReviseOptions struct {
 	// writes is posted as the pending review, as a review's is, replacing
 	// the one factory posted before.
 	PostReview bool
+	// PostReplies is for a fix's follow-ups (Iterate, Address comments,
+	// Fix CI): the revise pushes to the PR's branch, and the replies and
+	// report its Change carries are posted on the PR.
+	PostReplies bool
+	// Inputs are the revise's inputs (factory --input name=value), such
+	// as an Iterate's instruction.
+	Inputs map[string]string
 }
 
 // StartRevise runs `factory recipe revise` and reads its result back as
 // StartPlan does, after planBanner: for ExtractPlan, or ExtractNotes; a
-// review's (PostReview) is posted as StartReview's is. The revise runs on the sandbox's disk and engine as its task left them, so
-// it takes no image, disk or engine.
+// review's (PostReview) is posted as StartReview's is, and a fix's
+// (PostReplies) has its replies posted on the PR. The revise runs on the
+// sandbox's disk and engine as its task left them, so it takes no image,
+// disk or engine.
 func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -764,6 +752,12 @@ func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	}
 	if opts.Session != "" {
 		args = append(args, "--task", opts.Session)
+	}
+	for _, name := range slices.Sorted(maps.Keys(opts.Inputs)) {
+		args = append(args, "--input", name+"="+opts.Inputs[name])
+	}
+	if opts.PostReplies {
+		return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.changeHarvest(opts.SandboxName, opts.Namespace, opts.RunName, "post-replies", opts.GithubToken))
 	}
 	if opts.PostReview {
 		return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.reviewHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))

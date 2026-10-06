@@ -27,7 +27,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"strconv"
 	"strings"
 	"time"
 
@@ -88,15 +87,13 @@ const (
 	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
 	AnnotationPlanApproved   = "board.gemini.google.com/plan-approved-at"
 	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
-	// PR follow-up verbs (Iterate / Address comments / Fix CI): the API
-	// stamps the request on the fix sandbox — durable consent the
-	// controller drives from. No Request left standing to strand (the #1529
-	// lesson): rerunRequested keeps a request standing until a completion
-	// newer than it lands.
-	AnnotationIterateRequested     = "board.gemini.google.com/iterate-requested-at"
-	AnnotationIterateInstruction   = "board.gemini.google.com/iterate-instruction"
-	AnnotationAddressRequested     = "board.gemini.google.com/address-requested-at"
-	AnnotationInvestigateRequested = "board.gemini.google.com/investigate-requested-at"
+	// AnnotationFixHarvestedAt is when the controller last read a fix
+	// run's result (the PR it opened, or why it failed): a fix run
+	// recorded after it has not been read yet, and a restarted controller
+	// follows it by its run name to open its PR. AnnotationFixError is
+	// why the last one failed, until one succeeds.
+	AnnotationFixHarvestedAt = "board.gemini.google.com/fix-harvested-at"
+	AnnotationFixError       = "board.gemini.google.com/fix-error"
 	// AnnotationAutoIterate overrides the board's autoIterate policy for
 	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
 	// open string so future per-PR auto modes extend it without
@@ -112,7 +109,6 @@ const (
 	reviseRequeue           = 15 * time.Second
 	launchRetryBackoff      = 30 * time.Minute
 	prWatchRelaunchInterval = 10 * time.Minute
-	draftPRInstruction      = "Open the pull request as a draft pull request."
 )
 
 var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1alpha1", Kind: "Sandbox"}
@@ -154,9 +150,6 @@ type fixPlan struct {
 	issue    int
 	issueURL string
 	executor string
-	// auto marks a launch consented via the member's standing auto-fix
-	// opt-in rather than a direct act; safety rails apply (forced draft PR).
-	auto bool
 }
 
 // maxActive mirrors the CRD default for specs that omit the limits block
@@ -350,12 +343,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.ensureApplies(ctx, work, mail.applies)
 	r.ensureRevises(ctx, work, mail.revises)
-
-	// PR follow-up claims convert (or launch) BEFORE the resume passes:
-	// the ownership annotations they stamp are what stops resumeReviews
-	// from reading a follow-up's fresh factory-pr sandbox as an
-	// interrupted review.
-	converted := r.ensurePRTaskClaims(ctx, work, mail.prTasks)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
 
@@ -372,12 +359,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		logger.Error(err, "request cleanup failed")
 	}
 
-	// Explicit PR follow-up clicks run regardless of the auto policy —
-	// a click IS the consent (claims converted above, before the resume
-	// passes).
-	r.ensurePRTaskClicks(ctx, work, converted)
-
-	// Follow up factory-created PRs (investigate failures, address
+	// Follow up factory-created PRs (fix failing checks, address
 	// comments): board policy is the default, each PR's fix sandbox may
 	// override it either way.
 	r.followUpPRs(ctx, work, board.Spec.Policy.AutoIterate == nil || *board.Spec.Policy.AutoIterate)
@@ -454,16 +436,6 @@ func (w *workState) findSandbox(namespace, name string) *unstructured.Unstructur
 // (factorycli.ReviewSandboxName), or nil.
 func (w *workState) reviewSandbox(namespace string, pr int) *unstructured.Unstructured {
 	return w.findSandbox(namespace, factorycli.ReviewSandboxName(w.repo, pr))
-}
-
-func (w *workState) findPRSandbox(pr int) *unstructured.Unstructured {
-	prStr := strconv.Itoa(pr)
-	for _, sb := range w.sandboxes {
-		if sb.GetLabels()[factorycli.LabelPR] == prStr {
-			return sb
-		}
-	}
-	return nil
 }
 
 // discoveryClient resolves the owner's identity: boards are personal, so
@@ -606,7 +578,7 @@ func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Clie
 			if item.IsPullRequest() || !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
 				continue
 			}
-			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: member, auto: true})
+			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: member})
 		}
 		if resp.NextPage == 0 {
 			return fixes, nil
@@ -628,26 +600,10 @@ type mailbox struct {
 	reviews  []reviewPlan
 	triages  []triageClick
 	plans    []planRequest
-	prTasks  []prTaskClaim
 	runbooks []runbookClaim
 	research []researchClaim
 	applies  []*boardv1alpha1.Request
 	revises  []*boardv1alpha1.Request
-}
-
-// prTaskClaim is a follow-up verb clicked on a PR with no sandbox yet
-// (hand-made PRs): the Request bridges until factory creates the
-// factory-pr sandbox, then the claim converts to the durable sandbox
-// annotation the normal click pass drives.
-type prTaskClaim struct {
-	pr     int
-	member string
-	kind   string
-	// instruction is the member's own words for an Iterate. It rides on
-	// the Request because the sandbox it belongs on does not exist yet;
-	// it used to ride on a per-PR board annotation, which outlived the
-	// click and had nothing to clean it up.
-	instruction string
 }
 
 // dedupeReviews keeps one plan per PR, preferring a member's click over a
@@ -724,14 +680,19 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 	return nil
 }
 
-// resumeFixes re-drives approved plans whose fix never started. The fix
-// Request settles as soon as the sandbox exists, so a controller restart
-// between that and the task landing in the sandbox — or a launch that
-// bailed — would otherwise strand the row at "starting" forever. The
-// approval annotation is the durable consent, and the runner's
-// preflight/single-flight make relaunching idempotent (a standing
-// Request planning the same fix in the same pass is skipped by
-// IsRunning).
+// resumeFixes revisits the issue sandboxes whose fix is owed something
+// no standing Request asks for any more (the fix Request settles as soon
+// as the fix runs):
+//
+//   - an approved plan whose fix never started: a restart between the
+//     Request settling and the task landing, or a launch that bailed;
+//   - a Fix again, which is a marker on the sandbox, not a Request;
+//   - a fix run whose result the controller has not read: still running
+//     when it restarted, or just ended. Its PR is opened from it.
+//
+// The runner's single-flight and the run name make relaunching
+// idempotent (a standing Request planning the same fix in the same pass
+// is skipped by IsRunning).
 func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 	var out []fixPlan
 	for _, sb := range work.sandboxes {
@@ -740,12 +701,10 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 			continue
 		}
 		annotations := sb.GetAnnotations()
-		if annotations[AnnotationPlanApproved] == "" || annotations[AnnotationPlanDraft] == "" {
-			continue
-		}
-		// Once a fix has run (or is stamped running), the normal
-		// paths own the sandbox — resume only pre-fix strandings.
-		if strings.HasPrefix(annotations[factorycli.AnnotationTaskType], "fix") {
+		approved := annotations[AnnotationPlanApproved] != "" && annotations[AnnotationPlanDraft] != "" &&
+			!fixLike(annotations[factorycli.AnnotationTaskType])
+		_, unread := fixRunUnread(annotations, work.board.Name, n)
+		if !approved && !unread && !(refixRequested(sb) && fixLike(annotations[factorycli.AnnotationTaskType])) {
 			continue
 		}
 		executor := annotations[AnnotationExecutor]
@@ -757,8 +716,18 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 	return out
 }
 
-// ensureFix launches (or reattaches) a factory fix as the plan's executor,
-// in the executor's namespace with the executor's identity.
+// fixLike reports whether a sandbox's last task type is a fix's. An
+// absent type is one: sandboxes from before type stamping only ever
+// carried fixes.
+func fixLike(taskType string) bool {
+	return taskType == "" || strings.HasPrefix(taskType, "fix")
+}
+
+// ensureFix launches a fix as the plan's executor, in the executor's
+// namespace with the executor's identity, or follows one to its end:
+// `factory recipe fix` in the issue's sandbox, whose pushed branch the
+// runner opens as a draft PR once the run ends (StartFix). The PR is
+// GitHub's, and the sandbox is aliased to it.
 func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
 	logger := log.FromContext(ctx)
 	sb := work.issueSandbox(plan.executor, plan.issue)
@@ -766,31 +735,40 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	if sb != nil {
 		name = sb.GetName()
 	}
-	// PR/issue numbers repeat across repos, so runner keys carry the repo:
-	// two boards in one namespace must never share a single-flight slot.
-	key := fmt.Sprintf("%s/fix-%s-%d", plan.executor, work.repo, plan.issue)
+	key := fixKey(work, plan.executor, plan.issue)
 
-	if r.Factory.IsRunning(key) {
+	// Not while the fix runs, nor while a follow-up or a plan does in the
+	// same sandbox.
+	if r.Factory.IsRunning(key) || r.Factory.IsRunning(sandboxReviseKey(plan.executor, name)) ||
+		r.Factory.IsRunning(planKey(work, plan.executor, plan.issue)) {
 		return
 	}
-	state, taskType := "", ""
+	annotations := map[string]string{}
 	if sb != nil {
-		annotations := sb.GetAnnotations()
-		state = annotations[factorycli.AnnotationTaskState]
-		taskType = annotations[factorycli.AnnotationTaskType]
+		r.recordFixResult(ctx, sb, key)
+		if sb.GetAnnotations() != nil {
+			annotations = sb.GetAnnotations()
+		}
+	}
+	state := annotations[factorycli.AnnotationTaskState]
+	// A fix run recorded and not read, by a controller that did not see
+	// it end: followed by its name, for the PR it pushed.
+	followed, follow := "", false
+	if _, ok := r.Factory.LastResult(key); !ok {
+		followed, follow = fixRunUnread(annotations, work.board.Name, plan.issue)
 	}
 	// Terminal means THE FIX ran to an end state. The task-state stamps
 	// are per-sandbox, not per-type: a completed plan in the same sandbox
 	// (plans run in the fix sandbox by design) must not masquerade as a
-	// finished fix — that bailed every Approve & Fix after a plan. An
-	// absent type keeps the old semantics (pre-type-stamping sandboxes
-	// only ever carried fix results).
-	fixLike := taskType == "" || strings.HasPrefix(taskType, "fix")
-	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) && fixLike
-	if terminal && refixRequested(sb) {
-		terminal = false
+	// finished fix — that bailed every Approve & Fix after a plan.
+	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) &&
+		fixLike(annotations[factorycli.AnnotationTaskType])
+	if terminal && !refixRequested(sb) && !follow {
+		return
 	}
-	if terminal {
+	// Something else is at work in the sandbox (a plan, a follow-up the
+	// watch runs): the fix waits for it rather than being refused.
+	if state == factorycli.TaskStateRunning && !follow {
 		return
 	}
 	if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
@@ -810,40 +788,34 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	}
 
 	issueURL := plan.issueURL
-	if issueURL == "" {
+	if issueURL == "" || strings.Contains(issueURL, "/pull/") {
+		// A fix sandbox's htmlURL is its PR's once it has one.
 		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, plan.issue)
 	}
-	instruction := ""
-	if plan.auto || work.board.Spec.Policy.DraftPR == nil || *work.board.Spec.Policy.DraftPR {
-		// Auto-started fixes always open draft PRs, regardless of policy —
-		// the human promotes.
-		instruction = draftPRInstruction
-	}
-
-	// An approved plan on the sandbox rides along: the fix follows it and
-	// publishes it as the PR description's Plan section. Only approval
-	// consents this — a plain Fix click on a merely drafted (or rejected)
-	// plan ignores it.
-	withPlan := false
-	if sb != nil {
-		annotations := sb.GetAnnotations()
-		withPlan = annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
+	// An approved plan on the sandbox rides along: the fix follows it.
+	// Only approval consents this — a plain Fix click on a merely drafted
+	// (or rejected) plan ignores it.
+	withPlan := annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
+	runName := fixRunName(work.board.Name, plan.issue)
+	if follow {
+		runName = followed
 	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
+	// The PR is always a draft: open-pr opens nothing else.
 	if r.Factory.StartFix(key, factorycli.FixOptions{
 		Namespace:         plan.executor,
 		SandboxName:       name,
 		IssueURL:          issueURL,
-		Instruction:       instruction,
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
 		WithPlan:          withPlan,
 		Engine:            boardEngine(work.board),
 		Disclose:          work.board.Spec.Policy.Disclose,
+		RunName:           runName,
 	}) {
-		logger.Info("launched factory fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name)
+		logger.Info("launched factory recipe fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name, "run", runName)
 	}
 }
 
@@ -1239,171 +1211,6 @@ func runIntent(scenario, name, guidance string) string {
 		return shape
 	}
 	return shape + " " + guidance
-}
-
-// ensurePRTaskClaims handles follow-up clicks on PRs with no sandbox:
-// once any sandbox carries the PR label (factory created or aliased it),
-// the claim converts to the durable request annotation the click pass
-// drives — and the trim rule drops the claim. Until then the launch runs
-// factory directly: `pr <verb>` ensures the factory-pr sandbox itself
-// (gh pr checkout attaches the branch), so hand-made PRs work with the
-// same machinery as agent PRs.
-func (r *Reconciler) ensurePRTaskClaims(ctx context.Context, work *workState, claims []prTaskClaim) map[string]bool {
-	logger := log.FromContext(ctx)
-	converted := map[string]bool{}
-	reqKeys := map[string]string{
-		"iterate":     AnnotationIterateRequested,
-		"address":     AnnotationAddressRequested,
-		"investigate": AnnotationInvestigateRequested,
-	}
-	for _, claim := range claims {
-		reqKey := reqKeys[claim.kind]
-		if reqKey == "" {
-			continue
-		}
-		if sb := work.findPRSandbox(claim.pr); sb != nil {
-			// Convert: the annotation is the durable consent from here on.
-			annotations := sb.GetAnnotations()
-			if annotations == nil {
-				annotations = map[string]string{}
-			}
-			if annotations[reqKey] != "" {
-				continue // already converted; the reap pass settles the Request
-			}
-			annotations[reqKey] = time.Now().UTC().Format(time.RFC3339)
-			annotations[AnnotationExecutor] = claim.member
-			if claim.kind == "iterate" && claim.instruction != "" {
-				annotations[AnnotationIterateInstruction] = claim.instruction
-			}
-			sb.SetAnnotations(annotations)
-			if err := r.Update(ctx, sb); err != nil {
-				logger.Error(err, "unable to convert pr-task claim", "pr", claim.pr, "kind", claim.kind)
-			} else {
-				// The click pass picks it up NEXT reconcile, when the
-				// preflight can see the sandbox's true task state.
-				converted[sb.GetName()] = true
-			}
-			continue
-		}
-		// No sandbox anywhere: launch factory directly; it ensures the
-		// factory-pr sandbox and checks the PR branch out.
-		key := fmt.Sprintf("%s/%s-%d", claim.member, claim.kind, claim.pr)
-		if r.Factory.IsRunning(key) {
-			continue
-		}
-		if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-			continue
-		}
-		token, err := r.executorToken(ctx, claim.member)
-		if err != nil {
-			continue
-		}
-		instruction := ""
-		if claim.kind == "iterate" {
-			instruction = claim.instruction
-		}
-		starters := map[string]func(string, factorycli.PRTaskOptions) bool{
-			"iterate":     r.Factory.StartIterate,
-			"address":     r.Factory.StartAddressComments,
-			"investigate": r.Factory.StartInvestigate,
-		}
-		if starters[claim.kind](key, factorycli.PRTaskOptions{
-			Namespace:   claim.member,
-			SandboxName: factorycli.PRSandboxName(work.repo, claim.pr),
-			PRURL:       fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, claim.pr),
-			Instruction: instruction,
-			GithubToken: token,
-			Engine:      boardEngine(work.board),
-			Disclose:    work.board.Spec.Policy.Disclose,
-		}) {
-			logger.Info("launched factory pr "+claim.kind+" (manual PR attach)", "pr", claim.pr, "board", work.board.Name)
-		}
-	}
-	return converted
-}
-
-// ensurePRTaskClicks drives the explicit PR follow-up verbs. Requests
-// live as sandbox annotations (durable consent, restart-proof); a
-// request is served once any completion newer than it lands — the same
-// global-completion semantics refix uses, which also means a click made
-// while another task runs is considered absorbed by that run's finish
-// (acceptable: the verbs are one click away). One launch per sandbox per
-// pass, and any in-flight follow-up defers the others — the tasks share
-// one workspace.
-func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, skip map[string]bool) {
-	logger := log.FromContext(ctx)
-	kinds := []struct {
-		reqKey, kind string
-		start        func(string, factorycli.PRTaskOptions) bool
-	}{
-		{AnnotationIterateRequested, "iterate", r.Factory.StartIterate},
-		{AnnotationAddressRequested, "address", r.Factory.StartAddressComments},
-		{AnnotationInvestigateRequested, "investigate", r.Factory.StartInvestigate},
-	}
-	for _, sb := range work.sandboxes {
-		if skip[sb.GetName()] {
-			continue // converted this pass; next reconcile owns it
-		}
-		issue, isIssueSB := factorycli.IssueOf(sb, work.repo)
-		if !isIssueSB && !strings.HasPrefix(sb.GetName(), "factory-pr-") {
-			continue
-		}
-		annotations := sb.GetAnnotations()
-		prNum := sb.GetLabels()[factorycli.LabelPR]
-		prURL := annotations["htmlURL"]
-		if prNum == "" || !strings.Contains(prURL, "/pull/") {
-			continue
-		}
-		namespace := sb.GetNamespace()
-		busy := false
-		for _, k := range kinds {
-			if r.Factory.IsRunning(fmt.Sprintf("%s/%s-%s", namespace, k.kind, prNum)) {
-				busy = true
-			}
-		}
-		// A fix or plan child may still be provisioning this sandbox (no
-		// task landed yet for the prober's sandbox-wide busy check to
-		// see): their runner keys derive from the sandbox name.
-		if r.Factory.IsRunning(namespace+"/"+sb.GetName()) ||
-			(isIssueSB && (r.Factory.IsRunning(fmt.Sprintf("%s/fix-%s-%d", namespace, work.repo, issue)) ||
-				r.Factory.IsRunning(fmt.Sprintf("%s/plan-%s-%d", namespace, work.repo, issue)))) {
-			busy = true
-		}
-		if busy {
-			continue
-		}
-		for _, k := range kinds {
-			if !rerunRequested(sb, k.reqKey, factorycli.AnnotationCompletionTime) {
-				continue
-			}
-			key := fmt.Sprintf("%s/%s-%s", namespace, k.kind, prNum)
-			if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-				continue
-			}
-			token, err := r.executorToken(ctx, namespace)
-			if err != nil {
-				continue
-			}
-			instruction := ""
-			if k.kind == "iterate" {
-				instruction = annotations[AnnotationIterateInstruction]
-			}
-			r.stampUnpaused(ctx, sb)
-			r.stampEngine(ctx, sb, boardEngine(work.board))
-			if k.start(key, factorycli.PRTaskOptions{
-				Namespace:   namespace,
-				SandboxName: sb.GetName(),
-				PRURL:       prURL,
-				Instruction: instruction,
-				GithubToken: token,
-				Engine:      boardEngine(work.board),
-				Disclose:    work.board.Spec.Policy.Disclose,
-			}) {
-				logger.Info("launched factory pr "+k.kind, "pr", prNum, "board", work.board.Name)
-			}
-			break // one launch per sandbox per pass — shared workspace
-		}
-	}
 }
 
 // followUpPRs keeps a factory pr watch running for every fix sandbox aliased
