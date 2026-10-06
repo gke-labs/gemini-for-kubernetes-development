@@ -73,10 +73,11 @@ var verbs = map[string]verb{
 	"label":       {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
 	"push-notes":  {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
 	"post-review": {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
+	"open-pr":     {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
 	"run":         {class: ClassFollowUp, kinds: []string{"Plan"}},
-	"revise":      {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
-	"edit":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
-	"reject":      {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review"}},
+	"revise":      {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
+	"edit":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
+	"reject":      {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
 }
 
 // followUps are the tasks a run may start, by the kinds whose result they
@@ -109,6 +110,11 @@ var defaultActions = map[string][]Action{
 	"Review": {
 		{Verb: "edit", Field: "spec", Format: "yaml"},
 		{Verb: "post-review", Label: "Post as pending review"},
+		{Verb: "reject"},
+	},
+	"Change": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "open-pr", Label: "Open draft PR"},
 		{Verb: "reject"},
 	},
 }

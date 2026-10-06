@@ -432,6 +432,114 @@ function cloneRepo {
     fi
 }
 
+# setupForkRepo is setup-repo for a fix recipe (pkg/recipe/recipes/fix.yaml),
+# as fix_issue.sh's setupGitRepos: the checkout, with "origin" the task
+# identity's fork and "upstream" the repository. It stops if origin cannot
+# be made the fork (ensureForkRemote): a fix never pushes to the
+# repository.
+function setupForkRepo {
+    echo "Running setupForkRepo..."
+    if [ ! -d "/workspaces/${REPO_NAME}/.git" ]; then
+        rm -rf "/workspaces/${REPO_NAME}"
+        (cd /workspaces && git clone "${CLONE_URL}")
+    else
+        (cd "/workspaces/${REPO_NAME}" && git rebase --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git merge --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git cherry-pick --abort 2>/dev/null || true)
+        (cd "/workspaces/${REPO_NAME}" && git reset --hard HEAD && git clean -fd && git fetch origin)
+    fi
+
+    ensureForkRemote
+
+    # An origin that was already the fork skipped gh repo fork, which is
+    # what adds upstream; checkoutDefaultBranch branches from it.
+    (
+        cd "/workspaces/${REPO_NAME}"
+        if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "${CLONE_URL}"
+        else
+            git remote add upstream "${CLONE_URL}"
+        fi
+    )
+    (cd "/workspaces/${REPO_NAME}" && gh repo set-default "${CLONE_URL}" || true)
+
+    resetRepoGitConfig
+
+    (cd "/workspaces/${REPO_NAME}" && git config user.email "${GITHUB_USER_EMAIL}" && git config user.name "${GITHUB_USER_NAME}")
+}
+
+# pushToFork is a fix recipe's push step: it pushes HEAD to the branch the
+# task started ($TASK_DIR/branch) on the token's login's fork of the
+# repository, and nowhere else. The agent commits and never pushes; this
+# is the only way its commits leave the sandbox.
+#
+#   - origin must be the login's repository, and GitHub must say it is a
+#     fork of the repository. The push goes to that repository's URL, not
+#     to the remote, so a pushurl left in the checkout cannot redirect it.
+#   - It is a lease: against $TASK_DIR/lease, the head this branch was last
+#     pushed at, when there is one; else the branch must not exist yet. A
+#     commit someone else pushed in between is never overwritten.
+#   - Hooks are off and the checkout's config is reset (resetRepoGitConfig).
+#   - With no lease (a start), a HEAD still at the base ($TASK_DIR/base)
+#     fails: the fix made no change.
+#
+# What it pushed goes to $TASK_DIR/push.json, which the runner puts on the
+# task's Change (pkg/taskoutput).
+function pushToFork {
+    echo "Running pushToFork..."
+    local dir="${TASK_DIR:?TASK_DIR is not set}"
+    local branch base head lease="" login url fork upstream parent
+    if ! branch="$(cat "${dir}/branch" 2>/dev/null)" || [ -z "${branch}" ]; then
+        echo "no branch recorded in ${dir}/branch; nothing to push to" >&2
+        return 1
+    fi
+    base="$(cat "${dir}/base" 2>/dev/null || true)"
+    if [ -f "${dir}/lease" ]; then
+        lease="$(cat "${dir}/lease")"
+    fi
+
+    cd "/workspaces/${REPO_NAME}"
+    if ! [[ "${branch}" =~ ^[A-Za-z0-9._/-]+$ ]] || ! git check-ref-format --branch "${branch}" >/dev/null 2>&1; then
+        echo "the recorded branch ${branch} is not a branch name" >&2
+        return 1
+    fi
+    resetRepoGitConfig
+    head="$(git rev-parse --verify 'HEAD^{commit}')"
+    if [ -z "${lease}" ] && [ "${head}" = "${base}" ]; then
+        echo "the fix made no change: there is no commit on top of ${base}" >&2
+        return 1
+    fi
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Warning: uncommitted changes in the checkout are not pushed" >&2
+    fi
+
+    login="$(GH_TOKEN="${GITHUB_USER_TOKEN}" gh api user --jq .login)"
+    if [ -z "${login}" ] || ! originIsForkOf "${login}"; then
+        echo "origin is not ${login}'s repository; a fix pushes to the member's fork only" >&2
+        return 1
+    fi
+    url="$(git config --get remote.origin.url)"
+    fork="${url#*github.com[/:]}"
+    fork="${fork%/}"
+    fork="${fork%.git}"
+    upstream="${CLONE_URL#https://github.com/}"
+    upstream="${upstream%.git}"
+    # GitHub's names for both, so they compare as GitHub sees them.
+    parent="$(GH_TOKEN="${GITHUB_USER_TOKEN}" gh api "repos/${fork}" --jq 'if .fork then .parent.full_name else "" end')"
+    fork="$(GH_TOKEN="${GITHUB_USER_TOKEN}" gh api "repos/${fork}" --jq .full_name)"
+    upstream="$(GH_TOKEN="${GITHUB_USER_TOKEN}" gh api "repos/${upstream}" --jq .full_name)"
+    if [ -z "${parent}" ] || [ "$(printf '%s' "${parent}" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "${upstream}" | tr '[:upper:]' '[:lower:]')" ]; then
+        echo "${fork} is not a fork of ${upstream}; not pushing to it" >&2
+        return 1
+    fi
+
+    echo "pushing ${head} to ${fork} ${branch}"
+    git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/${branch}:${lease}" \
+        "https://github.com/${fork}.git" "${head}:refs/heads/${branch}"
+
+    printf '{"fork":"%s","branch":"%s","base":"%s","head":"%s"}\n' "${fork}" "${branch}" "${base}" "${head}" > "${dir}/push.json"
+}
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating ${USER_HOME}/.gemini directory"

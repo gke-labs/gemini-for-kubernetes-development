@@ -1,6 +1,6 @@
 # Fix as a recipe
 
-**Status:** Proposed.
+**Status:** Proposed. Step 1 (the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, `run:fix` on the recipe) is built; see [As built](#as-built).
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -154,6 +154,17 @@ The Plan kind's *Fix with this plan* (`factory apply --action run:fix`) starts t
    - Iterate, then a review comment answered by Address comments, then a failing check fixed by Fix CI, each a commit on the PR;
    - the controller deleted mid-fix resumes the run;
    - Auto picks up a new comment on its own.
+
+## As built
+
+Step 1 deviates from the above where:
+
+- **The branch is a `run` step** in `fix.yaml`, after `checkout-default-branch`, not part of `setup-fork`. It writes the branch and the base to `$TASK_DIR/branch` and `$TASK_DIR/base`, which `push` reads; `uses` steps now get `TASK_DIR`.
+- **`push` records `push.json`** (fork, branch, base, head) in the task directory. Its lease comes from `$TASK_DIR/lease`; nothing writes that until the revises (step 2), so a start's push requires the branch not to exist. It pushes to the fork's URL as the API names it, not to the remote `origin`, so a `pushurl` left in the checkout cannot redirect it.
+- **`--with-plan` takes a value** (`--with-plan true`): recipe inputs have no boolean type.
+- **Disclose** reaches the prompts as a standard input, `disclose` (`--disclose`). `open-pr` adds no footer, as the other verbs do not.
+- **Labels** are a recipe input, `--labels a,b`, which the runner adds to `spec.labels`.
+- **`open-pr` points the document's target at the PR**; `factory apply` (and `--apply`) then aliases the sandbox: the one the run used, else `source.sandbox`, else the issue's.
 
 ## Not planned here
 

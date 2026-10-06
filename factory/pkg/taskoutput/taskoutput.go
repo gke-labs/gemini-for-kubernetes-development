@@ -53,7 +53,8 @@ type Document struct {
 type Target struct {
 	URL string `yaml:"url" json:"url"`
 	// Commit is the commit a PR's result is of: the head a Review
-	// reviewed, which its comments are placed on.
+	// reviewed, which its comments are placed on, or the head a Change
+	// pushed.
 	Commit string `yaml:"commit,omitempty" json:"commit,omitempty"`
 }
 
@@ -81,6 +82,7 @@ var kinds = map[string]kind{
 	"Plan":   {parse: parsePlan},
 	"Notes":  {parse: parseNotes},
 	"Review": {parse: parseReview},
+	"Change": {parse: parseChange},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.

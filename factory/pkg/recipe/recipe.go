@@ -84,8 +84,9 @@ const (
 )
 
 // fullCredentialSteps are the named steps that put the token where the
-// agent can reach it later: on disk, or in the checkout's remote.
-var fullCredentialSteps = []string{"setup-git", "setup-repo", "checkout-default-branch", "checkout-pr-branch"}
+// agent can reach it later — on disk, or in the checkout's remote — or
+// write with it: setup-fork may fork, push pushes.
+var fullCredentialSteps = []string{"setup-git", "setup-repo", "setup-fork", "checkout-default-branch", "checkout-pr-branch", "push"}
 
 // Part is a list of steps run in order: the recipe's start, or a revise.
 type Part struct {
@@ -178,9 +179,11 @@ func (s Step) Label(i int) string {
 var NamedSteps = map[string]string{
 	"setup-git":               "setupGit",
 	"setup-repo":              "setupGitRepos",
+	"setup-fork":              "setupForkRepo",
 	"checkout-default-branch": "checkoutDefaultBranch",
 	"checkout-pr-branch":      "checkoutPRBranch",
 	"configure-engine":        "configureGemini",
+	"push":                    "pushToFork",
 	CloneStep:                 "cloneRepo",
 }
 

@@ -380,6 +380,8 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		}
 		standard, htmlURL = issueInputs(it, issue), issue.GetHTMLURL()
 	}
+	// Whether what the agent writes for GitHub says an agent wrote it.
+	standard["disclose"] = strconv.FormatBool(rootFlags.Disclose)
 	inputs, err := rec.ResolveInputs(standard, overrides)
 	if err != nil {
 		return err
@@ -816,8 +818,9 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	}
 	fmt.Printf("\nApplying the result of task %s...\n", e.ID)
 	for _, d := range docs {
-		if err := taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout); err != nil {
-			return fmt.Errorf("applying the %s for %s: %w", d.Kind, d.Target.URL, err)
+		target := d.Target.URL
+		if err := applyDocument(ctx, gh, d, "", sandboxName, dryRun); err != nil {
+			return fmt.Errorf("applying the %s for %s: %w", d.Kind, target, err)
 		}
 	}
 	if dryRun {
@@ -1031,6 +1034,11 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	if err != nil {
 		return err
 	}
+	if doc.Kind == "Change" {
+		if err := fillChange(doc, taskDir, inputs); err != nil {
+			return err
+		}
+	}
 	doc.Actions = task.Output.Actions
 	out, err := taskoutput.Marshal(doc)
 	if err != nil {
@@ -1038,6 +1046,30 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	}
 	fmt.Printf("::task-output %s %s\n", doc.Kind, taskoutput.File)
 	return os.WriteFile(filepath.Join(taskDir, taskoutput.File), out, 0o644)
+}
+
+// fillChange puts on a Change what the push step recorded (where the
+// commits went, and which they are) rather than what the agent said, and
+// the labels the task was given.
+func fillChange(doc *taskoutput.Document, taskDir string, inputs map[string]string) error {
+	data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.PushedFile))
+	if err != nil {
+		return fmt.Errorf("the Change has no push: %w", err)
+	}
+	var p taskoutput.Pushed
+	if err := json.Unmarshal(data, &p); err != nil {
+		return fmt.Errorf("parsing %s: %w", taskoutput.PushedFile, err)
+	}
+	if err := doc.SetPushed(p); err != nil {
+		return err
+	}
+	var labels []string
+	for _, l := range strings.Split(inputs["labels"], ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			labels = append(labels, l)
+		}
+	}
+	return doc.AddLabels(labels)
 }
 
 // taskTarget is the issue, PR or repository a task's result is about.
