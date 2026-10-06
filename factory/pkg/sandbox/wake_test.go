@@ -18,7 +18,7 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 	_ = unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
 	kc := reviewClients(t, ns, sb)
 
-	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "", "", "", "", "", "", nil, nil, "")
+	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, false, "", "", "", "", "", "", nil, nil, "")
 	if err != nil {
 		t.Fatalf("EnsureRecipeSandbox: %v", err)
 	}
@@ -31,5 +31,16 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 	}
 	if got.GetAnnotations()["sandbox.gemini.google.com/unpaused-at"] == "" {
 		t.Error("unpaused-at not set; the idle suspender would put it straight back")
+	}
+}
+
+// A credentials: clone recipe's PR sandbox is one no recipe holding the
+// token runs in.
+func TestRecipeSandboxName(t *testing.T) {
+	if got := sandbox.RecipeSandboxName("open-rl", 7, false); got != "recipe-open-rl-7" {
+		t.Errorf("full = %s", got)
+	}
+	if got := sandbox.RecipeSandboxName("open-rl", 7, true); got != "recipe-open-rl-7-nocreds" {
+		t.Errorf("no credentials = %s", got)
 	}
 }

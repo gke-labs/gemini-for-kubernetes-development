@@ -84,6 +84,11 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - **Conversation server.** The sandbox daemon serves agent conversations over HTTP using the Agent Client Protocol, under `/v1/sessions` on its loopback task server (`:49990`, reached by port-forward). It handles sessions, prompts, streamed events, permission prompts, cancel and modes (`default`, `auto_edit`, `yolo`), and keeps transcripts under `/workspaces/.acpd/sessions`. It drives `gemini --acp` or Antigravity's `agy_acp_server`; Claude is not supported for research yet.
 - **Save notes.** The notes are a task output, and `apply --action push-notes` pushes them to `docs-exploration/research/<note>.md` on the `research/notes` branch of your fork. `apply` holds the GitHub credential, not the agent session.
 
+### Reviews as a recipe (`factory recipe review`)
+- **Review a PR.** `recipe review --url <PR> [--instruction …]` reviews the PR in a sandbox of its own (`recipe-<repo>-<n>-nocreds`). The clone fetches the PR's head and base, and the agent reviews with `git diff` and no GitHub credentials (`credentials: clone`). The result is a Review task output pinned to the commit reviewed.
+- **Post it as a draft.** `apply --action post-review` posts it as your pending review on the PR, at that commit, folding comments that are not on a line of the diff into the body. You read, change and submit it on GitHub. Posting again replaces the pending review factory posted, and refuses to touch one you started yourself.
+- `factory pr review` and the watch's reviews are unchanged.
+
 ### Engines and models
 - **Choosing an engine.** `--engine gemini|claude|antigravity` (config key `engine`) picks the agent:
   - `gemini --yolo`, which uses `GEMINI_API_KEY`

@@ -410,6 +410,12 @@ function checkoutDefaultBranch {
 # config file and no remote URL; the empty helper before it drops any
 # inherited one. Nothing here forks, sets a default repo or configures
 # git, as setupGitRepos does: those leave the token's reach behind.
+#
+# For a PR (PR_NUMBER, PR_BASE) it also fetches the PR's head and base
+# branch from CLONE_URL into refs/factory/pr/{head,base} and checks the
+# head out, detached: the agent, which has no token for gh, reviews with
+# `git diff refs/factory/pr/base...HEAD`, and the runner pins the result
+# to refs/factory/pr/head.
 function cloneRepo {
     echo "Running cloneRepo..."
     git_auth() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"; }
@@ -418,6 +424,11 @@ function cloneRepo {
         (cd /workspaces && git_auth clone "${CLONE_URL}")
     else
         (cd "/workspaces/${REPO_NAME}" && git_auth fetch origin)
+    fi
+    if [ -n "${PR_NUMBER}" ]; then
+        (cd "/workspaces/${REPO_NAME}" &&
+            git_auth fetch --force "${CLONE_URL}" "+refs/pull/${PR_NUMBER}/head:refs/factory/pr/head" "+refs/heads/${PR_BASE:?PR_BASE is not set}:refs/factory/pr/base" &&
+            git reset -q --hard && git clean -fdq && git checkout -q --force --detach refs/factory/pr/head)
     fi
 }
 

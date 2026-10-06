@@ -25,7 +25,7 @@ func NewApplyCommand(ctx context.Context) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "apply -f <file | -> [--action <verb>]",
-		Short: "Apply task outputs (a triage, a plan, notes …) to GitHub",
+		Short: "Apply task outputs (a triage, a plan, notes, a review …) to GitHub",
 		Long: `Apply task outputs to GitHub.
 
 A task output is the result a task leaves in its task directory
@@ -39,10 +39,14 @@ Without --action, apply does each write the result offers:
   Plan    comment: comments the plan
   Notes   push-notes: commits the notes to docs-exploration/research/<name>.md
           on the research/notes branch of your fork (made if you have none)
+  Review  post-review: posts the review as your pending review on the PR,
+          at the commit reviewed, replacing one factory posted before; you
+          read, change and submit it on GitHub
 
 --action does one action the result offers:
   label, comment  that write alone
   push-notes      that write alone
+  post-review     that write alone
   run             the follow-up it offers (run:fix names it): for a Plan,
                   writes the plan, as edited, to the issue's sandbox and
                   runs factory fix --with-plan there
@@ -53,7 +57,8 @@ Without --action, apply does each write the result offers:
 edit and reject are for whoever keeps the result as a draft: edit the
 file before applying it, or don't apply it.
 
-Applying the same task's output again does not comment again.`,
+Applying the same task's output again does not comment again, nor post
+a review that was submitted.`,
 		Example: `  factory sandbox task output fix-repo-123 | factory apply -f - --dry-run
   factory sandbox task output fix-repo-123 > triage.yaml   # look, edit
   factory apply -f triage.yaml
@@ -115,7 +120,7 @@ Applying the same task's output again does not comment again.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd

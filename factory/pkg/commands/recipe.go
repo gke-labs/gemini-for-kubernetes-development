@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -340,6 +341,11 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}
+	if rec.Credentials == recipe.CredentialsClone && !it.IsPR && !it.IsRepo() {
+		// The issue's sandbox is its fix's too, whose setup-git leaves
+		// the token in gh's hosts.yml for the agent to read.
+		return fmt.Errorf("recipe %s is credentials: clone, which an issue's sandbox, shared with its fix, cannot keep; run it on the PR or the repository", rec.Name)
+	}
 
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
@@ -393,9 +399,10 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
 	// An issue's recipes run in the issue's sandbox, beside its triage,
-	// plan and fix; a PR's in a sandbox of their own; a repository's in
-	// one per conversation, named as a research session's is, since its
-	// transcript is the sandbox's.
+	// plan and fix; a PR's in a sandbox of their own, one for those that
+	// hold the token and one for credentials: clone's, which no token
+	// has touched; a repository's in one per conversation, named as a
+	// research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
 	case it.IsRepo():
@@ -409,7 +416,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	case it.IsPR:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
-		sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, rec.Credentials == recipe.CredentialsClone, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	default:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
@@ -457,6 +464,10 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	envMap, secrets, err := recipeEnv(secret, it, rec.Credentials)
 	if err != nil {
 		return err
+	}
+	if it.IsPR {
+		// The base branch the clone step fetches beside the PR's head.
+		envMap["PR_BASE"] = standard["pr_base"]
 	}
 
 	task := newSpoolTask(rec.Name, runName, itemURL)
@@ -942,7 +953,7 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	if err := r.Run(ctx, rec); err != nil {
 		return err
 	}
-	return writeTaskOutput(taskDir, inputs, engine)
+	return writeTaskOutput(taskDir, repoDir, inputs, engine)
 }
 
 // takeSecrets reads the task's secrets (spool.SecretsFile) as KEY=VALUE
@@ -984,7 +995,7 @@ func readSpoolTask(taskDir string) spool.Task {
 // writeTaskOutput wraps the result the task declared (task.json's output)
 // into taskoutput.File. A result that does not parse fails the task: it is
 // caught here, not when someone applies it.
-func writeTaskOutput(taskDir string, inputs map[string]string, engine string) error {
+func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine string) error {
 	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
 	if err != nil {
 		return nil // started by hand, or by a CLI older than task.json
@@ -1003,7 +1014,9 @@ func writeTaskOutput(taskDir string, inputs map[string]string, engine string) er
 		fmt.Printf("::task-output %s left in %s for the client to wrap\n", task.Output.Kind, task.Output.From)
 		return nil
 	}
-	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), taskTarget(task, inputs), taskoutput.Source{
+	target := taskTarget(task, inputs)
+	target.Commit = prHeadCommit(repoDir)
+	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), target, taskoutput.Source{
 		Task:    filepath.Base(taskDir),
 		Session: task.Session,
 		Recipe:  task.Recipe,
@@ -1029,6 +1042,20 @@ func taskTarget(task spool.Task, inputs map[string]string) taskoutput.Target {
 		}
 	}
 	return taskoutput.Target{}
+}
+
+// prHeadCommit is the PR head the clone step checked out
+// (refs/factory/pr/head), what a PR's result is of; empty for anything
+// else.
+func prHeadCommit(repoDir string) string {
+	if repoDir == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "-q", "refs/factory/pr/head^{commit}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // instructionSeparator is between instructions joined into one input.
