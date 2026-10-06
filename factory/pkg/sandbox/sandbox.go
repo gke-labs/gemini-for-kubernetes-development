@@ -720,6 +720,18 @@ type RecordedRun struct {
 	// revise; unset, the run's task has its own.
 	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
+	// Revises are the revises the run's recipe offers, which can run into
+	// its session: what a session view offers as buttons from the start,
+	// before any task output names them (research's notes have none
+	// until the first Save notes).
+	Revises []RecordedRevise `json:"revises,omitempty"`
+}
+
+// RecordedRevise is one of a recipe's revises, as a button: its id and
+// the label it is shown under.
+type RecordedRevise struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 // MarkSandboxRunStarted is MarkSandboxTaskRunning (or, side, its side-task
