@@ -39,6 +39,7 @@ query($owner:String!,$name:String!,$me:String!) {
       nodes {
         id number title body url updatedAt isDraft
         author { login }
+        headRepository { nameWithOwner isFork owner { login } }
         labels(first:20){ nodes { name } }
         reviewRequests(first:20){ nodes { requestedReviewer { ... on User { login } } } }
         reviews(first:10, author:$me){ nodes { state } }
@@ -107,14 +108,19 @@ type gqlIssue struct {
 }
 
 type gqlPullRequest struct {
-	ID             string       `json:"id"`
-	Number         int          `json:"number"`
-	Title          string       `json:"title"`
-	Body           string       `json:"body"`
-	URL            string       `json:"url"`
-	UpdatedAt      time.Time    `json:"updatedAt"`
-	IsDraft        bool         `json:"isDraft"`
-	Author         *gqlLogin    `json:"author"`
+	ID             string    `json:"id"`
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	Body           string    `json:"body"`
+	URL            string    `json:"url"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+	IsDraft        bool      `json:"isDraft"`
+	Author         *gqlLogin `json:"author"`
+	HeadRepository *struct {
+		NameWithOwner string    `json:"nameWithOwner"`
+		IsFork        bool      `json:"isFork"`
+		Owner         *gqlLogin `json:"owner"`
+	} `json:"headRepository"`
 	Labels         gqlNameNodes `json:"labels"`
 	ReviewRequests struct {
 		Nodes []struct {
@@ -221,7 +227,7 @@ func fetchBoardSnapshot(ctx context.Context, hc *http.Client, owner, repo, membe
 	}
 	for i := range repository.PullRequests.Nodes {
 		node := &repository.PullRequests.Nodes[i]
-		snap.prs = append(snap.prs, node.toPullRequest())
+		snap.prs = append(snap.prs, node.toPullRequest(owner+"/"+repo))
 		snap.reviews[node.Number] = node.states()
 	}
 	return snap, nil
@@ -243,7 +249,9 @@ func (p *gqlPullRequest) states() reviewStates {
 	return st
 }
 
-func (p *gqlPullRequest) toPullRequest() *github.PullRequest {
+// toPullRequest fills in the head and base repositories so the feed can tell
+// a PR pushed from the member's fork (base is the repository queried).
+func (p *gqlPullRequest) toPullRequest(base string) *github.PullRequest {
 	pr := &github.PullRequest{
 		NodeID:    github.String(p.ID),
 		Number:    github.Int(p.Number),
@@ -255,6 +263,14 @@ func (p *gqlPullRequest) toPullRequest() *github.PullRequest {
 		UpdatedAt: timePtr(p.UpdatedAt),
 		Labels:    labelsOf(p.Labels.Nodes),
 		User:      userOf(p.Author),
+		Base:      &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String(base)}},
+	}
+	if h := p.HeadRepository; h != nil {
+		pr.Head = &github.PullRequestBranch{Repo: &github.Repository{
+			FullName: github.String(h.NameWithOwner),
+			Fork:     github.Bool(h.IsFork),
+			Owner:    userOf(h.Owner),
+		}}
 	}
 	for _, rr := range p.ReviewRequests.Nodes {
 		// A requested team has no login and is not the member; the query

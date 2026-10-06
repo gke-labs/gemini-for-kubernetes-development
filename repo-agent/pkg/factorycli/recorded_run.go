@@ -72,6 +72,16 @@ func RecordedRunSession(annotations map[string]string, key string) string {
 	return run.Task
 }
 
+// RecordedRunRevises are the revises of the run recorded under key, none
+// when there is no run.
+func RecordedRunRevises(annotations map[string]string, key string) []RecordedRevise {
+	var run RecordedRun
+	if err := json.Unmarshal([]byte(annotations[key]), &run); err != nil {
+		return nil
+	}
+	return run.Revises
+}
+
 // recordedRunKinds are the runs a sandbox records, with the kind of task
 // output each writes.
 var recordedRunKinds = []struct{ key, kind string }{

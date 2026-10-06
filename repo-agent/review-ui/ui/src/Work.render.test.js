@@ -408,7 +408,7 @@ describe('Work, an unattended window', () => {
 // it. The runs pinned to a pull request show on its row.
 describe('WorkRow Deploy', () => {
     const pr = {
-        type: 'pull', number: 42, stage: 'open', group: 'review', title: 'retry the fetch',
+        type: 'pull', number: 42, stage: 'open', group: 'prs', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-09-28T10:00:00Z',
     };
     // A factory, not one shared mock: CRA resets every mock's
@@ -637,7 +637,7 @@ describe('WorkRow draft actions', () => {
 
 describe('WorkRow review', () => {
     const review = {
-        type: 'pull', number: 42, stage: 'review-pending', group: 'review', title: 'retry the fetch',
+        type: 'pull', number: 42, stage: 'review-pending', group: 'prs', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-10-05T10:00:00Z',
         reviewSession: { sandbox: 'review-r-42', task: 'recipe-review-1' },
     };
@@ -674,9 +674,16 @@ describe('WorkRow review', () => {
 
 describe('WorkRow fix follow-ups', () => {
     const pr = {
-        type: 'pull', number: 9, stage: 'open', group: 'mine-pr', title: 'the fix',
+        type: 'pull', number: 9, stage: 'open', group: 'prs', mine: true, myPR: true, title: 'the fix',
         htmlURL: 'https://github.com/o/r/pull/9', updatedAt: '2026-10-06T10:00:00Z',
         fixSession: { sandbox: 'fix-r-7', task: 'recipe-fix-1' },
+        // As the fix run recorded them.
+        fixRevises: [
+            { verb: 'revise', revise: 'iterate', label: 'Iterate', inputs: ['instruction'], enabled: true },
+            { verb: 'revise', revise: 'address-comments', label: 'Address comments', enabled: true },
+            { verb: 'revise', revise: 'fix-ci', label: 'Fix CI', enabled: true },
+            { verb: 'revise', revise: 'rebase', label: 'Rebase', enabled: true },
+        ],
     };
     const renderRow = async (item) => {
         await act(async () => {
@@ -698,8 +705,28 @@ describe('WorkRow fix follow-ups', () => {
         await renderRow(pr);
         await act(async () => { findButton('Agent ▾').click(); });
         expect(link('Continue session').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
-        await act(async () => { findButton('Address review comments').click(); });
+        await act(async () => { findButton('Address comments').click(); });
         expect(posted()).toEqual([[reviseAt, { revise: 'address-comments' }]]);
+    });
+
+    test('every recorded revise is offered, Rebase included', async () => {
+        global.fetch = ok();
+        await renderRow(pr);
+        await act(async () => { findButton('Agent ▾').click(); });
+        await act(async () => { findButton('Rebase').click(); });
+        expect(posted()).toEqual([[reviseAt, { revise: 'rebase' }]]);
+    });
+
+    test('a PR not on the member\'s fork has no follow-ups', async () => {
+        await renderRow({ ...pr, myPR: false });
+        expect(findButton('Agent ▾')).toBeUndefined();
+    });
+
+    test('a PR that is not mine is reviewed, not promoted', async () => {
+        await renderRow({ ...pr, mine: false, myPR: false, draftPR: true, author: 'carol' });
+        expect(findButton('Review')).toBeDefined();
+        expect(findButton('Promote PR')).toBeUndefined();
+        expect(container.textContent).toContain('carol');
     });
 
     test('Iterate asks for an instruction and passes it as the input', async () => {

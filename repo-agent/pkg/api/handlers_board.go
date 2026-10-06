@@ -820,6 +820,30 @@ func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession 
 	return &models.TaskSession{Sandbox: sb.GetName(), Task: task}
 }
 
+// headOnMemberFork is whether pr's head is a branch on member's fork of
+// the repository: the only place a recipe pushes to (fix's push step
+// refuses any other).
+func headOnMemberFork(pr *github.PullRequest, member string) bool {
+	head := pr.GetHead().GetRepo()
+	return head != nil && head.GetFork() &&
+		strings.EqualFold(head.GetOwner().GetLogin(), member) &&
+		!strings.EqualFold(head.GetFullName(), pr.GetBase().GetRepo().GetFullName())
+}
+
+// fixRevises are the revises of the fix run recorded on sb, the PR row's
+// follow-ups: whatever the fix recipe offers, with the inputs each asks
+// for.
+func fixRevises(sb *unstructured.Unstructured) []models.WorkAction {
+	if sb == nil {
+		return nil
+	}
+	var revises []models.WorkAction
+	for _, rv := range factorycli.RecordedRunRevises(sb.GetAnnotations(), factorycli.AnnotationFixRun) {
+		revises = append(revises, models.WorkAction{Verb: "revise", Revise: rv.ID, Label: rv.Label, Inputs: reviseInputs[rv.ID], Enabled: true})
+	}
+	return revises
+}
+
 func hasLabel(labels []*github.Label, name string) bool {
 	for _, l := range labels {
 		if strings.EqualFold(l.GetName(), name) {
@@ -1187,10 +1211,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 
-	group := "review"
-	if authored {
-		group = "mine-pr"
-	}
+	// Every pull request is a row of the PRs group; what the member may
+	// do on it follows from whether it is theirs (mine) and whether they
+	// can push to it (myPR).
+	myPR := authored && headOnMemberFork(pr, member)
 
 	var prLabels []string
 	for _, l := range pr.Labels {
@@ -1207,7 +1231,9 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	items[key] = &models.WorkItem{
 		Type:            "pr",
-		Group:           group,
+		Group:           "prs",
+		Mine:            authored,
+		MyPR:            myPR,
 		Number:          pr.GetNumber(),
 		Author:          pr.GetUser().GetLogin(),
 		Title:           pr.GetTitle(),
@@ -1223,6 +1249,7 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Sandbox:         workSandbox(sb, autoDefault),
 		ReviewSession:   taskSession(rsb, factorycli.AnnotationReviewRun),
 		FixSession:      taskSession(sb, factorycli.AnnotationFixRun),
+		FixRevises:      fixRevises(sb),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 	if sb == nil {
