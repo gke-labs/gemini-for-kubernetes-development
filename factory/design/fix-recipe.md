@@ -1,6 +1,6 @@
 # Fix as a recipe
 
-**Status:** Proposed. Step 1 (the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, `run:fix` on the recipe) is built; see [As built](#as-built).
+**Status:** Proposed. Step 1 (the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, `run:fix` on the recipe) and step 2 but the PR mode (the revises, `post-replies`, revise inputs, `factory pr watch` revising a fix run) are built; see [As built](#as-built).
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -165,6 +165,16 @@ Step 1 deviates from the above where:
 - **Disclose** reaches the prompts as a standard input, `disclose` (`--disclose`). `open-pr` adds no footer, as the other verbs do not.
 - **Labels** are a recipe input, `--labels a,b`, which the runner adds to `spec.labels`.
 - **`open-pr` points the document's target at the PR**; `factory apply` (and `--apply`) then aliases the sandbox: the one the run used, else `source.sandbox`, else the issue's.
+
+Step 2 deviates where:
+
+- **The PR mode is not built.** `factory recipe fix --url <PR>` needs its own sandbox naming and labelling, a PR branch of the start's templates, and the fork-ownership check; it is a change of its own.
+- **A revise is handed the push** as inputs (`pushed_fork`, `pushed_branch`, `pushed_base`, `pushed_head`): `factory recipe revise` reads `push.json` of the newest task in the session that pushed. The revise's first step writes `$TASK_DIR/branch`, `base` and `lease` from them, and checks the branch out. With a lease, a head that did not move pushes nothing new and is not an error. `rebase` writes the new base (upstream's `HEAD`) before its ask.
+- **The PR comes from the sandbox's alias**: `pr_url` is the `htmlURL` annotation when it is a PR, else the `pr` annotation. A revise's Change targets it; `address-comments` and `fix-ci` fail without it ("open it first"), `iterate` and `rebase` do not need it.
+- **Title and body**: a revise's agent writes `change: {}` unless they no longer fit; the runner fills the previous Change's (`pushed_title`, `pushed_body`). A Change with no title is still refused when it is used (`ChangeSpec`), not when it is wrapped.
+- **Revise inputs are marked `revise: true`** (`instruction`, `pr_url`): a built-in's command has no flag for them, and `ForSandbox` drops the mark. `factory recipe revise --input` overrides the *start's* inputs, read from the session's first task, so one revise's input is not the next's.
+- **`post-replies` adds no disclose footer**, as no other verb does: the asks say whether to state that an agent wrote the replies (the `disclose` input). Each reply carries a marker of the task and the comment it answers (`reply=<id>`); the report carries the task's. It refuses a comment that is not on the PR. A Change with no replies or report posts nothing, wherever it points.
+- **`factory pr watch`** looks for the PR's labelled sandbox with a `fix-run` each poll. With one, failing checks run `fix-ci` and new comments `address-comments`, each followed by `post-replies` (`factory recipe revise` + `factory apply --action post-replies`, in-process), and comments carrying factory's task-output marker are not new feedback. Without one, nothing changed.
 
 ## Not planned here
 

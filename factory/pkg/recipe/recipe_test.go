@@ -389,6 +389,25 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	if in := got.Inputs["instructions"]; in.Type != "" || in.Description != rec.Inputs["instructions"].Description {
 		t.Errorf("sandbox recipe's instructions input = %+v, want it without its type", in)
 	}
+
+	// The fix's revise inputs lose their mark; its anchored revise steps
+	// stay.
+	data, rec, err = Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Inputs["instruction"].Revise || !rec.Inputs["pr_url"].Revise {
+		t.Fatalf("fix inputs = %+v", rec.Inputs)
+	}
+	if out, err = ForSandbox(data); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Parse(out); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Inputs["instruction"].Revise || len(got.Revise) != len(rec.Revise) || got.Revise[1].Steps[0].Run != rec.Revise[0].Steps[0].Run {
+		t.Errorf("sandbox fix recipe = %+v", got)
+	}
 }
 
 func TestInputTypeValidated(t *testing.T) {
@@ -501,7 +520,7 @@ func TestTaskOutputActionsValidated(t *testing.T) {
 
 // The built-in recipes declare what their results offer.
 func TestBuiltinActions(t *testing.T) {
-	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject", "review": "edit post-review reject", "fix": "edit open-pr reject"} {
+	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject", "review": "edit post-review reject", "fix": "edit open-pr post-replies reject"} {
 		_, r, err := Builtin(name)
 		if err != nil {
 			t.Fatal(err)
@@ -765,7 +784,7 @@ func TestBuiltinFixRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" || len(r.Revise) != 0 {
+	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" || len(r.Revise) != 4 {
 		t.Fatalf("fix task-type %q, credentials %q, task-output %+v, %d revises", r.TaskType, r.Credentials, r.TaskOutput, len(r.Revise))
 	}
 	var uses []string
@@ -824,6 +843,126 @@ func TestBuiltinFixRenders(t *testing.T) {
 	}
 	if !strings.Contains(r.Context, "Do NOT run `git push`") {
 		t.Errorf("the context does not forbid pushing:\n%s", r.Context)
+	}
+}
+
+// TestBuiltinFixRevises: each of the fix's revises starts from the push
+// the fix last made, writes a Change, and ends with the push; their asks
+// render with the start's inputs and say what they must.
+func TestBuiltinFixRevises(t *testing.T) {
+	_, r, err := Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, rv := range r.Revise {
+		ids = append(ids, rv.ID)
+		first, last := rv.Steps[0], rv.Steps[len(rv.Steps)-1]
+		if !strings.Contains(first.Run, "INPUT_PUSHED_HEAD") || !strings.Contains(first.Run, "/lease") {
+			t.Errorf("%s does not start from the push: %q", rv.ID, first.Run)
+		}
+		if last.Uses != "push" {
+			t.Errorf("%s ends with %s, not the push", rv.ID, last.Label(len(rv.Steps)-1))
+		}
+		if c := rv.Steps[len(rv.Steps)-2]; c.Ask == "" || c.Capture != "change.yaml" {
+			t.Errorf("%s does not capture change.yaml before the push", rv.ID)
+		}
+	}
+	if got := strings.Join(ids, " "); got != "iterate address-comments fix-ci rebase" {
+		t.Errorf("revises = %s", got)
+	}
+	acts := r.OutputDecl().Actions
+	var verbs []string
+	for _, a := range acts {
+		verbs = append(verbs, strings.TrimSpace(a.Verb+" "+a.Revise))
+	}
+	if got := strings.Join(verbs, ","); got != "edit,open-pr,post-replies,reject,revise iterate,revise address-comments,revise fix-ci,revise rebase" {
+		t.Errorf("actions = %s", got)
+	}
+
+	inputs, err := r.ResolveInputs(map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "u", "disclose": "true",
+		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
+	}, map[string]string{"instruction": "rename foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for name, v := range map[string]string{"pr": "12", "lease": "h1", "base": "b2"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asks := map[string]string{}
+	for _, rv := range r.Revise {
+		var all strings.Builder
+		for i, s := range rv.Steps {
+			if s.Ask == "" {
+				continue
+			}
+			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
+			if err != nil {
+				t.Fatalf("%s step %s: %v", rv.ID, s.Label(i), err)
+			}
+			all.WriteString(out)
+		}
+		asks[rv.ID] = all.String()
+	}
+	for id, want := range map[string][]string{
+		"iterate":          {"rename foo", "change: {}"},
+		"address-comments": {"pulls/12/comments", "issues/12/comments", "inReplyTo", "since you last pushed\n   (h1)", "written by an AI"},
+		"fix-ci":           {"gh pr checks 12", "--log-failed", "report:"},
+		"rebase":           {"git rebase b2", "change: {}"},
+	} {
+		for _, w := range want {
+			if !strings.Contains(asks[id], w) {
+				t.Errorf("%s's asks lack %q:\n%s", id, w, asks[id])
+			}
+		}
+	}
+}
+
+// The revises' first step points the push at the fix's branch, leased
+// against the head last pushed, and checks that branch out.
+func TestFixRevisePointsThePushAtTheBranch(t *testing.T) {
+	_, r, err := Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := r.Revise[0].Steps[0].Run
+	repo, taskDir := t.TempDir(), t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@e", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("branch", "issue-7-1")
+	run := func(env ...string) error {
+		cmd := exec.Command("bash", "-eo", "pipefail", "-c", script)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), append(env, "TASK_DIR="+taskDir)...)
+		_, err := cmd.CombinedOutput()
+		return err
+	}
+	if err := run("INPUT_PUSHED_BRANCH=", "INPUT_PUSHED_HEAD=", "INPUT_PR_URL="); err == nil {
+		t.Error("a revise of a fix that pushed nothing ran")
+	}
+	if err := run("INPUT_PUSHED_BRANCH=issue-7-1", "INPUT_PUSHED_BASE=b0", "INPUT_PUSHED_HEAD=h1", "INPUT_PR_URL=https://github.com/o/r/pull/12"); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1", "pr": "12"} {
+		if got, _ := os.ReadFile(filepath.Join(taskDir, name)); string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	out, _ := exec.Command("git", "-C", repo, "symbolic-ref", "--short", "HEAD").Output()
+	if strings.TrimSpace(string(out)) != "issue-7-1" {
+		t.Errorf("checked out %q", out)
 	}
 }
 

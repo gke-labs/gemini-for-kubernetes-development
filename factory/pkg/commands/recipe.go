@@ -136,6 +136,9 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	f.add(cmd)
 	for _, in := range sortedInputNames(rec) {
 		decl := rec.Inputs[in]
+		if decl.Revise {
+			continue // factory recipe revise --input
+		}
 		if decl.Type == recipe.InstructionsType {
 			// An array, not a slice: an instruction's text may have commas.
 			f.instructions[in] = cmd.Flags().StringArray(inputFlagName(in, decl), nil, decl.Description+" (a local file, a file in the repository, or the text itself). Repeatable.")
@@ -459,7 +462,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		}
 		if ok {
 			fmt.Printf("Picking up task %s, this recipe's last run on %s (run again once it is applied to start a new one).\n", e.ID, htmlURL)
-			return awaitAndApply(ctx, sb, ghClient, sandboxName, e.ID, apply.dryRun)
+			return awaitAndApply(ctx, sb, ghClient, sandboxName, e.ID, "", apply.dryRun)
 		}
 		// Interrupting stops the waiting; the task runs on, for the
 		// next run to pick up.
@@ -491,7 +494,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		return err
 	}
 	if apply.on {
-		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, apply.dryRun)
+		return awaitAndApply(ctx, sb, ghClient, sandboxName, task.ID, "", apply.dryRun)
 	}
 	printResultHint(rec, task, sandboxName)
 	return nil
@@ -700,7 +703,7 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 			fmt.Printf("Task %s's result is applied already.\n", e.ID)
 			return nil
 		}
-		return awaitAndApply(ctx, sb, gh, sandboxName, e.ID, apply.dryRun)
+		return awaitAndApply(ctx, sb, gh, sandboxName, e.ID, "", apply.dryRun)
 	}
 	if e.State != spool.Exited {
 		if rootFlags.Detached {
@@ -779,9 +782,10 @@ func taskApplied(ctx context.Context, sb taskapi.Sandbox, id string) bool {
 }
 
 // awaitAndApply follows task id to its end, unless it has ended, and
-// applies its result with gh, as `factory apply` does. Applying again is
-// harmless: a triage's comment is not posted twice.
-func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, sandboxName, id string, dryRun bool) error {
+// applies its result with gh, as `factory apply` does: each write it
+// offers, or verb's alone. Applying again is harmless: a triage's comment
+// is not posted twice.
+func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client, sandboxName, id, verb string, dryRun bool) error {
 	sel := taskSelectFlags{id: id}
 	e, err := sel.find(ctx, sb)
 	if err != nil {
@@ -819,7 +823,7 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	fmt.Printf("\nApplying the result of task %s...\n", e.ID)
 	for _, d := range docs {
 		target := d.Target.URL
-		if err := applyDocument(ctx, gh, d, "", sandboxName, dryRun); err != nil {
+		if err := applyDocument(ctx, gh, d, verb, sandboxName, dryRun); err != nil {
 			return fmt.Errorf("applying the %s for %s: %w", d.Kind, target, err)
 		}
 	}
@@ -1035,7 +1039,7 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		return err
 	}
 	if doc.Kind == "Change" {
-		if err := fillChange(doc, taskDir, inputs); err != nil {
+		if err := fillChange(doc, task, taskDir, inputs); err != nil {
 			return err
 		}
 	}
@@ -1050,8 +1054,19 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 
 // fillChange puts on a Change what the push step recorded (where the
 // commits went, and which they are) rather than what the agent said, and
-// the labels the task was given.
-func fillChange(doc *taskoutput.Document, taskDir string, inputs map[string]string) error {
+// the labels the task was given. A revise's Change is about the fix's PR
+// (pr_url, which factory recipe revise sets), and keeps the title and
+// body the previous one had (pushed_title, pushed_body) where the agent
+// wrote none.
+func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, inputs map[string]string) error {
+	if task.Revise != "" {
+		if u := inputs["pr_url"]; u != "" {
+			doc.Target.URL = u
+		}
+		if err := doc.KeepTitle(inputs["pushed_title"], inputs["pushed_body"]); err != nil {
+			return err
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.PushedFile))
 	if err != nil {
 		return fmt.Errorf("the Change has no push: %w", err)

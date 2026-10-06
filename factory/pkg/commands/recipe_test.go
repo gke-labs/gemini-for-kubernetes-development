@@ -71,7 +71,8 @@ func TestLoadRecipe(t *testing.T) {
 }
 
 // Every built-in recipe is a command of its own, `factory recipe <name>`,
-// with a flag per input that shadows no other flag.
+// with a flag per input that shadows no other flag, but for the inputs
+// only revises read.
 func TestBuiltinRecipeCommands(t *testing.T) {
 	root := NewRootCommand(context.Background())
 	recipeCmd, _, err := root.Find([]string{"recipe"})
@@ -96,6 +97,17 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 			flag := inputFlagName(in, decl)
 			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "run-name" {
 				t.Errorf("recipe %s: input %s's flag --%s is taken", name, in, flag)
+			}
+			if decl.Revise {
+				// fix's instruction: --instruction is its instructions'.
+				owned := false
+				for other, d := range rec.Inputs {
+					owned = owned || (other != in && !d.Revise && inputFlagName(other, d) == flag)
+				}
+				if cmd.Flags().Lookup(flag) != nil && !owned {
+					t.Errorf("factory recipe %s has --%s, which only its revises read", name, flag)
+				}
+				continue
 			}
 			if cmd.Flags().Lookup(flag) == nil {
 				t.Errorf("factory recipe %s has no --%s", name, flag)

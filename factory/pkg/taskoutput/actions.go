@@ -69,15 +69,16 @@ type verb struct {
 }
 
 var verbs = map[string]verb{
-	"comment":     {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
-	"label":       {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
-	"push-notes":  {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
-	"post-review": {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
-	"open-pr":     {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
-	"run":         {class: ClassFollowUp, kinds: []string{"Plan"}},
-	"revise":      {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
-	"edit":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
-	"reject":      {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
+	"comment":      {class: ClassApply, kinds: []string{"Triage", "Plan"}, apply: applyComment},
+	"label":        {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
+	"push-notes":   {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
+	"post-review":  {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
+	"open-pr":      {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
+	"post-replies": {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
+	"run":          {class: ClassFollowUp, kinds: []string{"Plan"}},
+	"revise":       {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
+	"edit":         {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
+	"reject":       {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change"}},
 }
 
 // followUps are the tasks a run may start, by the kinds whose result they
@@ -115,6 +116,7 @@ var defaultActions = map[string][]Action{
 	"Change": {
 		{Verb: "edit", Field: "spec", Format: "yaml"},
 		{Verb: "open-pr", Label: "Open draft PR"},
+		{Verb: "post-replies", Label: "Post replies"},
 		{Verb: "reject"},
 	},
 }

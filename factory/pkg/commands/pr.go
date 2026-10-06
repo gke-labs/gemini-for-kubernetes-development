@@ -704,6 +704,9 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			return true
 		}
 
+		// A fix recipe's PR is followed by revising its run instead.
+		fixSandbox := fixRunSandbox(ctx, kubeClient, prNum, prURL)
+
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
 		hasFailure := false
@@ -734,7 +737,13 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
-				if dryRun {
+				if fixSandbox != "" {
+					if dryRun {
+						fmt.Printf("[DRYRUN] Would revise the fix in %s with fix-ci for PR #%d\n", fixSandbox, prNum)
+					} else if err := reviseFixRun(ctx, ghClient, fixSandbox, "fix-ci"); err != nil {
+						klog.Errorf("Fix CI failed: %v", err)
+					}
+				} else if dryRun {
 					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
 				} else {
 					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", continueSession, ephemeralStorage, secrets); err != nil {
@@ -762,6 +771,10 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					if strings.Contains(c.GetUser().GetLogin(), "bot") {
 						continue
 					}
+					// The fix run's own replies and reports.
+					if fixSandbox != "" && factoryPosted(c.GetBody()) {
+						continue
+					}
 					if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
 						hasNewComments = true
 						break
@@ -771,7 +784,13 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if hasNewComments {
 					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					if dryRun {
+					if fixSandbox != "" {
+						if dryRun {
+							fmt.Printf("[DRYRUN] Would revise the fix in %s with address-comments for PR #%d\n", fixSandbox, prNum)
+						} else if err := reviseFixRun(ctx, ghClient, fixSandbox, "address-comments"); err != nil {
+							klog.Errorf("Address comments failed: %v", err)
+						}
+					} else if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
 					} else {
 						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession, ephemeralStorage, secrets); err != nil {
