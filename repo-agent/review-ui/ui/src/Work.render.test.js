@@ -634,3 +634,40 @@ describe('WorkRow draft actions', () => {
         expect(container.textContent).toContain('cannot comment now: plan posted');
     });
 });
+
+describe('WorkRow review', () => {
+    const review = {
+        type: 'pull', number: 42, stage: 'review-pending', group: 'review', title: 'retry the fetch',
+        htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-10-05T10:00:00Z',
+        reviewSession: { sandbox: 'review-r-42', task: 'recipe-review-1' },
+    };
+    const renderRow = async (item) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+    };
+    const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+
+    test('a pending review links to GitHub and to its session, with no draft of its own', async () => {
+        await renderRow(review);
+        await act(async () => { findButton('Review ready').click(); });
+        expect(link('Finalize').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+        expect(link('Continue session').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        expect(findButton('Post as pending review')).toBeUndefined();
+    });
+
+    test('a review at work can be watched', async () => {
+        await renderRow({ ...review, stage: 'reviewing' });
+        expect(link('watch').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+    });
+
+    test('a review run before sessions has no session link', async () => {
+        await renderRow({ ...review, reviewSession: undefined });
+        await act(async () => { findButton('Review ready').click(); });
+        expect(link('Finalize')).toBeDefined();
+        expect(link('Continue session')).toBeUndefined();
+    });
+});

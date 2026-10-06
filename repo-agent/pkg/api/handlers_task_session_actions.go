@@ -31,8 +31,10 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
@@ -61,6 +63,14 @@ func sessionIssue(sb *unstructured.Unstructured) (int, string, bool) {
 	a := sb.GetAnnotations()
 	n, ok := factorycli.IssueOf(sb, a["repo"])
 	return n, a[annoBoard], ok && a[annoBoard] != ""
+}
+
+// sessionReview is the PR the sandbox reviews, and the board its row is
+// on; false for any sandbox but a review's.
+func sessionReview(sb *unstructured.Unstructured) (int, string, bool) {
+	a := sb.GetAnnotations()
+	n, ok := factorycli.ReviewPROf(sb, a["repo"])
+	return n, a[annoBoard], ok && a["repo"] != ""
 }
 
 // sessionResearch is the research conversation the sandbox is, false for
@@ -110,6 +120,20 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 			}
 		}
 		s.markRevises(ctx, s.Auth.GetNamespaceFromContext(c), board, number, revises)
+		return revises
+	}
+	if _, board, ok := sessionReview(sb); ok {
+		// The review is GitHub's pending review: an Update review posts
+		// over it, so there must be one, and the review must be done.
+		switch {
+		case kind != "Review":
+			return disable(fmt.Sprintf("a %s is not revised from here", kind))
+		case a[annoTaskState] == "Running":
+			return disable("the review is running")
+		case a["reviewState"] == "" || board == "":
+			return disable("the review is not on GitHub yet")
+		}
+		s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
 		return revises
 	}
 	view, ok := sessionResearch(sb)
@@ -227,8 +251,55 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		s.asIssueAction(c, board, number, "revise", gin.H{"kind": "Plan", "revise": req.Revise})
 		return
 	}
+	if _, board, ok := sessionReview(sb); ok {
+		s.reviseReview(c, sb, board, req.Revise)
+		return
+	}
 	view, _ := sessionResearch(sb)
 	s.saveRecipeNotes(c, view, req.Revise)
+}
+
+// reviseReview files a review's Update review, keyed by its sandbox as a
+// Save notes is: the controller asks the revise into the review's session
+// and posts what it writes over the pending review. 202.
+func (s *Server) reviseReview(c *gin.Context, sb *unstructured.Unstructured, boardName, revise string) {
+	ctx := c.Request.Context()
+	board, member, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	filed, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
+		Verb:    boardv1alpha1.VerbRevise,
+		Member:  member,
+		Sandbox: sb.GetName(),
+		Revise:  revise,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
+}
+
+// markSandboxRevises marks revises with the newest revise Request filed for
+// the sandbox, as markRevises does an issue's.
+func (s *Server) markSandboxRevises(ctx context.Context, namespace, sandbox string, revises []models.WorkAction) {
+	reqs, err := s.listRequests(ctx, namespace, v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRevise,
+	})
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	// Newest first: the newest Request for a revise is the word on it.
+	for _, req := range reqs {
+		if req.Spec.Sandbox != sandbox || seen[req.Spec.Revise] {
+			continue
+		}
+		seen[req.Spec.Revise] = true
+		markRevise(revises, req)
+	}
 }
 
 // taskSessionDraftAction takes one of the session's draft's actions:

@@ -453,96 +453,113 @@ func TestFixTerminalAndRefix(t *testing.T) {
 	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/fix-repo-10"))
 }
 
-// A finished review invocation's stdout draft is harvested onto the sandbox.
+// reviewSandboxFixture is the member's review sandbox of PR 42, as `factory
+// recipe review` makes it: by name, with no PR label.
+func reviewSandboxFixture(annotations map[string]interface{}) *unstructured.Unstructured {
+	a := map[string]interface{}{"repo": "repo", "htmlURL": "https://github.com/test/repo/pull/42"}
+	for k, v := range annotations {
+		a[k] = v
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "review-repo-42", "namespace": "alice",
+			"labels": map[string]interface{}{
+				"factory.gemini.google.com/managed": "true",
+				"sandbox.gemini.google.com/type":    "recipe",
+			},
+			"annotations": a,
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+}
+
+// A finished review run posted the pending review on GitHub (the runner
+// applies post-review as its harvest): the sandbox records it.
 func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	prSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name": "factory-pr-42", "namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-
 	fake := newFakeLauncher()
-	// The invocation ran with --publish draft: the pending review is already
-	// on GitHub; no banner output to harvest.
-	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "Posting review as a draft (pending) review to GitHub PR...\n"}
+	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "posted\n"}
 	// A standing review click, so ensureReview runs for PR 42.
 	req := click(boardv1alpha1.VerbReview, 42)
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), prSandbox, req)
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(nil), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
 	g.Expect(updated.GetAnnotations()[AnnotationReviewedAt]).NotTo(gomega.BeEmpty())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
 
 	// No launch happened (completion short-circuits), and the click is
-	// settled because the sandbox exists — after persisting the executor
-	// on the sandbox so resumes keep the draft-publish identity.
+	// settled because the sandbox exists — after persisting the executor.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 	g.Expect(updated.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 	status := requestStatus(t, r, req)
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(status.Sandbox).To(gomega.Equal("factory-pr-42"))
+	g.Expect(status.Sandbox).To(gomega.Equal("review-repo-42"))
 	g.Expect(status.CompletedAt).NotTo(gomega.BeNil())
 }
 
-// The production loop: a clicked review finished (pending posted on GitHub)
-// but the Request was settled and the sandbox carried no executor stamp — the
-// resume path reprocessed it as a draft-harvest, found no banner, and
-// relaunched forever. The invocation output's draft-posted marker must win.
-func TestResumeRecognizesPostedDraftWithoutExecutor(t *testing.T) {
+// A clicked review's Request settles when its sandbox exists, long before
+// the run ends: the resume pass reads the result.
+func TestResumeReviewMarksPending(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	prSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name": "factory-pr-42", "namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-
 	fake := newFakeLauncher()
-	fake.results["alice/review-repo-42"] = factorycli.Result{
-		FinishedAt: time.Now(),
-		Output:     "...\nPosting review as a draft (pending) review to GitHub PR...\n",
-	}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), prSandbox)
+	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Output: "posted\n"}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(nil))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
-// A review click launches in the clicker's namespace under their
-// identity with --publish draft (the pending review must be authored by
-// them to be visible to them).
+// A controller that restarted mid-review has no result in memory: it
+// invokes the recipe again with the review run recorded on the sandbox,
+// which follows that run instead of starting another. A revise's run,
+// recorded under the same annotation, is not followed.
+func TestResumeReviewByRecordedRun(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ghClient := testGithubClient(`[]`)
+
+	recorded := func(name string) map[string]interface{} {
+		return map[string]interface{}{
+			factorycli.AnnotationReviewRun: `{"name":"` + name + `","task":"recipe-review-1","startedAt":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`,
+		}
+	}
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(recorded("review/test-board/42/1700000000")))
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.Equal("review/test-board/42/1700000000"))
+
+	fake2 := newFakeLauncher()
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(recorded("revise/test-board/review-repo-42/review/1700000000")))
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches = fake2.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.HavePrefix("review/test-board/42/"))
+	g.Expect(launches[0].ReviewOpts.RunName).NotTo(gomega.Equal("review/test-board/42/1700000000"))
+}
+
+// A review click runs the review recipe in the clicker's namespace under
+// their identity (the pending review must be authored by them to be
+// visible to them), in their review sandbox, under a fresh run name.
 func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
@@ -558,7 +575,9 @@ func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-42"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
-	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
+	g.Expect(launches[0].ReviewOpts.SandboxName).To(gomega.Equal("review-repo-42"))
+	g.Expect(launches[0].ReviewOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/42"))
+	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.HavePrefix("review/test-board/42/"))
 	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
 
@@ -683,9 +702,9 @@ func TestDraftReviewIntake(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-5"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
-	// Personal board: the member is the executor — attributed, publish draft.
+	// Personal board: the member is the executor — attributed.
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
-	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
+	g.Expect(launches[0].ReviewOpts.SandboxName).To(gomega.Equal("review-repo-5"))
 	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
 
@@ -813,46 +832,19 @@ func TestReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-1163"))
-	g.Expect(launches[0].ReviewOpts.Publish).To(gomega.Equal("draft"))
 }
 
-// Review drafts are no longer harvested into annotations — a finished
-// invocation either shows the draft-posted marker (pending on GitHub) or
-// gets the standard backoff; legacy banner output stores nothing and must
-// not hot-loop the agent.
-func TestNoDraftHarvestAndNoHotLoop(t *testing.T) {
+// A run that failed before its sandbox existed backs off rather than
+// hot-looping the agent.
+func TestReviewFailureWithoutSandboxBacksOff(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name": "factory-pr-42", "namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-
 	fake := newFakeLauncher()
-	fake.results["alice/review-repo-42"] = factorycli.Result{
-		FinishedAt: time.Now(),
-		Output:     "Reading output...\n\n================= CODE REVIEW =================\nreview:\n  body: legacy banner\n===============================================\n",
-	}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
+	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Err: fmt.Errorf("exit status 1")}
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	updated := &unstructured.Unstructured{}
-	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationAgentDraft]).To(gomega.BeEmpty())
-	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.BeEmpty())
-	// Recent unrecognizable result: back off, no relaunch.
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
@@ -869,23 +861,7 @@ func TestSettleSubmittedReview(t *testing.T) {
 			{"id": 1, "state": "COMMENTED", "user": {"login": "alice"}}
 		]`),
 	}}})
-	sandbox := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name": "factory-pr-42", "namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{
-				"htmlURL":                          "https://github.com/test/repo/pull/42",
-				"reviewState":                      "pending",
-				"board.gemini.google.com/executor": "alice",
-			},
-		},
-		"spec": map[string]interface{}{"replicas": int64(0)},
-	}}
+	sandbox := reviewSandboxFixture(map[string]interface{}{"reviewState": "pending"})
 
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
@@ -895,7 +871,7 @@ func TestSettleSubmittedReview(t *testing.T) {
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("submitted"))
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
@@ -987,20 +963,7 @@ func TestReviewErrorParksUntilRetryClick(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	prSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name":      "factory-pr-42",
-			"namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "42",
-			},
-			"annotations": map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
+	prSandbox := reviewSandboxFixture(nil)
 
 	fake := newFakeLauncher()
 	fake.results["alice/review-repo-42"] = factorycli.Result{
@@ -1015,7 +978,7 @@ func TestReviewErrorParksUntilRetryClick(t *testing.T) {
 
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "factory-pr-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationReviewError]).To(gomega.ContainSubstring("OAuth App access restrictions"))
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 
@@ -1069,7 +1032,8 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 
 	// Someone else's pending review is invisible anyway, but a submitted
-	// one by the executor must not block.
+	// one by the executor must not block, nor a pending one factory
+	// posted (post-review replaces it).
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
 			suffix: "/reviews",
@@ -1549,10 +1513,9 @@ func TestPRTaskClaims(t *testing.T) {
 	g.Expect(got.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 }
 
-// A factory-pr sandbox created by a follow-up verb (hand-made PR attach)
-// must not read as an interrupted review: the live race launched a
-// review into a mid-clone sandbox and both tasks died.
-func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
+// The board's reviews live in review sandboxes: a factory-pr sandbox (a
+// follow-up verb's, or the watch's) never resumes as a review.
+func TestResumeReviewsSkipsPRSandboxes(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 	fake := newFakeLauncher()
@@ -1567,9 +1530,9 @@ func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
 				"factory.gemini.google.com/pr":      "88",
 			},
 			"annotations": map[string]interface{}{
-				"htmlURL":                  "https://github.com/test/repo/pull/88",
-				AnnotationIterateRequested: time.Now().UTC().Format(time.RFC3339),
-				AnnotationExecutor:         "alice",
+				"htmlURL":                     "https://github.com/test/repo/pull/88",
+				factorycli.AnnotationTaskType: "review",
+				AnnotationRereviewRequested:   time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -1578,7 +1541,7 @@ func TestResumeReviewsSkipsFollowUpOwnedSandbox(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	for _, l := range fake.launches() {
-		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "follow-up-owned sandbox must not resume a review")
+		g.Expect(l.ReviewOpts).To(gomega.BeNil(), "a factory-pr sandbox must not resume a review")
 	}
 }
 

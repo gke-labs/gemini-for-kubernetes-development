@@ -14,6 +14,9 @@ import (
 const (
 	AnnotationTriageRun = "sandbox.gemini.google.com/recipe-triage-run"
 	AnnotationPlanRun   = "sandbox.gemini.google.com/plan-run"
+	// AnnotationReviewRun is a review's: the recipe has no task type, so
+	// it runs as recipe-review, the main task of a sandbox of its own.
+	AnnotationReviewRun = "sandbox.gemini.google.com/recipe-review-run"
 )
 
 // RecordedRun is the run factory recorded on a sandbox.
@@ -72,6 +75,7 @@ var recordedRunKinds = []struct{ key, kind string }{
 	{AnnotationPlanRun, "Plan"},
 	{AnnotationTriageRun, "Triage"},
 	{ResearchRunAnnotation, "Notes"},
+	{AnnotationReviewRun, "Review"},
 }
 
 // SessionRun is the recorded run whose agent session is session, with the

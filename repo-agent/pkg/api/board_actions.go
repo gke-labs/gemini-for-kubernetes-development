@@ -219,7 +219,8 @@ func markRevise(actions []models.WorkAction, req boardv1alpha1.Request) {
 
 // needsTriageAccess is why a viewer who may not label the repo's issues
 // cannot add a triage's labels. Its comment needs nothing: anyone may
-// comment on a public issue.
+// comment on a public issue. Nor does a Review's post-review, for the same
+// reason: a pending review is a review anyone may write.
 const needsTriageAccess = "needs triage access on the repo"
 
 // forViewer is the feed as the viewer may act on it. The feed is built and

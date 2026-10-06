@@ -55,15 +55,16 @@ func notesSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured
 	return sb
 }
 
-// notesReviseKey is the runner key of a conversation's Save notes: one at
-// a time, as for a plan.
-func notesReviseKey(spec boardv1alpha1.RequestSpec) string {
-	return fmt.Sprintf("%s/revise-%s", spec.Member, spec.Sandbox)
+// sandboxReviseKey is the runner key of a revise filed for a sandbox (a
+// conversation's Save notes, a review's Update review): one at a time, as
+// for a plan.
+func sandboxReviseKey(member, sandbox string) string {
+	return fmt.Sprintf("%s/revise-%s", member, sandbox)
 }
 
-// notesRevisePrefix is the run names of a conversation's revise, before
-// the time.
-func notesRevisePrefix(board, sandbox, revise string) string {
+// sandboxRevisePrefix is the run names of a sandbox's revise, before the
+// time.
+func sandboxRevisePrefix(board, sandbox, revise string) string {
 	return fmt.Sprintf("revise/%s/%s/%s/", board, sandbox, revise)
 }
 
@@ -72,7 +73,7 @@ func notesRevisePrefix(board, sandbox, revise string) string {
 func (r *Reconciler) ensureNotesRevise(ctx context.Context, work *workState, req *boardv1alpha1.Request) {
 	logger := log.FromContext(ctx)
 	spec := req.Spec
-	key := notesReviseKey(spec)
+	key := sandboxReviseKey(spec.Member, spec.Sandbox)
 	if r.Factory.IsRunning(key) {
 		return
 	}
@@ -89,7 +90,7 @@ func (r *Reconciler) ensureNotesRevise(ctx context.Context, work *workState, req
 		return
 	}
 	annotations := sb.GetAnnotations()
-	prefix := notesRevisePrefix(work.board.Name, spec.Sandbox, spec.Revise)
+	prefix := sandboxRevisePrefix(work.board.Name, spec.Sandbox, spec.Revise)
 	runName := fmt.Sprintf("%s%d", prefix, time.Now().Unix())
 	if name, ok := r.resumableReviseRun(key, annotations, factorycli.ResearchRunAnnotation, prefix, req); ok {
 		runName = name
@@ -115,7 +116,7 @@ func (r *Reconciler) ensureNotesRevise(ctx context.Context, work *workState, req
 func (r *Reconciler) settleNotesRevise(ctx context.Context, work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
 	spec := req.Spec
 	sb := notesSandbox(work, spec)
-	key := notesReviseKey(spec)
+	key := sandboxReviseKey(spec.Member, spec.Sandbox)
 	res, ran := r.Factory.LastResult(key)
 	ran = ran && res.FinishedAt.After(req.CreationTimestamp.Time)
 	switch {

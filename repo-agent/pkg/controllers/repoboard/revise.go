@@ -83,6 +83,10 @@ func (r *Reconciler) ensureRevises(ctx context.Context, work *workState, reqs []
 		if spec.Revise == "" {
 			continue
 		}
+		if spec.Sandbox != "" && reviewRevise(work, spec) {
+			r.ensureReviewRevise(ctx, work, req)
+			continue
+		}
 		if spec.Sandbox != "" {
 			r.ensureNotesRevise(ctx, work, req)
 			continue
@@ -170,6 +174,9 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 			reason:  "Malformed",
 			message: "a revise names the recipe revise to run",
 		}
+	}
+	if spec.Sandbox != "" && reviewRevise(work, spec) {
+		return r.settleReviewRevise(ctx, work, req, now)
 	}
 	if spec.Sandbox != "" {
 		return r.settleNotesRevise(ctx, work, req, now)

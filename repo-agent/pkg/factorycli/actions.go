@@ -36,11 +36,14 @@ type Action struct {
 
 // boardVerbs are the verbs the board executes, by kind; a run, only the
 // fix follow-up. Anything else a document offers is not shown. Only a
-// plan's revises so far: triage's are factory's phase 4.
+// plan's revises so far: triage's are factory's phase 4. A review's
+// draft is the pending review on GitHub, edited and discarded there, so
+// the board only posts it and revises it.
 var boardVerbs = map[string][]string{
 	"Triage": {"edit", "label", "comment", "reject"},
 	"Plan":   {"edit", "comment", "run", "revise", "reject"},
 	"Notes":  {"edit", "push-notes", "reject"},
+	"Review": {"post-review", "revise"},
 }
 
 // defaultActions are a kind's actions when its document declares none (or
@@ -62,6 +65,11 @@ var defaultActions = map[string][]Action{
 	"Notes": {
 		{Verb: "edit", Field: "spec.markdown", Format: "markdown"},
 		{Verb: "push-notes", Label: "Save to research/notes"},
+		{Verb: "reject"},
+	},
+	"Review": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "post-review", Label: "Post as pending review"},
 		{Verb: "reject"},
 	},
 }

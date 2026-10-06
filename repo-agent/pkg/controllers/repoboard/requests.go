@@ -346,11 +346,10 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 		}
 
 	case boardv1alpha1.VerbReview:
-		if sb := work.findPRSandbox(spec.Number); sb != nil {
+		if sb := work.reviewSandbox(spec.Member, spec.Number); sb != nil {
 			// Persist the consenting executor on the sandbox before the
-			// Request stops being read: it is the only durable record
-			// that this review was a member's click, and draft-publish
-			// depends on it.
+			// Request stops being read: it is the durable record that
+			// this review was a member's click.
 			if sb.GetAnnotations()[AnnotationExecutor] != spec.Member {
 				annotations := sb.GetAnnotations()
 				if annotations == nil {

@@ -122,3 +122,69 @@ func TestAnApprovedPlansSessionRefusesItsRevise(t *testing.T) {
 		t.Errorf("filed %+v", reqs)
 	}
 }
+
+// reviewSessionAt is the review's session on the board test's PR 42.
+const reviewSessionAt = "/api/task-sessions/review-repo-42/recipe-review-1"
+
+// reviewSessionServer is the board test server with PR 42's review
+// sandbox, whose recorded run offers Update review, in state (the
+// review's last-task-state) with reviewState.
+func reviewSessionServer(t *testing.T, state, reviewState string) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "review/myboard/42/1", Task: "recipe-review-1", StartedAt: time.Unix(1_000_000, 0),
+		Revises: []factorycli.RecordedRevise{{ID: "review", Label: "Update review"}},
+	})
+	annotations := map[string]interface{}{
+		"repo":    "repo",
+		"htmlURL": "https://github.com/test/repo/pull/42",
+		annoBoard: "myboard",
+		"sandbox.gemini.google.com/last-task-type":  "recipe-review",
+		"sandbox.gemini.google.com/last-task-state": state,
+		"reviewState":                  reviewState,
+		factorycli.AnnotationReviewRun: string(run),
+	}
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(1), boardCR(),
+		sandboxCR("review-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true"}, annotations, 1))
+	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
+	return r, dyn
+}
+
+// A review's Update review is filed for its sandbox: the review has no
+// row of its own to file it on, and no draft on the board (the draft is
+// the pending review on GitHub).
+func TestAReviewSessionFilesUpdateReviewForItsSandbox(t *testing.T) {
+	r, dyn := reviewSessionServer(t, "Completed", "pending")
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/post-review", `{}`); w.Code != http.StatusNotFound {
+		t.Errorf("a draft action: %d %s, want 404: the review's draft is on GitHub", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/revise", `{"revise":"review"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 {
+		t.Fatalf("filed %+v, want one revise", reqs)
+	}
+	spec := reqs[0].Spec
+	if spec.Verb != boardv1alpha1.VerbRevise || spec.Sandbox != "review-repo-42" || spec.Revise != "review" || spec.Number != 0 || spec.Member != "alice" {
+		t.Errorf("revise filed %+v, want alice's Update review of review-repo-42", spec)
+	}
+	// One at a time.
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/revise", `{"revise":"review"}`); w.Code != http.StatusConflict {
+		t.Errorf("second revise: %d %s, want 409 while the first stands", w.Code, w.Body.String())
+	}
+}
+
+// Not while the review runs, nor before it is on GitHub.
+func TestAReviewSessionRefusesUpdateReviewUntilPosted(t *testing.T) {
+	for _, tc := range []struct{ state, reviewState string }{{"Running", ""}, {"Completed", ""}} {
+		r, dyn := reviewSessionServer(t, tc.state, tc.reviewState)
+		if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/revise", `{"revise":"review"}`); w.Code != http.StatusConflict {
+			t.Errorf("%s/%q: revise %d %s, want 409", tc.state, tc.reviewState, w.Code, w.Body.String())
+		}
+		if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+			t.Errorf("filed %+v", reqs)
+		}
+	}
+}
