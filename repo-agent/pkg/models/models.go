@@ -125,6 +125,9 @@ type WorkItem struct {
 	// plan and triage runs, to watch while they run and continue after.
 	PlanSession   *TaskSession `json:"planSession,omitempty"`
 	TriageSession *TaskSession `json:"triageSession,omitempty"`
+	// ReviewSession is a PR's review session (the review recipe's), for
+	// Continue session and Update review.
+	ReviewSession *TaskSession `json:"reviewSession,omitempty"`
 }
 
 // TaskSession names a factory task's agent session: the sandbox it ran in

@@ -320,6 +320,7 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.GET("/repo-suggestions", server.getRepoSuggestions)
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
+	r.POST("/board/:board/prs/:id/abandon", server.abandonBoardReview)
 	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
 	r.POST("/board/:board/research", server.startResearchSession)
 	r.GET("/board/:board/research/prompts", server.getResearchPrompts)
@@ -459,9 +460,10 @@ func TestGetBoardWork(t *testing.T) {
 	fixSandbox := sandboxCR("fix-repo-10",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/issues/10"}, 1)
-	reviewSandbox := sandboxCR("factory-pr-42",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "42"},
-		map[string]interface{}{"reviewState": "pending", "htmlURL": "https://github.com/test/repo/pull/42"}, 1)
+	reviewSandbox := sandboxCR("review-repo-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
+		map[string]interface{}{"reviewState": "pending", "htmlURL": "https://github.com/test/repo/pull/42",
+			factorycli.AnnotationReviewRun: `{"name":"review/myboard/42/1","task":"recipe-review-1","startedAt":"2026-09-16T12:00:00Z"}`}, 1)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), fixSandbox, reviewSandbox)
 
@@ -490,6 +492,10 @@ func TestGetBoardWork(t *testing.T) {
 	}
 	if row := byKey["pr-42"]; row.Stage != "review-pending" || row.Attention != "needs-you" {
 		t.Errorf("pr-42 row wrong: %+v", row)
+	}
+	// The review's session, for Continue session and Update review.
+	if rs := byKey["pr-42"].ReviewSession; rs == nil || rs.Sandbox != "review-repo-42" || rs.Task != "recipe-review-1" {
+		t.Errorf("pr-42 review session wrong: %+v", rs)
 	}
 
 	// needs-you rows sort before working rows.
@@ -1011,8 +1017,8 @@ func TestSubmittedThenReRequested(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	submittedSandbox := sandboxCR("factory-pr-90",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "90"},
+	submittedSandbox := sandboxCR("review-repo-90",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
 		map[string]interface{}{"reviewState": "submitted", "htmlURL": "https://github.com/test/repo/pull/90"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), submittedSandbox)
@@ -1046,8 +1052,8 @@ func TestKickoffFeedbackStages(t *testing.T) {
 		]`,
 	}
 	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbReview, Number: 5})
-	provisioning := sandboxCR("factory-pr-6",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "6"},
+	provisioning := sandboxCR("review-repo-6",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
 		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6"}, 1)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), provisioning, clicked)
@@ -1591,8 +1597,8 @@ func TestPrelaunchFailureRendersFailed(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	stuck := sandboxCR("factory-pr-repo-55",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "55"},
+	stuck := sandboxCR("review-repo-55",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
 		map[string]interface{}{
 			"htmlURL":                           "https://github.com/test/repo/pull/55",
 			"review.gemini.google.com/error":    "connecting to sandbox: timed out waiting for sandbox pod",
@@ -2000,5 +2006,57 @@ func TestTriageInIssueSandbox(t *testing.T) {
 	}
 	if a := stored(); a[factorycli.AnnotationTriageDraft] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/triage-rejected-at"] == "" {
 		t.Errorf("after reject: %v", a)
+	}
+}
+
+// The board's review lives in the PR's review sandbox: a Review click
+// re-arms it and Abandon parks it there, never in the PR's fix or
+// follow-up sandbox.
+func TestReviewClicksFindTheReviewSandbox(t *testing.T) {
+	review := sandboxCR("review-repo-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
+		map[string]interface{}{"repo": "repo", "reviewState": "pending", "htmlURL": "https://github.com/test/repo/pull/42"}, 1)
+	followUp := sandboxCR("factory-pr-repo-42",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "42"},
+		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/42"}, 1)
+	_, r, dyn := boardTestServer(t, map[string]string{
+		"https://api.github.com/repos/test/repo/pulls/42/requested_reviewers":  `{}`,
+		"https://api.github.com/repos/test/repo/pulls/42/reviews?per_page=100": `[]`,
+	}, boardCR(), review, followUp)
+	annotations := func(name string) map[string]string {
+		t.Helper()
+		got, err := dyn.Resource(schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}).
+			Namespace("alice").Get(context.Background(), name, v1.GetOptions{})
+		if err != nil {
+			t.Fatalf("get %s: %v", name, err)
+		}
+		return got.GetAnnotations()
+	}
+
+	req, _ := http.NewRequest("POST", "/board/myboard/prs/42/review", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("review: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if annotations("review-repo-42")[annoRereviewRequest] == "" {
+		t.Error("the Review click did not re-arm the review sandbox")
+	}
+	if annotations("factory-pr-repo-42")[annoRereviewRequest] != "" {
+		t.Error("the Review click stamped the PR's follow-up sandbox")
+	}
+
+	req, _ = http.NewRequest("POST", "/board/myboard/prs/42/abandon", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("abandon: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	a := annotations("review-repo-42")
+	if a["reviewState"] != "" || a[annoReviewAbandoned] == "" {
+		t.Errorf("abandon did not park the review sandbox: %v", a)
+	}
+	if annotations("factory-pr-repo-42")[annoReviewAbandoned] != "" {
+		t.Error("abandon stamped the PR's follow-up sandbox")
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 )
 
@@ -203,26 +204,38 @@ func PRSandboxName(repo string, prNum int) string {
 // fix sandbox aliased to the same PR instead of the default factory-pr-<n>).
 const LabelPR = "factory.gemini.google.com/pr"
 
-// draftPostedMarker appears in `factory pr review --publish draft` output
-// once the pending review has been posted to GitHub (draft mode prints no
-// CODE REVIEW banner, so this line is the completion signal).
-const draftPostedMarker = "Posting review as a draft (pending) review to GitHub PR"
-
-// DraftWasPosted reports whether an invocation's output shows the review
-// was published as a pending (draft) review on GitHub.
-func DraftWasPosted(output string) bool {
-	return strings.Contains(output, draftPostedMarker)
+// ReviewSandboxName is the sandbox `factory recipe review` runs a PR's
+// review in: factory's RecipeSandboxName for the review recipe, which has
+// a sandbox of its own (credentials: clone), review-<repo>-<n>. It carries
+// no PR label, so `factory pr` never adopts it, and the board finds it by
+// its name (ReviewPROf).
+func ReviewSandboxName(repo string, prNum int) string {
+	return fmt.Sprintf("review-%s-%d", repo, prNum)
 }
 
-// ReviewOptions are the inputs for a `factory pr review` invocation.
+// ReviewPROf is the PR the review sandbox sb is for, false for any other
+// sandbox.
+func ReviewPROf(sb *unstructured.Unstructured, repo string) (int, bool) {
+	if r := sb.GetAnnotations()["repo"]; r != "" && r != repo {
+		return 0, false
+	}
+	rest, ok := strings.CutPrefix(sb.GetName(), "review-"+repo+"-")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	return n, err == nil && n > 0
+}
+
+// ReviewOptions are the inputs for a `factory recipe review` invocation.
 type ReviewOptions struct {
-	// SandboxName enables the in-flight preflight (factory-pr-<repo>-<n>).
+	// SandboxName is the sandbox the review runs in (ReviewSandboxName),
+	// to read its result back from.
 	SandboxName string
 
 	Namespace string
 	PRURL     string
-	// Instructions are passed as repeated --instruction flags (review
-	// prompt plus any policy lines like severity thresholds).
+	// Instructions are passed as repeated --instruction flags.
 	Instructions      []string
 	Image             string
 	WorkspaceDiskSize string
@@ -230,11 +243,9 @@ type ReviewOptions struct {
 	// Engine selects the agent engine (factory --engine); empty = gemini.
 	Engine  string
 	Timeout time.Duration
-	// Publish is factory's --publish policy. "no" (default) prints the
-	// review between CODE REVIEW banners for draft harvesting; "draft"
-	// posts a pending review on GitHub under the invoking identity (only
-	// visible to that identity — use the consenting member's token).
-	Publish string
+	// RunName records the review's task in the sandbox, to read its
+	// result back by (factory --run-name).
+	RunName string
 }
 
 // PRWatchOptions are the inputs for a `factory pr watch` invocation, the
@@ -384,9 +395,10 @@ type Launcher interface {
 	// StartFix launches `factory fix` for key unless one is already running.
 	// Returns false if an invocation for key is already in flight.
 	StartFix(key string, opts FixOptions) bool
-	// StartReview launches `factory pr review` for key unless
-	// one is already running. The review YAML is recovered from the
-	// invocation's output (see DraftWasPosted) via LastResult.
+	// StartReview launches `factory recipe review` for key unless one is
+	// already running, and posts the review it writes as the member's
+	// pending review on the PR: a result without an error is a review
+	// posted.
 	StartReview(key string, opts ReviewOptions) bool
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
@@ -523,19 +535,21 @@ func (r *Runner) StartFix(key string, opts FixOptions) bool {
 	})
 }
 
+// StartReview runs `factory recipe review`, reads its Review task output
+// back with `factory sandbox task output --run-name`, and posts it with
+// `factory apply --action post-review`: the member's pending review on the
+// PR, at the commit reviewed. The draft is GitHub's; the board keeps none.
+// The result's Output has the Review between reviewBanner and a closer,
+// then what apply said; a result without an error is a review posted.
 func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 45 * time.Minute
 	}
-	publish := opts.Publish
-	if publish == "" {
-		publish = "no"
-	}
 	args := []string{
-		"pr", "review",
-		"--pr-url", opts.PRURL,
-		"--publish", publish,
+		"recipe", "review",
+		"--run-name", opts.RunName,
+		"--url", opts.PRURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
@@ -554,9 +568,35 @@ func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
 	}
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: "review",
-	})
+	// No probe, as for triage: the run name is the run.
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.reviewHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
+}
+
+// reviewBanner opens the Review in a review's Output.
+const reviewBanner = "================= PR REVIEW ===================="
+
+// reviewHarvest reads a finished review run's Review task output back by
+// its run name and posts it as the pending review: apply replaces the
+// pending review factory posted before (a revise's), and refuses one the
+// member wrote, so running it again after a restart repeats nothing.
+func (r *Runner) reviewHarvest(sandbox, namespace, runName, githubToken string) *preflight {
+	return &preflight{
+		harvest: func(ctx context.Context, out string, err error) (string, error) {
+			if err != nil {
+				return out, err
+			}
+			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
+			if err != nil {
+				return out + "\n" + doc, fmt.Errorf("reading the review's task output: %w", err)
+			}
+			section := reviewBanner + "\n" + doc + "\n" + bannerCloser + "\n"
+			posted, err := r.applyDoc(ctx, doc, "post-review", githubToken)
+			if err != nil {
+				return section + posted, fmt.Errorf("posting the review: %w", err)
+			}
+			return section + posted, nil
+		},
+	}
 }
 
 func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
@@ -700,11 +740,15 @@ type ReviseOptions struct {
 	// RunName records the revise's task in the sandbox, to read its
 	// result back by.
 	RunName string
+	// PostReview is for a review's Update review: the Review the revise
+	// writes is posted as the pending review, as a review's is, replacing
+	// the one factory posted before.
+	PostReview bool
 }
 
 // StartRevise runs `factory recipe revise` and reads its result back as
-// StartPlan does, after planBanner: for ExtractPlan, or ExtractNotes. The
-// revise runs on the sandbox's disk and engine as its task left them, so
+// StartPlan does, after planBanner: for ExtractPlan, or ExtractNotes; a
+// review's (PostReview) is posted as StartReview's is. The revise runs on the sandbox's disk and engine as its task left them, so
 // it takes no image, disk or engine.
 func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	timeout := opts.Timeout
@@ -720,6 +764,9 @@ func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	}
 	if opts.Session != "" {
 		args = append(args, "--task", opts.Session)
+	}
+	if opts.PostReview {
+		return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.reviewHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
 	}
 	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.planHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
 }

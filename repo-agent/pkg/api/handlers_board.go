@@ -733,6 +733,16 @@ func (s *Server) boardSandboxes(ctx context.Context, namespace, owner, repo stri
 	return byName, nil
 }
 
+// reviewSandbox is the PR's review sandbox in namespace
+// (factorycli.ReviewSandboxName), or nil.
+func (s *Server) reviewSandbox(ctx context.Context, namespace, owner, repo string, pr int) *unstructured.Unstructured {
+	sandboxes, err := s.boardSandboxes(ctx, namespace, owner, repo)
+	if err != nil {
+		return nil
+	}
+	return sandboxes[factorycli.ReviewSandboxName(repo, pr)]
+}
+
 // annoTaskEngine is where factory records the engine of the task it last
 // started in a sandbox, in the same write that marks it Running.
 const annoTaskEngine = "sandbox.gemini.google.com/last-task-engine"
@@ -1033,7 +1043,8 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 
-	if len(viewLabels) > 0 && !hasAnyLabel(pr.Labels, viewLabels) && sb == nil {
+	if len(viewLabels) > 0 && !hasAnyLabel(pr.Labels, viewLabels) && sb == nil &&
+		sandboxes[factorycli.ReviewSandboxName(repo, pr.GetNumber())] == nil {
 		return
 	}
 
@@ -1061,14 +1072,21 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		}
 	}
 
-	reviewState := ""
+	// The board's review runs in a sandbox of its own (the review
+	// recipe's); the PR's sandbox carries the fix and its follow-ups.
+	rsb := sandboxes[factorycli.ReviewSandboxName(repo, pr.GetNumber())]
 	state := ""
+	if sb != nil {
+		state = sb.GetAnnotations()[annoTaskState]
+	}
+	reviewState := ""
+	reviewTaskState := ""
 	reviewError := ""
 	restarting := false
-	if sb != nil {
-		annotations := sb.GetAnnotations()
+	if rsb != nil {
+		annotations := rsb.GetAnnotations()
 		reviewState = annotations["reviewState"]
-		state = annotations[annoTaskState]
+		reviewTaskState = annotations[annoTaskState]
 		reviewError = annotations[annoReviewError]
 		// A re-review marker newer than the last task activity means a
 		// relaunch is waking the sandbox: stale Failed/Completed stamps
@@ -1087,10 +1105,8 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	stage, attention := "open", ""
 	switch {
 	case state == "Running":
-		// An active run always wins — stale reviewState from a previous
-		// cycle must not mask a re-review in flight. The stage is named by
-		// the TASK TYPE: an aliased fix sandbox can be running a fix or a
-		// follow-up, and calling those "reviewing" misled owners.
+		// The PR's sandbox is at work: the stage is named by the TASK
+		// TYPE, a fix or a follow-up.
 		stage, attention = "reviewing", attentionWorking
 		switch sb.GetAnnotations()["sandbox.gemini.google.com/last-task-type"] {
 		case "fix-issue":
@@ -1102,6 +1118,10 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		case "investigate":
 			stage = "investigating"
 		}
+	case reviewTaskState == "Running":
+		// An active review always wins — stale reviewState from a previous
+		// cycle must not mask a re-review in flight.
+		stage, attention = "reviewing", attentionWorking
 	case restarting:
 		stage, attention = "review-starting", attentionWorking
 	case reviewError != "" && reviewState == "":
@@ -1110,12 +1130,12 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		// this case they fall into "provisioning" below and render as
 		// starting forever, with no Retry to unstick them.
 		stage, attention = "review-failed", attentionNeedsYou
-	case sb != nil && state == "" && reviewState == "":
+	case rsb != nil && reviewTaskState == "" && reviewState == "":
 		// Sandbox exists but the task hasn't stamped a state yet:
 		// provisioning (pod scheduling, image pull, clone). Not the
 		// member's move.
 		stage, attention = "review-starting", attentionWorking
-	case state == "Failed" && reviewState == "":
+	case reviewTaskState == "Failed" && reviewState == "":
 		// The run died without posting anything — surface it instead of
 		// falling back to the pre-click stage.
 		stage, attention = "review-failed", attentionNeedsYou
@@ -1188,7 +1208,11 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		DraftPR:         pr.GetDraft(),
 		Fixes:           closingRefs(pr.GetBody()),
 		Sandbox:         workSandbox(sb, autoDefault),
+		ReviewSession:   taskSession(rsb, factorycli.AnnotationReviewRun),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
+	}
+	if sb == nil {
+		items[key].Sandbox = workSandbox(rsb, autoDefault)
 	}
 }
 
@@ -1260,20 +1284,13 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		log.Info("member token unavailable; request-only kickoff", "err", err)
 	}
 
-	// A fresh review consent also stamps the re-review marker on any
-	// existing sandbox for this PR, so a previously finished (or
+	// A fresh review consent also stamps the re-review marker on the PR's
+	// review sandbox, if there is one, so a previously finished (or
 	// abandoned) review relaunches instead of staying terminal.
 	if kind == "pr" {
-		prStr := strconv.Itoa(number)
 		for _, ns := range []string{namespace, board.GetNamespace()} {
-			sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-			if err != nil {
-				continue
-			}
-			for _, sb := range sandboxes {
-				if sb.GetLabels()[labelFactoryPR] == prStr {
-					_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoRereviewRequest, nowRFC3339())
-				}
+			if sb := s.reviewSandbox(ctx, ns, owner, repo, number); sb != nil {
+				_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoRereviewRequest, nowRFC3339())
 			}
 		}
 	}
@@ -1486,20 +1503,14 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 	// Clear the sandbox's review state so the row returns to its plain
 	// stage; the abandoned-at marker stops the controller from re-marking
 	// the stale invocation result as pending.
-	prStr := strconv.Itoa(number)
 	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
+		sb := s.reviewSandbox(ctx, ns, owner, repo, number)
+		if sb == nil {
 			continue
 		}
-		for _, sb := range sandboxes {
-			if sb.GetLabels()[labelFactoryPR] != prStr {
-				continue
-			}
-			_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "reviewState", "")
-			_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
-			_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
-		}
+		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "reviewState", "")
+		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
+		_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }

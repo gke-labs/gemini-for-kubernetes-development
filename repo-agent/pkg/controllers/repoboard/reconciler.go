@@ -450,6 +450,12 @@ func (w *workState) findSandbox(namespace, name string) *unstructured.Unstructur
 	return nil
 }
 
+// reviewSandbox is the member's sandbox of pr's review
+// (factorycli.ReviewSandboxName), or nil.
+func (w *workState) reviewSandbox(namespace string, pr int) *unstructured.Unstructured {
+	return w.findSandbox(namespace, factorycli.ReviewSandboxName(w.repo, pr))
+}
+
 func (w *workState) findPRSandbox(pr int) *unstructured.Unstructured {
 	prStr := strconv.Itoa(pr)
 	for _, sb := range w.sandboxes {
@@ -841,9 +847,10 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	}
 }
 
-// ensureReview launches (or harvests) a draft review. Drafts are
-// unattributed prep: they run in the board namespace under the discovery
-// identity and write nothing to GitHub.
+// ensureReview launches a review, or reads what came of one: `factory
+// recipe review` in the executor's review sandbox, whose Review the
+// runner posts as the executor's pending review on the PR once the run
+// ends (StartReview). The draft is GitHub's; the board keeps none.
 func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan reviewPlan) {
 	logger := log.FromContext(ctx)
 
@@ -855,44 +862,29 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	if plan.executor == "" {
 		return
 	}
-	token, err := r.executorToken(ctx, plan.executor)
-	if err != nil {
-		logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
-		return
-	}
-	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
-		logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
-		return
-	}
-	key := fmt.Sprintf("%s/review-%s-%d", plan.executor, work.repo, plan.pr)
-
-	sb := work.findPRSandbox(plan.pr)
+	key := reviewKey(work, plan.executor, plan.pr)
+	name := factorycli.ReviewSandboxName(work.repo, plan.pr)
+	sb := work.reviewSandbox(plan.executor, plan.pr)
 	annotations := map[string]string{}
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	// Abandoned, errored and legacy draft-bearing sandboxes are terminal:
-	// relaunch only on a fresh re-review marker (a new click stamps one).
-	done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
-		annotations[AnnotationReviewAbandoned] != "" || annotations[AnnotationReviewError] != ""
+	// Posted, abandoned and errored reviews are terminal: relaunch only
+	// on a fresh re-review marker (a new click stamps one).
+	done := annotations[AnnotationReviewState] != "" || annotations[AnnotationReviewAbandoned] != "" ||
+		annotations[AnnotationReviewError] != ""
 	if done && !reviewRerunRequested(sb) {
 		return
 	}
-	if r.Factory.IsRunning(key) {
+	// Nor while an Update review rewrites it.
+	if r.Factory.IsRunning(key) || r.Factory.IsRunning(sandboxReviseKey(plan.executor, name)) {
 		return
-	}
-	// A follow-up verb (iterate/address/investigate) may be provisioning
-	// this PR's sandbox — its task is not visible to the prober yet.
-	for _, kind := range []string{"iterate", "address", "investigate"} {
-		if r.Factory.IsRunning(fmt.Sprintf("%s/%s-%d", plan.executor, kind, plan.pr)) {
-			return
-		}
 	}
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
-		if res.Err == nil && sb != nil && factorycli.DraftWasPosted(res.Output) {
-			// The pending review is already on GitHub; record that so the
-			// board points the member there.
+		if res.Err == nil && sb != nil {
+			// The pending review is on GitHub; record that so the board
+			// points the member there.
 			if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
 				logger.Error(err, "unable to mark review pending", "pr", plan.pr)
 			}
@@ -906,8 +898,8 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 			}
 			return
 		}
-		// Pre-sandbox failure, or a success with nothing recognizable in
-		// its output: back off rather than hot-looping the agent.
+		// A failure before the sandbox existed: back off rather than
+		// hot-looping the agent.
 		if time.Since(res.FinishedAt) < launchRetryBackoff {
 			return
 		}
@@ -917,9 +909,19 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		logger.Info("review deferred: board at maxActive", "pr", plan.pr, "limit", maxActive(work.board))
 		return
 	}
-	// GitHub is the only storage for pending reviews and allows one per
-	// author per PR: a fresh or re-armed launch must not race a review
-	// already parked there (the post step would 422 and burn a full run).
+	token, err := r.executorToken(ctx, plan.executor)
+	if err != nil {
+		logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
+		return
+	}
+	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
+		logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
+		return
+	}
+	// GitHub allows one pending review per author per PR. factory's post
+	// replaces a pending review it posted, and refuses one the member
+	// wrote: a fresh or re-armed launch must not race the member's own
+	// (the post would fail after burning a full run).
 	if sb == nil || reviewRerunRequested(sb) {
 		gh := newGithubClientFromToken(ctx, token)
 		pending, reviewed, err := executorReviewStates(ctx, gh, work.owner, work.repo, plan.pr, plan.executor)
@@ -928,9 +930,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 			return
 		}
 		if pending {
-			// GitHub allows one pending review per author: launching would
-			// 422 at the post step after burning a full run.
-			logger.Info("pending review already parked on GitHub; not launching", "pr", plan.pr, "executor", plan.executor)
+			logger.Info("the member's own pending review is parked on GitHub; not launching", "pr", plan.pr, "executor", plan.executor)
 			return
 		}
 		if reviewed && plan.auto {
@@ -941,65 +941,62 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 			return
 		}
 	}
+	// A run this controller did not see end (a restart's) is followed by
+	// its recorded name; a revise's, recorded under the same key, is not
+	// the review's.
+	runName := r.resumableRun(key, annotations, factorycli.AnnotationReviewRun, reviewRunName(work.board.Name, plan.pr),
+		AnnotationReviewedAt, AnnotationReviewErrorAt, AnnotationReviewAbandoned, AnnotationRereviewRequested)
+	if !strings.HasPrefix(runName, reviewRunPrefix(work.board.Name, plan.pr)) {
+		runName = reviewRunName(work.board.Name, plan.pr)
+	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
-	reviewSandbox := ""
-	if sb != nil {
-		reviewSandbox = sb.GetName()
-	}
 	if r.Factory.StartReview(key, factorycli.ReviewOptions{
 		Namespace:         plan.executor,
-		SandboxName:       reviewSandbox,
+		SandboxName:       name,
 		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
-		Publish:           "draft",
 		Engine:            boardEngine(work.board),
+		RunName:           runName,
 	}) {
-		logger.Info("launched factory review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
+		logger.Info("launched factory recipe review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
 	}
 }
 
-// resumeReviews revisits board-namespace sandboxes that carry (or should
-// carry) a review: harvesting a finished invocation's draft or relaunching
-// an interrupted review. A fix sandbox aliased to a PR never gets an
-// unrequested review launched on it.
+// reviewKey is the runner key of a PR's reviews.
+func reviewKey(work *workState, member string, pr int) string {
+	return fmt.Sprintf("%s/review-%s-%d", member, work.repo, pr)
+}
+
+// reviewRunName is what a review's task is recorded under in its sandbox,
+// as planRunName is for a plan's.
+func reviewRunName(board string, pr int) string {
+	return fmt.Sprintf("%s%d", reviewRunPrefix(board, pr), time.Now().Unix())
+}
+
+func reviewRunPrefix(board string, pr int) string {
+	return fmt.Sprintf("review/%s/%d/", board, pr)
+}
+
+// resumeReviews revisits the review sandboxes whose review has not ended:
+// following a run a restart lost sight of, by its recorded name, and
+// relaunching one a re-review click re-armed.
 func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
 	for _, sb := range work.sandboxes {
-		prStr := sb.GetLabels()[factorycli.LabelPR]
-		if prStr == "" {
+		pr, ok := factorycli.ReviewPROf(sb, work.repo)
+		if !ok {
 			continue
 		}
 		annotations := sb.GetAnnotations()
-		// A factory-pr name no longer implies review: the PR follow-up
-		// verbs create factory-pr sandboxes too (hand-made PR attach). The
-		// name reads as review only while nothing says otherwise — no
-		// non-review task ran and no follow-up request owns the sandbox.
-		taskType := annotations[factorycli.AnnotationTaskType]
-		prTaskOwned := annotations[AnnotationIterateRequested] != "" ||
-			annotations[AnnotationAddressRequested] != "" ||
-			annotations[AnnotationInvestigateRequested] != ""
-		reviewish := taskType == "review" ||
-			(strings.HasPrefix(sb.GetName(), "factory-pr-") && (taskType == "" || taskType == "review") && !prTaskOwned)
-		rerun := reviewRerunRequested(sb)
-		if !reviewish && !rerun {
+		done := annotations[AnnotationReviewState] != "" || annotations[AnnotationReviewAbandoned] != "" ||
+			annotations[AnnotationReviewError] != ""
+		if done && !reviewRerunRequested(sb) {
 			continue
 		}
-		done := annotations[AnnotationAgentDraft] != "" || annotations[AnnotationReviewState] != "" ||
-			annotations[AnnotationReviewAbandoned] != "" || annotations[AnnotationReviewError] != ""
-		if done && !rerun {
-			continue
-		}
-		pr, err := strconv.Atoi(prStr)
-		if err != nil {
-			continue
-		}
-		// The stamped executor (a member's click) survives restarts; a
-		// sandbox outside the board namespace belongs to the executor
-		// whose namespace hosts it, and on personal boards the member is
-		// the only possible executor.
-		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: work.board.Namespace})
+		// The sandbox is in its executor's namespace.
+		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: sb.GetNamespace()})
 	}
 }
 
@@ -1014,14 +1011,11 @@ func (r *Reconciler) settleSubmittedReviews(ctx context.Context, work *workState
 		if annotations[AnnotationReviewState] != reviewStatePending {
 			continue
 		}
-		pr, err := strconv.Atoi(sb.GetLabels()[factorycli.LabelPR])
-		if err != nil {
+		pr, ok := factorycli.ReviewPROf(sb, work.repo)
+		if !ok {
 			continue
 		}
-		executor := work.board.Namespace
-		if executor == "" {
-			continue
-		}
+		executor := sb.GetNamespace()
 		token, err := r.executorToken(ctx, executor)
 		if err != nil {
 			continue
@@ -1367,10 +1361,6 @@ func (r *Reconciler) ensurePRTaskClicks(ctx context.Context, work *workState, sk
 				busy = true
 			}
 		}
-		// A review child may own a factory-pr sandbox.
-		if r.Factory.IsRunning(fmt.Sprintf("%s/review-%s-%s", namespace, work.repo, prNum)) {
-			busy = true
-		}
 		// A fix or plan child may still be provisioning this sandbox (no
 		// task landed yet for the prober's sandbox-wide busy check to
 		// see): their runner keys derive from the sandbox name.
@@ -1558,10 +1548,16 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	}
 }
 
+// factoryReviewMarker opens the marker factory ends a review it posts
+// with (factory/pkg/taskoutput).
+const factoryReviewMarker = "<!-- factory:task-output kind=Review "
+
 // executorReviewStates reports whether the executor has a pending review
-// parked on the PR and whether they have any submitted one. Pending
-// reviews are only visible to their author, so the check must run under
-// the executor's own token.
+// of their own parked on the PR and whether they have any submitted one.
+// A pending review factory posted (its body carries factory's Review
+// marker) is not the executor's own: posting a new review replaces it.
+// Pending reviews are only visible to their author, so the check must run
+// under the executor's own token.
 func executorReviewStates(ctx context.Context, gh *github.Client, owner, repo string, pr int, executor string) (pending, reviewed bool, err error) {
 	reviews, _, err := gh.PullRequests.ListReviews(ctx, owner, repo, pr, &github.ListOptions{PerPage: 100})
 	if err != nil {
@@ -1573,7 +1569,7 @@ func executorReviewStates(ctx context.Context, gh *github.Client, owner, repo st
 		}
 		switch strings.ToUpper(rv.GetState()) {
 		case "PENDING":
-			pending = true
+			pending = pending || !strings.Contains(rv.GetBody(), factoryReviewMarker)
 		case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
 			reviewed = true
 		}

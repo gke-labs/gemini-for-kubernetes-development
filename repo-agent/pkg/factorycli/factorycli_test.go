@@ -11,12 +11,3 @@ func TestExtractTriageYAML_RealFactoryOutput(t *testing.T) {
 		t.Fatalf("ExtractTriageYAML mismatch: %q", got)
 	}
 }
-
-func TestDraftWasPosted(t *testing.T) {
-	if !DraftWasPosted("...\nPosting review as a draft (pending) review to GitHub PR...\n") {
-		t.Fatal("marker not detected")
-	}
-	if DraftWasPosted("================= CODE REVIEW =================") {
-		t.Fatal("false positive")
-	}
-}

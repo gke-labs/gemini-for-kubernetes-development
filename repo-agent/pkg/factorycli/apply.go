@@ -176,31 +176,50 @@ func (r *Runner) StartApply(key string, opts ApplyOptions) bool {
 	}
 	// A file, because command has no stdin. Removed once the run is
 	// over, whatever came of it.
-	f, err := os.CreateTemp("", "task-output-*.yaml")
+	name, err := writeTaskOutput(opts.Doc)
 	if err != nil {
-		r.fail(key, fmt.Errorf("writing the task output: %w", err))
+		r.fail(key, err)
 		return true
 	}
-	_, werr := f.WriteString(opts.Doc)
+	args := []string{"apply", "-f", name, "--action", opts.Action}
+	started := r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
+		harvest: func(_ context.Context, out string, err error) (string, error) {
+			os.Remove(name)
+			return out, err
+		},
+	})
+	if !started {
+		os.Remove(name)
+	}
+	return started
+}
+
+// applyDoc runs `factory apply -f <doc> --action <action>` to its end,
+// within another invocation: a review's post-review, once its run ends.
+func (r *Runner) applyDoc(ctx context.Context, doc, action, githubToken string) (string, error) {
+	name, err := writeTaskOutput(doc)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(name)
+	return r.exec(ctx, []string{"apply", "-f", name, "--action", action}, githubToken)
+}
+
+// writeTaskOutput writes doc to a file of its own, for factory apply -f.
+func writeTaskOutput(doc string) (string, error) {
+	f, err := os.CreateTemp("", "task-output-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("writing the task output: %w", err)
+	}
+	_, werr := f.WriteString(doc)
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
 	if werr != nil {
 		os.Remove(f.Name())
-		r.fail(key, fmt.Errorf("writing the task output: %w", werr))
-		return true
+		return "", fmt.Errorf("writing the task output: %w", werr)
 	}
-	args := []string{"apply", "-f", f.Name(), "--action", opts.Action}
-	started := r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		harvest: func(_ context.Context, out string, err error) (string, error) {
-			os.Remove(f.Name())
-			return out, err
-		},
-	})
-	if !started {
-		os.Remove(f.Name())
-	}
-	return started
+	return f.Name(), nil
 }
 
 // fail records a result for key without running anything.

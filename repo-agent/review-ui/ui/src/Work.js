@@ -373,7 +373,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   };
   const stageBtn = STAGE_BUTTON[item.stage];
   const liveSession = item.stage === 'planning' ? item.planSession
-    : item.stage === 'triaging' ? item.triageSession : null;
+    : item.stage === 'triaging' ? item.triageSession
+    : item.stage === 'reviewing' ? item.reviewSession : null;
   const actions = [];
   if (!stageBtn && item.type === 'issue') {
     if (['untriaged', 'open', 'triaged', 'plan-failed'].includes(item.stage)) {
@@ -758,6 +759,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           }}>
             <span>Your draft review is saved on GitHub (visible only to you) — finalize it there, or abandon it to start over.</span>
             <span style={{ whiteSpace: 'nowrap' }}>
+              {/* The draft is the pending review on GitHub; the session is
+                  where to ask the agent about it, or have it Update review. */}
+              {item.reviewSession && (
+                <a className="btn btn-sm" href={taskSessionHref(item.reviewSession)}
+                  target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginRight: '4px' }}
+                  title="Continue the review conversation where it left off, in its own tab — Update review posts a new pending review over this one"
+                >Continue session ↗</a>
+              )}
               <a className="btn btn-sm" href={`${item.htmlURL}/files`} target="_blank" rel="noopener noreferrer"
                 style={{ textDecoration: 'none' }} title="Open your pending review on GitHub">Finalize ↗</a>
               <button className="btn btn-sm" style={{ marginLeft: '4px' }}
