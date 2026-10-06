@@ -10,15 +10,11 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/feedback"
 )
 
 // prHistory is everything said and done on a pull request, fetched once per
-// evaluation.
-//
-// The conversation is read up front rather than on demand because nearly every
-// decision that follows needs some part of it, and each part costs a paginated
-// round trip. Fetching it once also means every phase reasons about the same
-// snapshot, instead of one phase seeing a comment that another did not.
+// evaluation (feedback.History, under the names the scanner uses).
 type prHistory struct {
 	// comments are the pull request's top-level comments.
 	comments []*githubv39.IssueComment
@@ -32,57 +28,19 @@ type prHistory struct {
 	lastCommitTime time.Time
 }
 
-// fetchHistory reads the commits, comments and reviews of a pull request.
-//
-// A failure to list commits is tolerated - a zero lastCommitTime simply makes
-// every comment look new, which errs towards doing the work again rather than
-// towards silently skipping it. A failure to list comments, reviews or the
-// inline comments of those reviews is not: without them the scanner cannot tell
-// whether feedback is outstanding, and acting on that blank picture would queue
-// the wrong task - or, worse, none at all, since a pull request whose only
-// outstanding feedback is inline would look clean and be handed back to a human.
-//
-// The inline comments are read for the whole pull request in one call and
-// grouped by review here, rather than fetched per review. Both spellings
-// return the same thing, but the per-review one costs a request each, so its
-// price rose with every review a pull request had ever received - which on a
-// long-lived change was the single largest term in the cost of evaluating it.
+// fetchHistory reads the commits, comments and reviews of a pull request
+// (feedback.Fetch).
 func (s *Scanner) fetchHistory(ctx context.Context, num int) (*prHistory, error) {
-	h := &prHistory{revCommentsMap: make(map[int64][]*githubv39.PullRequestComment)}
-
-	commits, err := s.gh.ListCommits(ctx, num)
-	if err == nil {
-		for _, c := range commits {
-			if c.GetCommit().GetCommitter().GetDate().After(h.lastCommitTime) {
-				h.lastCommitTime = c.GetCommit().GetCommitter().GetDate()
-			}
-		}
-	}
-
-	h.comments, err = s.gh.ListIssueComments(ctx, num)
+	h, err := feedback.Fetch(ctx, s.gh, num)
 	if err != nil {
-		return nil, fmt.Errorf("listing issue comments: %w", err)
+		return nil, err
 	}
-
-	h.reviews, err = s.gh.ListReviews(ctx, num)
-	if err != nil {
-		return nil, fmt.Errorf("listing reviews: %w", err)
-	}
-
-	revComments, err := s.gh.ListAllReviewComments(ctx, num)
-	if err != nil {
-		return nil, fmt.Errorf("listing review comments: %w", err)
-	}
-	for _, rc := range revComments {
-		// A comment with no review behind it is not addressable as review
-		// feedback - every consumer of this map looks a review up by ID - so it
-		// is dropped rather than collected under the zero key.
-		if id := rc.GetPullRequestReviewID(); id != 0 {
-			h.revCommentsMap[id] = append(h.revCommentsMap[id], rc)
-		}
-	}
-
-	return h, nil
+	return &prHistory{
+		comments:       h.Comments,
+		reviews:        h.Reviews,
+		revCommentsMap: h.ReviewComments,
+		lastCommitTime: h.LastCommitTime,
+	}, nil
 }
 
 // pauseIfInactive stops the watcher working a pull request that no human has

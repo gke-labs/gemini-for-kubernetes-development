@@ -8,6 +8,7 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/feedback"
 )
 
 // prCommentAnalysis is the verdict on a pull request's outstanding feedback.
@@ -34,11 +35,8 @@ type prCommentAnalysis struct {
 //
 // A comment counts as outstanding only if it post-dates both the last commit
 // (a push is taken as the answer to everything said before it) and the last
-// address-comments task.
-//
-// Reactions are the second gate. What the emoji on a comment mean, and which
-// of them outrank the others, is conventions.CommentState's business; this
-// function only asks whether the comment still needs attention.
+// address-comments task, and its reactions say it still needs attention
+// (feedback.Pending).
 func (s *Scanner) evaluateComments(
 	ctx context.Context,
 	pr *githubv39.PullRequest,
@@ -46,10 +44,6 @@ func (s *Scanner) evaluateComments(
 	lastCommitTime, lastCommentAddressedTime time.Time,
 ) prCommentAnalysis {
 	var analysis prCommentAnalysis
-
-	comments := history.comments
-	reviews := history.reviews
-	revCommentsMap := history.revCommentsMap
 
 	updateOldestComment := func(t time.Time, author string, cType string, id int64) {
 		if !t.IsZero() && (analysis.oldestCommentTime.IsZero() || t.Before(analysis.oldestCommentTime)) {
@@ -60,119 +54,41 @@ func (s *Scanner) evaluateComments(
 		}
 	}
 
-	for _, c := range comments {
-		if s.ignoreFeedback(pr, feedback{
-			user: c.GetUser(),
-			body: c.GetBody(),
-			at:   c.GetCreatedAt(),
-		}, lastCommitTime, lastCommentAddressedTime) {
-			continue
-		}
-		if !s.reactions.CommentState(ctx, c.GetID()).NeedsAttention() {
-			continue
-		}
-		analysis.hasNewComments = true
-		analysis.unackCommentIDs = append(analysis.unackCommentIDs, c.GetID())
-		updateOldestComment(c.GetCreatedAt(), c.GetUser().GetLogin(), "comment", c.GetID())
+	h := &feedback.History{
+		Comments:       history.comments,
+		Reviews:        history.reviews,
+		ReviewComments: history.revCommentsMap,
+		LastCommitTime: history.lastCommitTime,
 	}
-
-	for _, r := range reviews {
-		// The review body and its inline comments are judged independently:
-		// an empty or approving review body can still carry inline feedback.
-		// The reaction read comes last so that only a review body that would
-		// otherwise count costs a (GraphQL) request.
-		if !s.ignoreFeedback(pr, feedback{
-			user:        r.GetUser(),
-			body:        r.GetBody(),
-			reviewState: r.GetState(),
-			at:          r.GetSubmittedAt(),
-		}, lastCommitTime, lastCommentAddressedTime) && s.reactions.ReviewState(ctx, r.GetNodeID()).NeedsAttention() {
-			analysis.hasNewComments = true
-			if nodeID := r.GetNodeID(); nodeID != "" {
-				analysis.unackReviewNodeIDs = append(analysis.unackReviewNodeIDs, nodeID)
+	for _, it := range feedback.Pending(ctx, pr, h, s.feedbackPolicy(), s.reactions, lastCommitTime, lastCommentAddressedTime) {
+		analysis.hasNewComments = true
+		switch it.Kind {
+		case feedback.KindComment:
+			analysis.unackCommentIDs = append(analysis.unackCommentIDs, it.ID)
+			updateOldestComment(it.At, it.Author, "comment", it.ID)
+		case feedback.KindReview:
+			if it.NodeID != "" {
+				analysis.unackReviewNodeIDs = append(analysis.unackReviewNodeIDs, it.NodeID)
 			}
-			updateOldestComment(r.GetSubmittedAt(), r.GetUser().GetLogin(), "review", r.GetID())
-		}
-
-		for _, rc := range revCommentsMap[r.GetID()] {
-			// An inline comment only becomes visible when its review is
-			// submitted, so it is timed from then rather than from its draft.
-			at := conventions.ReviewCommentTime(rc, r.GetSubmittedAt())
-			if s.ignoreFeedback(pr, feedback{
-				user: rc.GetUser(),
-				body: rc.GetBody(),
-				at:   at,
-			}, lastCommitTime, lastCommentAddressedTime) {
-				continue
-			}
-			if !s.reactions.ReviewCommentState(ctx, rc.GetID()).NeedsAttention() {
-				continue
-			}
-			analysis.hasNewComments = true
-			analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, rc.GetID())
-			updateOldestComment(at, rc.GetUser().GetLogin(), "inline review comment", rc.GetID())
+			updateOldestComment(it.At, it.Author, "review", it.ID)
+		case feedback.KindReviewComment:
+			analysis.unackPRCommentIDs = append(analysis.unackPRCommentIDs, it.ID)
+			updateOldestComment(it.At, it.Author, "inline review comment", it.ID)
 		}
 	}
 
 	return analysis
 }
 
-// feedback is the common shape of an issue comment, a review, or an inline
-// review comment, as far as deciding whether it needs addressing goes.
-type feedback struct {
-	user *githubv39.User
-	body string
-	// reviewState is the review's state (e.g. APPROVED); empty for comments.
-	reviewState string
-	at          time.Time
-}
-
-// approvalCommands are Prow-style commands that signal approval rather than
-// requesting changes.
-var approvalCommands = []string{"/lgtm", "/approve"}
-
-// ignoreFeedback reports whether a piece of feedback should not count as
-// outstanding. It is ignored when:
-//   - it comes from an ignored user (reviewer bots are never ignored),
-//   - it comes from the pull request's own author,
-//   - it predates the last commit or the last address-comments task,
-//   - its body opts out via the ignore prefix,
-//   - its body is empty,
-//   - it is an approving review, or
-//   - a line of its body starts with an approval command such as /lgtm.
-func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastCommitTime, lastCommentAddressedTime time.Time) bool {
-	if !conventions.IsFeedbackAuthor(f.user, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.ReviewerLogins) {
-		return true
+// feedbackPolicy is whose feedback the scanner acts on: anyone but its own
+// account and unlisted bots, never the pull request's (bot) author.
+func (s *Scanner) feedbackPolicy() feedback.Policy {
+	return feedback.Policy{
+		SelfLogin:       s.cfg.GitHubLogin,
+		AllowlistedBots: s.cfg.AllowlistedBots,
+		ReviewerLogins:  s.cfg.ReviewerLogins,
+		TriggerLabel:    s.cfg.TriggerLabel,
 	}
-	// The pull request's own author talking to itself is not feedback.
-	if strings.EqualFold(f.user.GetLogin(), pr.GetUser().GetLogin()) {
-		return true
-	}
-	if !f.at.After(lastCommitTime) || !f.at.After(lastCommentAddressedTime) {
-		return true
-	}
-	if conventions.HasIgnorePrefix(f.body, s.cfg.TriggerLabel) {
-		return true
-	}
-	body := strings.TrimSpace(f.body)
-	if body == "" {
-		return true
-	}
-	if strings.EqualFold(f.reviewState, "APPROVED") {
-		return true
-	}
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		for _, cmd := range approvalCommands {
-			if strings.EqualFold(fields[0], cmd) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // hasBotReviewAfterLastCommit reports whether the current head has already been

@@ -152,7 +152,19 @@ func TestFillChange(t *testing.T) {
 	if err := fillChange(retitled, spool.Task{Revise: "iterate"}, dir, inputs); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" {
+	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" || len(c.Feedback) != 0 {
 		t.Errorf("retitled %+v", c)
+	}
+
+	// An address-comments revise's names the feedback it was handed.
+	if err := os.WriteFile(filepath.Join(dir, taskoutput.FeedbackFile), []byte(`[{"kind":"review-comment","id":4,"author":"rev","body":"x"},{"kind":"review","id":5,"nodeId":"PRR_5","body":"y"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	addressed, _ := taskoutput.Wrap("Change", "change:\n  replies:\n    - inReplyTo: 4\n      body: done\n", taskoutput.Target{}, taskoutput.Source{})
+	if err := fillChange(addressed, spool.Task{Revise: "address-comments"}, dir, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = addressed.ChangeSpec(); fmt.Sprint(c.Feedback) != "[{review-comment 4 } {review 5 PRR_5}]" {
+		t.Errorf("feedback %v", c.Feedback)
 	}
 }

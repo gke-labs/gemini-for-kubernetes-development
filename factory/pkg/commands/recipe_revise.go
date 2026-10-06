@@ -11,6 +11,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/feedback"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
@@ -173,6 +175,17 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 			inputs["pr_url"] = u
 		}
 	}
+	// address-comments is handed the feedback still waiting on the PR,
+	// which it answers, and which is acknowledged (👀) once handed over,
+	// so `factory pr watch` does not pick it up again meanwhile.
+	var handed []feedback.Item
+	var reactor feedback.Reactor
+	if _, ok := rec.Inputs["feedback"]; ok && reviseID == addressCommentsRevise && inputs["pr_url"] != "" {
+		if handed, reactor, err = handFeedback(ctx, inputs, it.Owner, it.Repo); err != nil {
+			return "", err
+		}
+		fmt.Printf("Handing the revise %d piece(s) of feedback still waiting on %s\n", len(handed), inputs["pr_url"])
+	}
 
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
@@ -194,6 +207,11 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 	task.Output = rec.OutputDecl()
 	task.TaskType = rec.TaskType
 	fmt.Printf("Revising %s in the session of task %s (task %s)...\n", reviseID, session, task.ID)
+	if len(handed) > 0 {
+		if err := feedback.React(ctx, reactor, handed, conventions.ReactionAcknowledged); err != nil {
+			fmt.Printf("Warning: acknowledging the feedback: %v\n", err)
+		}
+	}
 	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, nil); err != nil || !done {
 		return task.ID, err
 	}

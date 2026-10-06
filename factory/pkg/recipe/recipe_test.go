@@ -888,7 +888,7 @@ func TestBuiltinFixRevises(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	for name, v := range map[string]string{"pr": "12", "lease": "h1", "base": "b2"} {
+	for name, v := range map[string]string{"pr": "12", "lease": "h1", "base": "b2", "comments.json": ""} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -918,6 +918,37 @@ func TestBuiltinFixRevises(t *testing.T) {
 			if !strings.Contains(asks[id], w) {
 				t.Errorf("%s's asks lack %q:\n%s", id, w, asks[id])
 			}
+		}
+	}
+
+	// Handed the feedback, address-comments names it instead of reading
+	// everything since the last push.
+	if err := os.WriteFile(filepath.Join(dir, "comments.json"), []byte(`[{"kind":"comment","id":200}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, rv := range r.Revise {
+		if rv.ID != "address-comments" {
+			continue
+		}
+		var all strings.Builder
+		for i, s := range rv.Steps {
+			if s.Ask == "" {
+				continue
+			}
+			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
+			if err != nil {
+				t.Fatalf("step %s: %v", s.Label(i), err)
+			}
+			all.WriteString(out)
+		}
+		got := all.String()
+		for _, w := range []string{`"id":200`, "pulls/12/comments", "inReplyTo", "review summary"} {
+			if !strings.Contains(got, w) {
+				t.Errorf("handed feedback, address-comments lacks %q:\n%s", w, got)
+			}
+		}
+		if strings.Contains(got, "since you last pushed") {
+			t.Errorf("handed feedback, address-comments still reads everything:\n%s", got)
 		}
 	}
 }

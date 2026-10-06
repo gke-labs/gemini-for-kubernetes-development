@@ -174,7 +174,7 @@ Step 2 deviates where:
 - **Title and body**: a revise's agent writes `change: {}` unless they no longer fit; the runner fills the previous Change's (`pushed_title`, `pushed_body`). A Change with no title is still refused when it is used (`ChangeSpec`), not when it is wrapped.
 - **Revise inputs are marked `revise: true`** (`instruction`, `pr_url`): a built-in's command has no flag for them, and `ForSandbox` drops the mark. `factory recipe revise --input` overrides the *start's* inputs, read from the session's first task, so one revise's input is not the next's.
 - **`post-replies` adds no disclose footer**, as no other verb does: the asks say whether to state that an agent wrote the replies (the `disclose` input). Each reply carries a marker of the task and the comment it answers (`reply=<id>`); the report carries the task's. It refuses a comment that is not on the PR. A Change with no replies or report posts nothing, wherever it points.
-- **`factory pr watch`** looks for the PR's labelled sandbox with a `fix-run` each poll. With one, failing checks run `fix-ci` and new comments `address-comments`, each followed by `post-replies` (`factory recipe revise` + `factory apply --action post-replies`, in-process), and comments carrying factory's task-output marker are not new feedback. Without one, nothing changed.
+- **`factory pr watch`** looks for the PR's labelled sandbox with a `fix-run` each poll. With one, failing checks run `fix-ci` and new comments `address-comments`, each followed by `post-replies` (`factory recipe revise` + `factory apply --action post-replies`, in-process), and comments carrying factory's task-output marker are not new feedback. Without one, nothing changed. Which comments are new changed after; see [Auto's feedback check](#autos-feedback-check).
 
 Step 3 (repo-agent) deviates where:
 
@@ -189,6 +189,33 @@ Step 3 (repo-agent) deviates where:
 - **A PR with no fix run gets no follow-up buttons**, since the PR mode is not built. Auto (`factory pr watch`) still works on it as before.
 - **The PR row's stage comes from the recorded run.** A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
 - **A fix session has no draft panel.** Its draft is the PR. *Continue session* is on the PR row's drawer and on a failed fix's error.
+
+## Auto's feedback check
+
+Tried on PR 1774, Auto did not pick up the comments made on it. `factory pr watch` asked "is there new feedback?" its own way:
+
+- It read only the conversation comments. Reviews and comments on the code went unseen.
+- It counted a comment only if it was newer than the last commit. A Fix CI commit after a comment hid it.
+- What it had handled was a time in memory, lost when the board relaunched the watch, every 10 minutes.
+- The revise then read "everything since the last push" by itself, so it and the watch could disagree about what was new.
+
+The overseer's watch (`watch/prs`) solved all of this long ago: all three kinds of feedback, inline comments timed from their review, approvals, `/lgtm` and the ignore prefix skipped, and what was handled recorded as reactions on GitHub. The fix reuses it instead of a second copy.
+
+- **One check, two callers.** `watch/feedback` is the overseer's check for one PR, moved out of `watch/prs`: `Fetch` (the PR's commits, comments, reviews and inline comments), `Pending` (what still needs answering) and `React`. The overseer's `Scanner.evaluate` calls it with the policy it always had, and its behaviour does not change. `factory pr watch` calls it for a fix run.
+- **Whose words count** is a `Policy`. The overseer ignores its own login and the PR's author (its bots). On a fix's PR, factory posts as the member and the member reviews their own PR, so the fix's policy counts the member and the PR's author. It skips what factory posted from a task output (the task-output marker) and bots.
+- **No time gate.** A comment counts until its reaction says it was handled, whenever it was made.
+- **The reactions are the member's.** factory reacts with the member's token, so the reaction interpreter is bound to the token's login (`GET /user`). Only the member's 👀 and 👍 mean "handled"; a reviewer's 👀 does not.
+- **The revise is handed the list.** For `address-comments`, `factory recipe revise` computes what is pending and passes it as the `feedback` input (JSON; each body cut at 4000 characters, the whole at 64 KiB, the rest left for the next round). The revise writes it to `$TASK_DIR/comments.json` and the ask lists those comments instead of telling the agent to read everything. The runner names them on the Change (`spec.feedback`: kind, id, node id), from the file and not from the agent.
+- **👀 when handed, 👍 when answered.** The pending comments get 👀 as the revise is handed to the sandbox, so the next poll does not hand them again. `post-replies` adds 👍 to each one named on the Change, after posting. A review summary has no thread, so it is answered in the report and still gets its 👍.
+- **Same path for the board's button.** *Address comments* goes through the same `factory recipe revise`, so it is handed the same list and leaves the same reactions. With nothing pending, the button still runs, and the agent reads the PR itself, as before.
+- **pr watch on a fix run** revises `address-comments` when anything is pending, and does not look at comment times. On failing checks it runs `fix-ci` as before. Without a fix run, pr watch is unchanged.
+
+Limits, as built:
+
+- A revise that fails, or fails to start, leaves 👀 and no 👍. The comments are not handed again by themselves; press *Address comments* to run it again. The overseer's 😕 and bounded retries are not copied.
+- 🚀 does not reopen a comment on a fix's PR. The interpreter counts the member's reactions as the watcher's, and on a 👍 a rocket never counts. Use the button.
+
+Not done here, for later: a conflict running `rebase`, a merge-queue or stop label, a limit on Fix CI attempts, and Auto reviewing the PR.
 
 ## Not planned here
 
