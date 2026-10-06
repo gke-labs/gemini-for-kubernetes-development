@@ -753,6 +753,25 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			}
 		}
 
+		// Check 2, for a fix run: feedback no 👀 or 👍 marks as handled,
+		// whenever it was said (pendingFixFeedback).
+		if fixSandbox != "" {
+			pending, err := pendingFixFeedback(ctx, ghClient, owner, repo, prNum)
+			if err != nil {
+				klog.Errorf("Failed to read the feedback on PR #%d: %v", prNum, err)
+				return false
+			}
+			if len(pending) > 0 {
+				fmt.Printf("\nFound %d piece(s) of feedback to address on PR #%d. Revising the fix in %s with address-comments...\n", len(pending), prNum, fixSandbox)
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would revise the fix in %s with address-comments for PR #%d\n", fixSandbox, prNum)
+				} else if err := reviseFixRun(ctx, ghClient, fixSandbox, addressCommentsRevise); err != nil {
+					klog.Errorf("Address comments failed: %v", err)
+				}
+			}
+			return false
+		}
+
 		// Check 2: Check new comments/reviews after latest commit
 		prCommits, err := repoClient.ListCommits(ctx, prNum)
 		if err == nil {
@@ -771,10 +790,6 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					if strings.Contains(c.GetUser().GetLogin(), "bot") {
 						continue
 					}
-					// The fix run's own replies and reports.
-					if fixSandbox != "" && factoryPosted(c.GetBody()) {
-						continue
-					}
 					if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
 						hasNewComments = true
 						break
@@ -784,13 +799,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if hasNewComments {
 					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					if fixSandbox != "" {
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would revise the fix in %s with address-comments for PR #%d\n", fixSandbox, prNum)
-						} else if err := reviseFixRun(ctx, ghClient, fixSandbox, "address-comments"); err != nil {
-							klog.Errorf("Address comments failed: %v", err)
-						}
-					} else if dryRun {
+					if dryRun {
 						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
 					} else {
 						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession, ephemeralStorage, secrets); err != nil {

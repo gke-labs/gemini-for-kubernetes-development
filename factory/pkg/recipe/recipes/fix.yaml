@@ -31,6 +31,9 @@ inputs:
   pr_url:
     description: The fix's PR; factory sets it for the revises, from the sandbox's PR alias
     revise: true
+  feedback:
+    description: The feedback address-comments answers, a JSON list; factory sets it, from what no reaction marks as handled on the PR
+    revise: true
 
 context: |
   You are an automated coding agent. You fix GitHub issues; your commits
@@ -167,7 +170,8 @@ start:
     - uses: push
 
 # The PR's follow-ups. factory hands each one the push the fix last made
-# (INPUT_PUSHED_*: fork, branch, base, head) and the PR (pr_url); a
+# (INPUT_PUSHED_*: fork, branch, base, head) and the PR (pr_url), and
+# address-comments the feedback still waiting on the PR (feedback); a
 # revise's Change keeps the previous title and body unless the agent
 # writes new ones.
 revise:
@@ -223,11 +227,28 @@ revise:
       - run: *pushed
       - run: &needs-pr |
           test -s "$TASK_DIR/pr" || { echo "the fix has no PR yet: open it first (factory apply --action open-pr)" >&2; exit 1; }
+      # The feedback factory found waiting. Empty when none is (the board's
+      # button pressed anyway): the agent then reads the PR itself. The
+      # runner names it on the Change, and post-replies marks it addressed.
+      - run: |
+          printf '%s' "${INPUT_FEEDBACK}" > "$TASK_DIR/comments.json"
       - ask: |
           The pull request for your fix is
           https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}.
           Reviewers have commented on it. Address their comments.
-
+          {{ with file "comments.json" }}
+          1. These are the comments to address, as JSON, oldest first:
+             conversation comments (kind "comment"), review summaries
+             ("review") and comments on the code ("review-comment", with
+             path and line).
+             <comments>
+             {{ . }}
+             </comments>
+             For context, the whole conversation is on GitHub: the review
+             comments on the code,
+             `gh api repos/{{ $.Inputs.repo_owner }}/{{ $.Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
+             and the rest, `gh pr view {{ file "pr" }} --comments`.
+          {{- else }}
           1. Read what was said since you last pushed
              ({{ file "lease" }}): the review comments on the code,
              `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
@@ -235,6 +256,7 @@ revise:
              `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/issues/{{ file "pr" }}/comments --paginate`,
              and the reviews, `gh pr view {{ file "pr" }} --comments`.
              Skip what is already answered, and what bots wrote.
+          {{- end }}
           2. Change what they ask for, where it is right to, and commit.
              Where it is not, do not change it: say why in your reply.
           3. Commit, never push; do NOT reply on GitHub yourself: factory
@@ -255,8 +277,9 @@ revise:
 
           Rules:
           - inReplyTo is the numeric `id` of the comment you answer, from
-            the `gh api` output above: a review comment's or a
-            conversation comment's. One reply per comment you answer.
+            the comments above: a review comment's or a conversation
+            comment's. One reply per comment you answer. A review summary
+            has no thread: answer it in the report.
           - Add `title:` and `body:` (the whole new description, keeping
             `Fixes #{{ .Inputs.issue_number }}`) only if the pull request's no longer fit.
           {{- if eq .Inputs.disclose "true" }}

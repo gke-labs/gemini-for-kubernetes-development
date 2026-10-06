@@ -220,6 +220,7 @@ func TestOpenPR(t *testing.T) {
 // on the PR, 300 on another; conversation comment 200 is on the PR.
 type fakeThreads struct {
 	review, issue []map[string]any // posted
+	reactions     []string         // "<where> <content>"
 }
 
 func (f *fakeThreads) client(t *testing.T) *githubv39.Client {
@@ -256,6 +257,24 @@ func (f *fakeThreads) client(t *testing.T) *githubv39.Client {
 		}
 		_ = json.NewEncoder(w).Encode(f.issue)
 	})
+	react := func(where string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if where == "review" {
+				vars, _ := req["variables"].(map[string]any)
+				where = fmt.Sprintf("review %v", vars["subjectId"])
+				fmt.Fprint(w, `{"data":{"addReaction":{"reaction":{"content":"THUMBS_UP"}}}}`)
+				f.reactions = append(f.reactions, fmt.Sprintf("%s %v", where, vars["content"]))
+				return
+			}
+			f.reactions = append(f.reactions, fmt.Sprintf("%s %v", where, req["content"]))
+			fmt.Fprint(w, `{}`)
+		}
+	}
+	mux.HandleFunc("/repos/o/r/pulls/comments/100/reactions", react("review-comment 100"))
+	mux.HandleFunc("/repos/o/r/issues/comments/200/reactions", react("comment 200"))
+	mux.HandleFunc("/graphql", react("review"))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	gh := githubv39.NewClient(nil)
@@ -305,6 +324,38 @@ func TestPostReplies(t *testing.T) {
 		}
 		if len(f.review) != 1 || len(f.issue) != 2 {
 			t.Errorf("posted again: %d review and %d issue comments", len(f.review), len(f.issue))
+		}
+	})
+
+	t.Run("marks the feedback it was handed resolved", func(t *testing.T) {
+		// What the agent writes under feedback is not taken.
+		doc := reviseChange(t, "change:\n  replies:\n    - inReplyTo: 100\n      body: Moved it.\n  feedback:\n    - kind: comment\n      id: 999\n")
+		if c, _ := doc.ChangeSpec(); len(c.Feedback) != 0 {
+			t.Fatalf("the agent's feedback was kept: %v", c.Feedback)
+		}
+		if err := doc.SetFeedback([]FeedbackRef{{Kind: "review-comment", ID: 100}, {Kind: "comment", ID: 200}, {Kind: "review", ID: 5, NodeID: "PRR_5"}}); err != nil {
+			t.Fatal(err)
+		}
+		f := &fakeThreads{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		want := []string{"review-comment 100 +1", "comment 200 +1", "review PRR_5 THUMBS_UP"}
+		if strings.Join(f.reactions, "|") != strings.Join(want, "|") {
+			t.Errorf("reactions = %q, want %q", f.reactions, want)
+		}
+		// Feedback with nothing to say is still marked.
+		bare := reviseChange(t, "change: {}\n")
+		if err := bare.SetFeedback([]FeedbackRef{{Kind: "comment", ID: 200}}); err != nil {
+			t.Fatal(err)
+		}
+		f = &fakeThreads{}
+		if err := ApplyAction(ctx, f.client(t), bare, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.reactions) != 1 || len(f.review)+len(f.issue) != 0 {
+			t.Errorf("reactions %q, posted %d", f.reactions, len(f.review)+len(f.issue))
 		}
 	})
 

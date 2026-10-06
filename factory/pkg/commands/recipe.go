@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1057,7 +1058,8 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 // the labels the task was given. A revise's Change is about the fix's PR
 // (pr_url, which factory recipe revise sets), and keeps the title and
 // body the previous one had (pushed_title, pushed_body) where the agent
-// wrote none.
+// wrote none. An address-comments revise's names the feedback it was
+// handed (comments.json), for post-replies to mark resolved.
 func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, inputs map[string]string) error {
 	if task.Revise != "" {
 		if u := inputs["pr_url"]; u != "" {
@@ -1065,6 +1067,15 @@ func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, input
 		}
 		if err := doc.KeepTitle(inputs["pushed_title"], inputs["pushed_body"]); err != nil {
 			return err
+		}
+		if data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.FeedbackFile)); err == nil && len(bytes.TrimSpace(data)) > 0 {
+			var refs []taskoutput.FeedbackRef
+			if err := json.Unmarshal(data, &refs); err != nil {
+				return fmt.Errorf("parsing %s: %w", taskoutput.FeedbackFile, err)
+			}
+			if err := doc.SetFeedback(refs); err != nil {
+				return err
+			}
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.PushedFile))
