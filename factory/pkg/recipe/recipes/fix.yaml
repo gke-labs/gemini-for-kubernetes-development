@@ -1,0 +1,169 @@
+# factory recipe fix --url <issue> [--with-plan true] [--instruction …] [--apply]:
+# a fix for an issue, in the issue's sandbox (design/fix-recipe.md). The
+# agent commits and never pushes; the push step ends the task, pushing the
+# branch to the member's fork and nowhere else. The task's result is a
+# Change task output, whose open-pr (`factory apply`, or --apply) opens
+# the branch as a draft PR, with the caller's token.
+#
+# With --with-plan true the first ask follows the approved plan at
+# /workspaces/plan-issue-<n>.md, where a plan task (and `factory apply
+# --action run:fix`) leaves it.
+name: fix
+task-type: fix
+
+inputs:
+  with_plan:
+    description: '"true" to follow the approved plan at /workspaces/plan-issue-<n>.md'
+  labels:
+    description: Labels for the PR, comma-separated; open-pr adds them
+  instructions:
+    type: instructions
+    description: Additional instructions the agent must follow
+
+context: |
+  You are an automated coding agent. You fix GitHub issues; your commits
+  become a pull request that a human maintainer reviews.
+
+  You commit, and that is all you write. Do NOT run `git push`, do NOT
+  open, edit or comment on pull requests or issues, and do NOT add labels:
+  when you are done, factory pushes your commits to the member's fork and
+  opens the pull request from what you write.
+
+  The repository is checked out in the current directory, on a new branch
+  from the latest default branch. The git remote "origin" is the member's
+  fork, "upstream" the repository. `gh` is authenticated, to read issues
+  and pull requests. Do not run `git config --global`: in this environment
+  it overwrites /dev/null and breaks git for the rest of the run.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    # The branch the push step pushes, and the upstream commit it starts
+    # from.
+    - run: |
+        git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
+        git symbolic-ref --short HEAD > "$TASK_DIR/branch"
+        git rev-parse HEAD > "$TASK_DIR/base"
+    - uses: configure-engine
+    # The approved plan, with --with-plan true.
+    - run: |
+        : > "$TASK_DIR/plan.md"
+        case "${INPUT_WITH_PLAN}" in
+          true)
+            plan="/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
+            test -s "$plan" || { echo "with_plan: there is no plan at $plan" >&2; exit 1; }
+            cp "$plan" "$TASK_DIR/plan.md"
+            ;;
+          "" | false) ;;
+          *) echo "with_plan is \"true\" or \"false\", not \"${INPUT_WITH_PLAN}\"" >&2; exit 1 ;;
+        esac
+
+    - ask: |
+        Fix this GitHub issue, and commit the fix.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_number>{{ .Inputs.issue_number }}</issue_number>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+        <issue_description>
+        {{ .Inputs.issue_body }}
+        </issue_description>
+        {{ with file "plan.md" }}
+        A maintainer reviewed and approved this implementation plan. Follow
+        it. Where the code shows a step to be wrong, deviate, and say where
+        and why in your summary.
+        <approved_plan>
+        {{ . }}
+        </approved_plan>
+        {{ end }}
+        {{- with .Inputs.instructions }}
+        Additional instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{ end }}
+        1. Read the issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+           Where it references other issues or PRs, read those too
+           (`gh issue view <n>`, `gh pr view <n>`): there are often
+           important details there, and patterns to follow.
+        2. Make the change, and test it.
+        3. Commit it.
+
+        Good PR hygiene:
+        * Only solve the specific issue. Do not make unrelated changes or
+          cleanups. A good PR implements one idea.
+        * Keep the commit history clean: structure your commits well,
+          separating changes to different modules or generated code into
+          separate commits. No excessive, tiny or transient commits: use
+          `git commit --amend` or `git commit --fixup` for minor fixes to
+          earlier work, and prefer rebasing to merging.
+        * If you end up with many commits (more than 10) or hundreds of
+          files touched, stop and ask yourself whether the history is
+          clean; squash or rebase if it is not.
+        * Do not commit large binary files or build artifacts. Clean up
+          what builds and tests leave behind (`make clean` if there is one)
+          before committing.
+        * In each commit body, add a line like "Issue: {{ .Inputs.issue_number }}", but not as
+          the first line.
+        {{- if eq .Inputs.disclose "true" }}
+        * Commit messages may say that an agent wrote the change.
+        {{- else }}
+        * Do not say anywhere — commit messages or files — that an agent or
+          AI wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        * The year is 2026. Copyright headers on new files use 2026.
+        * Remember: commit, never push.
+
+        If you get stuck, commit what you have and say so: the pull request
+        will be marked work in progress, and people on GitHub may have
+        suggestions.
+
+        When you are done, summarise the design decisions you made: the
+        rationale behind your changes, and the alternatives you
+        considered. This summary is for the human reviewer.
+
+    - ask: |
+        Now write the pull request's title and description. Respond with
+        EXACTLY the following YAML structure and nothing else — no prose
+        before or after, no markdown fences:
+
+        change:
+          title: A brief title, like a commit subject
+          body: |
+            A brief description of what the change does and why, for the
+            reviewer.
+
+            Fixes #{{ .Inputs.issue_number }}
+
+        Rules:
+        - The body MUST contain a line of exactly the form
+          `Fixes #{{ .Inputs.issue_number }}`, on its own line, with nothing between `Fixes`
+          and the number. Always `Fixes`: "resolves Issue #{{ .Inputs.issue_number }}" or a bare
+          "#{{ .Inputs.issue_number }}" does not close the issue when the PR merges.
+        - If you could not finish, start the title with "[WIP]" and say in
+          the body what is left.
+        {{- if eq .Inputs.disclose "true" }}
+        - The body states that this pull request was generated by an AI
+          coding agent.
+        {{- else }}
+        - Do not say anywhere that an agent or AI wrote this.
+        {{- end }}
+      capture: change.yaml
+
+    - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  from: change.yaml
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open draft PR
+    - verb: reject

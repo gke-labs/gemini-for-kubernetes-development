@@ -705,3 +705,88 @@ echo "SCRIPT_KEPT=${GITHUB_USER_TOKEN}"`)
 		t.Errorf("the script's own token was dropped too:\n%s", out)
 	}
 }
+
+// TestPushToFork pins the fix recipe's push: HEAD goes to the branch the
+// task recorded, on the token's login's fork and nowhere else, under a
+// lease, and what it pushed is recorded for the runner.
+func TestPushToFork(t *testing.T) {
+	// gh answers as GitHub does for coder-bot, whose repo is a fork of
+	// $HOME/parent (upstream-org/repo unless changed). The fork's URL is
+	// rewritten to a bare repository.
+	setup := `mkdir -p "$HOME/bin" "$HOME/task" && cat > "$HOME/bin/gh" <<'STUB'
+#!/bin/bash
+case "$2 $4" in
+  "user .login") echo coder-bot ;;
+  "repos/coder-bot/repo .full_name") echo coder-bot/repo ;;
+  "repos/upstream-org/repo .full_name") echo upstream-org/repo ;;
+  repos/coder-bot/repo*) cat "$HOME/parent" 2>/dev/null || echo upstream-org/repo ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$HOME/bin/gh"
+export TASK_DIR="$HOME/task" CLONE_URL=https://github.com/upstream-org/repo.git GITHUB_USER_TOKEN=CODER_TOKEN
+git init -q --bare "$HOME/fork.git"
+git config --global url."$HOME/fork.git".insteadOf https://github.com/coder-bot/repo.git
+c() { git -c user.email=x@x -c user.name=x commit -q --allow-empty -m "$1"; }
+builtin cd "$REPO_DIR" && c base
+git remote add origin https://github.com/coder-bot/repo.git
+echo issue-7-1 > "$TASK_DIR/branch" && git rev-parse HEAD > "$TASK_DIR/base"
+# A hook that would stop the push.
+printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+git config core.hooksPath .git/hooks
+`
+	report := `
+echo "PUSHED=$(git --git-dir="$HOME/fork.git" log -1 --format=%s refs/heads/issue-7-1 2>/dev/null)"
+echo "RECORD=$(cat "$TASK_DIR/push.json" 2>/dev/null)"`
+
+	t.Run("pushes the commits to the fork", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+"c fix", "pushToFork"+report)
+		if err != nil {
+			t.Fatalf("pushToFork failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "PUSHED=fix") {
+			t.Errorf("the commit is not on the fork's branch:\n%s", out)
+		}
+		if !strings.Contains(out, `RECORD={"fork":"coder-bot/repo","branch":"issue-7-1","base":"`) {
+			t.Errorf("push.json not recorded:\n%s", out)
+		}
+		if strings.Contains(out, "CODER_TOKEN") {
+			t.Errorf("token in the output:\n%s", out)
+		}
+	})
+
+	t.Run("no commit fails a start", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup, "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "the fix made no change") {
+			t.Fatalf("want the push to fail with no change:\n%s", out)
+		}
+	})
+
+	t.Run("refuses an origin that is not the login's", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+"c fix\ngit remote set-url origin https://github.com/upstream-org/repo.git", "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "a fix pushes to the member's fork only") {
+			t.Fatalf("want the push refused:\n%s", out)
+		}
+	})
+
+	t.Run("refuses a repository that is not a fork of upstream", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+"c fix\necho someone/else > \"$HOME/parent\"", "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "is not a fork of upstream-org/repo") || strings.Contains(out, "PUSHED=fix") {
+			t.Fatalf("want the push refused:\n%s", out)
+		}
+	})
+
+	t.Run("a start does not overwrite an existing branch", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+`c other && git push -q "$HOME/fork.git" HEAD:refs/heads/issue-7-1 --no-verify && git reset -q --hard HEAD~1 && c fix`, "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "stale info") || strings.Contains(out, "PUSHED=fix") {
+			t.Fatalf("want the push to fail on the lease:\n%s", out)
+		}
+	})
+
+	t.Run("a lease on the last pushed head", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+`c first && git push -q "$HOME/fork.git" HEAD:refs/heads/issue-7-1 --no-verify && git rev-parse HEAD > "$TASK_DIR/lease" && c second`, "pushToFork"+report)
+		if err != nil || !strings.Contains(out, "PUSHED=second") {
+			t.Fatalf("want the push to go through the lease: %v\n%s", err, out)
+		}
+	})
+}

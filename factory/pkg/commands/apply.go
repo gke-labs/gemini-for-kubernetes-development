@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
+	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
@@ -25,7 +27,7 @@ func NewApplyCommand(ctx context.Context) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "apply -f <file | -> [--action <verb>]",
-		Short: "Apply task outputs (a triage, a plan, notes, a review …) to GitHub",
+		Short: "Apply task outputs (a triage, a plan, notes, a review, a change …) to GitHub",
 		Long: `Apply task outputs to GitHub.
 
 A task output is the result a task leaves in its task directory
@@ -42,14 +44,18 @@ Without --action, apply does each write the result offers:
   Review  post-review: posts the review as your pending review on the PR,
           at the commit reviewed, replacing one factory posted before; you
           read, change and submit it on GitHub
+  Change  open-pr: opens the branch the fix pushed to your fork as a draft
+          PR, unless it has one open already, and aliases the fix's
+          sandbox to the PR
 
 --action does one action the result offers:
   label, comment  that write alone
   push-notes      that write alone
   post-review     that write alone
+  open-pr         that write alone
   run             the follow-up it offers (run:fix names it): for a Plan,
                   writes the plan, as edited, to the issue's sandbox and
-                  runs factory fix --with-plan there
+                  runs factory recipe fix --with-plan true there
   revise          one of the recipe's revises (revise:plan names it):
                   factory recipe revise, into the conversation the result
                   came from; it writes a new result and posts nothing
@@ -58,7 +64,7 @@ edit and reject are for whoever keeps the result as a draft: edit the
 file before applying it, or don't apply it.
 
 Applying the same task's output again does not comment again, nor post
-a review that was submitted.`,
+a review that was submitted, nor open a second PR.`,
 		Example: `  factory sandbox task output fix-repo-123 | factory apply -f - --dry-run
   factory sandbox task output fix-repo-123 > triage.yaml   # look, edit
   factory apply -f triage.yaml
@@ -107,24 +113,67 @@ a review that was submitted.`,
 				return fmt.Errorf("creating github client: %w", err)
 			}
 			for _, d := range docs {
-				if action == "" {
-					err = taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout)
-				} else {
-					err = taskoutput.ApplyAction(ctx, gh, d, verb, dryRun, os.Stdout)
-				}
-				if err != nil {
-					return fmt.Errorf("applying the %s for %s: %w", d.Kind, d.Target.URL, err)
+				target := d.Target.URL
+				if err := applyDocument(ctx, gh, d, verb, "", dryRun); err != nil {
+					return fmt.Errorf("applying the %s for %s: %w", d.Kind, target, err)
 				}
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, open-pr, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
 }
+
+// applyDocument applies d with gh: each write it offers, or verb's alone.
+// A Change's open-pr points d at the PR it opened or found, and the
+// sandbox the fix ran in — sandboxName, else the one d names, else its
+// target's — is then aliased to that PR, which is how the board and the
+// watch find a fix's PR.
+func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Document, verb, sandboxName string, dryRun bool) error {
+	before := d.Target.URL
+	var err error
+	if verb == "" {
+		err = taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout)
+	} else {
+		err = taskoutput.ApplyAction(ctx, gh, d, verb, dryRun, os.Stdout)
+	}
+	if err != nil || dryRun || d.Kind != "Change" {
+		return err
+	}
+	pr, err := parseGitHubItemURL(d.Target.URL)
+	if err != nil || !pr.IsPR {
+		return nil // no PR: open-pr was not among the actions done
+	}
+	if sandboxName == "" {
+		sandboxName = d.Source.Sandbox
+	}
+	if sandboxName == "" {
+		if sandboxName, err = findSandbox(ctx, before); err != nil {
+			return fmt.Errorf("%s is open, but its sandbox is not aliased to it: %w", d.Target.URL, err)
+		}
+	}
+	if err := aliasSandbox(ctx, sandboxName, pr.Number, d.Target.URL); err != nil {
+		return fmt.Errorf("%s is open, but its sandbox is not aliased to it (applying again does): %w", d.Target.URL, err)
+	}
+	fmt.Printf("Sandbox %s is %s's\n", sandboxName, d.Target.URL)
+	return nil
+}
+
+// findSandbox and aliasSandbox are applyDocument's Kubernetes calls.
+var (
+	findSandbox  = sandboxForURL
+	aliasSandbox = func(ctx context.Context, sandboxName string, prNum int, prURL string) error {
+		kubeClient, err := clients.NewKubernetesClient()
+		if err != nil {
+			return fmt.Errorf("creating k8s client: %w", err)
+		}
+		return factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, prNum, prURL)
+	}
+)
 
 // runFollowUps starts the follow-up each document offers: for a Plan, a
 // fix that follows it.
@@ -172,7 +221,8 @@ func runRevises(ctx context.Context, c *cobra.Command, docs []*taskoutput.Docume
 }
 
 // fixWithPlan writes a Plan, as it may have been edited, where a fix
-// reads it in the issue's sandbox, and runs the fix.
+// reads it in the issue's sandbox, and runs the fix recipe there, with
+// the plan.
 func fixWithPlan(ctx context.Context, d *taskoutput.Document, dryRun bool) error {
 	p, err := d.PlanSpec()
 	if err != nil {
@@ -187,20 +237,33 @@ func fixWithPlan(ctx context.Context, d *taskoutput.Document, dryRun bool) error
 	}
 	planPath := tasks.PlanFilePath(it.Number)
 	if dryRun {
-		fmt.Printf("Would write the plan to %s in %s's sandbox and run: factory fix --url %s --with-plan\n", planPath, d.Target.URL, d.Target.URL)
+		fmt.Printf("Would write the plan to %s in %s's sandbox and run: factory recipe fix --url %s --with-plan true\n", planPath, d.Target.URL, d.Target.URL)
 		return nil
 	}
-	name, err := sandboxForURL(ctx, d.Target.URL)
-	if err != nil {
+	if err := writePlan(ctx, d.Target.URL, planPath, []byte(strings.TrimSpace(p.Markdown)+"\n")); err != nil {
 		return err
 	}
-	client, err := envd.Connect(ctx, rootFlags.Namespace, name)
-	if err != nil {
-		return fmt.Errorf("connecting to sandbox %s: %w", name, err)
-	}
-	if err := client.WriteFile(ctx, planPath, []byte(strings.TrimSpace(p.Markdown)+"\n")); err != nil {
-		return fmt.Errorf("writing the plan to %s in %s: %w", planPath, name, err)
-	}
-	fmt.Printf("Wrote the plan to %s in %s; running the fix\n", planPath, name)
-	return runFix(ctx, d.Target.URL, defaultFixPrompt, "", false, false, true, 2*time.Minute, 0, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+	return runFixRecipe(ctx, d.Target.URL)
 }
+
+// writePlan and runFixRecipe are fixWithPlan's sandbox calls.
+var (
+	writePlan = func(ctx context.Context, issueURL, planPath string, plan []byte) error {
+		name, err := sandboxForURL(ctx, issueURL)
+		if err != nil {
+			return err
+		}
+		client, err := envd.Connect(ctx, rootFlags.Namespace, name)
+		if err != nil {
+			return fmt.Errorf("connecting to sandbox %s: %w", name, err)
+		}
+		if err := client.WriteFile(ctx, planPath, plan); err != nil {
+			return fmt.Errorf("writing the plan to %s in %s: %w", planPath, name, err)
+		}
+		fmt.Printf("Wrote the plan to %s in %s; running the fix\n", planPath, name)
+		return nil
+	}
+	runFixRecipe = func(ctx context.Context, issueURL string) error {
+		return runRecipe(ctx, "fix", issueURL, "", "", applyMode{}, map[string]string{"with_plan": "true"}, nil)
+	}
+)

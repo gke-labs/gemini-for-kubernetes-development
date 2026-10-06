@@ -1,0 +1,130 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"testing"
+
+	githubv39 "github.com/google/go-github/v39/github"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
+)
+
+// run:fix writes the plan, as edited, then starts the fix recipe on the
+// plan's issue.
+func TestFixWithPlanRunsTheRecipe(t *testing.T) {
+	oldWrite, oldRun := writePlan, runFixRecipe
+	t.Cleanup(func() { writePlan, runFixRecipe = oldWrite, oldRun })
+	var calls []string
+	writePlan = func(_ context.Context, issueURL, planPath string, plan []byte) error {
+		calls = append(calls, fmt.Sprintf("write %s %s %q", issueURL, planPath, plan))
+		return nil
+	}
+	runFixRecipe = func(_ context.Context, issueURL string) error {
+		calls = append(calls, "fix "+issueURL)
+		return nil
+	}
+	issue := "https://github.com/o/r/issues/7"
+	d, err := taskoutput.Wrap("Plan", "## Summary\nDo it.\n", taskoutput.Target{URL: issue}, taskoutput.Source{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixWithPlan(context.Background(), d, true); err != nil || len(calls) != 0 {
+		t.Fatalf("dry run: %v, %v", err, calls)
+	}
+	if err := fixWithPlan(context.Background(), d, false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		fmt.Sprintf("write %s %s %q", issue, tasks.PlanFilePath(7), "## Summary\nDo it.\n"),
+		"fix " + issue,
+	}
+	if fmt.Sprint(calls) != fmt.Sprint(want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+// A Change's open-pr that finds the branch's PR aliases the fix's sandbox
+// to it.
+func TestApplyDocumentAliasesTheSandbox(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"login":"me"}`) })
+	mux.HandleFunc("/repos/o/r/pulls", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"number":9,"html_url":"https://github.com/o/r/pull/9"}]`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	oldFind, oldAlias := findSandbox, aliasSandbox
+	t.Cleanup(func() { findSandbox, aliasSandbox = oldFind, oldAlias })
+	var aliased string
+	aliasSandbox = func(_ context.Context, name string, prNum int, prURL string) error {
+		aliased = fmt.Sprintf("%s %d %s", name, prNum, prURL)
+		return nil
+	}
+	findSandbox = func(_ context.Context, u string) (string, error) { return "found-for-" + u, nil }
+
+	change := func(sandbox string) *taskoutput.Document {
+		d, err := taskoutput.Wrap("Change", "change:\n  title: t\n  body: b\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{Sandbox: sandbox})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.SetPushed(taskoutput.Pushed{Fork: "me/r", Branch: "issue-7-1", Head: "h"}); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	if err := applyDocument(context.Background(), gh, change("fix-r-7"), "open-pr", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if aliased != "fix-r-7 9 https://github.com/o/r/pull/9" {
+		t.Errorf("aliased %q", aliased)
+	}
+	aliased = ""
+	if err := applyDocument(context.Background(), gh, change(""), "open-pr", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if aliased != "found-for-https://github.com/o/r/issues/7 9 https://github.com/o/r/pull/9" {
+		t.Errorf("aliased %q", aliased)
+	}
+	aliased = ""
+	if err := applyDocument(context.Background(), gh, change(""), "open-pr", "", true); err != nil || aliased != "" {
+		t.Errorf("dry run: %v, aliased %q", err, aliased)
+	}
+}
+
+// The runner's Change gets the push's branch and head, not the agent's,
+// and the task's labels.
+func TestFillChange(t *testing.T) {
+	dir := t.TempDir()
+	d, err := taskoutput.Wrap("Change", "change:\n  title: t\n  branch: main\n  body: b\n  labels: [x]\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fillChange(d, dir, nil); err == nil {
+		t.Error("a Change with no push was filled")
+	}
+	if err := os.WriteFile(filepath.Join(dir, taskoutput.PushedFile), []byte(`{"fork":"me/r","branch":"issue-7-1","base":"b0","head":"h1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := fillChange(d, dir, map[string]string{"labels": " factory, x ,"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := d.ChangeSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Fork != "me/r" || c.Branch != "issue-7-1" || c.Base != "b0" || d.Target.Commit != "h1" || fmt.Sprint(c.Labels) != "[x factory]" {
+		t.Errorf("filled %+v, commit %s", c, d.Target.Commit)
+	}
+}

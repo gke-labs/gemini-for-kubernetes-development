@@ -46,7 +46,8 @@ type SandboxExecutor struct {
 // Uses runs NamedSteps[name] from lib.sh with the task's full environment,
 // or under CredentialsClone without its tokens, the clone step with the
 // task's secrets. The function name and with values go in as variables,
-// never as source.
+// never as source, and the task directory as TASK_DIR, where push finds
+// the branch to push and records what it pushed.
 func (e *SandboxExecutor) Uses(ctx context.Context, name string, with map[string]string, log io.Writer) error {
 	fn, ok := NamedSteps[name]
 	if !ok {
@@ -67,7 +68,7 @@ func (e *SandboxExecutor) Uses(ctx context.Context, name string, with map[string
 			return err
 		}
 	}
-	env := append(append([]string(nil), base...), "RECIPE_STEP_FUNCTION="+fn)
+	env := append(append([]string(nil), base...), "RECIPE_STEP_FUNCTION="+fn, "TASK_DIR="+e.TaskDir)
 	for k, v := range with {
 		env = append(env, "WITH_"+envName(k)+"="+v)
 	}
