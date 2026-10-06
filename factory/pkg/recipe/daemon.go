@@ -29,7 +29,15 @@ type DaemonSession struct {
 	// created is whether this task started the engine, and so ends it: a
 	// revise leaves a session it found open to the member using it.
 	created bool
+	// fresh is whether the session it created remembers nothing: no
+	// conversation to load, as for the first revise where the recipe
+	// has no start, or a start that asked nothing.
+	fresh bool
 }
+
+// Fresh reports whether the agent starts from nothing, so a revise sends
+// the recipe's context as a start would.
+func (d *DaemonSession) Fresh() bool { return d.fresh }
 
 // StartDaemonSession creates the task's session on the task server at
 // base (http://127.0.0.1:<port>/v1), named after the task, as the task:
@@ -98,6 +106,13 @@ func (d *DaemonSession) create(ctx context.Context, engine, model, apiKey, repoD
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("starting the task's session: %s", failure(resp))
 	}
+	var created struct {
+		Loaded bool `json:"loaded"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return fmt.Errorf("reading the task's session: %w", err)
+	}
+	d.fresh = !created.Loaded
 	return nil
 }
 

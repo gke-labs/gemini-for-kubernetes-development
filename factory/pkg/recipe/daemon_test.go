@@ -129,10 +129,14 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}
 
-	// Nobody has it open: the revise starts it, and ends it.
+	// Nobody has it open: the revise starts it, and ends it. Nothing asked
+	// in it before (the first revise), so there is no conversation to load: it is fresh.
 	s, err := OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !s.Fresh() {
+		t.Error("a session with no conversation to load is not fresh")
 	}
 	if got, err := s.Ask(ctx, "rewrite"); err != nil || !strings.Contains(got, "turn 1: rewrite") {
 		t.Errorf("ask = %q, %v", got, err)
@@ -150,6 +154,9 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 	s, err = OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if s.Fresh() {
+		t.Error("a session the member has open is fresh")
 	}
 	if _, err := s.Ask(ctx, "rewrite"); err != nil {
 		t.Fatal(err)

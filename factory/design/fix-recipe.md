@@ -1,6 +1,6 @@
 # Fix as a recipe
 
-**Status:** Steps 1–3 are built, except the PR mode; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
+**Status:** Steps 1–3 are built, the PR mode included; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -168,7 +168,6 @@ Step 1 deviates from the above where:
 
 Step 2 deviates where:
 
-- **The PR mode is not built.** `factory recipe fix --url <PR>` needs its own sandbox naming and labelling, a PR branch of the start's templates, and the fork-ownership check; it is a change of its own.
 - **A revise is handed the push** as inputs (`pushed_fork`, `pushed_branch`, `pushed_base`, `pushed_head`): `factory recipe revise` reads `push.json` of the newest task in the session that pushed. The revise's first step writes `$TASK_DIR/branch`, `base` and `lease` from them, and checks the branch out. With a lease, a head that did not move pushes nothing new and is not an error. `rebase` writes the new base (upstream's `HEAD`) before its ask.
 - **The PR comes from the sandbox's alias**: `pr_url` is the `htmlURL` annotation when it is a PR, else the `pr` annotation. A revise's Change targets it; `address-comments` and `fix-ci` fail without it ("open it first"), `iterate` and `rebase` do not need it.
 - **Title and body**: a revise's agent writes `change: {}` unless they no longer fit; the runner fills the previous Change's (`pushed_title`, `pushed_body`). A Change with no title is still refused when it is used (`ChangeSpec`), not when it is wrapped.
@@ -186,9 +185,29 @@ Step 3 (repo-agent) deviates where:
   - factory does not record a revise's inputs, so the board knows Iterate's (`WorkAction.inputs`).
   - The session view prompts for inputs. The PR row's drawer has a text box for them.
 - **The `iterate`, `address` and `investigate` verbs are gone** from the Request CRD, along with `/prs/:id/{iterate,address-comments,investigate}`, the `*-requested-at` annotations, `ensurePRTaskClaims`/`ensurePRTaskClicks`, and factorycli's `StartIterate`/`StartAddressComments`/`StartInvestigate`.
-- **A PR with no fix run gets no follow-up buttons**, since the PR mode is not built. Auto (`factory pr watch`) still works on it as before.
+- **A PR with no fix run gets no follow-up buttons.** On a PR of yours, factory can run a revise with no fix run (the PR mode, below), but the board does not offer it yet; `recipe list`'s `revisesOn` is what it will read. Auto (`factory pr watch`) still works on it as before.
 - **The PR row's stage comes from the recorded run.** A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
 - **A fix session has no draft panel.** Its draft is the PR. *Continue session* is on the PR row's drawer and on a failed fix's error.
+
+The PR mode deviates where:
+
+- **On a PR of yours, fix has no start; it has only its revises.** On your PR, the PR already is what fix's start makes. `factory recipe fix --url <PR> --revise <revise>` (with `--input` for the revise) runs a revise straight away. `fix` is `on: [issue, my-pr]`, and the fork-ownership check is `checkOn`'s `my-pr` rule, which points at `factory pr adopt`.
+- **Two optional recipe fields express it.**
+  - **`setup:`** prepares the workspace and asks nothing. fix's is setup-git, setup-fork and configure-engine.
+  - **`start.on`** is where the start runs; fix's is `[issue]`.
+  - When both are unset, nothing changes, so the other recipes are as they were.
+  - factory folds `setup` into whichever part runs first: into the start (`ForSandbox`), or where the start does not run, into the first revise (`SetupBeforeRevise`). It also drops `start.on`, so a runner sees neither.
+- **The first revise opens the session.** It has no `Session`, so it starts the conversation as a start would, and its context goes first, since the session is fresh. The revises after it continue its session (`liveRun` finds the recipe's last run that did not fail), so the daemon and its revise tokens are unchanged. A revise input the first revise was given is reset for the next.
+- **The PR stands in for the start's push.** factory sets the first revise's `pushed_*` from the PR:
+  - the fork and branch from its head;
+  - the lease from its head commit;
+  - the base from the compare API's merge base;
+  - the title and body from the PR's.
+  The revise's checkout step fetches the branch from the fork when it is not there yet. Its push records `push.json`, which the next revise reads, as after a fix. `open-pr` on its Change finds the open PR and opens nothing.
+- **It runs in the PR's recipe sandbox**, `recipe-<repo>-<n>`, not in a `fix-<repo>-pr-<n>` of its own. That sandbox's `htmlURL` is the PR already, so the later revises get `pr_url` as they do on a fix's PR.
+- **The revises name no issue.** They ask to keep the description's `Fixes #…` line "if it has one", so they render on a PR's inputs. `CheckRender` leaves out the start on a target it does not run on.
+- **`factory recipe list` reports it** as `revisesOn: [my-pr]`, the targets where the recipe has no start. A board offers the revises there before any run.
+- **Auto does not see it yet.** `factory pr watch` finds a fix run only on the PR's labelled sandbox, and `recipe-<repo>-<n>` is unlabelled so that `factory pr` never adopts it.
 
 ## Not planned here
 

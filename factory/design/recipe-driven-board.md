@@ -34,7 +34,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
   - **`my-pr`**: a pull request the caller may change. It was **authored by the caller, and its head is a branch on the caller's fork**, the only place `push` pushes to.
     - The board's "mine" is "authored by you" alone, so a PR you authored whose head is on the repository or on someone else's fork is not `my-pr`. The button shows there, disabled: "the PR's head is not on your fork".
     - factory checks the same rule when the recipe runs, since the board's view can be stale. That is fix's rule for a PR it did not open: "adopt it first" (`factory pr adopt`).
-  - The built-ins: triage, plan and fix `[issue]`; review `[pr]`; research `[repo]`. Fix's PR mode, deferred in [fix-recipe.md](fix-recipe.md), is `[issue, my-pr]` once it is built.
+  - The built-ins: triage, plan and fix `[issue]`; review `[pr]`; research `[repo]`. Fix's PR mode ([fix-recipe.md](fix-recipe.md)) makes fix `[issue, my-pr]`.
   - `my-pr` rows also get `pr` recipes: Review shows on your own PR, as it does today.
   - **Revises are not filtered by `on`.** They follow their run: the fix's revises show on the PR its run opened, which is `my-pr` by construction.
 - **Revise inputs.** A revise lists the inputs it asks for (`inputs: [instruction]` on fix's `iterate`). Today an input is marked `revise: true` for every revise.

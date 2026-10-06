@@ -2,6 +2,10 @@ package commands
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,6 +142,32 @@ func TestLastRun(t *testing.T) {
 	}
 	if e, ok := lastRun(entries, "triage", "https://github.com/o/r/issues/9"); ok {
 		t.Errorf("lastRun on an issue never run = %s; want none", e.ID)
+	}
+}
+
+// --revise continues the newest run of the recipe on the URL, start or
+// revise, that has not failed.
+func TestLiveRun(t *testing.T) {
+	const u = "https://github.com/o/r/pull/9"
+	entry := func(id, revise string, state spool.State, code string) spool.Entry {
+		return spool.Entry{Task: spool.Task{ID: id, Recipe: "fix", URL: u, Revise: revise}, State: state, ExitCode: code}
+	}
+	for _, c := range []struct {
+		name    string
+		entries []spool.Entry
+		want    string
+	}{
+		{"none", nil, ""},
+		{"a first revise", []spool.Entry{entry("r1", "iterate", spool.Exited, "0")}, "r1"},
+		{"skips a failed revise", []spool.Entry{entry("r2", "fix-ci", spool.Exited, "1"), entry("r1", "iterate", spool.Exited, "0")}, "r1"},
+		{"only failures", []spool.Entry{entry("r1", "iterate", spool.Exited, "1")}, ""},
+		{"still running", []spool.Entry{entry("s1", "", spool.Running, "")}, "s1"},
+		{"another URL", []spool.Entry{{Task: spool.Task{ID: "x", Recipe: "fix", URL: u + "0"}, State: spool.Exited, ExitCode: "0"}}, ""},
+	} {
+		e, ok := liveRun(c.entries, "fix", u)
+		if got := map[bool]string{true: e.ID}[ok]; got != c.want {
+			t.Errorf("%s: liveRun = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 
@@ -346,6 +376,7 @@ func TestCheckOn(t *testing.T) {
 		{"issue recipe on a PR", recipeOn("issue"), prItem, mine, false},
 		{"issue recipe on a repo", recipeOn("issue"), repo, nil, false},
 		{"pr on anyone's PR", recipeOn("pr"), prItem, pr("bob", "bob/r", "bob", true), true},
+		{"pr on mine", recipeOn("pr"), prItem, mine, true},
 		{"pr recipe on an issue", recipeOn("pr"), issue, nil, false},
 		{"my-pr on mine", recipeOn("my-pr"), prItem, mine, true},
 		{"my-pr on someone else's", recipeOn("my-pr"), prItem, pr("bob", "bob/r", "bob", true), false},
@@ -353,7 +384,7 @@ func TestCheckOn(t *testing.T) {
 		{"my-pr on mine from someone else's fork", recipeOn("my-pr"), prItem, pr("alice", "bob/r", "bob", true), false},
 		{"repo on repo", recipeOn("repo"), repo, nil, true},
 	} {
-		if err := checkOn(c.rec, c.it, c.pr, "alice"); (err == nil) != c.ok {
+		if err := checkOn(c.rec, c.it, recipeTarget(c.it, c.pr, "alice")); (err == nil) != c.ok {
 			t.Errorf("%s: checkOn = %v, want ok %v", c.name, err, c.ok)
 		}
 	}
@@ -370,14 +401,19 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	for _, info := range infos {
 		byName[info.Name] = info
 	}
-	for name, on := range map[string]string{"triage": "issue", "plan": "issue", "fix": "issue", "review": "pr", "research": "repo"} {
-		if got := byName[name]; !slices.Equal(got.On, []string{on}) || got.Kind == "" || got.Label == "" {
-			t.Errorf("%s = %+v, want on [%s], a kind and a label", name, got, on)
+	for name, on := range map[string][]string{"triage": {"issue"}, "plan": {"issue"}, "fix": {"issue", "my-pr"}, "review": {"pr"}, "research": {"repo"}} {
+		if got := byName[name]; !slices.Equal(got.On, on) || got.Kind == "" || got.Label == "" {
+			t.Errorf("%s = %+v, want on %v, a kind and a label", name, got, on)
 		}
 	}
 	fix := byName["fix"]
 	if fix.Label != "Fix" || fix.Kind != "Change" {
 		t.Errorf("fix = %+v", fix)
+	}
+	// It has no start on a PR of yours, so its revises are offered there
+	// before any run; plan starts everywhere it runs.
+	if !slices.Equal(fix.RevisesOn, []string{"my-pr"}) || byName["plan"].RevisesOn != nil {
+		t.Errorf("fix revises on %v, plan on %v; want [my-pr] and none", fix.RevisesOn, byName["plan"].RevisesOn)
 	}
 	var iterate RecipeReviseInfo
 	for _, rv := range fix.Revises {
@@ -392,5 +428,40 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 		if in.Name == "instruction" && !in.Revise {
 			t.Errorf("fix's instruction input is not marked revise: %+v", in)
 		}
+	}
+}
+
+// A first revise on a PR of yours pushes from the PR: its head branch on
+// the fork, leased at its head, from where it branched off its base.
+func TestPRPushInputs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/compare/main...alice:feature", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"merge_base_commit":{"sha":"b0"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	pr := &githubv39.PullRequest{
+		HTMLURL: githubv39.String("https://github.com/o/r/pull/9"),
+		Title:   githubv39.String("t"),
+		Body:    githubv39.String("b"),
+		Head: &githubv39.PullRequestBranch{
+			Ref: githubv39.String("feature"), SHA: githubv39.String("h1"), Label: githubv39.String("alice:feature"),
+			Repo: &githubv39.Repository{FullName: githubv39.String("alice/r")},
+		},
+		Base: &githubv39.PullRequestBranch{Ref: githubv39.String("main")},
+	}
+	inputs := map[string]string{}
+	if err := prPushInputs(context.Background(), gh, githubItem{Owner: "o", Repo: "r", Number: 9, IsPR: true}, pr, inputs); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"pushed_fork": "alice/r", "pushed_branch": "feature", "pushed_head": "h1", "pushed_base": "b0",
+		"pushed_title": "t", "pushed_body": "b", "pr_url": "https://github.com/o/r/pull/9",
+	}
+	if fmt.Sprint(inputs) != fmt.Sprint(want) {
+		t.Errorf("inputs = %v, want %v", inputs, want)
 	}
 }

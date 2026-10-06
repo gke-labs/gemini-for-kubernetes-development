@@ -23,6 +23,10 @@ type RecipeInfo struct {
 	// Kind is its task output's kind, if it declares one.
 	Kind    string             `json:"kind,omitempty"`
 	Revises []RecipeReviseInfo `json:"revises,omitempty"`
+	// RevisesOn are the targets (of On) where it has no start
+	// (start.on): a board offers its revises there before any run, and
+	// --revise runs the first.
+	RevisesOn []string `json:"revisesOn,omitempty"`
 }
 
 // RecipeInputInfo is one declared input. Revise marks one only revises
@@ -54,6 +58,11 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	}
 	for _, rv := range rec.Revise {
 		info.Revises = append(info.Revises, RecipeReviseInfo{ID: rv.ID, Label: rv.Label, Inputs: rv.Inputs})
+	}
+	for _, target := range rec.On {
+		if len(rec.Revise) > 0 && !rec.StartsOn(target) {
+			info.RevisesOn = append(info.RevisesOn, target)
+		}
 	}
 	return info
 }
