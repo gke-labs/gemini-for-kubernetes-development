@@ -8,6 +8,7 @@
 # given. After a conversation in its session, `factory recipe revise
 # <issue> plan` rewrites the plan from that conversation.
 name: plan
+on: [issue]
 task-type: plan
 
 inputs:

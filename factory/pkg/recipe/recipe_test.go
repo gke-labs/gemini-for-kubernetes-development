@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -984,5 +985,41 @@ func TestSandboxUsesGetsTheTaskDir(t *testing.T) {
 	}
 	if want := "pushToFork " + taskDir + "\n"; out.String() != want {
 		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+
+// on: and a revise's inputs are checked when parsed, and kept from a
+// sandbox's runner, which may predate them.
+func TestOnAndReviseInputs(t *testing.T) {
+	withOn := "label: Draft it\non: [issue, my-pr]\ninputs:\n  instruction:\n    revise: true\n" + strings.Replace(reviseRecipe, "    label: Update plan\n", "    label: Update plan\n    inputs: [instruction]\n", 1)
+	rec, err := Parse([]byte(withOn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rec.On, []string{OnIssue, OnMyPR}) || !slices.Equal(rec.Revise[0].Inputs, []string{"instruction"}) || rec.DisplayLabel() != "Draft it" {
+		t.Errorf("parsed = on %v, revise inputs %v, label %q", rec.On, rec.Revise[0].Inputs, rec.DisplayLabel())
+	}
+	if (&Recipe{Name: "fix"}).DisplayLabel() != "Fix" {
+		t.Error("an unlabelled recipe is not shown under its name")
+	}
+	out, err := ForSandbox([]byte(withOn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(out)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got.On != nil || got.Label != "" || got.Revise[0].Inputs != nil || len(got.Revise[0].Steps) != 2 {
+		t.Errorf("sandbox recipe kept factory's fields:\n%s", out)
+	}
+
+	for name, bad := range map[string]string{
+		"unknown target":          "on: [commit]\n" + reviseRecipe,
+		"undeclared revise input": strings.Replace(reviseRecipe, "    label: Update plan\n", "    label: Update plan\n    inputs: [instruction]\n", 1),
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
 	}
 }

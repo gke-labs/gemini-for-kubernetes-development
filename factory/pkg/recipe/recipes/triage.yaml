@@ -3,6 +3,7 @@
 # is a Triage task output (task-output.yaml), which `factory apply`
 # publishes, or `--apply` once the task is done.
 name: triage
+on: [issue]
 
 inputs:
   instructions:

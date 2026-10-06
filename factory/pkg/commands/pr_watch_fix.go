@@ -54,7 +54,7 @@ func reviseFixRun(ctx context.Context, gh *githubv39.Client, sandboxName, revise
 	if err != nil {
 		return err
 	}
-	return awaitAndApply(ctx, sb, gh, sandboxName, id, "post-replies", false)
+	return awaitAndApply(ctx, sb, gh, nil, sandboxName, id, "post-replies", false)
 }
 
 // factoryPosted is whether a comment is one factory posted from a task
