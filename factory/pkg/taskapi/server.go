@@ -457,6 +457,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if !nonEmpty(tf.ExitCodeFile) && alive(tf) {
 		if pid, err := readPID(tf); err == nil {
 			signalGroup(pid, sig)
+			waitReaped(taskDir, reapWait)
 		}
 	}
 	if req.Kill {
@@ -477,6 +478,26 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, e)
+}
+
+// reapWait bounds how long a cancel waits for the daemon to record the
+// end of the task it signalled.
+const reapWait = 3 * time.Second
+
+// waitReaped waits, up to limit, for the daemon to reap the task and record
+// its end in the task's status. Until it has, the status still says
+// running, and the cancel would answer that, and a kill's 137 would have
+// no exited status to go on (spool.RecordKill). A task the daemon did not
+// start has no status to wait for.
+func waitReaped(taskDir string, limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for {
+		st, ok := spool.ReadStatus(taskDir)
+		if !ok || st.State != spool.Running || !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // signalGroup signals pid's process group, or pid alone when it shares
