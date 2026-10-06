@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/api"
@@ -19,7 +18,7 @@ import (
 )
 
 const (
-	sessionName = "repo-agent-session"
+	sessionName = auth.SessionName
 )
 
 func main() {
@@ -72,7 +71,7 @@ func main() {
 			klog.Fatalf("Failed to ensure session secret: %v", err)
 		}
 	}
-	store := cookie.NewStore([]byte(sessionSecret))
+	store := auth.NewSessionStore(sessionSecret)
 	router.Use(sessions.Sessions(sessionName, store))
 
 	// Register Routes

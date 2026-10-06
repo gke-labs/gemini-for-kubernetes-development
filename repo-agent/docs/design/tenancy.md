@@ -20,6 +20,7 @@ The application uses [Gorilla Sessions](https://github.com/gorilla/sessions) to 
 *   **Session Name**: `repo-agent-session`.
 *   **Key**: The authenticated user's GitHub username is stored in the session under the key `ghUser`.
 *   **Encryption**: The session is encrypted using a `SESSION_SECRET` environment variable (or a randomly generated one if not set).
+*   **Cookie Security**: The cookie sets `Secure: true` and `SameSite: Lax` by default. The `Secure` flag can be disabled for HTTP / local dev environments via the `SESSION_COOKIE_SECURE=false` environment variable.
 
 ### Authentication Flow
 1.  **OAuth Login**: Users authenticate via GitHub OAuth (`/api/auth/login`).
