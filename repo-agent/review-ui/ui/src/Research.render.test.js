@@ -75,6 +75,11 @@ const nativeSet = (el, value) => {
 // that follows sees the state the fetch produced.
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
+// A research conversation is a task session: taskOf is the one the
+// list's row for research session id names, and sessionAt its API.
+const taskOf = id => ({ sandbox: `rsch-${id}`, task: 'research-1' });
+const sessionAt = id => `/api/task-sessions/rsch-${id}/research-1`;
+
 let container;
 let root;
 
@@ -102,14 +107,14 @@ describe('ResearchConversation', () => {
             sessionId: 's1', sandbox: 'rsch-repo-abcd1234', namespace: 'ns', repo: 'repo-agent', live: false,
         }));
 
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
-        expect(global.fetch).toHaveBeenCalledWith('/api/research/s1');
+        expect(global.fetch).toHaveBeenCalledWith(sessionAt('s1'));
         expect(FakeSocket.instances).toHaveLength(1);
         // Resuming from the start: a fresh view replays the whole
         // transcript off the sandbox's disk.
-        expect(FakeSocket.instances[0].url).toContain('/api/research-events/s1?offset=0');
+        expect(FakeSocket.instances[0].url).toContain('/api/task-session-events/rsch-s1/research-1?offset=0');
 
         const ws = FakeSocket.instances[0];
         await act(async () => {
@@ -137,7 +142,7 @@ describe('ResearchConversation', () => {
         // which is how agents answer comparison questions — degrades
         // into one paragraph of pipes.
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -160,7 +165,7 @@ describe('ResearchConversation', () => {
     // shape the two views actually differ over.
     const withATable = async (table) => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -234,7 +239,7 @@ describe('ResearchConversation', () => {
         expect(localStorage.getItem('repoboard.research.view')).toBe('raw');
 
         // And the next conversation opened comes up in it.
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         expect(container.querySelector('.term-rendered')).toBeNull();
     });
@@ -269,7 +274,7 @@ describe('ResearchConversation', () => {
 
     test('a live turn disables the composer and offers Stop', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -293,7 +298,7 @@ describe('ResearchConversation', () => {
 
     test('a pending permission is rendered with its options', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -323,7 +328,7 @@ describe('ResearchConversation', () => {
         global.fetch.mockClear();
         global.fetch.mockImplementation(() => reply(204, {}));
         await act(async () => { allow.click(); });
-        expect(global.fetch).toHaveBeenCalledWith('/api/research/s1/permission', expect.objectContaining({
+        expect(global.fetch).toHaveBeenCalledWith(`${sessionAt('s1')}/permission`, expect.objectContaining({
             method: 'POST',
             body: JSON.stringify({ requestId: 'r1', optionId: 'o1' }),
         }));
@@ -335,7 +340,7 @@ describe('ResearchConversation', () => {
     // you can see without scrolling, so it is where the ask belongs.
     test('a turn blocked on a permission says so in the status pill', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const pill = () => [...container.querySelectorAll('span')]
@@ -381,7 +386,7 @@ describe('ResearchConversation', () => {
             if (opts && opts.method === 'PATCH') return reply(200, { sessionId: 's1', title: 'retry loop' });
             return reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview' });
         });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" title="overview" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} title="overview" />); });
         await flush();
         expect(container.querySelector('strong').textContent).toBe('overview');
 
@@ -407,7 +412,7 @@ describe('ResearchConversation', () => {
         // needed naming was the one that looked like it had a name —
         // and the repo is a link two inches to the right anyway.
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         expect(container.querySelector('strong')).toBeNull();
@@ -430,7 +435,7 @@ describe('ResearchConversation', () => {
             }
             return reply(200, { sessionId: 's1', repo: 'repo-agent' });
         });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -463,7 +468,7 @@ describe('ResearchConversation', () => {
             if (opts && opts.method === 'PATCH') throw new Error('should not rename a named session');
             return reply(200, { sessionId: 's1', repo: 'repo-agent', title: 'overview' });
         });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -480,19 +485,31 @@ describe('ResearchConversation', () => {
     });
 
     test('a session the old research path made says to start a new one and opens no socket', async () => {
-        const error = 'this conversation was made by the old research path and can no longer be opened: delete it and start a new one';
-        global.fetch = jest.fn(() => reply(409, { error, legacy: true, sandbox: 'rsch-x', namespace: 'ns' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        global.fetch = jest.fn(() => reply(200, {}));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" legacy />); });
         await flush();
 
         expect(container.textContent).toContain('start a new one');
+        expect(global.fetch).not.toHaveBeenCalled();
         expect(FakeSocket.instances).toHaveLength(0);
-        expect(container.querySelector('[aria-label="Save notes"]')).toBeNull();
+    });
+
+    test('a claim with no task yet waits for one, and opens it when the list brings it', async () => {
+        global.fetch = jest.fn(() => reply(200, { repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" pending />); });
+        await flush();
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(container.textContent).toContain('Preparing the sandbox');
+
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" pending task={taskOf('s1')} />); });
+        await flush();
+        expect(global.fetch).toHaveBeenCalledWith(sessionAt('s1'));
+        expect(FakeSocket.instances).toHaveLength(1);
     });
 
     test('a paused session says so and opens no socket', async () => {
         global.fetch = jest.fn(() => reply(409, { error: 'research session is paused', paused: true, sandbox: 'rsch-x' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         expect(FakeSocket.instances).toHaveLength(0);
@@ -512,7 +529,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({
@@ -537,7 +554,7 @@ describe('ResearchConversation', () => {
         });
         await flush();
 
-        expect(global.fetch).toHaveBeenCalledWith('/api/research/s1/mode', expect.objectContaining({
+        expect(global.fetch).toHaveBeenCalledWith(`${sessionAt('s1')}/mode`, expect.objectContaining({
             method: 'POST',
             body: JSON.stringify({ mode: 'default' }),
         }));
@@ -548,7 +565,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -570,7 +587,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({
@@ -605,7 +622,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', mode: 'yolo', availableModes: modes,
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({
@@ -629,7 +646,7 @@ describe('ResearchConversation', () => {
                 sessionId: 's1', repo: 'repo-agent', live: true,
                 mode: 'yolo', availableModes: modes, autoApprove: true,
             }));
-            await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+            await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
             await flush();
             await act(async () => {
                 FakeSocket.instances[0].deliver({
@@ -660,7 +677,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'barney-s',
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const labels = () => [...container.querySelectorAll('button, a')].map(e => e.textContent);
@@ -681,7 +698,7 @@ describe('ResearchConversation', () => {
 
     test('the composer says why it will not send, and keeps saying it while you type', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const ws = FakeSocket.instances[0];
@@ -738,7 +755,7 @@ describe('ResearchConversation', () => {
 
         try {
             global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-            await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+            await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
             await flush();
             await act(async () => {
                 FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } });
@@ -790,7 +807,7 @@ describe('ResearchConversation', () => {
         global.fetch = jest.fn(() => reply(200, {
             sessionId: 's1', repo: 'repo-agent', mode: 'default', availableModes: modes, modeError: refused,
         }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({
@@ -824,7 +841,7 @@ describe('ResearchConversation', () => {
 
     test('an engine that offers no modes gets no control', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, offset: 0 } });
@@ -836,13 +853,13 @@ describe('ResearchConversation', () => {
     test('a 404 is "gone" for an existing session and "starting" for a just-claimed one', async () => {
         global.fetch = jest.fn(() => reply(404, { error: 'research session not found' }));
 
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         expect(container.textContent).toContain('no longer exists');
 
         // The same 404 seconds after filing a mailbox claim means the
         // controller has not built the sandbox yet, not that it is gone.
-        await act(async () => { root.render(<ResearchConversation sessionId="s2" pending />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s2" task={taskOf('s2')} pending />); });
         await flush();
         expect(container.textContent).toContain('Preparing the sandbox');
     });
@@ -856,7 +873,7 @@ describe('ResearchConversation', () => {
             ...status, htmlUrl: 'https://github.com/gke-labs/open-rl',
         }));
 
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
         const link = [...container.querySelectorAll('a')].find(a => a.textContent === 'open-rl');
@@ -866,83 +883,18 @@ describe('ResearchConversation', () => {
         // A sandbox annotated with no URL still says which repo it is;
         // it just does not pretend to be a link to nowhere.
         global.fetch = jest.fn(() => reply(200, status));
-        await act(async () => { root.render(<ResearchConversation sessionId="s3" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s3" task={taskOf('s3')} />); });
         await flush();
         expect(container.textContent).toContain('open-rl');
         expect([...container.querySelectorAll('a')].map(a => a.textContent)).not.toContain('open-rl');
     });
-
-    // Saving notes: the conversation's one way of outliving the disk it
-    // is written on. One click, no answers — what to write is the
-    // conversation and where it goes is the session, and the server
-    // knows both. The click asks the agent to write the note; the push
-    // happens minutes later, in the controller, which is why everything
-    // this pane shows about it comes back off the probe.
-
-    // liveSession gets a conversation to the point where the save
-    // button is live, and collects what the button posts.
-    const liveSession = async ({ status = {}, posts = [] } = {}) => {
-        global.fetch = jest.fn((url, opts) => {
-            if (url === '/api/research/s1/capture') {
-                posts.push({ body: opts && opts.body, method: opts && opts.method });
-                return reply(202, { sessionId: 's1', note: 'notes.md', path: 'x', offset: 10 });
-            }
-            return reply(200, { sessionId: 's1', repo: 'repo-agent', sandbox: 'rsch-1', namespace: 'ns', task: 'research-1', ...status });
-        });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
-        await flush();
-        await act(async () => {
-            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: !!status.busyTurn, task: 'research-1', offset: 0 } });
-        });
-        return posts;
-    };
-
-    const saveButton = () => container.querySelector('[aria-label="Save notes"]');
-
-    test('saving takes one click and sends nothing to fill in', async () => {
-        const posts = await liveSession();
-
-        await act(async () => { saveButton().dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        await flush();
-
-        // No body at all. Every answer the old form asked for — which
-        // part, which file — is derivable at the other end, and a
-        // second answer here is a second way for two captures to
-        // disagree about the file they are both writing.
-        expect(posts).toEqual([{ method: 'POST', body: undefined }]);
-        // And nothing opened: what happens next takes minutes and none
-        // of it happens here.
-        expect(container.querySelector('textarea[aria-label="What to capture"]')).toBeNull();
-    });
-
-    test('the save control is on the bar, not behind the ⋯ menu', async () => {
-        // Saving is something you do *while* reading, at the moment the
-        // answer lands. The menu is for what you do to a session once,
-        // and it is closed while you read.
-        await liveSession();
-        expect(saveButton()).toBeTruthy();
-
-        const more = container.querySelector('[aria-label="More actions"]');
-        await act(async () => { more.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-        const items = [...container.querySelectorAll('[role="menuitem"]')].map(b => b.textContent);
-        expect(items.join(' ')).not.toContain('Save notes');
-    });
-
-    test('a capture will not go while the agent is working, and says so', async () => {
-        // The write-up is a turn, and the session takes one at a time.
-        await liveSession({ status: { busyTurn: true } });
-
-        expect(saveButton().disabled).toBe(true);
-        expect(saveButton().title).toContain('The agent is working');
-    });
-
 });
 
 describe('ResearchPanel', () => {
     const sessions = {
         sessions: [
-            { sessionId: 'aaaaaaaa-1111', title: 'the retry loop', sandbox: 'rsch-repo-agent-1', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z', paused: false },
-            { sessionId: 'bbbbbbbb-2222', title: 'rollout flags', sandbox: 'rsch-kubectl-2', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z', paused: true },
+            { sessionId: 'aaaaaaaa-1111', title: 'the retry loop', sandbox: 'rsch-repo-agent-1', task: 'research-1', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z', paused: false },
+            { sessionId: 'bbbbbbbb-2222', title: 'rollout flags', sandbox: 'rsch-kubectl-2', task: 'research-1', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z', paused: true },
         ],
     };
 
@@ -1133,17 +1085,18 @@ describe('ResearchPanel', () => {
             sessions: [
                 sessions.sessions[0],
                 {
-                    sessionId: 'cccccccc-3333', title: 'the lease', sandbox: 'rsch-repo-agent-3',
+                    sessionId: 'cccccccc-3333', title: 'the lease', sandbox: 'rsch-repo-agent-3', task: 'research-1',
                     repo: 'repo-agent', createdAt: '2026-09-26T08:00:00Z',
                 },
             ],
         };
         global.fetch = jest.fn((url) => {
             if (url === '/api/research') return reply(200, two);
-            const m = /^\/api\/research\/([^/?]+)$/.exec(url);
+            const m = /^\/api\/task-sessions\/([^/?]+)\/research-1$/.exec(url);
             if (m) {
-                seen.push(m[1]);
-                return reply(200, { sessionId: m[1], sandbox: 'rsch-x', repo: 'repo-agent', live: true });
+                const id = two.sessions.find(x => x.sandbox === m[1]).sessionId;
+                seen.push(id);
+                return reply(200, { research: id, sandbox: m[1], repo: 'repo-agent', live: true });
             }
             return reply(404, { error: 'not found' });
         });
@@ -1192,7 +1145,7 @@ describe('ResearchPanel', () => {
         // collapsed state, so there is nothing to expand from.
         global.fetch = jest.fn((url) => {
             if (url === '/api/research') return reply(200, sessions);
-            if (/^\/api\/research\/[^/?]+$/.test(url)) {
+            if (/^\/api\/task-sessions\/[^/?]+\/research-1$/.test(url)) {
                 return reply(200, { sessionId: 'aaaaaaaa-1111', sandbox: 'rsch-x', repo: 'repo-agent', live: true });
             }
             return reply(404, { error: 'not found' });
@@ -1213,7 +1166,7 @@ describe('ResearchPanel', () => {
         await flush();
 
         const tab = container.querySelector('[aria-label="Open in a new tab"]');
-        expect(tab.getAttribute('href')).toBe('#/research/aaaaaaaa-1111');
+        expect(tab.getAttribute('href')).toBe('#/task-session/rsch-repo-agent-1/research-1');
         expect(tab.getAttribute('target')).toBe('_blank');
 
         expect(container.textContent).toContain('the retry loop');
@@ -1278,7 +1231,7 @@ describe('ResearchPanel', () => {
 
     test('the popped-out window does not offer to pop itself out again', async () => {
         global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" standalone />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} standalone />); });
         await flush();
 
         expect(container.querySelector('[aria-label="Open in a new tab"]')).toBeNull();
@@ -1677,7 +1630,10 @@ describe('AllResearchPanel', () => {
         global.fetch = jest.fn((url) => {
             if (url === '/api/research') {
                 return reply(200, {
-                    sessions: [{ sessionId: 'aaaaaaaa-1111', title: 'the retry loop', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z' }],
+                    sessions: [{
+                        sessionId: 'aaaaaaaa-1111', title: 'the retry loop', sandbox: 'rsch-repo-abcd1234', task: 'research-1',
+                        repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z',
+                    }],
                 });
             }
             // The conversation's own probe, for the session just clicked.
@@ -1693,7 +1649,7 @@ describe('AllResearchPanel', () => {
         await act(async () => { row.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
         await flush();
 
-        expect(global.fetch).toHaveBeenCalledWith('/api/research/aaaaaaaa-1111');
+        expect(global.fetch).toHaveBeenCalledWith('/api/task-sessions/rsch-repo-abcd1234/research-1');
         expect(row.getAttribute('aria-current')).toBe('true');
     });
 });
@@ -1798,19 +1754,18 @@ describe('ResearchConversation on a task session', () => {
     const render = async (body, status = 200) => {
         global.fetch = jest.fn(() => reply(status, body));
         await act(async () => {
-            root.render(<ResearchConversation sessionId={task.task} task={task} title="plan · fix-granule-42" />);
+            root.render(<ResearchConversation task={task} title="plan · fix-granule-42" />);
         });
         await flush();
     };
 
-    test('is reached at the task session routes, with no rename, notes or delete', async () => {
+    test('is reached at the task session routes, with no rename or delete', async () => {
         await render({ sessionId: task.task, sandbox: task.sandbox, namespace: 'ns', repo: 'granule' });
         expect(global.fetch).toHaveBeenCalledWith('/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12');
         expect(FakeSocket.instances[0].url)
             .toContain('/api/task-session-events/fix-granule-42/recipe-plan-20261004-120000-ab12?offset=0');
         expect(container.textContent).toContain('plan · fix-granule-42');
         expect(container.querySelector('input[aria-label="Session title"]')).toBeNull();
-        expect(container.querySelector('[aria-label="Save notes"]')).toBeNull();
         await act(async () => { container.querySelector('[aria-label="More actions"]').click(); });
         expect(container.textContent).not.toContain('Delete');
     });
@@ -1839,9 +1794,9 @@ describe('ResearchConversation on a task session', () => {
         expect(container.textContent).not.toContain('The task is still running');
     });
 
-    test('the draft\'s revises are buttons that file the revise on its board row, and follow it', async () => {
+    test('the recipe\'s revises are buttons that file the revise on the session, and follow it', async () => {
         const offered = { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true };
-        await render({ sessionId: task.task, repo: 'granule', board: 'granule', number: 42, revises: [offered] });
+        await render({ sessionId: task.task, repo: 'granule', revises: [offered] });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
@@ -1851,15 +1806,18 @@ describe('ResearchConversation on a task session', () => {
         let status = { ...offered, enabled: false, reason: 'revising' };
         global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST'
             ? reply(202, { request: 'r' })
-            : reply(200, { sessionId: task.task, board: 'granule', number: 42, revises: [status] })));
+            : reply(200, { sessionId: task.task, revises: [status] })));
         jest.useFakeTimers();
         try {
             await act(async () => { button().click(); });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-            expect(global.fetch).toHaveBeenCalledWith('/api/board/granule/issues/42/actions/revise', expect.objectContaining({
-                method: 'POST',
-                body: JSON.stringify({ kind: 'Plan', revise: 'plan' }),
-            }));
+            // The session, not the board row: the server picks where it is
+            // filed.
+            expect(global.fetch).toHaveBeenCalledWith(
+                '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise', expect.objectContaining({
+                    method: 'POST',
+                    body: JSON.stringify({ revise: 'plan' }),
+                }));
             expect(button().textContent).toBe('Update plan…');
             expect(button().disabled).toBe(true);
 
@@ -1870,7 +1828,7 @@ describe('ResearchConversation on a task session', () => {
             jest.useRealTimers();
         }
         expect(button().disabled).toBe(false);
-        expect(container.textContent).toContain('now the draft on the board');
+        expect(container.textContent).toContain('Update plan: done');
     });
 
     test('a revise that failed says why', async () => {
@@ -1893,7 +1851,7 @@ describe('ResearchConversation on a task session', () => {
         expect(button.disabled).toBe(true);
     });
 
-    test('a session that wrote no draft offers no revise', async () => {
+    test('a session whose recipe offers no revise has no revise button', async () => {
         await render({ sessionId: task.task, repo: 'granule' });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
@@ -1909,17 +1867,29 @@ describe('ResearchConversation on a task session', () => {
     });
 });
 
-describe('ResearchConversation notes on a recipe conversation', () => {
-    const draft = { markdown: '# Findings\n\nthe backoff is linear', note: 'backoff', draftedAt: '2026-10-05T10:00:00Z' };
-    const open = async (notes, calls = []) => {
+describe('ResearchConversation revises and draft', () => {
+    // One view for every recipe: a research conversation's Save notes and
+    // its notes draft come from the same fields a plan's Update plan and
+    // plan draft do.
+    const saveNotes = { verb: 'revise', revise: 'notes', label: 'Save notes', enabled: true };
+    const notesDraft = {
+        kind: 'Notes', markdown: '# Findings\n\nthe backoff is linear', note: 'backoff', draftedAt: '2026-10-05T10:00:00Z',
+        actions: [
+            { verb: 'push-notes', label: 'Save to research/notes', enabled: true },
+            { verb: 'edit', enabled: true },
+            { verb: 'reject', enabled: true },
+        ],
+    };
+    const at = sessionAt('s1');
+    const open = async (status, calls = []) => {
         global.fetch = jest.fn((url, opts) => {
             if (opts && opts.method) {
                 calls.push({ url, method: opts.method, body: opts.body });
-                return reply(url.endsWith('/capture') || url.endsWith('/notes/save') ? 202 : 204, {});
+                return reply(202, {});
             }
-            return reply(200, { sessionId: 's1', repo: 'granule', sandbox: 'rsch-1', namespace: 'ns', task: 'research-1', notes });
+            return reply(200, { research: 's1', repo: 'granule', sandbox: 'rsch-s1', namespace: 'ns', ...status });
         });
-        await act(async () => { root.render(<ResearchConversation sessionId="s1" />); });
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: 'research-1', offset: 0 } });
@@ -1932,17 +1902,17 @@ describe('ResearchConversation notes on a recipe conversation', () => {
         await flush();
     };
 
-    test('💾 writes a draft rather than pushing', async () => {
-        const calls = await open({});
-        const save = container.querySelector('[aria-label="Save notes"]');
-        expect(save).toBeTruthy();
-        expect(save.title).toContain('draft');
-        await click(save);
-        expect(calls).toEqual([{ url: '/api/research/s1/capture', method: 'POST', body: undefined }]);
+    test('Save notes is the recipe\'s revise, before any draft exists', async () => {
+        const calls = await open({ revises: [saveNotes] });
+        expect(container.textContent).not.toContain('💾');
+        expect(container.textContent).not.toContain('draft');
+        await click(button('Save notes'));
+        expect(calls).toEqual([{ url: `${at}/revise`, method: 'POST', body: JSON.stringify({ revise: 'notes' }) }]);
     });
 
-    test('the draft is shown, saved, edited and discarded', async () => {
-        const calls = await open(draft);
+    test('the draft is shown, and its actions are its own buttons', async () => {
+        window.confirm = jest.fn(() => true);
+        const calls = await open({ revises: [saveNotes], draft: notesDraft });
         expect(container.textContent).toContain('Notes draft');
         expect(container.textContent).toContain('backoff.md');
         // Folded to its line until asked for.
@@ -1952,7 +1922,8 @@ describe('ResearchConversation notes on a recipe conversation', () => {
 
         await click(button('Save to research/notes'));
         await click(button('Edit'));
-        const box = container.querySelector('textarea[aria-label="Edit the notes"]');
+        const box = container.querySelector('textarea[aria-label="Edit the draft"]');
+        expect(box.value).toBe(notesDraft.markdown);
         await act(async () => {
             nativeSet(box, '# Edited');
             box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1961,16 +1932,38 @@ describe('ResearchConversation notes on a recipe conversation', () => {
         await click(button('Discard'));
 
         expect(calls).toEqual([
-            { url: '/api/research/s1/notes/save', method: 'POST', body: undefined },
-            { url: '/api/research/s1/notes', method: 'PUT', body: JSON.stringify({ markdown: '# Edited' }) },
-            { url: '/api/research/s1/notes', method: 'DELETE', body: undefined },
+            { url: `${at}/draft/push-notes`, method: 'POST', body: JSON.stringify({ run: '', text: '' }) },
+            { url: `${at}/draft/edit`, method: 'POST', body: JSON.stringify({ run: '', text: '# Edited' }) },
+            { url: `${at}/draft/reject`, method: 'POST', body: JSON.stringify({ run: '', text: '' }) },
         ]);
     });
 
-    test('what failed is said, and 💾 waits while it writes', async () => {
-        await open({ ...draft, writing: true, saveError: 'push refused' });
-        expect(container.textContent).toContain('push refused');
-        expect(container.textContent).toContain('Writing this conversation up');
-        expect(container.querySelector('[aria-label="Save notes"]').disabled).toBe(true);
+    test('a plan session gets the same panel, with the plan\'s actions', async () => {
+        await open({
+            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true }],
+            draft: { kind: 'Plan', markdown: '## Summary', actions: [{ verb: 'comment', label: 'Post plan', enabled: true }] },
+        });
+        expect(container.textContent).toContain('Plan draft');
+        expect(button('Update plan')).toBeTruthy();
+        expect(button('Post plan')).toBeTruthy();
+    });
+
+    test('what is running and what failed is said, and what waits says why', async () => {
+        await open({
+            revises: [{ ...saveNotes, enabled: false, reason: 'revising' }],
+            draft: {
+                ...notesDraft,
+                actions: [
+                    { verb: 'push-notes', label: 'Save to research/notes', enabled: false, reason: 'the notes are being rewritten', error: 'push refused' },
+                    { verb: 'reject', enabled: true },
+                ],
+            },
+        });
+        expect(container.textContent).toContain('Save to research/notes failed: push refused');
+        expect(container.textContent).toContain('Save notes: running in this conversation');
+        expect(button('Save notes…').disabled).toBe(true);
+        const push = button('Save to research/notes');
+        expect(push.disabled).toBe(true);
+        expect(push.title).toBe('Not now: the notes are being rewritten');
     });
 });

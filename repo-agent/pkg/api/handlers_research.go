@@ -16,20 +16,19 @@ limitations under the License.
 
 package api
 
-// The research conversation proxy: everything that happens after the
-// sandbox exists.
+// Research sessions as the board lists them: the rail, renaming and
+// deleting.
 //
 // Creating one goes through a Request on the board, because only the
 // controller's image carries the factory CLI (see
 // handlers_board_research.go). Talking to one does not: the conversation
-// is the recipe's task session in the sandbox's daemon, reached over a
-// port-forward, so the board is never involved again. That is the same
-// split the chat terminal uses — create elsewhere, attach from here —
-// with a lighter attach: HTTP instead of pods/exec.
+// is the recipe's task session in the sandbox's daemon, and a row opens
+// it as any task session is opened, by its sandbox and task
+// (handlers_task_session.go).
 //
-// Routes are keyed by session id alone, with no board and no sandbox
-// name in the path. The sandbox carries the session's short id as a
-// label precisely so it can be found that way, and the member's
+// Rename and delete are keyed by session id alone, with no board and no
+// sandbox name in the path. The sandbox carries the session's short id
+// as a label precisely so it can be found that way, and the member's
 // namespace comes from their session, so a caller cannot reach into
 // another member's conversation by naming it.
 
@@ -167,23 +166,10 @@ type researchSandboxView struct {
 	Pod *corev1.Pod `json:"-"`
 }
 
-// cwd is the checkout the conversation is about, matching what factory
-// cloned.
-func (v researchSandboxView) cwd() string {
-	if v.Repo == "" {
-		return ""
-	}
-	return "/workspaces/" + v.Repo
-}
-
 // acpSession is the conversation's id on the daemon: the recipe's task.
 func (v researchSandboxView) acpSession() string {
 	return v.Task
 }
-
-// researchLegacyMessage is what a sandbox the old research path made
-// answers to every conversation route.
-const researchLegacyMessage = "this conversation was made by the old research path and can no longer be opened: delete it and start a new one"
 
 // researchClient reaches the daemon's task sessions, which host the
 // conversation. False when the sandbox's image keeps none.
@@ -514,70 +500,6 @@ func (s *Server) researchPod(ctx context.Context, namespace, sandboxName string)
 	return nil, nil
 }
 
-// researchConn is a resolved, reachable conversation.
-type researchConn struct {
-	view   researchSandboxView
-	client *acpd.Client
-}
-
-// resolveResearch turns a session id from the URL into something to talk
-// to, or an HTTP status and a message saying why not.
-//
-// The status codes are the contract with the UI: 404 means the session
-// does not exist, 409 means it exists but is not up yet — the first is
-// permanent, the second is worth retrying.
-func (s *Server) resolveResearch(c *gin.Context) (*researchConn, bool) {
-	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	sessionID := c.Param("session")
-	if !safeResearchSessionID.MatchString(sessionID) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
-		return nil, false
-	}
-
-	view, found, err := s.findResearchSandbox(ctx, namespace, sessionID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the session", "details": err.Error()})
-		return nil, false
-	}
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": "research session not found"})
-		return nil, false
-	}
-	if view.Legacy {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":   researchLegacyMessage,
-			"sandbox": view.Sandbox, "namespace": namespace, "legacy": true,
-		})
-		return nil, false
-	}
-	if view.Paused {
-		c.JSON(http.StatusConflict, gin.H{"error": "research session is paused", "sandbox": view.Sandbox, "paused": true})
-		return nil, false
-	}
-
-	pod, err := s.researchPod(ctx, namespace, view.Sandbox)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find the session's pod", "details": err.Error()})
-		return nil, false
-	}
-	if pod == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "research sandbox is still starting", "sandbox": view.Sandbox, "starting": true})
-		return nil, false
-	}
-	view.Pod = pod
-
-	client, ok := s.researchClient(ctx, pod)
-	if !ok {
-		c.JSON(http.StatusConflict, gin.H{
-			"error":   "this sandbox's image keeps no agent sessions for its tasks",
-			"sandbox": view.Sandbox, "namespace": namespace, "legacy": true,
-		})
-		return nil, false
-	}
-	return &researchConn{view: view, client: client}, true
-}
-
 // engineAPIKey reads the member's engine credential.
 //
 // Read fresh on every session create rather than cached: acpd holds the
@@ -596,37 +518,6 @@ func (s *Server) engineAPIKey(ctx context.Context, namespace string) (string, er
 	return key, nil
 }
 
-// ensureResearchSession returns the live task session, continuing it if
-// the daemon has none loaded.
-//
-// Lazily, rather than when the recipe's start ends: a session does not
-// survive a daemon restart, because the key is fixed in the engine
-// child's environment at exec time, so continuing on demand is the
-// recovery path as well as the first one.
-func (s *Server) ensureResearchSession(ctx context.Context, conn *researchConn) (*acpd.Session, error) {
-	session, err := conn.client.GetSession(ctx, conn.view.acpSession())
-	if err == nil {
-		return session, nil
-	}
-	if !errors.Is(err, acpd.ErrNotFound) {
-		return nil, err
-	}
-	apiKey, err := s.engineAPIKey(ctx, conn.view.Namespace)
-	if err != nil {
-		return nil, err
-	}
-	// The daemon loads what the recipe's start said, and refuses while
-	// the start is still running (409).
-	return conn.client.CreateSession(ctx, acpd.CreateSessionRequest{
-		ID:          conn.view.acpSession(),
-		Task:        conn.view.Task,
-		Engine:      conn.view.Engine,
-		CWD:         conn.view.cwd(),
-		Mode:        acpd.ResearchMode,
-		AutoApprove: acpd.ResearchAutoApprove,
-	}, apiKey)
-}
-
 // researchError maps an acpd failure onto a status for the caller.
 //
 // A pod that has gone away mid-conversation surfaces as a dial error,
@@ -641,124 +532,10 @@ func researchError(c *gin.Context, err error) {
 	c.JSON(http.StatusBadGateway, gin.H{"error": "the conversation server is unreachable", "details": err.Error()})
 }
 
-// getResearchSession reports one session's state: the sandbox's, always,
-// and the engine's when there is one to ask.
-//
-// It does not create the session. A status call that spawned an engine
-// would make polling the list expensive and surprising; opening the
-// event stream is the deliberate act that starts one.
-func (s *Server) getResearchSession(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	body := gin.H{
-		"sessionId": conn.view.SessionID,
-		"task":      conn.view.Task,
-		"sandbox":   conn.view.Sandbox,
-		"namespace": conn.view.Namespace,
-		"repo":      conn.view.Repo,
-		// Where that repo actually is. The conversation header has shown
-		// the repo name since it existed, and a name is not a way to get
-		// to the thing — the list has linked it all along, and a
-		// conversation opened straight from a click should not be the one
-		// place you have to go back to the list to reach the code.
-		"htmlUrl": conn.view.HTMLURL,
-		"cwd":     conn.view.cwd(),
-		"live":    false,
-		// The title, so a conversation opened straight from a click can
-		// name itself without also fetching the list.
-		"title": conn.view.Title,
-		"notes": s.researchNotes(c.Request.Context(), conn.view),
-	}
-	session, err := conn.client.GetSession(c.Request.Context(), conn.view.acpSession())
-	switch {
-	case err == nil:
-		body["live"] = true
-		// A task session's two facts: held, the recipe's start is still
-		// running and only it may drive the session; loaded, the agent
-		// remembers what the start said.
-		body["held"] = session.Held
-		body["loaded"] = session.Loaded
-		body["busy"] = session.Busy
-		// Reported here as well as on the list so the two cannot disagree
-		// about the same session. The conversation itself learns this from
-		// the event stream, which is better than polling — but it learns it
-		// from the moment it attached, and a session that stopped to ask
-		// something before anyone opened it has no event left to send.
-		body["waiting"] = session.Waiting
-		body["offset"] = session.Offset
-		body["engine"] = session.Engine
-		body["createdAt"] = session.CreatedAt
-		body["mode"] = session.Mode
-		body["availableModes"] = session.AvailableModes
-		body["modeError"] = session.ModeError
-		// Whether acpd is answering for the member. The mode alone does
-		// not say — a permissive mode does not stop gemini asking, which
-		// is why this exists — so the UI has to be told rather than infer
-		// it, or the header ends up claiming the opposite of what happens.
-		body["autoApprove"] = session.AutoApprove
-	case errors.Is(err, acpd.ErrNotFound):
-		// The sandbox is up but no engine is running in it: the normal
-		// state of a session nobody has opened yet, and of one whose
-		// acpd restarted. Not an error.
-	default:
-		body["unreachable"] = err.Error()
-	}
-	c.JSON(http.StatusOK, body)
-}
-
-// promptResearchSession sends one turn.
-//
-// The reply is not in the response: it arrives as events on the stream
-// the caller is already following. What comes back is the transcript
-// offset after the prompt was recorded, so a caller that is not yet
-// following knows where to start without replaying its own message.
-func (s *Server) promptResearchSession(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Text string `json:"text"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Text == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "text is required"})
-		return
-	}
-
-	ctx := c.Request.Context()
-	if _, err := s.ensureResearchSession(ctx, conn); err != nil {
-		researchError(c, err)
-		return
-	}
-	offset, err := conn.client.Prompt(ctx, conn.view.acpSession(), req.Text)
-	if err != nil {
-		// A 409 from acpd means a turn is already in flight. It travels
-		// through researchError unchanged, so the UI can disable the
-		// composer rather than treat it as a failure.
-		researchError(c, err)
-		return
-	}
-	// A session nobody named is named by what was asked of it. Only the
-	// first turn does this, and only when nothing else has: a canned
-	// session already has its title, and a renamed one keeps it.
-	if conn.view.Title == "" {
-		if title := research.Truncate(req.Text); title != "" {
-			if err := s.setResearchTitle(ctx, conn.view.Namespace, conn.view.Sandbox, title); err != nil {
-				// Best effort. The turn is already delivered, and an
-				// untitled row is a cosmetic loss.
-				klog.V(2).Infof("research: could not title %s: %v", conn.view.Sandbox, err)
-			}
-		}
-	}
-	c.JSON(http.StatusAccepted, gin.H{"offset": offset})
-}
-
 // renameResearchSession sets what a session is called.
 //
-// It does not go through resolveResearch: renaming a paused or
-// still-booting session is reasonable, and neither has a pod to dial.
+// It needs no pod: renaming a paused or still-booting session is
+// reasonable, and neither has one to dial.
 func (s *Server) renameResearchSession(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -828,78 +605,6 @@ func (s *Server) setResearchTitle(ctx context.Context, namespace, sandboxName, t
 	return err
 }
 
-// resolveResearchPermission answers a permission request the engine is
-// blocked on. Until this lands the turn makes no progress, so it does
-// not create a session: if there is no engine there is nothing waiting.
-func (s *Server) resolveResearchPermission(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	var res acpd.PermissionResolution
-	if err := c.ShouldBindJSON(&res); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid permission resolution", "details": err.Error()})
-		return
-	}
-	if err := conn.client.ResolvePermission(c.Request.Context(), conn.view.acpSession(), res); err != nil {
-		researchError(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-// cancelResearchSession interrupts the turn in flight. ACP models cancel
-// as a notification, so the turn ends with a cancelled stopReason on the
-// event stream rather than this call reporting the outcome.
-func (s *Server) cancelResearchSession(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	if err := conn.client.Cancel(c.Request.Context(), conn.view.acpSession()); err != nil {
-		researchError(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-// setResearchSessionMode switches how much the engine asks before it
-// acts.
-//
-// Like the permission route, it does not create a session: there is
-// nothing to set a mode on until an engine is running, and a create here
-// would give the member a session as a side effect of adjusting one. A
-// session that does not exist yet gets its mode at create instead — see
-// ensureResearchSession.
-func (s *Server) setResearchSessionMode(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Mode string `json:"mode"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Mode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "mode is required"})
-		return
-	}
-	session, err := conn.client.SetMode(c.Request.Context(), conn.view.acpSession(), req.Mode)
-	if err != nil {
-		// A 400 from acpd names the modes the engine does offer, and it
-		// travels through unchanged: the UI built its list from the same
-		// source, so a rejection here means the engine has been upgraded
-		// underneath it and the message is the useful part.
-		researchError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"sessionId":      conn.view.SessionID,
-		"mode":           session.Mode,
-		"availableModes": session.AvailableModes,
-		"autoApprove":    session.AutoApprove,
-	})
-}
-
 // deleteResearchSession ends a conversation for good.
 //
 // It deletes the sandbox, not the acpd session, because the sandbox IS
@@ -914,9 +619,9 @@ func (s *Server) deleteResearchSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
 		return
 	}
-	// Resolved from the object rather than from resolveResearch: a
-	// paused or half-booted session is exactly the one a member most
-	// wants to be able to delete, and that path refuses both.
+	// Resolved from the object alone, with no pod: a paused or
+	// half-booted session is exactly the one a member most wants to be
+	// able to delete.
 	view, found, err := s.findResearchSandbox(ctx, namespace, sessionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the session", "details": err.Error()})
@@ -959,49 +664,6 @@ const (
 	researchPingInterval = 20 * time.Second
 	researchReadTimeout  = 70 * time.Second
 )
-
-// streamResearchEvents follows one conversation over a websocket.
-//
-// A websocket rather than SSE for the reason the terminal learned the
-// hard way: this path idles for as long as the member is thinking, and
-// the intermediaries between here and a browser drop idle connections
-// without saying so. Ping/pong keeps it open and makes a real death
-// detectable.
-//
-// Traffic is one-way. Prompts, permissions and cancels are ordinary
-// POSTs, so this socket never has to multiplex a request onto a stream
-// it is also reading.
-//
-// This is the call that starts the engine. Opening the conversation is
-// the deliberate act; the status and list routes stay cheap because they
-// do not.
-func (s *Server) streamResearchEvents(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-
-	offset, ok := eventOffset(c)
-	if !ok {
-		return
-	}
-
-	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		klog.Errorf("research: websocket upgrade failed: %v", err)
-		return
-	}
-	defer func() { _ = ws.Close() }()
-
-	// Detached from the HTTP request: the follow lives as long as the
-	// websocket, and only as long.
-	ctx, cancel := context.WithCancel(context.WithoutCancel(c.Request.Context()))
-	defer cancel()
-
-	followSession(ctx, cancel, ws, conn.client, conn.view.acpSession(), offset, func(ctx context.Context) (*acpd.Session, error) {
-		return s.ensureResearchSession(ctx, conn)
-	})
-}
 
 // eventOffset is the ?offset= to follow events from, answering 400 when
 // it is not one.

@@ -231,6 +231,12 @@ func (f *fakeSessions) handler() http.Handler {
 	return mux
 }
 
+// researchConversation is the task session a research row opens: its
+// sandbox and its recipe's task.
+func researchConversation(sessionID string) string {
+	return "/api/task-sessions/" + factorycli.ResearchSandboxName(researchRepo, sessionID) + "/" + researchTaskOf(sessionID)
+}
+
 // researchTaskOf is the recipe task researchSandboxCR records for a
 // session: the id of its conversation on the daemon.
 func researchTaskOf(sessionID string) string { return "recipe-research-" + sessionID }
@@ -342,20 +348,15 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 		c.Next()
 	})
 	r.GET("/api/research", server.getResearchSessions)
-	r.GET("/api/research/:session", server.getResearchSession)
 	r.PATCH("/api/research/:session", server.renameResearchSession)
 	r.DELETE("/api/research/:session", server.deleteResearchSession)
-	r.POST("/api/research/:session/prompt", server.promptResearchSession)
-	r.POST("/api/research/:session/permission", server.resolveResearchPermission)
-	r.POST("/api/research/:session/cancel", server.cancelResearchSession)
-	r.POST("/api/research/:session/mode", server.setResearchSessionMode)
-	r.POST("/api/research/:session/capture", server.captureResearchNotes)
-	r.POST("/api/research/:session/notes/save", server.saveResearchNotes)
-	r.PUT("/api/research/:session/notes", server.editResearchNotes)
-	r.DELETE("/api/research/:session/notes", server.discardResearchNotes)
-	r.GET("/api/research-events/:session", server.streamResearchEvents)
 	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/permission", server.resolveTaskSessionPermission)
+	r.POST("/api/task-sessions/:sandbox/:task/cancel", server.cancelTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/mode", server.setTaskSessionMode)
+	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
 	r.GET("/api/task-session-events/:sandbox/:task", server.streamTaskSessionEvents)
 	return r, dynamicClient
 }
@@ -603,30 +604,19 @@ func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
 	}
 }
 
-// Every conversation route on a legacy sandbox is 409 legacy, saying to
-// recreate it; delete still works.
-func TestResearchLegacySandboxIsConflict(t *testing.T) {
+// A legacy sandbox records no task, so it has no conversation to open;
+// it is still deletable.
+func TestResearchLegacySandboxIsStillDeletable(t *testing.T) {
 	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
 	daemon := &fakeSessions{sessionExists: true}
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
 
-	for _, call := range []struct{ method, path, body string }{
-		{http.MethodGet, "/api/research/" + researchSession, ""},
-		{http.MethodPost, "/api/research/" + researchSession + "/prompt", `{"text":"hi"}`},
-		{http.MethodPost, "/api/research/" + researchSession + "/cancel", ""},
-	} {
-		w := doJSON(t, r, call.method, call.path, call.body)
-		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"legacy":true`) ||
-			!strings.Contains(w.Body.String(), "start a new one") {
-			t.Errorf("%s %s = %d %s; want 409 legacy", call.method, call.path, w.Code, w.Body.String())
-		}
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession, ""); w.Code >= 300 {
+		t.Errorf("delete = %d %s; a legacy sandbox must still be deletable", w.Code, w.Body.String())
 	}
 	if len(daemon.calls) != 0 {
 		t.Errorf("a legacy sandbox was dialled: %v", daemon.calls)
-	}
-	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession, ""); w.Code >= 300 {
-		t.Errorf("delete = %d %s; a legacy sandbox must still be deletable", w.Code, w.Body.String())
 	}
 }
 
@@ -663,14 +653,14 @@ func TestResearchSessionInAnotherNamespaceIsInvisible(t *testing.T) {
 	if w := doJSON(t, r, http.MethodGet, "/api/research", ""); !strings.Contains(w.Body.String(), `"sessions":[]`) {
 		t.Errorf("bob's session appeared in alice's list: %s", w.Body.String())
 	}
-	if w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, ""); w.Code != http.StatusNotFound {
+	if w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), ""); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for another namespace's session", w.Code)
 	}
 }
 
 // The label is eight hex characters of a digest, so it narrows the
 // search but cannot prove identity. Without the annotation check, a
-// colliding short id would hand one member another's conversation.
+// colliding short id would let one member delete another's conversation.
 func TestResearchShortIDCollisionIsRejected(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	// Same label, different session: exactly what a digest collision
@@ -682,7 +672,7 @@ func TestResearchShortIDCollisionIsRejected(t *testing.T) {
 	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, ""); w.Code != http.StatusNotFound {
+	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession, ""); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 — the label matched but the session did not", w.Code)
 	}
 }
@@ -715,7 +705,7 @@ func TestResearchSessionStillStartingIsConflict(t *testing.T) {
 				objs = append(objs, pod)
 			}
 			r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb}, objs...)
-			w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+			w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 			if w.Code != http.StatusConflict {
 				t.Errorf("status = %d, want 409: %s", w.Code, w.Body.String())
 			}
@@ -727,7 +717,7 @@ func TestResearchPausedSessionIsConflict(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, true)
 	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb})
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
 	}
@@ -744,7 +734,7 @@ func TestResearchStatusDoesNotCreateASession(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -776,7 +766,7 @@ func TestResearchPromptCreatesSessionWithKeyInHeader(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"what does this repo do?"}`)
+	w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"what does this repo do?"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -809,7 +799,7 @@ func TestResearchPromptReusesALiveSession(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if daemon.sawCall("POST /sessions") {
@@ -826,7 +816,7 @@ func TestResearchPromptPassesBusyThrough(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`)
+	w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"hello"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
 	}
@@ -844,7 +834,7 @@ func TestResearchPromptWithoutAnEngineKeyFails(t *testing.T) {
 		// who never supplied one.
 		&corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: "factory-user", Namespace: "alice"}})
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`)
+	w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"hello"}`)
 	if w.Code == http.StatusAccepted {
 		t.Fatalf("prompt succeeded without an engine key: %s", w.Body.String())
 	}
@@ -862,13 +852,13 @@ func TestResearchPermissionAndCancelReachTheEngine(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/permission", `{"requestId":"r1","optionId":"allow"}`); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/permission", `{"requestId":"r1","optionId":"allow"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("permission status = %d: %s", w.Code, w.Body.String())
 	}
 	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/permission") {
 		t.Errorf("permission did not reach acpd; calls: %v", daemon.calls)
 	}
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/cancel", ""); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/cancel", ""); w.Code != http.StatusNoContent {
 		t.Fatalf("cancel status = %d: %s", w.Code, w.Body.String())
 	}
 	if !daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/cancel") {
@@ -885,7 +875,7 @@ func TestResearchPermissionDoesNotCreateASession(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/permission", `{"requestId":"r1","optionId":"allow"}`)
+	doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/permission", `{"requestId":"r1","optionId":"allow"}`)
 	if daemon.sawCall("POST /sessions") {
 		t.Errorf("a permission answer spawned an engine; calls: %v", daemon.calls)
 	}
@@ -914,7 +904,7 @@ func TestResearchRejectsMalformedSessionIDs(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			// Escaped on the way in; gin hands the handler the decoded
 			// value, which is the form the check has to cope with.
-			w := doJSON(t, r, http.MethodGet, "/api/research/"+url.PathEscape(id), "")
+			w := doJSON(t, r, http.MethodDelete, "/api/research/"+url.PathEscape(id), "")
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", w.Code)
 			}
@@ -935,7 +925,7 @@ func TestResearchEventStreamCarriesResumeOffsets(t *testing.T) {
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession + "?offset=100"
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/task-session-events/" + factorycli.ResearchSandboxName(researchRepo, researchSession) + "/" + researchTaskOf(researchSession) + "?offset=100"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -990,7 +980,7 @@ func TestResearchEventStreamCreatesTheSession(t *testing.T) {
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/research-events/" + researchSession
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/task-session-events/" + factorycli.ResearchSandboxName(researchRepo, researchSession) + "/" + researchTaskOf(researchSession)
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -1259,49 +1249,19 @@ func TestResearchRenameRejectsAnEmptyTitle(t *testing.T) {
 	}
 }
 
-// A conversation nobody named is named by what was asked of it — the
-// alternative is a list of identical rows.
-func TestResearchFirstPromptTitlesTheSession(t *testing.T) {
-	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	daemon := &fakeSessions{}
-	r, dyn := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
+// The conversation names itself from the status, and says which research
+// session it is, so a view opened by its link can rename and delete it.
+func TestResearchStatusCarriesTheTitleAndTheSession(t *testing.T) {
+	sb := titled(researchSandboxCR("alice", researchSession, researchRepo, false), "overview")
+	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt",
-		`{"text":"where does the retry loop live?\nand who calls it"}`)
-	if w.Code != http.StatusAccepted {
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
+	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
-	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "where does the retry loop live?" {
-		t.Errorf("title = %q, want the first line of the first prompt", title)
-	}
-}
-
-// Only the first. A session that already has a name keeps it, whether
-// that name came from a canned opening or from the member.
-func TestResearchLaterPromptsDoNotRetitle(t *testing.T) {
-	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
-	annotations := sb.GetAnnotations()
-	annotations[research.TitleAnnotation] = "overview"
-	sb.SetAnnotations(annotations)
-	daemon := &fakeSessions{}
-	r, dyn := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
-
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"and the backoff?"}`)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
-	}
-	got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), sb.GetName(), v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if title := got.GetAnnotations()[research.TitleAnnotation]; title != "overview" {
-		t.Errorf("title = %q, want the name it already had", title)
+	if !strings.Contains(w.Body.String(), `"title":"overview"`) || !strings.Contains(w.Body.String(), `"research":"`+researchSession+`"`) {
+		t.Errorf("title or research id missing from the status: %s", w.Body.String())
 	}
 }
 
@@ -1316,7 +1276,7 @@ func TestResearchSessionIsCreatedAutoApproving(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"hello"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(daemon.createBody, `"mode":"`+acpd.ResearchMode+`"`) {
@@ -1332,7 +1292,7 @@ func TestResearchStatusReportsTheMode(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -1359,7 +1319,7 @@ func TestResearchStatusReportsAWaitingSession(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -1381,7 +1341,7 @@ func TestResearchStatusCarriesWhyTheModeDidNotStick(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -1396,7 +1356,7 @@ func TestResearchModeCanBeSwitchedMidConversation(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`)
+	w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/mode", `{"mode":"default"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -1414,7 +1374,7 @@ func TestResearchModeRejectsAnEmptyBody(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{}`); w.Code != http.StatusBadRequest {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/mode", `{}`); w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 	if daemon.sawCall("POST /sessions/" + researchTaskOf(researchSession) + "/mode") {
@@ -1431,7 +1391,7 @@ func TestSettingTheModeDoesNotCreateASession(t *testing.T) {
 	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 		researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/mode", `{"mode":"default"}`); w.Code != http.StatusNotFound {
+	if w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/mode", `{"mode":"default"}`); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for a session with no engine", w.Code)
 	}
 	if daemon.sawCall("POST /sessions") {
@@ -1459,7 +1419,7 @@ func TestResearchSessionIsCreatedOnTheSandboxEngine(t *testing.T) {
 			r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
 				researchPod("alice", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-			w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hi"}`)
+			w := doJSON(t, r, http.MethodPost, researchConversation(researchSession)+"/prompt", `{"text":"hi"}`)
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 			}

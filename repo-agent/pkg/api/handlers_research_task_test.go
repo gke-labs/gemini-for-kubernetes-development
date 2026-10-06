@@ -35,6 +35,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	podacpd "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -49,11 +50,21 @@ func recipeResearchSandboxCR() *unstructured.Unstructured {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: factorycli.ResearchRunName(researchSession), Task: researchTaskID, StartedAt: time.Now().UTC(),
+		Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
 	})
 	annotations := sb.GetAnnotations()
 	annotations[factorycli.ResearchRunAnnotation] = string(run)
 	sb.SetAnnotations(annotations)
 	return sb
+}
+
+// notesRevise is the research recipe's Save notes revise.
+const notesRevise = "notes"
+
+// recipeConversation is the recipe sandbox's conversation: its task
+// session.
+func recipeConversation() string {
+	return "/api/task-sessions/" + recipeResearchSandboxCR().GetName() + "/" + researchTaskID
 }
 
 // recipeResearchServer stands the daemon's task sessions up. hosts false
@@ -95,7 +106,7 @@ func TestRecipeResearchPromptContinuesTheTaskSession(t *testing.T) {
 	daemon := &fakeSessions{}
 	r := recipeResearchServer(t, daemon, true)
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"and the backoff?"}`)
+	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/prompt", `{"text":"and the backoff?"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -123,7 +134,7 @@ func TestRecipeResearchHeldWhileTheStartRuns(t *testing.T) {
 	}}
 	r := recipeResearchServer(t, daemon, true)
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, recipeConversation(), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
@@ -144,20 +155,21 @@ func TestRecipeResearchHeldWhileTheStartRuns(t *testing.T) {
 func TestRecipeResearchOnAnImageWithoutTaskSessionsIsConflict(t *testing.T) {
 	r := recipeResearchServer(t, &fakeSessions{}, false)
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/prompt", `{"text":"hi"}`)
+	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/prompt", `{"text":"hi"}`)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"legacy":true`) {
 		t.Fatalf("status = %d, body %s; want 409 legacy", w.Code, w.Body.String())
 	}
 }
 
-// 💾 on a recipe session files the recipe's notes revise for its sandbox
-// and pins the note's name; no engine is asked from the API.
+// Save notes on a research conversation files the recipe's notes revise
+// for its sandbox and pins the note's name; no engine is asked from the
+// API.
 func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
 	daemon := &fakeSessions{}
 	r, dyn := recipeResearchServerDyn(t, daemon, true)
 	seedNotesBoard(t, dyn)
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
+	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/revise", `{"revise":"notes"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
 	}
@@ -179,7 +191,7 @@ func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
 func TestRecipeResearchCaptureWithoutABoardIsConflict(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/capture", `{}`)
+	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/revise", `{"revise":"notes"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, body %s; want 409", w.Code, w.Body.String())
 	}
@@ -208,16 +220,42 @@ func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
 		}
 	}
 
-	w := doJSON(t, r, http.MethodGet, "/api/research/"+researchSession, "")
+	w := doJSON(t, r, http.MethodGet, recipeConversation(), "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	var got struct {
-		Notes researchNotesState `json:"notes"`
+		Revises []models.WorkAction `json:"revises"`
+		Draft   *taskSessionDraft   `json:"draft"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if got.Notes.Markdown != "# Findings" || !got.Notes.Writing || got.Notes.SaveError != "push refused" || got.Notes.Saving {
-		t.Errorf("notes = %+v, want the draft, writing, and the save's failure", got.Notes)
+	if len(got.Revises) != 1 || got.Revises[0].Label != "Save notes" || got.Revises[0].Enabled || got.Revises[0].Reason != revisingReason {
+		t.Errorf("revises = %+v, want Save notes, revising", got.Revises)
+	}
+	if got.Draft == nil || got.Draft.Kind != "Notes" || got.Draft.Markdown != "# Findings" {
+		t.Fatalf("draft = %+v, want the notes", got.Draft)
+	}
+	push, ok := findWorkAction(got.Draft.Actions, "push-notes", "")
+	if !ok || push.Error != "push refused" || push.Enabled || push.Reason != notesRewritingReason {
+		t.Errorf("push-notes = %+v, want waiting on the rewrite, with the save's failure", push)
+	}
+	if _, ok := findWorkAction(got.Draft.Actions, "revise", ""); ok {
+		t.Errorf("the draft offers the session's revise: %+v", got.Draft.Actions)
+	}
+}
+
+// The draft's actions are offered once there is a draft, and Save notes
+// is offered from the start, before any output exists.
+func TestRecipeResearchOffersSaveNotesBeforeAnyDraft(t *testing.T) {
+	r := recipeResearchServer(t, &fakeSessions{}, true)
+	w := doJSON(t, r, http.MethodGet, recipeConversation(), "")
+	var got struct {
+		Revises []models.WorkAction `json:"revises"`
+		Draft   *taskSessionDraft   `json:"draft"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got.Revises) != 1 || got.Revises[0].Revise != notesRevise || !got.Revises[0].Enabled || got.Draft != nil {
+		t.Errorf("status = %s, want Save notes and no draft", w.Body.String())
 	}
 }
 
@@ -227,11 +265,11 @@ func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/notes/save", `{}`); w.Code != http.StatusNotFound {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/push-notes", `{}`); w.Code != http.StatusNotFound {
 		t.Fatalf("save without a draft: status = %d, body %s; want 404", w.Code, w.Body.String())
 	}
 	setNotesAnnotations(t, dyn, map[string]string{annoNotesDraft: "# Findings"})
-	w := doJSON(t, r, http.MethodPost, "/api/research/"+researchSession+"/notes/save", `{}`)
+	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/push-notes", `{}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
 	}
@@ -250,10 +288,10 @@ func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 		factorycli.AnnotationNotesOutput: "kind: Notes",
 	})
 
-	if w := doJSON(t, r, http.MethodPut, "/api/research/"+researchSession+"/notes", `{"markdown":"  "}`); w.Code != http.StatusBadRequest {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/edit", `{"text":"  "}`); w.Code != http.StatusBadRequest {
 		t.Errorf("empty edit: status = %d, want 400", w.Code)
 	}
-	if w := doJSON(t, r, http.MethodPut, "/api/research/"+researchSession+"/notes", `{"markdown":"# Edited\n"}`); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/edit", `{"text":"# Edited\n"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("edit: status = %d, body %s", w.Code, w.Body.String())
 	}
 	a := notesSandboxAnnotations(t, dyn)
@@ -261,7 +299,7 @@ func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 		t.Errorf("after the edit: draft %q, saved %q", a[annoNotesDraft], a[annoNotesSaved])
 	}
 
-	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/reject", `{}`); w.Code != http.StatusNoContent {
 		t.Fatalf("discard: status = %d, body %s", w.Code, w.Body.String())
 	}
 	a = notesSandboxAnnotations(t, dyn)
@@ -275,14 +313,16 @@ func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 	}
 }
 
-// A sandbox the old research path made has no task session: its notes
-// routes answer 409 legacy, like every conversation route.
-func TestLegacyResearchNotesRoutesAreConflict(t *testing.T) {
-	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
-	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
-	if w := doJSON(t, r, http.MethodDelete, "/api/research/"+researchSession+"/notes", ""); w.Code != http.StatusConflict ||
-		!strings.Contains(w.Body.String(), `"legacy":true`) {
-		t.Errorf("status = %d, body %s; want 409 legacy", w.Code, w.Body.String())
+// A draft action the notes do not offer is refused, and a plan's verb
+// is not one of them.
+func TestRecipeResearchDraftRefusesAnUnofferedVerb(t *testing.T) {
+	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
+	setNotesAnnotations(t, dyn, map[string]string{annoNotesDraft: "# Findings"})
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/comment", `{}`); w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, body %s; want 400", w.Code, w.Body.String())
+	}
+	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+		t.Errorf("filed %+v", reqs)
 	}
 }
 

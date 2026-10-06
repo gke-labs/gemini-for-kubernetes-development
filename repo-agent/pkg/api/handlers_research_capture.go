@@ -16,15 +16,14 @@ limitations under the License.
 
 package api
 
-// Saving a conversation's notes: 💾 asks the recipe's notes revise to
-// write them into a draft (saveRecipeNotes), and the note's file name is
-// picked here.
+// Naming a conversation's notes: Save notes asks the recipe's notes revise
+// to write them into a draft (saveRecipeNotes), and the note's file name
+// is picked here.
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v39/github"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -32,18 +31,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
-
-// captureResearchNotes is 💾: the conversation writes its notes with
-// the recipe's revise, into a draft. No inputs — what goes in the note is
-// the conversation, and a member who wants something narrower says so to
-// the agent first.
-func (s *Server) captureResearchNotes(c *gin.Context) {
-	conn, ok := s.resolveResearch(c)
-	if !ok {
-		return
-	}
-	s.saveRecipeNotes(c, conn.view)
-}
 
 // researchNoteName is the file this session's notes go in.
 //

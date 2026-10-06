@@ -16,8 +16,8 @@ limitations under the License.
 
 package api
 
-// Task sessions: the agent conversation a factory task (plan, triage) ran
-// its asks in, opened in the research view.
+// Task sessions: the agent conversation a factory task (plan, triage,
+// research) ran its asks in, opened in the session view.
 //
 // factory's daemon keeps a task's session in the task's directory, named
 // after the task. While the task runs, only the task may drive it, so
@@ -45,10 +45,10 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // safeTaskID mirrors factory's rule for task ids: one path element.
@@ -83,11 +83,37 @@ func (t *taskSessionConn) cwd() string {
 	return ""
 }
 
-// engine is the engine the sandbox's tasks run on. The session loads only
-// on the engine it ran on; a sandbox whose engine changed since starts the
+// engine is the engine the sandbox's tasks run on: a research sandbox's
+// own (acpd.ResearchEngine), else the board's. The session loads only on
+// the engine it ran on; a sandbox whose engine changed since starts the
 // agent fresh, and says so (loaded false).
 func (t *taskSessionConn) engine() string {
-	return sandboxEngine(t.sandbox.GetAnnotations(), "gemini")
+	annotations := t.sandbox.GetAnnotations()
+	if annotations[researchSessionIDAnnotation] != "" {
+		return acpd.ResearchEngine(annotations)
+	}
+	return sandboxEngine(annotations, "gemini")
+}
+
+// taskSessionSandbox is the sandbox in the URL, looked up in the member's
+// namespace, with the task. 404: no such sandbox. A paused one is fine:
+// what reads only its annotations needs no pod.
+func (s *Server) taskSessionSandbox(c *gin.Context) (*unstructured.Unstructured, string, bool) {
+	name, task := c.Param("sandbox"), c.Param("task")
+	if !safeSandboxName.MatchString(name) || !safeTaskID.MatchString(task) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sandbox or task"})
+		return nil, "", false
+	}
+	sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(s.Auth.GetNamespaceFromContext(c)).Get(c.Request.Context(), name, v1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
+			return nil, "", false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the sandbox", "details": err.Error()})
+		return nil, "", false
+	}
+	return sb, task, true
 }
 
 // resolveTaskSession turns the sandbox and task in the URL into a session
@@ -96,20 +122,11 @@ func (t *taskSessionConn) engine() string {
 func (s *Server) resolveTaskSession(c *gin.Context) (*taskSessionConn, bool) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
-	name, task := c.Param("sandbox"), c.Param("task")
-	if !safeSandboxName.MatchString(name) || !safeTaskID.MatchString(task) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sandbox or task"})
+	sb, task, ok := s.taskSessionSandbox(c)
+	if !ok {
 		return nil, false
 	}
-	sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, v1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
-			return nil, false
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the sandbox", "details": err.Error()})
-		return nil, false
-	}
+	name := sb.GetName()
 	if replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas"); found && replicas == 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "the sandbox is paused", "sandbox": name, "paused": true})
 		return nil, false
@@ -181,13 +198,21 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		"cwd":     conn.cwd(),
 		"live":    false,
 	}
-	if revises := planRevises(conn.sandbox, conn.task); len(revises) > 0 {
-		// Where to file them: the plan draft's row.
-		n, _ := factorycli.IssueOf(conn.sandbox, conn.repo())
-		s.markRevises(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), annotations[annoBoard], n, revises)
-		body["revises"], body["board"], body["number"] = revises, annotations[annoBoard], n
+	ctx := c.Request.Context()
+	// What the session offers, whichever recipe it is: the recipe's
+	// revises, and the draft its output is.
+	if revises := s.sessionRevises(ctx, c, conn.sandbox, conn.task); len(revises) > 0 {
+		body["revises"] = revises
 	}
-	session, err := conn.client.GetSession(c.Request.Context(), conn.task)
+	if draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task); draft != nil {
+		body["draft"] = draft
+	}
+	// A research conversation's name, and its id for renaming and
+	// deleting it.
+	if id := annotations[researchSessionIDAnnotation]; id != "" {
+		body["research"], body["title"] = id, annotations[research.TitleAnnotation]
+	}
+	session, err := conn.client.GetSession(ctx, conn.task)
 	switch {
 	case err == nil:
 		body["live"] = true
@@ -209,31 +234,6 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		body["unreachable"] = err.Error()
 	}
 	c.JSON(http.StatusOK, body)
-}
-
-// planRevises are the revises the sandbox's plan draft offers, when task
-// is the session the draft came from: rewriting the plan from this
-// conversation (Update plan). None once the plan is approved, or for a
-// session that is not the draft's.
-func planRevises(sb *unstructured.Unstructured, task string) []models.WorkAction {
-	a := sb.GetAnnotations()
-	if a[annoPlanDraft] == "" || a[annoPlanApproved] != "" || a[annoBoard] == "" {
-		return nil
-	}
-	session := factorycli.TaskOutputSession("Plan", a[factorycli.AnnotationPlanOutput])
-	if session == "" {
-		session = factorycli.RecordedRunSession(a, factorycli.AnnotationPlanRun)
-	}
-	if session != task {
-		return nil
-	}
-	var out []models.WorkAction
-	for _, act := range factorycli.OfferedActions("Plan", a[factorycli.AnnotationPlanOutput]) {
-		if act.Verb == "revise" {
-			out = append(out, models.WorkAction{Verb: act.Verb, Revise: act.Revise, Label: act.Label, Enabled: true})
-		}
-	}
-	return out
 }
 
 // markRevises says on a session's revises what the revise Requests filed

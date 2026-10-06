@@ -1,6 +1,6 @@
 # One session view for every recipe
 
-**Status:** Proposed. Step 1 (factory records the recipe's revises) is in this change.
+**Status:** Built. Step 1 (factory records the recipe's revises) shipped in #1765; steps 2 and 3 (repo-agent API and UI) are built.
 
 Research has been a recipe since #1755, and a research conversation is a daemon task session, like a plan's or a triage's after *Continue session*. The board still shows the two differently. The browser uses one component for both, but it runs two mechanisms side by side:
 
@@ -46,8 +46,17 @@ A session knows its buttons from the moment it starts, whether or not an output 
 
 ## Steps
 
-1. **factory (this change).** `revises` in the recorded run.
+1. **factory (#1765).** `revises` in the recorded run.
 2. **repo-agent API.** `revises` and `draft` in the task-session `GET`, the generic `revise` and `draft/:verb` routes, research rows addressed by sandbox and task.
 3. **UI.** One view from `revises` and `draft`. The 💾, the notes panel and the `/research/:session/*` session routes are deleted.
+
+## As built
+
+- **Triage has no draft panel.** Its draft is YAML for the board row's form, not a document, so a triage session shows its revises (disabled, with why) and no draft.
+- **A plan's revise is disabled** once the plan is approved, before there is a draft, or when the draft came from another session.
+- **The draft's `edit` sends `text`**, the same field as the board row's edit.
+- **`#/research/<id>` is gone.** A research conversation opens in its own tab at `#/task-session/<sandbox>/<task>`, like any session. The task-session `GET` carries `research` (the conversation's id) and `title`, which is where rename and delete (`/api/research/:session`) go.
+- **The server no longer titles a conversation from its first prompt**, since prompts no longer go through the research routes. The UI still names an unnamed conversation from its first question.
+- **`revises` and `draft` show only when the pod is reachable.** A paused or starting sandbox still answers 409.
 
 Sandboxes started before step 1 have no `revises` on their run, so they show no buttons. They are recreated rather than handled (no compatibility shims for task sessions).

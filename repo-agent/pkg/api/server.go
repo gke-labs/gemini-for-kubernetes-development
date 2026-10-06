@@ -83,29 +83,20 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// board is only where the Request that made the sandbox was
 		// filed, and nothing after that click goes through it.
 		api.GET("/research", s.getResearchSessions)
-		api.GET("/research/:session", s.getResearchSession)
 		api.PATCH("/research/:session", s.renameResearchSession)
 		api.DELETE("/research/:session", s.deleteResearchSession)
-		api.POST("/research/:session/prompt", s.promptResearchSession)
-		api.POST("/research/:session/permission", s.resolveResearchPermission)
-		api.POST("/research/:session/cancel", s.cancelResearchSession)
-		api.POST("/research/:session/mode", s.setResearchSessionMode)
-		// A factory task's agent session (plan, triage): watched while the
-		// task runs, continued once it has ended.
+		// A factory task's agent session (plan, triage, research): watched
+		// while the task runs, continued once it has ended.
 		api.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 		api.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
-		// Writing a conversation down. The POST sends the turn that
-		// writes the note; the push to the fork is the controller's, and
-		// happens once that turn ends.
-		api.POST("/research/:session/capture", s.captureResearchNotes)
-		// A recipe conversation's notes draft, which capture (Save
-		// notes) writes: save it to research/notes, edit it, discard it.
-		api.POST("/research/:session/notes/save", s.saveResearchNotes)
-		api.PUT("/research/:session/notes", s.editResearchNotes)
-		api.DELETE("/research/:session/notes", s.discardResearchNotes)
+		// The session's revises and its draft's actions. The server files
+		// the Request on the issue's row, or on the sandbox when it has no
+		// issue.
+		api.POST("/task-sessions/:sandbox/:task/revise", s.reviseTaskSession)
+		api.POST("/task-sessions/:sandbox/:task/draft/:verb", s.taskSessionDraftAction)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
 		api.GET("/board/:board/runbook", s.getBoardRunbooks)
@@ -160,15 +151,10 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		terminal.GET("/:namespace/:name", s.overseerTerminal)
 	}
 
-	// The research event stream, attached directly to the router for the
+	// The task session event stream, attached directly to the router for the
 	// same reason the sandbox proxy is: the logging middleware buffers
 	// the response, which would hold every event until the conversation
 	// ended.
-	research := router.Group("/api/research-events")
-	research.Use(s.Auth.Middleware())
-	{
-		research.GET("/:session", s.streamResearchEvents)
-	}
 	taskSessions := router.Group("/api/task-session-events")
 	taskSessions.Use(s.Auth.Middleware())
 	{

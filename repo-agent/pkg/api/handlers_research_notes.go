@@ -32,12 +32,13 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// Saving a recipe research conversation's notes: 💾 files a revise (the
+// Saving a research conversation's notes: Save notes files a revise (the
 // recipe's notes revise, asked into the conversation's session) and the
 // controller stores the Notes it writes on the sandbox as a draft; Save to
 // research/notes files an apply (push-notes), which factory runs with the
 // member's token. Both Requests carry the sandbox instead of an issue
 // number. The draft can be edited or discarded in between, as a plan's.
+// The task session's revise and draft routes call these.
 
 // The notes draft on a research sandbox, as the controller writes it.
 const (
@@ -45,9 +46,6 @@ const (
 	annoNotesDraftedAt = "board.gemini.google.com/notes-drafted-at"
 	annoNotesSaved     = "board.gemini.google.com/notes-saved-at"
 )
-
-// notesRevise is the research recipe's Save notes revise.
-const notesRevise = "notes"
 
 // researchNotesDraft is a conversation's notes draft.
 type researchNotesDraft struct {
@@ -117,10 +115,10 @@ func (s *Server) researchBoard(ctx context.Context, view researchSandboxView) (*
 	return nil, fmt.Errorf("no board in %s for %s/%s", view.Namespace, owner, repo)
 }
 
-// saveRecipeNotes is 💾 on a recipe's conversation: pin the note's file
-// name, then file the revise that writes the draft. 202; the draft lands
-// on the sandbox when the revise ends.
-func (s *Server) saveRecipeNotes(c *gin.Context, view researchSandboxView) {
+// saveRecipeNotes files a research conversation's revise: pin the note's
+// file name, then file the revise that writes the draft. 202; the draft
+// lands on the sandbox when the revise ends.
+func (s *Server) saveRecipeNotes(c *gin.Context, view researchSandboxView, revise string) {
 	ctx := c.Request.Context()
 	board, err := s.researchBoard(ctx, view)
 	if err != nil {
@@ -136,50 +134,18 @@ func (s *Server) saveRecipeNotes(c *gin.Context, view researchSandboxView) {
 		Verb:    boardv1alpha1.VerbRevise,
 		Member:  view.Namespace,
 		Sandbox: view.Sandbox,
-		Revise:  notesRevise,
+		Revise:  revise,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file Save notes", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"sessionId": view.SessionID, "note": note, "request": filed.Name})
+	c.JSON(http.StatusAccepted, gin.H{"note": note, "request": filed.Name})
 }
 
-// recipeNotesView is the recipe conversation a notes route acts on, or
-// false with the answer written. A paused sandbox is fine: these touch
-// only its annotations.
-func (s *Server) recipeNotesView(c *gin.Context) (researchSandboxView, bool) {
-	sessionID := c.Param("session")
-	if !safeResearchSessionID.MatchString(sessionID) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
-		return researchSandboxView{}, false
-	}
-	view, found, err := s.findResearchSandbox(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), sessionID)
-	switch {
-	case err != nil:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the session", "details": err.Error()})
-		return researchSandboxView{}, false
-	case !found:
-		c.JSON(http.StatusNotFound, gin.H{"error": "research session not found"})
-		return researchSandboxView{}, false
-	case view.Task == "":
-		c.JSON(http.StatusConflict, gin.H{"error": researchLegacyMessage, "legacy": true})
-		return researchSandboxView{}, false
-	}
-	return view, true
-}
-
-// saveResearchNotes is Save to research/notes: files the push of the draft
-// as it is now. 202, as for any write.
-func (s *Server) saveResearchNotes(c *gin.Context) {
-	view, ok := s.recipeNotesView(c)
-	if !ok {
-		return
-	}
-	if view.Notes.Markdown == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "there are no notes to save — write them with Save notes first"})
-		return
-	}
+// saveResearchNotes is Save to research/notes (push-notes): files the push
+// of the draft as it is now. 202, as for any write.
+func (s *Server) saveResearchNotes(c *gin.Context, view researchSandboxView) {
 	ctx := c.Request.Context()
 	board, err := s.researchBoard(ctx, view)
 	if err != nil {
@@ -201,24 +167,13 @@ func (s *Server) saveResearchNotes(c *gin.Context) {
 
 // editResearchNotes replaces the draft with the member's edit: what Save
 // to research/notes pushes from then on.
-func (s *Server) editResearchNotes(c *gin.Context) {
-	view, ok := s.recipeNotesView(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Markdown string `json:"markdown"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Markdown) == "" {
+func (s *Server) editResearchNotes(c *gin.Context, view researchSandboxView, markdown string) {
+	if strings.TrimSpace(markdown) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "the notes are empty — discard them instead"})
 		return
 	}
-	if view.Notes.Markdown == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "there are no notes to edit"})
-		return
-	}
 	if err := s.updateResearchAnnotations(c.Request.Context(), view.Namespace, view.Sandbox, map[string]string{
-		annoNotesDraft: strings.TrimSpace(req.Markdown),
+		annoNotesDraft: strings.TrimSpace(markdown),
 		annoNotesSaved: "",
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the notes", "details": err.Error()})
@@ -229,11 +184,7 @@ func (s *Server) editResearchNotes(c *gin.Context) {
 
 // discardResearchNotes drops the draft. What was saved to research/notes
 // stays there.
-func (s *Server) discardResearchNotes(c *gin.Context) {
-	view, ok := s.recipeNotesView(c)
-	if !ok {
-		return
-	}
+func (s *Server) discardResearchNotes(c *gin.Context, view researchSandboxView) {
 	if err := s.updateResearchAnnotations(c.Request.Context(), view.Namespace, view.Sandbox, map[string]string{
 		annoNotesDraft:                   "",
 		annoNotesDraftedAt:               "",
