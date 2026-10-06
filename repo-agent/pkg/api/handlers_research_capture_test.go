@@ -28,7 +28,8 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-func capturePath(sessionID string) string { return "/api/research/" + sessionID + "/capture" }
+// savePath is Save notes on researchSession's conversation.
+func savePath() string { return recipeConversation() + "/revise" }
 
 // titled is a sandbox that has been named, which is every session past
 // its first turn and the only kind whose note gets a readable name.
@@ -44,6 +45,7 @@ func recipeSandboxFor(sessionID string) *unstructured.Unstructured {
 	sb := researchSandboxCR("alice", sessionID, researchRepo, false)
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: factorycli.ResearchRunName(sessionID), Task: researchTaskID, StartedAt: time.Now().UTC(),
+		Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
 	})
 	annotations := sb.GetAnnotations()
 	annotations[factorycli.ResearchRunAnnotation] = string(run)
@@ -54,11 +56,11 @@ func recipeSandboxFor(sessionID string) *unstructured.Unstructured {
 // A session nobody has named yet still has an id, and an id is a worse
 // file name than a name but a much better one than an empty path
 // component.
-func TestCaptureFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
+func TestSaveNotesFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
 	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true, recipeSandboxFor(researchSession))
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != researchSession+".md" {
@@ -67,12 +69,12 @@ func TestCaptureFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
 }
 
 // A named session saves under its name.
-func TestCaptureNamesTheNoteAfterTheSession(t *testing.T) {
+func TestSaveNotesNamesTheNoteAfterTheSession(t *testing.T) {
 	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true,
 		titled(recipeSandboxFor(researchSession), "Where the retry loop terminates"))
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != "where-the-retry-loop-terminates.md" {
@@ -84,7 +86,7 @@ func TestCaptureNamesTheNoteAfterTheSession(t *testing.T) {
 // of a repository is called the same thing — and the save overwrites
 // what is on the branch, so the second one sharing it would be the
 // second one replacing the first one's notes.
-func TestCaptureDoesNotTakeAnotherSessionsNote(t *testing.T) {
+func TestSaveNotesDoesNotTakeAnotherSessionsNote(t *testing.T) {
 	const otherSession = "0c7b3d9a-1111-2222-3333-444455556666"
 	taken := titled(recipeSandboxFor(otherSession), "first read")
 	annotations := taken.GetAnnotations()
@@ -95,27 +97,10 @@ func TestCaptureDoesNotTakeAnotherSessionsNote(t *testing.T) {
 		titled(recipeSandboxFor(researchSession), "First read"), taken)
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, capturePath(researchSession), ""); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != "first-read-2.md" {
 		t.Errorf("note = %q, want a file of its own", got)
-	}
-}
-
-// A sandbox the old research path made cannot be saved from: 409 legacy.
-func TestCaptureOnALegacySandboxIsConflict(t *testing.T) {
-	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
-	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.0.0.9", "Running"))
-
-	w := doJSON(t, r, http.MethodPost, capturePath(researchSession), "")
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, body %s; want 409", w.Code, w.Body.String())
-	}
-	var body map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["legacy"] != true {
-		t.Errorf("body %s, want legacy", w.Body.String())
 	}
 }

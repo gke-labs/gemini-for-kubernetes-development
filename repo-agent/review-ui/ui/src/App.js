@@ -22,19 +22,8 @@ function terminalRoute() {
   return m ? { namespace: m[1], name: m[2], chat: m[3] || '' } : null;
 }
 
-// Hash route #/research/<sessionId>: one deep-research conversation in
-// its own window, for the same reasons the terminal has one — a long
-// conversation wants the screen, and the link is shareable with anyone
-// in the namespace that owns it. The id pattern mirrors the server's
-// validation (handlers_research.go), so a malformed hash never becomes
-// a request.
-function researchRoute() {
-  const m = window.location.hash.match(/^#\/research\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/);
-  return m ? { sessionId: m[1] } : null;
-}
-
-// Hash route #/task-session/<sandbox>/<task>: a factory task's agent
-// session (plan, triage) in the research view, watched while the task
+// Hash route #/task-session/<sandbox>/<task>: a recipe's agent session
+// (research, plan, triage) in its own window, watched while the task
 // runs and continued after. The patterns mirror the server's
 // (handlers_task_session.go).
 function taskSessionRoute() {
@@ -54,23 +43,8 @@ function TaskSessionPage({ route }) {
   useEffect(() => { document.title = title; }, [title]);
   return (
     <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <ResearchConversation sessionId={route.task} task={route} title={title} fill standalone />
-    </div>
-  );
-}
-
-function ResearchPage({ route }) {
-  useEffect(() => {
-    document.title = `research ${route.sessionId.slice(0, 8)}`;
-  }, [route]);
-  return (
-    <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <ResearchConversation
-        sessionId={route.sessionId}
-        fill
-        standalone
-        onDeleted={() => { window.location.href = '/'; }}
-      />
+      <ResearchConversation task={route} title={title} fill standalone
+        onDeleted={() => { window.location.href = '/'; }} />
     </div>
   );
 }
@@ -99,7 +73,6 @@ function App() {
   const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
-  const [rschRoute] = useState(researchRoute());
   const [taskRoute] = useState(taskSessionRoute());
   const [githubAuthEnabled, setGithubAuthEnabled] = useState(false);
   const [providersError, setProvidersError] = useState(false);
@@ -278,7 +251,6 @@ function App() {
   // The standalone terminal window bypasses the shell chrome entirely
   // (auth still applies: the websocket endpoint sits behind the session).
   if (termRoute && isAuthenticated) return <TerminalPage route={termRoute} />;
-  if (rschRoute && isAuthenticated) return <ResearchPage route={rschRoute} />;
   if (taskRoute && isAuthenticated) return <TaskSessionPage route={taskRoute} />;
 
   if (isLoadingAuth) return <div className="App"><header className="App-header"><h1>Loading...</h1></header></div>;

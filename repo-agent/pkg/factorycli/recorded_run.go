@@ -24,6 +24,15 @@ type RecordedRun struct {
 	// a task that ran in its own.
 	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
+	// Revises are the revises the run's recipe offers into its session.
+	Revises []RecordedRevise `json:"revises,omitempty"`
+}
+
+// RecordedRevise is one of a recipe's revises: its id and its button's
+// label.
+type RecordedRevise struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
 }
 
 // RecordedRunName is the name of the run recorded under key, when it
@@ -55,4 +64,31 @@ func RecordedRunSession(annotations map[string]string, key string) string {
 		return run.Session
 	}
 	return run.Task
+}
+
+// recordedRunKinds are the runs a sandbox records, with the kind of task
+// output each writes.
+var recordedRunKinds = []struct{ key, kind string }{
+	{AnnotationPlanRun, "Plan"},
+	{AnnotationTriageRun, "Triage"},
+	{ResearchRunAnnotation, "Notes"},
+}
+
+// SessionRun is the recorded run whose agent session is session, with the
+// kind of task output its recipe writes: what a session view offers comes
+// from it, whichever recipe it is.
+func SessionRun(annotations map[string]string, session string) (RecordedRun, string, bool) {
+	if session == "" {
+		return RecordedRun{}, "", false
+	}
+	for _, k := range recordedRunKinds {
+		var run RecordedRun
+		if err := json.Unmarshal([]byte(annotations[k.key]), &run); err != nil {
+			continue
+		}
+		if run.Session == session || (run.Session == "" && run.Task == session) {
+			return run, k.kind, true
+		}
+	}
+	return RecordedRun{}, "", false
 }

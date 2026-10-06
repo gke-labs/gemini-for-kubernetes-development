@@ -654,23 +654,51 @@ function taskSessionFallback(namespace, task) {
 // Escape and the header's button — go back to that list instead of
 // shrinking into a pane the panel no longer has.
 //
-// `task` makes this a factory task's session (plan, triage) instead of a
-// research one: `{ sandbox, task }`. It is reached at its own routes,
-// named by the task rather than renamed, and has no notes or sandbox of
-// its own to save or delete. While the task runs it is the task's, so
-// the composer stays shut and the member watches.
-// REVISE_POLL_EVERY is how often a running revise is looked at again.
+// `task` is the session: `{ sandbox, task }`, whichever recipe started
+// it — a research conversation, a plan, a triage. Everything this shows
+// besides the conversation comes from the session's GET: the recipe's
+// revises as buttons, its draft as one panel with that draft's actions.
+// Nothing here knows which recipe it is.
+// `sessionId` is the research conversation the session is, when it is
+// one — the list knows it before the session does — and is what rename
+// and delete go to; a task's session is named by the task and is not
+// this view's to delete. While the task runs it is the task's, so the
+// composer stays shut and the member watches.
+// A research row with no task yet (`pending`, or `legacy`, made by the
+// old research path) has no session to open, and says so instead.
+// REVISE_POLL_EVERY is how often a running revise or a standing write is
+// looked at again.
 const REVISE_POLL_EVERY = 3000;
 
+// DRAFT_VERBS is how a verb a draft offers looks when the output gives
+// it no label, and what to confirm before taking it. Whether the member
+// may take it is the API's word, in its enabled and reason.
+const DRAFT_VERBS = {
+  edit: { label: 'Edit', title: 'Edit the draft before it goes anywhere' },
+  comment: {
+    label: 'Post', title: 'Posts the draft as a comment on the issue under your identity',
+    confirm: 'Post this draft on the issue as you?',
+  },
+  run: {
+    label: 'Approve & Fix', title: 'Approves the plan and launches the fix — the plan ships in the PR description',
+    confirm: 'Approve this plan and launch the fix as you?',
+  },
+  'push-notes': { label: 'Save to research/notes', title: 'Push this draft to research/notes in your fork' },
+  reject: {
+    label: 'Discard', title: 'Drop the draft',
+    confirm: 'Discard this draft?',
+  },
+};
+
 export function ResearchConversation({
-  sessionId, pending, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task,
+  sessionId, pending, legacy, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task,
 }) {
   const api = task
     ? `/api/task-sessions/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
-    : `/api/research/${encodeURIComponent(sessionId)}`;
+    : '';
   const eventsPath = task
     ? `/api/task-session-events/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
-    : `/api/research-events/${encodeURIComponent(sessionId)}`;
+    : '';
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
   //   starting — it exists but has no running pod yet
@@ -681,6 +709,10 @@ export function ResearchConversation({
   const [phase, setPhase] = useState('probing');
   const [detail, setDetail] = useState('');
   const [info, setInfo] = useState(null);
+  // The research conversation this session is, if it is one: from the
+  // row that was clicked, else from the session's own answer (a session
+  // opened by its link).
+  const researchId = sessionId || (info && info.research) || '';
   // The session's name, and the draft while it is being edited (null
   // when it is not). Seeded from the row that was clicked so the header
   // reads right before the probe answers.
@@ -728,10 +760,6 @@ export function ResearchConversation({
   // it are the three things you reach for once a session and never
   // while reading one, and they were costing header width all the time.
   const [menuOpen, setMenuOpen] = useState(false);
-  // A save in flight, which lasts as long as one POST. Everything after
-  // it — the turn, the push — is on the sandbox and comes back on the
-  // probe, so there is nothing else here to remember.
-  const [saving, setSaving] = useState(false);
   // Only so the composer can lift when it has the caret. :focus-within
   // would do it in a stylesheet, but every style in this file is
   // inline and one rule in App.css for one box is worse than a bool.
@@ -820,10 +848,19 @@ export function ResearchConversation({
   const busy = caughtUp ? transcript.busy : openBusy;
 
   // Probe, then attach. Split in two because the websocket cannot report
-  // "not up yet" — resolveResearch answers 409 before the upgrade, which
-  // the browser sees only as a socket that would not open.
+  // "not up yet" — the server answers 409 before the upgrade, which the
+  // browser sees only as a socket that would not open.
   useEffect(() => {
-    if (!sessionId) return undefined;
+    if (!api) {
+      // No session to talk to: a claim the controller has not made a
+      // sandbox for yet (the list's next poll brings the task), or an
+      // old research sandbox nothing can open.
+      setPhase(legacy ? 'legacy' : 'starting');
+      setDetail(legacy
+        ? 'Made by the old research path, which is gone: delete it and start a new one.'
+        : 'waiting for the controller to create the sandbox');
+      return undefined;
+    }
     const state = { closed: false, ws: null, timer: null };
 
     const later = (fn, ms) => { state.timer = setTimeout(fn, ms); };
@@ -977,7 +1014,7 @@ export function ResearchConversation({
       if (state.timer) clearTimeout(state.timer);
       if (state.ws) { try { state.ws.close(); } catch (e) { /* already gone */ } }
     };
-  }, [sessionId, pending, api, eventsPath]);
+  }, [pending, legacy, api, eventsPath]);
 
   // Follow the tail, but only for a reader who is already at it —
   // yanking the view down while someone is reading back is worse than
@@ -989,7 +1026,8 @@ export function ResearchConversation({
 
   // A different session is a different name; the seed from the list is
   // the best one available until the probe answers with the stored one.
-  useEffect(() => { setName(title || ''); editName(null); }, [sessionId, title]);
+  const taskName = task ? task.task : '';
+  useEffect(() => { setName(title || ''); editName(null); }, [sessionId, taskName, title]);
   useEffect(() => {
     // Never while the member is typing over it: the probe re-runs on
     // every reconnect, and it must not eat an edit in progress.
@@ -1065,7 +1103,7 @@ export function ResearchConversation({
     const next = (raw || '').trim();
     if (!next || next === name) return;
     if (optimistic) setName(next);
-    fetch(api, {
+    fetch(`/api/research/${encodeURIComponent(researchId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: next }),
@@ -1074,7 +1112,7 @@ export function ResearchConversation({
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setError(body.error || `rename failed: HTTP ${res.status}`); return; }
         if (body.title) setName(body.title);
-        if (onRenamed) onRenamed(sessionId, body.title || next);
+        if (onRenamed) onRenamed(researchId, body.title || next);
       })
       .catch(err => setError(`rename failed: ${err}`));
   };
@@ -1109,7 +1147,7 @@ export function ResearchConversation({
   const namedRef = useRef(false);
   useEffect(() => {
     // A task's session is named by the task.
-    if (namedRef.current || !caughtUp || task) return;
+    if (namedRef.current || !caughtUp || !researchId) return;
     if (!info || info.title || renamingRef.current !== null) return;
     const first = transcript.items.find(i => i.role === 'user' && (i.text || '').trim());
     if (!first) return;
@@ -1177,29 +1215,37 @@ export function ResearchConversation({
       .catch(err => setError(`cancel failed: ${err}`));
   };
 
-  // A revise of the plan this session wrote (Update plan). Only here, not
-  // on the board's row: it rewrites the plan from this conversation, so
-  // it is clicked where the conversation is. It is filed on the plan's
-  // row; the controller runs it into this session, so it shows here as
-  // the next turn, and the plan it writes becomes the draft. The status
-  // says what the row's Requests say of it — revising, or why the last
-  // one failed — and is read again until the revise is done.
-  const [revising, setRevising] = useState(''); // the POST in flight
-  const [revisesNow, setRevisesNow] = useState(null);
+  // The recipe's revises (Update plan, Save notes): each runs a step of
+  // the recipe into this session, so it shows here as the next turn and
+  // what it writes becomes the draft. The draft is the session's task
+  // output with the actions it offers (post it, save it, edit, discard).
+  // Both come from the session's GET, which says what the newest click
+  // of each says — revising, posting, or why the last one failed — and
+  // is read again while one stands. The server files each click where
+  // the draft lives; this only names the session.
+  const [revising, setRevising] = useState(''); // the revise POST in flight
   const [revised, setRevised] = useState('');
-  const revises = useMemo(() => (task && info && info.board && (revisesNow || info.revises)) || [], [task, info, revisesNow]);
-  const reviseRunning = revises.some(r => r.reason === 'revising');
-  const refreshRevises = useCallback(() => {
+  const [drafting, setDrafting] = useState(''); // the draft action POST in flight
+  const [draftEdit, setDraftEdit] = useState(null); // the edit box, when open
+  // The draft folds to its one line unless asked for: open, it took half
+  // the pane from the conversation, and stayed that way after the save.
+  const [draftOpen, setDraftOpen] = useState(false);
+  const revises = useMemo(() => (info && info.revises) || [], [info]);
+  const sessionDraft = (info && info.draft) || null;
+  const standing = revises.some(r => r.reason === 'revising')
+    || !!(sessionDraft && sessionDraft.actions.some(a => a.reason === 'posting'));
+  const refreshInfo = useCallback(() => {
+    if (!api) return;
     fetch(api)
       .then(res => (res.ok ? res.json() : null))
-      .then(body => { if (body) setRevisesNow(body.revises || []); })
+      .then(body => { if (body) setInfo(body); })
       .catch(() => {});
   }, [api]);
   useEffect(() => {
-    if (!reviseRunning) return undefined;
-    const timer = setInterval(refreshRevises, REVISE_POLL_EVERY);
+    if (!standing) return undefined;
+    const timer = setInterval(refreshInfo, REVISE_POLL_EVERY);
     return () => clearInterval(timer);
-  }, [reviseRunning, refreshRevises]);
+  }, [standing, refreshInfo]);
   // Done: it ran, and did not fail.
   const wasRunning = useRef('');
   useEffect(() => {
@@ -1213,64 +1259,24 @@ export function ResearchConversation({
     wasRunning.current = '';
     if (done && !done.error) setRevised(done.label || done.revise);
   }, [revises]);
-  // A recipe research conversation's notes (info.task): 💾 files the
-  // recipe's notes revise into this session and the controller stores
-  // what it writes on the sandbox as a draft, shown below the bar. Save
-  // to research/notes pushes the draft as it is then; it can be edited
-  // or discarded first. The status says what the newest click of each
-  // says — writing, saving, or why the last one failed — and is read
-  // again while one runs.
-  const recipeNotes = !task && !!(info && info.task);
-  const [notesNow, setNotesNow] = useState(null);
-  const notes = (recipeNotes && (notesNow || info.notes)) || {};
-  const notesRunning = !!(notes.writing || notes.saving);
-  const [notesBusy, setNotesBusy] = useState(''); // the click in flight
-  const [notesEdit, setNotesEdit] = useState(null); // the edit box, when open
-  // The draft folds to its one line unless asked for: open, it took half
-  // the pane from the conversation, and stayed that way after the save.
-  const [notesOpen, setNotesOpen] = useState(false);
-  const refreshNotes = useCallback(() => {
-    fetch(api)
-      .then(res => (res.ok ? res.json() : null))
-      .then(body => { if (body) setNotesNow(body.notes || {}); })
-      .catch(() => {});
-  }, [api]);
-  useEffect(() => {
-    if (!notesRunning) return undefined;
-    const timer = setInterval(refreshNotes, REVISE_POLL_EVERY);
-    return () => clearInterval(timer);
-  }, [notesRunning, refreshNotes]);
-  const notesCall = (what, method, path, body) => {
-    setNotesBusy(what);
-    setError('');
-    fetch(`${api}/${path}`, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    })
-      .then(async res => {
-        if (res.ok) {
-          if (what === 'edit') setNotesEdit(null);
-          refreshNotes();
-          return;
-        }
-        const b = await res.json().catch(() => ({}));
-        setError(b.error || `${what} failed: HTTP ${res.status}`);
-      })
-      .catch(err => setError(`${what} failed: ${err}`))
-      .finally(() => setNotesBusy(''));
-  };
 
   const revise = (r) => {
     setRevising(r.revise);
     setRevised('');
-    fetch(`/api/board/${encodeURIComponent(info.board)}/issues/${info.number}/actions/revise`, {
+    setError('');
+    fetch(`${api}/revise`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'Plan', revise: r.revise }),
+      body: JSON.stringify({ revise: r.revise }),
     })
       .then(async res => {
-        if (res.ok) { refreshRevises(); return; }
+        if (res.ok) {
+          // The revise is a turn like any other, so it scrolls in below
+          // — and the member should be looking at it.
+          stickRef.current = true;
+          refreshInfo();
+          return;
+        }
         const body = await res.json().catch(() => ({}));
         setError(body.error || `${r.label || 'revise'} failed: HTTP ${res.status}`);
       })
@@ -1278,40 +1284,36 @@ export function ResearchConversation({
       .finally(() => setRevising(''));
   };
 
+  const takeDraftAction = (a, text) => {
+    const label = a.label || (DRAFT_VERBS[a.verb] || {}).label || a.verb;
+    setDrafting(a.verb + (a.run || ''));
+    setError('');
+    fetch(`${api}/draft/${encodeURIComponent(a.verb)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run: a.run || '', text: text || '' }),
+    })
+      .then(async res => {
+        if (res.ok) {
+          if (a.verb === 'edit') setDraftEdit(null);
+          refreshInfo();
+          return;
+        }
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || `${label} failed: HTTP ${res.status}`);
+      })
+      .catch(err => setError(`${label} failed: ${err}`))
+      .finally(() => setDrafting(''));
+  };
+
   const destroy = () => {
     if (!window.confirm('Delete this conversation? The sandbox and its transcript go with it.')) return;
-    fetch(api, { method: 'DELETE' })
+    fetch(`/api/research/${encodeURIComponent(researchId)}`, { method: 'DELETE' })
       .then(res => {
-        if (res.ok || res.status === 404) { if (onDeleted) onDeleted(sessionId); return; }
+        if (res.ok || res.status === 404) { if (onDeleted) onDeleted(researchId); return; }
         res.json().catch(() => ({})).then(body => setError(body.error || `delete failed: HTTP ${res.status}`));
       })
       .catch(err => setError(`delete failed: ${err}`));
-  };
-
-  // captureNotes asks the recipe's notes revise to write the
-  // conversation up into a draft. One POST with nothing in it: what to
-  // write is the conversation and where it goes is the session, both of
-  // which the server already knows. A member who wants something
-  // narrower says so to the agent, in the conversation, and then saves.
-  const captureNotes = () => {
-    if (saving || busy || phase !== 'live') return;
-    setSaving(true);
-    setError('');
-    fetch(`${api}/capture`, { method: 'POST' })
-      .then(async res => {
-        if (!res.ok) {
-          // A 409 is no board for the repository, said in the body.
-          const body = await res.json().catch(() => ({}));
-          setError(body.error || `save notes failed: HTTP ${res.status}`);
-          return;
-        }
-        // The write-up is a turn like any other, so it scrolls in below
-        // — and the member should be looking at it.
-        stickRef.current = true;
-        refreshNotes();
-      })
-      .catch(err => setError(`save notes failed: ${err}`))
-      .finally(() => setSaving(false));
   };
 
   const waiting = pendingPermission(transcript);
@@ -1336,10 +1338,6 @@ export function ResearchConversation({
 
   const repo = (info && info.repo) || '';
   const composerDisabled = phase !== 'live' || busy || sending || taskState.held;
-
-  // A capture is a prompt, so it is refused for the same reasons one is
-  // — acpd will not take a second one mid-turn.
-  const captureDisabled = phase !== 'live' || busy || saving;
 
   // Why the composer will not send, as a line beside the Send button.
   // It used to be the textarea's placeholder, which is the one place it
@@ -1412,9 +1410,9 @@ export function ResearchConversation({
               click a word that gave no sign it was clickable. The repo is
               a link two inches to the right; saying it twice bought
               nothing and cost the empty box that asks for a name. */}
-          {task || (renaming === null && name) ? (
-            <strong onClick={task ? undefined : () => beginRename(name)} style={{ cursor: task ? 'default' : 'text' }}
-              title={task ? task.task : 'Click to rename this conversation'}>
+          {!researchId || (renaming === null && name) ? (
+            <strong onClick={researchId ? () => beginRename(name) : undefined} style={{ cursor: researchId ? 'text' : 'default' }}
+              title={researchId ? 'Click to rename this conversation' : task && task.task}>
               {name}
             </strong>
           ) : (
@@ -1447,7 +1445,7 @@ export function ResearchConversation({
             ? <a href={info.htmlUrl} target="_blank" rel="noopener noreferrer"
               title={`Open ${repo} on GitHub`}>{repo}</a>
             : <span style={{ color: 'var(--text-secondary)' }}>{repo}</span>)}
-          <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(sessionId)}</span>
+          <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{shortSession(researchId || taskName)}</span>
           <Pill {...statusPill} title={phase === 'live' && waiting
             ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
             : detail} />
@@ -1502,46 +1500,21 @@ export function ResearchConversation({
           {phase === 'live' && busy && !taskState.held && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
           )}
-          {/* The plan's revises: write it again from this conversation.
-              Not while a turn is in flight or the session is a task's —
-              factory would refuse it — and not twice at once. */}
+          {/* The recipe's revises: run a step of it again from this
+              conversation. Not while a turn is in flight or the session is
+              a task's — factory would refuse it — and not twice at once. */}
           {revises.map(r => (
             <button key={r.revise} className="btn btn-sm"
               disabled={!r.enabled || busy || taskState.held || !!revising}
               onClick={() => revise(r)}
-              title={r.reason === 'revising' ? 'Writing the plan again from this conversation'
+              title={r.reason === 'revising' ? `${r.label || r.revise}: running in this conversation`
                 : !r.enabled ? `Not now: ${r.reason}`
                   : taskState.held ? 'The session is a task\'s until it ends'
                     : busy ? 'The agent is working — once the turn ends'
-                      : 'Write the plan again from this conversation; it becomes the draft on the board, and nothing is posted'}>
+                      : 'Runs in this conversation; what it writes becomes the draft below, and nothing is posted'}>
               {revising === r.revise || r.reason === 'revising' ? `${r.label || r.revise}…` : (r.label || r.revise)}
             </button>
           ))}
-          {/* The one way anything said here outlives the sandbox's disk,
-              and it takes no answers: the note is the session's one
-              document and what goes in it is the conversation. It was a
-              form in the ⋯ menu asking which part and which file, which
-              is two questions to click through for the answer nearly
-              everyone wanted — and it hid the feature behind a menu
-              nobody opens mid-read.
-
-              On the bar and not in the menu because saving is something
-              you do *while* reading, at the moment the answer lands,
-              which is exactly the boundary the ⋯ menu draws. */}
-          {/* It writes a draft rather than pushing: the push is Save to
-              research/notes on the draft, below. */}
-          {recipeNotes && (
-            <button className="btn btn-sm" onClick={captureNotes}
-              disabled={captureDisabled || taskState.held || !!notes.writing}
-              aria-label="Save notes"
-              title={phase !== 'live' ? 'Not connected'
-                : busy ? 'The agent is working — save once the turn ends'
-                  : taskState.held ? 'The session is the recipe\'s until its start ends'
-                    : notes.writing ? 'Writing the notes from this conversation'
-                      : 'Write this conversation up as notes; they become a draft here to save to research/notes'}>
-              {saving || notes.writing ? '⋯' : '💾'}
-            </button>
-          )}
           {/* Two ways to get more room, and they are different enough to
               both be here rather than one behind the other. Full screen
               keeps the conversation you are in — same socket, same draft,
@@ -1552,7 +1525,7 @@ export function ResearchConversation({
               Out of the ⋯ menu, where pop out used to live: these are read
               *while* reading, and a menu is for things you do to a session
               once. An icon each, because they are a pair. */}
-          {!standalone && (
+          {!standalone && task && (
             <>
               {/* Opened from a list, this is the way back to it, and it
                   says which key does the same thing. The glyph alone
@@ -1569,7 +1542,7 @@ export function ResearchConversation({
                   : expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
                 {onClose ? 'esc ⤢' : expanded ? '⤢' : '⛶'}
               </button>
-              <a className="btn btn-sm" href={task ? taskSessionHash(task) : `#/research/${sessionId}`}
+              <a className="btn btn-sm" href={taskSessionHash(task)}
                 target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
                 title="Open this conversation in its own tab">↗</a>
             </>
@@ -1605,7 +1578,7 @@ export function ResearchConversation({
                   )}
                   {/* A task's sandbox is the issue's, and not this
                       conversation's to delete. */}
-                  {!task && (
+                  {researchId && (
                     <button role="menuitem" className="btn btn-delete btn-sm"
                       onClick={() => { setMenuOpen(false); destroy(); }}
                       title="Delete the sandbox — the transcript lives on its disk and goes with it">
@@ -1630,76 +1603,77 @@ export function ResearchConversation({
         {revised && (
           <div role="status" style={{ cursor: 'pointer', flex: '0 0 auto', fontSize: 'small', padding: '4px 10px' }}
             onClick={() => setRevised('')} title="Dismiss">
-            {revised}: the plan above is now the draft on the board.
+            {revised}: done — what it wrote is the draft.
           </div>
         )}
-
-        {recipeNotes && notes.writeError && (
-          <div className="warning-banner" style={{ flex: '0 0 auto' }}>
-            Save notes failed: {notes.writeError}. Click 💾 again to retry.
-          </div>
-        )}
-        {recipeNotes && notes.saveError && (
-          <div className="warning-banner" style={{ flex: '0 0 auto' }}>
-            The notes were not saved to research/notes: {notes.saveError}.
-          </div>
-        )}
-        {recipeNotes && notes.writing && (
-          <div style={{
+        {revises.filter(r => r.reason === 'revising').map(r => (
+          <div key={`revising-${r.revise}`} style={{
             flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'x-small',
             color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)',
           }}>
-            Writing this conversation up — the notes appear here as a draft when the turn finishes.
+            {r.label || r.revise}: running in this conversation — the draft appears here when the turn finishes.
           </div>
-        )}
-        {/* The draft: what Save to research/notes pushes, under the
-            note's name. One line until Show (or Edit) opens it, and then
-            a bounded box, so it never pushes the conversation away. */}
-        {recipeNotes && notes.markdown && (
+        ))}
+        {sessionDraft && sessionDraft.actions.filter(a => a.error).map(a => (
+          <div key={`draft-err-${a.verb}${a.run || ''}`} className="warning-banner" style={{ flex: '0 0 auto' }}>
+            {a.label || (DRAFT_VERBS[a.verb] || {}).label || a.verb} failed: {a.error}
+          </div>
+        ))}
+        {/* The draft: the session's task output, whatever its kind, with
+            the actions it offers. One line until Show (or Edit) opens
+            it, and then a bounded box, so it never pushes the
+            conversation away. */}
+        {sessionDraft && (
           <div style={{
-            flex: '0 0 auto', maxHeight: notesOpen || notesEdit !== null ? '40%' : undefined,
+            flex: '0 0 auto', maxHeight: draftOpen || draftEdit !== null ? '40%' : undefined,
             overflow: 'auto', padding: '6px 10px', textAlign: 'left',
             borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: 'x-small' }}>
-              <strong>Notes draft</strong>
-              {notes.note && <code>{notes.note}.md</code>}
+              <strong>{sessionDraft.kind} draft</strong>
+              {sessionDraft.note && <code>{sessionDraft.note}.md</code>}
               <span style={{ color: 'var(--text-secondary)' }}>
-                {notes.savedAt ? `saved to research/notes ${new Date(notes.savedAt).toLocaleString()}`
-                  : notes.saving ? 'saving…' : 'not saved yet'}
+                {sessionDraft.savedAt ? `saved ${new Date(sessionDraft.savedAt).toLocaleString()}`
+                  : sessionDraft.draftedAt ? `drafted ${new Date(sessionDraft.draftedAt).toLocaleString()}` : ''}
               </span>
               <span style={{ flex: 1 }} />
-              {notesEdit === null ? (
+              {draftEdit === null ? (
                 <>
-                  <button className="btn btn-sm" aria-expanded={notesOpen}
-                    onClick={() => setNotesOpen(o => !o)}>{notesOpen ? 'Hide' : 'Show'}</button>
-                  <button className="btn btn-sm" disabled={!!notesBusy || notes.saving || notes.writing}
-                    onClick={() => notesCall('save', 'POST', 'notes/save')}
-                    title="Push this draft to research/notes in your fork">
-                    {notesBusy === 'save' || notes.saving ? 'Saving…' : 'Save to research/notes'}
-                  </button>
-                  <button className="btn btn-sm" disabled={!!notesBusy || notes.writing}
-                    onClick={() => setNotesEdit(notes.markdown)}>Edit</button>
-                  <button className="btn btn-sm" disabled={!!notesBusy || notes.writing}
-                    onClick={() => notesCall('discard', 'DELETE', 'notes')}
-                    title="Drop the draft; what was saved to research/notes stays">Discard</button>
+                  <button className="btn btn-sm" aria-expanded={draftOpen}
+                    onClick={() => setDraftOpen(o => !o)}>{draftOpen ? 'Hide' : 'Show'}</button>
+                  {sessionDraft.actions.map(a => {
+                    const v = DRAFT_VERBS[a.verb] || {};
+                    const label = a.label || v.label || a.verb;
+                    const key = a.verb + (a.run || '');
+                    return (
+                      <button key={key} className="btn btn-sm" disabled={!a.enabled || !!drafting}
+                        title={a.enabled ? (v.title || label) : `Not now: ${a.reason}`}
+                        onClick={() => {
+                          if (a.verb === 'edit') { setDraftEdit(sessionDraft.markdown); return; }
+                          if (v.confirm && !window.confirm(v.confirm)) return;
+                          takeDraftAction(a);
+                        }}>
+                        {drafting === key || a.reason === 'posting' ? `${label}…` : label}
+                      </button>
+                    );
+                  })}
                 </>
               ) : (
                 <>
-                  <button className="btn btn-sm" disabled={!!notesBusy || !notesEdit.trim()}
-                    onClick={() => notesCall('edit', 'PUT', 'notes', { markdown: notesEdit })}>
-                    {notesBusy === 'edit' ? 'Storing…' : 'Store edit'}
+                  <button className="btn btn-sm" disabled={!!drafting || !draftEdit.trim()}
+                    onClick={() => takeDraftAction(sessionDraft.actions.find(a => a.verb === 'edit'), draftEdit)}>
+                    {drafting === 'edit' ? 'Storing…' : 'Store edit'}
                   </button>
-                  <button className="btn btn-sm" disabled={!!notesBusy} onClick={() => setNotesEdit(null)}>Cancel</button>
+                  <button className="btn btn-sm" disabled={!!drafting} onClick={() => setDraftEdit(null)}>Cancel</button>
                 </>
               )}
             </div>
-            {notesEdit === null ? (notesOpen && (
+            {draftEdit === null ? (draftOpen && (
               <div style={{ fontSize: 'small' }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{notes.markdown}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{sessionDraft.markdown}</ReactMarkdown>
               </div>
             )) : (
-              <textarea value={notesEdit} onChange={e => setNotesEdit(e.target.value)} aria-label="Edit the notes"
+              <textarea value={draftEdit} onChange={e => setDraftEdit(e.target.value)} aria-label="Edit the draft"
                 style={{ width: '100%', minHeight: '160px', marginTop: '6px', fontFamily: 'monospace', fontSize: 'small' }} />
             )}
           </div>
@@ -2055,6 +2029,17 @@ const openedBy = (s) => ({ sessionId: s.sessionId, pending: !!s.requested, title
 // twice for the session already open — is still two asks.
 const renamedBy = (open, s) => ({ ...openedBy(s), renameAt: ((open && open.renameAt) || 0) + 1 });
 
+// openRow is the open conversation's row as the list has it now, not as
+// it was clicked: a claim gains its sandbox and task minutes after it is
+// opened, and that is when the conversation has a session to talk to.
+function openRow(open, sessions) {
+  const row = (sessions || []).find(s => s.sessionId === open.sessionId) || {};
+  return {
+    task: row.task && row.sandbox ? { sandbox: row.sandbox, task: row.task } : null,
+    legacy: !!row.legacy,
+  };
+}
+
 // ResearchPanel is the board's Research tab: the ways to start a
 // conversation about this repository, the conversations already
 // started, and the conversation itself once one is open.
@@ -2078,9 +2063,9 @@ const renamedBy = (open, s) => ({ ...openedBy(s), renameAt: ((open && open.renam
 // summary line — "4 conversations for other repositories" — was
 // four-fifths of their work described as somewhere else's. A board's
 // research tab is about that repository. An orphaned session is still
-// reachable by its own link, #/research/<id>, and still listed by the
-// API, which is the thing that would have to change to make one truly
-// lost.
+// reachable by its own link, #/task-session/<sandbox>/<task>, and still
+// listed by the API, which is the thing that would have to change to
+// make one truly lost.
 export function ResearchPanel({ boardName, repoURL }) {
   const { sessions, forkOwner, notesBranch, listError, setListError, load } = useResearchSessions();
   const [open, setOpen] = useState(null); // { sessionId, pending, title }
@@ -2325,6 +2310,7 @@ export function ResearchPanel({ boardName, repoURL }) {
         <ResearchConversation
           key={open.sessionId}
           sessionId={open.sessionId}
+          {...openRow(open, sessions)}
           pending={open.pending}
           title={open.title}
           renameAt={open.renameAt}
@@ -2397,6 +2383,7 @@ export function AllResearchPanel() {
         <ResearchConversation
           key={open.sessionId}
           sessionId={open.sessionId}
+          {...openRow(open, sessions)}
           pending={open.pending}
           title={open.title}
           renameAt={open.renameAt}

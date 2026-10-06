@@ -32,7 +32,10 @@ const (
 
 // issueSandboxCR is an issue's sandbox, with a plan run recorded on it.
 func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured {
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: "plan/b/42/1", Task: planTask, StartedAt: time.Unix(1_000_000, 0)})
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "plan/b/42/1", Task: planTask, StartedAt: time.Unix(1_000_000, 0),
+		Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
+	})
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
@@ -43,6 +46,7 @@ func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured
 				"repo":                           "granule",
 				"htmlURL":                        "https://github.com/o/granule/issues/42",
 				"board.gemini.google.com/engine": "antigravity",
+				annoBoard:                        "myboard",
 				factorycli.AnnotationPlanRun:     string(run),
 			},
 		},
@@ -219,14 +223,14 @@ func TestTheBoardNamesTheRecordedRunsSession(t *testing.T) {
 	}
 }
 
-// The session a plan draft came from offers its revises, with where to
-// file them; another session, or an approved plan, offers none.
-func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
+// A plan session offers its recipe's revises, from its recorded run, and
+// the draft with the output's actions minus the revises; another session
+// offers neither; an approved plan's revise is disabled, saying why.
+func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	withDraft := func(approved bool) *unstructured.Unstructured {
 		sb := issueSandboxCR("alice", 1)
 		a := sb.GetAnnotations()
 		a[annoPlanDraft] = "## Summary\nA plan."
-		a[annoBoard] = "myboard"
 		a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"source:\n  task: recipe-plan-2\n  session: " + planTask + "\n" +
 			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
@@ -239,19 +243,23 @@ func TestATaskSessionOffersItsDraftsRevises(t *testing.T) {
 	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(false)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	for _, want := range []string{`"revises":[{"verb":"revise","revise":"plan","label":"Update plan","enabled":true}]`, `"board":"myboard"`, `"number":42`} {
+	for _, want := range []string{
+		`"revises":[{"verb":"revise","revise":"plan","label":"Update plan","enabled":true}]`,
+		`"draft":{"kind":"Plan","markdown":"## Summary\nA plan.","actions":[{"verb":"comment","enabled":true}]}`,
+	} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("status lacks %s: %s", want, w.Body.String())
 		}
 	}
-	if w := doJSON(t, r, http.MethodGet, "/api/task-sessions/"+issueSandbox+"/recipe-triage-1", ""); strings.Contains(w.Body.String(), `"revises"`) {
-		t.Errorf("another session offers the plan's revises: %s", w.Body.String())
+	if w := doJSON(t, r, http.MethodGet, "/api/task-sessions/"+issueSandbox+"/recipe-triage-1", ""); strings.Contains(w.Body.String(), `"revises"`) || strings.Contains(w.Body.String(), `"draft"`) {
+		t.Errorf("another session offers the plan's revises or draft: %s", w.Body.String())
 	}
 
 	r = taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(true)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
-	if w := doJSON(t, r, http.MethodGet, taskSessionAt, ""); strings.Contains(w.Body.String(), `"revises"`) {
-		t.Errorf("an approved plan offers revises: %s", w.Body.String())
+	w = doJSON(t, r, http.MethodGet, taskSessionAt, "")
+	if !strings.Contains(w.Body.String(), `"reason":"the plan is approved"`) || strings.Contains(w.Body.String(), `"draft"`) {
+		t.Errorf("an approved plan: %s", w.Body.String())
 	}
 }
 
@@ -261,7 +269,6 @@ func TestATaskSessionFollowsItsRevise(t *testing.T) {
 	sb := issueSandboxCR("alice", 1)
 	a := sb.GetAnnotations()
 	a[annoPlanDraft] = "## Summary\nA plan."
-	a[annoBoard] = "myboard"
 	a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 		"source:\n  task: " + planTask + "\n" +
 		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
