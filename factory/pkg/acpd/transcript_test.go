@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -282,5 +285,55 @@ func TestOpenTranscriptResumesExistingFile(t *testing.T) {
 	}
 	if !strings.Contains(string(chunk), "before restart") {
 		t.Error("history from before the restart was lost")
+	}
+}
+
+// A reopened transcript numbers on from where it stopped, past a last
+// line cut short by a crash: the browser keys events by seq.
+func TestAReopenedTranscriptContinuesItsSeq(t *testing.T) {
+	dir := t.TempDir()
+	appendN := func(n int) {
+		t.Helper()
+		tr, err := OpenTranscript(dir)
+		if err != nil {
+			t.Fatalf("OpenTranscript: %v", err)
+		}
+		defer tr.Close()
+		for i := 0; i < n; i++ {
+			if err := tr.AppendValue(KindUserPrompt, map[string]string{"text": "x"}); err != nil {
+				t.Fatalf("append: %v", err)
+			}
+		}
+	}
+	appendN(2)
+	appendN(3)
+	f, err := os.OpenFile(filepath.Join(dir, "stream.ndjson"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"seq":99,"ki`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	appendN(1)
+
+	tr, err := OpenTranscript(dir)
+	if err != nil {
+		t.Fatalf("OpenTranscript: %v", err)
+	}
+	defer tr.Close()
+	chunk, _, err := tr.ReadFrom(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seqs []int64
+	for _, line := range strings.Split(string(chunk), "\n") {
+		var ev Event
+		if json.Unmarshal([]byte(line), &ev) == nil {
+			seqs = append(seqs, ev.Seq)
+		}
+	}
+	if want := []int64{1, 2, 3, 4, 5, 6}; fmt.Sprint(seqs) != fmt.Sprint(want) {
+		t.Errorf("seqs = %v, want %v", seqs, want)
 	}
 }

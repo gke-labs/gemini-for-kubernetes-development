@@ -1,6 +1,8 @@
 package acpd
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -83,7 +85,10 @@ type Transcript struct {
 
 // OpenTranscript opens (creating if needed) the transcript under dir.
 // An existing file is appended to and its size adopted as the starting
-// offset, so a restarted acpd does not truncate a session's history.
+// offset, so a restarted acpd does not truncate a session's history. Its
+// last seq is adopted too: the browser keys what it draws by seq, and a
+// session continued after a restart that numbered from 1 again drew a
+// second event 1, 2, 3 under the first.
 func OpenTranscript(dir string) (*Transcript, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating transcript dir %s: %w", dir, err)
@@ -98,12 +103,62 @@ func OpenTranscript(dir string) (*Transcript, error) {
 		f.Close()
 		return nil, fmt.Errorf("stat transcript %s: %w", path, err)
 	}
+	seq, open, err := lastSeq(path)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("reading transcript %s: %w", path, err)
+	}
+	size := info.Size()
+	// A last line cut short is ended, or the next event would be glued to
+	// it and lost with it.
+	if open {
+		n, err := f.Write([]byte("\n"))
+		size += int64(n)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("ending transcript %s: %w", path, err)
+		}
+	}
 	return &Transcript{
 		path:    path,
 		f:       f,
-		size:    info.Size(),
+		size:    size,
+		seq:     seq,
 		changed: make(chan struct{}),
 	}, nil
+}
+
+// lastSeq is the highest seq in the transcript at path, 0 for an empty
+// one, and whether its last line is unterminated. It reads every line
+// rather than only the last: the last may be a write cut short by a
+// crash, and a line that does not parse is skipped rather than allowed to
+// restart the numbering.
+func lastSeq(path string) (int64, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false, err
+	}
+	defer f.Close()
+	var last int64
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		open := len(line) > 0 && line[len(line)-1] != '\n'
+		if line = bytes.TrimSpace(line); len(line) > 0 {
+			var ev struct {
+				Seq int64 `json:"seq"`
+			}
+			if json.Unmarshal(line, &ev) == nil && ev.Seq > last {
+				last = ev.Seq
+			}
+		}
+		if err == io.EOF {
+			return last, open, nil
+		}
+		if err != nil {
+			return 0, false, err
+		}
+	}
 }
 
 // Path is the transcript's location on disk.

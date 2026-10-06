@@ -40,12 +40,15 @@ import (
 // in a file under $FAKE_HISTORY, as gemini keeps chats under its home:
 // session/load replays them and the prompt echo counts them, so a test can
 // tell an agent that remembers from one that merely shares an id.
+// With --replay-late as well it answers session/load before replaying, as
+// gemini does.
 const fakeAgent = `
 import json, os, sys
 
 modes = "--modes" in sys.argv[1:]
 refuse = "--refuse" in sys.argv[1:]
 load = "--load" in sys.argv[1:]
+replay_late = "--replay-late" in sys.argv[1:]
 current = "default"
 sid = "agent-side-id"
 
@@ -97,16 +100,23 @@ for line in sys.stdin:
                   "error": {"code": -32603, "message": "no session %s" % wanted}})
             continue
         sid = wanted
+        result = {}
+        if modes:
+            result["modes"] = {"currentModeId": current, "availableModes": [
+                {"id": "default", "name": "Default"}, {"id": "yolo", "name": "YOLO"}]}
+        if replay_late:
+            send({"jsonrpc": "2.0", "id": mid, "result": result})
         for said in history(sid):
             send({"jsonrpc": "2.0", "method": "session/update", "params": {
                 "sessionId": sid,
                 "update": {"sessionUpdate": "user_message_chunk",
                            "content": {"type": "text", "text": "replay:%s" % said}}}})
-        result = {}
-        if modes:
-            result["modes"] = {"currentModeId": current, "availableModes": [
-                {"id": "default", "name": "Default"}, {"id": "yolo", "name": "YOLO"}]}
-        send({"jsonrpc": "2.0", "id": mid, "result": result})
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": sid,
+                "update": {"sessionUpdate": "agent_message_chunk",
+                           "content": {"type": "text", "text": "replay-answer:%s" % said}}}})
+        if not replay_late:
+            send({"jsonrpc": "2.0", "id": mid, "result": result})
     elif method == "session/set_mode":
         wanted = msg["params"]["modeId"]
         if refuse and wanted != "default":
@@ -215,7 +225,15 @@ func registerFakeEngine(t *testing.T) {
 		AuthMethodID: "fake-auth",
 		Env:          []string{"FAKE_HISTORY=" + t.TempDir()},
 	}
+	Engines["fake-load-late"] = Engine{
+		Command:      "python3",
+		Args:         []string{script, "--modes", "--load", "--replay-late"},
+		APIKeyEnv:    "FAKE_KEY",
+		AuthMethodID: "fake-auth",
+		Env:          []string{"FAKE_HISTORY=" + t.TempDir()},
+	}
 	t.Cleanup(func() {
+		delete(Engines, "fake-load-late")
 		delete(Engines, "fake-load")
 		delete(Engines, "fake")
 		delete(Engines, "fake-modes")

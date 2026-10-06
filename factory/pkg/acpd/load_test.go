@@ -1,6 +1,7 @@
 package acpd
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -156,4 +157,85 @@ func TestARecordForAnotherEngineOrDirectoryIsNotLoaded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gemini answers session/load and then replays the conversation, so the
+// replay arrives after the load has returned. Every revise and every
+// Continue session loads it, and each load wrote all of it into the
+// transcript again: the session view showed the conversation once per
+// load, numbered from 1 each time.
+func TestAReplayAfterTheLoadIsNotWritten(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+
+	decodeSession(t, create(t, ts, "s1", "fake-load-late", GeminiModeYolo), http.StatusCreated)
+	promptAndReadEcho(t, ts, "s1", "hello")
+	for i, text := range []string{"again", "once more"} {
+		deleteSession(t, ts, "s1")
+		if s := decodeSession(t, create(t, ts, "s1", "fake-load-late", GeminiModeYolo), http.StatusCreated); !s.Loaded {
+			t.Fatalf("load %d started fresh", i+1)
+		}
+		if !strings.Contains(promptAndReadEcho(t, ts, "s1", text), "history:hello") {
+			t.Fatalf("load %d: the agent does not remember the first turn", i+1)
+		}
+	}
+
+	if transcriptHas(t, ts, "s1", "user_message_chunk", "replay:") ||
+		transcriptHas(t, ts, "s1", "agent_message_chunk", "replay-answer:") {
+		t.Error("the replayed conversation was appended to the transcript")
+	}
+	for _, text := range []string{"hello", "again", "once more"} {
+		if !transcriptHas(t, ts, "s1", KindUserPrompt, text) {
+			t.Errorf("the transcript lost the prompt %q", text)
+		}
+	}
+	// Each turn after a load is still written: the replay ends at the
+	// prompt, not after it.
+	if got := countEvents(t, ts, "s1", KindTurnEnd); got != 3 {
+		t.Errorf("%d turns ended in the transcript, want 3", got)
+	}
+	seqs := eventSeqs(t, ts, "s1")
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] != seqs[i-1]+1 {
+			t.Fatalf("seq %d follows %d: the numbering did not carry across the loads", seqs[i], seqs[i-1])
+		}
+	}
+}
+
+func readEvents(t *testing.T, ts *httptest.Server, id string) []Event {
+	t.Helper()
+	resp, err := ts.Client().Get(ts.URL + "/sessions/" + id + "/events?follow=false")
+	if err != nil {
+		t.Fatalf("GET events: %v", err)
+	}
+	defer resp.Body.Close()
+	var events []Event
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var ev Event
+		if err := dec.Decode(&ev); err != nil {
+			return events
+		}
+		events = append(events, ev)
+	}
+}
+
+func countEvents(t *testing.T, ts *httptest.Server, id, kind string) int {
+	t.Helper()
+	n := 0
+	for _, ev := range readEvents(t, ts, id) {
+		if ev.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func eventSeqs(t *testing.T, ts *httptest.Server, id string) []int64 {
+	t.Helper()
+	var seqs []int64
+	for _, ev := range readEvents(t, ts, id) {
+		seqs = append(seqs, ev.Seq)
+	}
+	return seqs
 }
