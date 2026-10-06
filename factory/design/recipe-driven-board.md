@@ -17,7 +17,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 
 ## Decisions
 
-1. **The recipe says where it runs.** A recipe declares the items it runs on (`on: [issue]`, `[pr]`, `[repo]`). The board shows a launch button for it on those rows.
+1. **The recipe says where it runs.** A recipe declares the items it runs on (`on: [issue]`, `[pr]`, `[my-pr]`, `[repo]`). The board shows a launch button for it on those rows. `pr` is any PR, which a recipe only reads; `my-pr` is a PR the recipe may push to, which opens up more.
 2. **The recorded run says what it is.** The run annotation carries the recipe's name, its task-output kind, and each revise's inputs. The board finds a sandbox's runs by scanning, not by a list of keys.
 3. **One revise path.** A revise Request names a sandbox and a revise id. The controller runs `factory recipe revise` and stores the task output. Plan, review and fix keep their extra steps as hooks on that path, not as separate paths.
 4. **One draft and one apply path.** The draft is the run's stored task output, for any kind. An apply Request names the sandbox, the run and the action, and the controller runs `factory apply --action`. Verbs carry permissions, not kinds.
@@ -28,7 +28,14 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 
 ### factory: recipes declare it, runs record it
 
-- **`on:`**, a list of `issue`, `pr`, `repo`. The built-ins: triage, plan and fix `[issue]`; review `[pr]`; research `[repo]`. `factory recipe <name> --url` already refuses a URL of the wrong shape. This makes that rule data the board can read.
+- **`on:`**, a list of `issue`, `pr`, `my-pr`, `repo`. `factory recipe <name> --url` already refuses a URL of the wrong shape. This makes that rule data the board can read.
+  - **`pr`**: any pull request. The recipe reads it and writes only through applies with the caller's token: a review, a comment.
+  - **`my-pr`**: a pull request the caller may change. It was **authored by the caller, and its head is a branch on the caller's fork**, the only place `push` pushes to.
+    - The board's *My PRs* tab is "authored by you" alone, so a My PRs row whose head is on the repository or on someone else's fork is not `my-pr`. The button shows there, disabled: "the PR's head is not on your fork".
+    - factory checks the same rule when the recipe runs, since the board's view can be stale. That is fix's rule for a PR it did not open: "adopt it first" (`factory pr adopt`).
+  - The built-ins: triage, plan and fix `[issue]`; review `[pr]`; research `[repo]`. Fix's PR mode, deferred in [fix-recipe.md](fix-recipe.md), is `[issue, my-pr]` once it is built.
+  - `my-pr` rows also get `pr` recipes: Review shows on your own PR, as it does today.
+  - **Revises are not filtered by `on`.** They follow their run: the fix's revises show on the PR its run opened, which is `my-pr` by construction.
 - **Revise inputs.** A revise lists the inputs it asks for (`inputs: [instruction]` on fix's `iterate`). Today an input is marked `revise: true` for every revise.
 - **The recorded run gains** `recipe`, `kind` (the `task-output` kind) and per-revise `inputs`:
 
@@ -66,7 +73,7 @@ A new recipe, or a new revise of an existing one, needs Go and UI changes in all
 
 - **One launch Request**, `{verb: recipe, recipe: <name>, number, inputs}`, and one `StartRecipe(name, inputs)` in factorycli. It runs `factory recipe <name> --url … --run-name …` and records the run like the others.
 - **The rows list sessions, not four fields.** A work item carries `sessions[]` (recipe, label, sandbox, task, state). Each becomes a *Continue session ↗*, a state chip (`<label>: running / ready / failed`), and its revises.
-- **Launch buttons** come from `factory recipe list`, filtered by `on` and by the row. The five recipes that have buttons today keep their place and their chips. Others go under a `Run ▾` menu on the row.
+- **Launch buttons** come from `factory recipe list`, filtered by `on` and by the row. The work item says which it is: `issue`, `pr`, or `my-pr` (authored by the member and headed on their fork, which the API already has from the PR's `head.repo`). The five recipes that have buttons today keep their place and their chips. Others go under a `Run ▾` menu on the row.
 - **The PR row's follow-ups** are the fix session's revises: Iterate (with its input box, from `inputs`), Address comments, Fix CI, and Rebase.
 - **What stays per recipe in the controller:**
   - `ensureFix`'s apply of `open-pr` when the run ends, and the PR alias;
