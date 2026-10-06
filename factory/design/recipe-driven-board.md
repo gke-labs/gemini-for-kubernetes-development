@@ -110,6 +110,30 @@ The work item's `stage`, its `switch` in the API and the UI's stage table go. Th
   - the auto-* settings that start fix, triage and review on their own.
   These are board policy for those recipes. A recipe gains such a hook in Go when it needs one, not to appear on the board.
 
+## The board after this
+
+| Page | Element | Source |
+|---|---|---|
+| Board | Tabs: Up Next, Issues, **PRs**, Research | Hardcoded: board features |
+| Issues row | Launch buttons (Triage, Plan, Fix, any new recipe) | **Recipes**: `factory recipe list`, filtered by `on: issue`; label and order from the list |
+| Issues row | *‹label› again* | **Run state** on the sandbox, by the row rules |
+| Issues row | Chips (‹label›: running / ready / done / failed) | **Run state** on the sandbox, by the row rules; no stages |
+| Issues row | Button → Request | One launch Request `{recipe, number, inputs}` |
+| Issue and PR rows | Draft actions (Add labels, Post, Fix with this plan, Edit, Reject…) | **Task output's actions**; filtered only by the verb's permission. `DRAFT_VERBS` keeps fallback labels and confirm texts |
+| Issue and PR rows | *Continue session ↗* | **Recorded runs**: `sessions[]` from every `*-run` annotation |
+| PR row | Review, Review again | **Recipes** (`on: pr`) and run state |
+| PR row (yours) | Iterate (with its input box), Address comments, Fix CI, **Rebase** | **Fix run's revises**, inputs from the run record |
+| PR row (yours) | iterating / addressing / … chips | **Run state** and the newest revise Request's revise label |
+| PR row (yours) | Promote, Auto | Hardcoded: GitHub draft → ready, and a board setting; not recipes |
+| PR row | Finalize ↗ | Hardcoded: review's link to GitHub's pending review |
+| PR row | Abandon | **Review output's `reject`**, with review's hook deleting the pending review |
+| PR row | Deploy ▾ | Unchanged: runbooks from the repository, modes hardcoded |
+| Task session view | Revise buttons | **Recorded run's revises**; enabled unless the run is running, plus plan's hook |
+| Task session view | Draft panel + actions | **Task output**, for any kind; triage's form and review's inline comments stay written for them |
+| Research launcher | overview / recent changes | Hardcoded |
+| Settings | auto triage / fix / review | Hardcoded: board policy |
+| Controller | Recipe names | Only in the hooks: fix (open-pr, PR alias), review (pending review), plan (approval), triage and the auto-* settings. Launch, revise and apply take any recipe |
+
 ## Steps
 
 1. **repo-agent: one PRs tab.** Review and My PRs merge, with the row's actions from whether it is `my-pr`; the API computes that from the PR's author and `head.repo`. The follow-ups come from the fix run's revises, which shows Rebase. This needs nothing from factory: the run already records ids and labels, and `iterate`'s input stays in `reviseInputs` until step 3.
