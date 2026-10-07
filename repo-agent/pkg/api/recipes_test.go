@@ -118,6 +118,7 @@ func TestRunSessions(t *testing.T) {
 		}),
 		runSandbox("recipe-repo-9", "https://github.com/o/repo/pull/9", map[string]string{
 			"sandbox.gemini.google.com/recipe-summarize-run": `{"task":"s-1","session":"s-0","startedAt":"2026-10-03T10:00:00Z","recipe":"summarize","kind":"Summary","state":"Completed"}`,
+			"sandbox.gemini.google.com/last-task-engine":     "claude",
 		}),
 		runSandbox("unrelated", "https://github.com/o/repo/issues/77", map[string]string{
 			"sandbox.gemini.google.com/recipe-summarize-run": `{"task":"x","startedAt":"2026-10-03T10:00:00Z"}`,
@@ -146,6 +147,13 @@ func TestRunSessions(t *testing.T) {
 	}
 	if got := items["pr-9"].Sessions; len(got) != 1 || got[0].Task != "s-0" {
 		t.Errorf("PR 9 sessions = %+v, want summarize's, in the session it revised in", got)
+	}
+	// A run's engine is its sandbox's; one never stamped ran gemini.
+	if got := items["pr-9"].Sessions[0].Engine; got != "claude" {
+		t.Errorf("PR 9 session engine = %q, want claude", got)
+	}
+	if plan.Engine != "gemini" {
+		t.Errorf("plan session engine = %q, want gemini (unstamped sandbox)", plan.Engine)
 	}
 }
 

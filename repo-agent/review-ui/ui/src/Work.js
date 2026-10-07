@@ -25,6 +25,17 @@ function EngineIcon({ engine, title }) {
   );
 }
 
+// SessionMark ends a chip that opens a run's conversation: the icon of the
+// agent it is with, or ↗ for an engine without one.
+function SessionMark({ engine }) {
+  const src = ENGINE_ICON[engine];
+  if (!src) return ' ↗';
+  return (
+    <img src={src} alt={engine}
+      style={{ width: '14px', height: '14px', verticalAlign: '-2px', marginLeft: '4px' }} />
+  );
+}
+
 const ATTENTION_STYLE = {
   'needs-you': { label: 'Needs you', color: '#d73a49', bg: 'rgba(215,58,73,0.12)' },
   'working':   { label: 'Agent working', color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
@@ -68,6 +79,7 @@ function chipTitle(c, hint) {
     if (run.endedAt) lines.push(`ended ${at(run.endedAt)}`);
     const applied = Object.keys(run.applied || {}).sort();
     if (applied.length) lines.push(`applied: ${applied.join(', ')}`);
+    if (run.engine) lines.push(`agent: ${run.engine}`);
     if (run.sandbox) lines.push(`sandbox: ${run.sandbox}`);
   }
   return lines.join('\n');
@@ -132,14 +144,14 @@ function ageOf(ts) {
   return `${Math.floor(mins / (60 * 24))}d`;
 }
 
-function Chip({ text, color, bg, title }) {
+function Chip({ text, color, bg, title, children }) {
   if (!text) return null;
   return (
     <span title={title} style={{
       color, backgroundColor: bg,
       padding: '2px 8px', borderRadius: '10px',
       fontSize: 'small', whiteSpace: 'nowrap',
-    }}>{text}</span>
+    }}>{text}{children}</span>
   );
 }
 
@@ -462,7 +474,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 onClick={sessionClick(onOpenSession, c.run)}
                 title={chipTitle(c, 'its draft awaits your verdict — open its session to read and apply it')}
                 style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
-                {`${text} ↗`}
+                {text}<SessionMark engine={c.run.engine} />
               </a>
             );
           }
@@ -473,7 +485,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               onClick={sessionClick(onOpenSession, c.run)}
               style={{ textDecoration: 'none', marginLeft: '4px' }}
               title={chipTitle(c, c.status === 'running' ? 'watch the agent\'s conversation as it runs' : 'continue the conversation')}>
-              <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
+              <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
             </a>
           ) : (
             <span key={c.recipe} style={{ marginLeft: '4px' }}

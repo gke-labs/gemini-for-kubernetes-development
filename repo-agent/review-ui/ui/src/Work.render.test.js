@@ -736,6 +736,17 @@ describe('WorkRow run rules', () => {
         expect(plan.querySelector('span').style.color).toBe('rgb(34, 134, 58)');
     });
 
+    test('a session chip ends in the icon of the agent it is with', async () => {
+        await renderRow({ ...issue, sessions: [{ ...run('plan', 'Plan', 'done'), engine: 'claude' }, { ...run('triage', 'Triage', 'ready'), engine: 'antigravity' }] });
+        const plan = chip('Plan: done');
+        expect(plan.textContent).toBe('Plan');
+        expect(plan.querySelector('img').getAttribute('alt')).toBe('claude');
+        expect(plan.getAttribute('title').split('\n')).toContain('agent: claude');
+        const triage = chip('Triage: ready');
+        expect(triage.textContent).toBe('Triage');
+        expect(triage.querySelector('img').getAttribute('alt')).toBe('antigravity');
+    });
+
     test('an issue is not promoted, its PR is', async () => {
         await renderRow({ ...issue, draftPR: true, mine: true });
         expect(findButton('Promote PR')).toBeUndefined();
