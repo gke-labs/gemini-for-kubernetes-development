@@ -242,17 +242,10 @@ function SessionSlideOver({ session, onClose }) {
         boxShadow: '-6px 0 24px rgba(0,0,0,0.25)', zIndex: 901,
         display: 'flex', flexDirection: 'column', textAlign: 'left',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderBottom: '1px solid var(--border-color)' }}>
-          <strong style={{ fontSize: 'small', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</strong>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-            <a className="btn btn-sm" href={taskSessionHref(session)} target="_blank" rel="noopener noreferrer"
-              onClick={onClose} title="Open this session in its own tab">Pop out ↗</a>
-            <button className="btn btn-sm" onClick={onClose} aria-label="Close" title="Close (Esc)">✕</button>
-          </span>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* One header: the conversation's, with ↗ (pop out) and ✕. */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '0 12px 12px' }}>
           <ResearchConversation key={`${session.sandbox}/${session.task}`} task={{ sandbox: session.sandbox, task: session.task }}
-            title={title} fill />
+            title={title} fill onDismiss={onClose} />
         </div>
       </div>
     </>

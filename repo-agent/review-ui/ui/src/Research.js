@@ -702,7 +702,7 @@ const DRAFT_VERBS = {
 };
 
 export function ResearchConversation({
-  sessionId, pending, legacy, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task,
+  sessionId, pending, legacy, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task, onDismiss,
 }) {
   const api = task
     ? `/api/task-sessions/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
@@ -1487,6 +1487,14 @@ export function ResearchConversation({
           <Pill {...statusPill} title={phase === 'live' && waiting
             ? `Waiting for you: ${(waiting.toolCall && waiting.toolCall.title) || 'a tool call'}`
             : detail} />
+          {/* A paused session's one way forward, so it is the header's
+              call to action rather than a link in the text below. */}
+          {phase === 'paused' && task && (
+            <button className="btn btn-sm btn-submit" onClick={wake} disabled={waking}
+              title={`Scale ${task.sandbox} back up and reconnect to this session`}>
+              {waking ? 'Waking…' : '▶ Wake sandbox'}
+            </button>
+          )}
           <span style={{ flex: 1 }} />
           {/* How much the engine asks before it acts. A research session
               starts auto-approving — nobody is necessarily watching one,
@@ -1565,6 +1573,9 @@ export function ResearchConversation({
               once. An icon each, because they are a pair. */}
           {!standalone && task && (
             <>
+              {/* In a slide-over the slide-over is the room: no full screen,
+                  and ✕ (below) closes it. */}
+              {!onDismiss && (<>
               {/* Opened from a list, this is the way back to it, and it
                   says which key does the same thing. The glyph alone
                   named the gesture and not the shortcut, which left
@@ -1580,8 +1591,10 @@ export function ResearchConversation({
                   : expanded ? 'Exit full screen (Esc)' : 'Fill the window with this conversation'}>
                 {onClose ? 'esc ⤢' : expanded ? '⤢' : '⛶'}
               </button>
+              </>)}
               <a className="btn btn-sm" href={taskSessionHash(task)}
                 target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
+                onClick={onDismiss}
                 title="Open this conversation in its own tab">↗</a>
             </>
           )}
@@ -1590,6 +1603,8 @@ export function ResearchConversation({
               of them is destructive; they were sitting permanently beside
               the controls used every turn, which both crowded those and
               put Delete a stray click from Stop. */}
+          {/* Only when there is something in it. */}
+          {((info && info.sandbox && info.namespace) || researchId) && (
           <span style={{ position: 'relative', display: 'inline-flex' }}>
             <button className="btn btn-sm" aria-label="More actions" aria-expanded={menuOpen}
               onClick={() => setMenuOpen(o => !o)} title="More actions">⋯</button>
@@ -1627,6 +1642,10 @@ export function ResearchConversation({
               </>
             )}
           </span>
+          )}
+          {onDismiss && (
+            <button className="btn btn-sm" onClick={onDismiss} aria-label="Close" title="Close (Esc)">✕</button>
+          )}
         </div>
 
         {error && (
@@ -1763,16 +1782,8 @@ export function ResearchConversation({
             {phase === 'paused' && (
               <p style={{ color: 'var(--term-dim)' }}>
                 This session is paused: the sandbox is scaled to zero. Its transcript survives on the
-                sandbox's disk, but nothing is running to answer. {detail}
-                {task && (
-                  <>
-                    {' '}
-                    <button className="btn btn-sm" onClick={wake} disabled={waking}
-                      title={`Scale ${task.sandbox} back up and reconnect to this session`}>
-                      {waking ? 'Waking…' : 'Wake sandbox'}
-                    </button>
-                  </>
-                )}
+                sandbox's disk, but nothing is running to answer.
+                {task && ' Wake the sandbox to continue the conversation.'}
               </p>
             )}
             {(phase === 'starting' || phase === 'probing') && !transcript.items.length && (
