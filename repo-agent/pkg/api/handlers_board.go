@@ -744,6 +744,7 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 				Recipe:    run.Recipe,
 				Label:     recipeLabel(catalog, run.Recipe),
 				Sandbox:   sb.GetName(),
+				Engine:    sandboxEngine(annotations, "gemini"),
 				Task:      run.SessionOf(),
 				Run:       run.Key,
 				Kind:      run.Kind,

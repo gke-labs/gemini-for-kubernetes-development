@@ -164,6 +164,9 @@ type RunSession struct {
 	// Label is the recipe's, from the board's catalog.
 	Label   string `json:"label,omitempty"`
 	Sandbox string `json:"sandbox"`
+	// Engine is the agent the run's sandbox last ran (gemini, claude,
+	// antigravity): its chip's icon.
+	Engine string `json:"engine,omitempty"`
 	// Task is the run's agent session (a revise's is the one it revised
 	// in), for #/task-session/<sandbox>/<task>.
 	Task string `json:"task"`

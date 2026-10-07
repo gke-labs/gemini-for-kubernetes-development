@@ -598,6 +598,13 @@ describe('WorkRow your PR', () => {
         expect(chip('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
     });
 
+    test('the sandbox is agent-sandbox\'s icon; its engine is in the hover', async () => {
+        await renderRow({ ...pr, sandbox: { name: 'fix-r-7', engine: 'claude', replicas: '1' } });
+        const icon = container.querySelector('img[alt="sandbox"]');
+        expect(icon.getAttribute('title')).toBe('fix-r-7 (claude) — tasks & logs');
+        expect(container.querySelector('img[alt="claude"]')).toBeNull();
+    });
+
     test('auto follow-up shows on a PR the board fixed, and toggles', async () => {
         global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
         const sandbox = { name: 'fix-r-7', engine: 'gemini', autoIterate: 'on' };
@@ -734,6 +741,17 @@ describe('WorkRow run rules', () => {
         expect(title.some(l => l.startsWith('started '))).toBe(true);
         expect(title.some(l => l.startsWith('ended '))).toBe(true);
         expect(plan.querySelector('span').style.color).toBe('rgb(34, 134, 58)');
+    });
+
+    test('a session chip ends in the icon of the agent it is with', async () => {
+        await renderRow({ ...issue, sessions: [{ ...run('plan', 'Plan', 'done'), engine: 'claude' }, { ...run('triage', 'Triage', 'ready'), engine: 'antigravity' }] });
+        const plan = chip('Plan: done');
+        expect(plan.textContent).toBe('Plan');
+        expect(plan.querySelector('img').getAttribute('alt')).toBe('claude');
+        expect(plan.getAttribute('title').split('\n')).toContain('agent: claude');
+        const triage = chip('Triage: ready');
+        expect(triage.textContent).toBe('Triage');
+        expect(triage.querySelector('img').getAttribute('alt')).toBe('antigravity');
     });
 
     test('an issue is not promoted, its PR is', async () => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ResearchPanel, AllResearchPanel, ResearchConversation } from './Research';
+import agentSandboxIcon from './agent-sandbox-icon.svg';
 import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
@@ -22,6 +23,17 @@ function EngineIcon({ engine, title }) {
   return (
     <img src={src} alt={engine} title={title || `engine: ${engine}`}
       style={{ width: '20px', height: '20px', verticalAlign: 'middle', marginRight: '6px' }} />
+  );
+}
+
+// SessionMark ends a chip that opens a run's conversation: the icon of the
+// agent it is with, or ↗ for an engine without one.
+function SessionMark({ engine }) {
+  const src = ENGINE_ICON[engine];
+  if (!src) return ' ↗';
+  return (
+    <img src={src} alt={engine}
+      style={{ width: '14px', height: '14px', verticalAlign: '-2px', marginLeft: '4px' }} />
   );
 }
 
@@ -68,6 +80,7 @@ function chipTitle(c, hint) {
     if (run.endedAt) lines.push(`ended ${at(run.endedAt)}`);
     const applied = Object.keys(run.applied || {}).sort();
     if (applied.length) lines.push(`applied: ${applied.join(', ')}`);
+    if (run.engine) lines.push(`agent: ${run.engine}`);
     if (run.sandbox) lines.push(`sandbox: ${run.sandbox}`);
   }
   return lines.join('\n');
@@ -132,14 +145,14 @@ function ageOf(ts) {
   return `${Math.floor(mins / (60 * 24))}d`;
 }
 
-function Chip({ text, color, bg, title }) {
+function Chip({ text, color, bg, title, children }) {
   if (!text) return null;
   return (
     <span title={title} style={{
       color, backgroundColor: bg,
       padding: '2px 8px', borderRadius: '10px',
       fontSize: 'small', whiteSpace: 'nowrap',
-    }}>{text}</span>
+    }}>{text}{children}</span>
   );
 }
 
@@ -425,15 +438,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           Agent (machine facts, incl. run outcomes), then the one-action
           rail — launch verbs and the row's GitHub moves. */}
       <td style={{ padding: '6px 8px' }}>
-        {/* The icon is the sandbox's presence on the row: click for the
+        {/* The icon is the sandbox's presence on the row (agent-sandbox's
+            logo; the engine is on each run's chip): click for the
             card (tasks, logs, lifecycle). Resting lifecycle (paused /
             active) is deliberately NOT a board-level chip — pause/wake
             is automatic, and every flow that needs a manual wake goes
             through the card anyway. The state lives in the tooltip. */}
         {item.sandbox && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }}>
-            <EngineIcon engine={item.sandbox.engine}
-              title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`} />
+            <img src={agentSandboxIcon} alt="sandbox"
+              title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`}
+              style={{ height: '20px', verticalAlign: 'middle', marginRight: '6px' }} />
           </span>
         )}
         {chips.map(c => {
@@ -462,7 +477,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 onClick={sessionClick(onOpenSession, c.run)}
                 title={chipTitle(c, 'its draft awaits your verdict — open its session to read and apply it')}
                 style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
-                {`${text} ↗`}
+                {text}<SessionMark engine={c.run.engine} />
               </a>
             );
           }
@@ -473,7 +488,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               onClick={sessionClick(onOpenSession, c.run)}
               style={{ textDecoration: 'none', marginLeft: '4px' }}
               title={chipTitle(c, c.status === 'running' ? 'watch the agent\'s conversation as it runs' : 'continue the conversation')}>
-              <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
+              <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
             </a>
           ) : (
             <span key={c.recipe} style={{ marginLeft: '4px' }}
