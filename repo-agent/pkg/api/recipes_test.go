@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -178,6 +180,19 @@ func TestRunStatus(t *testing.T) {
 	} {
 		if got := runStatus(s); got != strings.Fields(want)[0] {
 			t.Errorf("%s: %+v → %q", want, s, got)
+		}
+	}
+}
+
+// A PR the member authored offers no Review: GitHub takes no verdict from
+// a PR's author.
+func TestOwnPROffersNoReview(t *testing.T) {
+	items := map[string]*models.WorkItem{"pr-1": {Type: "pr", Mine: true}, "pr-2": {Type: "pr"}}
+	applyRowRules(items, nil, nil, false, time.Now())
+	for key, want := range map[string]bool{"pr-1": false, "pr-2": true} {
+		got := slices.ContainsFunc(items[key].Recipes, func(rec models.RowRecipe) bool { return rec.Name == "review" })
+		if got != want {
+			t.Errorf("%s offers review = %v, want %v", key, got, want)
 		}
 	}
 }

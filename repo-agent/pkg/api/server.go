@@ -97,7 +97,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// A local-only run's files, served from its sandbox.
 		api.GET("/board/:board/runbook/instance/:instance/file/:file", s.getLocalRunFile)
 		api.POST("/board/:board/prs/:id/promote", s.promoteBoardPR)
-		api.POST("/board/:board/prs/:id/abandon", s.abandonBoardReview)
 
 		api.POST("/feedback", s.submitFeedback)
 		api.GET("/proxy", s.proxy)
