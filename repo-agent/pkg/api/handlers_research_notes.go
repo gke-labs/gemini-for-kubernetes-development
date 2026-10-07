@@ -40,12 +40,9 @@ import (
 // number. The draft can be edited or discarded in between, as a plan's.
 // The task session's revise and draft routes call these.
 
-// The notes draft on a research sandbox, as the controller writes it.
-const (
-	annoNotesDraft     = "board.gemini.google.com/notes"
-	annoNotesDraftedAt = "board.gemini.google.com/notes-drafted-at"
-	annoNotesSaved     = "board.gemini.google.com/notes-saved-at"
-)
+// When the controller stored the notes draft on a research sandbox
+// (factorycli.AnnotationNotesOutput).
+const annoNotesDraftedAt = "board.gemini.google.com/notes-drafted-at"
 
 // researchNotesDraft is a conversation's notes draft.
 type researchNotesDraft struct {
@@ -53,6 +50,8 @@ type researchNotesDraft struct {
 	DraftedAt string `json:"draftedAt,omitempty"`
 	// SavedAt is when this draft was last pushed to research/notes.
 	SavedAt string `json:"savedAt,omitempty"`
+	// doc is the Notes task output the draft is the spec of.
+	doc string
 }
 
 // researchNotesState is the draft with what the clicks on it say: a Save
@@ -172,9 +171,14 @@ func (s *Server) editResearchNotes(c *gin.Context, view researchSandboxView, mar
 		c.JSON(http.StatusBadRequest, gin.H{"error": "the notes are empty — discard them instead"})
 		return
 	}
+	doc, err := factorycli.WithDraft("Notes", view.Notes.doc, markdown)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if err := s.updateResearchAnnotations(c.Request.Context(), view.Namespace, view.Sandbox, map[string]string{
-		annoNotesDraft: strings.TrimSpace(markdown),
-		annoNotesSaved: "",
+		factorycli.AnnotationNotesOutput:  doc,
+		factorycli.AnnotationNotesApplied: "",
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the notes", "details": err.Error()})
 		return
@@ -186,10 +190,9 @@ func (s *Server) editResearchNotes(c *gin.Context, view researchSandboxView, mar
 // stays there.
 func (s *Server) discardResearchNotes(c *gin.Context, view researchSandboxView) {
 	if err := s.updateResearchAnnotations(c.Request.Context(), view.Namespace, view.Sandbox, map[string]string{
-		annoNotesDraft:                   "",
-		annoNotesDraftedAt:               "",
-		annoNotesSaved:                   "",
-		factorycli.AnnotationNotesOutput: "",
+		factorycli.AnnotationNotesOutput:  "",
+		factorycli.AnnotationNotesApplied: "",
+		annoNotesDraftedAt:                "",
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to discard the notes", "details": err.Error()})
 		return

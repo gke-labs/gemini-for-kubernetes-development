@@ -230,12 +230,12 @@ func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	withDraft := func(approved bool) *unstructured.Unstructured {
 		sb := issueSandboxCR("alice", 1)
 		a := sb.GetAnnotations()
-		a[annoPlanDraft] = "## Summary\nA plan."
 		a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"source:\n  task: recipe-plan-2\n  session: " + planTask + "\n" +
+			"spec:\n  markdown: |-\n    ## Summary\n    A plan.\n" +
 			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
 		if approved {
-			a[annoPlanApproved] = "2026-10-04T00:00:00Z"
+			a[factorycli.AnnotationPlanApplied] = `{"run":"2026-10-04T00:00:00Z"}`
 		}
 		sb.SetAnnotations(a)
 		return sb
@@ -268,9 +268,9 @@ func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 func TestATaskSessionFollowsItsRevise(t *testing.T) {
 	sb := issueSandboxCR("alice", 1)
 	a := sb.GetAnnotations()
-	a[annoPlanDraft] = "## Summary\nA plan."
 	a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 		"source:\n  task: " + planTask + "\n" +
+		"spec:\n  markdown: |-\n    ## Summary\n    A plan.\n" +
 		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
 	sb.SetAnnotations(a)
 	r, dyn := taskSessionTestServerDyn(t, nil, true, []*unstructured.Unstructured{sb},

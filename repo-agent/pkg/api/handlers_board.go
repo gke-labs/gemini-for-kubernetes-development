@@ -75,15 +75,12 @@ const (
 	annoReviewError     = "review.gemini.google.com/error"
 	annoFixError        = "board.gemini.google.com/fix-error"
 	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
-	annoPlanDraft       = "board.gemini.google.com/plan"
 	annoPlannedAt       = "board.gemini.google.com/planned-at"
 	annoPlanFeedback    = "board.gemini.google.com/plan-feedback"
 	annoPlanFeedbackAt  = "board.gemini.google.com/plan-feedback-at"
-	annoPlanApproved    = "board.gemini.google.com/plan-approved-at"
 	annoPlanRejected    = "board.gemini.google.com/plan-rejected-at"
 	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
-	annoTriagePublished = "board.gemini.google.com/triage-published-at"
 	// annoBoard is the board whose controller stored the sandbox's draft.
 	annoBoard = "board.gemini.google.com/board"
 )
@@ -887,26 +884,26 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	prURL := ""
 	taskType := ""
 	planDraft := ""
-	planApproved := false
+	approved := false
 	planRevising := false
 	var planActions []models.WorkAction
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		state = annotations[annoTaskState]
 		taskType = annotations[annoLastTaskType]
-		planDraft = annotations[annoPlanDraft]
-		planApproved = annotations[annoPlanApproved] != ""
+		planDraft = factorycli.PlanDraft(annotations)
+		approved = planApproved(annotations)
 		planRevising = planIsRevising(annotations)
 		if u := annotations["htmlURL"]; strings.Contains(u, "/pull/") {
 			prURL = u
 		}
-		if planDraft != "" && !planApproved {
+		if planDraft != "" && !approved {
 			planActions = planWorkActions(annotations, planRevising, state == "Running")
 		}
 	}
 	triageDraft := ""
 	triageState := ""
-	triagePublished := false
+	published := false
 	var triageActions []models.WorkAction
 	triageSB := factorycli.TriageSandbox(slices.Values(allSandboxes), repo, issue.GetNumber())
 	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
@@ -915,7 +912,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	if triageSB != nil {
 		triageDraft = factorycli.TriageDraft(triageSB)
 		triageState = factorycli.TriageState(triageSB)
-		triagePublished = triageSB.GetAnnotations()[annoTriagePublished] != ""
+		published = triagePublished(triageSB.GetAnnotations())
 		if triageDraft != "" {
 			triageActions = triageWorkActions(triageSB.GetAnnotations())
 		}
@@ -936,14 +933,14 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	case taskType == "plan" && planRevising:
 		// Refinement queued: the relaunch window before Running stamps.
 		stage, attention = "planning", attentionWorking
-	case taskType == "plan" && planDraft != "" && !planApproved:
+	case taskType == "plan" && planDraft != "" && !approved:
 		stage, attention = "plan-ready", attentionNeedsYou
-	case taskType == "plan" && planApproved:
+	case taskType == "plan" && approved:
 		// Approved: the fix Request is in flight.
 		stage, attention = "fix-starting", attentionWorking
 	case state == "Completed" && taskType != "plan":
 		stage, attention = "fix-done", attentionNeedsYou
-	case triageDraft != "" && triagePublished:
+	case triageDraft != "" && published:
 		stage = "triaged"
 	case triageDraft != "":
 		stage, attention = "triage-ready", attentionNeedsYou
@@ -987,9 +984,9 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		PRURL:           prURL,
 		Labels:          labels,
 		Draft:           triageDraft,
-		TriagePublished: triagePublished,
+		TriagePublished: published,
 		Plan:            planDraft,
-		PlanApproved:    planApproved,
+		PlanApproved:    approved,
 		TriageActions:   triageActions,
 		PlanActions:     planActions,
 		Sandbox:         workSandbox(sb, autoDefault),
@@ -1810,7 +1807,7 @@ func (s *Server) findPlanSandbox(c *gin.Context, board *unstructured.Unstructure
 		if err != nil {
 			continue
 		}
-		if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, number); sb != nil && sb.GetAnnotations()[annoPlanDraft] != "" {
+		if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, number); sb != nil && factorycli.PlanDraft(sb.GetAnnotations()) != "" {
 			return sb, ns
 		}
 	}
@@ -1860,7 +1857,7 @@ func (s *Server) planBoardApprove(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to approve"})
 		return
 	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(c.Request.Context(), ns, sb.GetName(), annoPlanApproved, nowRFC3339()); err != nil {
+	if err := s.markApplied(c.Request.Context(), ns, sb, factorycli.AnnotationPlanApplied, "run"); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve plan", "details": err.Error()})
 		return
 	}
@@ -1880,7 +1877,7 @@ func (s *Server) planBoardReject(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to reject"})
 		return
 	}
-	for _, key := range []string{annoPlanDraft, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt, annoPlanApproved, factorycli.AnnotationPlanOutput, factorycli.AnnotationPlanCommented} {
+	for _, key := range []string{factorycli.AnnotationPlanOutput, factorycli.AnnotationPlanApplied, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt} {
 		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, ""); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear plan", "details": err.Error()})
 			return
@@ -1905,7 +1902,7 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 	}
 	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
 		name := sb.GetName()
-		for _, key := range []string{factorycli.AnnotationTriageDraft, "board.gemini.google.com/triaged-at", annoTriagePublished, factorycli.AnnotationTriageOutput, factorycli.AnnotationTriageLabeled} {
+		for _, key := range []string{factorycli.AnnotationTriageOutput, factorycli.AnnotationTriageApplied, "board.gemini.google.com/triaged-at"} {
 			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
 				return
@@ -1920,6 +1917,27 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to reject"})
+}
+
+// editDraft stores draft, as a member edited it, as the spec of the task
+// output stored on sb under key.
+func (s *Server) editDraft(ctx context.Context, ns string, sb *unstructured.Unstructured, kind, key, draft string) error {
+	doc, err := factorycli.WithDraft(kind, sb.GetAnnotations()[key], draft)
+	if err != nil {
+		return err
+	}
+	return s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, doc)
+}
+
+// markApplied stamps action as applied to the task output stored on sb,
+// in its run's applied annotation (key).
+func (s *Server) markApplied(ctx context.Context, ns string, sb *unstructured.Unstructured, key, action string) error {
+	annotations := maps.Clone(sb.GetAnnotations())
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	factorycli.MarkApplied(annotations, key, action, time.Now())
+	return s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, annotations[key])
 }
 
 // putBoardPlanDraft saves a member-edited plan back onto the plan sandbox
@@ -1958,7 +1976,7 @@ func (s *Server) putBoardPlanDraft(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to write the plan into the sandbox", "details": err.Error()})
 		return
 	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanDraft, plan); err != nil {
+	if err := s.editDraft(ctx, ns, sb, "Plan", factorycli.AnnotationPlanOutput, plan); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save plan", "details": err.Error()})
 		return
 	}
@@ -1988,8 +2006,8 @@ func (s *Server) planBoardRefresh(c *gin.Context) {
 		return
 	}
 	annotations := sb.GetAnnotations()
-	draft := annotations[annoPlanDraft]
-	if annotations[annoPlanApproved] != "" {
+	draft := factorycli.PlanDraft(annotations)
+	if planApproved(annotations) {
 		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft})
 		return
 	}
@@ -2011,7 +2029,7 @@ func (s *Server) planBoardRefresh(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft})
 		return
 	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanDraft, fresh); err != nil {
+	if err := s.editDraft(ctx, ns, sb, "Plan", factorycli.AnnotationPlanOutput, fresh); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the refreshed plan", "details": err.Error()})
 		return
 	}
@@ -2045,7 +2063,7 @@ func (s *Server) putBoardTriageDraft(c *gin.Context) {
 	}
 
 	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AnnotationTriageDraft, strings.TrimSpace(req.Draft)+"\n"); err != nil {
+		if err := s.editDraft(ctx, ns, sb, "Triage", factorycli.AnnotationTriageOutput, req.Draft); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
 			return
 		}

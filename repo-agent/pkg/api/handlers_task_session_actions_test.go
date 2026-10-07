@@ -47,13 +47,16 @@ func planSessionServer(t *testing.T, approved bool) (*gin.Engine, *fake.FakeDyna
 		annoBoard: "myboard",
 		"sandbox.gemini.google.com/last-task-type":  "plan",
 		"sandbox.gemini.google.com/last-task-state": "Completed",
-		annoPlanDraft:                "## Summary\nDo the thing.",
 		annoPlannedAt:                "2026-09-17T00:00:00Z",
 		factorycli.AnnotationPlanRun: string(run),
 		factorycli.AnnotationPlanOutput: `apiVersion: factory.gemini.google.com/v1alpha1
 kind: Plan
 source:
   task: recipe-plan-1
+spec:
+  markdown: |-
+    ## Summary
+    Do the thing.
 actions:
   - verb: comment
     label: Post plan
@@ -64,7 +67,7 @@ actions:
 `,
 	}
 	if approved {
-		annotations[annoPlanApproved] = "2026-09-18T00:00:00Z"
+		annotations[factorycli.AnnotationPlanApplied] = `{"run":"2026-09-18T00:00:00Z"}`
 	}
 	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(),
 		sandboxCR("fix-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true"}, annotations, 1))

@@ -15,11 +15,10 @@ import (
 const TaskOutputAPIVersion = "factory.gemini.google.com/v1alpha1"
 
 // ComposeTaskOutput is the task output factory apply takes for a draft:
-// the document the task left, as stored without its spec (header), with
-// the draft, as the member may have edited it, as its spec. A draft
-// stored before task outputs were kept has no header; it gets a fresh
-// one, whose source task is task — something stable for the draft, which
-// is what factory dedups its comments on.
+// the document the task left (header), with the draft, as the member may
+// have edited it, as its spec. A draft with no document gets a fresh one,
+// and a document that names no source task gets task — something stable
+// for the draft, which is what factory dedups its comments on.
 //
 // A Triage draft is a triage: block; a Plan draft is the plan's markdown.
 func ComposeTaskOutput(kind, header, draft, issueURL, task string) (string, error) {
@@ -53,6 +52,9 @@ func composeTaskOutput(kind, header string, spec any, targetURL, task string) (s
 		setKey(root, "kind", scalar(kind))
 		setKey(root, "source", mapping("task", task))
 	}
+	if m, _ := parseTaskOutputMeta(kind, header); m.Source.Task == "" {
+		setKey(root, "source", mapping("task", task))
+	}
 	if !hasTarget(root) {
 		setKey(root, "target", mapping("url", targetURL))
 	}
@@ -71,9 +73,9 @@ func composeTaskOutput(kind, header string, spec any, targetURL, task string) (s
 // draftSpec is a draft as its kind's spec.
 func draftSpec(kind, draft string) (any, error) {
 	switch kind {
-	case "Plan":
+	case "Plan", "Notes":
 		if strings.TrimSpace(draft) == "" {
-			return nil, fmt.Errorf("the plan is empty")
+			return nil, fmt.Errorf("the %s is empty", strings.ToLower(kind))
 		}
 		return map[string]string{"markdown": strings.TrimSpace(draft)}, nil
 	case "Triage":

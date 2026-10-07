@@ -79,9 +79,9 @@ func TestTriageDraftAndState(t *testing.T) {
 	}{
 		// The issue's sandbox: its own keys; agentDraft there is a review's.
 		{testSandbox("fix-repo-7", nil, map[string]string{
-			AnnotationTriageDraft: "new", AnnotationRecipeTriageTaskState: "Completed",
+			AnnotationTriageOutput: "apiVersion: " + TaskOutputAPIVersion + "\nkind: Triage\nspec:\n  assessment: new\n", AnnotationRecipeTriageTaskState: "Completed",
 			"agentDraft": "review", AnnotationTaskState: "Running",
-		}), "new", "Completed"},
+		}), "triage:\n  assessment: new", "Completed"},
 		{testSandbox("fix-repo-7", nil, map[string]string{"agentDraft": "review", AnnotationTaskState: "Running"}), "", ""},
 	} {
 		if d := TriageDraft(c.sb); d != c.draft {

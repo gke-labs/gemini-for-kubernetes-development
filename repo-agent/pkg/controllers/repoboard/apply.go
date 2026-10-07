@@ -17,6 +17,7 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,28 +28,28 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-// applyWrites are the writes an apply Request may ask for, by kind, and
-// the annotation each stamps on the draft's sandbox once it is done.
-var applyWrites = map[string]map[string]string{
-	"Triage": {
-		"label":   factorycli.AnnotationTriageLabeled,
-		"comment": AnnotationTriagePublished,
-	},
-	"Plan": {
-		"comment": factorycli.AnnotationPlanCommented,
-	},
-	"Notes": {
-		"push-notes": AnnotationNotesSaved,
-	},
+// applyWrites are the writes an apply Request may ask for, by kind.
+var applyWrites = map[string][]string{
+	"Triage": {"label", "comment"},
+	"Plan":   {"comment"},
+	"Notes":  {"push-notes"},
 }
 
-// applyStamp is the annotation an apply's write stamps, or "" for a write
-// nothing serves.
+// appliedKeys are where a kind's draft is stamped with what was applied of
+// it: its run's applied annotation.
+var appliedKeys = map[string]string{
+	"Triage": factorycli.AnnotationTriageApplied,
+	"Plan":   factorycli.AnnotationPlanApplied,
+	"Notes":  factorycli.AnnotationNotesApplied,
+}
+
+// applyStamp is the applied annotation an apply's write stamps, or "" for
+// a write nothing serves.
 func applyStamp(spec boardv1alpha1.RequestSpec) string {
-	if spec.Apply == nil {
+	if spec.Apply == nil || !slices.Contains(applyWrites[spec.Apply.Kind], spec.Apply.Action) {
 		return ""
 	}
-	return applyWrites[spec.Apply.Kind][spec.Apply.Action]
+	return appliedKeys[spec.Apply.Kind]
 }
 
 // applyKey is the runner key of one write.
@@ -72,7 +73,7 @@ func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstruc
 			}
 		}
 	case "Plan":
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlanDraft] != "" {
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && factorycli.PlanDraft(sb.GetAnnotations()) != "" {
 			return sb
 		}
 	case "Notes":
@@ -81,25 +82,25 @@ func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstruc
 	return nil
 }
 
-// applyDoc is the task output to apply: the draft on sb, as it is now —
-// edits included — under the document its task left.
+// applyDoc is the task output to apply: the one stored on sb, as it is
+// now — edits included.
 func applyDoc(work *workState, spec boardv1alpha1.RequestSpec, sb *unstructured.Unstructured) (string, error) {
 	if spec.Apply.Kind == "Notes" {
 		return notesDoc(work, sb)
 	}
 	a := sb.GetAnnotations()
-	header, draft, draftAt := a[factorycli.AnnotationTriageOutput], factorycli.TriageDraft(sb), a[AnnotationTriagedAt]
+	doc, draftAt := a[factorycli.AnnotationTriageOutput], a[AnnotationTriagedAt]
 	if spec.Apply.Kind == "Plan" {
-		header, draft, draftAt = a[factorycli.AnnotationPlanOutput], a[AnnotationPlanDraft], a[AnnotationPlannedAt]
+		doc, draftAt = a[factorycli.AnnotationPlanOutput], a[AnnotationPlannedAt]
 	}
-	// A draft from before task outputs were kept: what factory dedups its
-	// comment on is the task, so name one that is stable for this draft.
+	// A document that names no task: what factory dedups its comment on is
+	// the task, so name one that is stable for this draft.
 	task := "board-" + sb.GetName()
 	if t, err := time.Parse(time.RFC3339, draftAt); err == nil {
 		task = fmt.Sprintf("%s-%d", task, t.Unix())
 	}
 	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, spec.Number)
-	return factorycli.ComposeTaskOutput(spec.Apply.Kind, header, draft, url, task)
+	return factorycli.ComposeTaskOutput(spec.Apply.Kind, doc, factorycli.Draft(spec.Apply.Kind, doc), url, task)
 }
 
 // ensureApplies starts the write each apply Request asks for, once: not
@@ -188,17 +189,17 @@ func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boar
 	return pendingOutcome(req, now)
 }
 
-// stampApplied marks the write done on the draft's sandbox. A posted
-// triage is finished with, so its sandbox is parked too, unless a plan or
-// fix is running in it.
+// stampApplied marks the write done on the draft's sandbox, in its run's
+// applied annotation. A posted triage is finished with, so its sandbox is
+// parked too, unless a plan or fix is running in it.
 func (r *Reconciler) stampApplied(ctx context.Context, sb *unstructured.Unstructured, spec boardv1alpha1.RequestSpec, stamp string) error {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	annotations[stamp] = time.Now().UTC().Format(time.RFC3339)
+	factorycli.MarkApplied(annotations, stamp, spec.Apply.Action, time.Now())
 	sb.SetAnnotations(annotations)
-	if stamp == AnnotationTriagePublished && annotations[factorycli.AnnotationTaskState] != factorycli.TaskStateRunning {
+	if spec.Apply.Kind == "Triage" && spec.Apply.Action == "comment" && annotations[factorycli.AnnotationTaskState] != factorycli.TaskStateRunning {
 		if err := unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas"); err != nil {
 			return err
 		}

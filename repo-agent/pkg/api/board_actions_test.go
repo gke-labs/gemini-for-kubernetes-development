@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -91,8 +92,9 @@ func (h actionHarness) requestOf(verb string) boardv1alpha1.Request {
 }
 
 // settle does what the controller does once the write has run: the
-// Request's verdict, and on success the draft's stamp.
-func (h actionHarness) settle(req boardv1alpha1.Request, phase, message, stamp string) {
+// Request's verdict, and on success action stamped applied under
+// appliedKey.
+func (h actionHarness) settle(req boardv1alpha1.Request, phase, message, appliedKey, action string) {
 	h.t.Helper()
 	ctx := context.Background()
 	obj, err := h.dyn.Resource(requestGVR).Namespace("alice").Get(ctx, req.Name, v1.GetOptions{})
@@ -104,13 +106,13 @@ func (h actionHarness) settle(req boardv1alpha1.Request, phase, message, stamp s
 	if _, err := h.dyn.Resource(requestGVR).Namespace("alice").Update(ctx, obj, v1.UpdateOptions{}); err != nil {
 		h.t.Fatalf("update request: %v", err)
 	}
-	if stamp != "" {
+	if appliedKey != "" {
 		sb, err := h.dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(ctx, "fix-repo-"+itoa(h.number), v1.GetOptions{})
 		if err != nil {
 			h.t.Fatalf("get sandbox: %v", err)
 		}
 		a := sb.GetAnnotations()
-		a[stamp] = "2026-10-03T00:00:00Z"
+		factorycli.MarkApplied(a, appliedKey, action, time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
 		sb.SetAnnotations(a)
 		if _, err := h.dyn.Resource(k8s.SandboxGVR).Namespace("alice").Update(ctx, sb, v1.UpdateOptions{}); err != nil {
 			h.t.Fatalf("update sandbox: %v", err)
@@ -138,12 +140,15 @@ func TestPlanActions(t *testing.T) {
 			"htmlURL": "https://github.com/test/repo/issues/42",
 			"sandbox.gemini.google.com/last-task-type":  "plan",
 			"sandbox.gemini.google.com/last-task-state": "Completed",
-			"board.gemini.google.com/plan":              "## Summary\nDo the thing.",
 			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
 			factorycli.AnnotationPlanOutput: `apiVersion: factory.gemini.google.com/v1alpha1
 kind: Plan
 source:
   task: recipe-plan-1
+spec:
+  markdown: |-
+    ## Summary
+    Do the thing.
 actions:
   - verb: comment
     label: Post plan
@@ -187,11 +192,11 @@ actions:
 	h.requestOf(boardv1alpha1.VerbApply)
 
 	// A failed write says why, and can be clicked again.
-	h.settle(filed, boardv1alpha1.RequestFailed, "403 Resource not accessible", "")
+	h.settle(filed, boardv1alpha1.RequestFailed, "403 Resource not accessible", "", "")
 	if a := h.row().PlanActions[0]; !a.Enabled || a.Error != "403 Resource not accessible" {
 		t.Errorf("comment after a failure = %+v", a)
 	}
-	h.settle(filed, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationPlanCommented)
+	h.settle(filed, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationPlanApplied, "comment")
 	if a := h.row().PlanActions[0]; a.Enabled || a.Reason != "plan posted" || a.Error != "" {
 		t.Errorf("comment after posting = %+v", a)
 	}
@@ -202,7 +207,7 @@ actions:
 	if w := h.act("Plan", "run", "fix", ""); w.Code != http.StatusOK {
 		t.Fatalf("run fix: %d %s", w.Code, w.Body.String())
 	}
-	if h.annotations()["board.gemini.google.com/plan-approved-at"] == "" {
+	if !factorycli.IsApplied(h.annotations(), factorycli.AnnotationPlanApplied, "run") {
 		t.Error("run fix did not approve the plan")
 	}
 	if filed := h.requestOf(boardv1alpha1.VerbFix); filed.Spec.Number != 42 {
@@ -224,12 +229,15 @@ func TestPlanRevise(t *testing.T) {
 			"htmlURL": "https://github.com/test/repo/issues/42",
 			"sandbox.gemini.google.com/last-task-type":  "plan",
 			"sandbox.gemini.google.com/last-task-state": "Completed",
-			"board.gemini.google.com/plan":              "## Summary\nDo the thing.",
 			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
 			factorycli.AnnotationPlanOutput: `apiVersion: factory.gemini.google.com/v1alpha1
 kind: Plan
 source:
   task: recipe-plan-1
+spec:
+  markdown: |-
+    ## Summary
+    Do the thing.
 actions:
   - verb: comment
     label: Post plan
@@ -271,7 +279,7 @@ actions:
 	}
 
 	// A failed revise says why, and can be clicked again.
-	h.settle(filed, boardv1alpha1.RequestFailed, "a turn is in flight", "")
+	h.settle(filed, boardv1alpha1.RequestFailed, "a turn is in flight", "", "")
 	acts = h.row().PlanActions
 	if a := acts[2]; !a.Enabled || a.Error != "a turn is in flight" {
 		t.Errorf("revise after a failure = %+v", a)
@@ -287,7 +295,7 @@ func TestTriageActions(t *testing.T) {
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{
-			factorycli.AnnotationTriageDraft:                     "triage:\n  labels: [bug]\n  assessment: A crash.",
+			factorycli.AnnotationTriageOutput:                    storedOutput("Triage", "triage:\n  labels: [bug]\n  assessment: A crash."),
 			"board.gemini.google.com/triaged-at":                 "2026-09-17T00:00:00Z",
 			"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
 			"htmlURL": "https://github.com/test/repo/issues/20",
@@ -318,10 +326,10 @@ func TestTriageActions(t *testing.T) {
 	if len(rt.writes) != 0 {
 		t.Errorf("triage wrote to GitHub: %q", rt.writes)
 	}
-	h.settle(label, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationTriageLabeled)
+	h.settle(label, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationTriageApplied, "label")
 	for _, req := range filedRequests(t, dyn, "alice") {
 		if req.Spec.Apply.Action == "comment" {
-			h.settle(req, boardv1alpha1.RequestSucceeded, "", annoTriagePublished)
+			h.settle(req, boardv1alpha1.RequestSucceeded, "", factorycli.AnnotationTriageApplied, "comment")
 		}
 	}
 	if w := h.act("Triage", "edit", "", "triage:\n  labels: [x]"); w.Code != http.StatusConflict {
@@ -330,7 +338,7 @@ func TestTriageActions(t *testing.T) {
 	if w := h.act("Triage", "reject", "", ""); w.Code != http.StatusOK {
 		t.Fatalf("reject: %d %s", w.Code, w.Body.String())
 	}
-	if a := h.annotations(); a[factorycli.AnnotationTriageDraft] != "" || a[factorycli.AnnotationTriageLabeled] != "" {
+	if a := h.annotations(); a[factorycli.AnnotationTriageOutput] != "" || a[factorycli.AnnotationTriageApplied] != "" {
 		t.Errorf("reject left %v", a)
 	}
 }
@@ -342,7 +350,7 @@ func TestTriageActionsWithoutTriageAccess(t *testing.T) {
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{
-			factorycli.AnnotationTriageDraft:     "triage:\n  labels: [bug]\n  assessment: A crash.",
+			factorycli.AnnotationTriageOutput:    storedOutput("Triage", "triage:\n  labels: [bug]\n  assessment: A crash."),
 			"board.gemini.google.com/triaged-at": "2026-09-17T00:00:00Z",
 			"htmlURL":                            "https://github.com/test/repo/issues/20",
 		}, 1)
@@ -370,4 +378,14 @@ func TestTriageActionsWithoutTriageAccess(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].Spec.Apply.Action != "comment" {
 		t.Errorf("filed %+v, want the comment only", reqs)
 	}
+}
+
+// storedOutput is a task output of kind with draft as its spec, as the
+// board stores one, naming no task.
+func storedOutput(kind, draft string) string {
+	doc, err := factorycli.ComposeTaskOutput(kind, "", draft, "", "")
+	if err != nil {
+		panic(err)
+	}
+	return doc
 }

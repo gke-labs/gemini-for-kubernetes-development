@@ -55,12 +55,12 @@ func planRun(name, task, session string, started time.Time) string {
 // in the session of recipe-plan-1, its plan run recorded.
 func planDraftSandbox(extra map[string]interface{}) *unstructured.Unstructured {
 	annotations := map[string]interface{}{
-		factorycli.AnnotationPlanRun:       planRun("plan/test-board/42/1", "recipe-plan-1", "", time.Unix(1_000_000, 0)),
-		AnnotationPlanDraft:                "## Summary\nFirst plan.",
-		AnnotationPlannedAt:                "2026-10-01T00:00:00Z",
-		factorycli.AnnotationPlanCommented: "2026-10-01T00:05:00Z",
+		factorycli.AnnotationPlanRun:     planRun("plan/test-board/42/1", "recipe-plan-1", "", time.Unix(1_000_000, 0)),
+		AnnotationPlannedAt:              "2026-10-01T00:00:00Z",
+		factorycli.AnnotationPlanApplied: `{"comment":"2026-10-01T00:05:00Z"}`,
 		factorycli.AnnotationPlanOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"source:\n  task: recipe-plan-2\n  session: recipe-plan-1\n" +
+			"spec:\n  markdown: |-\n    ## Summary\n    First plan.\n" +
 			"actions:\n  - verb: revise\n    revise: plan\n    label: Update plan\n",
 	}
 	for k, v := range extra {
@@ -113,10 +113,9 @@ func TestReviseRewritesThePlanDraft(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	a := getSandbox(t, r, "fix-repo-42").GetAnnotations()
-	g.Expect(a[AnnotationPlanDraft]).To(gomega.Equal("## Summary\nRevised plan."))
-	g.Expect(a[factorycli.AnnotationPlanOutput]).To(gomega.And(
-		gomega.ContainSubstring("task: recipe-plan-3"), gomega.Not(gomega.ContainSubstring("Revised plan."))))
-	g.Expect(a).NotTo(gomega.HaveKey(factorycli.AnnotationPlanCommented))
+	g.Expect(factorycli.PlanDraft(a)).To(gomega.Equal("## Summary\nRevised plan."))
+	g.Expect(a[factorycli.AnnotationPlanOutput]).To(gomega.ContainSubstring("task: recipe-plan-3"))
+	g.Expect(a).NotTo(gomega.HaveKey(factorycli.AnnotationPlanApplied))
 	g.Expect(a[AnnotationPlannedAt]).NotTo(gomega.Equal("2026-10-01T00:00:00Z"))
 }
 
@@ -139,7 +138,7 @@ func TestReviseFailureIsNotRetried(t *testing.T) {
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
 	g.Expect(status.Reason).To(gomega.Equal("ReviseFailed"))
 	g.Expect(status.Message).To(gomega.ContainSubstring("a turn is in flight"))
-	g.Expect(getSandbox(t, r, "fix-repo-42").GetAnnotations()[AnnotationPlanDraft]).To(gomega.Equal("## Summary\nFirst plan."))
+	g.Expect(factorycli.PlanDraft(getSandbox(t, r, "fix-repo-42").GetAnnotations())).To(gomega.Equal("## Summary\nFirst plan."))
 }
 
 // A plan and a revise of one issue never run at once: they would race to
@@ -210,13 +209,13 @@ func TestReviseResumesItsRecordedRun(t *testing.T) {
 	}
 }
 
-// With no task output to say which session, the recorded plan run's is
+// With a task output that does not say which session, the recorded plan run's is
 // revised in: its session, for a revise, else its task.
 func TestReviseSessionFallsBackToTheRecordedRun(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := planDraftSandbox(map[string]interface{}{factorycli.AnnotationPlanRun: planRun("revise/test-board/fix-repo-42/plan/1", "recipe-plan-2", "recipe-plan-0", time.Unix(1_000_000, 0))})
 	a := sb.GetAnnotations()
-	delete(a, factorycli.AnnotationPlanOutput)
+	a[factorycli.AnnotationPlanOutput] = storedOutput("Plan", "## Summary\nFirst plan.")
 	sb.SetAnnotations(a)
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, reviseClick(42, "plan"))
@@ -242,7 +241,7 @@ func TestReviseWithoutDraft(t *testing.T) {
 	req = reviseClick(42, "plan")
 	sb := planDraftSandbox(nil)
 	a := sb.GetAnnotations()
-	delete(a, AnnotationPlanDraft)
+	delete(a, factorycli.AnnotationPlanOutput)
 	sb.SetAnnotations(a)
 	r = newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
 	_, err = r.Reconcile(context.Background(), boardRequest())

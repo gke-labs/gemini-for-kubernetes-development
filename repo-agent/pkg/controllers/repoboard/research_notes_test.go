@@ -85,7 +85,7 @@ func TestSaveNotesRevisesTheConversation(t *testing.T) {
 	g := gomega.NewWithT(t)
 	req := notesReviseClick()
 	fake := newFakeLauncher()
-	sb := recipeResearchSandbox(map[string]string{AnnotationNotesSaved: "2026-10-01T00:00:00Z"})
+	sb := recipeResearchSandbox(map[string]string{factorycli.AnnotationNotesApplied: `{"push-notes":"2026-10-01T00:00:00Z"}`})
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -112,11 +112,10 @@ func TestSaveNotesRevisesTheConversation(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	a := sandboxAnnotations(t, r, notesSandboxName)
-	g.Expect(a[AnnotationNotesDraft]).To(gomega.Equal("# Retry loop\nIt lives in pkg/retry."))
-	g.Expect(a[factorycli.AnnotationNotesOutput]).To(gomega.And(
-		gomega.ContainSubstring("task: research-2"), gomega.Not(gomega.ContainSubstring("pkg/retry"))))
+	g.Expect(factorycli.NotesDraft(a)).To(gomega.Equal("# Retry loop\nIt lives in pkg/retry."))
+	g.Expect(a[factorycli.AnnotationNotesOutput]).To(gomega.ContainSubstring("task: research-2"))
 	g.Expect(a).To(gomega.HaveKey(AnnotationNotesDraftedAt))
-	g.Expect(a).NotTo(gomega.HaveKey(AnnotationNotesSaved))
+	g.Expect(a).NotTo(gomega.HaveKey(factorycli.AnnotationNotesApplied))
 }
 
 // A Save notes that fails fails the click with what factory said, and is
@@ -178,11 +177,11 @@ func TestSaveNotesResumesItsRecordedRun(t *testing.T) {
 func TestSaveNotesToResearchNotes(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := recipeResearchSandbox(map[string]string{
-		AnnotationNotesDraft:     "# Retry loop\nEdited.",
 		AnnotationNotesDraftedAt: "2026-10-01T00:00:00Z",
 		research.NoteAnnotation:  "retry-loop",
 		factorycli.AnnotationNotesOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Notes\n" +
-			"target:\n  url: https://github.com/test/repo\nsource:\n  task: research-2\n  session: research-1\n",
+			"target:\n  url: https://github.com/test/repo\nsource:\n  task: research-2\n  session: research-1\n" +
+			"spec:\n  markdown: |-\n    # Retry loop\n    Edited.\n",
 	})
 	req := notesApplyClick()
 	fake := newFakeLauncher()
@@ -206,5 +205,5 @@ func TestSaveNotesToResearchNotes(t *testing.T) {
 	_, err = r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(sandboxAnnotations(t, r, notesSandboxName)).To(gomega.HaveKey(AnnotationNotesSaved))
+	g.Expect(factorycli.IsApplied(sandboxAnnotations(t, r, notesSandboxName), factorycli.AnnotationNotesApplied, "push-notes")).To(gomega.BeTrue())
 }

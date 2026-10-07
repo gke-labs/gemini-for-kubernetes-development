@@ -36,12 +36,9 @@ import (
 // apply pushes the draft, as it is then, to the member's fork. Both are
 // keyed by the sandbox, as an issue's are by its number.
 
-// The notes draft, on the research sandbox.
-const (
-	AnnotationNotesDraft     = "board.gemini.google.com/notes"
-	AnnotationNotesDraftedAt = "board.gemini.google.com/notes-drafted-at"
-	AnnotationNotesSaved     = "board.gemini.google.com/notes-saved-at"
-)
+// When the notes draft on the research sandbox
+// (factorycli.AnnotationNotesOutput) was stored.
+const AnnotationNotesDraftedAt = "board.gemini.google.com/notes-drafted-at"
 
 // notesSandbox is the member's research sandbox a Save notes Request
 // names, when the recipe started it.
@@ -53,12 +50,12 @@ func notesSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured
 	return sb
 }
 
-// storeNotesDraft stores a revise's notes as the draft: not yet saved.
-func (r *Reconciler) storeNotesDraft(ctx context.Context, sb *unstructured.Unstructured, notes, doc string) error {
+// storeNotesDraft stores a revise's Notes task output as the draft: not
+// yet saved.
+func (r *Reconciler) storeNotesDraft(ctx context.Context, sb *unstructured.Unstructured, doc string) error {
 	annotations := sb.GetAnnotations()
-	annotations[AnnotationNotesDraft] = notes
-	setOrDelete(annotations, factorycli.AnnotationNotesOutput, doc)
-	delete(annotations, AnnotationNotesSaved)
+	annotations[factorycli.AnnotationNotesOutput] = doc
+	delete(annotations, factorycli.AnnotationNotesApplied)
 	annotations[AnnotationNotesDraftedAt] = time.Now().UTC().Format(time.RFC3339)
 	sb.SetAnnotations(annotations)
 	return r.Update(ctx, sb)
@@ -67,7 +64,7 @@ func (r *Reconciler) storeNotesDraft(ctx context.Context, sb *unstructured.Unstr
 // notesDraftSandbox is the research sandbox holding the notes draft a
 // Save to research/notes pushes, or nil.
 func notesDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured.Unstructured {
-	if sb := notesSandbox(work, spec); sb != nil && sb.GetAnnotations()[AnnotationNotesDraft] != "" {
+	if sb := notesSandbox(work, spec); sb != nil && factorycli.NotesDraft(sb.GetAnnotations()) != "" {
 		return sb
 	}
 	return nil
@@ -82,5 +79,5 @@ func notesDoc(work *workState, sb *unstructured.Unstructured) (string, error) {
 		task = fmt.Sprintf("%s-%d", task, t.Unix())
 	}
 	url := fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo)
-	return factorycli.ComposeNotes(a[factorycli.AnnotationNotesOutput], a[AnnotationNotesDraft], a[research.NoteAnnotation], url, task)
+	return factorycli.ComposeNotes(a[factorycli.AnnotationNotesOutput], factorycli.NotesDraft(a), a[research.NoteAnnotation], url, task)
 }
