@@ -83,6 +83,14 @@ func sessionIssue(sb *unstructured.Unstructured) (int, string, bool) {
 	return n, a[annoBoard], ok && a[annoBoard] != ""
 }
 
+// sessionPR is the PR the sandbox is the fix sandbox factory made for, and
+// the board its row is on; false for any other sandbox.
+func sessionPR(sb *unstructured.Unstructured) (int, string, bool) {
+	a := sb.GetAnnotations()
+	n, ok := factorycli.PRSandboxOf(sb, a["repo"])
+	return n, a[annoBoard], ok && a[annoBoard] != ""
+}
+
 // sessionReview is the PR the sandbox reviews, and the board its row is
 // on; false for any sandbox but a review's.
 func sessionReview(sb *unstructured.Unstructured) (int, string, bool) {
@@ -116,7 +124,9 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 		}
 		return revises
 	}
-	if _, _, ok := sessionIssue(sb); ok {
+	_, _, onIssue := sessionIssue(sb)
+	_, _, onPR := sessionPR(sb)
+	if onIssue || onPR {
 		if kind == "Change" {
 			// The fix's follow-ups push to its PR and answer on it: there
 			// must be one, and the fix's sandbox must be idle.
@@ -258,6 +268,9 @@ func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.
 	if !ok {
 		item = "pr"
 		number, boardName, ok = sessionReview(sb)
+	}
+	if !ok {
+		number, boardName, ok = sessionPR(sb)
 	}
 	if ok {
 		draft.board, _, _ = s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)

@@ -92,6 +92,17 @@ func TestRecipeLaunch(t *testing.T) {
 	}
 }
 
+// A recipe whose kind its runner applies nothing of runs with no apply.
+func TestSummarizeAppliesNothing(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), launchOn("pr", 12, nil))
+	r.reconcileBoard(t)
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RecipeOpts.Apply).To(gomega.BeEmpty())
+}
+
 // The run's task output is stored on its sandbox as its run's, which is
 // what settles the click.
 func TestRecipeStoresItsOutput(t *testing.T) {
@@ -168,6 +179,28 @@ func TestCareLaunchesOnAPR(t *testing.T) {
 	g.Expect(launches[0].RecipeOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].RecipeOpts.Recipe).To(gomega.Equal("care"))
 	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("fix-repo-12"))
+	// Its run pushes, so it posts the replies that answer for the push.
+	g.Expect(launches[0].RecipeOpts.Apply).To(gomega.Equal("post-replies"))
+}
+
+// A Change's replies were posted by its run: its output is stored with
+// post-replies stamped applied, so nothing waits on the member.
+func TestCareRepliesAreApplied(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	finished := time.Now().Add(time.Minute)
+	fake.results["alice/recipe-care-repo-pr-12"] = factorycli.Result{FinishedAt: finished, Output: "================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\nspec:\n  title: t\n  report: Rebased.\n================================================\n"}
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(),
+		recipeSandbox("fix-repo-12", "https://github.com/test/repo/pull/12"), req)
+	r.reconcileBoard(t)
+
+	sb := &unstructured.Unstructured{}
+	sb.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-12", Namespace: "alice"}, sb)).To(gomega.Succeed())
+	run := factorycli.RunAnnotation("recipe-care")
+	g.Expect(sb.GetAnnotations()[factorycli.OutputAnnotation(run)]).To(gomega.ContainSubstring("kind: Change"))
+	g.Expect(factorycli.IsApplied(sb.GetAnnotations(), factorycli.AppliedAnnotation(run), "post-replies")).To(gomega.BeTrue())
 }
 
 // The board publishes factory's catalog on its status, for the API.

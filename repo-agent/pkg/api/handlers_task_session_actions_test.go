@@ -26,7 +26,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic/fake"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
@@ -478,5 +480,49 @@ func TestATriageSessionsEditIsValidated(t *testing.T) {
 	}
 	if got := stored(); !strings.Contains(got, "pasted whole") {
 		t.Errorf("stored after a whole-output edit = %q", got)
+	}
+}
+
+// careSandbox is the fix sandbox factory made for PR 9, which care ran in.
+func careSandbox() *unstructured.Unstructured {
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "request/1", Task: "recipe-care-1", StartedAt: time.Unix(1_000_000, 0), Recipe: "care", State: "Completed",
+		Kind: "Change", Revises: []factorycli.RecordedRevise{{ID: "fix-ci", Label: "Fix CI"}, {ID: "rebase", Label: "Rebase"}},
+	})
+	careRun := factorycli.RunAnnotation("recipe-care")
+	return sandboxCR("fix-repo-9", map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelPR: "9"},
+		map[string]interface{}{
+			"repo":    "repo",
+			"htmlURL": "https://github.com/test/repo/pull/9",
+			annoBoard: "myboard",
+			"sandbox.gemini.google.com/last-task-state": "Completed",
+			careRun: string(run),
+			factorycli.OutputAnnotation(careRun): "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\n" +
+				"source:\n  task: recipe-care-1\nspec:\n  title: Fix it\n",
+		}, 1)
+}
+
+// A care session in the fix sandbox made for its PR offers its revises,
+// and files them and its draft's writes on the sandbox, as a fix's.
+func TestACareSessionOnAPRSandboxActs(t *testing.T) {
+	sb := careSandbox()
+	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{sb},
+		researchPod("alice", "fix-repo-9", "10.1.2.3", corev1.PodRunning))
+	w := doJSON(t, r, http.MethodGet, "/api/task-sessions/fix-repo-9/recipe-care-1", "")
+	if !strings.Contains(w.Body.String(), `"revise":"fix-ci","label":"Fix CI","enabled":true`) ||
+		!strings.Contains(w.Body.String(), `"revise":"rebase","label":"Rebase","enabled":true`) {
+		t.Errorf("care's revises in %s, want them enabled", w.Body.String())
+	}
+
+	sb = careSandbox()
+	server, r2, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(), sb)
+	r2.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r2.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
+	if w := doJSON(t, r2, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/draft/post-replies", `{}`); w.Code != http.StatusAccepted {
+		t.Fatalf("post-replies: %d %s", w.Code, w.Body.String())
+	}
+	if spec := applyFiled(t, dyn); spec.Sandbox != "fix-repo-9" || spec.Number != 9 ||
+		*spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-care", Action: "post-replies"}) {
+		t.Errorf("post-replies filed %+v, want care's on fix-repo-9, PR 9", spec)
 	}
 }

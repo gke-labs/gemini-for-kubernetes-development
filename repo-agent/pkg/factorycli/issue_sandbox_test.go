@@ -35,6 +35,27 @@ func TestIssueOf(t *testing.T) {
 	}
 }
 
+// A fix sandbox made for a PR is the PR's; an issue's fix sandbox aliased
+// to the PR it opened stays the issue's.
+func TestPRSandboxOf(t *testing.T) {
+	repo := map[string]string{"repo": "repo"}
+	for _, c := range []struct {
+		sb     *unstructured.Unstructured
+		want   int
+		wantOK bool
+	}{
+		{testSandbox("fix-repo-12", map[string]string{LabelPR: "12"}, repo), 12, true},
+		{testSandbox("fix-repo-10", map[string]string{LabelPR: "12"}, repo), 0, false},
+		{testSandbox("fix-repo-12", map[string]string{LabelPR: "12"}, map[string]string{"repo": "other"}), 0, false},
+		{testSandbox("review-repo-12", map[string]string{LabelPR: "12"}, repo), 0, false},
+		{testSandbox("fix-repo-12", nil, repo), 0, false},
+	} {
+		if n, ok := PRSandboxOf(c.sb, "repo"); n != c.want || ok != c.wantOK {
+			t.Errorf("PRSandboxOf(%s, %v) = %d, %v; want %d, %v", c.sb.GetName(), c.sb.GetLabels(), n, ok, c.want, c.wantOK)
+		}
+	}
+}
+
 func TestIssueSandboxPrefersTheLabel(t *testing.T) {
 	byName := testSandbox("fix-repo-7", nil, nil)
 	labelled := testSandbox("repo-7", map[string]string{LabelIssue: "7"}, map[string]string{"repo": "repo"})
