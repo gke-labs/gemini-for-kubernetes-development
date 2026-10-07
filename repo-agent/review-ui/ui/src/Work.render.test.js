@@ -769,10 +769,16 @@ describe('SessionSlideOver', () => {
         const dialog = container.querySelector('[role="dialog"]');
         expect(dialog.getAttribute('aria-label')).toBe('summarize · fix-r-5');
         expect(dialog.style.width).toBe('80%');
-        const popOut = Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes('Pop out'));
-        expect(popOut.getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
-        expect(popOut.getAttribute('target')).toBe('_blank');
+        // One header, the conversation's: one pop out, a close, no full screen.
+        const popOuts = container.querySelectorAll('a[aria-label="Open in a new tab"]');
+        expect(popOuts.length).toBe(1);
+        expect(popOuts[0].getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+        expect(popOuts[0].getAttribute('target')).toBe('_blank');
+        expect(container.querySelector('button[aria-label="Full screen"]')).toBeNull();
+        expect(container.querySelectorAll('button[aria-label="Close"]').length).toBe(1);
         act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
         expect(onClose).toHaveBeenCalled();
+        act(() => { container.querySelector('button[aria-label="Close"]').click(); });
+        expect(onClose).toHaveBeenCalledTimes(2);
     });
 });
