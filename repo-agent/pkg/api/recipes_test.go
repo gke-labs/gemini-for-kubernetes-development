@@ -147,6 +147,25 @@ func TestRunSessions(t *testing.T) {
 	}
 }
 
+// An issue folded into the PR that fixes it shows its runs on the PR row,
+// once, whether its sandbox still names the issue or already the PR.
+func TestRunSessionsOfFoldedIssue(t *testing.T) {
+	items := map[string]*models.WorkItem{"pr-30": {Fixes: []int{12, 13}}}
+	sandboxes := []*unstructured.Unstructured{
+		runSandbox("fix-repo-12", "https://github.com/o/repo/issues/12", map[string]string{
+			"sandbox.gemini.google.com/recipe-summarize-run": `{"task":"s-1","startedAt":"2026-10-03T10:00:00Z","recipe":"summarize","kind":"Summary","state":"Completed"}`,
+		}),
+		runSandbox("fix-repo-13", "https://github.com/o/repo/pull/30", map[string]string{
+			"sandbox.gemini.google.com/plan-run": `{"task":"p-1","startedAt":"2026-10-01T10:00:00Z","recipe":"plan","kind":"Plan","state":"Completed"}`,
+		}),
+	}
+	addRunSessions(items, sandboxes, "repo", nil)
+	got := items["pr-30"].Sessions
+	if len(got) != 2 || got[0].Recipe != "summarize" || got[1].Recipe != "plan" {
+		t.Errorf("PR 30 sessions = %+v, want summarize then plan, once each", got)
+	}
+}
+
 // A run's status is the same rule for every recipe: running, failed, or
 // ended, and ready only while its draft waits for the member.
 func TestRunStatus(t *testing.T) {
