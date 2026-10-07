@@ -204,9 +204,10 @@ func PRSandboxName(repo string, prNum int) string {
 	return "factory-pr-" + slug + suffix
 }
 
-// LabelPR is the label factory puts on any sandbox working on a PR
-// (EnsureReviewSandbox looks sandboxes up by it, so a review may land on a
-// fix sandbox aliased to the same PR instead of the default factory-pr-<n>).
+// LabelPR is the label factory puts on any sandbox working on a PR: a fix
+// sandbox aliased to the PR its fix opened, or made for a PR (PRFixSandbox).
+// EnsureReviewSandbox looks sandboxes up by it, so a review may land on a
+// fix sandbox aliased to the same PR instead of the default factory-pr-<n>.
 const LabelPR = "factory.gemini.google.com/pr"
 
 // ReviewSandboxName is the sandbox `factory recipe review` runs a PR's

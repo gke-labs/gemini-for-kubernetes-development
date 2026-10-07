@@ -738,7 +738,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				lastInvestigatedTime = time.Now()
 				if dryRun {
 					fmt.Printf("[DRYRUN] Would run care's fix-ci for PR #%d\n", prNum)
-				} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
+				} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
 					klog.Errorf("Fix CI failed: %v", err)
 				}
 			}
@@ -777,7 +777,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					lastCommentAddressedTime = time.Now()
 					if dryRun {
 						fmt.Printf("[DRYRUN] Would run care's address-comments for PR #%d\n", prNum)
-					} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
+					} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
 						klog.Errorf("Address comments failed: %v", err)
 					}
 				}

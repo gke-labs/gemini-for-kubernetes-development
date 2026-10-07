@@ -26,7 +26,8 @@ type RecipeInfo struct {
 	// TaskType is what its runs are recorded under on the sandbox
 	// (sandbox.gemini.google.com/<taskType>-run), and Credentials its
 	// recipe.Credentials when not full: a PR's credentials: clone recipe
-	// runs in a sandbox of its own (RecipeSandboxName).
+	// runs in a sandbox of its own (RecipeSandboxName), not the PR's fix
+	// sandbox.
 	TaskType    string `json:"taskType"`
 	Credentials string `json:"credentials,omitempty"`
 }

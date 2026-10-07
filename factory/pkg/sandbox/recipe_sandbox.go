@@ -12,25 +12,22 @@ import (
 )
 
 // EnsureRecipeSandbox creates (or reuses) the sandbox `factory recipe`
-// runs a recipe in for a PR: RecipeSandboxName. An issue's recipes run in
-// the issue's sandbox (EnsureFixSandbox).
-func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, number int, ownRecipe string, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := RecipeSandboxName(repoName, number, ownRecipe)
+// runs a credentials: clone recipe in on a PR: RecipeSandboxName. A PR's
+// other recipes run in its fix sandbox (EnsurePRSandbox), an issue's in
+// the issue's (EnsureFixSandbox).
+func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, number int, recipe string, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := RecipeSandboxName(repoName, number, recipe)
 	return ensureTaskSandbox(ctx, kubeClient, namespace, name, "recipe", repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
 }
 
-// RecipeSandboxName is the sandbox of a PR's recipes,
-// recipe-<repo>-<number>, or for ownRecipe, a credentials: clone recipe,
-// one of its own named after it (review-<repo>-<number>): setup-git
+// RecipeSandboxName is the sandbox of a credentials: clone recipe on a
+// PR, one of its own named after it (review-<repo>-<number>): setup-git
 // leaves the token in gh's hosts.yml on the workspace, so a sandbox a
 // recipe holding the token ever ran in can no longer promise an agent
 // without one. It is not labeled with the PR either, so that `factory pr`
 // (EnsureReviewSandbox) never adopts it.
-func RecipeSandboxName(repoName string, number int, ownRecipe string) string {
-	if ownRecipe != "" {
-		return fmt.Sprintf("%s-%s-%d", ownRecipe, repoName, number)
-	}
-	return fmt.Sprintf("recipe-%s-%d", repoName, number)
+func RecipeSandboxName(repoName string, number int, recipe string) string {
+	return fmt.Sprintf("%s-%s-%d", recipe, repoName, number)
 }
 
 func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name, sandboxType, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {

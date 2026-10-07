@@ -15,10 +15,13 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 )
 
-// careRunSandbox is PR prNum's sandbox (recipe-<repo>-<n>) when it records
-// a run of the care recipe on the PR, or "". The watch revises that run.
+// careRunSandbox is PR prNum's fix sandbox when it records a run of the
+// care recipe on the PR, or "". The watch revises that run.
 func careRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repo string, prNum int, prURL string) string {
-	name := factorysandbox.RecipeSandboxName(repo, prNum, "")
+	name, err := factorysandbox.PRFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, prURL)
+	if err != nil || name == "" {
+		return ""
+	}
 	sb, err := k8s.NewManager(kubeClient).GetSandbox(ctx, rootFlags.Namespace, name)
 	if err != nil {
 		return ""
@@ -41,7 +44,7 @@ const careTaskType = "recipe-care"
 // address-comments) in care's run in careSandbox, or with none, a start
 // focused on it (ci, comments) — waits for it, and posts what it answers
 // on the PR (post-replies).
-func careFollowUp(ctx context.Context, gh *githubv39.Client, prURL, careSandbox, revise, focus string) error {
+func careFollowUp(ctx context.Context, gh *githubv39.Client, kubeClient *clients.KubernetesClient, prURL, careSandbox, revise, focus string) error {
 	if careSandbox != "" {
 		sb, err := taskapi.Connect(ctx, rootFlags.Namespace, careSandbox)
 		if err != nil {
@@ -62,7 +65,10 @@ func careFollowUp(ctx context.Context, gh *githubv39.Client, prURL, careSandbox,
 	if err := runRecipe(ctx, "care", prURL, runName, "", applyMode{}, map[string]string{"focus": focus}, nil); err != nil {
 		return err
 	}
-	name := factorysandbox.RecipeSandboxName(it.Repo, it.Number, "")
+	name, err := factorysandbox.PRFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, prURL)
+	if err != nil {
+		return err
+	}
 	sb, err := taskapi.Connect(ctx, rootFlags.Namespace, name)
 	if err != nil {
 		return fmt.Errorf("connecting to sandbox %s: %w", name, err)

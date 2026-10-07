@@ -90,8 +90,13 @@ func recipeRunName(req *boardv1alpha1.Request) string {
 // recipeSandbox is the sandbox a recipe Request's run is in, or will be,
 // and the sandbox if it exists.
 func (w *workState) recipeSandbox(rec boardv1alpha1.BoardRecipe, spec boardv1alpha1.RequestSpec) (string, *unstructured.Unstructured) {
-	if spec.Item == "issue" {
+	switch {
+	case spec.Item == "issue":
 		if sb := w.issueSandbox(spec.Member, spec.Number); sb != nil {
+			return sb.GetName(), sb
+		}
+	case spec.Item == "pr" && rec.Credentials != "clone":
+		if sb := factorycli.PRFixSandbox(w.sandboxesIn(spec.Member), w.repo, spec.Number); sb != nil {
 			return sb.GetName(), sb
 		}
 	}
