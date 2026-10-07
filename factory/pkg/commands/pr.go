@@ -63,6 +63,11 @@ func NewInvestigateCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
@@ -326,6 +331,11 @@ func NewAddressCommentsCommand(ctx context.Context) *cobra.Command {
 			_, err := ResolveRootFlags(cmd)
 			if err != nil {
 				return err
+			}
+
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
 			}
 
 			if flags.PRURL == "" {
@@ -604,6 +614,11 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}
@@ -846,6 +861,11 @@ func NewIterateCommand(ctx context.Context) *cobra.Command {
 			_, err := ResolveRootFlags(cmd)
 			if err != nil {
 				return err
+			}
+
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
 			}
 
 			if flags.PRURL == "" {
@@ -1125,6 +1145,11 @@ func NewAdoptCommand(ctx context.Context) *cobra.Command {
 			_, err := ResolveRootFlags(cmd)
 			if err != nil {
 				return err
+			}
+
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
 			}
 
 			adoptAction := args[0]

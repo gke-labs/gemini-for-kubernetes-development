@@ -42,8 +42,9 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 	var flags FixFlags
 
 	cmd := &cobra.Command{
-		Use:   "fix",
-		Short: "Create a pull request for a given GitHub issue or instructions in a sandbox",
+		Use:     "fix",
+		Aliases: []string{"issue"},
+		Short:   "Create a pull request for a given GitHub issue or instructions in a sandbox",
 		Example: `  # Fix an issue with a custom instruction
   factory fix --url https://github.com/owner/repo/issues/1 --instruction "Use Go 1.26 and add unit tests"
 
@@ -64,6 +65,18 @@ func NewFixCommand(ctx context.Context) *cobra.Command {
 			if flags.URL == "" {
 				return fmt.Errorf("--url is required")
 			}
+
+			if strings.Contains(flags.URL, "/issues/") {
+				if rootFlags.IssueMode == "disabled" {
+					fmt.Println("Issue handling is disabled (ISSUE_MODE=disabled)")
+					return nil
+				}
+			}
+			if !flags.NoPR && rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+
 			if flags.Instruction != "" && flags.InstructionFile != "" {
 				return fmt.Errorf("cannot specify both --instruction and --instruction-file")
 			}

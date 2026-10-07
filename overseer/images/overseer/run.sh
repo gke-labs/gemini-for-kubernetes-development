@@ -12,6 +12,12 @@ function writeFactoryConfig {
         echo "chores:" >> "$CFG_FILE"
         echo "  mode: $CHORES_MODE" >> "$CFG_FILE"
     fi
+    if [ -n "$PR_MODE" ] || [ -n "$REVIEW_MODE" ] || [ -n "$ISSUE_MODE" ]; then
+        echo "repo:" >> "$CFG_FILE"
+        [ -n "$REVIEW_MODE" ] && echo "  reviewMode: $REVIEW_MODE" >> "$CFG_FILE"
+        [ -n "$PR_MODE" ] && echo "  prMode: $PR_MODE" >> "$CFG_FILE"
+        [ -n "$ISSUE_MODE" ] && echo "  issueMode: $ISSUE_MODE" >> "$CFG_FILE"
+    fi
     if [ -n "$EPHEMERAL_STORAGE" ]; then
         echo "ephemeralStorage: $EPHEMERAL_STORAGE" >> "$CFG_FILE"
     fi

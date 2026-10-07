@@ -30,5 +30,9 @@ type RootFlags struct {
 	AbortOnCancel    bool
 	// Disclose makes the agent say, in what it posts, that an agent wrote
 	// it: the PR description, and the footer on its comments and reports.
-	Disclose bool
+	Disclose   bool
+	IssueMode  string
+	PRMode     string
+	ReviewMode string
+	ChoresMode string
 }
