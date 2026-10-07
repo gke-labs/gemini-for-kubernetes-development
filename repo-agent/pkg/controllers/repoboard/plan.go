@@ -50,7 +50,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	needFresh := annotations[AnnotationPlannedAt] == ""
+	needFresh := annotations[AnnotationPlannedAt] == "" || clickedSince(annotations[AnnotationPlannedAt], req.since)
 	feedbackAt, feedbackErr := time.Parse(time.RFC3339, annotations[AnnotationPlanFeedbackAt])
 	needRefine := false
 	if feedbackErr == nil {
@@ -65,7 +65,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok && !planResultStale(annotations, res.FinishedAt) {
+	if res, ok := r.Factory.LastResult(key); ok && !planResultStale(annotations, res.FinishedAt) && !req.since.After(res.FinishedAt) {
 		if res.Err == nil && sb != nil {
 			if doc := factorycli.HarvestedOutput("Plan", res.Output); doc != "" {
 				annotations[factorycli.AnnotationPlanOutput] = doc

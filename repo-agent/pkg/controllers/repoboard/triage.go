@@ -85,7 +85,7 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 
 // ensureTriage drives one issue's triage state machine in namespace:
 // harvest a finished run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, runName string, clicked bool) {
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, runName string, clicked bool, since time.Time) {
 	logger := log.FromContext(ctx)
 	sb := work.triageSandbox(namespace, issue.GetNumber())
 	if sb == nil {
@@ -102,7 +102,8 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	if annotations[AnnotationTriagedAt] != "" {
+	// Triaged, unless clicked again since.
+	if annotations[AnnotationTriagedAt] != "" && !clickedSince(annotations[AnnotationTriagedAt], since) {
 		return
 	}
 	if !clicked && annotations[AnnotationTriageRejected] != "" {
@@ -114,7 +115,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
+	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) && !since.After(res.FinishedAt) {
 		if res.Err == nil && sb != nil {
 			if doc := factorycli.HarvestedOutput("Triage", res.Output); doc != "" {
 				annotations[factorycli.AnnotationTriageOutput] = doc
@@ -186,7 +187,7 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
 			url = u
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageRunName(work.board.Name, n, triageClick{}), false)
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageRunName(work.board.Name, n, triageClick{}), false, time.Time{})
 	}
 }
 
@@ -196,6 +197,7 @@ type triageClick struct {
 	issue   int
 	member  string
 	request string
+	since   time.Time
 }
 
 // triageRunName is what a triage's task is recorded under in the sandbox

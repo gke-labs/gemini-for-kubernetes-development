@@ -133,13 +133,13 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			// on; settleHooked fails one on anything else.
 			switch {
 			case spec.Recipe == "fix" && spec.Item == "issue":
-				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member})
+				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member, since: req.CreationTimestamp.Time})
 			case spec.Recipe == "review" && spec.Item == "pr":
 				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
 			case spec.Recipe == "triage" && spec.Item == "issue":
-				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID)})
+				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID), since: req.CreationTimestamp.Time})
 			case spec.Recipe == "plan" && spec.Item == "issue":
-				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
+				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member, since: req.CreationTimestamp.Time})
 			case !slices.Contains(hookedRecipes, spec.Recipe):
 				box.recipes = append(box.recipes, req)
 			}
@@ -409,14 +409,18 @@ func (r *Reconciler) settleHooked(ctx context.Context, work *workState, req *boa
 	switch spec.Recipe {
 	case "fix":
 		// The issue's sandbox may predate the click — a triage or plan made
-		// it — so it is served by a fix in it: stamped, running, or run
-		// since the click.
+		// it, or a fix that ended, which the click runs again — so it is
+		// served by a fix in it since the click: running, or ended after.
 		key := fixKey(work, spec.Member, spec.Number)
 		res, ran := r.Factory.LastResult(key)
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil &&
-			(sb.GetAnnotations()[factorycli.AnnotationTaskType] == "fix" || r.Factory.IsRunning(key) ||
-				(ran && res.FinishedAt.After(req.CreationTimestamp.Time))) {
-			return served(sb.GetName()), true
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil {
+			annotations := sb.GetAnnotations()
+			fixing := annotations[factorycli.AnnotationTaskType] == "fix" &&
+				(annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning ||
+					!clickedSince(annotations[factorycli.AnnotationCompletionTime], req.CreationTimestamp.Time))
+			if fixing || r.Factory.IsRunning(key) || (ran && res.FinishedAt.After(req.CreationTimestamp.Time)) {
+				return served(sb.GetName()), true
+			}
 		}
 
 	case "review":
@@ -448,18 +452,25 @@ func (r *Reconciler) settleHooked(ctx context.Context, work *workState, req *boa
 		if member == "" {
 			member = work.board.Namespace
 		}
-		if sb := work.triageSandbox(member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
+		if sb := work.triageSandbox(member, spec.Number); sb != nil && stampedSince(sb.GetAnnotations()[AnnotationTriagedAt], req) {
 			return served(sb.GetName()), true
 		}
 
 	case "plan":
 		// Likewise: the fix sandbox may predate the click, so its
-		// existence proves nothing. A stored draft does.
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
+		// existence proves nothing. A draft stored since the click does.
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && stampedSince(sb.GetAnnotations()[AnnotationPlannedAt], req) {
 			return served(sb.GetName()), true
 		}
 	}
 	return requestOutcome{}, false
+}
+
+// stampedSince reports whether a draft was stored at (RFC3339) since req
+// was clicked: an older one is the run the click runs again.
+func stampedSince(at string, req *boardv1alpha1.Request) bool {
+	stamped, err := time.Parse(time.RFC3339, at)
+	return err == nil && !stamped.Before(req.CreationTimestamp.Time.Truncate(time.Second))
 }
 
 // served is the ordinary happy ending: the thing the click asked for

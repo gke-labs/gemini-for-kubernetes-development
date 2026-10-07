@@ -155,6 +155,9 @@ type fixPlan struct {
 	issue    int
 	issueURL string
 	executor string
+	// since is when the click was made, zero for none: a click after the
+	// fix ended is Fix again.
+	since time.Time
 }
 
 // maxActive mirrors the CRD default for specs that omit the limits block
@@ -190,6 +193,9 @@ type reviewPlan struct {
 type planRequest struct {
 	issue  int
 	member string
+	// since is when the click was made, zero for none: a click after the
+	// plan was drafted is Plan again.
+	since time.Time
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -326,14 +332,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	seenFix := map[string]bool{}
+	// One pass per fix, with its newest click.
+	var fixOrder []string
+	fixPlans := map[string]fixPlan{}
 	for _, plan := range append(fixes, r.resumeFixes(work)...) {
 		k := fmt.Sprintf("%s/%d", plan.executor, plan.issue)
-		if seenFix[k] {
+		seen, ok := fixPlans[k]
+		if !ok {
+			fixOrder = append(fixOrder, k)
+		} else if !plan.since.After(seen.since) {
 			continue
+		} else if plan.issueURL == "" {
+			plan.issueURL = seen.issueURL
 		}
-		seenFix[k] = true
-		r.ensureFix(ctx, work, plan)
+		fixPlans[k] = plan
+	}
+	for _, k := range fixOrder {
+		r.ensureFix(ctx, work, fixPlans[k])
 	}
 	for _, plan := range dedupeReviews(reviews) {
 		r.ensureReview(ctx, work, plan)
@@ -344,7 +359,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if !clicked || member == "" {
 			member = board.Namespace
 		}
-		r.ensureTriage(ctx, work, issue, member, triageRunName(board.Name, issue.GetNumber(), click), clicked)
+		r.ensureTriage(ctx, work, issue, member, triageRunName(board.Name, issue.GetNumber(), click), clicked, click.since)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
@@ -727,6 +742,14 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 	return out
 }
 
+// clickedSince reports whether a click made at since came after the run
+// stamped at (RFC3339) ended: a click again, for a new run. A click from
+// before, or none (zero), is not; nor is one with no run to come after.
+func clickedSince(at string, since time.Time) bool {
+	ended, err := time.Parse(time.RFC3339, at)
+	return err == nil && !since.IsZero() && since.Truncate(time.Second).After(ended)
+}
+
 // fixLike reports whether a sandbox's last task type is a fix's. An
 // absent type is one: sandboxes from before type stamping only ever
 // carried fixes.
@@ -774,7 +797,8 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	// finished fix — that bailed every Approve & Fix after a plan.
 	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) &&
 		fixLike(annotations[factorycli.AnnotationTaskType])
-	if terminal && !refixRequested(sb) && !follow {
+	again := clickedSince(annotations[factorycli.AnnotationCompletionTime], plan.since)
+	if terminal && !refixRequested(sb) && !again && !follow {
 		return
 	}
 	// Something else is at work in the sandbox (a plan, a follow-up the
@@ -782,7 +806,8 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	if state == factorycli.TaskStateRunning && !follow {
 		return
 	}
-	if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
+	if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff &&
+		!plan.since.After(res.FinishedAt) {
 		return
 	}
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
