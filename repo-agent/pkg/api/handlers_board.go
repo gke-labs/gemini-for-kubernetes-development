@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,7 +78,6 @@ const (
 	annoPlanFeedback    = "board.gemini.google.com/plan-feedback"
 	annoPlanFeedbackAt  = "board.gemini.google.com/plan-feedback-at"
 	annoPlanRejected    = "board.gemini.google.com/plan-rejected-at"
-	annoRefixRequest    = "review.gemini.google.com/refix-requested-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	// annoBoard is the board whose controller stored the sandbox's draft.
 	annoBoard = "board.gemini.google.com/board"
@@ -607,86 +605,30 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 	}
 
-	// A standing Request is a click the controller hasn't materialized
-	// yet (launch window is up to a reconcile): render those items as
-	// starting so the member sees immediate feedback and no second
-	// kickoff is invited.
-	if requests := s.boardRequests(ctx, board); len(requests) > 0 {
-		// Clicks beyond the launch limits are honestly "queued", not
-		// "starting": the controller defers them until a slot frees
-		// (which includes the finished-but-idle hour today).
-		running := 0
-		for _, sb := range sandboxes {
-			if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
-				running++
-			}
-		}
-		atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
-		preRunPR := map[string]bool{"open": true, "review-requested": true, "review-submitted": true}
-		preRunIssue := map[string]bool{"open": true, "untriaged": true, "triage-ready": true, "triaged": true}
-		mark := func(item *models.WorkItem, startingStage string) {
-			// A sandbox-backed row is already launched (its stage came
-			// from the sandbox, not this pre-run map); only truly
-			// pre-sandbox clicks can be queued.
-			if atCapacity && item.Sandbox == nil {
-				item.Stage, item.Attention = "queued", attentionWaiting
-				return
-			}
-			item.Stage, item.Attention = startingStage, attentionWorking
-		}
-		for _, req := range requests {
-			n := strconv.Itoa(req.Spec.Number)
-			if req.Spec.Verb != boardv1alpha1.VerbRecipe {
-				continue
-			}
-			switch req.Spec.Recipe {
-			case "review":
-				if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
-					mark(item, "review-starting")
-				}
-			case "fix":
-				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-					mark(item, "fix-starting")
-				}
-			case "triage":
-				if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
-					// Triage is only board-capacity gated, not per-user.
-					item.Stage, item.Attention = "triaging", attentionWorking
-				}
-			case "plan":
-				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
-					mark(item, "planning")
-				}
-			}
+	// Every row by the same rules, whichever recipes ran on it: its runs,
+	// its launch buttons, the clicks not started yet, and its attention.
+	catalog, err := boardRecipes(board)
+	if err != nil {
+		log.Error(err, "invalid recipes on board", "board", board.GetName())
+	}
+	addRunSessions(items, allSandboxes, repo, catalog)
+	running := 0
+	for _, sb := range sandboxes {
+		if replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas"); err == nil && found && replicas > 0 {
+			running++
 		}
 	}
-
-	addRunSessions(items, allSandboxes, repo)
+	// Clicks beyond the launch limit are honestly queued, not starting:
+	// the controller defers them until a slot frees.
+	atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
+	applyRowRules(items, catalog, s.boardRequests(ctx, board), atCapacity, time.Now())
 	s.markApplies(ctx, board, items)
 
 	work := make([]models.WorkItem, 0, len(items))
 	for _, item := range items {
 		work = append(work, *item)
 	}
-	rank := map[string]int{attentionNeedsYou: 0, attentionWorking: 1, attentionWaiting: 2, "": 3}
-	// Within needs-you, finished agent work awaiting a verdict (drafts,
-	// pending reviews, failures with Retry) outranks a bare review
-	// request — the latter is an incoming ask with nothing prepared yet.
-	deferred := func(item models.WorkItem) int {
-		if item.Stage == "review-requested" {
-			return 1
-		}
-		return 0
-	}
-	sort.Slice(work, func(i, j int) bool {
-		if rank[work[i].Attention] != rank[work[j].Attention] {
-			return rank[work[i].Attention] < rank[work[j].Attention]
-		}
-		if deferred(work[i]) != deferred(work[j]) {
-			return deferred(work[i]) < deferred(work[j])
-		}
-		return work[i].UpdatedAt > work[j].UpdatedAt
-	})
+	sortWork(work)
 	return work, nil
 }
 
@@ -788,26 +730,6 @@ func workSandbox(sb *unstructured.Unstructured, autoIterateDefault bool) *models
 	}
 }
 
-// fixRunStage names what the fix's sandbox is doing by its recorded
-// run: the fix itself, or one of its revises, which the board files under
-// revise/<board>/<sandbox>/<revise>/<unix>. The watch's revises carry no
-// run name, and read as a generic follow-up.
-func fixRunStage(annotations map[string]string) string {
-	var run factorycli.RecordedRun
-	if err := json.Unmarshal([]byte(annotations[factorycli.AnnotationFixRun]), &run); err != nil || run.Session == "" {
-		return "fixing"
-	}
-	if parts := strings.Split(run.Name, "/"); len(parts) == 5 && parts[0] == "revise" {
-		switch parts[3] {
-		case "address-comments":
-			return "addressing"
-		case "fix-ci":
-			return "investigating"
-		}
-	}
-	return "iterating"
-}
-
 // taskSession is the agent session of the run recorded on sb under key,
 // nil when there is none.
 func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession {
@@ -825,13 +747,14 @@ func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession 
 // issue's own sandbox's on the issue, and on the PR its fix opened (the
 // sandbox's URL turns to it); a PR's (by its URL, or a review sandbox's
 // name) on the PR.
-func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured.Unstructured, repo string) {
+func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured.Unstructured, repo string, catalog []boardv1alpha1.BoardRecipe) {
 	for _, sb := range sandboxes {
 		var sessions []models.RunSession
 		annotations := sb.GetAnnotations()
 		for _, run := range factorycli.Runs(annotations) {
 			session := models.RunSession{
 				Recipe:    run.Recipe,
+				Label:     recipeLabel(catalog, run.Recipe),
 				Sandbox:   sb.GetName(),
 				Task:      run.SessionOf(),
 				Run:       run.Key,
@@ -1000,42 +923,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		}
 	}
 
-	stage, attention := "open", ""
-	switch {
-	case state == "Running" && taskType == "plan":
-		stage, attention = "planning", attentionWorking
-	case state == "Running":
-		stage, attention = "fixing", attentionWorking
-	case state == "Failed" && taskType == "plan":
-		stage, attention = "plan-failed", attentionNeedsYou
-	case state == "Failed":
-		stage, attention = "fix-failed", attentionNeedsYou
-	case state == "Completed" && prURL != "":
-		stage, attention = "pr-open", attentionNeedsYou
-	case taskType == "plan" && planRevising:
-		// Refinement queued: the relaunch window before Running stamps.
-		stage, attention = "planning", attentionWorking
-	case taskType == "plan" && planDraft != "" && !approved:
-		stage, attention = "plan-ready", attentionNeedsYou
-	case taskType == "plan" && approved:
-		// Approved: the fix Request is in flight.
-		stage, attention = "fix-starting", attentionWorking
-	case state == "Completed" && taskType != "plan":
-		stage, attention = "fix-done", attentionNeedsYou
-	case triageDraft != "" && published:
-		stage = "triaged"
-	case triageDraft != "":
-		stage, attention = "triage-ready", attentionNeedsYou
-	case triageState == "Running":
-		stage, attention = "triaging", attentionWorking
-	case triageSB != nil && triageDraft == "" && triageState != "Completed" && triageState != "Failed":
-		// Triage sandbox provisioning (no task state yet). Finished
-		// sandboxes without a draft (rejected, failed) rest instead.
-		stage, attention = "triaging", attentionWorking
-	case claimedBy == "":
-		// Unclaimed and untouched: the triage inbox state.
-		stage = "untriaged"
-	}
 	if sb != nil && sb == triageSB && taskType == "" {
 		// The issue's sandbox has only been triaged in: it is the triage's
 		// on the row, not a fix's.
@@ -1060,8 +947,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Author:          issue.GetUser().GetLogin(),
 		Title:           issue.GetTitle(),
 		HTMLURL:         issue.GetHTMLURL(),
-		Stage:           stage,
-		Attention:       attention,
 		Assignee:        claimedBy,
 		PRURL:           prURL,
 		Labels:          labels,
@@ -1076,7 +961,7 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	}
 	items[key].PlanSession = taskSession(planSB, factorycli.AnnotationPlanRun)
 	items[key].FixSession = taskSession(planSB, factorycli.AnnotationFixRun)
-	if (stage == "fix-failed" || stage == "fix-done") && planSB != nil {
+	if planSB != nil && state == "Failed" && taskType == "fix" {
 		items[key].Error = planSB.GetAnnotations()[annoFixError]
 	}
 	items[key].TriageSession = taskSession(triageSB, factorycli.AnnotationTriageRun)
@@ -1172,120 +1057,24 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 	authored := strings.EqualFold(pr.GetUser().GetLogin(), member)
 
-	// The fix's follow-ups (its revises) run in its sandbox; while one
-	// runs (or after it fails) the row shows it as the machine's state,
-	// same as fixing/reviewing.
-	followUpStage := ""
-	if sb != nil && sb.GetAnnotations()[annoLastTaskType] == "fix" {
-		name := fixRunStage(sb.GetAnnotations())
-		switch sb.GetAnnotations()[annoTaskState] {
-		case "Running":
-			followUpStage = name
-		case "Failed":
-			followUpStage = name + "-failed"
-			if name == "fixing" {
-				followUpStage = "fix-failed"
-			}
-		}
-	}
-
 	// The board's review runs in a sandbox of its own (the review
 	// recipe's); the PR's sandbox carries the fix and its follow-ups.
 	rsb := sandboxes[factorycli.ReviewSandboxName(repo, pr.GetNumber())]
-	state := ""
-	if sb != nil {
-		state = sb.GetAnnotations()[annoTaskState]
-	}
 	reviewState := ""
 	reviewTaskState := ""
 	reviewError := ""
-	restarting := false
 	if rsb != nil {
 		annotations := rsb.GetAnnotations()
 		reviewState = annotations["reviewState"]
 		reviewTaskState = annotations[annoTaskState]
 		reviewError = annotations[annoReviewError]
-		// A re-review marker newer than the last task activity means a
-		// relaunch is waking the sandbox: stale Failed/Completed stamps
-		// must render as starting, not as the old outcome.
-		if markerAt, err := time.Parse(time.RFC3339, annotations[annoRereviewRequest]); err == nil {
-			lastActivity := time.Time{}
-			for _, key := range []string{"sandbox.gemini.google.com/last-task-time", annoCompletionTime} {
-				if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(lastActivity) {
-					lastActivity = t
-				}
-			}
-			restarting = markerAt.After(lastActivity)
-		}
 	}
-
-	stage, attention := "open", ""
-	switch {
-	case state == "Running":
-		// The PR's sandbox is at work: the stage is named by the TASK
-		// TYPE, a fix or a follow-up.
-		stage, attention = "reviewing", attentionWorking
-		if sb.GetAnnotations()[annoLastTaskType] == "fix" {
-			stage = fixRunStage(sb.GetAnnotations())
-		}
-	case reviewTaskState == "Running":
-		// An active review always wins — stale reviewState from a previous
-		// cycle must not mask a re-review in flight.
-		stage, attention = "reviewing", attentionWorking
-	case restarting:
-		stage, attention = "review-starting", attentionWorking
-	case reviewError != "" && reviewState == "":
-		// Parked failure — including pre-task failures (sandbox-ready
-		// timeout, connect errors) that never stamp a task state. Without
-		// this case they fall into "provisioning" below and render as
-		// starting forever, with no Retry to unstick them.
-		stage, attention = "review-failed", attentionNeedsYou
-	case rsb != nil && reviewTaskState == "" && reviewState == "":
-		// Sandbox exists but the task hasn't stamped a state yet:
-		// provisioning (pod scheduling, image pull, clone). Not the
-		// member's move.
-		stage, attention = "review-starting", attentionWorking
-	case reviewTaskState == "Failed" && reviewState == "":
-		// The run died without posting anything — surface it instead of
-		// falling back to the pre-click stage.
-		stage, attention = "review-failed", attentionNeedsYou
-	case (reviewState == "submitted" || reviewedOnGitHub) && !reviewRequested:
-		// The sandbox breadcrumb or GitHub itself: Reviewed ✓ survives
-		// clean slates because the submitted review IS the record.
-		stage = "review-submitted"
-	// A review request on an already-submitted row is GitHub's native
-	// "please review again" (submitting clears you from
-	// requested_reviewers; a re-request re-adds you) — fall through to the
-	// review-requested handling below.
-	case reviewState == "pending" || pendingOnGitHub:
-		// The agent posted a pending review under the member's identity;
-		// GitHub is where they finalize it. pendingOnGitHub is the
-		// rediscovered form: GitHub said so directly, no sandbox needed.
-		stage, attention = "review-pending", attentionNeedsYou
-	case reviewRequested:
-		// A bare GitHub review request: nothing is queued, a human is
-		// waiting on the member. Fresh requests demand attention; fossils
-		// stay out of UP NEXT.
-		stage, attention = "review-requested", attentionWaiting
-		if time.Since(pr.GetUpdatedAt()) <= reviewRequestFreshWindow {
-			attention = attentionNeedsYou
-		}
-	case authored && followUpStage != "":
-		stage, attention = followUpStage, attentionWorking
-		if strings.HasSuffix(followUpStage, "-failed") {
-			attention = attentionNeedsYou
-		}
-	case authored:
-		stage, attention = "open", attentionWaiting
-		// Your own draft PR awaits your promote — under the draft-PR
-		// policy the agent opens drafts precisely so a human promotes
-		// them, which makes promotion a pending human act (Up Next).
-		// Same freshness decay as review requests: a deliberately parked
-		// WIP draft fossilizes out of the inbox instead of nagging.
-		if pr.GetDraft() && time.Since(pr.GetUpdatedAt()) <= reviewRequestFreshWindow {
-			attention = attentionNeedsYou
-		}
-	}
+	// The pending review is the member's to finalize on GitHub: the
+	// sandbox's breadcrumb, or GitHub itself, which needs no sandbox. A
+	// submitted one is a receipt until someone asks for another review
+	// (submitting clears the request; a re-request re-adds it).
+	reviewPending := (reviewState == "pending" || pendingOnGitHub) && reviewTaskState != "Running"
+	reviewed := (reviewState == "submitted" || reviewedOnGitHub) && !reviewRequested && !reviewPending
 
 	// Every pull request is a row of the PRs group; what the member may
 	// do on it follows from whether it is theirs (mine) and whether they
@@ -1298,11 +1087,14 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
+	// Why the last run failed: the review's, parked with nothing posted
+	// (a failure before the task, too, which stamps no state), or the
+	// fix's or a follow-up's.
 	itemError := ""
 	switch {
-	case stage == "review-failed":
+	case reviewError != "" && reviewState == "" && reviewTaskState != "Running":
 		itemError = friendlyReviewError(reviewError)
-	case strings.HasSuffix(stage, "-failed") && sb != nil:
+	case sb != nil && sb.GetAnnotations()[annoTaskState] == "Failed" && sb.GetAnnotations()[annoLastTaskType] == "fix":
 		itemError = sb.GetAnnotations()[annoFixError]
 	}
 	items[key] = &models.WorkItem{
@@ -1316,9 +1108,9 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Labels:          prLabels,
 		ReviewRequested: reviewRequested,
 		HTMLURL:         pr.GetHTMLURL(),
-		Stage:           stage,
-		Attention:       attention,
 		Error:           itemError,
+		ReviewPending:   reviewPending,
+		Reviewed:        reviewed,
 		PRURL:           pr.GetHTMLURL(),
 		DraftPR:         pr.GetDraft(),
 		Fixes:           closingRefs(pr.GetBody()),
@@ -1331,31 +1123,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	if sb == nil {
 		items[key].Sandbox = workSandbox(rsb, autoDefault)
 	}
-}
-
-// kickoffFix handles the Fix click: best-effort GitHub-native claim
-// (assignment), plus the authoritative Request the controller consumes.
-// Consent is the click — the session user is the executor.
-func (s *Server) kickoffFix(c *gin.Context) {
-	s.kickoff(c, "issue", "fix", nil)
-}
-
-// kickoffReview handles the Review click: best-effort self-requested
-// review, plus the Request.
-func (s *Server) kickoffReview(c *gin.Context) {
-	s.kickoff(c, "pr", "review", nil)
-}
-
-// kickoffPlan handles the Plan click: a Request only — planning is
-// draft-only (nothing written to GitHub) and claims happen at fix time.
-func (s *Server) kickoffPlan(c *gin.Context) {
-	s.kickoff(c, "issue", "plan", nil)
-}
-
-// kickoffTriage handles the Triage click: a Request only — triage is
-// draft-only, so there is no GitHub-side claim to make.
-func (s *Server) kickoffTriage(c *gin.Context) {
-	s.kickoff(c, "issue", "triage", nil)
 }
 
 // launchRecipe handles any recipe's launch button on an issue or PR row:
@@ -1507,51 +1274,6 @@ func (s *Server) kickoff(c *gin.Context, item, recipe string, inputs map[string]
 		return
 	}
 	invalidateWorkFeed(board.GetNamespace(), board.GetName())
-	c.Status(http.StatusOK)
-}
-
-// rerunBoardIssue marks a finished fix for re-run via the sandbox
-// annotation the controller honors. (Reviews have no rerun endpoint: the
-// Review kickoff stamps the re-review marker itself.)
-func (s *Server) rerunBoardIssue(c *gin.Context) {
-	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	sessionUser := s.Auth.GetUserFromContext(c)
-
-	number := c.Param("id")
-	board, _, err := s.resolveBoard(ctx, namespace, sessionUser, c.Param("board"))
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
-		return
-	}
-	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	owner, repo, err := parseRepoURL(repoURL)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid repoURL on board"})
-		return
-	}
-
-	// Fix sandboxes live in the executor's namespace (session user for
-	// their own reruns).
-	var sandboxNS, sandboxName string
-	annotation := annoRefixRequest
-	issue, _ := strconv.Atoi(number)
-	for _, ns := range []string{namespace, board.GetNamespace()} {
-		if sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo); err == nil {
-			if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue); sb != nil && !factorycli.OnlyTriaged(sb) {
-				sandboxNS, sandboxName = ns, sb.GetName()
-				break
-			}
-		}
-	}
-	if sandboxName == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no sandbox for this item yet"})
-		return
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, sandboxNS, sandboxName, annotation, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to request re-run", "details": err.Error()})
-		return
-	}
 	c.Status(http.StatusOK)
 }
 

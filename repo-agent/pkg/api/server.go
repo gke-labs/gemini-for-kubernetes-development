@@ -67,12 +67,9 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/recipes", s.getBoardRecipes)
 		api.POST("/board/:board/issues/:id/recipes/:recipe", s.launchRecipe("issue"))
 		api.POST("/board/:board/prs/:id/recipes/:recipe", s.launchRecipe("pr"))
-		api.POST("/board/:board/issues/:id/fix", s.kickoffFix)
-		api.POST("/board/:board/issues/:id/triage", s.kickoffTriage)
 		api.POST("/board/:board/issues/:id/triage-reject", s.rejectBoardTriage)
 		api.PUT("/board/:board/issues/:id/plan-draft", s.putBoardPlanDraft)
 		api.PUT("/board/:board/issues/:id/draft", s.putBoardTriageDraft)
-		api.POST("/board/:board/issues/:id/plan", s.kickoffPlan)
 		api.POST("/board/:board/issues/:id/plan-feedback", s.planBoardFeedback)
 		api.POST("/board/:board/issues/:id/plan-refresh", s.planBoardRefresh)
 		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
@@ -109,8 +106,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// What a draft's task output offers (a work item's triageActions
 		// and planActions), taken one at a time.
 		api.POST("/board/:board/issues/:id/actions/:verb", s.boardIssueAction)
-		api.POST("/board/:board/prs/:id/review", s.kickoffReview)
-		api.POST("/board/:board/issues/:id/rerun", s.rerunBoardIssue)
 		api.POST("/board/:board/prs/:id/promote", s.promoteBoardPR)
 		api.POST("/board/:board/prs/:id/abandon", s.abandonBoardReview)
 

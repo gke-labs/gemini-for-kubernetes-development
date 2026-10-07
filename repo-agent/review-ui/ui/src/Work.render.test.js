@@ -408,7 +408,7 @@ describe('Work, an unattended window', () => {
 // it. The runs pinned to a pull request show on its row.
 describe('WorkRow Deploy', () => {
     const pr = {
-        type: 'pull', number: 42, stage: 'open', group: 'prs', title: 'retry the fetch',
+        type: 'pull', number: 42, group: 'prs', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-09-28T10:00:00Z',
     };
     // A factory, not one shared mock: CRA resets every mock's
@@ -513,7 +513,8 @@ describe('anyPosting', () => {
 
 describe('WorkRow draft actions', () => {
     const triage = {
-        type: 'issue', number: 7, stage: 'triage-ready', group: 'issues', title: 'crash on start',
+        type: 'issue', number: 7, group: 'issues', title: 'crash on start',
+        sessions: [{ recipe: 'triage', label: 'Triage', sandbox: 'fix-r-7', task: 'recipe-triage-1', status: 'ready' }],
         htmlURL: 'https://github.com/o/r/issues/7', updatedAt: '2026-10-04T10:00:00Z',
         draft: 'triage:\n  labels: [bug]\n  assessment: A crash.',
         triageActions: [
@@ -524,7 +525,8 @@ describe('WorkRow draft actions', () => {
         ],
     };
     const plan = {
-        type: 'issue', number: 8, stage: 'plan-ready', group: 'issues', title: 'needs a plan',
+        type: 'issue', number: 8, group: 'issues', title: 'needs a plan',
+        sessions: [{ recipe: 'plan', label: 'Plan', sandbox: 'fix-r-8', task: 'recipe-plan-1', status: 'ready' }],
         htmlURL: 'https://github.com/o/r/issues/8', updatedAt: '2026-10-04T10:00:00Z',
         plan: '## Summary\nDo the thing.',
         planActions: [
@@ -544,7 +546,7 @@ describe('WorkRow draft actions', () => {
                     runState={{ repoRunbooks: [], instances: [] }} {...props} />
             </tbody></table>);
         });
-        await act(async () => { findButton(item.stage === 'plan-ready' ? 'Plan ready' : 'Triage ready').click(); });
+        await act(async () => { findButton(item.plan ? 'Plan ready' : 'Triage ready').click(); });
         await flush();
     };
 
@@ -637,7 +639,7 @@ describe('WorkRow draft actions', () => {
 
 describe('WorkRow review', () => {
     const review = {
-        type: 'pull', number: 42, stage: 'review-pending', group: 'prs', title: 'retry the fetch',
+        type: 'pull', number: 42, reviewPending: true, group: 'prs', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-10-05T10:00:00Z',
         reviewSession: { sandbox: 'review-r-42', task: 'recipe-review-1' },
     };
@@ -660,8 +662,10 @@ describe('WorkRow review', () => {
     });
 
     test('a review at work can be watched', async () => {
-        await renderRow({ ...review, stage: 'reviewing' });
-        expect(link('watch').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        await renderRow({ ...review, reviewPending: false, recipes: [{ name: 'review', label: 'Review' }],
+            sessions: [{ recipe: 'review', label: 'Review', sandbox: 'review-r-42', task: 'recipe-review-1', status: 'running' }] });
+        expect(link('Review: running').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        expect(findButton('Review')).toBeUndefined();
     });
 
     test('a review run before sessions has no session link', async () => {
@@ -674,7 +678,8 @@ describe('WorkRow review', () => {
 
 describe('WorkRow fix follow-ups', () => {
     const pr = {
-        type: 'pull', number: 9, stage: 'open', group: 'prs', mine: true, myPR: true, title: 'the fix',
+        type: 'pull', number: 9, group: 'prs', mine: true, myPR: true, title: 'the fix',
+        recipes: [{ name: 'review', label: 'Review' }],
         htmlURL: 'https://github.com/o/r/pull/9', updatedAt: '2026-10-06T10:00:00Z',
         fixSession: { sandbox: 'fix-r-7', task: 'recipe-fix-1' },
         // As the fix run recorded them.
@@ -745,8 +750,103 @@ describe('WorkRow fix follow-ups', () => {
     });
 
     test('a follow-up at work can be watched', async () => {
-        await renderRow({ ...pr, stage: 'addressing' });
-        expect(link('watch').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
+        await renderRow({ ...pr, sessions: [{ recipe: 'fix', label: 'Fix', sandbox: 'fix-r-7', task: 'recipe-fix-1', status: 'running' }] });
+        expect(link('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
         expect(findButton('Agent ▾')).toBeUndefined();
+    });
+});
+
+// A row follows its runs by one set of rules, the same for every recipe:
+// a recipe not run yet is its label, one done or failed is ‹label› again,
+// a running one is a chip to its session, and a ready one is its draft.
+describe('WorkRow run rules', () => {
+    const issue = {
+        type: 'issue', number: 5, group: 'issues', title: 'a bug',
+        htmlURL: 'https://github.com/o/r/issues/5', updatedAt: '2026-10-06T10:00:00Z',
+        recipes: [
+            { name: 'triage', label: 'Triage' }, { name: 'plan', label: 'Plan' }, { name: 'fix', label: 'Fix' },
+            { name: 'summarize', label: 'Summarize', inputs: ['length'] },
+        ],
+    };
+    const run = (recipe, label, status) => ({ recipe, label, sandbox: 'fix-r-5', task: `recipe-${recipe}-1`, status });
+    const renderRow = async (item, onAction = () => {}) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={onAction}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+    };
+    const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+
+    test('every recipe the row offers is a button, in the catalog order, launched by its recipe', async () => {
+        const onAction = jest.fn();
+        await renderRow(issue, onAction);
+        const labels = Array.from(container.querySelectorAll('button')).map(b => b.textContent);
+        expect(labels).toEqual(['Triage', 'Plan', 'Fix', 'Summarize']);
+        await act(async () => { findButton('Plan').click(); });
+        expect(onAction).toHaveBeenCalledWith('issues/5/recipes/plan', 'Plan', {});
+    });
+
+    test('a required input is asked for, and passed', async () => {
+        const onAction = jest.fn();
+        window.prompt = jest.fn(() => ' short ');
+        await renderRow(issue, onAction);
+        await act(async () => { findButton('Summarize').click(); });
+        expect(onAction).toHaveBeenCalledWith('issues/5/recipes/summarize', 'Summarize', { inputs: { length: 'short' } });
+    });
+
+    test('a cancelled input launches nothing', async () => {
+        const onAction = jest.fn();
+        window.prompt = jest.fn(() => null);
+        await renderRow(issue, onAction);
+        await act(async () => { findButton('Summarize').click(); });
+        expect(onAction).not.toHaveBeenCalled();
+    });
+
+    test('a running recipe is a chip to its session, not a button', async () => {
+        await renderRow({ ...issue, sessions: [run('plan', 'Plan', 'running')] });
+        expect(findButton('Plan')).toBeUndefined();
+        expect(link('Plan: running').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
+    });
+
+    test('a click waiting for its run says so', async () => {
+        await renderRow({ ...issue, launching: { fix: 'queued' } });
+        expect(findButton('Fix')).toBeUndefined();
+        expect(container.textContent).toContain('Fix: queued');
+    });
+
+    test('a done or failed recipe is offered again', async () => {
+        await renderRow({ ...issue, sessions: [run('fix', 'Fix', 'failed'), run('summarize', 'Summarize', 'done')] });
+        expect(findButton('Fix again')).toBeDefined();
+        expect(findButton('Summarize again')).toBeDefined();
+        expect(container.textContent).toContain('Fix: failed');
+    });
+
+    test('a failed run with an error opens it', async () => {
+        await renderRow({ ...issue, error: 'the agent gave up', sessions: [run('fix', 'Fix', 'failed')] });
+        expect(container.textContent).not.toContain('the agent gave up');
+        await act(async () => { container.querySelector('span[title="Show why the run stopped"]').click(); });
+        expect(container.textContent).toContain('the agent gave up');
+    });
+
+    test('a ready draft of any other recipe is read in its session', async () => {
+        await renderRow({ ...issue, sessions: [run('summarize', 'Summarize', 'ready')] });
+        expect(findButton('Summarize')).toBeUndefined();
+        expect(link('Summarize ready').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+    });
+
+    test('an issue is not promoted, its PR is', async () => {
+        await renderRow({ ...issue, draftPR: true, mine: true });
+        expect(findButton('Promote PR')).toBeUndefined();
+        await renderRow({ type: 'pull', number: 6, group: 'prs', mine: true, draftPR: true, title: 'fix',
+            htmlURL: 'https://github.com/o/r/pull/6', updatedAt: '2026-10-06T10:00:00Z' });
+        expect(findButton('Promote PR')).toBeDefined();
+    });
+
+    test('an issue with an open PR offers nothing more, and links the PR', async () => {
+        await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6' });
+        expect(container.querySelectorAll('button').length).toBe(0);
+        expect(link('Fix ✓').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
     });
 });

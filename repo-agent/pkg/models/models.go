@@ -106,7 +106,6 @@ type WorkItem struct {
 	Number          int          `json:"number"`
 	Title           string       `json:"title"`
 	HTMLURL         string       `json:"htmlURL"`
-	Stage           string       `json:"stage"`
 	Attention       string       `json:"attention,omitempty"` // needs-you | working | waiting
 	Assignee        string       `json:"assignee,omitempty"`
 	Author          string       `json:"author,omitempty"`          // PR author (review rows show it as a chip)
@@ -145,13 +144,36 @@ type WorkItem struct {
 	// recipes they are, newest first: what the row's chips, attention and
 	// session links follow.
 	Sessions []RunSession `json:"sessions,omitempty"`
+	// Recipes are the recipes the row starts, in the board's order: its
+	// launch buttons. An issue with an open PR from its fix has none; the
+	// PR row carries the work from there.
+	Recipes []RowRecipe `json:"recipes,omitempty"`
+	// Launching are the recipes clicked on the row whose runs have not
+	// started yet: recipe → starting, or queued behind the board's limit.
+	Launching map[string]string `json:"launching,omitempty"`
+	// ReviewPending is a pending review of the member's on the PR, on
+	// GitHub, to finalize there; Reviewed one they submitted, with no new
+	// request for another.
+	ReviewPending bool `json:"reviewPending,omitempty"`
+	Reviewed      bool `json:"reviewed,omitempty"`
+}
+
+// RowRecipe is a recipe a row starts: its launch button.
+type RowRecipe struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	// Inputs are the inputs a launch must be given: required, with no
+	// default.
+	Inputs []string `json:"inputs,omitempty"`
 }
 
 // RunSession is one recipe run on an item: its recipe, the session its
 // revises go into, its state, and its stored task output's applied
 // actions.
 type RunSession struct {
-	Recipe  string `json:"recipe,omitempty"`
+	Recipe string `json:"recipe,omitempty"`
+	// Label is the recipe's, from the board's catalog.
+	Label   string `json:"label,omitempty"`
 	Sandbox string `json:"sandbox"`
 	// Task is the run's agent session (a revise's is the one it revised
 	// in), for #/task-session/<sandbox>/<task>.

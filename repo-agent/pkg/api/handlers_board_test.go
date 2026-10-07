@@ -333,13 +333,9 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.POST("/board/:board/issues/:id/recipes/:recipe", server.launchRecipe("issue"))
 	r.POST("/board/:board/prs/:id/recipes/:recipe", server.launchRecipe("pr"))
 	r.GET("/repo-suggestions", server.getRepoSuggestions)
-	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
-	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
 	r.POST("/board/:board/prs/:id/abandon", server.abandonBoardReview)
-	r.POST("/board/:board/issues/:id/rerun", server.rerunBoardIssue)
 	r.POST("/board/:board/research", server.startResearchSession)
 	r.GET("/board/:board/research/prompts", server.getResearchPrompts)
-	r.POST("/board/:board/issues/:id/plan", server.kickoffPlan)
 	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
 	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
 	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
@@ -460,6 +456,11 @@ func sandboxCR(name string, labels, annotations map[string]interface{}, replicas
 	}}
 }
 
+// recordedRun is a run of recipe recorded on a sandbox, in state.
+func recordedRun(recipe, state string) string {
+	return `{"name":"` + recipe + `/myboard/1","task":"recipe-` + recipe + `-1","recipe":"` + recipe + `","state":"` + state + `","startedAt":"2026-09-16T10:00:00Z"}`
+}
+
 func TestGetBoardWork(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[
@@ -473,7 +474,8 @@ func TestGetBoardWork(t *testing.T) {
 	}
 	fixSandbox := sandboxCR("fix-repo-10",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/issues/10"}, 1)
+		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Running", "htmlURL": "https://github.com/test/repo/issues/10",
+			factorycli.AnnotationFixRun: `{"name":"fix/myboard/10/1","task":"recipe-fix-1","recipe":"fix","state":"Running","startedAt":"2026-09-16T10:00:00Z"}`}, 1)
 	reviewSandbox := sandboxCR("review-repo-42",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
 		map[string]interface{}{"reviewState": "pending", "htmlURL": "https://github.com/test/repo/pull/42",
@@ -501,10 +503,11 @@ func TestGetBoardWork(t *testing.T) {
 		byKey[item.Type+"-"+itoa(item.Number)] = item
 	}
 
-	if row := byKey["issue-10"]; row.Stage != "fixing" || row.Attention != "working" || row.Sandbox == nil || row.Sandbox.Name != "fix-repo-10" {
+	if row := byKey["issue-10"]; len(row.Sessions) != 1 || row.Sessions[0].Status != "running" || row.Attention != "working" ||
+		row.Sandbox == nil || row.Sandbox.Name != "fix-repo-10" {
 		t.Errorf("issue-10 row wrong: %+v", row)
 	}
-	if row := byKey["pr-42"]; row.Stage != "review-pending" || row.Attention != "needs-you" {
+	if row := byKey["pr-42"]; !row.ReviewPending || row.Attention != "needs-you" {
 		t.Errorf("pr-42 row wrong: %+v", row)
 	}
 	// The review's session, for Continue session and Update review.
@@ -518,17 +521,14 @@ func TestGetBoardWork(t *testing.T) {
 	}
 }
 
-// The PR a fix opened carries the fix's session, and names what its
-// sandbox is doing from the recorded run: a revise the board filed by its
-// id, one the watch ran (no run name) as a follow-up, the fix itself as
-// fixing.
+// The PR a fix opened carries the fix's session, and its row follows the
+// fix's run, a revise of it included: working while it runs, needs you
+// with the reason when it failed, waiting on others once it is done.
 func TestPRRowFromTheFixRun(t *testing.T) {
-	for _, tc := range []struct{ run, state, stage string }{
-		{`{"name":"revise/myboard/fix-repo-7/address-comments/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "addressing"},
-		{`{"name":"revise/myboard/fix-repo-7/fix-ci/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Failed", "investigating-failed"},
-		{`{"task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "iterating"},
-		{`{"name":"fix/myboard/7/1","task":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Running", "fixing"},
-		{`{"name":"revise/myboard/fix-repo-7/iterate/2","task":"recipe-fix-2","session":"recipe-fix-1","startedAt":"2026-09-16T12:00:00Z"}`, "Completed", "open"},
+	for _, tc := range []struct{ state, status, attention string }{
+		{"Running", "running", "working"},
+		{"Failed", "failed", "needs-you"},
+		{"Completed", "done", "waiting"},
 	} {
 		ghResponses := map[string]string{
 			"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
@@ -536,13 +536,14 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 				 "user": {"login": "alice"}, "body": "Fixes #7"}
 			]`,
 		}
+		run := `{"name":"revise/myboard/fix-repo-7/fix-ci/2","task":"recipe-fix-2","session":"recipe-fix-1","recipe":"fix","state":"` + tc.state + `","startedAt":"2026-09-16T12:00:00Z"}`
 		sb := sandboxCR("fix-repo-7",
 			map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "9", factorycli.LabelIssue: "7"},
 			map[string]interface{}{
 				"repo": "repo", "htmlURL": "https://github.com/test/repo/pull/9",
 				"sandbox.gemini.google.com/last-task-type":  "fix",
 				"sandbox.gemini.google.com/last-task-state": tc.state,
-				factorycli.AnnotationFixRun:                 tc.run,
+				factorycli.AnnotationFixRun:                 run,
 				annoFixError:                                "push: the branch moved",
 			}, 1)
 		_, r, _ := boardTestServer(t, ghResponses, boardCR(), sb)
@@ -560,16 +561,16 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 			}
 		}
 		if row == nil {
-			t.Fatalf("%s: no PR row: %s", tc.run, w.Body.String())
+			t.Fatalf("%s: no PR row: %s", tc.state, w.Body.String())
 		}
-		if row.Stage != tc.stage {
-			t.Errorf("%s %s: stage %q, want %q", tc.run, tc.state, row.Stage, tc.stage)
+		if len(row.Sessions) != 1 || row.Sessions[0].Status != tc.status || row.Attention != tc.attention {
+			t.Errorf("%s: sessions %+v, attention %q; want %s, %s", tc.state, row.Sessions, row.Attention, tc.status, tc.attention)
 		}
 		if fs := row.FixSession; fs == nil || fs.Sandbox != "fix-repo-7" || fs.Task != "recipe-fix-1" {
-			t.Errorf("%s: fix session %+v, want the fix's", tc.run, fs)
+			t.Errorf("%s: fix session %+v, want the fix's", tc.state, fs)
 		}
-		if failed := strings.HasSuffix(tc.stage, "-failed"); failed != (row.Error != "") {
-			t.Errorf("%s: error %q on stage %s", tc.run, row.Error, tc.stage)
+		if failed := tc.state == "Failed"; failed != (row.Error != "") {
+			t.Errorf("%s: error %q", tc.state, row.Error)
 		}
 	}
 }
@@ -581,7 +582,7 @@ func TestKickoffFixFilesARequest(t *testing.T) {
 		"https://api.github.com/repos/test/repo/issues/77/labels":    `[]`,
 	}, boardCR())
 
-	req, _ := http.NewRequest("POST", "/board/myboard/issues/77/fix", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/issues/77/recipes/fix", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -622,7 +623,7 @@ func TestKickoffFixTwiceIsOneRequest(t *testing.T) {
 
 	fix := func(issue string) {
 		t.Helper()
-		req, _ := http.NewRequest("POST", "/board/myboard/issues/"+issue+"/fix", strings.NewReader(`{}`))
+		req, _ := http.NewRequest("POST", "/board/myboard/issues/"+issue+"/recipes/fix", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -672,34 +673,11 @@ func TestKickoffForbiddenForNonMember(t *testing.T) {
 	board.SetNamespace("board-kcc")
 	_, r, _ := boardTestServer(t, map[string]string{}, board)
 
-	req, _ := http.NewRequest("POST", "/board/myboard/issues/77/fix", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/issues/77/recipes/fix", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestRerunBoardIssue(t *testing.T) {
-	fixSandbox := sandboxCR("fix-repo-10",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{"sandbox.gemini.google.com/last-task-state": "Completed", "htmlURL": "https://github.com/test/repo/issues/10"}, 0)
-	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR(), fixSandbox)
-
-	req, _ := http.NewRequest("POST", "/board/myboard/issues/10/rerun", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
-	sb, err := dyn.Resource(gvrSandbox).Namespace("alice").Get(context.Background(), "fix-repo-10", v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sb.GetAnnotations()["review.gemini.google.com/refix-requested-at"] == "" {
-		t.Errorf("expected refix annotation, got %v", sb.GetAnnotations())
 	}
 }
 
@@ -929,7 +907,8 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	}
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20",
+			factorycli.AnnotationTriageRun: recordedRun("triage", "Completed")}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, board, triageSandbox)
 
@@ -948,7 +927,8 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 		byKey[item.Type+"-"+itoa(item.Number)] = item
 	}
 
-	if row := byKey["issue-20"]; row.Group != "issues" || row.Stage != "triage-ready" || row.Draft == "" {
+	if row := byKey["issue-20"]; row.Group != "issues" || len(row.Sessions) != 1 || row.Sessions[0].Status != "ready" ||
+		row.Attention != "needs-you" || row.Draft == "" {
 		t.Errorf("issue-20 row wrong: %+v", row)
 	}
 	// The paused triage sandbox surfaces on the resting row (Agent column
@@ -956,7 +936,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	if row := byKey["issue-20"]; row.Sandbox == nil || row.Sandbox.Name != "fix-repo-20" {
 		t.Errorf("issue-20 should carry its triage sandbox: %+v", row.Sandbox)
 	}
-	if row := byKey["issue-21"]; row.Group != "issues" || row.Stage != "untriaged" {
+	if row := byKey["issue-21"]; row.Group != "issues" || row.Attention != "" || len(row.Recipes) != 3 {
 		t.Errorf("issue-21 row wrong: %+v", row)
 	}
 	// The feed is the universe: label-carrying rows surface with their
@@ -970,8 +950,8 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	}
 }
 
-// A bare GitHub review request is "review-requested" (not "queued" — nothing
-// launches without a click), is nobody's claim, and only fresh requests are
+// A bare GitHub review request offers Review (nothing launches without a
+// click), is nobody's claim, and only fresh requests are
 // needs-you; fossils stay out of UP NEXT.
 func TestGetBoardWorkReviewRequested(t *testing.T) {
 	fresh := time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
@@ -1004,10 +984,11 @@ func TestGetBoardWorkReviewRequested(t *testing.T) {
 		byKey[item.Type+"-"+itoa(item.Number)] = item
 	}
 
-	if row := byKey["pr-70"]; row.Stage != "review-requested" || row.Attention != "needs-you" || row.Assignee != "" {
+	if row := byKey["pr-70"]; !row.ReviewRequested || row.Attention != "needs-you" || row.Assignee != "" ||
+		len(row.Recipes) != 1 || row.Recipes[0].Name != "review" {
 		t.Errorf("fresh request row wrong: %+v", row)
 	}
-	if row := byKey["pr-71"]; row.Stage != "review-requested" || row.Attention != "waiting" || row.Assignee != "" {
+	if row := byKey["pr-71"]; !row.ReviewRequested || row.Attention != "waiting" || row.Assignee != "" {
 		t.Errorf("fossil request row wrong: %+v", row)
 	}
 }
@@ -1081,7 +1062,7 @@ func TestFeedReturnsFullUniverse(t *testing.T) {
 
 // GitHub's native "review again": submitting clears you from
 // requested_reviewers, a re-request re-adds you — a submitted row with a
-// fresh request returns to review-requested instead of staying quiet.
+// fresh request asks for the review again instead of staying quiet.
 func TestSubmittedThenReRequested(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
@@ -1102,8 +1083,8 @@ func TestSubmittedThenReRequested(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 90 {
-			if item.Stage != "review-requested" || item.Attention != "needs-you" {
-				t.Errorf("re-requested after submit: want review-requested/needs-you, got %q/%q", item.Stage, item.Attention)
+			if item.Reviewed || item.Attention != "needs-you" {
+				t.Errorf("re-requested after submit: want requested/needs-you, got reviewed=%v/%q", item.Reviewed, item.Attention)
 			}
 			return
 		}
@@ -1111,39 +1092,42 @@ func TestSubmittedThenReRequested(t *testing.T) {
 	t.Fatal("pr-90 row missing")
 }
 
-// Between a click and the run: a standing Request renders the row as
-// Starting… (no needs-you, no second kickoff invited), and a sandbox
-// without a task state (provisioning) does the same.
-func TestKickoffFeedbackStages(t *testing.T) {
+// Between a click and the run, a standing Request shows the recipe as
+// starting on its row (no needs-you, no second click invited), until a run
+// of it starts after the click.
+func TestKickoffFeedback(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[
 			{"number": 5, "title": "clicked", "html_url": "https://github.com/test/repo/pull/5", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]},
-			{"number": 6, "title": "provisioning", "html_url": "https://github.com/test/repo/pull/6", "updated_at": "` + fresh + `",
+			{"number": 6, "title": "started", "html_url": "https://github.com/test/repo/pull/6", "updated_at": "` + fresh + `",
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
 	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "pr", Number: 5})
-	provisioning := sandboxCR("review-repo-6",
+	started := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "pr", Number: 6})
+	run := `{"name":"review/myboard/6/1","task":"recipe-review-1","recipe":"review","state":"Running","startedAt":"` +
+		time.Now().UTC().Add(time.Minute).Format(time.RFC3339) + `"}`
+	sb := sandboxCR("review-repo-6",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
-		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6"}, 1)
+		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6", factorycli.AnnotationReviewRun: run}, 1)
 
-	_, r, _ := boardTestServer(t, ghResponses, boardCR(), provisioning, clicked)
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), sb, clicked, started)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	var work []models.WorkItem
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
-	stages := map[int][2]string{}
+	rows := map[int]models.WorkItem{}
 	for _, item := range work {
-		stages[item.Number] = [2]string{item.Stage, item.Attention}
+		rows[item.Number] = item
 	}
-	if s := stages[5]; s[0] != "review-starting" || s[1] != "working" {
-		t.Errorf("clicked PR: want review-starting/working, got %v", s)
+	if row := rows[5]; row.Launching["review"] != "starting" || row.Attention != "working" {
+		t.Errorf("clicked PR: want review starting/working, got %v/%q", row.Launching, row.Attention)
 	}
-	if s := stages[6]; s[0] != "review-starting" || s[1] != "working" {
-		t.Errorf("provisioning PR: want review-starting/working, got %v", s)
+	if row := rows[6]; row.Launching != nil || len(row.Sessions) != 1 || row.Sessions[0].Status != "running" || row.Attention != "working" {
+		t.Errorf("started PR: want its run running, nothing launching, got %v %+v %q", row.Launching, row.Sessions, row.Attention)
 	}
 }
 
@@ -1218,8 +1202,8 @@ func TestGetBoardWorkRediscoversPendingReview(t *testing.T) {
 	if len(work) != 1 {
 		t.Fatalf("expected 1 row, got %d: %s", len(work), w.Body.String())
 	}
-	if work[0].Stage != "review-pending" || work[0].Attention != "needs-you" {
-		t.Errorf("expected rediscovered review-pending row, got %+v", work[0])
+	if !work[0].ReviewPending || work[0].Attention != "needs-you" {
+		t.Errorf("expected the rediscovered pending review, got %+v", work[0])
 	}
 }
 
@@ -1244,8 +1228,8 @@ func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
 		t.Fatalf("bad json: %v", err)
 	}
-	if len(work) != 1 || work[0].Stage != "review-requested" {
-		t.Errorf("expected review-requested row, got %s", w.Body.String())
+	if len(work) != 1 || work[0].ReviewPending || !work[0].ReviewRequested {
+		t.Errorf("expected a plain review request, got %s", w.Body.String())
 	}
 }
 
@@ -1367,8 +1351,8 @@ func TestTriageDraftFromTaskOutput(t *testing.T) {
 	}
 }
 
-// The plan loop, API side: a plan-carrying fix sandbox renders plan-ready
-// with the draft; feedback stamps the refinement markers; approve stamps
+// The plan loop, API side: a plan-carrying fix sandbox renders its plan
+// ready with the draft; feedback stamps the refinement markers; approve stamps
 // approval and files the fix request; reject clears the draft.
 func TestPlanEndpoints(t *testing.T) {
 	ghResponses := map[string]string{
@@ -1387,12 +1371,13 @@ func TestPlanEndpoints(t *testing.T) {
 			"sandbox.gemini.google.com/last-task-state": "Completed",
 			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
 			factorycli.AnnotationPlanOutput:             storedOutput("Plan", "## Summary\nDo the thing."),
+			factorycli.AnnotationPlanRun:                recordedRun("plan", "Completed"),
 		}, 1)
 
 	srv, r, dyn := boardTestServer(t, ghResponses, boardCR(), planSandbox)
 	_ = srv
 
-	// Feed: plan-ready with the draft attached.
+	// Feed: the plan ready, with the draft attached.
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1400,7 +1385,7 @@ func TestPlanEndpoints(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
 		t.Fatalf("bad json: %v", err)
 	}
-	if len(work) != 1 || work[0].Stage != "plan-ready" || work[0].Attention != "needs-you" || !strings.Contains(work[0].Plan, "Do the thing.") {
+	if len(work) != 1 || len(work[0].Sessions) != 1 || work[0].Sessions[0].Status != "ready" || work[0].Attention != "needs-you" || !strings.Contains(work[0].Plan, "Do the thing.") {
 		t.Fatalf("expected plan-ready row with draft, got %s", w.Body.String())
 	}
 
@@ -1540,8 +1525,8 @@ func TestRequestQueuedAtCapacity(t *testing.T) {
 	}
 	for _, item := range work {
 		if item.Number == 92 {
-			if item.Stage != "queued" || item.Attention != "waiting" {
-				t.Errorf("pr-92 should be queued/waiting, got %s/%s", item.Stage, item.Attention)
+			if item.Launching["review"] != "queued" || item.Attention != "waiting" {
+				t.Errorf("pr-92 should be queued/waiting, got %v/%s", item.Launching, item.Attention)
 			}
 			return
 		}
@@ -1641,7 +1626,8 @@ func TestRejectBoardTriage(t *testing.T) {
 		t.Error("tombstone missing")
 	}
 
-	// The feed shows a fully reset row: untriaged, no sandbox chip.
+	// The feed shows a fully reset row: nothing asked, no sandbox chip,
+	// Triage offered again.
 	req, _ = http.NewRequest("GET", "/board/myboard/work", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1649,7 +1635,7 @@ func TestRejectBoardTriage(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 20 {
-			if item.Stage != "untriaged" || item.Sandbox != nil || item.Draft != "" {
+			if item.Attention != "" || item.Sandbox != nil || item.Draft != "" || len(item.Recipes) == 0 || item.Recipes[0].Name != "triage" {
 				t.Errorf("row not reset: %+v", item)
 			}
 			return
@@ -1659,8 +1645,8 @@ func TestRejectBoardTriage(t *testing.T) {
 }
 
 // A pre-task launch failure (sandbox-ready timeout) stamps the review
-// error but never a task state: the row must read Review failed with a
-// Retry path, not sit on "starting" forever.
+// error but never a task state: the row must say why, need the member,
+// and offer Review again, not sit on "starting" forever.
 func TestPrelaunchFailureRendersFailed(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
@@ -1685,8 +1671,8 @@ func TestPrelaunchFailureRendersFailed(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 55 {
-			if item.Stage != "review-failed" || item.Error == "" {
-				t.Errorf("expected review-failed with reason, got %+v", item)
+			if item.Error == "" || item.Attention != "needs-you" || len(item.Recipes) != 1 || item.Recipes[0].Name != "review" {
+				t.Errorf("expected the failure with its reason and Review, got %+v", item)
 			}
 			return
 		}
@@ -1710,7 +1696,8 @@ func TestUpNextDefersBareReviewRequests(t *testing.T) {
 	}
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20",
+			factorycli.AnnotationTriageRun: recordedRun("triage", "Completed")}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -1724,7 +1711,7 @@ func TestUpNextDefersBareReviewRequests(t *testing.T) {
 	// Both are needs-you, and the PR is newer — yet the triage draft
 	// (ready for a verdict) must come first.
 	if work[0].Number != 20 || work[1].Number != 42 {
-		t.Errorf("expected triage-ready before review-requested, got %d then %d", work[0].Number, work[1].Number)
+		t.Errorf("expected the ready triage before the review request, got %d then %d", work[0].Number, work[1].Number)
 	}
 }
 
@@ -1794,8 +1781,8 @@ func TestGetBoardWorkRediscoversSubmittedReview(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 43 {
-			if item.Stage != "review-submitted" {
-				t.Errorf("expected rediscovered review-submitted, got %+v", item)
+			if !item.Reviewed {
+				t.Errorf("expected the rediscovered submitted review, got %+v", item)
 			}
 			return
 		}
@@ -1950,7 +1937,7 @@ func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 // credential from that namespace itself, at launch time.
 func TestKickoffRecordsTheMemberNotTheToken(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
-	req, _ := http.NewRequest("POST", "/board/myboard/issues/1324/fix", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/issues/1324/recipes/fix", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -2026,6 +2013,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 			"agentDraft":                      "not a triage",
 			factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"),
 			factorycli.AnnotationRecipeTriageTaskState: "Completed",
+			factorycli.AnnotationTriageRun:             recordedRun("triage", "Completed"),
 		}, 1)
 	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
 
@@ -2046,7 +2034,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
 		return nil
 	}
-	if got := row(); got.Stage != "triage-ready" || !strings.Contains(got.Draft, "labels:\n    - bug") ||
+	if got := row(); got.Attention != "needs-you" || !strings.Contains(got.Draft, "labels:\n    - bug") ||
 		got.Sandbox == nil || got.Sandbox.Name != "repo-20" || got.Sandbox.TaskState != "Completed" {
 		t.Errorf("row = %+v sandbox %+v", got, got.Sandbox)
 	}
@@ -2105,7 +2093,7 @@ func TestReviewClicksFindTheReviewSandbox(t *testing.T) {
 		return got.GetAnnotations()
 	}
 
-	req, _ := http.NewRequest("POST", "/board/myboard/prs/42/review", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/board/myboard/prs/42/recipes/review", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
