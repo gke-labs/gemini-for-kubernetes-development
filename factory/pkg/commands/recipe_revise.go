@@ -45,10 +45,10 @@ Revising a revise continues the same conversation. Nothing is posted:
 apply the new result as any other. --input sets an input the revise
 takes, such as the fix recipe's iterate instruction.
 
-A fix's revises (iterate, address-comments, fix-ci, rebase) push to the
-branch the fix pushed, leased against the head last pushed, and their
-Change is about the fix's PR (the sandbox's PR alias): post-replies posts
-its replies and report there.
+The revises of fix (iterate) and care (address-comments, fix-ci, rebase,
+iterate) push to the branch the start pushed, leased against the head last
+pushed, and their Change is about the sandbox's PR: post-replies posts a
+care Change's replies and report there.
 
 The session must not be mid-turn; the revise fails before sending anything
 if it is.`,
@@ -58,9 +58,12 @@ if it is.`,
   # A given task, under a run name
   factory recipe revise fix-repo-123 plan --task recipe-plan-20261004-120000-ab12 --run-name revise-1
 
-  # Change a fix's PR as asked, then post what it says
-  factory recipe revise https://github.com/owner/repo/pull/456 iterate --input instruction="rename foo to bar"
-  factory sandbox task output fix-repo-123 | factory apply -f -`,
+  # Change a fix's PR as asked
+  factory recipe revise fix-repo-123 iterate --input instruction="rename foo to bar"
+
+  # Fix a PR's checks in care's session, then post what it says
+  factory recipe revise https://github.com/owner/repo/pull/456 fix-ci --recipe care
+  factory sandbox task output recipe-repo-456 | factory apply -f -`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			return runRevise(ctx, c, args[0], args[1], f)

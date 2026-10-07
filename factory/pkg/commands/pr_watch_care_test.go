@@ -12,8 +12,8 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
-// The watch revises a PR's fix run only in the sandbox aliased to that
-// PR that records one.
+// A board fix's PR is the one sandbox aliased to it that records a fix
+// run.
 func TestFixRunOf(t *testing.T) {
 	sb := func(name, htmlURL string, fixRun bool) unstructured.Unstructured {
 		var u unstructured.Unstructured
@@ -43,7 +43,34 @@ func TestFixRunOf(t *testing.T) {
 	}
 }
 
-// A fix's revise gets the push its session last made, and that task's
+// The watch revises care's run where the PR's sandbox records one on the
+// PR, starts care for a board fix's PR without one, and leaves any other
+// PR to the overseer's tasks.
+func TestWatchFollowUp(t *testing.T) {
+	pr := "https://github.com/o/r/pull/12"
+	run := factorysandbox.RunAnnotation(careTaskType)
+	if !careRunOn(map[string]string{"htmlURL": "https://github.com/O/r/pull/12/", run: `{"task":"c-1"}`}, pr) {
+		t.Error("care's run on the PR not found")
+	}
+	if careRunOn(map[string]string{"htmlURL": pr}, pr) || careRunOn(map[string]string{"htmlURL": "https://github.com/o/r/pull/13", run: "{}"}, pr) {
+		t.Error("found a care run where there is none on the PR")
+	}
+	for _, c := range []struct {
+		care, fix string
+		want      watchFollowUp
+	}{
+		{"recipe-r-12", "fix-r-7", followReviseCare},
+		{"recipe-r-12", "", followReviseCare},
+		{"", "fix-r-7", followStartCare},
+		{"", "", followOverseer},
+	} {
+		if got := followUpOf(c.care, c.fix); got != c.want {
+			t.Errorf("followUpOf(%q, %q) = %d, want %d", c.care, c.fix, got, c.want)
+		}
+	}
+}
+
+// A Change revise gets the push its session last made, and that task's
 // title and body, skipping tasks that pushed nothing and other sessions.
 func TestChangeInputs(t *testing.T) {
 	files := map[string]string{

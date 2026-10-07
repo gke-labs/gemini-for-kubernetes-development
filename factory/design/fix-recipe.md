@@ -1,6 +1,6 @@
 # Fix as a recipe
 
-**Status:** Steps 1–3 are built, the PR mode included; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
+**Status:** Steps 1–3 are built; the PR revises and the PR mode moved to the `care` recipe ([care-recipe.md](care-recipe.md)), which deleted the PR mode; see [As built](#as-built). Step 1 is the `fix` recipe's start, `setup-fork` and `push`, the Change kind, `open-pr`/`edit`/`reject`, and `run:fix` on the recipe. Step 2 is the revises, `post-replies`, revise inputs and `factory pr watch` revising a fix run. Step 3 is the board's fix, follow-ups and UI. The in-cluster verification (step 4) has not been done.
 
 The board's fix is the last of its agent work on the old mechanism, and the busiest. `factory fix` runs `fix_issue.sh` with the member's token; the agent pushes, runs `gh pr create`, and writes the PR's URL to `agent-output.txt`, which factory reads to alias the sandbox to the PR. Every follow-up is a separate command in the same sandbox, resuming the engine CLI's last chat:
 
@@ -188,7 +188,7 @@ Step 3 (repo-agent) deviates where:
 - **The PR row's stage comes from the recorded run.** A board revise is named by its id: `address-comments` → addressing, `fix-ci` → investigating, anything else → iterating. The watch's revises carry no run name and read as iterating. The fix itself reads as fixing.
 - **A fix session has no draft panel.** Its draft is the PR. *Continue session* is on the PR row's drawer and on a failed fix's error.
 
-The PR mode deviates where:
+The PR mode (deleted by [care-recipe.md](care-recipe.md)) deviated where:
 
 - **On a PR of yours, fix has no start; it has only its revises.** On your PR, the PR already is what fix's start makes. `factory recipe fix --url <PR> --revise <revise>` (with `--input` for the revise) runs a revise straight away. `fix` is `on: [issue, my-pr]`, and the fork-ownership check is `checkOn`'s `my-pr` rule, which points at `factory pr adopt`.
 - **Two optional recipe fields express it.**

@@ -1,0 +1,266 @@
+# factory recipe care --url <PR> [--focus comments|ci|rebase] [--instruction …]:
+# looks after a pull request of yours (design/care-recipe.md), in the PR's
+# sandbox. The PR must be yours: authored by you, its head a branch on your
+# fork (on: [my-pr]); factory pr adopt takes over one that is not.
+#
+# The start brings the PR to mergeable: it rebases it if it is behind or
+# conflicts, fixes checks it broke, and answers review comments not yet
+# answered, in that order, since a rebase changes both the checks and the
+# code the comments are on. focus narrows a run to one of them. The agent
+# commits and never pushes; the push step pushes to the PR's branch on your
+# fork, leased against the head the PR had, so a commit someone else pushed
+# meanwhile is never overwritten. factory hands the start the PR's push
+# facts (INPUT_PUSHED_*: fork, branch, the base it branched from, head) and
+# its title and body.
+#
+# The revises (factory recipe revise <sandbox> <revise>) are the targeted
+# jobs, asked into the start's session, each leased against the head care
+# last pushed: address-comments, fix-ci, rebase, iterate. Every run's
+# Change carries the replies and report post-replies posts on the PR.
+name: care
+label: Care
+on: [my-pr]
+
+inputs:
+  focus:
+    description: "One job only: comments, ci or rebase; empty: whatever the PR needs"
+  instructions:
+    type: instructions
+    description: Additional instructions the agent must follow
+  instruction:
+    description: What the iterate revise changes, which it asks for (factory recipe revise … iterate --input instruction=…)
+    revise: true
+
+context: |
+  You are an automated coding agent. You look after a pull request: you
+  keep it mergeable, and answer its reviewers. A human maintainer reviews
+  your commits.
+
+  You commit, and that is all you write. Do NOT run `git push`, do NOT
+  open, edit or comment on pull requests or issues, and do NOT add labels:
+  when you are done, factory pushes your commits to the pull request's
+  branch on the member's fork, and posts the replies you write.
+
+  The repository is checked out in the current directory, on the pull
+  request's branch. The git remote "origin" is the member's fork,
+  "upstream" the repository. `gh` is authenticated, to read issues and
+  pull requests. Do not run `git config --global`: in this environment it
+  overwrites /dev/null and breaks git for the rest of the run.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+    # The branch to push and the head to lease against: a commit someone
+    # else pushed to the PR since is never overwritten.
+    - run: &pushed |
+        test -n "${INPUT_PUSHED_BRANCH}" && test -n "${INPUT_PUSHED_HEAD}" || { echo "nothing pushed to this PR is known; there is no branch to work on" >&2; exit 1; }
+        printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
+        printf '%s\n' "${INPUT_PUSHED_BASE}" > "$TASK_DIR/base"
+        printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
+        printf '%s' "${INPUT_PR_URL##*/}" > "$TASK_DIR/pr"
+        if [ "$(git symbolic-ref --short -q HEAD)" != "${INPUT_PUSHED_BRANCH}" ]; then
+          # The PR's branch, from the fork, the first time.
+          git rev-parse -q --verify "refs/heads/${INPUT_PUSHED_BRANCH}" >/dev/null ||
+            git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/heads/${INPUT_PUSHED_BRANCH}"
+          git checkout "${INPUT_PUSHED_BRANCH}"
+        fi
+    # The default branch as it is now, which a rebase goes onto.
+    - run: |
+        case "${INPUT_FOCUS}" in ""|comments|ci|rebase) ;; *) echo "focus ${INPUT_FOCUS} is not one of: comments, ci, rebase" >&2; exit 1 ;; esac
+        git fetch upstream HEAD
+        git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/upstream"
+
+    - ask: |
+        You look after this pull request:
+        https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}
+        "{{ .Inputs.pr_title }}". Its branch is checked out, at
+        {{ file "lease" }}.
+        {{- with .Inputs.instructions }}
+
+        Additional instructions you MUST follow:
+        <instructions>
+        {{ . }}
+        </instructions>
+        {{- end }}
+
+        Read the pull request first: `gh pr view {{ file "pr" }} --comments`.
+        Then, in this order, since a rebase changes both the checks and the
+        code the comments are on:
+        {{- if or (not .Inputs.focus) (eq .Inputs.focus "rebase") }}
+
+        - Rebase. If the branch conflicts with {{ file "upstream" }}, the
+          default branch as it is now, or is far behind it, rebase onto it
+          (`git rebase {{ file "upstream" }}`). Resolve conflicts so that
+          the change still does what it did; build and test what they
+          touched.{{ if not .Inputs.focus }} If it merges cleanly and is not far behind, leave it.{{ end }}
+        {{- end }}
+        {{- if or (not .Inputs.focus) (eq .Inputs.focus "ci") }}
+
+        - Checks. Find the failed ones (`gh pr checks {{ file "pr" }}`) and
+          read their logs (`gh run view <run-id> --log-failed`). If this
+          change caused a failure, fix it and commit. If it did not (a
+          flaky test, an outage, a failure on the default branch too),
+          change nothing and say so.
+        {{- end }}
+        {{- if or (not .Inputs.focus) (eq .Inputs.focus "comments") }}
+
+        - Review comments. Read the review comments on the code,
+          `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
+          and the conversation,
+          `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/issues/{{ file "pr" }}/comments --paginate`.
+          Skip what is already answered, and what bots wrote. Change what
+          reviewers ask for, where it is right to, and commit. Where it is
+          not, do not change it: say why in your reply.
+        {{- end }}
+
+        Keep the history clean (`git commit --fixup` and an autosquash
+        rebase for small fixes to earlier commits are fine: factory pushes
+        with a lease). Commit, never push; do NOT comment on GitHub
+        yourself: factory posts the replies you write next. If nothing
+        needs doing, say so and commit nothing.
+        {{- if eq .Inputs.disclose "true" }}
+        Commit messages may say that an agent wrote the change.
+        {{- else }}
+        Do not say anywhere — commit messages or files — that an agent or AI
+        wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        When you are done, say briefly what you did.
+    - ask: &replies |
+        Now write the result. Respond with EXACTLY the following YAML
+        structure and nothing else — no prose before or after, no markdown
+        fences:
+
+        change:
+          replies:
+            - inReplyTo: 123456789
+              body: |
+                Your answer to that comment: what you changed, or why not.
+          report: |
+            For the PR's reviewers: what you did, such as what conflicted
+            and how you resolved it, or which checks failed, why, and what
+            you changed.
+
+        Rules:
+        - inReplyTo is the numeric `id` of a comment you answer, from the
+          `gh api` output: a review comment's or a conversation comment's.
+          One reply per comment you answer; none if you answered none.
+        - Leave out report if there is nothing to report, and write
+          `change: {}` if there is nothing at all.
+        - Add `title:` and `body:` (the whole new description, keeping its
+          `Fixes #…` line, if it has one) only if the pull request's no
+          longer fit.
+        {{- if eq .Inputs.disclose "true" }}
+        - Each reply and the report says it was written by an AI coding agent.
+        {{- else }}
+        - Do not say anywhere that an agent or AI wrote this.
+        {{- end }}
+      capture: change.yaml
+    # A rebase onto the default branch moved the base.
+    - run: |
+        if git merge-base --is-ancestor "$(cat "$TASK_DIR/upstream")" HEAD; then
+          cp "$TASK_DIR/upstream" "$TASK_DIR/base"
+        fi
+    - uses: push
+
+# The targeted jobs. factory hands each one the push care last made
+# (INPUT_PUSHED_*) and the PR (pr_url); a revise's Change keeps the
+# previous title and body unless the agent writes new ones.
+revise:
+  - id: address-comments
+    label: Address comments
+    steps:
+      - run: *pushed
+      - ask: |
+          Reviewers have commented on the pull request. Address their
+          comments.
+
+          1. Read what was said since you last pushed
+             ({{ file "lease" }}): the review comments on the code,
+             `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
+             the conversation,
+             `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/issues/{{ file "pr" }}/comments --paginate`,
+             and the reviews, `gh pr view {{ file "pr" }} --comments`.
+             Skip what is already answered, and what bots wrote.
+          2. Change what they ask for, where it is right to, and commit.
+             Where it is not, do not change it: say why in your reply.
+          3. Commit, never push; do NOT reply on GitHub yourself: factory
+             posts the replies you write next.
+      - ask: *replies
+        capture: change.yaml
+      - uses: push
+
+  - id: fix-ci
+    label: Fix CI
+    steps:
+      - run: *pushed
+      - ask: |
+          Checks fail on the pull request. Fix them.
+
+          1. Find the failed checks: `gh pr checks {{ file "pr" }}`.
+          2. Read the failed runs' logs: `gh run view <run-id> --log-failed`.
+          3. Find the cause. If this change caused it, fix it and commit.
+             If it did not (a flaky test, an outage, a failure on the
+             default branch too), change nothing and say so.
+          4. Commit, never push; do NOT comment on GitHub yourself.
+      - ask: *replies
+        capture: change.yaml
+      - uses: push
+
+  - id: rebase
+    label: Rebase
+    steps:
+      - run: *pushed
+      # The new base: the repository's default branch as it is now. The
+      # push step force-pushes the rewritten branch, still leased.
+      - run: |
+          git fetch upstream HEAD
+          git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/base"
+      - ask: |
+          Rebase the branch onto {{ file "base" }}, the default branch as
+          it is now (`git rebase {{ file "base" }}`). Resolve any conflicts
+          so that the change still does what it did; build and test what
+          the conflicts touched. Do not push.
+          When you are done, say briefly what conflicted and how you
+          resolved it.
+      - ask: *replies
+        capture: change.yaml
+      - uses: push
+
+  - id: iterate
+    label: Iterate
+    inputs: [instruction]
+    steps:
+      - run: *pushed
+      - run: |
+          test -n "${INPUT_INSTRUCTION}" || { echo "iterate needs --input instruction=…" >&2; exit 1; }
+      - ask: |
+          Change the pull request as this instruction asks, and commit the
+          change.
+
+          <instruction>
+          {{ .Inputs.instruction }}
+          </instruction>
+
+          The same rules as before: commit, never push; keep the history
+          clean. If the instruction needs no change, say so and commit
+          nothing. When you are done, say briefly what you changed.
+      - ask: *replies
+        capture: change.yaml
+      - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  from: change.yaml
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: post-replies
+      label: Post replies
+    - verb: reject

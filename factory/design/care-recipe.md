@@ -1,6 +1,6 @@
 # Care: a recipe for your PR
 
-**Status:** Proposed.
+**Status:** Step 1 (factory) is built; steps 2 (repo-agent) and 3 (verification) are not.
 
 The `fix` recipe does two jobs today. Its start fixes an issue and pushes a branch. Its revises look after the PR afterwards: `iterate`, `address-comments`, `fix-ci` and `rebase`. For a PR the fix did not open, or one whose fix sandbox is gone, fix has a PR mode: `on: [issue, my-pr]` with `start.on: [issue]` (`revisesOn: [my-pr]`). There the first revise opens a conversation and reads the push facts from the PR.
 
@@ -135,3 +135,13 @@ Someone else's PR      #1488  Review: ready ↗                     Summarize
    - `auto ⏻` on a fix PR
 
 Old fix sandboxes keep their recorded revise lists. Their sessions offer revises fix no longer has, so recreate them rather than shim ([no back-compat for recipes](recipe-driven-board.md)).
+
+## As built
+
+Step 1 (factory) deviates where:
+
+- **care has no `task-type`.** Like review and summarize, its runs are recorded as `recipe-care` (`sandbox.gemini.google.com/recipe-care-run`), which the catalog publishes as its `taskType`.
+- **`pr_url` is not declared.** It is a standard input on a PR, so care's start and revises get it without a revise input.
+- **The start on a PR gets the PR's push facts** from `runRecipe` for any recipe whose task output is a Change (`prPushInputs`). care's start force-with-lease pushes even an unchanged head, so it always records `push.json` for its revises.
+- **The watch starts care only on a fix's PR.** With a care run on `recipe-<repo>-<n>` it revises it; with a fix sandbox aliased to the PR and no care run it starts care with a `focus`; otherwise (the overseer's PRs) it runs `pr investigate` / `pr address-comments` as before. A care start that fails is logged, with no fallback.
+- **fix's iterate after care has pushed to the same branch fails its lease**, which is safe: nothing is overwritten.

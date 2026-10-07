@@ -10,20 +10,13 @@
 # apply --action run:fix`, or the board's "Fix with this plan") starts
 # this recipe with its markdown, as edited, as the plan.
 #
-# On a PR you opened from your fork there is nothing to start (start: on:
-# [issue]): the PR already is what the start makes. factory recipe fix
-# --url <PR> --revise <revise> runs a revise there straight away, the
-# first opening the session, with the push facts read from the PR. A PR
-# whose head is not on your fork is refused: factory pr adopt takes it
-# over.
-#
-# The revises (factory recipe revise <sandbox> <revise>) are the PR's
-# follow-ups, asked into the fix's session: iterate, address-comments,
-# fix-ci, rebase. Each ends with the same push, to the branch the start
-# pushed, leased against the head last pushed, so the PR follows. Their
-# Change carries the replies and report post-replies posts on the PR.
+# Its one revise (factory recipe revise <sandbox> iterate) changes the fix
+# as asked, in the fix's session. It ends with the same push, to the
+# branch the start pushed, leased against the head last pushed, so the PR
+# follows. Looking after the PR — review comments, checks, rebasing — is
+# the care recipe's (design/care-recipe.md).
 name: fix
-on: [issue, my-pr]
+on: [issue]
 task-type: fix
 
 inputs:
@@ -38,9 +31,6 @@ inputs:
   instruction:
     description: What the iterate revise changes, which it asks for (factory recipe revise … iterate --input instruction=…)
     revise: true
-  pr_url:
-    description: The fix's PR; factory sets it for the revises, from the sandbox's PR alias
-    revise: true
 
 context: |
   You are an automated coding agent. You fix GitHub issues; your commits
@@ -52,22 +42,17 @@ context: |
   opens the pull request from what you write.
 
   The repository is checked out in the current directory, on the branch
-  you work on: a new one from the latest default branch, or the pull
-  request's when you continue one. The git remote "origin" is the member's
+  you work on, made from the latest default branch. The git remote "origin" is the member's
   fork, "upstream" the repository. `gh` is authenticated, to read issues
   and pull requests. Do not run `git config --global`: in this environment
   it overwrites /dev/null and breaks git for the rest of the run.
 
-setup:
+start:
   steps:
     - uses: setup-git
     - uses: setup-fork
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
     - uses: configure-engine
-
-start:
-  on: [issue]
-  steps:
     - uses: checkout-default-branch
     # The branch the push step pushes, and the upstream commit it starts
     # from.
@@ -169,11 +154,9 @@ start:
 
     - uses: push
 
-# The PR's follow-ups. factory hands each one the push the fix last made
-# (INPUT_PUSHED_*: fork, branch, base, head) and the PR (pr_url) — on a
-# PR of yours with no fix, the PR's head and the base it branched from; a
-# revise's Change keeps the previous title and body unless the agent
-# writes new ones.
+# factory hands the revise the push the fix last made (INPUT_PUSHED_*:
+# fork, branch, base, head); its Change keeps the previous title and body
+# unless the agent writes new ones.
 revise:
   - id: iterate
     label: Iterate
@@ -181,18 +164,12 @@ revise:
     steps:
       # The branch to push and the head to lease against: a commit someone
       # else pushed to the PR since is never overwritten.
-      - run: &pushed |
+      - run: |
           test -n "${INPUT_PUSHED_BRANCH}" && test -n "${INPUT_PUSHED_HEAD}" || { echo "the fix pushed nothing; there is no branch to revise" >&2; exit 1; }
           printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
           printf '%s\n' "${INPUT_PUSHED_BASE}" > "$TASK_DIR/base"
           printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
-          printf '%s' "${INPUT_PR_URL##*/}" > "$TASK_DIR/pr"
-          if [ "$(git symbolic-ref --short -q HEAD)" != "${INPUT_PUSHED_BRANCH}" ]; then
-            # Not here yet where no fix made it: the PR's, from the fork.
-            git rev-parse -q --verify "refs/heads/${INPUT_PUSHED_BRANCH}" >/dev/null ||
-              git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/heads/${INPUT_PUSHED_BRANCH}"
-            git checkout "${INPUT_PUSHED_BRANCH}"
-          fi
+          git checkout "${INPUT_PUSHED_BRANCH}"
       - run: |
           test -n "${INPUT_INSTRUCTION}" || { echo "iterate needs --input instruction=…" >&2; exit 1; }
       - ask: |
@@ -207,7 +184,7 @@ revise:
           fixes to earlier commits are fine: factory pushes with a lease).
           If the instruction needs no change, say so and commit nothing.
           When you are done, say briefly what you changed.
-      - ask: &change |
+      - ask: |
           Now write the result. Respond with EXACTLY the following YAML
           structure and nothing else — no prose before or after, no
           markdown fences:
@@ -225,114 +202,6 @@ revise:
         capture: change.yaml
       - uses: push
 
-  - id: address-comments
-    label: Address comments
-    steps:
-      - run: *pushed
-      - run: &needs-pr |
-          test -s "$TASK_DIR/pr" || { echo "the fix has no PR yet: open it first (factory apply --action open-pr)" >&2; exit 1; }
-      - ask: |
-          The pull request for your fix is
-          https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}.
-          Reviewers have commented on it. Address their comments.
-
-          1. Read what was said since you last pushed
-             ({{ file "lease" }}): the review comments on the code,
-             `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
-             the conversation,
-             `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/issues/{{ file "pr" }}/comments --paginate`,
-             and the reviews, `gh pr view {{ file "pr" }} --comments`.
-             Skip what is already answered, and what bots wrote.
-          2. Change what they ask for, where it is right to, and commit.
-             Where it is not, do not change it: say why in your reply.
-          3. Commit, never push; do NOT reply on GitHub yourself: factory
-             posts the replies you write next.
-      - ask: |
-          Now write your replies. Respond with EXACTLY the following YAML
-          structure and nothing else — no prose before or after, no
-          markdown fences:
-
-          change:
-            replies:
-              - inReplyTo: 123456789
-                body: |
-                  Your answer to that comment: what you changed, or why not.
-            report: |
-              Optional: one comment for the PR as a whole, such as an
-              answer to a review's summary.
-
-          Rules:
-          - inReplyTo is the numeric `id` of the comment you answer, from
-            the `gh api` output above: a review comment's or a
-            conversation comment's. One reply per comment you answer.
-          - Add `title:` and `body:` (the whole new description, keeping
-            its `Fixes #…` line, if it has one) only if the pull request's
-            no longer fit.
-          {{- if eq .Inputs.disclose "true" }}
-          - Each reply and the report says it was written by an AI coding agent.
-          {{- else }}
-          - Do not say anywhere that an agent or AI wrote this.
-          {{- end }}
-        capture: change.yaml
-      - uses: push
-
-  - id: fix-ci
-    label: Fix CI
-    steps:
-      - run: *pushed
-      - run: *needs-pr
-      - ask: |
-          Checks fail on the pull request for your fix,
-          https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}.
-          Fix them.
-
-          1. Find the failed checks: `gh pr checks {{ file "pr" }}`.
-          2. Read the failed runs' logs: `gh run view <run-id> --log-failed`.
-          3. Find the cause. If your change caused it, fix it and commit.
-             If it did not (a flaky test, an outage, a failure on the
-             default branch too), change nothing and say so.
-          4. Commit, never push; do NOT comment on GitHub yourself.
-      - ask: |
-          Now write your report. Respond with EXACTLY the following YAML
-          structure and nothing else — no prose before or after, no
-          markdown fences:
-
-          change:
-            report: |
-              For the PR's reviewers: which checks failed, why, and what you
-              changed, or why the failure is not this change's.
-
-          Add `title:` and `body:` (the whole new description, keeping its
-          `Fixes #…` line, if it has one) only if the pull request's no
-          longer fit.
-          {{- if eq .Inputs.disclose "true" }}
-          The report says it was written by an AI coding agent.
-          {{- else }}
-          Do not say anywhere that an agent or AI wrote this.
-          {{- end }}
-        capture: change.yaml
-      - uses: push
-
-  - id: rebase
-    label: Rebase
-    steps:
-      - run: *pushed
-      # The new base: the repository's default branch as it is now. The
-      # push step force-pushes the rewritten branch, still leased.
-      - run: |
-          git fetch upstream HEAD
-          git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/base"
-      - ask: |
-          Rebase your branch onto {{ file "base" }}, the default branch
-          as it is now (`git rebase {{ file "base" }}`). Resolve any
-          conflicts so that the change still does what it did; build and
-          test what the conflicts touched. Do not push.
-          When you are done, say briefly what conflicted and how you
-          resolved it.
-      - ask: *change
-        capture: change.yaml
-      - uses: push
-
 outputs:
   - change.yaml
 
@@ -345,6 +214,4 @@ task-output:
       format: yaml
     - verb: open-pr
       label: Open draft PR
-    - verb: post-replies
-      label: Post replies
     - verb: reject
