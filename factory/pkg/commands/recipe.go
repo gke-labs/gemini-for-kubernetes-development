@@ -1159,6 +1159,7 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		}
 	}
 	doc.Actions = task.Output.Actions
+	doc.Preview = task.Output.Preview
 	out, err := taskoutput.Marshal(doc)
 	if err != nil {
 		return err

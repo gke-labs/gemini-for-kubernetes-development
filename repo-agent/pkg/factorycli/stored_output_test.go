@@ -144,3 +144,32 @@ func TestAnyKindsDraft(t *testing.T) {
 		t.Error("a draft from no output, or another kind's")
 	}
 }
+
+// A glance at a draft is the field its document names, else its markdown,
+// as plain text of about previewLen characters.
+func TestPreview(t *testing.T) {
+	if got := Preview("Plan", planTaskOutput); !strings.HasPrefix(got, "Summary Fix the crash. Notes") || strings.ContainsAny(got, "#=\n") {
+		t.Errorf("plan preview = %q, want its markdown as plain text", got)
+	}
+	triage := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\npreview: spec.assessment\nspec:\n  labels: [bug]\n  assessment: |-\n    **Real bug** in [the parser](http://x/p.go).\n\n    - crashes on `nil`\n"
+	if got := Preview("Triage", triage); got != "Real bug in the parser. crashes on nil" {
+		t.Errorf("triage preview = %q", got)
+	}
+	if got := Preview("Triage", strings.Replace(triage, "preview: spec.assessment\n", "", 1)); got != "" {
+		t.Errorf("a triage naming no preview = %q, want none", got)
+	}
+	if got := Preview("Triage", strings.Replace(triage, "spec.assessment", "spec.labels", 1)); got != "" {
+		t.Errorf("a preview that is no text = %q, want none", got)
+	}
+	report := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Report\nspec:\n  markdown: '# Summary of the work'\n"
+	if got := Preview("Report", report); got != "Summary of the work" {
+		t.Errorf("report preview = %q", got)
+	}
+	long := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nspec:\n  markdown: '" + strings.Repeat("word ", 200) + "'\n"
+	if got := Preview("Plan", long); len([]rune(got)) > previewLen+1 || !strings.HasSuffix(got, "word…") {
+		t.Errorf("long preview = %q", got)
+	}
+	if Preview("Plan", "") != "" || Preview("Plan", triage) != "" {
+		t.Error("a preview of no output, or another kind's")
+	}
+}

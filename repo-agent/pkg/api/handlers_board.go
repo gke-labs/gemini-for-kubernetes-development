@@ -744,6 +744,10 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 				session.EndedAt = run.EndedAt.UTC().Format(time.RFC3339)
 			}
 			session.Status = runStatus(session)
+			if doc := annotations[factorycli.OutputAnnotation(run.Key)]; doc != "" {
+				session.Actions = runActions(run.Kind, doc)
+				session.Preview = factorycli.Preview(run.Kind, doc)
+			}
 			for _, rv := range run.Revises {
 				session.Revises = append(session.Revises, rv.ID)
 			}
@@ -766,6 +770,20 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 			return strings.Compare(b.StartedAt, a.StartedAt)
 		})
 	}
+}
+
+// runActions are the actions a run's output offers but the draft verbs
+// and revises (models.RunSession.Actions).
+func runActions(kind, doc string) []models.RunAction {
+	var out []models.RunAction
+	for _, a := range factorycli.OfferedActions(kind, doc) {
+		switch a.Verb {
+		case "edit", "reject", "revise":
+			continue
+		}
+		out = append(out, models.RunAction{Verb: a.Verb, Label: a.Label})
+	}
+	return out
 }
 
 // runStatus is a run's status on the row (models.RunSession.Status).

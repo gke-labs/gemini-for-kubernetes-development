@@ -71,6 +71,7 @@ outputs:
 task-output:
   kind: Triage
   from: triage-output.yaml
+  preview: spec.assessment
   # What can be done with the result: whoever shows it builds its controls
   # from these (factory apply --action does the writes).
   actions:

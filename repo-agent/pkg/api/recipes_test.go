@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -122,7 +123,7 @@ func TestRunSessions(t *testing.T) {
 		runSandbox("fix-repo-12", "https://github.com/o/repo/pull/30", map[string]string{
 			"sandbox.gemini.google.com/plan-run":   `{"name":"p","task":"plan-1","startedAt":"2026-10-01T10:00:00Z","recipe":"plan","kind":"Plan","state":"Completed","endedAt":"2026-10-01T10:05:00Z","revises":[{"id":"revise"}]}`,
 			"sandbox.gemini.google.com/fix-run":    `{"name":"f","task":"fix-2","startedAt":"2026-10-02T10:00:00Z","recipe":"fix","kind":"Change","state":"Running"}`,
-			"board.gemini.google.com/plan-output":  "kind: Plan\n",
+			"board.gemini.google.com/plan-output":  "kind: Plan\nspec:\n  markdown: '## Fix the **crash**'\n",
 			"board.gemini.google.com/plan-applied": `{"comment":"2026-10-01T11:00:00Z"}`,
 		}),
 		prSandbox("fix-repo-9", "https://github.com/o/repo/pull/9", map[string]string{
@@ -150,6 +151,13 @@ func TestRunSessions(t *testing.T) {
 	}
 	if plan.Status != "done" {
 		t.Errorf("plan status = %q, want done: its draft was posted", plan.Status)
+	}
+	// Its draft's moves, but the draft verbs, and a glance at it.
+	if want := []models.RunAction{{Verb: "comment"}, {Verb: "run", Label: "Fix with this plan"}}; !reflect.DeepEqual(plan.Actions, want) {
+		t.Errorf("plan actions = %+v, want %+v", plan.Actions, want)
+	}
+	if plan.Preview != "Fix the crash" {
+		t.Errorf("plan preview = %q", plan.Preview)
 	}
 	if got := items["pr-30"].Sessions; len(got) != 2 {
 		t.Errorf("PR 30 sessions = %+v, want the issue sandbox's two", got)

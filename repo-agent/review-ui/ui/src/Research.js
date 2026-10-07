@@ -673,7 +673,7 @@ const REVISE_POLL_EVERY = 3000;
 // DRAFT_VERBS is how a verb a draft offers looks when the output gives
 // it no label, and what to confirm before taking it. Whether the member
 // may take it is the API's word, in its enabled and reason.
-const DRAFT_VERBS = {
+export const DRAFT_VERBS = {
   edit: { label: 'Edit', title: 'Edit the draft before it goes anywhere' },
   comment: {
     label: 'Post', title: 'Posts the draft as a comment on the issue under your identity',

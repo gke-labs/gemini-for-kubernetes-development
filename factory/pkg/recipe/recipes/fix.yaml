@@ -208,6 +208,7 @@ outputs:
 task-output:
   kind: Change
   from: change.yaml
+  preview: spec.body
   actions:
     - verb: edit
       field: spec

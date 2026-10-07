@@ -113,14 +113,15 @@ func TestWriteTaskOutputLeavesAnUnknownKind(t *testing.T) {
 	}
 }
 
-// The runner copies the actions the task declared into the document.
+// The runner copies the actions and the preview the task declared into
+// the document.
 func TestWriteTaskOutputCopiesActions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "recipe-plan-20261003-101010-abcd")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "run", Run: "fix", Label: "Fix"}}
-	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions, Preview: "spec.markdown"}},
 		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
 	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
 		t.Fatal(err)
@@ -135,6 +136,9 @@ func TestWriteTaskOutputCopiesActions(t *testing.T) {
 	}
 	if got := docs[0].Actions; len(got) != 2 || got[1].Run != "fix" || got[1].Label != "Fix" {
 		t.Errorf("actions = %+v", got)
+	}
+	if docs[0].Preview != "spec.markdown" {
+		t.Errorf("preview = %q", docs[0].Preview)
 	}
 }
 

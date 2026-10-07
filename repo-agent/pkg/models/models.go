@@ -197,6 +197,18 @@ type RunSession struct {
 	Applied map[string]string `json:"applied,omitempty"`
 	// Revises are the revise ids the run's recipe offers into its session.
 	Revises []string `json:"revises,omitempty"`
+	// Actions are what the output offers to do with its draft, but edit,
+	// reject and revise: the moves a ready run waits on.
+	Actions []RunAction `json:"actions,omitempty"`
+	// Preview is a glance at the output's draft, as plain text.
+	Preview string `json:"preview,omitempty"`
+}
+
+// RunAction is one of a run's output's actions: its verb, and its label
+// when the output gives one.
+type RunAction struct {
+	Verb  string `json:"verb"`
+	Label string `json:"label,omitempty"`
 }
 
 // TaskSession names a factory task's agent session: the sandbox it ran in

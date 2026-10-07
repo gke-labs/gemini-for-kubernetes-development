@@ -350,6 +350,7 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 		return nil, fmt.Errorf("task %s: %w", e.ID, err)
 	}
 	doc.Actions = decl.Actions
+	doc.Preview = decl.Preview
 	return taskoutput.Marshal(doc)
 }
 

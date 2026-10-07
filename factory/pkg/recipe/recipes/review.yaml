@@ -116,6 +116,7 @@ outputs:
 task-output:
   kind: Review
   from: review.yaml
+  preview: spec.body
   actions:
     - verb: edit
       field: spec

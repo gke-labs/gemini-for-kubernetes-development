@@ -56,7 +56,7 @@ A recipe is YAML shaped like a GitHub Actions workflow and embedded in the facto
 | `context:` | Rules sent to the agent once, at the start of the session. |
 | `steps:` | `uses:` runs a named `lib.sh` step from a closed set. These are the only steps that get the token. `run:` is inline shell without the token, with inputs as `INPUT_*`. `ask:` is one prompt turn; all asks share one agent session. `capture:` saves a turn's reply to a file. |
 | `outputs:` | Files the task's result consists of. |
-| `task-output:` | `{kind, from, actions}`: the file that becomes the typed result, its kind, and what may be done with it (part 5). |
+| `task-output:` | `{kind, from, actions, preview}`: the file that becomes the typed result, its kind, what may be done with it (part 5), and the spec field (`spec.assessment`) a glance at it shows, such as a board chip's hover. Without `preview`, a glance shows the `edit` action's field when that is markdown. The runner copies `actions` and `preview` into the document. |
 | `task-type:` | Makes the recipe its sandbox's main task, of that type, as plan and fix are: its state is `last-task-*`, and it lists as that type. Unset, the recipe is a side task, `recipe-<name>`. |
 
 The sandbox runs the recipe with its own `factory recipe exec`. The CLI strips the fields it handles itself, such as `task-output:` and `task-type:`, before uploading (`recipe.ForSandbox`).

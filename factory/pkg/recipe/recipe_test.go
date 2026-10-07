@@ -467,9 +467,27 @@ func TestInputTypeValidated(t *testing.T) {
 }
 
 func TestTaskOutputValidated(t *testing.T) {
-	for _, to := range []string{"{kind: Poem, from: x.yaml}", "{kind: Triage, from: ../x}"} {
+	for _, to := range []string{"{kind: Poem, from: x.yaml}", "{kind: Triage, from: ../x}",
+		"{kind: Triage, from: x.yaml, preview: assessment}", "{kind: Triage, from: x.yaml, preview: spec.}"} {
 		if _, err := Parse([]byte("name: x\nstart: {steps: [{run: 'true'}]}\ntask-output: " + to + "\n")); err == nil {
 			t.Errorf("task-output %s accepted", to)
+		}
+	}
+	if _, err := Parse([]byte("name: x\nstart: {steps: [{run: 'true'}]}\ntask-output: {kind: Triage, from: x.yaml, preview: spec.assessment}\n")); err != nil {
+		t.Errorf("preview spec.assessment: %v", err)
+	}
+}
+
+// Each built-in recipe whose draft is not markdown names the spec field
+// a glance at it shows.
+func TestBuiltinPreviews(t *testing.T) {
+	for name, want := range map[string]string{"triage": "spec.assessment", "review": "spec.body", "care": "spec.report", "fix": "spec.body"} {
+		_, r, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.TaskOutput == nil || r.TaskOutput.Preview != want {
+			t.Errorf("%s preview = %+v, want %s", name, r.TaskOutput, want)
 		}
 	}
 }
