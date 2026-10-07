@@ -106,6 +106,7 @@ type taskOutputMeta struct {
 		Session string `yaml:"session"`
 	} `yaml:"source"`
 	Actions []Action `yaml:"actions"`
+	Preview string   `yaml:"preview"`
 }
 
 func parseTaskOutputMeta(kind, doc string) (taskOutputMeta, bool) {

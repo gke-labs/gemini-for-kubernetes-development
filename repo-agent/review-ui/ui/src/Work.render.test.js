@@ -717,7 +717,7 @@ describe('WorkRow run rules', () => {
     test('a failed run with an error opens it', async () => {
         await renderRow({ ...issue, error: 'the agent gave up', sessions: [run('fix', 'Fix', 'failed')] });
         expect(container.textContent).not.toContain('the agent gave up');
-        await act(async () => { container.querySelector('span[title^="Fix: failed — show why the run stopped"]').click(); });
+        await act(async () => { container.querySelector('span[title^="Fix: failed — the agent gave up"]').click(); });
         expect(container.textContent).toContain('the agent gave up');
     });
 
@@ -732,19 +732,24 @@ describe('WorkRow run rules', () => {
         expect(container.querySelectorAll('tr').length).toBe(1);
     });
 
-    test('a chip is its recipe in its status colour; the status and the run are its hover', async () => {
+    test('a chip is its recipe in its status colour; where it stands and its draft are its hover', async () => {
+        const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
         await renderRow({ ...issue, sessions: [
-            { ...run('plan', 'Plan', 'done'), startedAt: '2026-10-06T10:00:00Z', endedAt: '2026-10-06T10:05:00Z', applied: { comment: '2026-10-06T11:00:00Z' } },
+            { ...run('plan', 'Plan', 'done'), output: true, applied: { edit: twoHoursAgo, comment: twoHoursAgo },
+              actions: [{ verb: 'comment', label: 'Post plan' }], preview: 'Fix the crash in the parser' },
+            { ...run('summarize', 'Summarize', 'ready'), output: true,
+              actions: [{ verb: 'comment', label: 'Post summary' }, { verb: 'run' }], preview: 'What changed' },
+            { ...run('triage', 'Triage', 'running'), preview: 'old draft' },
+            { ...run('care', 'Care', 'done') },
         ] });
         const plan = chip('Plan: done');
         expect(plan.textContent).toBe('Plan ↗');
-        const title = plan.getAttribute('title').split('\n');
-        expect(title[0]).toBe('Plan: done — continue the conversation');
-        expect(title).toContain('applied: comment');
-        expect(title).toContain('sandbox: fix-r-5');
-        expect(title.some(l => l.startsWith('started '))).toBe(true);
-        expect(title.some(l => l.startsWith('ended '))).toBe(true);
+        expect(plan.getAttribute('title')).toBe('Plan: done — Post plan 2h ago\nFix the crash in the parser');
         expect(plan.querySelector('span').style.color).toBe('rgb(34, 134, 58)');
+        expect(chip('Summarize: ready').getAttribute('title'))
+            .toBe('Summarize: ready — draft needs your approval: Post summary · Approve & Fix\nWhat changed');
+        expect(chip('Triage: running').getAttribute('title')).toBe('Triage: running — agent working');
+        expect(chip('Care: done').getAttribute('title')).toBe('Care: done — nothing to apply');
     });
 
     test('a session chip ends in the icon of the agent it is with', async () => {
@@ -752,7 +757,6 @@ describe('WorkRow run rules', () => {
         const plan = chip('Plan: done');
         expect(plan.textContent).toBe('Plan');
         expect(plan.querySelector('img').getAttribute('alt')).toBe('claude');
-        expect(plan.getAttribute('title').split('\n')).toContain('agent: claude');
         const triage = chip('Triage: ready');
         expect(triage.textContent).toBe('Triage');
         expect(triage.querySelector('img').getAttribute('alt')).toBe('antigravity');

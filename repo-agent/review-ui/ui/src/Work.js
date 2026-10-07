@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel, AllResearchPanel, ResearchConversation } from './Research';
+import { ResearchPanel, AllResearchPanel, ResearchConversation, DRAFT_VERBS, ageOf } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
 import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
@@ -69,20 +69,49 @@ const RUN_STYLE = {
 // READY_STYLE is a draft's button: your verdict is the bottleneck.
 const READY_STYLE = RUN_STYLE.ready;
 
-// chipTitle is a run chip's hover: its status, what a click does, and the
-// run's facts.
-function chipTitle(c, hint) {
-  const lines = [`${c.label}: ${c.status}${hint ? ` — ${hint}` : ''}`];
+// actionLabel is how a draft's action reads: its own label, else its
+// verb's button's.
+function actionLabel(a) {
+  return a.label || (DRAFT_VERBS[a.verb] || {}).label || a.verb;
+}
+
+// runState is where a run stands, in words, the same for every recipe:
+// what it waits on, or what became of its draft.
+function runState(c, error) {
   const run = c.run;
-  if (run) {
-    const at = ts => new Date(ts).toLocaleString();
-    if (run.startedAt) lines.push(`started ${at(run.startedAt)}`);
-    if (run.endedAt) lines.push(`ended ${at(run.endedAt)}`);
-    const applied = Object.keys(run.applied || {}).sort();
-    if (applied.length) lines.push(`applied: ${applied.join(', ')}`);
-    if (run.engine) lines.push(`agent: ${run.engine}`);
-    if (run.sandbox) lines.push(`sandbox: ${run.sandbox}`);
+  switch (c.status) {
+    case 'running':
+      return 'agent working';
+    case 'failed':
+      return error ? error.trim().split('\n')[0] : 'open its session to see why';
+    case 'ready': {
+      // A review's chip stays ready while its pending review is on GitHub.
+      if (run.status !== 'ready') return 'your pending review is on GitHub — submit or discard it there';
+      const moves = (run.actions || []).map(actionLabel);
+      return `draft needs your approval${moves.length ? `: ${moves.join(' · ')}` : ''}`;
+    }
+    case 'done': {
+      if (!run.output) return 'nothing to apply';
+      const applied = Object.entries(run.applied || {}).filter(([verb]) => verb !== 'edit')
+        .map(([verb, at]) => {
+          const label = verb === 'reject' ? 'discarded'
+            : actionLabel((run.actions || []).find(a => a.verb === verb) || { verb });
+          const ago = ageOf(at);
+          return ago ? `${label} ${ago} ago` : label;
+        });
+      return applied.length ? applied.join(' · ') : 'draft applied';
+    }
+    default:
+      return '';
   }
+}
+
+// chipTitle is a run chip's hover: where the run stands, and a glance at
+// its draft. A chip with no run yet says what it is waiting for (hint).
+function chipTitle(c, hint, error) {
+  const state = c.run ? runState(c, error) : hint;
+  const lines = [`${c.label}: ${c.status}${state ? ` — ${state}` : ''}`];
+  if (c.run && c.run.preview && c.status !== 'running') lines.push(c.run.preview);
   return lines.join('\n');
 }
 
@@ -470,7 +499,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           if (c.status === 'failed' && item.error) {
             return (
               <span key={c.recipe} onClick={() => setShowError(v => !v)} style={{ cursor: 'pointer', marginLeft: '4px' }}
-                title={chipTitle(c, 'show why the run stopped')}>
+                title={chipTitle(c, '', item.error)}>
                 <Chip text={`${text} !`} color={style.color} bg={style.bg} />
               </span>
             );
@@ -488,7 +517,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             return (
               <a key={c.recipe} className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
                 onClick={sessionClick(onOpenSession, c.run)}
-                title={chipTitle(c, 'its draft awaits your verdict — open its session to read and apply it')}
+                title={chipTitle(c)}
                 style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
                 {text}<SessionMark engine={c.run.engine} />
               </a>
@@ -500,7 +529,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             <a key={c.recipe} href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
               onClick={sessionClick(onOpenSession, c.run)}
               style={{ textDecoration: 'none', marginLeft: '4px' }}
-              title={chipTitle(c, c.status === 'running' ? 'watch the agent\'s conversation as it runs' : 'continue the conversation')}>
+              title={chipTitle(c)}>
               <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
             </a>
           ) : (

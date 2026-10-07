@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -228,6 +229,83 @@ func WithDraft(kind, doc, draft string) (string, error) {
 		return "", fmt.Errorf("encoding the %s: %w", kind, err)
 	}
 	return string(out), nil
+}
+
+// previewLen is about how long a preview is.
+const previewLen = 300
+
+// Preview is a glance at the draft in a stored task output of kind, as
+// plain text of about previewLen characters: the spec field its document
+// names as its preview, else its edit action's when that is markdown, else
+// its markdown (DraftIsMarkdown). "" when it has none, or the field is not
+// text.
+func Preview(kind, doc string) string {
+	root := headerNode(kind, doc)
+	if root == nil {
+		return ""
+	}
+	m, _ := parseTaskOutputMeta(kind, doc)
+	path := m.Preview
+	if path == "" {
+		for _, a := range OfferedActions(kind, doc) {
+			if a.Verb == "edit" && a.Format == "markdown" {
+				path = a.Field
+			}
+		}
+	}
+	if path == "" && kind != "Triage" && DraftIsMarkdown(kind, doc) {
+		path = "spec.markdown"
+	}
+	fields := strings.Split(path, ".")
+	if len(fields) < 2 || fields[0] != "spec" {
+		return ""
+	}
+	node := root
+	for _, f := range fields {
+		if node.Kind != yaml.MappingNode {
+			return ""
+		}
+		if node = mapValue(node, f); node == nil {
+			return ""
+		}
+	}
+	if node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return clip(plainText(node.Value), previewLen)
+}
+
+var (
+	mdFence    = regexp.MustCompile("(?m)^\\s*(```|~~~).*$")
+	mdLink     = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	mdLineMark = regexp.MustCompile(`(?m)^\s*(#{1,6}\s+|>\s?|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+)`)
+	mdEmphasis = regexp.MustCompile("\\*\\*|__|[*`]")
+	mdRule     = regexp.MustCompile(`(?m)^\s*(=+|([-*_]\s*){3,})\s*$`)
+)
+
+// plainText is markdown as one line of its words: no fences, headings,
+// rules, list or quote marks, emphasis, or link targets.
+func plainText(md string) string {
+	s := mdFence.ReplaceAllString(md, "")
+	s = mdRule.ReplaceAllString(s, "")
+	s = mdLink.ReplaceAllString(s, "$1")
+	s = mdLineMark.ReplaceAllString(s, "")
+	s = mdEmphasis.ReplaceAllString(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// clip is s cut at a word to about n characters, with an ellipsis when
+// it was cut.
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	cut := string(r[:n])
+	if i := strings.LastIndex(cut, " "); i > n/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,.;:") + "…"
 }
 
 // mapValue is key's value in a mapping node, or nil.
