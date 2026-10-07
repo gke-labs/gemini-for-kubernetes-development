@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel, AllResearchPanel } from './Research';
+import { ResearchPanel, AllResearchPanel, ResearchConversation } from './Research';
 import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
@@ -250,10 +250,58 @@ const DRAFT_VERBS = {
 // POSTING_POLL_EVERY is the feed's cadence while a write stands.
 const POSTING_POLL_EVERY = 3000;
 
-// taskSessionHref opens a task's agent session (plan, triage) in its own
+// taskSessionHref is a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
 function taskSessionHref(session) {
   return `#/task-session/${session.sandbox}/${session.task}`;
+}
+
+// sessionClick opens a session link in the board's slide-over, unless the
+// click asks for a tab of its own (a modifier, a middle click) or there is
+// no slide-over to open it in.
+function sessionClick(onOpenSession, session) {
+  return (e) => {
+    if (!onOpenSession || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onOpenSession(session);
+  };
+}
+
+// SessionSlideOver: a task's session beside the board, 80% of its width,
+// the same view as its own tab (which its ↗ pops out to). Escape or the
+// backdrop closes it; the session goes on without it.
+function SessionSlideOver({ session, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const m = session.task.match(/^recipe-([a-z0-9]+)-/);
+  const title = `${m ? m[1] : session.task} · ${session.sandbox}`;
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 900 }} />
+      <div role="dialog" aria-label={title} style={{
+        position: 'fixed', top: 0, right: 0, height: '100%', width: '80%',
+        backgroundColor: 'var(--bg-card)', borderLeft: '1px solid var(--border-color)',
+        boxShadow: '-6px 0 24px rgba(0,0,0,0.25)', zIndex: 901,
+        display: 'flex', flexDirection: 'column', textAlign: 'left',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderBottom: '1px solid var(--border-color)' }}>
+          <strong style={{ fontSize: 'small', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</strong>
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+            <a className="btn btn-sm" href={taskSessionHref(session)} target="_blank" rel="noopener noreferrer"
+              onClick={onClose} title="Open this session in its own tab">Pop out ↗</a>
+            <button className="btn btn-sm" onClick={onClose} aria-label="Close" title="Close (Esc)">✕</button>
+          </span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <ResearchConversation key={`${session.sandbox}/${session.task}`} task={{ sandbox: session.sandbox, task: session.task }}
+            title={title} fill />
+        </div>
+      </div>
+    </>
+  );
 }
 
 // anyPosting is whether a row has a write or a revise standing. A revise
@@ -298,7 +346,7 @@ function DraftActions({ kind, actions, number, onEdit, onTake }) {
   return [...buttons, ...failures];
 }
 
-function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, runState, onRunStarted }) {
+function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, onOpenSession, runState, onRunStarted }) {
   const [showDraft, setShowDraft] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -402,7 +450,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       ready.push({ key: 'plan', label: `${label} ready`, open: showPlan, onClick: () => setShowPlan(v => !v), style: READY_STYLE,
         title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' });
     } else {
-      ready.push({ key: run.recipe, label: `${label} ready ↗`, href: taskSessionHref(run), style: READY_STYLE,
+      ready.push({ key: run.recipe, label: `${label} ready ↗`, href: taskSessionHref(run), session: run, style: READY_STYLE,
         title: `${label}'s draft awaits your verdict — open its session to read and apply it` });
     }
   }
@@ -561,8 +609,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           // ended one continued.
           return c.run ? (
             <a key={c.recipe} href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
+              onClick={sessionClick(onOpenSession, c.run)}
               style={{ textDecoration: 'none', marginLeft: '4px' }}
-              title={c.status === 'running' ? 'Watch the agent\'s conversation as it runs' : 'Continue the conversation, in its own tab'}>
+              title={c.status === 'running' ? 'Watch the agent\'s conversation as it runs' : 'Continue the conversation'}>
               <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
             </a>
           ) : (
@@ -590,6 +639,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         ))}
         {ready.map(r => r.href ? (
           <a key={r.key} className="btn btn-sm" href={r.href} target="_blank" rel="noopener noreferrer" title={r.title}
+            onClick={r.session ? sessionClick(onOpenSession, r.session) : undefined}
             style={{ marginLeft: '4px', textDecoration: 'none', color: r.style.color, backgroundColor: r.style.bg, borderColor: r.style.color, fontWeight: 600 }}>
             {r.label}
           </a>
@@ -683,9 +733,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                   )}
                   <div style={{ textAlign: 'right' }}>
                     {item.triageSession && (
-                      <a className="btn btn-sm" href={taskSessionHref(item.triageSession)}
+                      <a className="btn btn-sm" href={taskSessionHref(item.triageSession)} onClick={sessionClick(onOpenSession, item.triageSession)}
                         target="_blank" rel="noopener noreferrer"
-                        title="Continue the triage conversation where it left off, in its own tab"
+                        title="Continue the triage conversation where it left off"
                       >Continue session ↗</a>
                     )}
                     <DraftActions kind="Triage" actions={item.triageActions} number={item.number}
@@ -748,9 +798,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                   )}
                   <div style={{ textAlign: 'right' }}>
                     {planReady && item.planSession ? (
-                      <a className="btn btn-sm" href={taskSessionHref(item.planSession)}
+                      <a className="btn btn-sm" href={taskSessionHref(item.planSession)} onClick={sessionClick(onOpenSession, item.planSession)}
                         target="_blank" rel="noopener noreferrer"
-                        title="Continue the planning conversation where the plan left it, in its own tab"
+                        title="Continue the planning conversation where the plan left it"
                       >Continue session ↗</a>
                     ) : planReady && item.sandbox && (
                       // A plan from before task sessions: the terminal
@@ -784,9 +834,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               {/* The draft is the pending review on GitHub; the session is
                   where to ask the agent about it, or have it Update review. */}
               {item.reviewSession && (
-                <a className="btn btn-sm" href={taskSessionHref(item.reviewSession)}
+                <a className="btn btn-sm" href={taskSessionHref(item.reviewSession)} onClick={sessionClick(onOpenSession, item.reviewSession)}
                   target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginRight: '4px' }}
-                  title="Continue the review conversation where it left off, in its own tab — Update review posts a new pending review over this one"
+                  title="Continue the review conversation where it left off — Update review posts a new pending review over this one"
                 >Continue session ↗</a>
               )}
               <a className="btn btn-sm" href={`${item.htmlURL}/files`} target="_blank" rel="noopener noreferrer"
@@ -814,9 +864,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
             <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)}
+              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)} onClick={sessionClick(onOpenSession, item.fixSession)}
                 target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-                title="Continue the fix's conversation where it left off, in its own tab"
+                title="Continue the fix's conversation where it left off"
               >Continue session ↗</a>
               <span style={{ marginLeft: 'auto' }} />
               {/* The fix's recorded revises: the ones that need no input are
@@ -887,9 +937,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)}>agent logs</button>
             )}
             {item.fixSession && !fixBusy && (
-              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)}
+              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)} onClick={sessionClick(onOpenSession, item.fixSession)}
                 target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }}
-                title="Continue the fix's conversation where it left off, in its own tab"
+                title="Continue the fix's conversation where it left off"
               >Continue session ↗</a>
             )}
           </div>
@@ -1681,6 +1731,9 @@ function Work({ onBack, namespace }) {
   const defaultView = { issues: 'all', prs: 'all', labels: '' };
   const [view, setView] = useState(defaultView);
   const [cardSandbox, setCardSandbox] = useState(null);
+  // The task session open beside the board, { sandbox, task }.
+  const [openSession, setOpenSession] = useState(null);
+  const closeSession = useCallback(() => setOpenSession(null), []);
   const [specOpen, setSpecOpen] = useState(false);
   const [spec, setSpec] = useState(null);
 
@@ -2060,7 +2113,7 @@ function Work({ onBack, namespace }) {
                       onAction={(p, l, b) => handleAction(p, l, item.board, b)} onRefresh={fetchWork}
                       namespace={namespace} groupTag={item.board}
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
-                      onOpenSandbox={setCardSandbox} />
+                      onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession} />
                   ))}
                   {!loadingWork && !upNextAll.length && (
                     <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
@@ -2204,7 +2257,7 @@ function Work({ onBack, namespace }) {
                   )}
                   {!loadingWork && rows.map(item => (
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
-                      onOpenSandbox={setCardSandbox}
+                      onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession}
                       onAction={(p, l, b) => handleAction(p, l, undefined, b)} onRefresh={fetchWork} namespace={namespace}
                       groupTag={shown === UP_NEXT ? groupLabel(item) : undefined}
                       runState={runState} onRunStarted={onRunStarted} />
@@ -2227,6 +2280,10 @@ function Work({ onBack, namespace }) {
           </div>
         );
       })()}
+
+      {openSession && (
+        <SessionSlideOver session={openSession} onClose={closeSession} />
+      )}
 
       {cardSandbox && (
         <SandboxCard name={cardSandbox} namespace={namespace} onClose={() => setCardSandbox(null)} />
@@ -2345,5 +2402,5 @@ function Work({ onBack, namespace }) {
   );
 }
 
-export { TryPanel, WorkRow, PRDeploy, prRunName, anyPosting };
+export { TryPanel, WorkRow, PRDeploy, SessionSlideOver, prRunName, anyPosting };
 export default Work;
