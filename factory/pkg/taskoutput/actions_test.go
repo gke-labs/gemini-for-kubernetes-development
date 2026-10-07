@@ -21,19 +21,19 @@ func TestValidateActions(t *testing.T) {
 		kind string
 		acts []Action
 	}{
-		"unknown verb":         {"Plan", []Action{{Verb: "merge"}}},
-		"verb not for kind":    {"Plan", []Action{{Verb: "label"}}},
-		"twice":                {"Plan", []Action{{Verb: "comment"}, {Verb: "comment"}}},
-		"edit without field":   {"Plan", []Action{{Verb: "edit", Format: "markdown"}}},
-		"edit outside spec":    {"Plan", []Action{{Verb: "edit", Field: "target.url", Format: "yaml"}}},
-		"edit format":          {"Plan", []Action{{Verb: "edit", Field: "spec", Format: "html"}}},
-		"unknown follow-up":    {"Plan", []Action{{Verb: "run", Run: "deploy"}}},
-		"follow-up not a plan": {"Triage", []Action{{Verb: "run", Run: "fix"}}},
-		"comment with a run":   {"Plan", []Action{{Verb: "comment", Run: "fix"}}},
-		"revise without one":   {"Plan", []Action{{Verb: "revise"}}},
-		"revise twice":         {"Plan", []Action{{Verb: "revise", Revise: "plan"}, {Verb: "revise", Revise: "plan"}}},
-		"revise with a run":    {"Plan", []Action{{Verb: "revise", Revise: "plan", Run: "fix"}}},
-		"comment with revise":  {"Plan", []Action{{Verb: "comment", Revise: "plan"}}},
+		"unknown verb":        {"Plan", []Action{{Verb: "merge"}}},
+		"verb not for kind":   {"Plan", []Action{{Verb: "label"}}},
+		"twice":               {"Plan", []Action{{Verb: "comment"}, {Verb: "comment"}}},
+		"edit without field":  {"Plan", []Action{{Verb: "edit", Format: "markdown"}}},
+		"edit outside spec":   {"Plan", []Action{{Verb: "edit", Field: "target.url", Format: "yaml"}}},
+		"edit format":         {"Plan", []Action{{Verb: "edit", Field: "spec", Format: "html"}}},
+		"run without one":     {"Plan", []Action{{Verb: "run"}}},
+		"run with a field":    {"Plan", []Action{{Verb: "run", Run: "fix", Field: "spec"}}},
+		"comment with a run":  {"Plan", []Action{{Verb: "comment", Run: "fix"}}},
+		"revise without one":  {"Plan", []Action{{Verb: "revise"}}},
+		"revise twice":        {"Plan", []Action{{Verb: "revise", Revise: "plan"}, {Verb: "revise", Revise: "plan"}}},
+		"revise with a run":   {"Plan", []Action{{Verb: "revise", Revise: "plan", Run: "fix"}}},
+		"comment with revise": {"Plan", []Action{{Verb: "comment", Revise: "plan"}}},
 	} {
 		if err := ValidateActions(tc.kind, tc.acts); err == nil {
 			t.Errorf("%s: accepted %+v", name, tc.acts)
@@ -49,7 +49,7 @@ func TestOffered(t *testing.T) {
 	if got := verbsOf(doc.Offered()); got != "edit label comment reject" {
 		t.Errorf("defaults = %s", got)
 	}
-	doc.Actions = []Action{{Verb: "comment"}, {Verb: "teleport"}, {Verb: "run", Run: "fix"}}
+	doc.Actions = []Action{{Verb: "comment"}, {Verb: "teleport"}, {Verb: "post-review"}}
 	if got := verbsOf(doc.Offered()); got != "comment" {
 		t.Errorf("offered = %s", got)
 	}
@@ -135,5 +135,24 @@ func TestActionsRoundTrip(t *testing.T) {
 	}
 	if got := docs[0].Actions; len(got) != 4 || got[0].Field != "spec.markdown" || got[2].Run != "fix" || got[2].Label != "Fix with this plan" {
 		t.Errorf("actions = %+v\n%s", got, data)
+	}
+}
+
+// A result is another recipe's input as its markdown, or else its spec
+// as YAML.
+func TestDocumentText(t *testing.T) {
+	plan, err := Wrap("Plan", "## Steps\n1. do it\n", Target{URL: "https://github.com/o/r/issues/7"}, Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := plan.Text(); err != nil || got != "## Steps\n1. do it\n" {
+		t.Errorf("Plan text = %q %v", got, err)
+	}
+	triage, err := Wrap("Triage", "triage:\n  labels: [bug]\n  priority: high\n", Target{URL: "https://github.com/o/r/issues/7"}, Source{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := triage.Text(); err != nil || !strings.Contains(got, "priority: high") || !strings.Contains(got, "bug") {
+		t.Errorf("Triage text = %q %v", got, err)
 	}
 }

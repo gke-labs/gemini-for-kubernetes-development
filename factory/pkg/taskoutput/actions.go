@@ -75,16 +75,10 @@ var verbs = map[string]verb{
 	"post-review":  {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
 	"open-pr":      {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
 	"post-replies": {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
-	"run":          {class: ClassFollowUp, kinds: []string{"Plan"}},
+	"run":          {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
 	"revise":       {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
 	"edit":         {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
 	"reject":       {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-}
-
-// followUps are the tasks a run may start, by the kinds whose result they
-// take.
-var followUps = map[string][]string{
-	"fix": {"Plan"},
 }
 
 // defaultActions are what a kind's result offers when its document
@@ -180,12 +174,13 @@ func ValidateActions(kind string, actions []Action) error {
 				return fmt.Errorf("action edit: format %q must be yaml or markdown", a.Format)
 			}
 		case "run":
-			kinds, ok := followUps[a.Run]
-			if !ok {
-				return fmt.Errorf("action run: %q is not a follow-up; one of: %s", a.Run, strings.Join(sortedKeys(followUps), ", "))
+			// Whether the recipe takes the result is the recipe's to say
+			// (an input from: kind), checked where recipes are.
+			if !reviseRE.MatchString(a.Run) {
+				return fmt.Errorf("action run: recipe %q must match %s", a.Run, reviseRE)
 			}
-			if !slices.Contains(kinds, kind) {
-				return fmt.Errorf("action run %s does not take a %s", a.Run, kind)
+			if a.Field != "" || a.Format != "" || a.Revise != "" {
+				return fmt.Errorf("action run takes only a run and a label")
 			}
 		case "revise":
 			if !reviseRE.MatchString(a.Revise) {
@@ -235,13 +230,4 @@ func (d *Document) Offer(verbName, arg string) (Action, error) {
 		verbName += " " + arg
 	}
 	return Action{}, fmt.Errorf("the %s does not offer %s; it offers: %s", d.Kind, verbName, strings.Join(offered, ", "))
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

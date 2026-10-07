@@ -11,11 +11,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
 
 // NewApplyCommand acts on task outputs: what a task found, applied to
@@ -57,9 +56,9 @@ Without --action, apply does each write the result offers:
   post-review     that write alone
   open-pr         that write alone
   post-replies    that write alone
-  run             the follow-up it offers (run:fix names it): for a Plan,
-                  writes the plan, as edited, to the issue's sandbox and
-                  runs factory recipe fix --with-plan true there
+  run             the follow-up it offers (run:fix names it): the recipe
+                  on the result's target, with the result, as edited, as
+                  its input from that kind (fix's plan, from: Plan)
   revise          one of the recipe's revises (revise:plan names it):
                   factory recipe revise, into the conversation the result
                   came from; it writes a new result and posts nothing
@@ -179,22 +178,48 @@ var (
 	}
 )
 
-// runFollowUps starts the follow-up each document offers: for a Plan, a
-// fix that follows it.
+// runFollowUps starts the follow-up each document offers: the recipe it
+// names, on the document's target, with the result as the recipe's input
+// from its kind.
 func runFollowUps(ctx context.Context, c *cobra.Command, docs []*taskoutput.Document, run string, dryRun bool) error {
 	if _, err := ResolveRootFlags(c); err != nil {
 		return err
 	}
 	for _, d := range docs {
 		a, _ := d.Offer("run", run)
-		if a.Run != "fix" {
-			return fmt.Errorf("%s: follow-up %q is not one this factory runs", d.Target.URL, a.Run)
+		input, text, err := followUpInput(d, a.Run)
+		if err != nil {
+			return fmt.Errorf("%s: %w", d.Target.URL, err)
 		}
-		if err := fixWithPlan(ctx, d, dryRun); err != nil {
+		if dryRun {
+			fmt.Printf("Would run: factory recipe %s --url %s with the %s as its %s input\n", a.Run, d.Target.URL, d.Kind, input)
+			continue
+		}
+		if err := runFollowUp(ctx, a.Run, d.Target.URL, map[string]string{input: text}); err != nil {
 			return fmt.Errorf("%s: %w", d.Target.URL, err)
 		}
 	}
 	return nil
+}
+
+// followUpInput is the input of built-in recipe name that takes the
+// document's kind, and the document's text to give it.
+func followUpInput(d *taskoutput.Document, name string) (string, string, error) {
+	_, rec, err := recipe.Builtin(name)
+	if err != nil {
+		return "", "", err
+	}
+	input, ok := rec.InputFrom(d.Kind)
+	if !ok {
+		return "", "", fmt.Errorf("recipe %s takes no input from a %s", name, d.Kind)
+	}
+	text, err := d.Text()
+	return input, text, err
+}
+
+// runFollowUp is runFollowUps' sandbox call.
+var runFollowUp = func(ctx context.Context, name, url string, inputs map[string]string) error {
+	return runRecipe(ctx, name, url, "", "", applyMode{}, inputs, nil, reviseRun{})
 }
 
 // runRevises runs the revise each document offers, in the conversation of
@@ -223,51 +248,3 @@ func runRevises(ctx context.Context, c *cobra.Command, docs []*taskoutput.Docume
 	}
 	return nil
 }
-
-// fixWithPlan writes a Plan, as it may have been edited, where a fix
-// reads it in the issue's sandbox, and runs the fix recipe there, with
-// the plan.
-func fixWithPlan(ctx context.Context, d *taskoutput.Document, dryRun bool) error {
-	p, err := d.PlanSpec()
-	if err != nil {
-		return err
-	}
-	it, err := parseGitHubItemURL(d.Target.URL)
-	if err != nil {
-		return err
-	}
-	if it.IsPR {
-		return fmt.Errorf("a Plan targets an issue, not %s", d.Target.URL)
-	}
-	planPath := tasks.PlanFilePath(it.Number)
-	if dryRun {
-		fmt.Printf("Would write the plan to %s in %s's sandbox and run: factory recipe fix --url %s --with-plan true\n", planPath, d.Target.URL, d.Target.URL)
-		return nil
-	}
-	if err := writePlan(ctx, d.Target.URL, planPath, []byte(strings.TrimSpace(p.Markdown)+"\n")); err != nil {
-		return err
-	}
-	return runFixRecipe(ctx, d.Target.URL)
-}
-
-// writePlan and runFixRecipe are fixWithPlan's sandbox calls.
-var (
-	writePlan = func(ctx context.Context, issueURL, planPath string, plan []byte) error {
-		name, err := sandboxForURL(ctx, issueURL)
-		if err != nil {
-			return err
-		}
-		client, err := envd.Connect(ctx, rootFlags.Namespace, name)
-		if err != nil {
-			return fmt.Errorf("connecting to sandbox %s: %w", name, err)
-		}
-		if err := client.WriteFile(ctx, planPath, plan); err != nil {
-			return fmt.Errorf("writing the plan to %s in %s: %w", planPath, name, err)
-		}
-		fmt.Printf("Wrote the plan to %s in %s; running the fix\n", planPath, name)
-		return nil
-	}
-	runFixRecipe = func(ctx context.Context, issueURL string) error {
-		return runRecipe(ctx, "fix", issueURL, "", "", applyMode{}, map[string]string{"with_plan": "true"}, nil, reviseRun{})
-	}
-)

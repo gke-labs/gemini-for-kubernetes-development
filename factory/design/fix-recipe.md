@@ -26,7 +26,7 @@ Triage, plan, research and review already run as recipes: a task session in the 
 
 ### The `fix` recipe
 
-`factory recipe fix --url <issue|PR> [--instruction …] [--with-plan] [--apply]`, built in (`pkg/recipe/recipes/fix.yaml`):
+`factory recipe fix --url <issue|PR> [--instruction …] [--plan <markdown>] [--apply]`, built in (`pkg/recipe/recipes/fix.yaml`):
 
 - **`task-type: fix`**, in the issue's sandbox (`fix-<repo>-<n>`), where triage and plan run and the approved plan is left. Its run is recorded under `fix-run`.
 - **Credentials: full**, as plan's are in the same sandbox: the agent reads the issue, its comments and linked PRs with `gh`. It is told not to push, comment or open PRs, but the token is in the sandbox. The issue's sandbox going token-free is a later step (see [Not planned here](#not-planned-here)).
@@ -34,7 +34,7 @@ Triage, plan, research and review already run as recipes: a task session in the 
   - `setup-git`, then **`setup-fork`** (new): clone, and make `origin` the member's fork and `upstream` the repository. It fails if the fork cannot be made (the repository forbids forks, or the member cannot fork). This is `fix_issue.sh`'s `ensureForkRemote`. A fix never falls back to pushing to the repository.
   - `checkout-default-branch`, then a branch `issue-<n>-<unix>`.
   - `configure-engine`.
-  - With `--with-plan`, the approved plan (`/workspaces/plan-issue-<n>.md`) goes into the first ask.
+  - With a `plan` input, the approved plan goes into the first ask. The input is declared `from: Plan`: it is what a Plan's `run: fix` fills (below).
   - An ask that fixes the issue and commits, with `fix_issue.txt`'s rules minus the push and `gh pr create`.
   - An ask that writes the PR's title and body (with `Fixes #<n>`), captured to `change.yaml`.
   - **`push`** (new): see below.
@@ -119,7 +119,7 @@ Its triggers (a new head with failures, 30 minutes since the last attempt, comme
 
 ### `run:fix`
 
-The Plan kind's *Fix with this plan* (`factory apply --action run:fix`) starts the `fix` recipe with `--with-plan` instead of `factory fix`. It still writes the edited plan to `/workspaces/plan-issue-<n>.md` first. The overseer does not use `run:fix`.
+The Plan kind's *Fix with this plan* (`factory apply --action run:fix`) starts the `fix` recipe with the plan, as edited, as its `plan` input. The hand-off is declared by the consumer: fix's input `plan: {from: Plan}` says it takes a Plan's result; the producer's action `run: fix` only names the follow-up, and a recipe refuses a `run:` of a recipe with no input from its kind. No file in the sandbox carries the plan to the fix. The overseer does not use `run:fix`.
 
 ## Board (repo-agent)
 
@@ -161,7 +161,6 @@ Step 1 deviates from the above where:
 
 - **The branch is a `run` step** in `fix.yaml`, after `checkout-default-branch`, not part of `setup-fork`. It writes the branch and the base to `$TASK_DIR/branch` and `$TASK_DIR/base`, which `push` reads; `uses` steps now get `TASK_DIR`.
 - **`push` records `push.json`** (fork, branch, base, head) in the task directory. Its lease comes from `$TASK_DIR/lease`; nothing writes that until the revises (step 2), so a start's push requires the branch not to exist. It pushes to the fork's URL as the API names it, not to the remote `origin`, so a `pushurl` left in the checkout cannot redirect it.
-- **`--with-plan` takes a value** (`--with-plan true`): recipe inputs have no boolean type.
 - **Disclose** reaches the prompts as a standard input, `disclose` (`--disclose`). `open-pr` adds no footer, as the other verbs do not.
 - **Labels** are a recipe input, `--labels a,b`, which the runner adds to `spec.labels`.
 - **`open-pr` points the document's target at the PR**; `factory apply` (and `--apply`) then aliases the sandbox: the one the run used, else `source.sandbox`, else the issue's.

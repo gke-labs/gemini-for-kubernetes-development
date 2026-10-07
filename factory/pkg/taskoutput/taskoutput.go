@@ -169,6 +169,22 @@ func Parse(data []byte) ([]*Document, error) {
 // Triage is a Triage document's spec.
 type Triage = tasks.TriageSuggestion
 
+// Text is the result as another recipe's input takes it: its spec's
+// markdown when it has one, else its spec as YAML.
+func (d *Document) Text() (string, error) {
+	var md struct {
+		Markdown string `yaml:"markdown"`
+	}
+	if err := d.Spec.Decode(&md); err == nil && strings.TrimSpace(md.Markdown) != "" {
+		return strings.TrimSpace(md.Markdown) + "\n", nil
+	}
+	out, err := yaml.Marshal(&d.Spec)
+	if err != nil {
+		return "", fmt.Errorf("%s spec: %w", d.Kind, err)
+	}
+	return string(out), nil
+}
+
 // TriageSpec decodes a Triage document's spec.
 func (d *Document) TriageSpec() (*Triage, error) {
 	if d.Kind != "Triage" {
@@ -193,7 +209,7 @@ func parseTriage(raw string) (any, error) {
 }
 
 // Plan is a Plan document's spec: an implementation plan for an issue,
-// in markdown, which a fix can follow (factory fix --with-plan).
+// in markdown, which a fix can follow (fix.yaml's input from: Plan).
 type Plan struct {
 	Markdown string `yaml:"markdown"`
 }

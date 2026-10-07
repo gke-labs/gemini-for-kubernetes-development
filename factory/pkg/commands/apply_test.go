@@ -14,41 +14,29 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 )
 
-// run:fix writes the plan, as edited, then starts the fix recipe on the
-// plan's issue.
-func TestFixWithPlanRunsTheRecipe(t *testing.T) {
-	oldWrite, oldRun := writePlan, runFixRecipe
-	t.Cleanup(func() { writePlan, runFixRecipe = oldWrite, oldRun })
-	var calls []string
-	writePlan = func(_ context.Context, issueURL, planPath string, plan []byte) error {
-		calls = append(calls, fmt.Sprintf("write %s %s %q", issueURL, planPath, plan))
-		return nil
-	}
-	runFixRecipe = func(_ context.Context, issueURL string) error {
-		calls = append(calls, "fix "+issueURL)
-		return nil
-	}
-	issue := "https://github.com/o/r/issues/7"
-	d, err := taskoutput.Wrap("Plan", "## Summary\nDo it.\n", taskoutput.Target{URL: issue}, taskoutput.Source{Task: "t"})
+// run:fix gives the plan, as edited, to fix as its input from a Plan.
+func TestRunFixFollowUpPassesThePlan(t *testing.T) {
+	d, err := taskoutput.Wrap("Plan", "## Summary\nDo it.\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{Task: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if err := fixWithPlan(context.Background(), d, true); err != nil || len(calls) != 0 {
-		t.Fatalf("dry run: %v, %v", err, calls)
+	input, text, err := followUpInput(d, "fix")
+	if err != nil || input != "plan" || text != "## Summary\nDo it.\n" {
+		t.Errorf("followUpInput = %q %q %v, want fix's plan input with the plan", input, text, err)
 	}
-	if err := fixWithPlan(context.Background(), d, false); err != nil {
+}
+
+// A run of a recipe that takes no input from the result's kind starts
+// nothing.
+func TestRunFollowUpNeedsAnInputFromTheKind(t *testing.T) {
+	d, err := taskoutput.Wrap("Summary", "Short.\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{Task: "t"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		fmt.Sprintf("write %s %s %q", issue, tasks.PlanFilePath(7), "## Summary\nDo it.\n"),
-		"fix " + issue,
-	}
-	if fmt.Sprint(calls) != fmt.Sprint(want) {
-		t.Errorf("calls = %q, want %q", calls, want)
+	if _, _, err := followUpInput(d, "fix"); err == nil {
+		t.Error("fix took a Summary")
 	}
 }
 

@@ -44,6 +44,8 @@ type RecipeInputInfo struct {
 	Required    bool   `json:"required,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Revise      bool   `json:"revise,omitempty"`
+	// From is the task output kind whose result the input takes.
+	From string `json:"from,omitempty"`
 }
 
 // RecipeReviseInfo is one revise, with the inputs it asks for.
@@ -66,7 +68,7 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	}
 	for _, name := range sortedInputNames(rec) {
 		in := rec.Inputs[name]
-		info.Inputs = append(info.Inputs, RecipeInputInfo{Name: name, Description: in.Description, Default: in.Default, Required: in.Required, Type: in.Type, Revise: in.Revise})
+		info.Inputs = append(info.Inputs, RecipeInputInfo{Name: name, Description: in.Description, Default: in.Default, Required: in.Required, Type: in.Type, Revise: in.Revise, From: in.From})
 	}
 	for _, rv := range rec.Revise {
 		info.Revises = append(info.Revises, RecipeReviseInfo{ID: rv.ID, Label: rv.Label, Inputs: rv.Inputs})

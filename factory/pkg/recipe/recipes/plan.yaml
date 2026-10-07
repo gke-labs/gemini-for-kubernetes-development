@@ -1,8 +1,9 @@
 # factory recipe plan --url <issue> [--feedback …] [--instruction …] [--apply]:
 # an implementation plan for an issue, in the issue's sandbox. The plan is
-# left at /workspaces/plan-issue-<n>.md, where `factory fix --with-plan`
-# follows it, and is the task's result: a Plan task output, which
-# `factory apply` (or --apply) posts on the issue.
+# the task's result: a Plan task output, which `factory apply` (or
+# --apply) posts on the issue, and whose run: fix starts the fix recipe
+# with it as fix's plan input (from: Plan). It is also left at
+# /workspaces/plan-issue-<n>.md, for the next plan run to revise.
 #
 # Run again, it revises the plan it finds there, against --feedback if
 # given. After a conversation in its session, `factory recipe revise
