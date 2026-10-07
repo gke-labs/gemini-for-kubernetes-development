@@ -16,7 +16,7 @@ Each row button then starts a recipe, and each revise lives in its run's session
 ## Decisions
 
 1. **care is a new conversation.** A start always opens one; only a revise continues one (`StartDaemonSession` / `OpenDaemonSession`). care does not try to continue the fix's: its input is GitHub state (comments, checks, the base branch), not the fix's reasoning.
-2. **care runs where a PR's recipes already run:** `recipe-<repo>-<n>` (`EnsureRecipeSandbox`). It does not use the fix's sandbox. It clones the PR's branch from the fork, so it has the code. No sandbox code changes.
+2. **care runs in the PR's fix sandbox** (`EnsurePRSandbox`): the one the fix that opened the PR ran in, found by its `factory.gemini.google.com/pr` label, or for a PR no fix opened, `fix-<repo>-<pr>`, made for it and labelled with the PR, not an issue. Issues and PRs share one number space, so the name cannot clash with an issue's. Its start fetches the PR's branch and resets to the PR's head, since the fix's checkout may be behind or ahead of it. (First written as `recipe-<repo>-<n>`, a sandbox of the PR's recipes; changed after step 3 so that a PR has one sandbox. A credentials: clone recipe, review, keeps one of its own.)
 3. **care's start does what the PR needs.** It rebases if the PR is behind or conflicting, then fixes failing checks, then works through unanswered review comments. A rebase changes both the checks and the code the comments are on, hence that order. An optional `focus` input (`comments`, `ci`, `rebase`) narrows a run to one job.
 4. **Its revises are fix's three PR revises plus `iterate`**, with the same ids and prompts (moved, with "your fix" reworded to "this PR"). They continue care's conversation.
 5. **fix loses its PR mode, and factory loses the machinery behind it.** fix is `on: [issue]`, with one revise. After the split every recipe's start runs on every target in its `on:`, and a revise always continues a run. Nothing needs a start that skips some targets, a revise that opens a session, or a `setup:` that can run ahead of either. Those pieces are deleted rather than kept for a recipe that might want them (see [What goes](#what-goes)).
@@ -90,7 +90,7 @@ What stays: the `on:` rule that a my-pr is a PR too (today inside `StartsOn`, wh
 
 The watch revises a fix run today (`reviseFixRun`: `fix-ci`, `address-comments` in the fix's sandbox). After the split:
 
-- **A care run on the PR** (`care-run` on `recipe-<repo>-<n>`): revise it with `fix-ci` or `address-comments`, then apply `post-replies`, as now.
+- **A care run on the PR** (`recipe-care-run` on the PR's fix sandbox): revise it with `fix-ci` or `address-comments`, then apply `post-replies`, as now.
 - **No care run:** start care with `focus: ci` or `focus: comments`, then apply `post-replies`.
 - **Neither recipe can run**, for example on an old image: fall back to `pr investigate` / `pr address-comments`, as the watch does for a PR without a fix run today.
 
@@ -143,8 +143,9 @@ Step 1 (factory) deviates where:
 - **care has no `task-type`.** Like review and summarize, its runs are recorded as `recipe-care` (`sandbox.gemini.google.com/recipe-care-run`), which the catalog publishes as its `taskType`.
 - **`pr_url` is not declared.** It is a standard input on a PR, so care's start and revises get it without a revise input.
 - **The start on a PR gets the PR's push facts** from `runRecipe` for any recipe whose task output is a Change (`prPushInputs`). care's start force-with-lease pushes even an unchanged head, so it always records `push.json` for its revises.
-- **The watch starts care only on a fix's PR.** With a care run on `recipe-<repo>-<n>` it revises it; with a fix sandbox aliased to the PR and no care run it starts care with a `focus`; otherwise it runs `pr investigate` / `pr address-comments` as before. A care start that fails is logged, with no fallback. (Superseded: the watch now always cares, see below.)
+- **The watch starts care only on a fix's PR.** With a care run on the PR's sandbox it revises it; with a fix sandbox aliased to the PR and no care run it starts care with a `focus`; otherwise it runs `pr investigate` / `pr address-comments` as before. A care start that fails is logged, with no fallback. (Superseded: the watch now always cares, see below.)
 - **fix's iterate after care has pushed to the same branch fails its lease**, which is safe: nothing is overwritten.
+- **care shares the fix's sandbox** (decision 2, as changed): a PR's non-clone recipes run in `EnsurePRSandbox`, so care and the fix's revises take turns in one sandbox, and the watch finds care's run there (`PRFixSandbox`). `RecipeSandboxName` is only a credentials: clone recipe's now; `recipe-<repo>-<n>` is no longer made, and an existing one is left unused.
 
 ## Auto on any PR of yours
 

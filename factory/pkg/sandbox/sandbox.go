@@ -247,7 +247,59 @@ func labelValue(s string) string {
 // named task) taskID, fix-<repo>-<taskID>. Plan and triage run in it too.
 func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
-	issueLabels := IssueLabels(repoName, taskID)
+	return ensureFixSandbox(ctx, kubeClient, namespace, name, IssueLabels(repoName, taskID), nil, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+// LabelPR is the PR a sandbox works on: a fix's once it opens its PR
+// (AliasSandboxToPR), and one made for a PR (EnsurePRSandbox).
+const LabelPR = "factory.gemini.google.com/pr"
+
+// EnsurePRSandbox creates (or reuses) the sandbox a PR's recipes run in
+// (care): the fix sandbox of the fix that opened it, sharing its disk and
+// checkout, or with none, one made for the PR, fix-<repo>-<pr>, as a fix
+// sandbox aliased to it is. Issues and PRs share their numbers' space, so
+// that name is never an issue's.
+func EnsurePRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, prURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name, err := PRFixSandbox(ctx, kubeClient, namespace, repoName, prNum, prURL)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		name = fmt.Sprintf("fix-%s-%d", repoName, prNum)
+	}
+	labels := map[string]string{LabelRepo: labelValue(repoName), LabelPR: strconv.Itoa(prNum)}
+	return ensureFixSandbox(ctx, kubeClient, namespace, name, labels, map[string]string{"pr": strconv.Itoa(prNum)}, repoName, cloneURL, prURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+// PRFixSandbox is the fix sandbox in namespace aliased to PR prNum of
+// repoName, whose htmlURL is prURL, or "".
+func PRFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, prURL string) (string, error) {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%d", LabelPR, prNum),
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing the sandboxes of PR #%d: %w", prNum, err)
+	}
+	for _, sb := range list.Items {
+		a := sb.GetAnnotations()
+		if strings.HasPrefix(sb.GetName(), "fix-") && a["repo"] == repoName && sameItemURL(a["htmlURL"], prURL) && !terminating(&sb) {
+			return sb.GetName(), nil
+		}
+	}
+	return "", nil
+}
+
+func sameItemURL(a, b string) bool {
+	norm := func(u string) string {
+		u, _, _ = strings.Cut(u, "#")
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u), "/"))
+	}
+	return norm(a) != "" && norm(a) == norm(b)
+}
+
+// ensureFixSandbox creates (or reuses) fix sandbox name, labelled with
+// labels: on reuse, it gains them.
+func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string, issueLabels, annotations map[string]string, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil && terminating(sb) {
@@ -284,11 +336,11 @@ func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
 			}, issueLabels),
-			Annotations: map[string]string{
+			Annotations: withLabels(map[string]string{
 				"repo":     repoName,
 				"cloneURL": cloneURL,
 				"htmlURL":  htmlURL,
-			},
+			}, annotations),
 			Image:                 image,
 			Replicas:              1,
 			WorkspaceDiskSize:     diskSize,

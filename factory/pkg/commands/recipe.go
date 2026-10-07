@@ -417,10 +417,10 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
 	// An issue's recipes run in the issue's sandbox, beside its triage,
-	// plan and fix; a PR's in a sandbox of their own, one for those that
-	// hold the token and one for credentials: clone's, which no token
-	// has touched; a repository's in one per conversation, named as a
-	// research session's is, since its transcript is the sandbox's.
+	// plan and fix; a PR's in its fix sandbox, beside the fix that opened
+	// it, except a credentials: clone recipe's, in one of its own which no
+	// token has touched; a repository's in one per conversation, named as
+	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
 	case it.IsRepo():
@@ -433,14 +433,13 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		fmt.Printf("Ensuring the sandbox for %s/%s, session %s...\n", it.Owner, it.Repo, session)
 		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
 	case it.IsPR:
-		// A credentials: clone recipe gets a sandbox of its own, named
-		// after it: no recipe holding the token has run there.
-		ownRecipe := ""
-		if rec.Credentials == recipe.CredentialsClone {
-			ownRecipe = rec.Name
-		}
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
-		sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, ownRecipe, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		if rec.Credentials == recipe.CredentialsClone {
+			// No recipe holding the token has run there.
+			sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, rec.Name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		} else {
+			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		}
 	default:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)

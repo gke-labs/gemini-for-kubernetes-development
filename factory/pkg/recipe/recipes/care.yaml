@@ -1,7 +1,8 @@
 # factory recipe care --url <PR> [--focus comments|ci|rebase] [--instruction …]:
 # looks after a pull request of yours (design/care-recipe.md), in the PR's
-# sandbox. The PR must be yours: authored by you, its head a branch on your
-# fork (on: [my-pr]); factory pr adopt takes over one that is not.
+# fix sandbox: the fix's that opened it, or one made for the PR. The PR
+# must be yours: authored by you, its head a branch on your fork (on:
+# [my-pr]); factory pr adopt takes over one that is not.
 #
 # The start brings the PR to mergeable: it rebases it if it is behind or
 # conflicts, fixes checks it broke, and answers review comments not yet
@@ -67,6 +68,12 @@ start:
             git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/heads/${INPUT_PUSHED_BRANCH}"
           git checkout "${INPUT_PUSHED_BRANCH}"
         fi
+    # The PR as it is now: the sandbox may be the fix's that opened the
+    # PR, its branch behind what was pushed since, or ahead with commits
+    # never pushed. The revises keep it, leased against care's last push.
+    - run: |
+        git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}"
+        git reset --hard "${INPUT_PUSHED_HEAD}"
     # The default branch as it is now, which a rebase goes onto.
     - run: |
         case "${INPUT_FOCUS}" in ""|comments|ci|rebase) ;; *) echo "focus ${INPUT_FOCUS} is not one of: comments, ci, rebase" >&2; exit 1 ;; esac

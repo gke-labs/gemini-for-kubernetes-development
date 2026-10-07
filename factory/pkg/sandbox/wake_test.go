@@ -14,11 +14,11 @@ import (
 // the caller connects to envd next, before anything else would wake it.
 func TestReusedSandboxIsWoken(t *testing.T) {
 	ns := "u"
-	sb := prSandbox("recipe-open-rl-7", ns, "", "", false)
+	sb := prSandbox("review-open-rl-7", ns, "", "", false)
 	_ = unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
 	kc := reviewClients(t, ns, sb)
 
-	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "", "", "", "", "", "", "", nil, nil, "")
+	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "review", "", "", "", "", "", "", nil, nil, "")
 	if err != nil {
 		t.Fatalf("EnsureRecipeSandbox: %v", err)
 	}
@@ -37,9 +37,6 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 // A credentials: clone recipe's PR sandbox is its own, which no recipe
 // holding the token runs in.
 func TestRecipeSandboxName(t *testing.T) {
-	if got := sandbox.RecipeSandboxName("open-rl", 7, ""); got != "recipe-open-rl-7" {
-		t.Errorf("shared = %s", got)
-	}
 	if got := sandbox.RecipeSandboxName("open-rl", 7, "review"); got != "review-open-rl-7" {
 		t.Errorf("own = %s", got)
 	}

@@ -171,3 +171,44 @@ func TestReusedFixSandboxLauncher(t *testing.T) {
 		}
 	}
 }
+
+// A PR's recipes run in its fix sandbox, the one the fix that opened it
+// ran in; a PR no fix opened gets a fix sandbox of its own, which is not
+// an issue's.
+func TestPRSandboxIsTheFixSandbox(t *testing.T) {
+	ns := "u"
+	prURL := "https://github.com/o/open-rl/pull/12"
+	fix := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "fix-open-rl-7", "namespace": ns,
+			"labels":      map[string]interface{}{LabelRepo: "open-rl", LabelIssue: "7", LabelPR: "12"},
+			"annotations": map[string]interface{}{"repo": "open-rl", "htmlURL": prURL},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	kc := fakeKube(t, ns, fix)
+	name, err := EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 12, "https://github.com/o/open-rl.git", prURL, "", "", "", "", nil, nil, "")
+	if err != nil || name != "fix-open-rl-7" {
+		t.Fatalf("EnsurePRSandbox(12) = %q, %v; want the fix's sandbox", name, err)
+	}
+
+	name, err = EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 13, "https://github.com/o/open-rl.git", "https://github.com/o/open-rl/pull/13", "", "", "", "", nil, nil, "")
+	if err != nil || name != "fix-open-rl-13" {
+		t.Fatalf("EnsurePRSandbox(13) = %q, %v", name, err)
+	}
+	got, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := got.GetLabels(); l[LabelRepo] != "open-rl" || l[LabelPR] != "13" || l[LabelIssue] != "" {
+		t.Errorf("labels = %v", l)
+	}
+	if a := got.GetAnnotations(); a["pr"] != "13" || a["htmlURL"] != "https://github.com/o/open-rl/pull/13" {
+		t.Errorf("annotations = %v", a)
+	}
+	if again, err := PRFixSandbox(context.Background(), kc, ns, "open-rl", 13, "https://github.com/o/open-rl/pull/13"); err != nil || again != name {
+		t.Errorf("PRFixSandbox(13) = %q, %v", again, err)
+	}
+}
