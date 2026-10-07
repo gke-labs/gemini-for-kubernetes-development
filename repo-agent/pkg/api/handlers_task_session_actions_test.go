@@ -52,8 +52,8 @@ func planSessionServer(t *testing.T, approved bool) (*gin.Engine, *fake.FakeDyna
 		annoBoard: "myboard",
 		"sandbox.gemini.google.com/last-task-type":  "plan",
 		"sandbox.gemini.google.com/last-task-state": "Completed",
-		annoPlannedAt:                "2026-09-17T00:00:00Z",
-		factorycli.AnnotationPlanRun: string(run),
+		"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
+		factorycli.AnnotationPlanRun:                string(run),
 		factorycli.AnnotationPlanOutput: `apiVersion: factory.gemini.google.com/v1alpha1
 kind: Plan
 source:
@@ -438,5 +438,45 @@ func TestATriageSessionActsOnItsIssueRow(t *testing.T) {
 	}
 	if spec := applyFiled(t, dyn); spec.Number != 42 || *spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-triage", Action: "comment"}) {
 		t.Errorf("comment filed %+v, want the triage's on #42", spec)
+	}
+}
+
+// A triage's edit in its session is held to the schema label and comment
+// act on: malformed YAML, unknown fields and an empty suggestion are
+// refused with why; a valid edit, as the triage: block or as the whole
+// task output, replaces the stored draft.
+func TestATriageSessionsEditIsValidated(t *testing.T) {
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "triage/myboard/42/1", Task: "recipe-triage-1", StartedAt: time.Unix(1_000_000, 0), Kind: "Triage",
+	})
+	r, dyn := fixSessionServer(t, "Completed", false, map[string]interface{}{
+		factorycli.AnnotationTriageRun: string(run),
+		factorycli.AnnotationTriageOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\n" +
+			"source:\n  task: recipe-triage-1\nspec:\n  labels: [bug]\n  assessment: A crash.\n",
+	})
+	edit := func(text string) int {
+		body, _ := json.Marshal(map[string]string{"text": text})
+		return doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-42/recipe-triage-1/draft/edit", string(body)).Code
+	}
+	for _, bad := range []string{"triage: [", "triage:\n  bogus: field", "triage: {}", ""} {
+		if code := edit(bad); code != http.StatusBadRequest {
+			t.Errorf("edit %q: %d, want 400", bad, code)
+		}
+	}
+	stored := func() string {
+		return sessionSandboxAnnotations(t, dyn, "fix-repo-42")[factorycli.AnnotationTriageOutput]
+	}
+	if code := edit("triage:\n  labels: [bug, p1]\n  assessment: human-refined"); code != http.StatusOK {
+		t.Fatalf("valid edit: %d", code)
+	}
+	if got := stored(); !strings.Contains(got, "p1") || !strings.Contains(got, "human-refined") {
+		t.Errorf("stored after edit = %q", got)
+	}
+	whole := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\nspec:\n  labels:\n    - bug\n  assessment: pasted whole\n"
+	if code := edit(whole); code != http.StatusOK {
+		t.Fatalf("edit as a whole task output: %d", code)
+	}
+	if got := stored(); !strings.Contains(got, "pasted whole") {
+		t.Errorf("stored after a whole-output edit = %q", got)
 	}
 }

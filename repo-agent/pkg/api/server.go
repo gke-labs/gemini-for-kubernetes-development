@@ -67,10 +67,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/recipes", s.getBoardRecipes)
 		api.POST("/board/:board/issues/:id/recipes/:recipe", s.launchRecipe("issue"))
 		api.POST("/board/:board/prs/:id/recipes/:recipe", s.launchRecipe("pr"))
-		api.POST("/board/:board/issues/:id/triage-reject", s.rejectBoardTriage)
-		api.PUT("/board/:board/issues/:id/plan-draft", s.putBoardPlanDraft)
-		api.PUT("/board/:board/issues/:id/draft", s.putBoardTriageDraft)
-		api.POST("/board/:board/issues/:id/plan-feedback", s.planBoardFeedback)
 		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
 		api.POST("/board/:board/research", s.startResearchSession)
 		// The canned openings as text, for a pane that puts one in the
@@ -100,11 +96,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.DELETE("/board/:board/runbook/instance/:instance", s.removeRunbookInstance)
 		// A local-only run's files, served from its sandbox.
 		api.GET("/board/:board/runbook/instance/:instance/file/:file", s.getLocalRunFile)
-		api.POST("/board/:board/issues/:id/plan-approve", s.planBoardApprove)
-		api.POST("/board/:board/issues/:id/plan-reject", s.planBoardReject)
-		// What a draft's task output offers (a work item's triageActions
-		// and planActions), taken one at a time.
-		api.POST("/board/:board/issues/:id/actions/:verb", s.boardIssueAction)
 		api.POST("/board/:board/prs/:id/promote", s.promoteBoardPR)
 		api.POST("/board/:board/prs/:id/abandon", s.abandonBoardReview)
 

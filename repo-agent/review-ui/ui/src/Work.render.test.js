@@ -499,15 +499,13 @@ describe('WorkRow Deploy', () => {
     });
 });
 
-// A draft's controls are the actions its task output offers: labeled by
-// the document, disabled with the reason when the draft's state rules one
-// out, and taken through the one action endpoint.
+// A row says a write or a revise filed on its runs stands, and the board
+// polls fast while one does.
 describe('anyPosting', () => {
-    test('is whether a row has a write standing, on either draft', () => {
+    test('is whether a row has a write or a revise standing', () => {
         expect(anyPosting([])).toBe(false);
-        expect(anyPosting([{ triageActions: [{ verb: 'comment', reason: 'assessment posted' }] }])).toBe(false);
-        expect(anyPosting([{ number: 1 }, { planActions: [{ verb: 'comment', reason: 'posting' }] }])).toBe(true);
-        expect(anyPosting([{ triageActions: [{ verb: 'label', reason: 'posting' }] }])).toBe(true);
+        expect(anyPosting([{ number: 1 }])).toBe(false);
+        expect(anyPosting([{ number: 1 }, { number: 2, posting: true }])).toBe(true);
     });
 });
 

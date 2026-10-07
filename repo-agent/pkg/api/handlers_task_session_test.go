@@ -260,7 +260,7 @@ func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	r = taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(true)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	w = doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	if !strings.Contains(w.Body.String(), `"reason":"the plan is approved"`) || !strings.Contains(w.Body.String(), `"draft"`) {
+	if !strings.Contains(w.Body.String(), `"reason":"its follow-up was started"`) || !strings.Contains(w.Body.String(), `"draft"`) {
 		t.Errorf("an approved plan: %s", w.Body.String())
 	}
 }

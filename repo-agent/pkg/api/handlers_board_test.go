@@ -19,7 +19,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -336,13 +335,6 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	r.POST("/board/:board/prs/:id/abandon", server.abandonBoardReview)
 	r.POST("/board/:board/research", server.startResearchSession)
 	r.GET("/board/:board/research/prompts", server.getResearchPrompts)
-	r.POST("/board/:board/issues/:id/plan-feedback", server.planBoardFeedback)
-	r.POST("/board/:board/issues/:id/plan-approve", server.planBoardApprove)
-	r.POST("/board/:board/issues/:id/plan-reject", server.planBoardReject)
-	r.POST("/board/:board/issues/:id/triage-reject", server.rejectBoardTriage)
-	r.PUT("/board/:board/issues/:id/plan-draft", server.putBoardPlanDraft)
-	r.PUT("/board/:board/issues/:id/draft", server.putBoardTriageDraft)
-	r.POST("/board/:board/issues/:id/actions/:verb", server.boardIssueAction)
 	r.GET("/boards", server.getBoards)
 	r.POST("/boards", server.createBoard)
 	r.DELETE("/board/:board", server.deleteBoard)
@@ -928,7 +920,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	}
 
 	if row := byKey["issue-20"]; row.Group != "issues" || len(row.Sessions) != 1 || row.Sessions[0].Status != "ready" ||
-		row.Attention != "needs-you" || row.Draft == "" {
+		row.Attention != "needs-you" || !row.Sessions[0].Output {
 		t.Errorf("issue-20 row wrong: %+v", row)
 	}
 	// The paused triage sandbox surfaces on the resting row (Agent column
@@ -1233,128 +1225,9 @@ func TestGetBoardWorkNoPendingReviewStaysRequested(t *testing.T) {
 	}
 }
 
-// Triage drafts are member-editable, but only within the schema publish
-// consumes: malformed YAML, unknown fields, and empty suggestions are
-// rejected with the reason; a valid edit replaces the stored draft.
-func TestPutBoardTriageDraft(t *testing.T) {
-	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
-			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
-		]`,
-		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
-	}
-	triageSandbox := sandboxCR("fix-repo-20",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
-
-	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
-
-	put := func(draft string) *httptest.ResponseRecorder {
-		body, _ := json.Marshal(map[string]string{"draft": draft})
-		req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		return w
-	}
-
-	if w := put("triage: ["); w.Code != http.StatusBadRequest {
-		t.Errorf("malformed YAML: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-	if w := put("triage:\n  bogus: field"); w.Code != http.StatusBadRequest {
-		t.Errorf("unknown field: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-	if w := put("triage: {}"); w.Code != http.StatusBadRequest {
-		t.Errorf("empty suggestion: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-	if w := put(""); w.Code != http.StatusBadRequest {
-		t.Errorf("empty draft: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-
-	edited := "triage:\n  labels: [bug, p1]\n  assessment: human-refined"
-	if w := put(edited); w.Code != http.StatusOK {
-		t.Fatalf("valid edit: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// The stored draft (and hence the work feed) reflects the edit.
-	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	var work []models.WorkItem
-	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
-		t.Fatalf("bad json: %v", err)
-	}
-	found := false
-	for _, item := range work {
-		if item.Type == "issue" && item.Number == 20 {
-			found = true
-			if !strings.Contains(item.Draft, "human-refined") {
-				t.Errorf("draft not updated: %q", item.Draft)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
-	}
-}
-
-// A draft stored as a Triage task output is shown, edited and saved as the
-// triage: block.
-func TestTriageDraftFromTaskOutput(t *testing.T) {
-	ghResponses := map[string]string{
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
-		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
-		"https://api.github.com/repos/test/repo/issues?direction=desc&per_page=100&sort=updated&state=open": `[
-			{"number": 20, "title": "triaged", "html_url": "https://github.com/test/repo/issues/20", "updated_at": "2026-09-16T09:00:00Z"}
-		]`,
-		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
-	}
-	taskOutput := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\ntarget:\n  url: https://github.com/test/repo/issues/20\nspec:\n  labels:\n    - bug\n  assessment: %s\n"
-	stored := fmt.Sprintf(taskOutput, "from the agent")
-	triageSandbox := sandboxCR("fix-repo-20",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageOutput: stored, "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
-	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
-
-	draft := func() string {
-		req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		var work []models.WorkItem
-		if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
-			t.Fatalf("bad json: %v", err)
-		}
-		for _, item := range work {
-			if item.Type == "issue" && item.Number == 20 {
-				return item.Draft
-			}
-		}
-		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
-		return ""
-	}
-	if got, want := draft(), "triage:\n  labels:\n    - bug\n  assessment: from the agent"; got != want {
-		t.Errorf("shown draft = %q, want %q", got, want)
-	}
-
-	body, _ := json.Marshal(map[string]string{"draft": fmt.Sprintf(taskOutput, "human-refined")})
-	req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("task-output edit: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if got := draft(); !strings.HasPrefix(got, "triage:\n") || !strings.Contains(got, "human-refined") {
-		t.Errorf("saved draft = %q, want the triage: block with the edit", got)
-	}
-}
-
-// The plan loop, API side: a plan-carrying fix sandbox renders its plan
-// ready with the draft; feedback stamps the refinement markers; approve stamps
-// approval and files the fix request; reject clears the draft.
-func TestPlanEndpoints(t *testing.T) {
+// A plan-carrying fix sandbox renders its plan ready, with a draft for
+// its session to show.
+func TestPlanReadyRow(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
 		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
@@ -1374,8 +1247,7 @@ func TestPlanEndpoints(t *testing.T) {
 			factorycli.AnnotationPlanRun:                recordedRun("plan", "Completed"),
 		}, 1)
 
-	srv, r, dyn := boardTestServer(t, ghResponses, boardCR(), planSandbox)
-	_ = srv
+	_, r, _ := boardTestServer(t, ghResponses, boardCR(), planSandbox)
 
 	// Feed: the plan ready, with the draft attached.
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -1385,57 +1257,10 @@ func TestPlanEndpoints(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &work); err != nil {
 		t.Fatalf("bad json: %v", err)
 	}
-	if len(work) != 1 || len(work[0].Sessions) != 1 || work[0].Sessions[0].Status != "ready" || work[0].Attention != "needs-you" || !strings.Contains(work[0].Plan, "Do the thing.") {
+	if len(work) != 1 || len(work[0].Sessions) != 1 || work[0].Sessions[0].Status != "ready" || work[0].Attention != "needs-you" || !work[0].Sessions[0].Output {
 		t.Fatalf("expected plan-ready row with draft, got %s", w.Body.String())
 	}
 
-	post := func(path, body string) *httptest.ResponseRecorder {
-		req, _ := http.NewRequest("POST", "/board/myboard/issues/42/"+path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		return w
-	}
-	getAnnotations := func() map[string]string {
-		sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "fix-repo-42", v1.GetOptions{})
-		if err != nil {
-			t.Fatalf("get sandbox: %v", err)
-		}
-		return sb.GetAnnotations()
-	}
-
-	// Refine: feedback stamped.
-	if w := post("plan-feedback", `{"feedback": ""}`); w.Code != http.StatusBadRequest {
-		t.Errorf("empty feedback: expected 400, got %d", w.Code)
-	}
-	if w := post("plan-feedback", `{"feedback": "merge steps 2 and 3"}`); w.Code != http.StatusOK {
-		t.Fatalf("feedback: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	annotations := getAnnotations()
-	if annotations["board.gemini.google.com/plan-feedback"] != "merge steps 2 and 3" || annotations["board.gemini.google.com/plan-feedback-at"] == "" {
-		t.Errorf("feedback not stamped: %v", annotations)
-	}
-
-	// Approve: approval stamped and the fix request filed.
-	if w := post("plan-approve", `{}`); w.Code != http.StatusOK {
-		t.Fatalf("approve: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	if !factorycli.IsApplied(getAnnotations(), factorycli.AnnotationPlanApplied, "run") {
-		t.Error("approval not stamped")
-	}
-	filed := theRequest(t, dyn, "alice")
-	if filed.Spec.Verb != boardv1alpha1.VerbRecipe || filed.Spec.Recipe != "fix" || filed.Spec.Number != 42 {
-		t.Errorf("approve filed %+v, want a fix click on 42", filed.Spec)
-	}
-
-	// Reject: draft cleared, reject stamped.
-	if w := post("plan-reject", `{}`); w.Code != http.StatusOK {
-		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	annotations = getAnnotations()
-	if annotations[factorycli.AnnotationPlanOutput] != "" || annotations["board.gemini.google.com/plan-rejected-at"] == "" {
-		t.Errorf("reject did not clear the draft: %v", annotations)
-	}
 }
 
 // Onboarding suggestions: involvement-searched repos rank first by
@@ -1583,10 +1408,10 @@ func TestBoardViewLabelFilter(t *testing.T) {
 	}
 }
 
-// Rejecting a triage clears the breadcrumbs, tombstones the sandbox, and
-// the row returns to its resting stage with no sandbox chip — Triage /
-// Plan / Fix are available again.
-func TestRejectBoardTriage(t *testing.T) {
+// Rejecting a triage's draft in its session clears it, tombstones the
+// sandbox, and the row returns to its resting stage with no sandbox chip —
+// Triage / Plan / Fix are available again.
+func TestRejectATriage(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
 		"https://api.github.com/repos/test/repo/issues?creator=alice&direction=desc&per_page=100&sort=updated&state=open":  `[]`,
@@ -1601,12 +1426,16 @@ func TestRejectBoardTriage(t *testing.T) {
 			factorycli.AnnotationTriageOutput:                    storedOutput("Triage", "triage:\n  labels: [bug]"),
 			"board.gemini.google.com/triaged-at":                 "2026-09-17T00:00:00Z",
 			"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
-			"htmlURL": "https://github.com/test/repo/issues/20",
+			"htmlURL":                      "https://github.com/test/repo/issues/20",
+			"repo":                         "repo",
+			annoBoard:                      "myboard",
+			factorycli.AnnotationTriageRun: recordedRun("triage", "Completed"),
 		}, 1)
 
-	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+	server, r, dyn := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
 
-	req, _ := http.NewRequest("POST", "/board/myboard/issues/20/triage-reject", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", "/api/task-sessions/fix-repo-20/recipe-triage-1/draft/reject", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -1619,8 +1448,8 @@ func TestRejectBoardTriage(t *testing.T) {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	annotations := sb.GetAnnotations()
-	if annotations[factorycli.AnnotationTriageOutput] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
-		t.Errorf("breadcrumbs not cleared: %v", annotations)
+	if annotations[factorycli.AnnotationTriageOutput] != "" {
+		t.Errorf("draft not cleared: %v", annotations)
 	}
 	if annotations["board.gemini.google.com/recipe-triage-rejected-at"] == "" {
 		t.Error("tombstone missing")
@@ -1635,7 +1464,7 @@ func TestRejectBoardTriage(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 20 {
-			if item.Attention != "" || item.Sandbox != nil || item.Draft != "" || len(item.Recipes) == 0 || item.Recipes[0].Name != "triage" {
+			if item.Attention != "" || item.Sandbox != nil || len(item.Recipes) == 0 || item.Recipes[0].Name != "triage" {
 				t.Errorf("row not reset: %+v", item)
 			}
 			return
@@ -1911,9 +1740,7 @@ func TestTheBlockLiftsAndTheBoardRefreshesAgain(t *testing.T) {
 // gets a 409 for a button that should not have been there.
 func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 	key := "alice/posting"
-	workFeedPut(key, []models.WorkItem{{Number: 1, TriageActions: []models.WorkAction{
-		{Verb: "comment", Reason: postingReason},
-	}}})
+	workFeedPut(key, []models.WorkItem{{Number: 1, Posting: true}})
 	defer invalidateWorkFeed("alice", "posting")
 	ageFeedEntry(t, key, workFeedPostingFreshFor+time.Second, time.Time{})
 	if _, ok, needsRefresh := workFeedGet(key); !ok || !needsRefresh {
@@ -1921,9 +1748,7 @@ func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 	}
 
 	quiet := "alice/quiet"
-	workFeedPut(quiet, []models.WorkItem{{Number: 1, PlanActions: []models.WorkAction{
-		{Verb: "comment", Reason: "plan posted"},
-	}}})
+	workFeedPut(quiet, []models.WorkItem{{Number: 1}})
 	defer invalidateWorkFeed("alice", "quiet")
 	ageFeedEntry(t, quiet, workFeedPostingFreshFor+time.Second, time.Time{})
 	if _, ok, needsRefresh := workFeedGet(quiet); !ok || needsRefresh {
@@ -2009,13 +1834,15 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "20"},
 		map[string]interface{}{
 			"repo":                            "repo",
+			annoBoard:                         "myboard",
 			"htmlURL":                         "https://github.com/test/repo/issues/20",
 			"agentDraft":                      "not a triage",
 			factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"),
 			factorycli.AnnotationRecipeTriageTaskState: "Completed",
 			factorycli.AnnotationTriageRun:             recordedRun("triage", "Completed"),
 		}, 1)
-	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
+	server, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
 
 	row := func() *models.WorkItem {
 		t.Helper()
@@ -2034,13 +1861,13 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
 		return nil
 	}
-	if got := row(); got.Attention != "needs-you" || !strings.Contains(got.Draft, "labels:\n    - bug") ||
+	if got := row(); got.Attention != "needs-you" || len(got.Sessions) != 1 || !got.Sessions[0].Output ||
 		got.Sandbox == nil || got.Sandbox.Name != "repo-20" || got.Sandbox.TaskState != "Completed" {
 		t.Errorf("row = %+v sandbox %+v", got, got.Sandbox)
 	}
 
-	body, _ := json.Marshal(map[string]string{"draft": "triage:\n  labels: [bug, p1]"})
-	req, _ := http.NewRequest("PUT", "/board/myboard/issues/20/draft", strings.NewReader(string(body)))
+	body, _ := json.Marshal(map[string]string{"text": "triage:\n  labels: [bug, p1]"})
+	req, _ := http.NewRequest("POST", "/api/task-sessions/repo-20/recipe-triage-1/draft/edit", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -2058,7 +1885,8 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		t.Errorf("after edit: %v", a)
 	}
 
-	req, _ = http.NewRequest("POST", "/board/myboard/issues/20/triage-reject", nil)
+	req, _ = http.NewRequest("POST", "/api/task-sessions/repo-20/recipe-triage-1/draft/reject", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

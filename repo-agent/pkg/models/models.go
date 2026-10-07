@@ -77,8 +77,9 @@ type WorkSandbox struct {
 	AutoIterateOverridden bool   `json:"autoIterateOverridden,omitempty"` // per-PR override set (vs board default)
 }
 
-// WorkAction is one action a draft's task output offers, as the row can
-// take it: POST /board/:board/issues/:id/actions/:verb {kind, run}.
+// WorkAction is one action a draft's task output offers, or a revise its
+// run offers, as a session takes it: POST
+// /task-sessions/:sandbox/:task/draft/:verb {run, text}, or …/revise.
 type WorkAction struct {
 	Verb   string `json:"verb"`
 	Run    string `json:"run,omitempty"`
@@ -112,21 +113,15 @@ type WorkItem struct {
 	ReviewRequested bool         `json:"reviewRequested,omitempty"` // PR asks for the viewer's review (client-side scope)
 	PRURL           string       `json:"prURL,omitempty"`
 	Labels          []string     `json:"labels,omitempty"`
-	Draft           string       `json:"draft,omitempty"`           // triage/review draft, when ready
-	TriagePublished bool         `json:"triagePublished,omitempty"` // published triage rides the row as a done-state chip
-	Error           string       `json:"error,omitempty"`           // why the last agent run failed, human-readable
-	Plan            string       `json:"plan,omitempty"`            // implementation-plan draft awaiting refine/approve
-	PlanApproved    bool         `json:"planApproved,omitempty"`    // approved plan rides the row as a done-state receipt
-	TriageActions   []WorkAction `json:"triageActions,omitempty"`   // what can be done with Draft, from its task output
-	PlanActions     []WorkAction `json:"planActions,omitempty"`     // what can be done with Plan, from its task output
-	DraftPR         bool         `json:"draftPR,omitempty"`         // PR is a GitHub draft (promotable)
-	Fixes           []int        `json:"fixes,omitempty"`           // issue numbers this PR closes
+	Error           string       `json:"error,omitempty"`   // why the last agent run failed, human-readable
+	DraftPR         bool         `json:"draftPR,omitempty"` // PR is a GitHub draft (promotable)
+	Fixes           []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt       string       `json:"updatedAt,omitempty"`
-	// PlanSession and TriageSession are the agent sessions of the last
-	// plan and triage runs, to watch while they run and continue after.
-	PlanSession   *TaskSession `json:"planSession,omitempty"`
-	TriageSession *TaskSession `json:"triageSession,omitempty"`
+	// Posting is whether a write or a revise filed on the row's runs still
+	// stands: the controller does it in seconds, so the feed is kept fresh
+	// for seconds, and the UI polls faster, until it is done.
+	Posting bool `json:"posting,omitempty"`
 	// ReviewSession is a PR's review session (the review recipe's), for
 	// Continue session and Update review.
 	ReviewSession *TaskSession `json:"reviewSession,omitempty"`
