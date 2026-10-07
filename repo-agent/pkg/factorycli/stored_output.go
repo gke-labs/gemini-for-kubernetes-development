@@ -162,26 +162,6 @@ func DraftIsMarkdown(kind, doc string) bool {
 	return markdownFromTaskOutput(kind, doc) != ""
 }
 
-// HarvestedTaskOutput is the task output in a run's result, whatever its
-// kind, or "": the runner puts it after a banner (a triage's, a plan's or
-// a revise's, a change's, a review's), and the closer after it.
-func HarvestedTaskOutput(output string) string {
-	for _, banner := range []string{changeBanner, reviewBanner, planBanner} {
-		start := strings.Index(output, banner)
-		if start < 0 {
-			continue
-		}
-		rest := output[start+len(banner):]
-		if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
-			rest = rest[:end]
-		}
-		if rest = strings.TrimSpace(rest); TaskOutputKind(rest) != "" {
-			return rest + "\n"
-		}
-	}
-	return TriageTaskOutput(output)
-}
-
 // KeepOutput stores doc, in annotations, as the output of the run
 // recorded under runKey, with applied stamped at at: the actions the run
 // applied itself (a fix's open-pr). A new output replaces what was

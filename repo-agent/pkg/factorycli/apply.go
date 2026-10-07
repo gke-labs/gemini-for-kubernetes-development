@@ -187,14 +187,10 @@ func (r *Runner) StartApply(key string, opts ApplyOptions) bool {
 	return started
 }
 
-// applyDoc runs `factory apply -f <doc> --action <action>` to its end,
-// within another invocation: a review's post-review, once its run ends.
-func (r *Runner) applyDoc(ctx context.Context, doc, action, githubToken string) (string, error) {
-	return r.applyDocIn(ctx, doc, action, "", githubToken)
-}
-
-// applyDocIn is applyDoc in namespace, where a Change's apply finds the
-// sandbox to alias to the PR it opens.
+// applyDocIn runs `factory apply -f <doc> --action <action>` to its end,
+// in namespace, within another invocation: the action a run applies once
+// it ends. A Change's open-pr finds the sandbox to alias to the PR it
+// opens in the namespace.
 func (r *Runner) applyDocIn(ctx context.Context, doc, action, namespace, githubToken string) (string, error) {
 	name, err := writeTaskOutput(doc)
 	if err != nil {

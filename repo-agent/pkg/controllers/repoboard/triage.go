@@ -31,7 +31,7 @@ import (
 // Triage intake (design D4): `factory recipe triage` prepares label /
 // priority / duplicate suggestions per inbound issue. It writes nothing to
 // GitHub; its result, a Triage task output, is read back by the task's
-// run name (factorycli.StartTriage). The maintainer applies suggestions
+// run name (factorycli.StartRecipe). The maintainer applies suggestions
 // with their own clicks.
 //
 // It runs in the issue's sandbox, the one plan and fix use
@@ -116,7 +116,7 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
 		if res.Err == nil && sb != nil {
-			if doc := factorycli.TriageTaskOutput(res.Output); doc != "" {
+			if doc := factorycli.HarvestedOutput("Triage", res.Output); doc != "" {
 				annotations[factorycli.AnnotationTriageOutput] = doc
 				delete(annotations, factorycli.AnnotationTriageApplied)
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
@@ -149,14 +149,11 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
-	if r.Factory.StartTriage(key, factorycli.TriageOptions{
-		Namespace:   namespace,
-		SandboxName: name,
-		IssueURL:    issue.GetHTMLURL(),
-		GithubToken: token,
-		Engine:      boardEngine(work.board),
-		RunName:     runName,
-	}) {
+	opts := r.recipeOptions(work, "triage", namespace, name, issue.GetHTMLURL(), token, runName)
+	// The triage shares the issue's sandbox and makes it as the fix
+	// would: on factory's default image and disk.
+	opts.Image, opts.WorkspaceDiskSize = "", ""
+	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
 }

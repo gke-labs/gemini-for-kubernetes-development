@@ -46,15 +46,16 @@ import (
 )
 
 type fakeLaunch struct {
-	Key          string
-	FixOpts      *factorycli.FixOptions
-	ReviewOpts   *factorycli.ReviewOptions
+	Key string
+	// One of the recipe's runs, by its name.
+	FixOpts      *factorycli.RecipeOptions
+	ReviewOpts   *factorycli.RecipeOptions
+	TriageOpts   *factorycli.RecipeOptions
+	PlanOpts     *factorycli.RecipeOptions
+	ResearchOpts *factorycli.RecipeOptions
 	PRWatchOpts  *factorycli.PRWatchOptions
-	TriageOpts   *factorycli.TriageOptions
-	PlanOpts     *factorycli.PlanOptions
 	ReviseOpts   *factorycli.ReviseOptions
 	RunOpts      *factorycli.RunOptions
-	ResearchOpts *factorycli.ResearchOptions
 	ApplyOpts    *factorycli.ApplyOptions
 }
 
@@ -77,17 +78,31 @@ func newFakeLauncher() *fakeLauncher {
 	return &fakeLauncher{running: map[string]bool{}, results: map[string]factorycli.Result{}}
 }
 
-func (f *fakeLauncher) StartFix(key string, opts factorycli.FixOptions) bool {
+// StartRecipe records the run under its recipe's field. A triage or a
+// plan refuses a busy key, as the real runner does; the rest record
+// unconditionally, like StartRun: the single flight under test is the
+// caller's IsRunning check, and a fake that refused a busy key would pass
+// whether or not the caller made it.
+func (f *fakeLauncher) StartRecipe(key string, opts factorycli.RecipeOptions) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, FixOpts: &opts})
-	return true
-}
-
-func (f *fakeLauncher) StartReview(key string, opts factorycli.ReviewOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, ReviewOpts: &opts})
+	launch := fakeLaunch{Key: key}
+	switch opts.Recipe {
+	case "fix":
+		launch.FixOpts = &opts
+	case "review":
+		launch.ReviewOpts = &opts
+	case "triage":
+		launch.TriageOpts = &opts
+	case "plan":
+		launch.PlanOpts = &opts
+	case "research":
+		launch.ResearchOpts = &opts
+	}
+	if (opts.Recipe == "triage" || opts.Recipe == "plan") && f.running[key] {
+		return false
+	}
+	f.calls = append(f.calls, launch)
 	return true
 }
 
@@ -95,26 +110,6 @@ func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRWatchOpts: &opts})
-	return true
-}
-
-func (f *fakeLauncher) StartTriage(key string, opts factorycli.TriageOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.running[key] {
-		return false
-	}
-	f.calls = append(f.calls, fakeLaunch{Key: key, TriageOpts: &opts})
-	return true
-}
-
-func (f *fakeLauncher) StartPlan(key string, opts factorycli.PlanOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.running[key] {
-		return false
-	}
-	f.calls = append(f.calls, fakeLaunch{Key: key, PlanOpts: &opts})
 	return true
 }
 
@@ -141,16 +136,6 @@ func (f *fakeLauncher) StartRun(key string, opts factorycli.RunOptions) bool {
 	// The real runner holds the key for the length of the run, which is
 	// what tells the reap pass the click is in flight rather than lost.
 	f.running[key] = true
-	return true
-}
-
-// Records unconditionally, like StartRun: the single
-// flight under test is the caller's IsRunning check, and a fake that
-// refused a busy key would pass whether or not the caller made it.
-func (f *fakeLauncher) StartResearch(key string, opts factorycli.ResearchOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeLaunch{Key: key, ResearchOpts: &opts})
 	return true
 }
 
@@ -370,7 +355,7 @@ func TestLabelDiscovery_ExecutorConsent(t *testing.T) {
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-10"))
-	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
+	g.Expect(launches[0].FixOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/10"))
 	g.Expect(launches[0].FixOpts.RunName).To(gomega.HavePrefix("fix/test-board/10/"))
 	g.Expect(launches[0].FixOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].FixOpts.GithubToken).To(gomega.Equal("gho_alice"))
@@ -553,7 +538,7 @@ func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].ReviewOpts.SandboxName).To(gomega.Equal("review-repo-42"))
-	g.Expect(launches[0].ReviewOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/42"))
+	g.Expect(launches[0].ReviewOpts.URL).To(gomega.Equal("https://github.com/test/repo/pull/42"))
 	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.HavePrefix("review/test-board/42/"))
 	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
 }
@@ -572,7 +557,7 @@ func TestRequestFix(t *testing.T) {
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-77"))
-	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/77"))
+	g.Expect(launches[0].FixOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/77"))
 
 	// No sandbox yet: the click stays standing for the next reconcile.
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty())
@@ -713,7 +698,7 @@ func TestTriageIntake(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/triage-repo-30"))
 	g.Expect(launches[0].TriageOpts).NotTo(gomega.BeNil())
-	g.Expect(launches[0].TriageOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/30"))
+	g.Expect(launches[0].TriageOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/30"))
 
 	// Phase 2: harvest after completion.
 	triageSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -1041,8 +1026,8 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(launches[0].Key).To(gomega.Equal("alice/plan-repo-42"))
 	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].PlanOpts.Namespace).To(gomega.Equal("alice"))
-	g.Expect(launches[0].PlanOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
-	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.BeEmpty())
+	g.Expect(launches[0].PlanOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
+	g.Expect(launches[0].PlanOpts.Inputs["feedback"]).To(gomega.BeEmpty())
 	g.Expect(launches[0].PlanOpts.RunName).To(gomega.HavePrefix("plan/test-board/42/"))
 
 	// 2. Harvest: finished run + fix sandbox -> draft stored, the click
@@ -1067,7 +1052,7 @@ func TestPlanLifecycle(t *testing.T) {
 	fake2 := newFakeLauncher()
 	fake2.results["alice/plan-repo-42"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "banner\n================== ISSUE PLAN ==================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nactions:\n  - verb: comment\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
+		Output:     "banner\n================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nactions:\n  - verb: comment\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
 	}
 	planReq := click(boardv1alpha1.VerbPlan, 42)
 	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
@@ -1103,7 +1088,7 @@ func TestPlanLifecycle(t *testing.T) {
 	launches = fake2.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
-	g.Expect(launches[0].PlanOpts.Feedback).To(gomega.Equal("merge steps 2 and 3"))
+	g.Expect(launches[0].PlanOpts.Inputs["feedback"]).To(gomega.Equal("merge steps 2 and 3"))
 }
 
 // An approved plan rides into the fix (--with-plan); a merely drafted or
@@ -1143,7 +1128,7 @@ func TestFixWithApprovedPlan(t *testing.T) {
 		launches := fake.launches()
 		g.Expect(launches).To(gomega.HaveLen(1), "approved=%v", approved)
 		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil())
-		g.Expect(launches[0].FixOpts.WithPlan).To(gomega.Equal(approved), "approved=%v", approved)
+		g.Expect(launches[0].FixOpts.Inputs["with_plan"] == "true").To(gomega.Equal(approved), "approved=%v", approved)
 	}
 }
 
@@ -1193,7 +1178,7 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 		launches := fake.launches()
 		g.Expect(launches).To(gomega.HaveLen(1), "standing=%v", standing)
 		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil(), "standing=%v", standing)
-		g.Expect(launches[0].FixOpts.WithPlan).To(gomega.BeTrue())
+		g.Expect(launches[0].FixOpts.Inputs["with_plan"]).To(gomega.Equal("true"))
 	}
 }
 

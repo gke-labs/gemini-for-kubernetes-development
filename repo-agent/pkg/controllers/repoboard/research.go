@@ -171,18 +171,19 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		if err != nil {
 			continue
 		}
-		if r.Factory.StartResearch(key, factorycli.ResearchOptions{
-			Namespace:   claim.member,
-			RepoURL:     fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo),
-			SessionID:   claim.sessionID,
-			Topic:       topic,
-			GithubToken: token,
-			// Read at launch, like a task's engine: switching the board
-			// changes the next session, not the ones already running.
-			Engine: acpd.ResearchEngineFor(boardEngine(work.board)),
-			// The board's sandbox image, as for its tasks.
-			Image: work.board.Spec.Sandbox.Image,
-		}) {
+		opts := r.recipeOptions(work, "research", claim.member, "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
+		opts.Session, opts.Detached = claim.sessionID, true
+		opts.Inputs = map[string]string{"topic": topic}
+		// Read at launch, like a task's engine: switching the board
+		// changes the next session, not the ones already running.
+		opts.Engine = acpd.ResearchEngineFor(boardEngine(work.board))
+		// A cold image pull and a fresh PVC, and short enough that a
+		// wedged create becomes a failure rather than a permanent
+		// "starting". Deliberately no secret: mounting the member secret
+		// would put the engine key on the sandbox's disk, where the agent
+		// running in it could read it.
+		opts.Timeout, opts.WorkspaceDiskSize = 20*time.Minute, ""
+		if r.Factory.StartRecipe(key, opts) {
 			logger.Info("launched factory recipe research", "session", claim.sessionID, "board", work.board.Name)
 		}
 	}

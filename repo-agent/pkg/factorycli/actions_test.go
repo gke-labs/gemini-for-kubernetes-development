@@ -15,9 +15,9 @@ func TestPlanTaskOutputKeepsTheDocument(t *testing.T) {
   - verb: run
     run: fix
 `
-	got := PlanTaskOutput("Running recipe plan...\n" + planBanner + "\n" + doc + bannerCloser + "\n")
+	got := HarvestedOutput("Plan", "Running recipe plan...\n"+taskOutputBanner+"\n"+doc+bannerCloser+"\n")
 	if !strings.HasPrefix(got, "apiVersion: ") || Draft("Plan", got) == "" {
-		t.Fatalf("PlanTaskOutput = %q, want the whole document", got)
+		t.Fatalf("HarvestedOutput = %q, want the whole document", got)
 	}
 	if task := TaskOutputTask("Plan", got); task != "recipe-plan-20261003-120000-0001" {
 		t.Errorf("task = %q", task)
@@ -26,7 +26,7 @@ func TestPlanTaskOutputKeepsTheDocument(t *testing.T) {
 	if acts := OfferedActions("Plan", got); !reflect.DeepEqual(acts, want) {
 		t.Errorf("offered = %+v, want %+v", acts, want)
 	}
-	if PlanTaskOutput(planBanner+"\njust markdown\n"+bannerCloser) != "" {
+	if HarvestedOutput("Plan", taskOutputBanner+"\njust markdown\n"+bannerCloser) != "" {
 		t.Error("a plan that is no document has none to keep")
 	}
 }

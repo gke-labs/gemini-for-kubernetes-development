@@ -67,8 +67,8 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 
 	if res, ok := r.Factory.LastResult(key); ok && !planResultStale(annotations, res.FinishedAt) {
 		if res.Err == nil && sb != nil {
-			if factorycli.ExtractPlan(res.Output) != "" {
-				annotations[factorycli.AnnotationPlanOutput] = factorycli.PlanTaskOutput(res.Output)
+			if doc := factorycli.HarvestedOutput("Plan", res.Output); doc != "" {
+				annotations[factorycli.AnnotationPlanOutput] = doc
 				// A new plan has not been posted, nor approved.
 				delete(annotations, factorycli.AnnotationPlanApplied)
 				annotations[AnnotationPlannedAt] = time.Now().UTC().Format(time.RFC3339)
@@ -111,17 +111,11 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		AnnotationPlannedAt, AnnotationPlanFeedbackAt, AnnotationPlanRejected)
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
-	if r.Factory.StartPlan(key, factorycli.PlanOptions{
-		Namespace:         req.member,
-		SandboxName:       name,
-		IssueURL:          fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, req.issue),
-		Feedback:          feedback,
-		Image:             work.board.Spec.Sandbox.Image,
-		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
-		GithubToken:       token,
-		Engine:            boardEngine(work.board),
-		RunName:           runName,
-	}) {
+	opts := r.recipeOptions(work, "plan", req.member, name, fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, req.issue), token, runName)
+	if feedback != "" {
+		opts.Inputs = map[string]string{"feedback": feedback}
+	}
+	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)
 	}
 }

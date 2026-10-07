@@ -69,7 +69,7 @@ func TestFixFollowsAnUnreadRun(t *testing.T) {
 	g.Expect(launches[0].Key).To(gomega.Equal(fixKeyAt))
 	g.Expect(launches[0].FixOpts.RunName).To(gomega.Equal("fix/test-board/7/100"))
 	g.Expect(launches[0].FixOpts.SandboxName).To(gomega.Equal("fix-repo-7"))
-	g.Expect(launches[0].FixOpts.IssueURL).To(gomega.Equal("https://github.com/test/repo/issues/7"))
+	g.Expect(launches[0].FixOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/7"))
 }
 
 // A run the controller read is not followed again, and a revise of the
@@ -97,7 +97,7 @@ func TestFixRecordsItsResult(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results[fixKeyAt] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output: "================= CHANGE ====================\n" + changeDoc("Fix it") + "\n" + closer +
+		Output: "================== TASK OUTPUT =================\n" + changeDoc("Fix it") + "\n" + closer +
 			"\nError: the fork has no branch issue-7-1\n",
 		Err: errors.New("applying open-pr: exit status 1"),
 	}
@@ -132,7 +132,7 @@ func TestFixKeepsItsChange(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results[fixKeyAt] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "================= CHANGE ====================\n" + changeDoc("Fix it") + "\n" + closer + "\nopened #9\n",
+		Output:     "================== TASK OUTPUT =================\n" + changeDoc("Fix it") + "\n" + closer + "\nopened #9\n",
 	}
 	sb := issueSandbox("fix-repo-7", "7", fixedSandbox(factorycli.TaskStateCompleted, fixRun("fix/test-board/7/100", ""), nil))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
@@ -205,8 +205,7 @@ func TestFixReviseIterates(t *testing.T) {
 	g.Expect(opts.SandboxName).To(gomega.Equal("fix-repo-7"))
 	g.Expect(opts.Revise).To(gomega.Equal("iterate"))
 	g.Expect(opts.Session).To(gomega.Equal("recipe-fix-1"))
-	g.Expect(opts.PostReplies).To(gomega.BeTrue())
-	g.Expect(opts.PostReview).To(gomega.BeFalse())
+	g.Expect(opts.Apply).To(gomega.Equal("post-replies"))
 	g.Expect(opts.Inputs).To(gomega.Equal(map[string]string{"instruction": "rename it"}))
 	g.Expect(opts.RunName).To(gomega.HavePrefix("revise/test-board/fix-repo-7/iterate/"))
 
@@ -219,7 +218,7 @@ func TestFixReviseIterates(t *testing.T) {
 	delete(fake.running, fixReviseKeyAt)
 	fake.results[fixReviseKeyAt] = factorycli.Result{
 		FinishedAt: time.Now().Add(time.Second),
-		Output:     "================== ISSUE PLAN ==================\n" + changeDoc("Renamed") + "\n" + closer + "\nposted 2 replies\n",
+		Output:     "================== TASK OUTPUT =================\n" + changeDoc("Renamed") + "\n" + closer + "\nposted 2 replies\n",
 	}
 	_, err = r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())

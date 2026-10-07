@@ -89,7 +89,7 @@ var reviseHooks = map[string]reviseHook{
 		// draft: it has the time a fix's turn takes, and its replies and
 		// report are posted on the PR.
 		options: func(opts *factorycli.ReviseOptions, _ *unstructured.Unstructured) {
-			opts.Timeout, opts.PostReplies = 45*time.Minute, true
+			opts.Timeout, opts.Apply = 45*time.Minute, "post-replies"
 		},
 		applies: []string{"post-replies"},
 	},
@@ -101,7 +101,7 @@ var reviseHooks = map[string]reviseHook{
 		// Posted as the member's pending review, replacing the one
 		// factory posted before.
 		options: func(opts *factorycli.ReviseOptions, _ *unstructured.Unstructured) {
-			opts.PostReview = true
+			opts.Apply = "post-review"
 		},
 		done: (*Reconciler).revisedReview,
 	},
@@ -300,8 +300,8 @@ func (r *Reconciler) keptRevise(ctx context.Context, sb *unstructured.Unstructur
 // plan's: not yet posted. A draft gone since (rejected, or approved) stays
 // gone.
 func (r *Reconciler) revisedPlan(ctx context.Context, work *workState, spec boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, res factorycli.Result) requestOutcome {
-	plan := factorycli.ExtractPlan(res.Output)
-	if plan == "" {
+	doc := factorycli.HarvestedOutput("Plan", res.Output)
+	if doc == "" {
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "NoPlan",
@@ -312,7 +312,7 @@ func (r *Reconciler) revisedPlan(ctx context.Context, work *workState, spec boar
 		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
 	}
 	annotations := sb.GetAnnotations()
-	annotations[factorycli.AnnotationPlanOutput] = factorycli.PlanTaskOutput(res.Output)
+	annotations[factorycli.AnnotationPlanOutput] = doc
 	delete(annotations, factorycli.AnnotationPlanApplied)
 	annotations[AnnotationPlannedAt] = time.Now().UTC().Format(time.RFC3339)
 	annotations[AnnotationBoard] = work.board.Name
@@ -340,7 +340,8 @@ func (r *Reconciler) revisedReview(ctx context.Context, work *workState, _ board
 
 // revisedNotes stores a revise's notes as the draft: not yet saved.
 func (r *Reconciler) revisedNotes(ctx context.Context, _ *workState, _ boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, res factorycli.Result) requestOutcome {
-	if factorycli.ExtractNotes(res.Output) == "" {
+	doc := factorycli.HarvestedOutput("Notes", res.Output)
+	if doc == "" {
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "NoNotes",
@@ -350,7 +351,7 @@ func (r *Reconciler) revisedNotes(ctx context.Context, _ *workState, _ boardv1al
 	if sb == nil {
 		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
 	}
-	if err := r.storeNotesDraft(ctx, sb, factorycli.NotesTaskOutput(res.Output)); err != nil {
+	if err := r.storeNotesDraft(ctx, sb, doc); err != nil {
 		log.FromContext(ctx).Error(err, "storing the notes draft", "sandbox", sb.GetName())
 		return stillPending
 	}

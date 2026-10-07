@@ -71,7 +71,7 @@ func planDraftSandbox(extra map[string]interface{}) *unstructured.Unstructured {
 
 // revisedOutput is what StartRevise's harvest leaves: the revise's Plan
 // task output between the plan banner and its closer.
-const revisedOutput = "================== ISSUE PLAN ==================\n" +
+const revisedOutput = "================== TASK OUTPUT =================\n" +
 	"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 	"source:\n  task: recipe-plan-3\n  session: recipe-plan-1\n" +
 	"spec:\n  markdown: |-\n    ## Summary\n    Revised plan.\n" +

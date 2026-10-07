@@ -206,10 +206,10 @@ func TestResearchClaimLaunches(t *testing.T) {
 	launches := researchLaunches(fake)
 	g.Expect(launches).To(gomega.HaveLen(1))
 	opts := launches[0].ResearchOpts
-	g.Expect(opts.SessionID).To(gomega.Equal(testSession))
+	g.Expect(opts.Session).To(gomega.Equal(testSession))
 	g.Expect(opts.Namespace).To(gomega.Equal("alice"))
-	g.Expect(opts.RepoURL).To(gomega.Equal("https://github.com/test/repo"))
-	g.Expect(opts.Topic).To(gomega.Equal("where does the retry loop live?"))
+	g.Expect(opts.URL).To(gomega.Equal("https://github.com/test/repo"))
+	g.Expect(opts.Inputs["topic"]).To(gomega.Equal("where does the retry loop live?"))
 	g.Expect(opts.GithubToken).NotTo(gomega.BeEmpty(), "the clone needs the member's token")
 	// The key has to name the sandbox the invocation will create, or a
 	// second claim for the same session would launch a second engine.
@@ -459,8 +459,8 @@ func TestResearchCannedKindIsAskedAndTitled(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	launches := researchLaunches(fake)
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].ResearchOpts.Topic).To(gomega.ContainSubstring("Overview of the repo"))
-	g.Expect(launches[0].ResearchOpts.Topic).To(gomega.ContainSubstring("https://github.com/test/repo"))
+	g.Expect(launches[0].ResearchOpts.Inputs["topic"]).To(gomega.ContainSubstring("Overview of the repo"))
+	g.Expect(launches[0].ResearchOpts.Inputs["topic"]).To(gomega.ContainSubstring("https://github.com/test/repo"))
 
 	req := researchRequest(testSession, time.Now().Add(-time.Minute), kickoff)
 	name := factorycli.ResearchSandboxName("repo", testSession)

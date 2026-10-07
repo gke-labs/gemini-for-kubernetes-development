@@ -56,10 +56,10 @@ func TestRecipeRunsAreNotProbed(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory", Prober: p,
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	if !r.StartTriage("alice/triage-repo-3", TriageOptions{Namespace: "alice", SandboxName: "fix-repo-3", IssueURL: "u", RunName: "auto/b/3/1"}) {
+	if !r.StartRecipe("alice/triage-repo-3", RecipeOptions{Recipe: "triage", Namespace: "alice", SandboxName: "fix-repo-3", URL: "u", RunName: "auto/b/3/1"}) {
 		t.Fatal("triage did not launch")
 	}
-	if !r.StartPlan("alice/plan-repo-3", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-3", IssueURL: "u", RunName: "plan/b/3/1"}) {
+	if !r.StartRecipe("alice/plan-repo-3", RecipeOptions{Recipe: "plan", Namespace: "alice", SandboxName: "fix-repo-3", URL: "u", RunName: "plan/b/3/1"}) {
 		t.Fatal("plan did not launch")
 	}
 	waitResult(t, r, "alice/triage-repo-3")
@@ -75,7 +75,7 @@ func TestRunnerLaunchesWhenIdle(t *testing.T) {
 	r := &Runner{Binary: "/nonexistent-factory", Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
 		running: map[string]struct{}{}, results: map[string]Result{}}
 
-	r.StartPlan("alice/plan-repo-4", PlanOptions{Namespace: "alice", SandboxName: "fix-repo-4", IssueURL: "u"})
+	r.StartRecipe("alice/plan-repo-4", RecipeOptions{Recipe: "plan", Namespace: "alice", SandboxName: "fix-repo-4", URL: "u"})
 	res := waitResult(t, r, "alice/plan-repo-4")
 	if res.Err == nil {
 		t.Error("expected exec error from nonexistent binary")

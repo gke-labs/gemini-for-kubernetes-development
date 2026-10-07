@@ -72,7 +72,7 @@ func notesApplyClick() *boardv1alpha1.Request {
 
 // notesOutput is what StartRevise's harvest leaves for a Save notes: the
 // revise's Notes task output after the banner.
-const notesOutput = "================== ISSUE PLAN ==================\n" +
+const notesOutput = "================== TASK OUTPUT =================\n" +
 	"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Notes\n" +
 	"target:\n  url: https://github.com/test/repo\n" +
 	"source:\n  task: research-2\n  session: research-1\n" +

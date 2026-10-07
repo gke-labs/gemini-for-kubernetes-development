@@ -67,7 +67,7 @@ func TestUpdateReviewRevisesAndPosts(t *testing.T) {
 	g.Expect(opts.SandboxName).To(gomega.Equal("review-repo-42"))
 	g.Expect(opts.Revise).To(gomega.Equal("review"))
 	g.Expect(opts.Session).To(gomega.Equal("recipe-review-1"))
-	g.Expect(opts.PostReview).To(gomega.BeTrue())
+	g.Expect(opts.Apply).To(gomega.Equal("post-review"))
 	g.Expect(opts.RunName).To(gomega.HavePrefix("revise/test-board/review-repo-42/review/"))
 
 	fake.running[reviewReviseKeyAt] = true
@@ -79,7 +79,7 @@ func TestUpdateReviewRevisesAndPosts(t *testing.T) {
 	delete(fake.running, reviewReviseKeyAt)
 	fake.results[reviewReviseKeyAt] = factorycli.Result{
 		FinishedAt: time.Now().Add(time.Second),
-		Output: "================= PR REVIEW ====================\n" +
+		Output: "================== TASK OUTPUT =================\n" +
 			"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Review\nspec:\n  body: Looks good.\n" +
 			"================================================\nposted\n",
 	}

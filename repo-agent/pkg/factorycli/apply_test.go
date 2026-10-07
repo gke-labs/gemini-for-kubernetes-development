@@ -67,18 +67,15 @@ actions:
   - verb: push-notes
     label: Save to research/notes
 `
-	out := "Revising...\n" + planBanner + "\n" + doc + bannerCloser + "\n"
-	if got := ExtractNotes(out); got != "# Findings" {
-		t.Errorf("ExtractNotes = %q", got)
-	}
-	header := NotesTaskOutput(out)
+	out := "Revising...\n" + taskOutputBanner + "\n" + doc + bannerCloser + "\n"
+	header := HarvestedOutput("Notes", out)
 	if Draft("Notes", header) != "# Findings" {
-		t.Fatalf("NotesTaskOutput = %q, want the whole document", header)
+		t.Fatalf("HarvestedOutput = %q, want the whole document", header)
 	}
 	if acts := OfferedActions("Notes", header); len(acts) != 1 || acts[0].Verb != "push-notes" {
 		t.Errorf("offered = %+v", acts)
 	}
-	if ExtractNotes(planBanner+"\n"+planTaskOutput+bannerCloser+"\n") != "" {
+	if HarvestedOutput("Notes", taskOutputBanner+"\n"+planTaskOutput+bannerCloser+"\n") != "" {
 		t.Error("a plan read as notes")
 	}
 
