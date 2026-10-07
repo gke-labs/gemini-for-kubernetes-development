@@ -753,7 +753,7 @@ describe('WorkRow run rules', () => {
 
     test('an issue whose fix run is recorded shows the run, not the PR fact', async () => {
         await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6', sessions: [run('fix', 'Fix', 'done')] });
-        const fixes = Array.from(container.querySelectorAll('a')).filter(a => a.textContent.startsWith('Fix:'));
+        const fixes = Array.from(container.querySelectorAll('a')).filter(a => (a.getAttribute('title') || '').startsWith('Fix:'));
         expect(fixes.map(a => a.getAttribute('href'))).toEqual(['#/task-session/fix-r-5/recipe-fix-1']);
     });
 });
