@@ -7,9 +7,6 @@ import (
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
@@ -17,32 +14,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 )
-
-// fixRunSandbox is the sandbox of the fix recipe's run behind PR prNum
-// (design/fix-recipe.md): the one aliased to the PR that records a fix
-// run (fix-run), or "". Its PR is looked after by care
-// (design/care-recipe.md) instead of `pr investigate` and `pr
-// address-comments`.
-func fixRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, prNum int, prURL string) string {
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(rootFlags.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
-	})
-	if err != nil {
-		klog.Errorf("Failed to list the sandboxes of PR #%d: %v", prNum, err)
-		return ""
-	}
-	return fixRunOf(list.Items, prURL)
-}
-
-func fixRunOf(items []unstructured.Unstructured, prURL string) string {
-	for _, sb := range items {
-		a := sb.GetAnnotations()
-		if a[factorysandbox.RunAnnotation("fix")] != "" && normalizeItemURL(a["htmlURL"]) == normalizeItemURL(prURL) {
-			return sb.GetName()
-		}
-	}
-	return ""
-}
 
 // careRunSandbox is PR prNum's sandbox (recipe-<repo>-<n>) when it records
 // a run of the care recipe on the PR, or "". The watch revises that run.
@@ -65,29 +36,6 @@ func careRunOn(annotations map[string]string, prURL string) bool {
 // careTaskType is what the care recipe's runs are recorded under: it
 // declares no task-type.
 const careTaskType = "recipe-care"
-
-// watchFollowUp is how the watch follows a PR up.
-type watchFollowUp int
-
-const (
-	// followOverseer: pr investigate and pr address-comments, for a PR no
-	// recipe made or looks after.
-	followOverseer watchFollowUp = iota
-	// followStartCare: start care, for the PR a board fix opened.
-	followStartCare
-	// followReviseCare: revise care's run on the PR.
-	followReviseCare
-)
-
-func followUpOf(careSandbox, fixSandbox string) watchFollowUp {
-	switch {
-	case careSandbox != "":
-		return followReviseCare
-	case fixSandbox != "":
-		return followStartCare
-	}
-	return followOverseer
-}
 
 // careFollowUp runs care on prURL for one job — revise (fix-ci,
 // address-comments) in care's run in careSandbox, or with none, a start

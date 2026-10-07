@@ -404,7 +404,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 
 		if watch {
 			fmt.Printf("\nStarting PR watch for %s...\n", prURL)
-			return runPRWatch(ctx, prURL, pollInterval, false, true, watchTimeout, ephemeralStorage, secrets)
+			return runPRWatch(ctx, prURL, pollInterval, false, watchTimeout)
 		}
 	} else if watch {
 		fmt.Println("\nWarning: --watch was specified but could not determine PR URL from task output.")
