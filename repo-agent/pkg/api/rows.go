@@ -24,24 +24,6 @@ import (
 // GitHub adds the facts no run records: a review requested of the member,
 // their pending review, their own draft PR.
 
-// hookedRecipes are the built-ins the controller has passes of its own
-// for, in the board's order, as the rows offer them until the controller
-// has published its catalog.
-var hookedRecipes = []boardv1alpha1.BoardRecipe{
-	{Name: "triage", Label: "Triage", On: []string{"issue"}},
-	{Name: "plan", Label: "Plan", On: []string{"issue"}},
-	{Name: "fix", Label: "Fix", On: []string{"issue"}},
-	{Name: "review", Label: "Review", On: []string{"pr"}},
-}
-
-// rowStarts reports whether a row of item (issue or pr) offers rec.
-func rowStarts(rec boardv1alpha1.BoardRecipe, item string) bool {
-	if want, ok := hookedRecipeItems[rec.Name]; ok {
-		return item == want
-	}
-	return recipeStartsOn(rec, item)
-}
-
 // recipeLabel is name's label in catalog, else its name.
 func recipeLabel(catalog []boardv1alpha1.BoardRecipe, name string) string {
 	if i := slices.IndexFunc(catalog, func(rec boardv1alpha1.BoardRecipe) bool { return rec.Name == name }); i >= 0 && catalog[i].Label != "" {
@@ -50,14 +32,12 @@ func recipeLabel(catalog []boardv1alpha1.BoardRecipe, name string) string {
 	return name
 }
 
-// rowRecipes are the launch buttons of a row of item.
+// rowRecipes are the launch buttons of a row of item: the recipes the
+// controller published that start there, none before it has.
 func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string) []models.RowRecipe {
-	if len(catalog) == 0 {
-		catalog = hookedRecipes
-	}
 	var out []models.RowRecipe
 	for _, rec := range catalog {
-		if !rowStarts(rec, item) {
+		if !recipeStartsOn(rec, item) {
 			continue
 		}
 		button := models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name)}

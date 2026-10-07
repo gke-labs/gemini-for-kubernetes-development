@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -424,7 +425,23 @@ func theRequest(t *testing.T, dyn *fake.FakeDynamicClient, namespace string) boa
 	return reqs[0]
 }
 
+// boardCR is a board its controller has published the built-in recipes
+// on, as factory recipe list lists them.
 func boardCR() *unstructured.Unstructured {
+	board := bareBoardCR()
+	board.Object["status"] = map[string]interface{}{"recipes": []interface{}{
+		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue", "my-pr"}, "revisesOn": []interface{}{"my-pr"}, "kind": "Change"},
+		map[string]interface{}{"name": "plan", "label": "Plan", "on": []interface{}{"issue"}, "kind": "Plan"},
+		map[string]interface{}{"name": "research", "label": "Research", "on": []interface{}{"repo"}, "kind": "Notes"},
+		map[string]interface{}{"name": "review", "label": "Review", "on": []interface{}{"pr"}, "kind": "Review"},
+		map[string]interface{}{"name": "summarize", "label": "Summarize", "on": []interface{}{"issue"}, "kind": "Summary"},
+		map[string]interface{}{"name": "triage", "label": "Triage", "on": []interface{}{"issue"}, "kind": "Triage"},
+	}}
+	return board
+}
+
+// bareBoardCR is a board before its controller has published anything.
+func bareBoardCR() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "board.gemini.google.com/v1alpha1",
 		"kind":       "RepoBoard",
@@ -928,7 +945,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	if row := byKey["issue-20"]; row.Sandbox == nil || row.Sandbox.Name != "fix-repo-20" {
 		t.Errorf("issue-20 should carry its triage sandbox: %+v", row.Sandbox)
 	}
-	if row := byKey["issue-21"]; row.Group != "issues" || row.Attention != "" || len(row.Recipes) != 3 {
+	if row := byKey["issue-21"]; row.Group != "issues" || row.Attention != "" || len(row.Recipes) != 4 {
 		t.Errorf("issue-21 row wrong: %+v", row)
 	}
 	// The feed is the universe: label-carrying rows surface with their
@@ -1464,7 +1481,7 @@ func TestRejectATriage(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &work)
 	for _, item := range work {
 		if item.Number == 20 {
-			if item.Attention != "" || item.Sandbox != nil || len(item.Recipes) == 0 || item.Recipes[0].Name != "triage" {
+			if item.Attention != "" || item.Sandbox != nil || !slices.ContainsFunc(item.Recipes, func(rec models.RowRecipe) bool { return rec.Name == "triage" }) {
 				t.Errorf("row not reset: %+v", item)
 			}
 			return
