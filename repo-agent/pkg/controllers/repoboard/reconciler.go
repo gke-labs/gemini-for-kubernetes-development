@@ -81,13 +81,12 @@ const (
 	// Plan-loop annotations live on the issue's FIX sandbox (`factory
 	// plan` runs there so the approved plan sits next to the code the fix
 	// will touch). The draft (factorycli.AnnotationPlanOutput) is
-	// board-only until the member approves — applies its run action,
-	// factorycli.AnnotationPlanApplied — which publishes it via the fix
-	// PR's description.
+	// board-only until the member applies its run action
+	// (factorycli.AnnotationPlanApplied), which files the fix with it as
+	// the plan input; the fix publishes it in its PR's description.
 	AnnotationPlannedAt      = "board.gemini.google.com/planned-at"
 	AnnotationPlanFeedback   = "board.gemini.google.com/plan-feedback"
 	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
-	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
 	// AnnotationFixHarvestedAt is when the controller last read a fix
 	// run's result (the PR it opened, or why it failed): a fix run
 	// recorded after it has not been read yet, and a restarted controller
@@ -158,6 +157,9 @@ type fixPlan struct {
 	// since is when the click was made, zero for none: a click after the
 	// fix ended is Fix again.
 	since time.Time
+	// inputs are the click's recipe inputs: a plan's draft as fix's plan,
+	// from its run: fix.
+	inputs map[string]string
 }
 
 // maxActive mirrors the CRD default for specs that omit the limits block
@@ -188,8 +190,8 @@ type reviewPlan struct {
 
 // planRequest is one plan (or plan refinement) to ensure: PLAN -> human
 // REFINE -> UPDATE_PLAN rounds run in the requesting member's fix sandbox,
-// write nothing to GitHub, and end at APPROVE (fix launches --with-plan)
-// or REJECT (draft cleared).
+// write nothing to GitHub, and end at "Fix with this plan" (a fix Request
+// carrying the plan) or reject.
 type planRequest struct {
 	issue  int
 	member string
@@ -707,11 +709,9 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 }
 
 // resumeFixes revisits the issue sandboxes whose fix is owed something
-// no standing Request asks for any more (the fix Request settles as soon
-// as the fix runs):
+// no standing Request asks for (the fix Request, which carries a plan
+// clicked into it, settles only once the fix runs):
 //
-//   - an approved plan whose fix never started: a restart between the
-//     Request settling and the task landing, or a launch that bailed;
 //   - a Fix again, which is a marker on the sandbox, not a Request;
 //   - a fix run whose result the controller has not read: still running
 //     when it restarted, or just ended. Its PR is opened from it.
@@ -727,10 +727,8 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 			continue
 		}
 		annotations := sb.GetAnnotations()
-		approved := planApproved(annotations) &&
-			!fixLike(annotations[factorycli.AnnotationTaskType])
 		_, unread := fixRunUnread(annotations, work.board.Name, n)
-		if !approved && !unread && !(refixRequested(sb) && fixLike(annotations[factorycli.AnnotationTaskType])) {
+		if !unread && !(refixRequested(sb) && fixLike(annotations[factorycli.AnnotationTaskType])) {
 			continue
 		}
 		executor := annotations[AnnotationExecutor]
@@ -828,10 +826,6 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 		// A fix sandbox's htmlURL is its PR's once it has one.
 		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, plan.issue)
 	}
-	// An approved plan on the sandbox rides along: the fix follows it.
-	// Only approval consents this — a plain Fix click on a merely drafted
-	// (or rejected) plan ignores it.
-	withPlan := planApproved(annotations)
 	runName := fixRunName(work.board.Name, plan.issue)
 	if follow {
 		runName = followed
@@ -841,9 +835,8 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	// The PR is always a draft: open-pr opens nothing else.
 	opts := r.recipeOptions(work, "fix", plan.executor, name, issueURL, token, runName)
 	opts.Timeout, opts.Apply = 3*time.Hour, "open-pr"
-	if withPlan {
-		opts.Inputs = map[string]string{"with_plan": "true"}
-	}
+	// A plan's run: fix brings the plan as fix's plan input.
+	opts.Inputs = plan.inputs
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name, "run", runName)
 	}

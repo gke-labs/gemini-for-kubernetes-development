@@ -1115,54 +1115,10 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(launches[0].PlanOpts.Inputs["feedback"]).To(gomega.Equal("merge steps 2 and 3"))
 }
 
-// An approved plan rides into the fix (--with-plan); a merely drafted or
-// rejected plan does not.
-func TestFixWithApprovedPlan(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-
-	sbWithPlan := func(approved bool) *unstructured.Unstructured {
-		annotations := map[string]interface{}{
-			"htmlURL":                       "https://github.com/test/repo/issues/7",
-			factorycli.AnnotationPlanOutput: storedOutput("Plan", "## Summary\nplanned"),
-			AnnotationPlannedAt:             time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-			"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
-		}
-		if approved {
-			annotations[factorycli.AnnotationPlanApplied] = `{"run":"` + time.Now().UTC().Format(time.RFC3339) + `"}`
-		}
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":        "fix-repo-7",
-				"namespace":   "alice",
-				"labels":      map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-				"annotations": annotations,
-			},
-			"spec": map[string]interface{}{"replicas": int64(1)},
-		}}
-	}
-
-	for _, approved := range []bool{true, false} {
-		fake := newFakeLauncher()
-		r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sbWithPlan(approved), launch("fix", 7))
-		_, err := r.Reconcile(context.Background(), boardRequest())
-		g.Expect(err).NotTo(gomega.HaveOccurred())
-		launches := fake.launches()
-		g.Expect(launches).To(gomega.HaveLen(1), "approved=%v", approved)
-		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil())
-		g.Expect(launches[0].FixOpts.Inputs["with_plan"] == "true").To(gomega.Equal(approved), "approved=%v", approved)
-	}
-}
-
-// The live #1529 regression, both halves. (1) Type-blind terminal: the
-// plan's Completed stamp on the shared fix sandbox must not read as "the
-// fix already ran" — that bailed every Approve & Fix after a plan. (2)
-// resumeFixes: the fix Request settles as soon as the sandbox exists, so
-// with no click standing, an approved-but-never-fixed sandbox must still
-// launch (controller restarts between settling and task start).
-func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
+// The plan a fix follows is the click's: a plan's run: fix files the fix
+// with the plan as its input. A plan on the sandbox, applied or not, does
+// not ride into a plain Fix click.
+func TestFixTakesTheClicksPlan(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
@@ -1176,11 +1132,11 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 				"annotations": map[string]interface{}{
 					"htmlURL":                        "https://github.com/test/repo/issues/7",
-					AnnotationExecutor:               "alice",
 					factorycli.AnnotationPlanOutput:  storedOutput("Plan", "## Summary\nplanned"),
 					AnnotationPlannedAt:              time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 					factorycli.AnnotationPlanApplied: `{"run":"` + time.Now().UTC().Format(time.RFC3339) + `"}`,
-					// the PLAN's completion stamps — not the fix's
+					// The plan's completion stamps, not a fix's: the fix
+					// has not run.
 					factorycli.AnnotationTaskType:  "plan",
 					factorycli.AnnotationTaskState: factorycli.TaskStateCompleted,
 				},
@@ -1189,20 +1145,30 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 		}}
 	}
 
-	// (1) with the click standing, (2) with it already settled.
-	for _, standing := range []bool{true, false} {
-		fake := newFakeLauncher()
-		objs := []runtime.Object{testBoard(nil), githubSecret(), sb()}
-		if standing {
-			objs = append(objs, launch("fix", 7))
+	for _, plan := range []string{"## Summary\nplanned", ""} {
+		click := launch("fix", 7)
+		if plan != "" {
+			click.Spec.Inputs = map[string]string{"plan": plan}
 		}
-		r := newTestReconciler(fake, ghClient, objs...)
+		fake := newFakeLauncher()
+		r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb(), click)
 		_, err := r.Reconcile(context.Background(), boardRequest())
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		launches := fake.launches()
-		g.Expect(launches).To(gomega.HaveLen(1), "standing=%v", standing)
-		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil(), "standing=%v", standing)
-		g.Expect(launches[0].FixOpts.Inputs["with_plan"]).To(gomega.Equal("true"))
+		g.Expect(launches).To(gomega.HaveLen(1), "plan=%q", plan)
+		g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil())
+		g.Expect(launches[0].FixOpts.Inputs["plan"]).To(gomega.Equal(plan))
+		g.Expect(launches[0].FixOpts.Inputs).NotTo(gomega.HaveKey("with_plan"))
+	}
+
+	// With no click standing, an applied plan launches nothing: the click
+	// stands until a fix runs, so a restart does not lose it.
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sb())
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, l := range fake.launches() {
+		g.Expect(l.FixOpts).To(gomega.BeNil())
 	}
 }
 
@@ -1281,9 +1247,9 @@ func TestWakeStampsUnpaused(t *testing.T) {
 			"annotations": map[string]interface{}{
 				"repo":    "repo",
 				"htmlURL": "https://github.com/test/repo/issues/30",
-				factorycli.AnnotationRecipeTriageTaskState:   "Completed",
-				"sandbox.gemini.google.com/completion-time":  time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
-				"board.gemini.google.com/triage-rejected-at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+				factorycli.AnnotationRecipeTriageTaskState:          "Completed",
+				"sandbox.gemini.google.com/completion-time":         time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339),
+				"board.gemini.google.com/recipe-triage-rejected-at": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(0)},

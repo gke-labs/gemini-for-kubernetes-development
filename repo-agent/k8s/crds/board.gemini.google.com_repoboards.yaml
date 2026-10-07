@@ -188,6 +188,11 @@ spec:
                             type: string
                           description:
                             type: string
+                          from:
+                            description: |-
+                              From is the task output kind whose result the input takes:
+                              a run: <recipe> action on that kind's draft fills it.
+                            type: string
                           name:
                             type: string
                           required:

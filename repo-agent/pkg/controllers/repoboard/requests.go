@@ -133,7 +133,7 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			// on; settleHooked fails one on anything else.
 			switch {
 			case spec.Recipe == "fix" && spec.Item == "issue":
-				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member, since: req.CreationTimestamp.Time})
+				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member, since: req.CreationTimestamp.Time, inputs: spec.Inputs})
 			case spec.Recipe == "review" && spec.Item == "pr":
 				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
 			case spec.Recipe == "triage" && spec.Item == "issue":

@@ -66,7 +66,7 @@ func IssueSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, i
 func HasTriage(sb *unstructured.Unstructured) bool {
 	a := sb.GetAnnotations()
 	return TriageTaskState(a) != "" || a[AnnotationTriageOutput] != "" ||
-		a["board.gemini.google.com/triaged-at"] != "" || a["board.gemini.google.com/triage-rejected-at"] != ""
+		a["board.gemini.google.com/triaged-at"] != "" || a[RejectedAnnotation(AnnotationTriageRun)] != ""
 }
 
 // OnlyTriaged reports whether sb, an issue's sandbox, has had a triage and

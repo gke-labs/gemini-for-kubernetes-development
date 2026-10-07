@@ -36,6 +36,7 @@ import (
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
@@ -63,6 +64,7 @@ type taskSessionDraft struct {
 	// where its writes are filed.
 	runKey string
 	board  *unstructured.Unstructured
+	item   string
 	number int
 }
 
@@ -193,9 +195,9 @@ func reviseActions(run factorycli.RecordedRun) []models.WorkAction {
 	return revises
 }
 
-// sessionDraft is task's draft, nil when it has none: an issue's plan or
-// triage, as its row has it; a research conversation's notes; and any
-// other run's stored task output (anyDraft).
+// sessionDraft is task's draft, nil when it has none: a research
+// conversation's notes, and any other run's stored task output
+// (anyDraft).
 func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) *taskSessionDraft {
 	a := sb.GetAnnotations()
 	run, ok := factorycli.SessionRun(a, task)
@@ -203,26 +205,6 @@ func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructu
 		return nil
 	}
 	kind := run.Kind
-	if number, boardName, ok := sessionIssue(sb); ok && (kind == "Plan" || kind == "Triage") {
-		var item models.WorkItem
-		var draft *taskSessionDraft
-		switch {
-		case kind == "Plan" && factorycli.PlanDraft(a) != "" && !planApproved(a):
-			item.PlanActions = planWorkActions(a, planIsRevising(a), a[annoTaskState] == "Running")
-			draft = &taskSessionDraft{Kind: "Plan", Markdown: factorycli.PlanDraft(a), DraftedAt: a[annoPlannedAt]}
-		case kind == "Triage" && factorycli.TriageDraft(sb) != "":
-			item.TriageActions = triageWorkActions(a)
-			draft = &taskSessionDraft{Kind: "Triage", Spec: factorycli.TriageDraft(sb), DraftedAt: a["board.gemini.google.com/triaged-at"]}
-		default:
-			return nil
-		}
-		board, _, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
-		if err == nil {
-			s.markApplies(ctx, board, map[string]*models.WorkItem{"issue-" + strconv.Itoa(number): &item})
-		}
-		draft.Actions = withoutRevises(append(item.PlanActions, item.TriageActions...))
-		return draft
-	}
 	view, ok := sessionResearch(sb)
 	if !ok {
 		return s.anyDraft(ctx, c, sb, run)
@@ -251,11 +233,12 @@ func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructu
 	}
 }
 
-// anyDraft is the draft of a run the board keeps no draft of its own for
-// (a fix's Change, a review's Review, a new recipe's): its stored task
-// output, as markdown or its spec as YAML, with the writes, edit and
-// reject it offers. A write is filed on the run, on the board of the
-// issue or PR the sandbox is for; a sandbox for neither offers none.
+// anyDraft is a run's draft, whichever recipe it is (a triage, a plan, a
+// fix's Change, a review's Review, a new recipe's): its stored task
+// output, as markdown or its spec as YAML, with the writes, follow-ups,
+// edit and reject it offers. A write or a follow-up is filed on the
+// board of the issue or PR the sandbox is for; a sandbox for neither
+// offers none.
 func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, run factorycli.RecordedRun) *taskSessionDraft {
 	a := sb.GetAnnotations()
 	doc := a[factorycli.OutputAnnotation(run.Key)]
@@ -273,18 +256,20 @@ func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.
 	if run.EndedAt != nil {
 		draft.DraftedAt = run.EndedAt.UTC().Format(time.RFC3339)
 	}
+	item := "issue"
 	number, boardName, ok := sessionIssue(sb)
 	if !ok {
+		item = "pr"
 		number, boardName, ok = sessionReview(sb)
 	}
 	if ok {
 		draft.board, _, _ = s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
-		draft.number = number
+		draft.item, draft.number = item, number
 	}
 	applied := factorycli.Applied(a, factorycli.AppliedAnnotation(run.Key))
 	var offered []factorycli.Action
 	for _, act := range factorycli.OfferedActions(kind, doc) {
-		if act.Verb == "edit" || act.Verb == "reject" || (factorycli.IsApplyVerb(act.Verb) && draft.board != nil) {
+		if act.Verb == "edit" || act.Verb == "reject" || ((factorycli.IsApplyVerb(act.Verb) || act.Verb == "run") && draft.board != nil) {
 			offered = append(offered, act)
 		}
 	}
@@ -342,13 +327,22 @@ func (s *Server) markRunApplies(ctx context.Context, board *unstructured.Unstruc
 
 // anyDraftAction takes one of an anyDraft's actions: an edit rewrites its
 // spec (or markdown), and makes it unapplied, a reject discards it — a review's abandons its
-// pending review, as the PR row's Abandon does — and a write is filed on
-// its run.
-func (s *Server) anyDraftAction(c *gin.Context, sb *unstructured.Unstructured, draft *taskSessionDraft, verb, text string) {
+// pending review, as the PR row's Abandon does — a write is filed on its
+// run, and a run starts the recipe it names with the draft.
+func (s *Server) anyDraftAction(c *gin.Context, sb *unstructured.Unstructured, draft *taskSessionDraft, verb, run, text string) {
 	ctx := c.Request.Context()
 	ns := s.Auth.GetNamespaceFromContext(c)
 	switch {
 	case verb == "edit":
+		if draft.Kind == "Triage" {
+			// What label and comment act on: refused up front if they
+			// could not.
+			text = factorycli.NormalizeTriageDraft(text)
+			if err := validateTriageDraft(text); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "draft does not match the triage schema", "details": err.Error()})
+				return
+			}
+		}
 		if err := s.editDraft(ctx, ns, sb, draft.Kind, factorycli.OutputAnnotation(draft.runKey), text); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -372,11 +366,59 @@ func (s *Server) anyDraftAction(c *gin.Context, sb *unstructured.Unstructured, d
 				return
 			}
 		}
+		// The tombstone keeps a pass that starts the recipe on its own
+		// (auto-triage) from redoing what the member threw away.
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.RejectedAnnotation(draft.runKey), nowRFC3339()); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to discard the draft", "details": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"discarded": true})
+	case verb == "run" && draft.board != nil:
+		s.runFollowUp(c, sb, draft, run)
 	case factorycli.IsApplyVerb(verb) && draft.board != nil:
 		s.fileApply(c, draft.board, sb.GetName(), draft.number, factorycli.RunTaskType(draft.runKey), verb)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not take %s here", strings.ToLower(draft.Kind), verb)})
+	}
+}
+
+// runFollowUp is a draft's run: <recipe>: the recipe, on the draft's
+// issue or PR, with the draft as it stands as the input the recipe takes
+// from its kind (fix's plan, from: Plan), filed as the launch click is.
+// Once filed, the run is stamped applied: the draft has gone where it was
+// going.
+func (s *Server) runFollowUp(c *gin.Context, sb *unstructured.Unstructured, draft *taskSessionDraft, recipe string) {
+	recipes, err := boardRecipes(draft.board)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid recipes on board", "details": err.Error()})
+		return
+	}
+	input := ""
+	if i := slices.IndexFunc(recipes, func(rec boardv1alpha1.BoardRecipe) bool { return rec.Name == recipe }); i >= 0 {
+		for _, in := range recipes[i].Inputs {
+			if in.From == draft.Kind {
+				input = in.Name
+			}
+		}
+	}
+	if input == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the board's %s takes no %s", recipe, strings.ToLower(draft.Kind))})
+		return
+	}
+	text := draft.Markdown
+	if text == "" {
+		text = draft.Spec
+	}
+	c.Params = append(c.Params,
+		gin.Param{Key: "board", Value: draft.board.GetName()},
+		gin.Param{Key: "id", Value: strconv.Itoa(draft.number)},
+	)
+	s.kickoff(c, draft.item, recipe, map[string]string{input: text})
+	if c.Writer.Status() != http.StatusOK {
+		return
+	}
+	if err := s.markApplied(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), sb, factorycli.AppliedAnnotation(draft.runKey), "run"); err != nil {
+		klog.FromContext(c.Request.Context()).Error(err, "the follow-up is filed; stamping its run applied failed", "sandbox", sb.GetName())
 	}
 }
 
@@ -538,7 +580,7 @@ func (s *Server) taskSessionDraftAction(c *gin.Context) {
 		return
 	}
 	if draft.runKey != "" {
-		s.anyDraftAction(c, sb, draft, verb, req.Text)
+		s.anyDraftAction(c, sb, draft, verb, req.Run, req.Text)
 		return
 	}
 	if number, board, ok := sessionIssue(sb); ok {

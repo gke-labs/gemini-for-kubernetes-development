@@ -1622,7 +1622,7 @@ func TestRejectBoardTriage(t *testing.T) {
 	if annotations[factorycli.AnnotationTriageOutput] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
 		t.Errorf("breadcrumbs not cleared: %v", annotations)
 	}
-	if annotations["board.gemini.google.com/triage-rejected-at"] == "" {
+	if annotations["board.gemini.google.com/recipe-triage-rejected-at"] == "" {
 		t.Error("tombstone missing")
 	}
 
@@ -2064,7 +2064,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if a := stored(); a[factorycli.AnnotationTriageOutput] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/triage-rejected-at"] == "" {
+	if a := stored(); a[factorycli.AnnotationTriageOutput] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/recipe-triage-rejected-at"] == "" {
 		t.Errorf("after reject: %v", a)
 	}
 }

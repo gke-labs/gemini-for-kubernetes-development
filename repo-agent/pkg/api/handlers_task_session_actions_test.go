@@ -65,6 +65,9 @@ spec:
 actions:
   - verb: comment
     label: Post plan
+  - verb: run
+    run: fix
+    label: Fix with this plan
   - verb: reject
   - verb: revise
     revise: plan
@@ -74,7 +77,14 @@ actions:
 	if approved {
 		annotations[factorycli.AnnotationPlanApplied] = `{"run":"2026-09-18T00:00:00Z"}`
 	}
-	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(),
+	// The board's catalog: fix takes a Plan as its plan.
+	board := boardCR()
+	board.Object["status"] = map[string]interface{}{"recipes": []interface{}{
+		map[string]interface{}{"name": "plan", "label": "Plan", "on": []interface{}{"issue"}, "kind": "Plan"},
+		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue"}, "kind": "Change",
+			"inputs": []interface{}{map[string]interface{}{"name": "plan", "from": "Plan"}}},
+	}}
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), board,
 		sandboxCR("fix-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true"}, annotations, 1))
 	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
@@ -117,17 +127,60 @@ func TestAPlanSessionActsOnItsIssueRow(t *testing.T) {
 	}
 }
 
-// Once the plan is approved it is not revised, and the session says why.
+// Once the plan went to a fix it is not revised, nor sent again, and the
+// session says why.
 func TestAnApprovedPlansSessionRefusesItsRevise(t *testing.T) {
 	r, dyn := planSessionServer(t, true)
 	if w := doJSON(t, r, http.MethodPost, planSessionAt+"/revise", `{"revise":"plan"}`); w.Code != http.StatusConflict {
 		t.Errorf("revise: %d %s, want 409", w.Code, w.Body.String())
 	}
-	if w := doJSON(t, r, http.MethodPost, planSessionAt+"/draft/comment", `{}`); w.Code != http.StatusNotFound {
-		t.Errorf("comment: %d %s, want 404: an approved plan is no draft", w.Code, w.Body.String())
+	if w := doJSON(t, r, http.MethodPost, planSessionAt+"/draft/run", `{"run":"fix"}`); w.Code != http.StatusConflict {
+		t.Errorf("run fix again: %d %s, want 409: it was applied", w.Code, w.Body.String())
 	}
 	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
 		t.Errorf("filed %+v", reqs)
+	}
+}
+
+// A plan's run: fix files the fix on its issue with the plan, as it
+// stands, as fix's input from a Plan, and stamps the run applied.
+func TestAPlanSessionsRunFixFilesTheFixWithThePlan(t *testing.T) {
+	r, dyn := planSessionServer(t, false)
+	if w := doJSON(t, r, http.MethodPost, planSessionAt+"/draft/run", `{"run":"fix"}`); w.Code != http.StatusOK {
+		t.Fatalf("run fix: %d %s", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 {
+		t.Fatalf("filed %+v, want the fix", reqs)
+	}
+	spec := reqs[0].Spec
+	if spec.Verb != boardv1alpha1.VerbRecipe || spec.Recipe != "fix" || spec.Item != "issue" || spec.Number != 42 ||
+		spec.Inputs["plan"] != "## Summary\nDo the thing." {
+		t.Errorf("filed %+v, want fix on #42 with the plan", spec)
+	}
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "fix-repo-42", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !factorycli.IsApplied(sb.GetAnnotations(), factorycli.AnnotationPlanApplied, "run") {
+		t.Errorf("the plan's run is not stamped applied: %v", sb.GetAnnotations())
+	}
+}
+
+// Rejecting a draft discards it and tombstones its run, whichever recipe
+// it is.
+func TestRejectingASessionDraftTombstonesIt(t *testing.T) {
+	r, dyn := planSessionServer(t, false)
+	if w := doJSON(t, r, http.MethodPost, planSessionAt+"/draft/reject", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("reject: %d %s", w.Code, w.Body.String())
+	}
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), "fix-repo-42", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := sb.GetAnnotations()
+	if a[factorycli.AnnotationPlanOutput] != "" || a[factorycli.RejectedAnnotation(factorycli.AnnotationPlanRun)] == "" {
+		t.Errorf("after reject: %v, want no output and a tombstone", a)
 	}
 }
 
@@ -227,7 +280,14 @@ func fixSessionServer(t *testing.T, state string, pr bool, extra ...map[string]i
 	for _, e := range extra {
 		maps.Copy(annotations, e)
 	}
-	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(),
+	// The board's catalog: fix takes a Plan as its plan.
+	board := boardCR()
+	board.Object["status"] = map[string]interface{}{"recipes": []interface{}{
+		map[string]interface{}{"name": "plan", "label": "Plan", "on": []interface{}{"issue"}, "kind": "Plan"},
+		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue"}, "kind": "Change",
+			"inputs": []interface{}{map[string]interface{}{"name": "plan", "from": "Plan"}}},
+	}}
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), board,
 		sandboxCR("fix-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "42"}, annotations, 1))
 	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)

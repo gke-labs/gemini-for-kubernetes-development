@@ -29,9 +29,10 @@ import (
 // The plan loop: agent PLAN -> human REFINE -> agent UPDATE_PLAN -> human
 // APPROVE/REJECT -> agent FIX. `factory recipe plan` runs in the issue's fix
 // sandbox and writes nothing to GitHub; the draft lives on the sandbox
-// (factorycli.AnnotationPlanOutput) until the member approves — approval launches the
-// fix with --with-plan, which publishes the plan as the PR description's
-// Plan section (the durable record). Refinement rounds are edge-triggered:
+// (factorycli.AnnotationPlanOutput) until the member applies its run
+// action — "Fix with this plan" files a fix Request whose plan input
+// (fix.yaml's input from: Plan) is the draft, and the fix publishes it as
+// the PR description's Plan section (the durable record). Refinement rounds are edge-triggered:
 // a feedback stamp newer than the last planned-at re-runs the planner
 // against the previous plan.
 
@@ -190,9 +191,6 @@ func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 	}
 }
 
-// setOrDelete sets key to value, or removes it for "".
-// planApproved reports whether annotations hold a plan draft the member
-// approved: applied its run action, a fix with this plan.
-func planApproved(annotations map[string]string) bool {
-	return factorycli.PlanDraft(annotations) != "" && factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "run")
-}
+// AnnotationPlanRejected tombstones a rejected plan draft, as
+// AnnotationTriageRejected does a triage's.
+var AnnotationPlanRejected = factorycli.RejectedAnnotation(factorycli.AnnotationPlanRun)

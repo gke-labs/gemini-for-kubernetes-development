@@ -239,6 +239,10 @@ type BoardRecipeInput struct {
 	Type string `json:"type,omitempty"`
 	// +kubebuilder:validation:Optional
 	Revise bool `json:"revise,omitempty"`
+	// From is the task output kind whose result the input takes:
+	// a run: <recipe> action on that kind's draft fills it.
+	// +kubebuilder:validation:Optional
+	From string `json:"from,omitempty"`
 }
 
 // BoardRecipeRevise is one revise of a recipe, and the inputs it asks for.
