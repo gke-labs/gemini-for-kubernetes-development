@@ -144,12 +144,27 @@ const IDLE_AFTER = 5 * 60 * 1000;
 // on the scale of a plan, which is minutes.
 const RUN_STATE_EVERY = 2 * 60 * 1000;
 
-const UP_NEXT = 'up-next';
-const GROUPS = [
-  { key: UP_NEXT, label: 'Up Next', hint: 'Everything that needs you, across all groups' },
-  { key: 'issues', label: 'Issues', hint: 'All open issues — yours, unclaimed, and filed by you; actions follow each row' },
-  { key: 'prs', label: 'PRs', hint: 'Open pull requests — review others\' and refine your own; actions follow each row' },
-];
+// The board's one list of issues and pull requests: what needs you or is
+// running first, the rest after, narrowed by the filters above it.
+const WORK = 'work';
+const WORK_HINT = 'Open issues and pull requests — what needs you or is running first; actions follow each row';
+
+// isActive is whether a row belongs in Work's first section: it needs
+// you, or an agent is working on it.
+function isActive(item) {
+  return item.attention === 'needs-you' || item.attention === 'working' || Object.keys(item.launching || {}).length > 0;
+}
+
+// matchesSearch is whether a row has q in its title, number (#12 or 12),
+// author or labels.
+export function matchesSearch(item, q) {
+  q = (q || '').trim().toLowerCase();
+  if (!q) return true;
+  if (/^#?\d+$/.test(q)) return String(item.number).startsWith(q.replace('#', ''));
+  return (item.title || '').toLowerCase().includes(q) ||
+    (item.author || '').toLowerCase().includes(q) ||
+    (item.labels || []).some(l => l.toLowerCase().includes(q));
+}
 
 function groupOf(item) {
   return item.group || (item.type === 'issue' ? 'issues' : 'prs');
@@ -411,7 +426,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         {groupTag && (
           <span onClick={onGroupTagClick} style={onGroupTagClick ? { cursor: 'pointer' } : undefined}
             title={onGroupTagClick ? `Open the ${groupTag} board` : undefined}>
-            <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={onGroupTagClick ? undefined : GROUPS.find(g => g.key === group)?.hint} />
+            <Chip text={groupTag} color={accentOf(item)} bg={tintOf(item)} title={onGroupTagClick ? undefined : (group === 'issues' ? 'An issue' : item.mine ? 'Your pull request' : 'A pull request')} />
           </span>
         )}
         {groupTag ? ' ' : ''}{item.type === 'issue' ? '◉' : '⇄'} #{item.number}
@@ -1393,8 +1408,10 @@ function Work({ onBack, namespace }) {
   const [error, setError] = useState('');
   // View is fluid per-user UI state (localStorage, per board) — it never
   // touches the board spec, so flipping it can never change what runs.
-  const defaultView = { issues: 'all', prs: 'all', labels: '' };
+  const defaultView = { type: 'both', scope: 'all', labels: '' };
   const [view, setView] = useState(defaultView);
+  // The search narrows the list while it is typed in; it is not kept.
+  const [search, setSearch] = useState('');
   const [cardSandbox, setCardSandbox] = useState(null);
   // The task session open beside the board, { sandbox, task }.
   const [openSession, setOpenSession] = useState(null);
@@ -1794,33 +1811,53 @@ function Work({ onBack, namespace }) {
       })() : (() => {
         // The feed is the full universe; the view narrows it here, client
         // side. In-flight items (sandbox, agent motion) always surface —
-        // tightening a filter must never hide running work.
+        // tightening the scope or labels must never hide running work.
         const inFlight = i => !!i.sandbox || i.attention === 'working' || Object.keys(i.launching || {}).length > 0;
         const labelFilters = (view.labels || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+        const inScope = item => {
+          const pr = groupOf(item) === 'prs';
+          switch (view.scope) {
+            case 'mine':
+              // Assignee list is viewer-first, so a simple prefix test works.
+              return pr ? !!item.mine : ((item.assignee || '').startsWith(namespace) || item.author === namespace);
+            case 'requested': return pr && !!item.reviewRequested;
+            case 'drafts': return pr && !!item.draftPR;
+            default: return true;
+          }
+        };
+        // The type and the search are what was asked for; scope and labels
+        // never hide running work.
         const visible = work.filter(item => {
+          if (view.type === 'issues' && groupOf(item) !== 'issues') return false;
+          if (view.type === 'prs' && groupOf(item) !== 'prs') return false;
+          if (!matchesSearch(item, search)) return false;
           if (inFlight(item)) return true;
           if (labelFilters.length && !(item.labels || []).some(l => labelFilters.includes(l.toLowerCase()))) return false;
-          const g = groupOf(item);
-          if (g === 'issues' && view.issues === 'mine') {
-            // Assignee list is viewer-first, so a simple prefix test works.
-            if (!(item.assignee || '').startsWith(namespace) && item.author !== namespace) return false;
-          }
-          if (g === 'prs') {
-            if (view.prs === 'mine' && !item.mine) return false;
-            if (view.prs === 'requested' && !item.reviewRequested) return false;
-            if (view.prs === 'drafts' && !item.draftPR) return false;
-          }
-          return true;
+          return inScope(item);
         });
-        const byGroup = {};
-        GROUPS.forEach(g => { byGroup[g.key] = []; });
-        visible.forEach(item => { (byGroup[groupOf(item)] = byGroup[groupOf(item)] || []).push(item); });
-        byGroup[UP_NEXT] = visible.filter(i => i.attention === 'needs-you');
-        // Always land on Up Next: consistent muscle memory, and its empty
-        // state ("nothing needs you") is the good news, not a dead end.
-        const shown = activeGroup || UP_NEXT;
-        const rows = byGroup[shown] || [];
+        // The feed comes needs-you first, then working: each section keeps
+        // its order.
+        const active = visible.filter(isActive);
+        const rest = visible.filter(i => !isActive(i));
+        const needs = visible.filter(i => i.attention === 'needs-you').length;
+        // Always land on Work: consistent muscle memory, and its empty
+        // first section ("nothing needs you") is the good news, not a dead end.
+        const shown = activeGroup || WORK;
         const groupLabel = item => (groupOf(item) === 'issues' ? 'ISSUE' : item.mine ? 'MY PR' : 'PR');
+        const section = (label, n) => (
+          <tr className="work-section">
+            <td colSpan="5" style={{ padding: '10px 8px 4px', fontSize: 'x-small', fontWeight: 600, letterSpacing: '0.04em', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+              {label} ({n})
+            </td>
+          </tr>
+        );
+        const row = item => (
+          <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
+            onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession}
+            onAction={(p, l, b) => handleAction(p, l, undefined, b)} onRefresh={fetchWork} namespace={namespace}
+            groupTag={view.type === 'both' ? groupLabel(item) : undefined}
+            runState={runState} onRunStarted={onRunStarted} />
+        );
         const header = (
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
@@ -1835,32 +1872,26 @@ function Work({ onBack, namespace }) {
         return (
           <div>
             <nav className="group-tabs" style={{ display: 'flex', alignItems: 'center' }}>
-              {GROUPS.map(g => {
-                const needs = byGroup[g.key].filter(i => i.attention === 'needs-you').length;
-                return (
-                  <button
-                    key={g.key}
-                    className={`group-tab g-${g.key} ${shown === g.key ? 'active' : ''}`}
-                    title={g.hint}
-                    onClick={() => setActiveGroup(g.key)}
-                  >
-                    {g.label}
-                    {g.key !== UP_NEXT && byGroup[g.key].length > 0 && (
-                      <span style={{
-                        marginLeft: '6px', backgroundColor: 'var(--bg-secondary)',
-                        borderRadius: '9px', padding: '0 7px', fontSize: 'x-small',
-                        color: 'var(--text-secondary)',
-                      }}>{byGroup[g.key].length}</span>
-                    )}
-                    {needs > 0 && (
-                      <span style={{
-                        marginLeft: '4px', backgroundColor: '#d73a49', color: 'white',
-                        borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
-                      }}>{needs}</span>
-                    )}
-                  </button>
-                );
-              })}
+              <button
+                className={`group-tab g-work ${shown === WORK ? 'active' : ''}`}
+                title={WORK_HINT}
+                onClick={() => setActiveGroup(WORK)}
+              >
+                Work
+                {visible.length > 0 && (
+                  <span style={{
+                    marginLeft: '6px', backgroundColor: 'var(--bg-secondary)',
+                    borderRadius: '9px', padding: '0 7px', fontSize: 'x-small',
+                    color: 'var(--text-secondary)',
+                  }}>{visible.length}</span>
+                )}
+                {needs > 0 && (
+                  <span style={{
+                    marginLeft: '4px', backgroundColor: '#d73a49', color: 'white',
+                    borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
+                  }}>{needs}</span>
+                )}
+              </button>
               <button
                 className={`group-tab ${shown === 'research' ? 'active' : ''}`}
                 title="Understand this repo — an overview read, a digest of recent activity, or any question you ask; each one a conversation with an agent that has the repo checked out"
@@ -1872,24 +1903,23 @@ function Work({ onBack, namespace }) {
                 onClick={() => setActiveGroup('try')}
               >Runs</button>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center', fontSize: 'small' }}>
-                {shown === 'issues' && (
-                  <span title="View scope — display only, never changes what runs">
-                    {['all', 'mine'].map(v => (
+                {shown === WORK && (
+                  <span title="View — display only, never changes what runs">
+                    {[['both', 'Both'], ['issues', 'Issues'], ['prs', 'PRs']].map(([v, label]) => (
                       <button key={v} className="btn btn-sm"
-                        style={{ marginLeft: '2px', opacity: view.issues === v ? 1 : 0.5 }}
-                        onClick={() => updateView({ issues: v })}
-                      >{v === 'all' ? 'All' : 'Mine'}</button>
-                    ))}
-                  </span>
-                )}
-                {shown === 'prs' && (
-                  <span title="View scope — display only, never changes what runs">
-                    {[['all', 'All'], ['mine', 'Mine'], ['requested', 'Review requested'], ['drafts', 'Drafts']].map(([v, label]) => (
-                      <button key={v} className="btn btn-sm"
-                        style={{ marginLeft: '2px', opacity: view.prs === v ? 1 : 0.5 }}
-                        onClick={() => updateView({ prs: v })}
+                        style={{ marginLeft: '2px', opacity: view.type === v ? 1 : 0.5 }}
+                        onClick={() => updateView({ type: v })}
                       >{label}</button>
                     ))}
+                    <span style={{ margin: '0 4px', color: 'var(--border-color)' }}>|</span>
+                    {[['all', 'All'], ['mine', 'Mine'], ['requested', 'Review requested'], ['drafts', 'Drafts']]
+                      .filter(([v]) => view.type !== 'issues' || v === 'all' || v === 'mine')
+                      .map(([v, label]) => (
+                        <button key={v} className="btn btn-sm"
+                          style={{ marginLeft: '2px', opacity: view.scope === v ? 1 : 0.5 }}
+                          onClick={() => updateView({ scope: v })}
+                        >{label}</button>
+                      ))}
                   </span>
                 )}
                 {syncing && !loadingWork && (
@@ -1903,6 +1933,16 @@ function Work({ onBack, namespace }) {
                   onChange={e => updateView({ labels: e.target.value })}
                   style={{ width: '120px', padding: '3px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: 'small' }}
                 />
+                {shown === WORK && (
+                  <input
+                    type="search"
+                    value={search}
+                    placeholder="search…"
+                    title="Title, #number, author or label"
+                    onChange={e => setSearch(e.target.value)}
+                    style={{ width: '140px', padding: '3px 6px', borderRadius: '4px', border: '1px solid var(--border-color)', fontSize: 'small' }}
+                  />
+                )}
               </span>
             </nav>
 
@@ -1920,24 +1960,15 @@ function Work({ onBack, namespace }) {
                       Loading {activeBoard}…
                     </td></tr>
                   )}
-                  {!loadingWork && rows.map(item => (
-                    <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
-                      onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession}
-                      onAction={(p, l, b) => handleAction(p, l, undefined, b)} onRefresh={fetchWork} namespace={namespace}
-                      groupTag={shown === UP_NEXT ? groupLabel(item) : undefined}
-                      runState={runState} onRunStarted={onRunStarted} />
-                  ))}
-                  {!loadingWork && !rows.length && (
-                    shown === UP_NEXT ? (
-                      <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
-                        ✓ Nothing needs you right now.
-                      </td></tr>
-                    ) : (
-                      <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>
-                        Nothing in {(GROUPS.find(g => g.key === shown) || {}).label || 'this group'} — {(GROUPS.find(g => g.key === shown) || {}).hint || ''}.
-                      </td></tr>
-                    )
+                  {!loadingWork && section('Active', active.length)}
+                  {!loadingWork && active.map(row)}
+                  {!loadingWork && !active.length && (
+                    <tr><td colSpan="5" style={{ padding: '8px 8px 12px', color: 'var(--status-green)' }}>
+                      ✓ Nothing needs you right now.
+                    </td></tr>
                   )}
+                  {!loadingWork && rest.length > 0 && section('Everything else', rest.length)}
+                  {!loadingWork && rest.map(row)}
                 </tbody>
               </table>
             </div>
