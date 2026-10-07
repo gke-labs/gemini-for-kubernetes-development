@@ -42,19 +42,36 @@ const ATTENTION_STYLE = {
 // ‹label› again, and a ready one as its draft's button — clicking opens
 // the panel, and the verdict verbs (publish/approve/reject/…) live there,
 // under the content they judge.
+// A chip says its status by colour alone, the word is in its hover:
+// blue working, orange your move, green done, red failed, grey waiting.
 const RUN_STYLE = {
-  running: { color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
-  starting: { color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
+  running: { color: '#0969da', bg: 'rgba(9,105,218,0.12)' },
+  starting: { color: '#0969da', bg: 'rgba(9,105,218,0.08)' },
   queued: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
-  ready: { color: '#b08800', bg: 'rgba(176,136,0,0.16)' },
+  ready: { color: '#c2410c', bg: 'rgba(234,88,12,0.14)' },
   // A pending review on GitHub with no run left: finalize or discard it there.
-  pending: { color: '#b08800', bg: 'rgba(176,136,0,0.16)' },
-  done: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
+  pending: { color: '#c2410c', bg: 'rgba(234,88,12,0.14)' },
+  done: { color: '#22863a', bg: 'rgba(34,134,58,0.12)' },
   failed: { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
 };
-// READY_STYLE is a draft's button: amber = your verdict is the bottleneck;
-// purple = your saved review awaits finalize.
-const READY_STYLE = { color: '#b08800', bg: 'rgba(176,136,0,0.16)' };
+// READY_STYLE is a draft's button: your verdict is the bottleneck.
+const READY_STYLE = RUN_STYLE.ready;
+
+// chipTitle is a run chip's hover: its status, what a click does, and the
+// run's facts.
+function chipTitle(c, hint) {
+  const lines = [`${c.label}: ${c.status}${hint ? ` — ${hint}` : ''}`];
+  const run = c.run;
+  if (run) {
+    const at = ts => new Date(ts).toLocaleString();
+    if (run.startedAt) lines.push(`started ${at(run.startedAt)}`);
+    if (run.endedAt) lines.push(`ended ${at(run.endedAt)}`);
+    const applied = Object.keys(run.applied || {}).sort();
+    if (applied.length) lines.push(`applied: ${applied.join(', ')}`);
+    if (run.sandbox) lines.push(`sandbox: ${run.sandbox}`);
+  }
+  return lines.join('\n');
+}
 
 // latestRuns is the newest run of each recipe on the row (its sessions
 // are newest first).
@@ -242,17 +259,10 @@ function SessionSlideOver({ session, onClose }) {
         boxShadow: '-6px 0 24px rgba(0,0,0,0.25)', zIndex: 901,
         display: 'flex', flexDirection: 'column', textAlign: 'left',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderBottom: '1px solid var(--border-color)' }}>
-          <strong style={{ fontSize: 'small', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</strong>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-            <a className="btn btn-sm" href={taskSessionHref(session)} target="_blank" rel="noopener noreferrer"
-              onClick={onClose} title="Open this session in its own tab">Pop out ↗</a>
-            <button className="btn btn-sm" onClick={onClose} aria-label="Close" title="Close (Esc)">✕</button>
-          </span>
-        </div>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* One header: the conversation's, with ↗ (pop out) and ✕. */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '0 12px 12px' }}>
           <ResearchConversation key={`${session.sandbox}/${session.task}`} task={{ sandbox: session.sandbox, task: session.task }}
-            title={title} fill />
+            title={title} fill onDismiss={onClose} />
         </div>
       </div>
     </>
@@ -428,18 +438,18 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
         {chips.map(c => {
           const style = RUN_STYLE[c.status] || RUN_STYLE.running;
-          const text = `${c.label}: ${c.status}`;
+          const text = c.label;
           if (c.status === 'failed' && item.error) {
             return (
               <span key={c.recipe} onClick={() => setShowError(v => !v)} style={{ cursor: 'pointer', marginLeft: '4px' }}
-                title="Show why the run stopped">
+                title={chipTitle(c, 'show why the run stopped')}>
                 <Chip text={`${text} !`} color={style.color} bg={style.bg} />
               </span>
             );
           }
           if (c.href) {
             return (
-              <a key={c.recipe} href={c.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={c.title}>
+              <a key={c.recipe} href={c.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={chipTitle(c, c.title)}>
                 <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
               </a>
             );
@@ -450,7 +460,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             return (
               <a key={c.recipe} className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
                 onClick={sessionClick(onOpenSession, c.run)}
-                title={`${c.label}'s draft awaits your verdict — open its session to read and apply it`}
+                title={chipTitle(c, 'its draft awaits your verdict — open its session to read and apply it')}
                 style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
                 {`${text} ↗`}
               </a>
@@ -462,12 +472,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             <a key={c.recipe} href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
               onClick={sessionClick(onOpenSession, c.run)}
               style={{ textDecoration: 'none', marginLeft: '4px' }}
-              title={c.status === 'running' ? 'Watch the agent\'s conversation as it runs' : 'Continue the conversation'}>
+              title={chipTitle(c, c.status === 'running' ? 'watch the agent\'s conversation as it runs' : 'continue the conversation')}>
               <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
             </a>
           ) : (
             <span key={c.recipe} style={{ marginLeft: '4px' }}
-              title={c.status === 'queued' ? 'Waiting for a free slot on the board' : 'Launching — the run has not started yet'}>
+              title={chipTitle(c, c.status === 'queued' ? 'waiting for a free slot on the board' : 'launching — the run has not started yet')}>
               <Chip text={text} color={style.color} bg={style.bg} />
             </span>
           );

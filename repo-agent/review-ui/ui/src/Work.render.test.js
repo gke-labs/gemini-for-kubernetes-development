@@ -523,12 +523,14 @@ describe('WorkRow review', () => {
         });
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+    // A chip shows its recipe; its status is the colour and its hover's first line.
+    const chip = (status) => Array.from(container.querySelectorAll('a')).find(a => (a.getAttribute('title') || '').split(' — ')[0] === status);
 
     const reviewRun = (status) => ({ recipe: 'review', label: 'Review', sandbox: 'review-r-42', task: 'recipe-review-1', status });
 
     test('a pending review whose run is gone is the review chip, linking GitHub to finalize or discard it', async () => {
         await renderRow(review);
-        expect(link('Review: pending').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+        expect(chip('Review: pending').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
         expect(findButton('Review ready')).toBeUndefined();
         expect(link('Finalize')).toBeUndefined();
         expect(findButton('✕')).toBeUndefined();
@@ -536,13 +538,13 @@ describe('WorkRow review', () => {
 
     test('a pending review with its run recorded is the run\'s ready chip, to its session', async () => {
         await renderRow({ ...review, sessions: [reviewRun('done')] });
-        expect(link('Review: ready').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
-        expect(link('Review: pending')).toBeUndefined();
+        expect(chip('Review: ready').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        expect(chip('Review: pending')).toBeUndefined();
     });
 
     test('a submitted review whose run is gone is a done chip linking the PR', async () => {
         await renderRow({ ...review, reviewPending: false, reviewed: true, recipes: [{ name: 'review', label: 'Review' }] });
-        expect(link('Review: done').getAttribute('href')).toBe('https://github.com/o/r/pull/42');
+        expect(chip('Review: done').getAttribute('href')).toBe('https://github.com/o/r/pull/42');
         expect(link('Review ✓')).toBeUndefined();
         expect(findButton('Review')).toBeDefined();
     });
@@ -550,7 +552,7 @@ describe('WorkRow review', () => {
     test('a review at work can be watched', async () => {
         await renderRow({ ...review, reviewPending: false, recipes: [{ name: 'review', label: 'Review' }],
             sessions: [reviewRun('running')] });
-        expect(link('Review: running').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        expect(chip('Review: running').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
         expect(findButton('Review')).toBeUndefined();
     });
 });
@@ -573,6 +575,8 @@ describe('WorkRow your PR', () => {
         });
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+    // A chip shows its recipe; its status is the colour and its hover's first line.
+    const chip = (status) => Array.from(container.querySelectorAll('a')).find(a => (a.getAttribute('title') || '').split(' — ')[0] === status);
 
     test('Care launches as a recipe, and there is no Agent drawer', async () => {
         const onAction = jest.fn();
@@ -591,7 +595,7 @@ describe('WorkRow your PR', () => {
 
     test('a fix at work can be watched', async () => {
         await renderRow({ ...pr, sessions: [fixRun('running')] });
-        expect(link('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
+        expect(chip('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
     });
 
     test('auto follow-up shows on a PR the board fixed, and toggles', async () => {
@@ -629,6 +633,8 @@ describe('WorkRow run rules', () => {
         });
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+    // A chip shows its recipe; its status is the colour and its hover's first line.
+    const chip = (status) => Array.from(container.querySelectorAll('a')).find(a => (a.getAttribute('title') || '').split(' — ')[0] === status);
 
     test('every recipe the row offers is a button, in the catalog order, launched by its recipe', async () => {
         const onAction = jest.fn();
@@ -658,7 +664,7 @@ describe('WorkRow run rules', () => {
     test('a running recipe is a chip to its session, not a button', async () => {
         await renderRow({ ...issue, sessions: [run('plan', 'Plan', 'running')] });
         expect(findButton('Plan')).toBeUndefined();
-        expect(link('Plan: running').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
+        expect(chip('Plan: running').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
     });
 
     test('a session link opens beside the board; a modified click keeps its tab', async () => {
@@ -675,7 +681,7 @@ describe('WorkRow run rules', () => {
             act(() => { a.dispatchEvent(e); });
             return e;
         };
-        const ready = link('Summarize: ready');
+        const ready = chip('Summarize: ready');
         expect(click(ready).defaultPrevented).toBe(true);
         expect(onOpenSession).toHaveBeenCalledWith(item.sessions[0]);
         expect(click(ready, { metaKey: true }).defaultPrevented).toBe(false);
@@ -686,20 +692,21 @@ describe('WorkRow run rules', () => {
     test('a click waiting for its run says so', async () => {
         await renderRow({ ...issue, launching: { fix: 'queued' } });
         expect(findButton('Fix')).toBeUndefined();
-        expect(container.textContent).toContain('Fix: queued');
+        expect(container.querySelector('span[title^="Fix: queued — "]')).toBeTruthy();
     });
 
     test('a done or failed recipe is offered again', async () => {
         await renderRow({ ...issue, sessions: [run('fix', 'Fix', 'failed'), run('summarize', 'Summarize', 'done')] });
         expect(findButton('Fix again')).toBeDefined();
         expect(findButton('Summarize again')).toBeDefined();
-        expect(container.textContent).toContain('Fix: failed');
+        expect(container.textContent).not.toContain('Fix: failed');
+        expect(chip('Fix: failed')).toBeDefined();
     });
 
     test('a failed run with an error opens it', async () => {
         await renderRow({ ...issue, error: 'the agent gave up', sessions: [run('fix', 'Fix', 'failed')] });
         expect(container.textContent).not.toContain('the agent gave up');
-        await act(async () => { container.querySelector('span[title="Show why the run stopped"]').click(); });
+        await act(async () => { container.querySelector('span[title^="Fix: failed — show why the run stopped"]').click(); });
         expect(container.textContent).toContain('the agent gave up');
     });
 
@@ -708,10 +715,25 @@ describe('WorkRow run rules', () => {
         for (const label of ['Triage', 'Plan', 'Summarize']) {
             expect(findButton(label)).toBeUndefined();
             const links = Array.from(container.querySelectorAll('a')).filter(a => a.textContent.includes(label));
-            expect(links.map(a => a.textContent)).toEqual([`${label}: ready ↗`]);
+            expect(links.map(a => a.textContent)).toEqual([`${label} ↗`]);
         }
-        expect(link('Plan: ready').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
+        expect(chip('Plan: ready').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
         expect(container.querySelectorAll('tr').length).toBe(1);
+    });
+
+    test('a chip is its recipe in its status colour; the status and the run are its hover', async () => {
+        await renderRow({ ...issue, sessions: [
+            { ...run('plan', 'Plan', 'done'), startedAt: '2026-10-06T10:00:00Z', endedAt: '2026-10-06T10:05:00Z', applied: { comment: '2026-10-06T11:00:00Z' } },
+        ] });
+        const plan = chip('Plan: done');
+        expect(plan.textContent).toBe('Plan ↗');
+        const title = plan.getAttribute('title').split('\n');
+        expect(title[0]).toBe('Plan: done — continue the conversation');
+        expect(title).toContain('applied: comment');
+        expect(title).toContain('sandbox: fix-r-5');
+        expect(title.some(l => l.startsWith('started '))).toBe(true);
+        expect(title.some(l => l.startsWith('ended '))).toBe(true);
+        expect(plan.querySelector('span').style.color).toBe('rgb(34, 134, 58)');
     });
 
     test('an issue is not promoted, its PR is', async () => {
@@ -725,13 +747,13 @@ describe('WorkRow run rules', () => {
     test('an issue with an open PR offers nothing more, and links the PR', async () => {
         await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6' });
         expect(container.querySelectorAll('button').length).toBe(0);
-        expect(link('Fix: done').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
+        expect(chip('Fix: done').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
         expect(link('Fix ✓')).toBeUndefined();
     });
 
     test('an issue whose fix run is recorded shows the run, not the PR fact', async () => {
         await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6', sessions: [run('fix', 'Fix', 'done')] });
-        const fixes = Array.from(container.querySelectorAll('a')).filter(a => a.textContent.startsWith('Fix:'));
+        const fixes = Array.from(container.querySelectorAll('a')).filter(a => (a.getAttribute('title') || '').startsWith('Fix:'));
         expect(fixes.map(a => a.getAttribute('href'))).toEqual(['#/task-session/fix-r-5/recipe-fix-1']);
     });
 });
@@ -747,10 +769,16 @@ describe('SessionSlideOver', () => {
         const dialog = container.querySelector('[role="dialog"]');
         expect(dialog.getAttribute('aria-label')).toBe('summarize · fix-r-5');
         expect(dialog.style.width).toBe('80%');
-        const popOut = Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes('Pop out'));
-        expect(popOut.getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
-        expect(popOut.getAttribute('target')).toBe('_blank');
+        // One header, the conversation's: one pop out, a close, no full screen.
+        const popOuts = container.querySelectorAll('a[aria-label="Open in a new tab"]');
+        expect(popOuts.length).toBe(1);
+        expect(popOuts[0].getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+        expect(popOuts[0].getAttribute('target')).toBe('_blank');
+        expect(container.querySelector('button[aria-label="Full screen"]')).toBeNull();
+        expect(container.querySelectorAll('button[aria-label="Close"]').length).toBe(1);
         act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
         expect(onClose).toHaveBeenCalled();
+        act(() => { container.querySelector('button[aria-label="Close"]').click(); });
+        expect(onClose).toHaveBeenCalledTimes(2);
     });
 });
