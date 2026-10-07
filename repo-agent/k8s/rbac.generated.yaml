@@ -91,6 +91,7 @@ rules:
   resources:
   - requests
   verbs:
+  - create
   - delete
   - get
   - list

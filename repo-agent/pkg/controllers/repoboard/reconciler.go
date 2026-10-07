@@ -94,11 +94,6 @@ const (
 	// why the last one failed, until one succeeds.
 	AnnotationFixHarvestedAt = "board.gemini.google.com/fix-harvested-at"
 	AnnotationFixError       = "board.gemini.google.com/fix-error"
-	// AnnotationAutoIterate overrides the board's autoIterate policy for
-	// one PR's fix sandbox: "on" | "off"; absent = inherit. Stored as an
-	// open string so future per-PR auto modes extend it without
-	// re-plumbing.
-	AnnotationAutoIterate = "board.gemini.google.com/auto-iterate"
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
@@ -132,7 +127,7 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards/status,verbs=get;update;patch
 // Requests are the clicks. The controller reads them, writes their phase,
 // and deletes them once they have been terminal long enough to be read.
-//+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests,verbs=get;list;watch;update;patch;delete
+//+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=requests/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
@@ -325,6 +320,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, req := range mail.recipes {
 		namespaces[req.Spec.Member] = true
 	}
+	for _, req := range mail.watches {
+		namespaces[req.Spec.Member] = true
+	}
 	for _, plan := range reviews {
 		if plan.executor != "" {
 			namespaces[plan.executor] = true
@@ -369,6 +367,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.ensureApplies(ctx, work, mail.applies)
 	r.ensureRevises(ctx, work, mail.revises)
 	r.ensureRecipes(ctx, work, mail.recipes)
+	r.ensureWatches(ctx, work, mail.watches)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
 
@@ -385,10 +384,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		logger.Error(err, "request cleanup failed")
 	}
 
-	// Follow up factory-created PRs (fix failing checks, address
-	// comments): board policy is the default, each PR's fix sandbox may
-	// override it either way.
-	r.followUpPRs(ctx, work, board.Spec.Policy.AutoIterate == nil || *board.Spec.Policy.AutoIterate)
+	// A fix's PR is watched (auto on) from when the fix opens it, under
+	// the board's autoIterate policy.
+	r.fileFixWatches(ctx, work, board.Spec.Policy.AutoIterate == nil || *board.Spec.Policy.AutoIterate)
 
 	// Pause finished sandboxes after the idle period.
 	idle := time.Duration(board.Spec.Sandbox.IdleMinutes) * time.Minute
@@ -630,6 +628,8 @@ type mailbox struct {
 	research []researchClaim
 	applies  []*boardv1alpha1.Request
 	revises  []*boardv1alpha1.Request
+	// watches are the PRs' autos.
+	watches []*boardv1alpha1.Request
 	// recipes are the recipe Requests no pass of its own serves.
 	recipes []*boardv1alpha1.Request
 }
@@ -1249,46 +1249,6 @@ func runIntent(scenario, name, guidance string) string {
 	return shape + " " + guidance
 }
 
-// followUpPRs keeps a factory pr watch running for every fix sandbox aliased
-// to an open PR, in the sandbox owner's namespace with their identity.
-func (r *Reconciler) followUpPRs(ctx context.Context, work *workState, boardDefault bool) {
-	logger := log.FromContext(ctx)
-	for _, sb := range work.sandboxes {
-		if _, ok := factorycli.IssueOf(sb, work.repo); !ok {
-			continue
-		}
-		if !autoIterateEnabled(sb, boardDefault) {
-			continue
-		}
-		prNum := sb.GetLabels()[factorycli.LabelPR]
-		prURL := sb.GetAnnotations()["htmlURL"]
-		if prNum == "" || !strings.Contains(prURL, "/pull/") {
-			continue
-		}
-		namespace := sb.GetNamespace()
-		key := fmt.Sprintf("%s/prwatch-%s", namespace, prNum)
-		if r.Factory.IsRunning(key) {
-			continue
-		}
-		if res, ok := r.Factory.LastResult(key); ok && time.Since(res.FinishedAt) < prWatchRelaunchInterval {
-			continue
-		}
-		token, err := r.executorToken(ctx, namespace)
-		if err != nil {
-			continue
-		}
-		if r.Factory.StartPRWatch(key, factorycli.PRWatchOptions{
-			Namespace:   namespace,
-			PRURL:       prURL,
-			GithubToken: token,
-			Engine:      boardEngine(work.board),
-			Disclose:    work.board.Spec.Policy.Disclose,
-		}) {
-			logger.Info("launched factory pr watch", "pr", prNum, "namespace", namespace, "board", work.board.Name)
-		}
-	}
-}
-
 func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after time.Duration) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {
@@ -1461,18 +1421,6 @@ func (r *Reconciler) stampUnpaused(ctx context.Context, sb *unstructured.Unstruc
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to stamp wake on paused sandbox", "sandbox", sb.GetName())
 	}
-}
-
-// autoIterateEnabled resolves a sandbox's effective auto-follow-up:
-// the per-PR annotation overrides the board policy in either direction.
-func autoIterateEnabled(sb *unstructured.Unstructured, boardDefault bool) bool {
-	switch sb.GetAnnotations()[AnnotationAutoIterate] {
-	case "on":
-		return true
-	case "off":
-		return false
-	}
-	return boardDefault
 }
 
 // boardEngine resolves the board's engine choice (default gemini).

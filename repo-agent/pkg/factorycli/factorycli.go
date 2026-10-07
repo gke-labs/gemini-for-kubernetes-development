@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,6 +281,11 @@ type Launcher interface {
 	// order.
 	Recipes(ctx context.Context) ([]boardv1alpha1.BoardRecipe, error)
 	IsRunning(key string) bool
+	// Running is the keys in flight that start with prefix.
+	Running(prefix string) []string
+	// Stop cancels key's invocation, if one is in flight; its result is
+	// the cancellation.
+	Stop(key string)
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.
 	LastResult(key string) (Result, bool)
@@ -292,8 +298,9 @@ type Runner struct {
 
 	Binary string
 
-	mu      sync.Mutex
-	running map[string]struct{}
+	mu sync.Mutex
+	// running holds each in-flight invocation's cancel.
+	running map[string]context.CancelFunc
 	results map[string]Result
 }
 
@@ -345,7 +352,7 @@ func NewRunner() *Runner {
 	}
 	return &Runner{
 		Binary:  binary,
-		running: make(map[string]struct{}),
+		running: make(map[string]context.CancelFunc),
 		results: make(map[string]Result),
 	}
 }
@@ -366,7 +373,6 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 		"--namespace", opts.Namespace,
 		"--watch-timeout", watchTimeout.String(),
 		"--timeout", timeout.String(),
-		"--continue-session",
 		"--abort-on-cancel=false",
 	}
 	if opts.Engine != "" {
@@ -462,11 +468,36 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 		r.mu.Unlock()
 		return false
 	}
-	r.running[key] = struct{}{}
+	// Detached from any reconcile context: the invocation outlives the
+	// reconcile that started it.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	r.running[key] = cancel
 	r.mu.Unlock()
 
-	go r.run(key, args, githubToken, timeout, pre)
+	go r.run(ctx, cancel, key, args, githubToken, pre)
 	return true
+}
+
+func (r *Runner) Running(prefix string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var keys []string
+	for key := range r.running {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (r *Runner) Stop(key string) {
+	r.mu.Lock()
+	cancel := r.running[key]
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (r *Runner) IsRunning(key string) bool {
@@ -483,10 +514,7 @@ func (r *Runner) LastResult(key string) (Result, bool) {
 	return res, ok
 }
 
-func (r *Runner) run(key string, args []string, githubToken string, timeout time.Duration, pre *preflight) {
-	// Detached from any reconcile context: the invocation outlives the
-	// reconcile that started it.
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func (r *Runner) run(ctx context.Context, cancel context.CancelFunc, key string, args []string, githubToken string, pre *preflight) {
 	defer cancel()
 
 	klog.Infof("factorycli: starting %s %s (key %s)", r.Binary, strings.Join(args[:2], " "), key)

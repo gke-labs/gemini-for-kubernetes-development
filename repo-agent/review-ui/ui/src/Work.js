@@ -237,6 +237,18 @@ const POSTING_POLL_EVERY = 3000;
 
 // taskSessionHref is a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
+// autoTitle is the auto chip's hover: what it does, since when, and why
+// its last watch failed.
+function autoTitle(auto) {
+  if (!auto.on) {
+    return 'Auto is off — click to watch this PR: care runs on new review comments and failed checks';
+  }
+  const lines = ['Auto is on: care runs on new review comments and failed checks — click to turn off'];
+  if (auto.since) lines.push(`since: ${new Date(auto.since).toLocaleString()}`);
+  if (auto.message) lines.push(`last watch failed: ${auto.message}`);
+  return lines.join('\n');
+}
+
 function taskSessionHref(session) {
   return `#/task-session/${session.sandbox}/${session.task}`;
 }
@@ -415,22 +427,23 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
         )}
         {prRuns.map(prRunChip)}
-        {/* factory pr watch follows a fix's PR up on its own (fix-ci,
-            address-comments, as care); the chip turns it on or off. */}
-        {isPR && item.myPR && runOf('fix') && item.sandbox && item.sandbox.autoIterate && (
+        {/* Auto: factory pr watch follows a PR of yours up on its
+            own (care on new comments and failed checks); the chip turns
+            it on or off. */}
+        {isPR && item.myPR && item.auto && (
           <span
             onClick={() => {
-              fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
+              fetch(`/api/board/${boardName}/prs/${item.number}/auto`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
+                body: JSON.stringify({ on: !item.auto.on }),
               }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
             }}
             style={{ cursor: 'pointer', marginLeft: '6px' }}
-            title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
-            <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
-              color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
-              bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
+            title={autoTitle(item.auto)}>
+            <Chip text={item.auto.on ? (item.auto.message ? 'auto ⏻ !' : 'auto ⏻') : 'auto ⏸'}
+              color={item.auto.on ? '#22863a' : '#6a737d'}
+              bg={item.auto.on ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
           </span>
         )}
       </td>
@@ -2001,9 +2014,9 @@ function Work({ onBack, namespace }) {
                   </select>
                 </label>
               </div>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Follow up factory-created PRs (address review comments and failures) with factory pr watch.">
+              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Turn auto on for each PR a fix opens: factory pr watch runs care on its new review comments and failed checks. Any PR of yours turns on from its auto chip.">
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />
-                Auto-iterate on factory PRs
+                Auto on PRs a fix opens
               </label>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Agent-created PRs open as drafts; you promote them.">
                 <input type="checkbox" checked={!!spec.draftPR} onChange={e => setSpec({ ...spec, draftPR: e.target.checked })} style={{ marginRight: '6px' }} />

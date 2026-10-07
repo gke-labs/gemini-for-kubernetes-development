@@ -1,6 +1,7 @@
 package factorycli
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -87,7 +88,7 @@ apply) grep -q "kind: ` + kind + `" "$3" && echo "Applied it" ;;
 }
 
 func newRunner(bin string, p TaskProber) *Runner {
-	return &Runner{Binary: bin, Prober: p, running: map[string]struct{}{}, results: map[string]Result{}}
+	return &Runner{Binary: bin, Prober: p, running: map[string]context.CancelFunc{}, results: map[string]Result{}}
 }
 
 // A recipe runs by its name with its inputs, and its task output is read

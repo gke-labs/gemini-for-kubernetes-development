@@ -74,6 +74,8 @@ type fakeLauncher struct {
 	// task this process did not start. Nothing is spent, so nothing about
 	// the click has changed.
 	refuseRun bool
+	// stopped are the keys Stop was called for.
+	stopped []string
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -172,6 +174,27 @@ func (f *fakeLauncher) IsRunning(key string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.running[key]
+}
+
+func (f *fakeLauncher) Running(prefix string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keys []string
+	for key, running := range f.running {
+		if running && strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func (f *fakeLauncher) Stop(key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[key] {
+		delete(f.running, key)
+		f.stopped = append(f.stopped, key)
+	}
 }
 
 func (f *fakeLauncher) LastResult(key string) (factorycli.Result, bool) {
@@ -586,39 +609,6 @@ func TestRequestFix(t *testing.T) {
 
 	// No sandbox yet: the click stays standing for the next reconcile.
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty())
-}
-
-// A fix sandbox aliased to a PR gets a pr-watch follow-up.
-func TestFollowUpPRWatch(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-
-	aliased := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "agents.x-k8s.io/v1alpha1",
-		"kind":       "Sandbox",
-		"metadata": map[string]interface{}{
-			"name": "fix-repo-10", "namespace": "alice",
-			"labels": map[string]interface{}{
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/pr":      "101",
-			},
-			"annotations": map[string]interface{}{
-				"sandbox.gemini.google.com/last-task-state": "Completed",
-				"htmlURL": "https://github.com/test/repo/pull/101",
-			},
-		},
-		"spec": map[string]interface{}{"replicas": int64(1)},
-	}}
-
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), aliased)
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	launches := fake.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/prwatch-101"))
-	g.Expect(launches[0].PRWatchOpts.PRURL).To(gomega.Equal("https://github.com/test/repo/pull/101"))
 }
 
 // On a personal board a labeled issue assigned to the owner is direct
@@ -1268,34 +1258,6 @@ func TestWakeStampsUnpaused(t *testing.T) {
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
 	g.Expect(updated.GetAnnotations()[AnnotationUnpausedAt]).NotTo(gomega.BeEmpty())
-}
-
-// The per-PR annotation overrides the board's autoIterate in either
-// direction; absent inherits.
-func TestAutoIterateOverride(t *testing.T) {
-	sb := func(override string) *unstructured.Unstructured {
-		annotations := map[string]interface{}{}
-		if override != "" {
-			annotations[AnnotationAutoIterate] = override
-		}
-		return &unstructured.Unstructured{Object: map[string]interface{}{
-			"metadata": map[string]interface{}{"annotations": annotations},
-		}}
-	}
-	cases := []struct {
-		override     string
-		boardDefault bool
-		want         bool
-	}{
-		{"", true, true}, {"", false, false},
-		{"off", true, false}, {"on", false, true},
-		{"on", true, true}, {"off", false, false},
-	}
-	for _, tc := range cases {
-		if got := autoIterateEnabled(sb(tc.override), tc.boardDefault); got != tc.want {
-			t.Errorf("override=%q default=%v: got %v want %v", tc.override, tc.boardDefault, got, tc.want)
-		}
-	}
 }
 
 // The board's reviews live in review sandboxes: a factory-pr sandbox (a
