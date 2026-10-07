@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel, WorkRow, prRunName, anyPosting } = require('./Work');
+const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -810,6 +810,28 @@ describe('WorkRow run rules', () => {
         expect(link('Plan: running').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
     });
 
+    test('a session link opens beside the board; a modified click keeps its tab', async () => {
+        const onOpenSession = jest.fn();
+        const item = { ...issue, sessions: [run('summarize', 'Summarize', 'ready')] };
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}} onOpenSession={onOpenSession}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+        const click = (a, init) => {
+            const e = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init });
+            act(() => { a.dispatchEvent(e); });
+            return e;
+        };
+        const ready = link('Summarize ready');
+        expect(click(ready).defaultPrevented).toBe(true);
+        expect(onOpenSession).toHaveBeenCalledWith(item.sessions[0]);
+        expect(click(link('Summarize: ready'), { metaKey: true }).defaultPrevented).toBe(false);
+        expect(onOpenSession).toHaveBeenCalledTimes(1);
+        expect(ready.getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+    });
+
     test('a click waiting for its run says so', async () => {
         await renderRow({ ...issue, launching: { fix: 'queued' } });
         expect(findButton('Fix')).toBeUndefined();
@@ -848,5 +870,24 @@ describe('WorkRow run rules', () => {
         await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6' });
         expect(container.querySelectorAll('button').length).toBe(0);
         expect(link('Fix ✓').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
+    });
+});
+
+describe('SessionSlideOver', () => {
+    test('shows the session with a pop out, and Escape closes it', async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') }));
+        const onClose = jest.fn();
+        await act(async () => {
+            root.render(<SessionSlideOver session={{ sandbox: 'fix-r-5', task: 'recipe-summarize-1' }} onClose={onClose} />);
+        });
+        await flush();
+        const dialog = container.querySelector('[role="dialog"]');
+        expect(dialog.getAttribute('aria-label')).toBe('summarize · fix-r-5');
+        expect(dialog.style.width).toBe('80%');
+        const popOut = Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes('Pop out'));
+        expect(popOut.getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+        expect(popOut.getAttribute('target')).toBe('_blank');
+        act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+        expect(onClose).toHaveBeenCalled();
     });
 });
