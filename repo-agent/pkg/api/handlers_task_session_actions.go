@@ -137,20 +137,17 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 		if kind != "Plan" {
 			return disable(fmt.Sprintf("a %s is not revised from here", kind))
 		}
+		doc := a[factorycli.OutputAnnotation(run.Key)]
 		switch {
-		case planApproved(a):
-			return disable("the plan is approved")
-		case factorycli.PlanDraft(a) == "":
-			return disable("there is no plan draft yet")
+		case factorycli.IsApplied(a, factorycli.AppliedAnnotation(run.Key), "run"):
+			return disable("its follow-up was started")
+		case factorycli.Draft(kind, doc) == "":
+			return disable("there is no draft yet")
+		case a[annoTaskState] == "Running":
+			return disable("a task is running")
 		}
-		if from := factorycli.TaskOutputSession("Plan", a[factorycli.AnnotationPlanOutput]); from != "" && from != task {
-			return disable("the plan draft came from another session")
-		}
-		// As the row offers them: waiting on a running task or a revise.
-		for i := range revises {
-			if act, ok := findWorkAction(planWorkActions(a, planIsRevising(a), a[annoTaskState] == "Running"), "revise", revises[i].Revise); ok {
-				revises[i].Enabled, revises[i].Reason = act.Enabled, act.Reason
-			}
+		if from := factorycli.TaskOutputSession(kind, doc); from != "" && from != task {
+			return disable("the draft came from another session")
 		}
 		s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
 		return revises
@@ -434,19 +431,6 @@ func withoutRevises(actions []models.WorkAction) []models.WorkAction {
 	return out
 }
 
-// asIssueAction points the request at the issue row's action route,
-// :verb on #number of board, with body, and takes it there: the row's
-// checks and permissions are the session's.
-func (s *Server) asIssueAction(c *gin.Context, board string, number int, verb string, body gin.H) {
-	c.Params = append(c.Params,
-		gin.Param{Key: "board", Value: board},
-		gin.Param{Key: "id", Value: strconv.Itoa(number)},
-		gin.Param{Key: "verb", Value: verb},
-	)
-	rebody(c, body)
-	s.boardIssueAction(c)
-}
-
 // reviseTaskSession is a session's revise button: POST …/revise {revise,
 // inputs}. 202 with the Request filed.
 func (s *Server) reviseTaskSession(c *gin.Context) {
@@ -581,10 +565,6 @@ func (s *Server) taskSessionDraftAction(c *gin.Context) {
 	}
 	if draft.runKey != "" {
 		s.anyDraftAction(c, sb, draft, verb, req.Run, req.Text)
-		return
-	}
-	if number, board, ok := sessionIssue(sb); ok {
-		s.asIssueAction(c, board, number, verb, gin.H{"kind": draft.Kind, "run": req.Run, "text": req.Text})
 		return
 	}
 	view, _ := sessionResearch(sb)

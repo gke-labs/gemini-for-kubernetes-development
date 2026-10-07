@@ -42,7 +42,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/ghquota"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
 // RepoBoard endpoints (docs/design/repoboard.md §7). Phase 1 scope: personal
@@ -73,10 +72,6 @@ const (
 	annoReviewError     = "review.gemini.google.com/error"
 	annoFixError        = "board.gemini.google.com/fix-error"
 	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
-	annoPlannedAt       = "board.gemini.google.com/planned-at"
-	annoPlanFeedback    = "board.gemini.google.com/plan-feedback"
-	annoPlanFeedbackAt  = "board.gemini.google.com/plan-feedback-at"
-	annoPlanRejected    = "board.gemini.google.com/plan-rejected-at"
 	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	// annoBoard is the board whose controller stored the sandbox's draft.
 	annoBoard = "board.gemini.google.com/board"
@@ -359,23 +354,9 @@ func workFeedPeek(key string) ([]models.WorkItem, bool) {
 // block: the budget is demonstrably back.
 func workFeedPut(key string, items []models.WorkItem) {
 	workFeedCache.Lock()
-	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now(), posting: anyPosting(items)}
+	workFeedCache.entries[key] = workFeedEntry{items: items, at: time.Now(), posting: slices.ContainsFunc(items, func(item models.WorkItem) bool { return item.Posting })}
 	delete(workFeedCache.refreshing, key)
 	workFeedCache.Unlock()
-}
-
-// anyPosting is whether a row has a write standing.
-func anyPosting(items []models.WorkItem) bool {
-	for i := range items {
-		for _, actions := range [][]models.WorkAction{items[i].TriageActions, items[i].PlanActions} {
-			for _, a := range actions {
-				if a.Reason == postingReason {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // workFeedBlock records that a rebuild could not reach GitHub because the
@@ -435,7 +416,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 			// suggestion-prefetch lesson).
 			go s.refreshWorkFeed(context.WithoutCancel(ctx), key, board, member, namespace)
 		}
-		c.JSON(http.StatusOK, s.forViewer(ctx, board, namespace, sessionUser, items))
+		c.JSON(http.StatusOK, items)
 		return
 	}
 
@@ -452,7 +433,7 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 	workFeedPut(key, items)
-	c.JSON(http.StatusOK, s.forViewer(ctx, board, namespace, sessionUser, items))
+	c.JSON(http.StatusOK, items)
 }
 
 // buildBoardWork assembles the feed universe from one GraphQL request
@@ -895,34 +876,22 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	}
 
 	sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue.GetNumber())
-	// The plan's sandbox, kept apart from sb, which a triage-only sandbox
-	// is taken off the row as.
+	// The issue's fix sandbox, kept apart from sb, which a triage-only
+	// sandbox is taken off the row as.
 	planSB := sb
 	state := ""
 	prURL := ""
 	taskType := ""
-	planDraft := ""
-	approved := false
-	planRevising := false
-	var planActions []models.WorkAction
 	if sb != nil {
 		annotations := sb.GetAnnotations()
 		state = annotations[annoTaskState]
 		taskType = annotations[annoLastTaskType]
-		planDraft = factorycli.PlanDraft(annotations)
-		approved = planApproved(annotations)
-		planRevising = planIsRevising(annotations)
 		if u := annotations["htmlURL"]; strings.Contains(u, "/pull/") {
 			prURL = u
-		}
-		if planDraft != "" && !approved {
-			planActions = planWorkActions(annotations, planRevising, state == "Running")
 		}
 	}
 	triageDraft := ""
 	triageState := ""
-	published := false
-	var triageActions []models.WorkAction
 	triageSB := factorycli.TriageSandbox(slices.Values(allSandboxes), repo, issue.GetNumber())
 	if len(viewLabels) > 0 && !hasAnyLabel(issue.Labels, viewLabels) && sb == nil && triageSB == nil {
 		return
@@ -930,10 +899,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	if triageSB != nil {
 		triageDraft = factorycli.TriageDraft(triageSB)
 		triageState = factorycli.TriageState(triageSB)
-		published = triagePublished(triageSB.GetAnnotations())
-		if triageDraft != "" {
-			triageActions = triageWorkActions(triageSB.GetAnnotations())
-		}
 	}
 
 	if sb != nil && sb == triageSB && taskType == "" {
@@ -954,30 +919,22 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		labels = append(labels, l.GetName())
 	}
 	items[key] = &models.WorkItem{
-		Type:            "issue",
-		Group:           "issues",
-		Number:          issue.GetNumber(),
-		Author:          issue.GetUser().GetLogin(),
-		Title:           issue.GetTitle(),
-		HTMLURL:         issue.GetHTMLURL(),
-		Assignee:        claimedBy,
-		PRURL:           prURL,
-		Labels:          labels,
-		Draft:           triageDraft,
-		TriagePublished: published,
-		Plan:            planDraft,
-		PlanApproved:    approved,
-		TriageActions:   triageActions,
-		PlanActions:     planActions,
-		Sandbox:         workSandbox(sb, autoDefault),
-		UpdatedAt:       issue.GetUpdatedAt().UTC().Format(time.RFC3339),
+		Type:      "issue",
+		Group:     "issues",
+		Number:    issue.GetNumber(),
+		Author:    issue.GetUser().GetLogin(),
+		Title:     issue.GetTitle(),
+		HTMLURL:   issue.GetHTMLURL(),
+		Assignee:  claimedBy,
+		PRURL:     prURL,
+		Labels:    labels,
+		Sandbox:   workSandbox(sb, autoDefault),
+		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
-	items[key].PlanSession = taskSession(planSB, factorycli.AnnotationPlanRun)
 	items[key].FixSession = taskSession(planSB, factorycli.AnnotationFixRun)
 	if planSB != nil && state == "Failed" && taskType == "fix" {
 		items[key].Error = planSB.GetAnnotations()[annoFixError]
 	}
-	items[key].TriageSession = taskSession(triageSB, factorycli.AnnotationTriageRun)
 	if ws := items[key].Sandbox; ws != nil && sb == triageSB && ws.TaskState == "" {
 		ws.TaskState = triageState
 	}
@@ -1692,127 +1649,6 @@ func engineOrDefault(engine string) string {
 	return "gemini"
 }
 
-// findPlanSandbox locates the issue's fix sandbox carrying a plan draft,
-// checking the viewer's namespace then the board's.
-func (s *Server) findPlanSandbox(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
-	ctx := c.Request.Context()
-	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		if sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, number); sb != nil && factorycli.PlanDraft(sb.GetAnnotations()) != "" {
-			return sb, ns
-		}
-	}
-	return nil, ""
-}
-
-// planBoardFeedback records the member's refinement feedback on the plan
-// sandbox; the controller re-runs the planner against the previous plan.
-func (s *Server) planBoardFeedback(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Feedback string `json:"feedback"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Feedback) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "feedback text is required"})
-		return
-	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to refine"})
-		return
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanFeedback, strings.TrimSpace(req.Feedback)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record feedback", "details": err.Error()})
-		return
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanFeedbackAt, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record feedback", "details": err.Error()})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
-// planBoardApprove approves the plan and launches the fix: the fix runs
-// --with-plan, so the approved plan ships in the PR description (its
-// durable record). Approval is the consent for both.
-func (s *Server) planBoardApprove(c *gin.Context) {
-	_, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to approve"})
-		return
-	}
-	if err := s.markApplied(c.Request.Context(), ns, sb, factorycli.AnnotationPlanApplied, "run"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve plan", "details": err.Error()})
-		return
-	}
-	// The fix kickoff does the rest: GitHub claim (assignment) + the Request.
-	s.kickoff(c, "issue", "fix", nil)
-}
-
-// planBoardReject discards the draft: plan annotations are cleared and the
-// reject stamp stops the controller from resurrecting the old result.
-func (s *Server) planBoardReject(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to reject"})
-		return
-	}
-	for _, key := range []string{factorycli.AnnotationPlanOutput, factorycli.AnnotationPlanApplied, annoPlannedAt, annoPlanFeedback, annoPlanFeedbackAt} {
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, ""); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear plan", "details": err.Error()})
-			return
-		}
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlanRejected, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject plan", "details": err.Error()})
-		return
-	}
-	_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
-	c.Status(http.StatusOK)
-}
-
-// rejectBoardTriage discards a triage draft: breadcrumbs are cleared so
-// the row returns to its resting stage (Triage / Plan / Fix again), and
-// the tombstone stops auto-triage from redoing thrown-away work. A fresh
-// Triage click re-arms.
-func (s *Server) rejectBoardTriage(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
-		name := sb.GetName()
-		for _, key := range []string{factorycli.AnnotationTriageOutput, factorycli.AnnotationTriageApplied, "board.gemini.google.com/triaged-at"} {
-			if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, key, ""); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear triage draft", "details": err.Error()})
-				return
-			}
-		}
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, factorycli.RejectedAnnotation(factorycli.AnnotationTriageRun), nowRFC3339()); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject triage", "details": err.Error()})
-			return
-		}
-		s.scaledownTriaged(ctx, sb)
-		c.Status(http.StatusOK)
-		return
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to reject"})
-}
-
 // editDraft stores draft, as a member edited it, as the spec of the task
 // output stored on sb under key.
 func (s *Server) editDraft(ctx context.Context, ns string, sb *unstructured.Unstructured, kind, key, draft string) error {
@@ -1832,88 +1668,6 @@ func (s *Server) markApplied(ctx context.Context, ns string, sb *unstructured.Un
 	}
 	factorycli.MarkApplied(annotations, key, action, time.Now())
 	return s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), key, annotations[key])
-}
-
-// putBoardPlanDraft saves a member-edited plan back onto the plan sandbox
-// — quick refinement by hand, alongside the chat loop. Plans are markdown:
-// the only validation is non-emptiness. The plan EXECUTES from
-// /workspaces/plan-issue-N.md inside the sandbox (fix --with-plan) and a
-// continued chat reads it there, so the edit must land in the file too —
-// which needs the pod up.
-func (s *Server) putBoardPlanDraft(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		Plan string `json:"plan"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Plan) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "plan text is required"})
-		return
-	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to edit"})
-		return
-	}
-	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sb.GetName(), ns)
-	if err != nil || podID == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "sandbox is paused — wake it from the agent card first (the plan executes from a file inside the sandbox, so edits must reach it)"})
-		return
-	}
-	plan := strings.TrimSpace(req.Plan)
-	if err := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
-		Command: []string{"sh", "-c", fmt.Sprintf("cat > /workspaces/plan-issue-%d.md", number)},
-		Stdin:   []byte(plan + "\n"),
-	}); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to write the plan into the sandbox", "details": err.Error()})
-		return
-	}
-	if err := s.editDraft(ctx, ns, sb, "Plan", factorycli.AnnotationPlanOutput, plan); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save plan", "details": err.Error()})
-		return
-	}
-	// The edit is the newest human word on the plan: bump planned-at so a
-	// stale feedback stamp cannot trigger a refine that overwrites it.
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlannedAt, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save plan", "details": err.Error()})
-		return
-	}
-	c.Status(http.StatusOK)
-}
-
-// putBoardTriageDraft saves a member-edited triage suggestion back onto
-// the draft sandbox. The edit is validated against the same schema publish
-// consumes, so a save that publish could not act on is rejected up front.
-func (s *Server) putBoardTriageDraft(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		Draft string `json:"draft"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
-		return
-	}
-	req.Draft = factorycli.NormalizeTriageDraft(req.Draft)
-	if err := validateTriageDraft(req.Draft); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "draft does not match the triage schema", "details": err.Error()})
-		return
-	}
-
-	if sb, ns := s.findTriageDraft(c, board, owner, repo, number); sb != nil {
-		if err := s.editDraft(ctx, ns, sb, "Triage", factorycli.AnnotationTriageOutput, req.Draft); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save draft", "details": err.Error()})
-			return
-		}
-		c.Status(http.StatusOK)
-		return
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "no triage suggestion to edit"})
 }
 
 // validateTriageDraft enforces the schema publish consumes: well-formed
@@ -1943,30 +1697,4 @@ type triageSuggestion struct {
 		Duplicates []string `yaml:"duplicates"`
 		Assessment string   `yaml:"assessment"`
 	} `yaml:"triage"`
-}
-
-// findTriageDraft locates the sandbox holding issue number's triage draft:
-// the issue's sandbox in the viewer's namespace, where their triage ran,
-// then the board's, where auto-triage runs.
-func (s *Server) findTriageDraft(c *gin.Context, board *unstructured.Unstructured, owner, repo string, number int) (*unstructured.Unstructured, string) {
-	ctx := c.Request.Context()
-	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
-		sandboxes, err := s.boardSandboxes(ctx, ns, owner, repo)
-		if err != nil {
-			continue
-		}
-		if sb := factorycli.TriageSandbox(maps.Values(sandboxes), repo, number); sb != nil && factorycli.TriageDraft(sb) != "" {
-			return sb, ns
-		}
-	}
-	return nil, ""
-}
-
-// scaledownTriaged parks a sandbox once its triage is published or thrown
-// away, unless a plan or fix is running in it.
-func (s *Server) scaledownTriaged(ctx context.Context, sb *unstructured.Unstructured) {
-	if sb.GetAnnotations()[annoTaskState] == "Running" {
-		return
-	}
-	_ = s.K8sManager.ScaledownSandboxByName(ctx, sb.GetNamespace(), sb.GetName())
 }

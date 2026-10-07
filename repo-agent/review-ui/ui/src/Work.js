@@ -257,11 +257,10 @@ function SessionSlideOver({ session, onClose }) {
   );
 }
 
-// anyPosting is whether a row has a write or a revise standing, taken in
-// its triage's or plan's session.
+// anyPosting is whether a row has a write or a revise standing, filed on
+// one of its runs.
 function anyPosting(items) {
-  return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]
-    .some(a => a.reason === 'posting' || a.reason === 'revising'));
+  return (items || []).some(item => item.posting);
 }
 
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, onOpenSession, runState, onRunStarted }) {

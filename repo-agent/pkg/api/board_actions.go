@@ -1,15 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,96 +13,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
-
-// boardIssueAction takes one action a draft's task output offers:
-// POST …/actions/:verb {kind: Triage|Plan, run, revise, text}, text being
-// an edit's new draft.
-// The action must be on the row (offered, and enabled just now, for the
-// viewer). The draft verbs and follow-ups are the handlers the board's
-// buttons already call; any other verb is a write, filed for the
-// controller's factory apply.
-func (s *Server) boardIssueAction(c *gin.Context) {
-	var req struct {
-		Kind string `json:"kind"`
-		Verb string `json:"-"`
-		Run  string `json:"run"`
-		// Revise is which of the output's revises, for a revise.
-		Revise string `json:"revise"`
-		Text   string `json:"text"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
-		return
-	}
-	req.Verb = c.Param("verb")
-	_, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	var sb *unstructured.Unstructured
-	var actions []models.WorkAction
-	var runKey string
-	switch req.Kind {
-	case "Triage":
-		runKey = factorycli.AnnotationTriageRun
-		if sb, _ = s.findTriageDraft(c, board, owner, repo, number); sb != nil {
-			actions = triageWorkActions(sb.GetAnnotations())
-		}
-	case "Plan":
-		runKey = factorycli.AnnotationPlanRun
-		if sb, _ = s.findPlanSandbox(c, board, owner, repo, number); sb != nil {
-			a := sb.GetAnnotations()
-			if factorycli.PlanDraft(a) != "" && !planApproved(a) {
-				actions = planWorkActions(a, planIsRevising(a), a[annoTaskState] == "Running")
-			}
-		}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must be Triage or Plan"})
-		return
-	}
-	if sb == nil || actions == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("no %s draft on #%d", strings.ToLower(req.Kind), number)})
-		return
-	}
-	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	actions = actionsFor(actions, s.repoPermissions(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), repoURL))
-	arg := req.Run
-	if req.Verb == "revise" {
-		arg = req.Revise
-	}
-	action, offered := findWorkAction(actions, req.Verb, arg)
-	if !offered {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not offer %s", strings.ToLower(req.Kind), strings.TrimSpace(req.Verb+" "+arg))})
-		return
-	}
-	if !action.Enabled {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot %s now: %s", req.Verb, action.Reason)})
-		return
-	}
-
-	if factorycli.IsApplyVerb(req.Verb) {
-		s.fileApply(c, board, sb.GetName(), number, factorycli.RunTaskType(runKey), req.Verb)
-		return
-	}
-	switch req.Kind + "/" + req.Verb {
-	case "Triage/edit":
-		rebody(c, gin.H{"draft": req.Text})
-		s.putBoardTriageDraft(c)
-	case "Triage/reject":
-		s.rejectBoardTriage(c)
-	case "Plan/edit":
-		rebody(c, gin.H{"plan": req.Text})
-		s.putBoardPlanDraft(c)
-	case "Plan/run":
-		// The only follow-up offered is fix: approving the plan launches
-		// it.
-		s.planBoardApprove(c)
-	case "Plan/reject":
-		s.planBoardReject(c)
-	case "Plan/revise":
-		s.reviseSandbox(c, sb, board.GetName(), number, action.Revise, nil)
-	}
-}
 
 // fileApply files the write of action, of the draft of run on sandbox,
 // for the controller, which runs factory apply --action with the
@@ -137,10 +41,9 @@ const postingReason = "posting"
 // draft's other actions wait for the plan it writes (planRevisingReason).
 const revisingReason = "revising"
 
-// markApplies says on each row's actions what the apply and revise
-// Requests say of them: a write filed and not yet done is "posting", a
-// revise "revising"; one whose last attempt failed carries why, and stays
-// clickable — a retry is a click.
+// markApplies marks the rows a write or a revise filed on their runs
+// still stands on (WorkItem.Posting). Requests carry the number of the
+// issue or PR whose row follows them.
 func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructured, items map[string]*models.WorkItem) {
 	reqs, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
 		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," +
@@ -149,45 +52,13 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 	if err != nil {
 		return
 	}
-	seen := map[string]bool{}
-	// Newest first: the newest Request for a write is the word on it.
 	for _, req := range reqs {
-		spec := req.Spec
-		if seen[spec.Key()] {
+		if !req.Active() {
 			continue
 		}
-		seen[spec.Key()] = true
-		item := items["issue-"+strconv.Itoa(spec.Number)]
-		if item == nil {
-			continue
-		}
-		if spec.Verb == boardv1alpha1.VerbRevise {
-			// The plan's own: the issue's sandbox has other runs' too.
-			if _, ok := findWorkAction(item.PlanActions, "revise", spec.Revise); ok {
-				markRevise(item.PlanActions, req)
-			}
-			continue
-		}
-		if spec.Apply == nil {
-			continue
-		}
-		var actions []models.WorkAction
-		switch spec.Apply.Run {
-		case factorycli.RunTaskType(factorycli.AnnotationTriageRun):
-			actions = item.TriageActions
-		case factorycli.RunTaskType(factorycli.AnnotationPlanRun):
-			actions = item.PlanActions
-		}
-		for i := range actions {
-			a := &actions[i]
-			if a.Verb != spec.Apply.Action {
-				continue
-			}
-			switch {
-			case req.Active() && a.Enabled:
-				a.Enabled, a.Reason = false, postingReason
-			case req.Status.Phase == boardv1alpha1.RequestFailed:
-				a.Error = req.Status.Message
+		for _, key := range []string{"issue-", "pr-"} {
+			if item := items[key+strconv.Itoa(req.Spec.Number)]; item != nil {
+				item.Posting = true
 			}
 		}
 	}
@@ -220,28 +91,6 @@ const (
 	needsPushAccess   = "needs push access on the repo"
 )
 
-// forViewer is the feed as the viewer may act on it. The feed is built and
-// cached per board, for whoever polls; what a viewer may write to GitHub
-// is theirs, so it is applied here, on a copy, as the feed is served.
-func (s *Server) forViewer(ctx context.Context, board *unstructured.Unstructured, namespace, sessionUser string, items []models.WorkItem) []models.WorkItem {
-	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-	perms := s.repoPermissions(ctx, namespace, sessionUser, repoURL)
-	if perms.push && perms.triage {
-		return items
-	}
-	out := make([]models.WorkItem, len(items))
-	for i := range items {
-		out[i] = items[i]
-		if len(items[i].TriageActions) > 0 {
-			out[i].TriageActions = actionsFor(items[i].TriageActions, perms)
-		}
-		if len(items[i].PlanActions) > 0 {
-			out[i].PlanActions = actionsFor(items[i].PlanActions, perms)
-		}
-	}
-	return out
-}
-
 // actionsFor is a copy of a draft's actions with what perms say of each:
 // one whose verb needs access the viewer lacks cannot be taken.
 func actionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkAction {
@@ -264,13 +113,6 @@ func actionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkActio
 	return out
 }
 
-// rebody replaces the request's body, for a handler that binds its own.
-func rebody(c *gin.Context, body any) {
-	b, _ := json.Marshal(body)
-	c.Request.Body = io.NopCloser(bytes.NewReader(b))
-	c.Request.ContentLength = int64(len(b))
-}
-
 // findWorkAction is the offered action verb, with arg its run or revise
 // when given.
 func findWorkAction(actions []models.WorkAction, verb, arg string) (models.WorkAction, bool) {
@@ -282,72 +124,9 @@ func findWorkAction(actions []models.WorkAction, verb, arg string) (models.WorkA
 	return models.WorkAction{}, false
 }
 
-// planIsRevising is whether feedback newer than the stored plan means a
-// refinement round is queued or running: agent motion, not the member's
-// move.
-func planIsRevising(annotations map[string]string) bool {
-	fb, err := time.Parse(time.RFC3339, annotations[annoPlanFeedbackAt])
-	if err != nil {
-		return false
-	}
-	planned, err := time.Parse(time.RFC3339, annotations[annoPlannedAt])
-	return err != nil || fb.After(planned)
-}
-
-// triagePublished reports whether a triage draft's assessment was posted:
-// its comment action applied.
-func triagePublished(annotations map[string]string) bool {
-	return factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "comment")
-}
-
-// planApproved reports whether a plan draft was approved: its run action,
-// a fix with this plan, applied.
-func planApproved(annotations map[string]string) bool {
-	return factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "run")
-}
-
-// triageWorkActions are the actions a triage draft's task output offers,
-// with what its sandbox's annotations say of each just now.
-func triageWorkActions(annotations map[string]string) []models.WorkAction {
-	published := triagePublished(annotations)
-	labeled := factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "label")
-	return workActions(factorycli.OfferedActions("Triage", annotations[factorycli.AnnotationTriageOutput]), func(a factorycli.Action) string {
-		switch {
-		case a.Verb == "label" && labeled:
-			return "labels added"
-		case a.Verb == "label" && published:
-			return "already posted"
-		case a.Verb == "comment" && published:
-			return "assessment posted"
-		case a.Verb == "edit" && published:
-			return "already posted"
-		}
-		return ""
-	})
-}
-
 // planRevisingReason is why a plan's actions wait while the agent
 // rewrites it.
 const planRevisingReason = "the plan is being revised"
-
-// planWorkActions are the actions a plan draft's task output offers, with
-// what its sandbox's annotations and task say of each just now.
-func planWorkActions(annotations map[string]string, revising, running bool) []models.WorkAction {
-	commented := factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "comment")
-	return workActions(factorycli.OfferedActions("Plan", annotations[factorycli.AnnotationPlanOutput]), func(a factorycli.Action) string {
-		switch {
-		case a.Verb == "reject":
-			return ""
-		case revising:
-			return planRevisingReason
-		case (a.Verb == "run" || a.Verb == "revise") && running:
-			return "a task is running"
-		case a.Verb == "comment" && commented:
-			return "plan posted"
-		}
-		return ""
-	})
-}
 
 func workActions(offered []factorycli.Action, disabled func(factorycli.Action) string) []models.WorkAction {
 	var out []models.WorkAction
