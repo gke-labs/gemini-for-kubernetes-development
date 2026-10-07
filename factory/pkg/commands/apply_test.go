@@ -92,6 +92,27 @@ func TestApplyDocumentAliasesTheSandbox(t *testing.T) {
 	}
 }
 
+// A Change's post-replies on its PR aliases no sandbox: several may work
+// on the PR (a care run's and an old one), and none needs it.
+func TestApplyDocumentPostRepliesAliasesNothing(t *testing.T) {
+	oldFind, oldAlias := findSandbox, aliasSandbox
+	t.Cleanup(func() { findSandbox, aliasSandbox = oldFind, oldAlias })
+	findSandbox = func(_ context.Context, u string) (string, error) {
+		return "", fmt.Errorf("several sandboxes work on %s", u)
+	}
+	aliasSandbox = func(_ context.Context, name string, _ int, _ string) error {
+		t.Errorf("aliased %s", name)
+		return nil
+	}
+	d, err := taskoutput.Wrap("Change", "change:\n  title: t\n  body: b\n", taskoutput.Target{URL: "https://github.com/o/r/pull/9"}, taskoutput.Source{Task: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyDocument(context.Background(), githubv39.NewClient(nil), d, "post-replies", "", false); err != nil {
+		t.Errorf("post-replies: %v", err)
+	}
+}
+
 // The runner's Change gets the push's branch and head, not the agent's,
 // and the task's labels.
 func TestFillChange(t *testing.T) {

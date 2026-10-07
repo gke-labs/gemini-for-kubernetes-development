@@ -135,7 +135,8 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 // A Change's open-pr points d at the PR it opened or found, and the
 // sandbox the fix ran in — sandboxName, else the one d names, else its
 // target's — is then aliased to that PR, which is how the board and the
-// watch find a fix's PR.
+// watch find a fix's PR. Its other actions alias nothing: the PR they
+// write to was opened before, and several sandboxes may work on it.
 func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Document, verb, sandboxName string, dryRun bool) error {
 	before := d.Target.URL
 	var err error
@@ -144,7 +145,7 @@ func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Docu
 	} else {
 		err = taskoutput.ApplyAction(ctx, gh, d, verb, dryRun, os.Stdout)
 	}
-	if err != nil || dryRun || d.Kind != "Change" {
+	if err != nil || dryRun || d.Kind != "Change" || (verb != "" && verb != "open-pr") {
 		return err
 	}
 	pr, err := parseGitHubItemURL(d.Target.URL)
