@@ -726,7 +726,7 @@ func fixLike(taskType string) bool {
 // ensureFix launches a fix as the plan's executor, in the executor's
 // namespace with the executor's identity, or follows one to its end:
 // `factory recipe fix` in the issue's sandbox, whose pushed branch the
-// runner opens as a draft PR once the run ends (StartFix). The PR is
+// runner opens as a draft PR once the run ends (StartRecipe, Apply open-pr). The PR is
 // GitHub's, and the sandbox is aliased to it.
 func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
 	logger := log.FromContext(ctx)
@@ -803,26 +803,38 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	// The PR is always a draft: open-pr opens nothing else.
-	if r.Factory.StartFix(key, factorycli.FixOptions{
-		Namespace:         plan.executor,
-		SandboxName:       name,
-		IssueURL:          issueURL,
+	opts := r.recipeOptions(work, "fix", plan.executor, name, issueURL, token, runName)
+	opts.Timeout, opts.Apply = 3*time.Hour, "open-pr"
+	if withPlan {
+		opts.Inputs = map[string]string{"with_plan": "true"}
+	}
+	if r.Factory.StartRecipe(key, opts) {
+		logger.Info("launched factory recipe fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name, "run", runName)
+	}
+}
+
+// recipeOptions are the board's options for a run of recipe on url, in
+// sandbox (empty: factory's for url), as member, named runName: the
+// board's sandbox image and disk, its engine and its disclosure.
+func (r *Reconciler) recipeOptions(work *workState, recipe, member, sandbox, url, token, runName string) factorycli.RecipeOptions {
+	return factorycli.RecipeOptions{
+		Recipe:            recipe,
+		URL:               url,
+		SandboxName:       sandbox,
+		Namespace:         member,
 		Image:             work.board.Spec.Sandbox.Image,
 		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
 		GithubToken:       token,
-		WithPlan:          withPlan,
 		Engine:            boardEngine(work.board),
 		Disclose:          work.board.Spec.Policy.Disclose,
 		RunName:           runName,
-	}) {
-		logger.Info("launched factory recipe fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name, "run", runName)
 	}
 }
 
 // ensureReview launches a review, or reads what came of one: `factory
 // recipe review` in the executor's review sandbox, whose Review the
 // runner posts as the executor's pending review on the PR once the run
-// ends (StartReview). The draft is GitHub's; the board keeps none.
+// ends (StartRecipe, Apply post-review). The draft is GitHub's; the board keeps none.
 func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan reviewPlan) {
 	logger := log.FromContext(ctx)
 
@@ -923,16 +935,9 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	}
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
-	if r.Factory.StartReview(key, factorycli.ReviewOptions{
-		Namespace:         plan.executor,
-		SandboxName:       name,
-		PRURL:             fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr),
-		Image:             work.board.Spec.Sandbox.Image,
-		WorkspaceDiskSize: work.board.Spec.Sandbox.DiskSize,
-		GithubToken:       token,
-		Engine:            boardEngine(work.board),
-		RunName:           runName,
-	}) {
+	opts := r.recipeOptions(work, "review", plan.executor, name, fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr), token, runName)
+	opts.Timeout, opts.Apply = 45*time.Minute, "post-review"
+	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
 	}
 }

@@ -20,7 +20,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
-	"time"
 )
 
 // researchShortIDLen mirrors factory's: eight hex characters of the
@@ -75,82 +74,9 @@ func ResearchTask(annotations map[string]string) string {
 	return RecordedRunSession(annotations, ResearchRunAnnotation)
 }
 
-// ResearchOptions are the inputs for a `factory recipe research`
-// invocation: the sandbox one deep-research conversation runs in, and its
-// opening question, asked by the recipe's start.
-type ResearchOptions struct {
-	Namespace string
-	RepoURL   string
-	// SessionID determines the sandbox name, so re-invoking with the
-	// same id finds the existing sandbox instead of making a second.
-	SessionID string
-	// Topic is the opening question.
-	Topic string
-	// GithubToken is used for the clone only: the recipe is credentials:
-	// clone, so factory hands it to that one step and keeps it out of the
-	// sandbox's environment and disk.
-	GithubToken string
-	// Engine is the engine the conversation runs on. Empty leaves
-	// factory's default, gemini.
-	Engine            string
-	Image             string
-	WorkspaceDiskSize string
-	Timeout           time.Duration
-}
-
 // ResearchRunName is the run a session's start is recorded under: one per
 // session, so a relaunch after a controller restart follows the start
 // instead of asking the question twice. Identifiers only.
 func ResearchRunName(sessionID string) string {
 	return "research/" + sessionID
-}
-
-// StartResearch launches `factory recipe research` for key unless one is
-// already running. Detached: factory returns once the sandbox has the
-// task and the sandbox carries research-ready, and the conversation runs
-// on in the sandbox, where the board follows it as a task session.
-//
-// No preflight probe: the sandbox is new, made for this conversation.
-func (r *Runner) StartResearch(key string, opts ResearchOptions) bool {
-	timeout := researchTimeout(opts)
-	return r.start(key, researchArgs(opts, timeout), opts.GithubToken, timeout)
-}
-
-// researchTimeout is long enough for a cold image pull and a fresh PVC,
-// and short enough that a wedged create eventually becomes a failure the
-// caller can report rather than a permanent "starting".
-func researchTimeout(opts ResearchOptions) time.Duration {
-	if opts.Timeout > 0 {
-		return opts.Timeout
-	}
-	return 20 * time.Minute
-}
-
-// researchArgs is the command line, split out so the contract with
-// factory can be asserted without spawning anything.
-func researchArgs(opts ResearchOptions, timeout time.Duration) []string {
-	args := []string{
-		"recipe", "research",
-		"--url", opts.RepoURL,
-		"--session", opts.SessionID,
-		"--run-name", ResearchRunName(opts.SessionID),
-		"--topic", opts.Topic,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--detached",
-		"--abort-on-cancel=false",
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	if opts.Image != "" {
-		args = append(args, "--image", opts.Image)
-	}
-	if opts.WorkspaceDiskSize != "" {
-		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
-	}
-	// Deliberately no --secret: mounting the member secret would put the
-	// engine key on the sandbox's disk, where the agent running in it
-	// could read it.
-	return args
 }

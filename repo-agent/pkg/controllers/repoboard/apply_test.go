@@ -50,7 +50,7 @@ func storedOutput(kind, draft string) string {
 // triageResult is a triage run's output with a Triage task output whose
 // spec is spec's lines.
 func triageResult(spec string) string {
-	return "...\n================= ISSUE TRIAGE =================\n" +
+	return "...\n================== TASK OUTPUT =================\n" +
 		"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\nsource:\n  task: recipe-triage-1\nspec:\n" + spec +
 		"================================================\n"
 }

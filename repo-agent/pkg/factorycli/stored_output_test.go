@@ -93,25 +93,6 @@ spec:
   body: Fixes #7.
 `
 
-// Any kind's task output is found after its banner, the runner's words
-// after the closer left out.
-func TestHarvestedTaskOutput(t *testing.T) {
-	for _, banner := range []string{changeBanner, reviewBanner, planBanner} {
-		out := "Running recipe...\n" + banner + "\n" + changeOutput + bannerCloser + "\nopened #9\n"
-		if got := HarvestedTaskOutput(out); got != changeOutput {
-			t.Errorf("after %q: %q, want the Change", banner, got)
-		}
-	}
-	if got := HarvestedTaskOutput(triageBanner + "\n" + triageTaskOutput + "\n" + bannerCloser); TaskOutputKind(got) != "Triage" {
-		t.Errorf("triage: %q", got)
-	}
-	for _, out := range []string{"", "posted\n", planBanner + "\njust words\n" + bannerCloser} {
-		if got := HarvestedTaskOutput(out); got != "" {
-			t.Errorf("%q: %q, want none", out, got)
-		}
-	}
-}
-
 // A new output replaces what was applied of the one before; the same
 // again keeps it.
 func TestKeepOutput(t *testing.T) {

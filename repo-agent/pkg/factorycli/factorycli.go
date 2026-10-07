@@ -229,27 +229,6 @@ func ReviewPROf(sb *unstructured.Unstructured, repo string) (int, bool) {
 	return n, err == nil && n > 0
 }
 
-// ReviewOptions are the inputs for a `factory recipe review` invocation.
-type ReviewOptions struct {
-	// SandboxName is the sandbox the review runs in (ReviewSandboxName),
-	// to read its result back from.
-	SandboxName string
-
-	Namespace string
-	PRURL     string
-	// Instructions are passed as repeated --instruction flags.
-	Instructions      []string
-	Image             string
-	WorkspaceDiskSize string
-	GithubToken       string
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine  string
-	Timeout time.Duration
-	// RunName records the review's task in the sandbox, to read its
-	// result back by (factory --run-name).
-	RunName string
-}
-
 // PRWatchOptions are the inputs for a `factory pr watch` invocation, the
 // follow-up loop for a PR the factory created: it investigates failing
 // checks, addresses new review comments, and exits once the PR is merged or
@@ -267,65 +246,6 @@ type PRWatchOptions struct {
 	Disclose bool
 }
 
-// FixOptions are the inputs for a `factory recipe fix` invocation.
-type FixOptions struct {
-	// SandboxName is the issue's sandbox the fix runs in
-	// (fix-<repo>-<n>), to read its result back from.
-	SandboxName string
-
-	// Namespace the task (and its sandbox) runs in; factory resolves the
-	// task identity from the factory-user Secret in this namespace.
-	Namespace string
-	// IssueURL is the GitHub issue to fix.
-	IssueURL string
-	// WithPlan folds the approved plan from a prior `factory recipe plan` run
-	// (living in the fix sandbox) into the fix prompt.
-	WithPlan bool
-	// Image overrides the sandbox base image; must be factory-compatible.
-	Image string
-	// WorkspaceDiskSize overrides the workspace PVC size.
-	WorkspaceDiskSize string
-	// GithubToken authenticates factory's host-side GitHub reads, and
-	// open-pr's write.
-	GithubToken string
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine string
-	// Timeout bounds the child process; the in-sandbox task itself is not
-	// killed on timeout (--abort-on-cancel=false) and is followed by the
-	// next invocation, by its run name.
-	Timeout time.Duration
-	// Disclose is factory's --disclose: whether what the agent writes says
-	// an agent wrote it. Always passed, because factory defaults it on.
-	Disclose bool
-	// RunName records the fix's task in the sandbox, to read its result
-	// back by (factory --run-name).
-	RunName string
-}
-
-// PlanOptions are the inputs for a `factory recipe plan` invocation: an
-// implementation plan prepared in the issue's sandbox, read back as a Plan
-// task output (see ExtractPlan) and left in the sandbox for a later
-// `factory fix --with-plan`. Nothing is written to GitHub.
-type PlanOptions struct {
-	// SandboxName enables the in-flight preflight (the issue fix sandbox).
-	SandboxName string
-
-	Namespace string
-	IssueURL  string
-	// Feedback revises the previous plan in the sandbox against maintainer
-	// feedback instead of planning fresh.
-	Feedback          string
-	Image             string
-	WorkspaceDiskSize string
-	GithubToken       string
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine  string
-	Timeout time.Duration
-	// RunName records the plan's task in the sandbox, to read its result
-	// back by (factory --run-name).
-	RunName string
-}
-
 // Result records the outcome of a finished invocation.
 type Result struct {
 	Err        error
@@ -335,38 +255,22 @@ type Result struct {
 
 // Launcher is the controller-facing interface (faked in tests).
 type Launcher interface {
-	// StartFix launches `factory recipe fix` for key unless one is already
-	// running, and opens the PR from what it pushed: a result without an
-	// error is a draft PR open. Returns false if an invocation for key is
-	// already in flight.
-	StartFix(key string, opts FixOptions) bool
-	// StartReview launches `factory recipe review` for key unless one is
-	// already running, and posts the review it writes as the member's
-	// pending review on the PR: a result without an error is a review
-	// posted.
-	StartReview(key string, opts ReviewOptions) bool
+	// StartRecipe launches `factory recipe <name>` for key unless one is
+	// already running, and applies RecipeOptions.Apply to its task output
+	// when it ends: a controller pass harvests the finished invocation's
+	// task output (HarvestedTaskOutput) via LastResult. Returns false if an
+	// invocation for key is already in flight.
+	StartRecipe(key string, opts RecipeOptions) bool
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
-	// StartPlan launches `factory recipe plan` for key unless one is already
-	// running; a controller pass harvests the finished invocation's output
-	// (see ExtractPlan) via LastResult.
-	StartPlan(key string, opts PlanOptions) bool
 	// StartRevise launches `factory recipe revise` for key unless one is
-	// already running; harvested as a plan is, or a fix's follow-up's
-	// replies posted (PostReplies).
+	// already running; harvested as a recipe's run is, ReviseOptions.Apply
+	// applied.
 	StartRevise(key string, opts ReviseOptions) bool
 	// StartRun launches `factory run <mode>` (plan, deploy or teardown
 	// of one run, in that run's sandbox) unless one is already running.
 	StartRun(key string, opts RunOptions) bool
-	// StartTriage launches `factory recipe triage` for key unless one is
-	// already running. The triage YAML is recovered from the result's
-	// output (see ExtractTriageYAML) via LastResult.
-	StartTriage(key string, opts TriageOptions) bool
-	// StartResearch launches `factory recipe research`, detached: the
-	// sandbox one deep-research conversation runs in, and its start (the
-	// clone and the opening question), whose session the conversation is.
-	StartResearch(key string, opts ResearchOptions) bool
 	// StartApply launches `factory apply --action`: one write of a draft's
 	// task output to its issue, with the member's token.
 	StartApply(key string, opts ApplyOptions) bool
@@ -441,143 +345,6 @@ func NewRunner() *Runner {
 	}
 }
 
-// StartFix runs `factory recipe fix`, reads its Change task output back
-// with `factory sandbox task output --run-name`, and opens the pushed
-// branch as a draft PR with `factory apply --action open-pr`, which
-// aliases the sandbox to the PR. A retried open-pr opens nothing new: it
-// aliases to the branch's open PR. The result's Output has the Change
-// between changeBanner and a closer, then what apply said; a result
-// without an error is a PR open.
-func (r *Runner) StartFix(key string, opts FixOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 3 * time.Hour
-	}
-	args := []string{
-		"recipe", "fix",
-		"--run-name", opts.RunName,
-		"--url", opts.IssueURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		// Never kill the in-sandbox task when this process dies; the next
-		// invocation follows it instead.
-		"--abort-on-cancel=false",
-	}
-	if opts.WithPlan {
-		args = append(args, "--with-plan", "true")
-	}
-	if opts.Image != "" {
-		args = append(args, "--image", opts.Image)
-	}
-	if opts.WorkspaceDiskSize != "" {
-		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
-	sandbox := opts.SandboxName
-	if sandbox == "" {
-		sandbox = opts.IssueURL
-	}
-	// No probe, as for triage: the run name is the run.
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.changeHarvest(sandbox, opts.Namespace, opts.RunName, "open-pr", opts.GithubToken))
-}
-
-// changeBanner opens the Change in a fix's or a fix revise's Output.
-const changeBanner = "================= CHANGE ===================="
-
-// changeHarvest reads a finished fix (or fix revise) run's Change task
-// output back by its run name and applies action to it: open-pr for a
-// fix, post-replies for a revise. Both are idempotent in factory (open-pr
-// aliases to the branch's open PR; a reply carries its task's marker), so
-// running it again after a restart repeats nothing. The namespace rides
-// along because the Change names no sandbox: open-pr finds the issue's in
-// it, to alias to the PR.
-func (r *Runner) changeHarvest(sandbox, namespace, runName, action, githubToken string) *preflight {
-	return &preflight{
-		harvest: func(ctx context.Context, out string, err error) (string, error) {
-			if err != nil {
-				return out, err
-			}
-			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
-			if err != nil {
-				return out + "\n" + doc, fmt.Errorf("reading the change's task output: %w", err)
-			}
-			section := changeBanner + "\n" + doc + "\n" + bannerCloser + "\n"
-			applied, err := r.applyDocIn(ctx, doc, action, namespace, githubToken)
-			if err != nil {
-				return section + applied, fmt.Errorf("applying %s: %w", action, err)
-			}
-			return section + applied, nil
-		},
-	}
-}
-
-// StartReview runs `factory recipe review`, reads its Review task output
-// back with `factory sandbox task output --run-name`, and posts it with
-// `factory apply --action post-review`: the member's pending review on the
-// PR, at the commit reviewed. The draft is GitHub's; the board keeps none.
-// The result's Output has the Review between reviewBanner and a closer,
-// then what apply said; a result without an error is a review posted.
-func (r *Runner) StartReview(key string, opts ReviewOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 45 * time.Minute
-	}
-	args := []string{
-		"recipe", "review",
-		"--run-name", opts.RunName,
-		"--url", opts.PRURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	for _, instruction := range opts.Instructions {
-		if instruction != "" {
-			args = append(args, "--instruction", instruction)
-		}
-	}
-	if opts.Image != "" {
-		args = append(args, "--image", opts.Image)
-	}
-	if opts.WorkspaceDiskSize != "" {
-		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	// No probe, as for triage: the run name is the run.
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.reviewHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
-}
-
-// reviewBanner opens the Review in a review's Output.
-const reviewBanner = "================= PR REVIEW ===================="
-
-// reviewHarvest reads a finished review run's Review task output back by
-// its run name and posts it as the pending review: apply replaces the
-// pending review factory posted before (a revise's), and refuses one the
-// member wrote, so running it again after a restart repeats nothing.
-func (r *Runner) reviewHarvest(sandbox, namespace, runName, githubToken string) *preflight {
-	return &preflight{
-		harvest: func(ctx context.Context, out string, err error) (string, error) {
-			if err != nil {
-				return out, err
-			}
-			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
-			if err != nil {
-				return out + "\n" + doc, fmt.Errorf("reading the review's task output: %w", err)
-			}
-			section := reviewBanner + "\n" + doc + "\n" + bannerCloser + "\n"
-			posted, err := r.applyDoc(ctx, doc, "post-review", githubToken)
-			if err != nil {
-				return section + posted, fmt.Errorf("posting the review: %w", err)
-			}
-			return section + posted, nil
-		},
-	}
-}
-
 func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -604,101 +371,6 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	return r.start(key, args, opts.GithubToken, timeout)
 }
 
-// StartTriage runs `factory recipe triage` and reads its result back with
-// `factory sandbox task output --run-name`, as a typed Triage task
-// output. The result's Output has it between triageBanner and a closer,
-// for ExtractTriageYAML.
-func (r *Runner) StartTriage(key string, opts TriageOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Minute
-	}
-	args := []string{
-		"recipe", "triage",
-		"--run-name", opts.RunName,
-		"--url", opts.IssueURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	sandbox := opts.SandboxName
-	if sandbox == "" {
-		sandbox = opts.IssueURL
-	}
-	// No probe: the run name is the run. Invoked again with it, factory
-	// follows the run or reads its result, and refuses a busy sandbox.
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, &preflight{
-		harvest: func(ctx context.Context, out string, err error) (string, error) {
-			if err != nil {
-				return out, err
-			}
-			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", opts.Namespace, "--run-name", opts.RunName}, opts.GithubToken)
-			if err != nil {
-				return out + "\n" + doc, fmt.Errorf("reading the triage's task output: %w", err)
-			}
-			return triageBanner + "\n" + doc + "\n" + bannerCloser + "\n", nil
-		},
-	})
-}
-
-// StartPlan runs `factory recipe plan` and reads its result back with
-// `factory sandbox task output --run-name`, as a typed Plan task output.
-// The result's Output has it between planBanner and a closer, for
-// ExtractPlan. The recipe is the sandbox's main task, of type plan, so
-// last-task-type stays plan.
-func (r *Runner) StartPlan(key string, opts PlanOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Minute
-	}
-	args := []string{
-		"recipe", "plan",
-		"--run-name", opts.RunName,
-		"--url", opts.IssueURL,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	if opts.Feedback != "" {
-		args = append(args, "--feedback", opts.Feedback)
-	}
-	if opts.Image != "" {
-		args = append(args, "--image", opts.Image)
-	}
-	if opts.WorkspaceDiskSize != "" {
-		args = append(args, "--workspace-disk-size", opts.WorkspaceDiskSize)
-	}
-	if opts.Engine != "" {
-		args = append(args, "--engine", opts.Engine)
-	}
-	sandbox := opts.SandboxName
-	if sandbox == "" {
-		sandbox = opts.IssueURL
-	}
-	// No probe, as for triage.
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.planHarvest(sandbox, opts.Namespace, opts.RunName, opts.GithubToken))
-}
-
-// planHarvest reads a finished plan run's Plan task output back by its run
-// name, between planBanner and a closer, for ExtractPlan.
-func (r *Runner) planHarvest(sandbox, namespace, runName, githubToken string) *preflight {
-	return &preflight{
-		harvest: func(ctx context.Context, out string, err error) (string, error) {
-			if err != nil {
-				return out, err
-			}
-			doc, err := r.execStdout(ctx, []string{"sandbox", "task", "output", sandbox, "--namespace", namespace, "--run-name", runName}, githubToken)
-			if err != nil {
-				return out + "\n" + doc, fmt.Errorf("reading the plan's task output: %w", err)
-			}
-			return planBanner + "\n" + doc + "\n" + bannerCloser + "\n", nil
-		},
-	}
-}
-
 // ReviseOptions are the inputs for a `factory recipe revise` invocation:
 // one of a recipe's revises, asked into the agent session its task ran
 // in, as the next turn of the conversation a member continued there — a
@@ -719,23 +391,19 @@ type ReviseOptions struct {
 	// RunName records the revise's task in the sandbox, to read its
 	// result back by.
 	RunName string
-	// PostReview is for a review's Update review: the Review the revise
-	// writes is posted as the pending review, as a review's is, replacing
-	// the one factory posted before.
-	PostReview bool
-	// PostReplies is for a fix's follow-ups (Iterate, Address comments,
-	// Fix CI): the revise pushes to the PR's branch, and the replies and
-	// report its Change carries are posted on the PR.
-	PostReplies bool
+	// Apply is the action applied to the revise's task output when it
+	// ends: a review's Update review posts its Review as the pending
+	// review (post-review), replacing the one factory posted before; a
+	// fix's follow-ups post the replies their Change carries
+	// (post-replies). Empty applies nothing.
+	Apply string
 	// Inputs are the revise's inputs (factory --input name=value), such
 	// as an Iterate's instruction.
 	Inputs map[string]string
 }
 
 // StartRevise runs `factory recipe revise` and reads its result back as
-// StartPlan does, after planBanner: for ExtractPlan, or ExtractNotes; a
-// review's (PostReview) is posted as StartReview's is, and a fix's
-// (PostReplies) has its replies posted on the PR. The revise runs on the
+// StartRecipe does, applying Apply to it. The revise runs on the
 // sandbox's disk and engine as its task left them, so it takes no image,
 // disk or engine.
 func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
@@ -756,13 +424,7 @@ func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
 	for _, name := range slices.Sorted(maps.Keys(opts.Inputs)) {
 		args = append(args, "--input", name+"="+opts.Inputs[name])
 	}
-	if opts.PostReplies {
-		return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.changeHarvest(opts.SandboxName, opts.Namespace, opts.RunName, "post-replies", opts.GithubToken))
-	}
-	if opts.PostReview {
-		return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.reviewHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
-	}
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.planHarvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.GithubToken))
+	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.harvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.Apply, opts.GithubToken))
 }
 
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {
@@ -875,72 +537,9 @@ func tail(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// TriageOptions are the inputs for a `factory recipe triage` invocation
-// (draft-only issue triage; it writes nothing to GitHub).
-type TriageOptions struct {
-	// SandboxName enables the in-flight preflight (the issue's sandbox).
-	SandboxName string
-
-	Namespace   string
-	IssueURL    string
-	GithubToken string
-	// Engine selects the agent engine (factory --engine); empty = gemini.
-	Engine  string
-	Timeout time.Duration
-	// RunName records the triage's task in the sandbox, to read its
-	// result back by (factory --run-name).
-	RunName string
-}
-
-// triageBanner opens the triage YAML in a triage's Output: StartTriage
-// puts the recipe triage's result between it and bannerCloser.
-const triageBanner = "================= ISSUE TRIAGE ================="
-
-// bannerCloser closes what a banner opens.
-const bannerCloser = "================================================"
-
 // TaskOutputFile is where a recipe task leaves its typed result
 // (factory/pkg/taskoutput).
 const TaskOutputFile = "task-output.yaml"
-
-// ExtractTriageYAML returns the triage YAML after the ISSUE TRIAGE banner
-// of a completed triage, or "": the agent's `triage:` block as `factory
-// triage` prints it, or the same made from a Triage task output.
-func ExtractTriageYAML(output string) string {
-	rest, ok := triageSection(output)
-	if !ok {
-		return ""
-	}
-	return NormalizeTriageDraft(rest)
-}
-
-// TriageTaskOutput is the Triage task output after the ISSUE TRIAGE banner
-// of a completed triage, or "": what the board stores (OutputAnnotation).
-func TriageTaskOutput(output string) string {
-	rest, ok := triageSection(output)
-	if !ok {
-		return ""
-	}
-	if i := strings.Index(rest, "\napiVersion:"); !strings.HasPrefix(rest, "apiVersion:") && i >= 0 {
-		rest = rest[i+1:]
-	}
-	if triageFromTaskOutput(rest) == "" {
-		return ""
-	}
-	return rest + "\n"
-}
-
-func triageSection(output string) (string, bool) {
-	start := strings.Index(output, triageBanner)
-	if start < 0 {
-		return "", false
-	}
-	rest := output[start+len(triageBanner):]
-	if end := strings.Index(rest, "================"); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.TrimSpace(rest), true
-}
 
 // triageFromTaskOutput is a Triage task output's spec as the `triage:`
 // block drafts are kept in, or "".
@@ -960,60 +559,6 @@ func triageFromTaskOutput(doc string) string {
 	}
 	_ = enc.Close()
 	return strings.TrimSpace(buf.String())
-}
-
-// planBanner opens the plan in a plan's Output: StartPlan puts the recipe
-// plan's result between it and bannerCloser.
-const planBanner = "================== ISSUE PLAN =================="
-
-// ExtractPlan returns the plan markdown after the ISSUE PLAN banner of a
-// completed plan, or "": a Plan task output's.
-func ExtractPlan(output string) string {
-	return planFromTaskOutput(planSection(output))
-}
-
-// PlanTaskOutput is the Plan task output after the ISSUE PLAN banner of a
-// completed plan, or "": what the board stores (OutputAnnotation).
-func PlanTaskOutput(output string) string {
-	rest := planSection(output)
-	if planFromTaskOutput(rest) == "" {
-		return ""
-	}
-	return rest + "\n"
-}
-
-func planSection(output string) string {
-	start := strings.Index(output, planBanner)
-	if start < 0 {
-		return ""
-	}
-	rest := output[start+len(planBanner):]
-	// The markdown may underline a heading with '='s: only the last
-	// closer is the banner's.
-	if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
-		rest = rest[:end]
-	}
-	return strings.TrimSpace(rest)
-}
-
-// planFromTaskOutput is a Plan task output's markdown, or "".
-func planFromTaskOutput(doc string) string { return markdownFromTaskOutput("Plan", doc) }
-
-// ExtractNotes returns the notes markdown of a completed Save notes revise
-// (a research recipe's), or "": a Notes task output's. StartRevise puts
-// any revise's result after planBanner.
-func ExtractNotes(output string) string {
-	return markdownFromTaskOutput("Notes", planSection(output))
-}
-
-// NotesTaskOutput is the Notes task output of a completed Save notes
-// revise, or "", as PlanTaskOutput is a plan's.
-func NotesTaskOutput(output string) string {
-	rest := planSection(output)
-	if markdownFromTaskOutput("Notes", rest) == "" {
-		return ""
-	}
-	return rest + "\n"
 }
 
 // markdownFromTaskOutput is the spec.markdown of a task output of kind,

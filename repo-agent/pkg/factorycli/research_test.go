@@ -19,7 +19,6 @@ package factorycli
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 // The name is mirrored from factory rather than imported, so nothing but
@@ -97,53 +96,6 @@ func TestResearchSandboxNameSeparatesSessions(t *testing.T) {
 	}
 }
 
-// The command line is the whole contract with factory. The flags have to
-// be the ones `factory recipe research` defines (--topic is the recipe's
-// input), and --secret must not be among them: mounting the member secret
-// would put the engine key on the sandbox's disk.
-func TestResearchArgs(t *testing.T) {
-	args := researchArgs(ResearchOptions{
-		Namespace: "barney-s",
-		RepoURL:   "https://github.com/kubernetes-sigs/agent-sandbox",
-		SessionID: "s1",
-		Topic:     "how are deletes handled?",
-	}, 20*time.Minute)
-
-	joined := strings.Join(args, " ")
-	for _, want := range []string{
-		"recipe research",
-		"--url https://github.com/kubernetes-sigs/agent-sandbox",
-		"--session s1",
-		"--run-name research/s1",
-		"--topic how are deletes handled?",
-		"--namespace barney-s",
-		"--timeout 20m0s",
-		"--detached",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("args %q missing %q", joined, want)
-		}
-	}
-	if strings.Contains(joined, "--secret") {
-		t.Error("args must not mount a secret into the research sandbox")
-	}
-	if strings.Contains(joined, "--engine") {
-		t.Error("no engine asked for, yet one was passed; factory's default should apply")
-	}
-
-	withOverrides := researchArgs(ResearchOptions{
-		Engine:            "antigravity",
-		Image:             "ghcr.io/example/img:tag",
-		WorkspaceDiskSize: "50Gi",
-	}, time.Minute)
-	joined = strings.Join(withOverrides, " ")
-	for _, want := range []string{"--image ghcr.io/example/img:tag", "--workspace-disk-size 50Gi", "--engine antigravity"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("%q missing from %q", want, joined)
-		}
-	}
-}
-
 // The conversation is the session of the task factory recorded the start
 // under; a sandbox the recipe did not start has none.
 func TestResearchTask(t *testing.T) {
@@ -153,19 +105,5 @@ func TestResearchTask(t *testing.T) {
 	}
 	if got := ResearchTask(map[string]string{}); got != "" {
 		t.Errorf("ResearchTask without a run = %q, want empty", got)
-	}
-}
-
-// An unset timeout has to become a real one: factory's --timeout takes a
-// duration, and "0s" would cancel the context before the pull starts.
-func TestResearchTimeoutDefaults(t *testing.T) {
-	if got := researchTimeout(ResearchOptions{}); got != 20*time.Minute {
-		t.Errorf("default timeout = %v, want 20m", got)
-	}
-	if got := researchTimeout(ResearchOptions{Timeout: 90 * time.Second}); got != 90*time.Second {
-		t.Errorf("caller timeout = %v, want 90s", got)
-	}
-	if got := researchTimeout(ResearchOptions{Timeout: -1}); got != 20*time.Minute {
-		t.Errorf("negative timeout = %v, want the 20m default", got)
 	}
 }
