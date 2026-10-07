@@ -67,7 +67,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/recipes", s.getBoardRecipes)
 		api.POST("/board/:board/issues/:id/recipes/:recipe", s.launchRecipe("issue"))
 		api.POST("/board/:board/prs/:id/recipes/:recipe", s.launchRecipe("pr"))
-		api.POST("/board/:board/prs/:id/auto-iterate", s.autoIterateBoardPR)
+		api.POST("/board/:board/prs/:id/auto", s.autoBoardPR)
 		api.POST("/board/:board/research", s.startResearchSession)
 		// The canned openings as text, for a pane that puts one in the
 		// member's box to edit rather than running it behind a button.

@@ -242,3 +242,59 @@ func TestRowRecipesFollowTheCatalog(t *testing.T) {
 		t.Errorf("no catalog: %v, want no buttons", got)
 	}
 }
+
+// Auto on a PR of the member's files their watch Request; off deletes it.
+func TestAutoTogglesTheWatchRequest(t *testing.T) {
+	_, r, dyn := boardTestServer(t, nil, boardCR())
+	post := func(body string) int {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/board/myboard/prs/9/auto", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	if code := post(`{"on":true}`); code != http.StatusOK {
+		t.Fatalf("on: %d", code)
+	}
+	if code := post(`{"on":true}`); code != http.StatusOK {
+		t.Fatalf("on again: %d", code)
+	}
+	spec := theRequest(t, dyn, "alice").Spec
+	if spec.Verb != boardv1alpha1.VerbWatch || spec.Item != "pr" || spec.Number != 9 || spec.Member != "alice" {
+		t.Errorf("filed %+v, want alice's watch of PR 9", spec)
+	}
+	if code := post(`{"on":false}`); code != http.StatusOK {
+		t.Fatalf("off: %d", code)
+	}
+	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+		t.Errorf("after off: %+v, want no watch", reqs)
+	}
+	if code := post(`{}`); code != http.StatusBadRequest {
+		t.Errorf("no on: %d, want 400", code)
+	}
+}
+
+// Every PR row of the member's has an auto, on while their watch stands.
+func TestMarkAutos(t *testing.T) {
+	items := map[string]*models.WorkItem{
+		"pr-1": {Type: "pr", MyPR: true},
+		"pr-2": {Type: "pr", MyPR: true},
+		"pr-3": {Type: "pr"},
+	}
+	watch := func(n int, member string) boardv1alpha1.Request {
+		req := boardv1alpha1.Request{Spec: boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbWatch, Item: "pr", Number: n, Member: member}}
+		req.Status.Phase = boardv1alpha1.RequestRunning
+		req.Status.Message = "no token"
+		return req
+	}
+	markAutos(items, []boardv1alpha1.Request{watch(1, "alice"), watch(2, "bob")}, "alice")
+	if a := items["pr-1"].Auto; a == nil || !a.On || a.Message != "no token" {
+		t.Errorf("pr-1 auto = %+v, want on, with why its watch failed", a)
+	}
+	if a := items["pr-2"].Auto; a == nil || a.On {
+		t.Errorf("pr-2 auto = %+v, want off: the watch is bob's", a)
+	}
+	if items["pr-3"].Auto != nil {
+		t.Errorf("pr-3 auto = %+v, want none: not alice's", items["pr-3"].Auto)
+	}
+}

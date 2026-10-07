@@ -605,16 +605,20 @@ describe('WorkRow your PR', () => {
         expect(container.querySelector('img[alt="claude"]')).toBeNull();
     });
 
-    test('auto follow-up shows on a PR the board fixed, and toggles', async () => {
+    test('auto shows on every PR of mine, and toggles its watch', async () => {
         global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
-        const sandbox = { name: 'fix-r-7', engine: 'gemini', autoIterate: 'on' };
-        await renderRow({ ...pr, sandbox });
-        expect(container.textContent).not.toContain('auto ⏻');
-        await renderRow({ ...pr, sandbox, sessions: [fixRun('done')] });
-        const chip = Array.from(container.querySelectorAll('span')).find(s => (s.title || '').startsWith('Auto follow-up'));
-        expect(chip).toBeDefined();
-        await act(async () => { chip.click(); });
-        expect(global.fetch).toHaveBeenCalledWith('/api/board/myboard/prs/9/auto-iterate', expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'off' }) }));
+        const autoChip = () => Array.from(container.querySelectorAll('span')).find(s => (s.title || '').startsWith('Auto is'));
+        await renderRow({ ...pr, mine: false, myPR: false, author: 'carol' });
+        expect(autoChip()).toBeUndefined();
+        await renderRow({ ...pr, auto: { on: false } });
+        expect(autoChip().textContent).toBe('auto ⏸');
+        await act(async () => { autoChip().click(); });
+        expect(global.fetch).toHaveBeenCalledWith('/api/board/myboard/prs/9/auto', expect.objectContaining({ method: 'POST', body: JSON.stringify({ on: true }) }));
+        await renderRow({ ...pr, auto: { on: true, since: '2026-10-07T10:00:00Z', message: 'no token' } });
+        expect(autoChip().textContent).toBe('auto ⏻ !');
+        expect(autoChip().title).toContain('last watch failed: no token');
+        await act(async () => { autoChip().click(); });
+        expect(global.fetch).toHaveBeenLastCalledWith('/api/board/myboard/prs/9/auto', expect.objectContaining({ body: JSON.stringify({ on: false }) }));
     });
 });
 

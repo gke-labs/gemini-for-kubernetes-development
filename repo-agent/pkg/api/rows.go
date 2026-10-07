@@ -104,6 +104,26 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 	}
 }
 
+// markAutos gives each PR row of the member's its auto: on while their
+// watch Request for it stands.
+func markAutos(items map[string]*models.WorkItem, requests []boardv1alpha1.Request, member string) {
+	for _, item := range items {
+		if item.Type == "pr" && item.MyPR {
+			item.Auto = &models.WorkAuto{}
+		}
+	}
+	for _, req := range requests {
+		if req.Spec.Verb != boardv1alpha1.VerbWatch || req.Spec.Member != member || !req.Active() {
+			continue
+		}
+		item := items["pr-"+strconv.Itoa(req.Spec.Number)]
+		if item == nil {
+			continue
+		}
+		item.Auto = &models.WorkAuto{On: true, Since: req.CreationTimestamp.UTC().Format(time.RFC3339), Message: req.Status.Message}
+	}
+}
+
 // runSince reports whether recipe's newest run on item started since a
 // click at: the click has its run.
 func runSince(item *models.WorkItem, recipe string, at time.Time) bool {

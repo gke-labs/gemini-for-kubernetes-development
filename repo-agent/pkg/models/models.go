@@ -69,12 +69,20 @@ type Board struct {
 
 // WorkSandbox is the sandbox chip on a work-item row.
 type WorkSandbox struct {
-	Name                  string `json:"name"`
-	Replicas              string `json:"replicas"`
-	TaskState             string `json:"taskState,omitempty"`
-	Engine                string `json:"engine,omitempty"`                // stamped at launch; pre-stamp sandboxes ran gemini
-	AutoIterate           string `json:"autoIterate,omitempty"`           // effective: "on" | "off"
-	AutoIterateOverridden bool   `json:"autoIterateOverridden,omitempty"` // per-PR override set (vs board default)
+	Name      string `json:"name"`
+	Replicas  string `json:"replicas"`
+	TaskState string `json:"taskState,omitempty"`
+	Engine    string `json:"engine,omitempty"` // stamped at launch; pre-stamp sandboxes ran gemini
+}
+
+// WorkAuto is a PR of the member's auto: on while their watch Request
+// stands, and factory pr watch follows the PR up.
+type WorkAuto struct {
+	On bool `json:"on"`
+	// Since is when it was turned on.
+	Since string `json:"since,omitempty"`
+	// Message is why the last watch failed, while it waits to relaunch.
+	Message string `json:"message,omitempty"`
 }
 
 // WorkAction is one action a draft's task output offers, or a revise its
@@ -129,6 +137,8 @@ type WorkItem struct {
 	// is on their fork, which a recipe may push to.
 	Mine bool `json:"mine,omitempty"`
 	MyPR bool `json:"myPR,omitempty"`
+	// Auto is a MyPR row's auto.
+	Auto *WorkAuto `json:"auto,omitempty"`
 	// Sessions are the runs recorded on the item's sandboxes, whichever
 	// recipes they are, newest first: what the row's chips, attention and
 	// session links follow.

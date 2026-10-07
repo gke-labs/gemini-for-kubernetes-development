@@ -131,6 +131,7 @@ spec:
                 - research
                 - apply
                 - revise
+                - watch
                 type: string
             required:
             - board

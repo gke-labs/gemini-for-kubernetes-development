@@ -93,6 +93,13 @@ const (
 	// (Iterate, Address comments, Fix CI), which pushes to the PR and
 	// posts its replies.
 	VerbRevise = "revise"
+	// VerbWatch is a PR's auto: while it stands, factory pr watch
+	// follows the pull request (Item pr, Number) up as Member — care on
+	// new review comments and failed checks — relaunched as each watch
+	// times out. It is never settled by a launch: it runs until the PR
+	// is merged or closed, or the member turns auto off, which deletes
+	// it.
+	VerbWatch = "watch"
 )
 
 // LabelBoard selects every Request filed against one board. Requests
@@ -210,7 +217,7 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=recipe;run;research;apply;revise
+	// +kubebuilder:validation:Enum=recipe;run;research;apply;revise;watch
 	Verb string `json:"verb"`
 
 	// Recipe is the recipe to launch, for verb=recipe: a name factory
@@ -366,6 +373,8 @@ func (s RequestSpec) Subject() string {
 		return s.target() + "/" + s.Apply.Run + "/" + s.Apply.Action
 	case VerbRevise:
 		return s.target() + "/" + s.Revise
+	case VerbWatch:
+		return s.Item + "-" + strconv.Itoa(s.Number)
 	case VerbRecipe:
 		// Two recipes on one issue are two clicks; a recipe twice is one.
 		return s.Item + "-" + strconv.Itoa(s.Number) + "/" + s.Recipe

@@ -155,6 +155,8 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			box.applies = append(box.applies, req)
 		case boardv1alpha1.VerbRevise:
 			box.revises = append(box.revises, req)
+		case boardv1alpha1.VerbWatch:
+			box.watches = append(box.watches, req)
 		}
 	}
 	return box
@@ -305,7 +307,9 @@ func (r *Reconciler) reapRequests(ctx context.Context, work *workState) error {
 
 	for _, req := range work.activeRequests() {
 		out := r.settle(ctx, work, req, now)
-		if out.phase == "" || out.phase == req.Status.Phase {
+		// A standing watch stays Running; what changes is why its last
+		// watch failed.
+		if out.phase == "" || (out.phase == req.Status.Phase && out.message == req.Status.Message) {
 			continue
 		}
 		req.Status.Phase = out.phase
@@ -350,6 +354,9 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 
 	case boardv1alpha1.VerbRevise:
 		return r.settleRevise(ctx, work, req, now)
+
+	case boardv1alpha1.VerbWatch:
+		return r.settleWatch(work, req)
 
 	case boardv1alpha1.VerbResearch:
 		claim, ok := researchClaimFrom(req)
