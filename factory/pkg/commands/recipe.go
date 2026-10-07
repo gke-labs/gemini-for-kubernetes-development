@@ -1170,18 +1170,16 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 
 // fillChange puts on a Change what the push step recorded (where the
 // commits went, and which they are) rather than what the agent said, and
-// the labels the task was given. A revise's Change is about the fix's PR
-// (pr_url, which factory recipe revise sets), and keeps the title and
-// body the previous one had (pushed_title, pushed_body) where the agent
+// the labels the task was given. A Change on a PR — a revise's, or a
+// start's on a PR such as care's — is about the PR (pr_url), and keeps
+// the title and body it had (pushed_title, pushed_body) where the agent
 // wrote none.
 func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, inputs map[string]string) error {
-	if task.Revise != "" {
-		if u := inputs["pr_url"]; u != "" {
-			doc.Target.URL = u
-		}
-		if err := doc.KeepTitle(inputs["pushed_title"], inputs["pushed_body"]); err != nil {
-			return err
-		}
+	if u := inputs["pr_url"]; u != "" {
+		doc.Target.URL = u
+	}
+	if err := doc.KeepTitle(inputs["pushed_title"], inputs["pushed_body"]); err != nil {
+		return err
 	}
 	data, err := os.ReadFile(filepath.Join(taskDir, taskoutput.PushedFile))
 	if err != nil {
