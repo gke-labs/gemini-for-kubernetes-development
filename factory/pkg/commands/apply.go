@@ -268,6 +268,6 @@ var (
 		return nil
 	}
 	runFixRecipe = func(ctx context.Context, issueURL string) error {
-		return runRecipe(ctx, "fix", issueURL, "", "", applyMode{}, map[string]string{"with_plan": "true"}, nil)
+		return runRecipe(ctx, "fix", issueURL, "", "", applyMode{}, map[string]string{"with_plan": "true"}, nil, reviseRun{})
 	}
 )

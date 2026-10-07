@@ -503,7 +503,7 @@ func TestBuiltinReviewRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CheckRender(inputs); err != nil {
+	if err := r.CheckRender("", inputs); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.OutputDecl().Actions; got[len(got)-1].Verb != "revise" || got[len(got)-1].Revise != "review" {
@@ -595,8 +595,6 @@ func TestRevisesAreValidated(t *testing.T) {
 		"bad step":         start + "revise: [{id: p, label: L, steps: [{run: y, capture: p.md}]}]",
 		"captures nothing": start + "revise: [{id: p, label: L, steps: [{ask: y}]}]",
 		"captures another": start + "revise: [{id: p, label: L, steps: [{ask: y, capture: other.md}]}]",
-		"start asks nothing": "name: a\noutputs: [p.md]\nstart: {steps: [{run: x}]}\n" +
-			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
 		"declared revise action": start + "task-output: {kind: Plan, from: p.md, actions: [{verb: revise, revise: p}]}\n" +
 			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
 		"misses the task output": "name: a\noutputs: [p.md, q.md]\nstart: {steps: [{ask: x, capture: p.md}, {ask: x2, capture: q.md}]}\n" +
@@ -605,6 +603,10 @@ func TestRevisesAreValidated(t *testing.T) {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
+	}
+	// A start may ask nothing: the first revise opens the session.
+	if _, err := Parse([]byte("name: a\noutputs: [p.md]\nstart: {steps: [{run: x}]}\nrevise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]")); err != nil {
+		t.Errorf("a start that asks nothing: %v", err)
 	}
 	// Step ids are each part's own.
 	if _, err := Parse([]byte(start + "revise: [{id: redo-labels, label: L, steps: [{id: x, ask: y, capture: p.md}, {id: x2, run: z}]}]")); err != nil {
@@ -751,7 +753,7 @@ func TestBuiltinResearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rec.CheckRender(inputs); err != nil {
+	if err := rec.CheckRender("", inputs); err != nil {
 		t.Fatalf("CheckRender: %v", err)
 	}
 	if _, err := rec.ResolveInputs(repo, nil); err == nil {
@@ -772,7 +774,7 @@ func TestBuiltinResearch(t *testing.T) {
 	}
 	if inputs, err := plan.ResolveInputs(repo, nil); err != nil {
 		t.Fatal(err)
-	} else if err := plan.CheckRender(inputs); err == nil || !strings.Contains(err.Error(), "issue_url") {
+	} else if err := plan.CheckRender("", inputs); err == nil || !strings.Contains(err.Error(), "issue_url") {
 		t.Errorf("plan on a repository: CheckRender = %v, want issue_url missing", err)
 	}
 }
@@ -789,12 +791,12 @@ func TestBuiltinFixRenders(t *testing.T) {
 		t.Fatalf("fix task-type %q, credentials %q, task-output %+v, %d revises", r.TaskType, r.Credentials, r.TaskOutput, len(r.Revise))
 	}
 	var uses []string
-	for _, s := range r.Start.Steps {
+	for _, s := range append(slices.Clone(r.Setup.Steps), r.Start.Steps...) {
 		if s.Uses != "" {
 			uses = append(uses, s.Uses)
 		}
 	}
-	if got := strings.Join(uses, " "); got != "setup-git setup-fork checkout-default-branch configure-engine push" {
+	if got := strings.Join(uses, " "); got != "setup-git setup-fork configure-engine checkout-default-branch push" {
 		t.Errorf("uses = %s", got)
 	}
 	if last := r.Start.Steps[len(r.Start.Steps)-1]; last.Uses != "push" {
@@ -810,7 +812,7 @@ func TestBuiltinFixRenders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.CheckRender(inputs); err != nil {
+		if err := r.CheckRender("", inputs); err != nil {
 			t.Fatal(err)
 		}
 		dir := t.TempDir()
@@ -1021,5 +1023,113 @@ func TestOnAndReviseInputs(t *testing.T) {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
+	}
+}
+
+// setup runs ahead of the start, or where the start does not run
+// (start.on), of the first revise; a runner sees neither.
+func TestSetupAndStartOn(t *testing.T) {
+	withSetup := "on: [issue, my-pr]\n" + strings.Replace(reviseRecipe, "start:\n  steps:", "setup:\n  steps:\n    - run: prepare\nstart:\n  on: [issue]\n  steps:", 1)
+	rec, err := Parse([]byte(withSetup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Setup.Steps) != 1 || !rec.StartsOn(OnIssue) || rec.StartsOn(OnMyPR) {
+		t.Fatalf("setup %+v, start on %v", rec.Setup, rec.Start.On)
+	}
+	if plain, _ := Parse([]byte(reviseRecipe)); !plain.StartsOn(OnRepo) {
+		t.Error("a start with no on does not run everywhere")
+	}
+	if onPR, _ := Parse([]byte(strings.Replace(withSetup, "on: [issue]\n  steps", "on: [issue, my-pr]\n  steps", 1))); onPR == nil || !onPR.StartsOn(OnMyPR) {
+		t.Error("start on every target of the recipe does not run on my-pr")
+	}
+
+	sandbox, err := ForSandbox([]byte(withSetup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(sandbox)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, sandbox)
+	}
+	if strings.Contains(string(sandbox), "setup:") || got.Start.On != nil || len(got.Start.Steps) != 4 || got.Start.Steps[0].Run != "prepare" || len(got.Revise[0].Steps) != 2 {
+		t.Errorf("sandbox recipe:\n%s", sandbox)
+	}
+
+	first, err := SetupBeforeRevise([]byte(withSetup), "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox, err = ForSandbox(first); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Parse(sandbox); err != nil {
+		t.Fatalf("%v\n%s", err, sandbox)
+	}
+	// The save step's anchor, used in the revise, survives.
+	if len(got.Start.Steps) != 3 || len(got.Revise[0].Steps) != 3 || got.Revise[0].Steps[0].Run != "prepare" || got.Revise[0].Steps[2].Run != "cp plan.md /somewhere" {
+		t.Errorf("first revise's recipe:\n%s", sandbox)
+	}
+	if _, err := SetupBeforeRevise([]byte(withSetup), "nope"); err == nil {
+		t.Error("setup folded into a revise that does not exist")
+	}
+
+	for name, bad := range map[string]string{
+		"setup asks":            strings.Replace(withSetup, "run: prepare", "ask: prepare", 1),
+		"setup on":              strings.Replace(withSetup, "setup:\n", "setup:\n  on: [issue]\n", 1),
+		"start on elsewhere":    strings.Replace(withSetup, "on: [issue]\n  steps", "on: [repo]\n  steps", 1),
+		"start on unknown":      strings.Replace(withSetup, "on: [issue]\n  steps", "on: [commit]\n  steps", 1),
+		"nothing runs on my-pr": withSetup[:strings.Index(withSetup, "revise:")],
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+}
+
+// A revise into a fresh session, the first where the start does not run, sends
+// the context as a start would.
+func TestAReviseIntoAFreshSessionSendsTheContext(t *testing.T) {
+	rec, err := Parse([]byte(reviseRecipe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _, sess, _ := newTestRunner(t)
+	r.Revise = "plan"
+	r.StartSession = func(context.Context) (Session, error) { return freshSession{sess}, nil }
+	if err := r.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.prompts) != 1 || !strings.HasPrefix(sess.prompts[0], "RULES\n") {
+		t.Errorf("prompts = %q, want the context first", sess.prompts)
+	}
+}
+
+type freshSession struct{ *fakeSession }
+
+func (freshSession) Fresh() bool { return true }
+
+// The built-in fix renders on a PR's inputs as on an issue's: on a PR of
+// yours it has no start, and its revises name no issue.
+func TestFixOnAPR(t *testing.T) {
+	_, rec, err := Builtin("fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.StartsOn(OnMyPR) || !rec.StartsOn(OnIssue) || len(rec.Setup.Steps) == 0 {
+		t.Fatalf("fix starts on %v, setup %d steps", rec.Start.On, len(rec.Setup.Steps))
+	}
+	inputs, err := rec.ResolveInputs(map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r/pull/9", "pr_url": "https://github.com/o/r/pull/9",
+		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "false",
+	}, map[string]string{"instruction": "rename it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.CheckRender(OnMyPR, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.CheckRender("", inputs); err == nil {
+		t.Error("fix's start, which names the issue, rendered on a PR's inputs")
 	}
 }

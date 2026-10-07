@@ -27,6 +27,11 @@ type Session interface {
 	Close() error
 }
 
+// FreshSession is a Session that can say it remembers nothing.
+type FreshSession interface {
+	Fresh() bool
+}
+
 // StepResult is what a step left for later ones to read.
 type StepResult struct {
 	ExitCode int
@@ -53,7 +58,9 @@ type Runner struct {
 	Inputs  map[string]string
 	// Revise selects the part to run: "" for start, else a revise's id.
 	// A revise asks in a session that already has the recipe's context,
-	// so it is not sent again.
+	// so it is not sent again, unless the session is a fresh one
+	// (FreshSession): the first revise where the recipe has no start
+	// (start.on), or one after a start that asked nothing.
 	Revise string
 	// Log receives a line per step and everything the steps print.
 	Log io.Writer
@@ -114,17 +121,20 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			if err != nil {
 				break
 			}
-			if !contextSent && rec.Context != "" {
-				prompt = rec.Context + "\n\n---\n\n" + prompt
-			}
-			contextSent = true
 			if session == nil {
 				if session, err = r.StartSession(ctx); err != nil {
 					session = nil
 					err = fmt.Errorf("starting the agent session: %w", err)
 					break
 				}
+				if f, ok := session.(FreshSession); ok && f.Fresh() {
+					contextSent = false
+				}
 			}
+			if !contextSent && rec.Context != "" {
+				prompt = rec.Context + "\n\n---\n\n" + prompt
+			}
+			contextSent = true
 			res.Reply, err = session.Ask(ctx, prompt)
 			if err == nil && step.Capture != "" {
 				err = os.WriteFile(filepath.Join(r.TaskDir, step.Capture), []byte(res.Reply), 0o644)
@@ -147,8 +157,14 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 // be done before anything has run (step results and files empty), so an
 // ask reading an input its target does not set — an issue's, on a
 // repository — fails before a sandbox is made rather than in it.
-func (r *Recipe) CheckRender(inputs map[string]string) error {
-	parts := map[string][]Step{"start": r.Start.Steps}
+//
+// On target, the start is left out where it does not run (StartsOn); ""
+// is any target.
+func (r *Recipe) CheckRender(target string, inputs map[string]string) error {
+	parts := map[string][]Step{}
+	if target == "" || r.StartsOn(target) {
+		parts["start"] = r.Start.Steps
+	}
 	for _, rv := range r.Revise {
 		parts["revise "+rv.ID] = rv.Steps
 	}

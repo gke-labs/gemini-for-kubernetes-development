@@ -56,9 +56,9 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 
 // recipeRunFlags are the flags every way of running a recipe takes.
 type recipeRunFlags struct {
-	itemURL, runName, session string
-	inputArgs                 []string
-	apply, dryRun             bool
+	itemURL, runName, session, revise string
+	inputArgs                         []string
+	apply, dryRun                     bool
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
@@ -70,6 +70,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
+	cmd.Flags().StringVar(&f.revise, "revise", "", "Run this revise of the recipe (factory recipe revise), its --input its own, in the session of the recipe's last run here; where the recipe has no start (start.on) and has not run, the revise opens the session. On a PR of yours, fix has no start: this is how its revises run there")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
 }
@@ -83,6 +84,9 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 	if f.dryRun && !f.apply {
 		return fmt.Errorf("--dry-run goes with --apply")
 	}
+	if f.apply && f.revise != "" {
+		return fmt.Errorf("--apply goes without --revise: apply a revise's result with factory apply")
+	}
 	if f.apply && rootFlags.Detached {
 		return fmt.Errorf("--apply waits for the task; it cannot be --detached")
 	}
@@ -95,6 +99,12 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 	if err != nil {
 		return err
 	}
+	var rv reviseRun
+	if f.revise != "" {
+		// --input is the revise's; the start takes what the URL sets.
+		rv = reviseRun{id: f.revise, overrides: overrides}
+		overrides = map[string]string{}
+	}
 	for k, v := range extra {
 		overrides[k] = v
 	}
@@ -104,7 +114,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, applyMode{f.apply, f.dryRun}, overrides, instructions, rv)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -330,13 +340,18 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // values of instructions-type inputs, each resolved as
 // `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off.
-func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, apply applyMode, overrides map[string]string, instructions map[string][]string, rv reviseRun) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
 	}
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
+	}
+	if rv.id != "" {
+		if _, err := rec.Steps(rv.id); err != nil {
+			return err
+		}
 	}
 	it, err := parseRecipeTarget(itemURL)
 	if err != nil {
@@ -345,28 +360,18 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}
-	if !it.IsPR {
-		// A PR's is checked once it and the caller are known.
-		if err := checkOn(rec, it, nil, ""); err != nil {
-			return err
-		}
-	}
-	if rec.Credentials == recipe.CredentialsClone && !it.IsPR && !it.IsRepo() {
-		// The issue's sandbox is its fix's too, whose setup-git leaves
-		// the token in gh's hosts.yml for the agent to read.
-		return fmt.Errorf("recipe %s is credentials: clone, which an issue's sandbox, shared with its fix, cannot keep; run it on the PR or the repository", rec.Name)
-	}
 
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
-	for in, vals := range instructions {
-		joined, err := resolveInstructions(ctx, ghClient, it.Owner, it.Repo, vals)
-		if err != nil {
-			return err
-		}
-		overrides[in] = joined
+	kubeClient, err := clients.NewKubernetesClient()
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
 	var standard map[string]string
 	var htmlURL string
@@ -391,28 +396,38 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		}
 		standard, htmlURL = issueInputs(it, issue), issue.GetHTMLURL()
 	}
+	target := recipeTarget(it, pr, string(secret.Data[constants.KeyGithubLogin]))
+	if err := checkOn(rec, it, target); err != nil {
+		return err
+	}
+	if rv.id == "" && !rec.StartsOn(target) {
+		var revises []string
+		for _, r := range rec.Revise {
+			revises = append(revises, r.ID)
+		}
+		return fmt.Errorf("recipe %s has no start on a %s: run one of its revises with --revise (%s)", rec.Name, target, strings.Join(revises, ", "))
+	}
+	if rec.Credentials == recipe.CredentialsClone && !it.IsPR && !it.IsRepo() {
+		// The issue's sandbox is its fix's too, whose setup-git leaves
+		// the token in gh's hosts.yml for the agent to read.
+		return fmt.Errorf("recipe %s is credentials: clone, which an issue's sandbox, shared with its fix, cannot keep; run it on the PR or the repository", rec.Name)
+	}
+
+	for in, vals := range instructions {
+		joined, err := resolveInstructions(ctx, ghClient, it.Owner, it.Repo, vals)
+		if err != nil {
+			return err
+		}
+		overrides[in] = joined
+	}
 	// Whether what the agent writes for GitHub says an agent wrote it.
 	standard["disclose"] = strconv.FormatBool(rootFlags.Disclose)
 	inputs, err := rec.ResolveInputs(standard, overrides)
 	if err != nil {
 		return err
 	}
-	if err := rec.CheckRender(inputs); err != nil {
+	if err := rec.CheckRender(target, inputs); err != nil {
 		return fmt.Errorf("recipe %s on %s: %w", rec.Name, htmlURL, err)
-	}
-
-	kubeClient, err := clients.NewKubernetesClient()
-	if err != nil {
-		return fmt.Errorf("creating k8s client: %w", err)
-	}
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
-	}
-	if it.IsPR {
-		if err := checkOn(rec, it, pr, string(secret.Data[constants.KeyGithubLogin])); err != nil {
-			return err
-		}
 	}
 
 	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo)
@@ -455,6 +470,42 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		return fmt.Errorf("connecting to sandbox: %w", err)
 	}
 	defer sb.Close()
+	envMap, secrets, err := recipeEnv(secret, it, rec.Credentials)
+	if err != nil {
+		return err
+	}
+	if it.IsPR {
+		// The base branch the clone step fetches beside the PR's head.
+		envMap["PR_BASE"] = standard["pr_base"]
+	}
+
+	if rv.id != "" {
+		// The revise is the run, and the run name its: into the session
+		// of the recipe's last run here, or where the start does not run
+		// and there is none, opening it.
+		entries, err := sb.List(ctx)
+		if err != nil {
+			return err
+		}
+		if runName != "" {
+			e, ok, err := runByName(entries, runName, rec.Name, htmlURL)
+			if err != nil {
+				return err
+			}
+			if ok {
+				return resumeNamedRun(ctx, sb, nil, rec, sandboxName, e, applyMode{})
+			}
+		}
+		if _, ok := liveRun(entries, rec.Name, htmlURL); ok {
+			_, err = reviseIn(ctx, sb, rv.id, reviseFlags{runName: runName, recipe: recipeArg}, rv.overrides)
+			return err
+		}
+		if rec.StartsOn(target) {
+			return fmt.Errorf("recipe %s has not run on %s here; run it (without --revise) before its revises", rec.Name, htmlURL)
+		}
+		return firstRevise(ctx, kubeClient, sb, ghClient, it, pr, rec, recipeBytes, rv, runName, itemURL, inputs, envMap, secrets)
+	}
+
 	if runName != "" {
 		entries, err := sb.List(ctx)
 		if err != nil {
@@ -485,15 +536,6 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		return err
 	}
 
-	envMap, secrets, err := recipeEnv(secret, it, rec.Credentials)
-	if err != nil {
-		return err
-	}
-	if it.IsPR {
-		// The base branch the clone step fetches beside the PR's head.
-		envMap["PR_BASE"] = standard["pr_base"]
-	}
-
 	task := newSpoolTask(rec.Name, runName, itemURL)
 	if rec.StartOutputs() {
 		task.Output = rec.OutputDecl()
@@ -513,39 +555,114 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	return nil
 }
 
-// checkOn refuses a target the recipe does not run on (recipe.On; unset,
-// it runs on any). pr and login are a PR target and the caller: a recipe
-// on my-pr runs only on a PR the caller authored whose head is a branch on
-// their fork, the only place push pushes to.
-func checkOn(rec *recipe.Recipe, it githubItem, pr *githubv39.PullRequest, login string) error {
-	if len(rec.On) == 0 {
-		return nil
+// reviseRun is --revise: the revise to run once the start has, and its
+// --input.
+type reviseRun struct {
+	id        string
+	overrides map[string]string
+}
+
+// liveRun is the newest task in entries (newest first) of recipeName on
+// itemURL, start or revise, that has not failed: the session a revise
+// continues. One that failed may have pushed nothing to continue from.
+func liveRun(entries []spool.Entry, recipeName, itemURL string) (spool.Entry, bool) {
+	want := normalizeItemURL(itemURL)
+	for _, e := range entries {
+		if e.Recipe != recipeName || normalizeItemURL(e.URL) != want || (e.State == spool.Exited && e.ExitCode != "0") {
+			continue
+		}
+		return e, true
 	}
-	on := func(target string) bool { return slices.Contains(rec.On, target) }
-	var what string
+	return spool.Entry{}, false
+}
+
+// firstRevise runs revise rv.id where the recipe has no start (start.on)
+// and has not run: it opens the session, after the recipe's setup. A
+// Change recipe's revise continues the PR, whose head stands in for the
+// push a start would have made.
+func firstRevise(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, gh *githubv39.Client, it githubItem, pr *githubv39.PullRequest, rec *recipe.Recipe, recipeBytes []byte, rv reviseRun, runName, itemURL string, inputs, envMap, secrets map[string]string) error {
+	inputs, err := rec.ResolveInputs(inputs, rv.overrides)
+	if err != nil {
+		return err
+	}
+	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" {
+		if pr == nil {
+			return fmt.Errorf("recipe %s's revises continue a PR, and %s is none", rec.Name, itemURL)
+		}
+		if err := prPushInputs(ctx, gh, it, pr, inputs); err != nil {
+			return err
+		}
+	}
+	if recipeBytes, err = recipe.SetupBeforeRevise(recipeBytes, rv.id); err != nil {
+		return err
+	}
+	if err := refuseIfBusy(ctx, sb, sb.Name()); err != nil {
+		return err
+	}
+	// No Session: it opens the conversation the revises after it continue.
+	task := newSpoolTask(rec.Name, runName, itemURL)
+	task.Revise = rv.id
+	task.Output = rec.OutputDecl()
+	task.TaskType = rec.TaskType
+	fmt.Printf("Running %s's %s, the first here: it opens the session (task %s)...\n", rec.Name, rv.id, task.ID)
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets); err != nil || !done {
+		return err
+	}
+	printResultHint(rec, task, sb.Name())
+	return nil
+}
+
+// prPushInputs sets the pushed_* inputs a Change revise pushes from to
+// the PR's: its head branch on the fork, leased at its head commit, from
+// the base it branched off; and its title and body, which the revise's
+// Change keeps unless the agent writes new ones.
+func prPushInputs(ctx context.Context, gh *githubv39.Client, it githubItem, pr *githubv39.PullRequest, inputs map[string]string) error {
+	cmp, _, err := gh.Repositories.CompareCommits(ctx, it.Owner, it.Repo, pr.GetBase().GetRef(), pr.GetHead().GetLabel(), nil)
+	if err != nil {
+		return fmt.Errorf("finding where PR #%d branched off %s: %w", it.Number, pr.GetBase().GetRef(), err)
+	}
+	inputs["pushed_fork"] = pr.GetHead().GetRepo().GetFullName()
+	inputs["pushed_branch"] = pr.GetHead().GetRef()
+	inputs["pushed_head"] = pr.GetHead().GetSHA()
+	inputs["pushed_base"] = cmp.GetMergeBaseCommit().GetSHA()
+	inputs["pushed_title"], inputs["pushed_body"] = pr.GetTitle(), pr.GetBody()
+	inputs["pr_url"] = pr.GetHTMLURL()
+	return nil
+}
+
+// recipeTarget is which of recipe.On it is: a PR is my-pr when login
+// authored it from their fork (isMyPR).
+func recipeTarget(it githubItem, pr *githubv39.PullRequest, login string) string {
 	switch {
 	case it.IsRepo():
-		if on(recipe.OnRepo) {
-			return nil
-		}
-		what = "repository"
+		return recipe.OnRepo
+	case it.IsPR && pr != nil && isMyPR(pr, login):
+		return recipe.OnMyPR
 	case it.IsPR:
-		if on(recipe.OnPR) {
+		return recipe.OnPR
+	default:
+		return recipe.OnIssue
+	}
+}
+
+// checkOn refuses a target (recipeTarget) the recipe does not run on
+// (recipe.On; unset, it runs on any). A recipe on pr runs on a my-pr; one
+// on my-pr only, not on a pr: push pushes only to the caller's fork.
+func checkOn(rec *recipe.Recipe, it githubItem, target string) error {
+	if len(rec.On) == 0 || slices.Contains(rec.On, target) {
+		return nil
+	}
+	switch target {
+	case recipe.OnMyPR:
+		if slices.Contains(rec.On, recipe.OnPR) {
 			return nil
 		}
-		if on(recipe.OnMyPR) {
-			if pr != nil && isMyPR(pr, login) {
-				return nil
-			}
+	case recipe.OnPR:
+		if slices.Contains(rec.On, recipe.OnMyPR) {
 			return fmt.Errorf("recipe %s runs on a PR you can push to, one you authored from your fork; #%d is not (factory pr adopt takes it over)", rec.Name, it.Number)
 		}
-		what = "pull request"
-	default:
-		if on(recipe.OnIssue) {
-			return nil
-		}
-		what = "issue"
 	}
+	what := map[string]string{recipe.OnRepo: "repository", recipe.OnIssue: "issue", recipe.OnPR: "pull request", recipe.OnMyPR: "pull request"}[target]
 	return fmt.Errorf("recipe %s runs on %s, not on a %s", rec.Name, strings.Join(rec.On, ", "), what)
 }
 

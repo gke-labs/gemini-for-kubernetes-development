@@ -9,13 +9,20 @@
 # /workspaces/plan-issue-<n>.md, where a plan task (and `factory apply
 # --action run:fix`) leaves it.
 #
+# On a PR you opened from your fork there is nothing to start (start: on:
+# [issue]): the PR already is what the start makes. factory recipe fix
+# --url <PR> --revise <revise> runs a revise there straight away, the
+# first opening the session, with the push facts read from the PR. A PR
+# whose head is not on your fork is refused: factory pr adopt takes it
+# over.
+#
 # The revises (factory recipe revise <sandbox> <revise>) are the PR's
 # follow-ups, asked into the fix's session: iterate, address-comments,
 # fix-ci, rebase. Each ends with the same push, to the branch the start
 # pushed, leased against the head last pushed, so the PR follows. Their
 # Change carries the replies and report post-replies posts on the PR.
 name: fix
-on: [issue]
+on: [issue, my-pr]
 task-type: fix
 
 inputs:
@@ -42,17 +49,23 @@ context: |
   when you are done, factory pushes your commits to the member's fork and
   opens the pull request from what you write.
 
-  The repository is checked out in the current directory, on a new branch
-  from the latest default branch. The git remote "origin" is the member's
+  The repository is checked out in the current directory, on the branch
+  you work on: a new one from the latest default branch, or the pull
+  request's when you continue one. The git remote "origin" is the member's
   fork, "upstream" the repository. `gh` is authenticated, to read issues
   and pull requests. Do not run `git config --global`: in this environment
   it overwrites /dev/null and breaks git for the rest of the run.
 
-start:
+setup:
   steps:
     - uses: setup-git
     - uses: setup-fork
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+
+start:
+  on: [issue]
+  steps:
     - uses: checkout-default-branch
     # The branch the push step pushes, and the upstream commit it starts
     # from.
@@ -60,7 +73,6 @@ start:
         git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
         git symbolic-ref --short HEAD > "$TASK_DIR/branch"
         git rev-parse HEAD > "$TASK_DIR/base"
-    - uses: configure-engine
     # The approved plan, with --with-plan true.
     - run: |
         : > "$TASK_DIR/plan.md"
@@ -168,7 +180,8 @@ start:
     - uses: push
 
 # The PR's follow-ups. factory hands each one the push the fix last made
-# (INPUT_PUSHED_*: fork, branch, base, head) and the PR (pr_url); a
+# (INPUT_PUSHED_*: fork, branch, base, head) and the PR (pr_url) — on a
+# PR of yours with no fix, the PR's head and the base it branched from; a
 # revise's Change keeps the previous title and body unless the agent
 # writes new ones.
 revise:
@@ -185,6 +198,9 @@ revise:
           printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
           printf '%s' "${INPUT_PR_URL##*/}" > "$TASK_DIR/pr"
           if [ "$(git symbolic-ref --short -q HEAD)" != "${INPUT_PUSHED_BRANCH}" ]; then
+            # Not here yet where no fix made it: the PR's, from the fork.
+            git rev-parse -q --verify "refs/heads/${INPUT_PUSHED_BRANCH}" >/dev/null ||
+              git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}:refs/heads/${INPUT_PUSHED_BRANCH}"
             git checkout "${INPUT_PUSHED_BRANCH}"
           fi
       - run: |
@@ -214,8 +230,8 @@ revise:
           change:
             title: "A brief title, like a commit subject, in double quotes"
             body: |
-              The whole new description; it keeps the line
-              `Fixes #{{ .Inputs.issue_number }}`.
+              The whole new description; it keeps the description's
+              `Fixes #…` line, if it has one.
         capture: change.yaml
       - uses: push
 
@@ -260,7 +276,8 @@ revise:
             the `gh api` output above: a review comment's or a
             conversation comment's. One reply per comment you answer.
           - Add `title:` and `body:` (the whole new description, keeping
-            `Fixes #{{ .Inputs.issue_number }}`) only if the pull request's no longer fit.
+            its `Fixes #…` line, if it has one) only if the pull request's
+            no longer fit.
           {{- if eq .Inputs.disclose "true" }}
           - Each reply and the report says it was written by an AI coding agent.
           {{- else }}
@@ -295,8 +312,9 @@ revise:
               For the PR's reviewers: which checks failed, why, and what you
               changed, or why the failure is not this change's.
 
-          Add `title:` and `body:` (the whole new description, keeping
-          `Fixes #{{ .Inputs.issue_number }}`) only if the pull request's no longer fit.
+          Add `title:` and `body:` (the whole new description, keeping its
+          `Fixes #…` line, if it has one) only if the pull request's no
+          longer fit.
           {{- if eq .Inputs.disclose "true" }}
           The report says it was written by an AI coding agent.
           {{- else }}

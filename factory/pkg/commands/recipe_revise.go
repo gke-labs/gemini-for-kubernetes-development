@@ -161,6 +161,12 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 	if err := json.Unmarshal(inputsJSON, &inputs); err != nil {
 		return "", fmt.Errorf("parsing task %s's inputs: %w", inputsFrom, err)
 	}
+	// Those a revise opened the session with were that revise's.
+	for name, in := range rec.Inputs {
+		if in.Revise {
+			inputs[name] = in.Default
+		}
+	}
 	if inputs, err = rec.ResolveInputs(inputs, overrides); err != nil {
 		return "", err
 	}
