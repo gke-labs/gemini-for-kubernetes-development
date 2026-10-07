@@ -190,6 +190,63 @@ type RepoBoardStatus struct {
 
 	// +kubebuilder:validation:Optional
 	Counts BoardCounts `json:"counts,omitempty"`
+
+	// Recipes are the recipes the controller's factory runs (factory
+	// recipe list), in the board's order: what its rows offer to launch
+	// and revise. A new built-in shows up with the image that ships it.
+	// +kubebuilder:validation:Optional
+	Recipes []BoardRecipe `json:"recipes,omitempty"`
+}
+
+// BoardRecipe is one recipe as factory recipe list -o json describes it.
+type BoardRecipe struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	// On is what it runs on: issue, pr, my-pr, repo. Empty, anything.
+	// +kubebuilder:validation:Optional
+	On []string `json:"on,omitempty"`
+	// +kubebuilder:validation:Optional
+	Inputs []BoardRecipeInput `json:"inputs,omitempty"`
+	// Kind is its task output's kind, if it declares one.
+	// +kubebuilder:validation:Optional
+	Kind string `json:"kind,omitempty"`
+	// +kubebuilder:validation:Optional
+	Revises []BoardRecipeRevise `json:"revises,omitempty"`
+	// RevisesOn are the targets where it has no start: its revises are
+	// offered there before any run.
+	// +kubebuilder:validation:Optional
+	RevisesOn []string `json:"revisesOn,omitempty"`
+	// TaskType is what its runs are recorded under on a sandbox.
+	// +kubebuilder:validation:Optional
+	TaskType string `json:"taskType,omitempty"`
+	// Credentials is clone for a recipe whose agent never holds the
+	// token; on a PR it runs in a sandbox of its own.
+	// +kubebuilder:validation:Optional
+	Credentials string `json:"credentials,omitempty"`
+}
+
+// BoardRecipeInput is one input a recipe declares. Revise marks one only
+// its revises take.
+type BoardRecipeInput struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Optional
+	Description string `json:"description,omitempty"`
+	// +kubebuilder:validation:Optional
+	Default string `json:"default,omitempty"`
+	// +kubebuilder:validation:Optional
+	Required bool `json:"required,omitempty"`
+	// +kubebuilder:validation:Optional
+	Type string `json:"type,omitempty"`
+	// +kubebuilder:validation:Optional
+	Revise bool `json:"revise,omitempty"`
+}
+
+// BoardRecipeRevise is one revise of a recipe, and the inputs it asks for.
+type BoardRecipeRevise struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// +kubebuilder:validation:Optional
+	Inputs []string `json:"inputs,omitempty"`
 }
 
 //+kubebuilder:object:root=true

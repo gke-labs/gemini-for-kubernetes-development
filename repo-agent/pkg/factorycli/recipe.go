@@ -1,13 +1,17 @@
 package factorycli
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 )
 
 // RecipeOptions are the inputs for one `factory recipe <name>` invocation,
@@ -195,4 +199,52 @@ func HarvestedOutput(kind, output string) string {
 		return ""
 	}
 	return doc
+}
+
+// Recipes is the catalog of recipes this factory binary runs (factory
+// recipe list -o json), in the board's order (OrderRecipes).
+func (r *Runner) Recipes(ctx context.Context) ([]boardv1alpha1.BoardRecipe, error) {
+	out, err := r.execStdout(ctx, []string{"recipe", "list", "-o", "json"}, "")
+	if err != nil {
+		return nil, fmt.Errorf("factory recipe list: %w: %s", err, tail(out, 2000))
+	}
+	var recipes []boardv1alpha1.BoardRecipe
+	if err := json.Unmarshal([]byte(out), &recipes); err != nil {
+		return nil, fmt.Errorf("reading factory recipe list: %w", err)
+	}
+	OrderRecipes(recipes)
+	return recipes, nil
+}
+
+// boardOrder is where the built-ins go on a row, in the order the work on
+// an issue goes; any other recipe follows them, by name.
+var boardOrder = []string{"triage", "plan", "fix", "review", "research"}
+
+// OrderRecipes sorts recipes in the board's order.
+func OrderRecipes(recipes []boardv1alpha1.BoardRecipe) {
+	rank := func(name string) int {
+		if i := slices.Index(boardOrder, name); i >= 0 {
+			return i
+		}
+		return len(boardOrder)
+	}
+	slices.SortStableFunc(recipes, func(a, b boardv1alpha1.BoardRecipe) int {
+		return cmp.Or(cmp.Compare(rank(a.Name), rank(b.Name)), strings.Compare(a.Name, b.Name))
+	})
+}
+
+// RecipeSandboxName is the sandbox factory runs recipe in on an issue or
+// PR (item) of repo: an issue's is the issue's own, beside its triage,
+// plan and fix (FixSandboxName); a PR's is recipe-<repo>-<n>, or for a
+// credentials: clone recipe, one of its own named after it, as the
+// review's is (factory's RecipeSandboxName).
+func RecipeSandboxName(recipe boardv1alpha1.BoardRecipe, item, repo string, number int) string {
+	switch {
+	case item != "pr":
+		return FixSandboxName(repo, number)
+	case recipe.Credentials == "clone":
+		return fmt.Sprintf("%s-%s-%d", recipe.Name, repo, number)
+	default:
+		return fmt.Sprintf("recipe-%s-%d", repo, number)
+	}
 }

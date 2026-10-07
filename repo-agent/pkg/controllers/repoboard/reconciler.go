@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"iter"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-github/v39/github"
@@ -122,6 +123,10 @@ type Reconciler struct {
 	// NewGithubClient is injectable for tests; defaults to
 	// memberGithubClient (token from the namespace's github-pat secret).
 	NewGithubClient func(ctx context.Context, r *Reconciler, namespace string) (*github.Client, string, error)
+
+	// catalog is the recipes factory runs (recipeCatalog).
+	catalogMu sync.Mutex
+	catalog   []boardv1alpha1.BoardRecipe
 }
 
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
@@ -309,6 +314,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, req := range mail.applies {
 		namespaces[req.Spec.Member] = true
 	}
+	for _, req := range mail.recipes {
+		namespaces[req.Spec.Member] = true
+	}
 	for _, plan := range reviews {
 		if plan.executor != "" {
 			namespaces[plan.executor] = true
@@ -343,6 +351,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.ensureApplies(ctx, work, mail.applies)
 	r.ensureRevises(ctx, work, mail.revises)
+	r.ensureRecipes(ctx, work, mail.recipes)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
 
@@ -604,6 +613,8 @@ type mailbox struct {
 	research []researchClaim
 	applies  []*boardv1alpha1.Request
 	revises  []*boardv1alpha1.Request
+	// recipes are the recipe Requests no pass of its own serves.
+	recipes []*boardv1alpha1.Request
 }
 
 // dedupeReviews keeps one plan per PR, preferring a member's click over a
@@ -1356,6 +1367,10 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	work.board.Status.Counts = boardv1alpha1.BoardCounts{
 		NeedsHuman: needsHuman,
 		Active:     r.activeCount(work),
+	}
+	// What the board's rows offer to launch, for the API to read.
+	if catalog := r.recipeCatalog(ctx); catalog != nil {
+		work.board.Status.Recipes = catalog
 	}
 	if err := r.Status().Update(ctx, work.board); err != nil {
 		log.FromContext(ctx).Error(err, "unable to update board status")

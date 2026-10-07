@@ -27,6 +27,12 @@ type RecipeInfo struct {
 	// (start.on): a board offers its revises there before any run, and
 	// --revise runs the first.
 	RevisesOn []string `json:"revisesOn,omitempty"`
+	// TaskType is what its runs are recorded under on the sandbox
+	// (sandbox.gemini.google.com/<taskType>-run), and Credentials its
+	// recipe.Credentials when not full: a PR's credentials: clone recipe
+	// runs in a sandbox of its own (RecipeSandboxName).
+	TaskType    string `json:"taskType"`
+	Credentials string `json:"credentials,omitempty"`
 }
 
 // RecipeInputInfo is one declared input. Revise marks one only revises
@@ -48,7 +54,13 @@ type RecipeReviseInfo struct {
 }
 
 func recipeInfo(rec *recipe.Recipe) RecipeInfo {
-	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On}
+	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType}
+	if info.TaskType == "" {
+		info.TaskType = "recipe-" + rec.Name
+	}
+	if rec.Credentials != recipe.CredentialsFull {
+		info.Credentials = rec.Credentials
+	}
 	if rec.TaskOutput != nil {
 		info.Kind = rec.TaskOutput.Kind
 	}

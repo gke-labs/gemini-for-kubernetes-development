@@ -53,10 +53,12 @@ type fakeLaunch struct {
 	TriageOpts   *factorycli.RecipeOptions
 	PlanOpts     *factorycli.RecipeOptions
 	ResearchOpts *factorycli.RecipeOptions
-	PRWatchOpts  *factorycli.PRWatchOptions
-	ReviseOpts   *factorycli.ReviseOptions
-	RunOpts      *factorycli.RunOptions
-	ApplyOpts    *factorycli.ApplyOptions
+	// Any other recipe's.
+	RecipeOpts  *factorycli.RecipeOptions
+	PRWatchOpts *factorycli.PRWatchOptions
+	ReviseOpts  *factorycli.ReviseOptions
+	RunOpts     *factorycli.RunOptions
+	ApplyOpts   *factorycli.ApplyOptions
 }
 
 type fakeLauncher struct {
@@ -98,6 +100,8 @@ func (f *fakeLauncher) StartRecipe(key string, opts factorycli.RecipeOptions) bo
 		launch.PlanOpts = &opts
 	case "research":
 		launch.ResearchOpts = &opts
+	default:
+		launch.RecipeOpts = &opts
 	}
 	if (opts.Recipe == "triage" || opts.Recipe == "plan") && f.running[key] {
 		return false
@@ -147,6 +151,20 @@ func (f *fakeLauncher) StartApply(key string, opts factorycli.ApplyOptions) bool
 	}
 	f.calls = append(f.calls, fakeLaunch{Key: key, ApplyOpts: &opts})
 	return true
+}
+
+// Recipes is the built-ins as factory lists them, in the board's order,
+// and summarize: a recipe the board has no pass of its own for, on issues
+// and PRs, writing a Summary.
+func (f *fakeLauncher) Recipes(context.Context) ([]boardv1alpha1.BoardRecipe, error) {
+	return []boardv1alpha1.BoardRecipe{
+		{Name: "triage", Label: "Triage", On: []string{"issue"}, Kind: "Triage", TaskType: "recipe-triage"},
+		{Name: "plan", Label: "Plan", On: []string{"issue"}, Kind: "Plan", TaskType: "plan"},
+		{Name: "fix", Label: "Fix", On: []string{"issue", "my-pr"}, Kind: "Change", TaskType: "fix", RevisesOn: []string{"my-pr"}},
+		{Name: "review", Label: "Review", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-review", Credentials: "clone"},
+		{Name: "research", Label: "Research", On: []string{"repo"}, Kind: "Notes", TaskType: "research"},
+		{Name: "summarize", Label: "Summarize", On: []string{"issue", "pr"}, Kind: "Summary", TaskType: "recipe-summarize"},
+	}, nil
 }
 
 func (f *fakeLauncher) IsRunning(key string) bool {
@@ -248,8 +266,14 @@ func testRequest(spec boardv1alpha1.RequestSpec) *boardv1alpha1.Request {
 }
 
 // click is the common case: a verb on an issue or PR number, from alice.
-func click(verb string, number int) *boardv1alpha1.Request {
-	return testRequest(boardv1alpha1.RequestSpec{Verb: verb, Number: number})
+// launch is a member's click on a recipe's launch button: a PR's for a
+// review, an issue's for the rest.
+func launch(recipe string, number int) *boardv1alpha1.Request {
+	item := "issue"
+	if recipe == "review" {
+		item = "pr"
+	}
+	return testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: recipe, Item: item, Number: number})
 }
 
 // requestStatus reads back what the reap pass decided. A Request that
@@ -446,7 +470,7 @@ func TestMailboxReviewPendingOnGithub(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "posted\n"}
 	// A standing review click, so ensureReview runs for PR 42.
-	req := click(boardv1alpha1.VerbReview, 42)
+	req := launch("review", 42)
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(nil), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -527,7 +551,7 @@ func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -548,7 +572,7 @@ func TestRequestFix(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 	fake := newFakeLauncher()
-	req := click(boardv1alpha1.VerbFix, 77)
+	req := launch("fix", 77)
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -786,7 +810,7 @@ func TestReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 	board.Spec.Limits = boardv1alpha1.LimitsSpec{} // UI-created boards omit limits entirely
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, board, githubSecret(), click(boardv1alpha1.VerbReview, 1163))
+	r := newTestReconciler(fake, ghClient, board, githubSecret(), launch("review", 1163))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -804,7 +828,7 @@ func TestReviewFailureWithoutSandboxBacksOff(t *testing.T) {
 
 	fake := newFakeLauncher()
 	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Err: fmt.Errorf("exit status 1")}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
@@ -981,7 +1005,7 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbReview, 42))
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
 			suffix: "/reviews",
@@ -1018,7 +1042,7 @@ func TestPlanLifecycle(t *testing.T) {
 
 	// 1. Click: a plan Request for 42, no sandbox yet -> fresh plan launch.
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), click(boardv1alpha1.VerbPlan, 42))
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("plan", 42))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	launches := fake.launches()
@@ -1054,7 +1078,7 @@ func TestPlanLifecycle(t *testing.T) {
 		FinishedAt: time.Now(),
 		Output:     "banner\n================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nactions:\n  - verb: comment\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
 	}
-	planReq := click(boardv1alpha1.VerbPlan, 42)
+	planReq := launch("plan", 42)
 	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1122,7 +1146,7 @@ func TestFixWithApprovedPlan(t *testing.T) {
 
 	for _, approved := range []bool{true, false} {
 		fake := newFakeLauncher()
-		r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sbWithPlan(approved), click(boardv1alpha1.VerbFix, 7))
+		r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sbWithPlan(approved), launch("fix", 7))
 		_, err := r.Reconcile(context.Background(), boardRequest())
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		launches := fake.launches()
@@ -1170,7 +1194,7 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 		fake := newFakeLauncher()
 		objs := []runtime.Object{testBoard(nil), githubSecret(), sb()}
 		if standing {
-			objs = append(objs, click(boardv1alpha1.VerbFix, 7))
+			objs = append(objs, launch("fix", 7))
 		}
 		r := newTestReconciler(fake, ghClient, objs...)
 		_, err := r.Reconcile(context.Background(), boardRequest())
@@ -1232,7 +1256,7 @@ func TestAutoReviewDefersToSubmitted(t *testing.T) {
 	board2 := testBoard(nil)
 	board2.Spec.Auto.Fix = "off"
 	fake2 := newFakeLauncher()
-	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), click(boardv1alpha1.VerbReview, 42))
+	r2 := newTestReconciler(fake2, ghClient, board2, githubSecret(), launch("review", 42))
 	submittedReviews()
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1268,7 +1292,7 @@ func TestWakeStampsUnpaused(t *testing.T) {
 	fake := newFakeLauncher()
 	board := testBoard(nil)
 	board.Spec.Auto.Fix = "off"
-	r := newTestReconciler(fake, ghClient, board, githubSecret(), paused, click(boardv1alpha1.VerbTriage, 30))
+	r := newTestReconciler(fake, ghClient, board, githubSecret(), paused, launch("triage", 30))
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))

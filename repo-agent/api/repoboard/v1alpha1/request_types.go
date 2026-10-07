@@ -72,10 +72,10 @@ const (
 // The verbs. Each is a button in the UI, and each names the factory
 // invocation the controller makes on the member's behalf.
 const (
-	VerbFix      = "fix"
-	VerbReview   = "review"
-	VerbTriage   = "triage"
-	VerbPlan     = "plan"
+	// VerbRecipe launches a recipe on an issue or PR: factory recipe
+	// <Recipe> on Item Number, with Inputs. Triage, plan, fix, review
+	// and any recipe factory recipe list lists.
+	VerbRecipe   = "recipe"
 	VerbRun      = "run"
 	VerbResearch = "research"
 	// VerbApply writes a draft's task output to its issue: factory apply
@@ -210,8 +210,21 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=fix;review;triage;plan;run;research;apply;revise
+	// +kubebuilder:validation:Enum=recipe;run;research;apply;revise
 	Verb string `json:"verb"`
+
+	// Recipe is the recipe to launch, for verb=recipe: a name factory
+	// recipe list lists. It becomes an argument to the factory CLI.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Recipe string `json:"recipe,omitempty"`
+
+	// Item says what Number is, for verb=recipe: an issue or a pull
+	// request, which share their numbers.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=issue;pr
+	Item string `json:"item,omitempty"`
 
 	// Member is the namespace whose identity, token and sandbox quota
 	// carry out the work. Never a credential — the token is fetched from
@@ -235,9 +248,9 @@ type RequestSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	Sandbox string `json:"sandbox,omitempty"`
 
-	// Inputs are a revise's inputs, by name, as its recipe asks for them:
-	// the Iterate box, as the fix's iterate revise's instruction. They
-	// become factory --input arguments.
+	// Inputs are a launch's or a revise's inputs, by name, as its recipe
+	// asks for them: the Iterate box, as the fix's iterate revise's
+	// instruction. They become factory --input arguments.
 	// +kubebuilder:validation:Optional
 	Inputs map[string]string `json:"inputs,omitempty"`
 
@@ -353,6 +366,9 @@ func (s RequestSpec) Subject() string {
 		return s.target() + "/" + s.Apply.Run + "/" + s.Apply.Action
 	case VerbRevise:
 		return s.target() + "/" + s.Revise
+	case VerbRecipe:
+		// Two recipes on one issue are two clicks; a recipe twice is one.
+		return s.Item + "-" + strconv.Itoa(s.Number) + "/" + s.Recipe
 	default:
 		return strconv.Itoa(s.Number)
 	}

@@ -63,6 +63,10 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/board/:board/spec", s.getBoardSpec)
 		api.PUT("/board/:board/spec", s.putBoardSpec)
 		api.GET("/board/:board/work", s.getBoardWork)
+		// The recipes the rows offer, and any one's launch on a row.
+		api.GET("/board/:board/recipes", s.getBoardRecipes)
+		api.POST("/board/:board/issues/:id/recipes/:recipe", s.launchRecipe("issue"))
+		api.POST("/board/:board/prs/:id/recipes/:recipe", s.launchRecipe("pr"))
 		api.POST("/board/:board/issues/:id/fix", s.kickoffFix)
 		api.POST("/board/:board/issues/:id/triage", s.kickoffTriage)
 		api.POST("/board/:board/issues/:id/triage-reject", s.rejectBoardTriage)

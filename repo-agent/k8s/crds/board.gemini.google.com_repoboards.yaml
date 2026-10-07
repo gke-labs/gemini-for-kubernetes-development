@@ -176,6 +176,67 @@ spec:
                   needsHuman:
                     type: integer
                 type: object
+              recipes:
+                items:
+                  properties:
+                    credentials:
+                      type: string
+                    inputs:
+                      items:
+                        properties:
+                          default:
+                            type: string
+                          description:
+                            type: string
+                          name:
+                            type: string
+                          required:
+                            type: boolean
+                          revise:
+                            type: boolean
+                          type:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type: array
+                    kind:
+                      type: string
+                    label:
+                      type: string
+                    name:
+                      type: string
+                    "on":
+                      items:
+                        type: string
+                      type: array
+                    revises:
+                      items:
+                        properties:
+                          id:
+                            type: string
+                          inputs:
+                            items:
+                              type: string
+                            type: array
+                          label:
+                            type: string
+                        required:
+                        - id
+                        - label
+                        type: object
+                      type: array
+                    revisesOn:
+                      items:
+                        type: string
+                      type: array
+                    taskType:
+                      type: string
+                  required:
+                  - label
+                  - name
+                  type: object
+                type: array
             type: object
         type: object
     served: true
