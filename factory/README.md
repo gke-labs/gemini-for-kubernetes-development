@@ -185,8 +185,8 @@ factory fix --url https://github.com/owner/repo/issues/1 --with-plan
 factory pr review --pr-url https://github.com/owner/repo/pull/1 \
   --instruction docs/guidelines.md --instruction "ignore test-only changes" --publish draft
 
-# React to CI failures and review comments on a PR until it merges
-factory pr watch --pr-url https://github.com/owner/repo/pull/1 --continue-session
+# Follow up CI failures and review comments on a PR of yours with care, until it merges
+factory pr watch --pr-url https://github.com/owner/repo/pull/1
 
 # Take over someone else's PR under the bot identity
 factory pr adopt open --pr-url https://github.com/owner/repo/pull/1 --strategy reuse

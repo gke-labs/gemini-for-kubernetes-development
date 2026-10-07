@@ -5,48 +5,21 @@ import (
 	"os"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
-// A board fix's PR is the one sandbox aliased to it that records a fix
-// run.
-func TestFixRunOf(t *testing.T) {
-	sb := func(name, htmlURL string, fixRun bool) unstructured.Unstructured {
-		var u unstructured.Unstructured
-		u.SetName(name)
-		a := map[string]string{"htmlURL": htmlURL}
-		if fixRun {
-			a[factorysandbox.RunAnnotation("fix")] = `{"task":"fix-1"}`
-		}
-		u.SetAnnotations(a)
-		return u
-	}
-	pr := "https://github.com/o/r/pull/12"
-	for name, c := range map[string]struct {
-		items []unstructured.Unstructured
-		want  string
-	}{
-		"a fix run":            {[]unstructured.Unstructured{sb("factory-pr-r-12", pr, false), sb("fix-r-7", "https://github.com/O/r/pull/12/", true)}, "fix-r-7"},
-		"no fix run":           {[]unstructured.Unstructured{sb("fix-r-7", pr, false)}, ""},
-		"another repo's PR 12": {[]unstructured.Unstructured{sb("fix-x-7", "https://github.com/o/x/pull/12", true)}, ""},
-	} {
-		if got := fixRunOf(c.items, pr); got != c.want {
-			t.Errorf("%s: %q, want %q", name, got, c.want)
-		}
-	}
+// care's replies and reports are not comments for care to address.
+func TestFactoryPosted(t *testing.T) {
 	if !factoryPosted("Done.\n\n<!-- factory:task-output kind=Change task=fix-2 reply=1 -->") || factoryPosted("please fix") {
 		t.Error("factoryPosted")
 	}
 }
 
-// The watch revises care's run where the PR's sandbox records one on the
-// PR, starts care for a board fix's PR without one, and leaves any other
-// PR to the overseer's tasks.
-func TestWatchFollowUp(t *testing.T) {
+// The watch revises care's run where the PR's sandbox records one on
+// the PR.
+func TestCareRunOn(t *testing.T) {
 	pr := "https://github.com/o/r/pull/12"
 	run := factorysandbox.RunAnnotation(careTaskType)
 	if !careRunOn(map[string]string{"htmlURL": "https://github.com/O/r/pull/12/", run: `{"task":"c-1"}`}, pr) {
@@ -54,19 +27,6 @@ func TestWatchFollowUp(t *testing.T) {
 	}
 	if careRunOn(map[string]string{"htmlURL": pr}, pr) || careRunOn(map[string]string{"htmlURL": "https://github.com/o/r/pull/13", run: "{}"}, pr) {
 		t.Error("found a care run where there is none on the PR")
-	}
-	for _, c := range []struct {
-		care, fix string
-		want      watchFollowUp
-	}{
-		{"recipe-r-12", "fix-r-7", followReviseCare},
-		{"recipe-r-12", "", followReviseCare},
-		{"", "fix-r-7", followStartCare},
-		{"", "", followOverseer},
-	} {
-		if got := followUpOf(c.care, c.fix); got != c.want {
-			t.Errorf("followUpOf(%q, %q) = %d, want %d", c.care, c.fix, got, c.want)
-		}
 	}
 }
 

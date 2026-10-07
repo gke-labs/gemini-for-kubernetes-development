@@ -20,7 +20,7 @@ Each row button then starts a recipe, and each revise lives in its run's session
 3. **care's start does what the PR needs.** It rebases if the PR is behind or conflicting, then fixes failing checks, then works through unanswered review comments. A rebase changes both the checks and the code the comments are on, hence that order. An optional `focus` input (`comments`, `ci`, `rebase`) narrows a run to one job.
 4. **Its revises are fix's three PR revises plus `iterate`**, with the same ids and prompts (moved, with "your fix" reworded to "this PR"). They continue care's conversation.
 5. **fix loses its PR mode, and factory loses the machinery behind it.** fix is `on: [issue]`, with one revise. After the split every recipe's start runs on every target in its `on:`, and a revise always continues a run. Nothing needs a start that skips some targets, a revise that opens a session, or a `setup:` that can run ahead of either. Those pieces are deleted rather than kept for a recipe that might want them (see [What goes](#what-goes)).
-6. **The overseer is left as it is.** `factory pr address-comments`, `pr investigate` and the watch's fallback to them do not change.
+6. **The overseer is left as it is.** `factory pr address-comments` and `pr investigate` do not change. The overseer runs the top-level `factory watch`, never `pr watch`, so the watch's fallback to them was later deleted ([Auto on any PR of yours](#auto-on-any-pr-of-yours)).
 
 ## care.yaml
 
@@ -143,5 +143,13 @@ Step 1 (factory) deviates where:
 - **care has no `task-type`.** Like review and summarize, its runs are recorded as `recipe-care` (`sandbox.gemini.google.com/recipe-care-run`), which the catalog publishes as its `taskType`.
 - **`pr_url` is not declared.** It is a standard input on a PR, so care's start and revises get it without a revise input.
 - **The start on a PR gets the PR's push facts** from `runRecipe` for any recipe whose task output is a Change (`prPushInputs`). care's start force-with-lease pushes even an unchanged head, so it always records `push.json` for its revises.
-- **The watch starts care only on a fix's PR.** With a care run on `recipe-<repo>-<n>` it revises it; with a fix sandbox aliased to the PR and no care run it starts care with a `focus`; otherwise (the overseer's PRs) it runs `pr investigate` / `pr address-comments` as before. A care start that fails is logged, with no fallback.
+- **The watch starts care only on a fix's PR.** With a care run on `recipe-<repo>-<n>` it revises it; with a fix sandbox aliased to the PR and no care run it starts care with a `focus`; otherwise it runs `pr investigate` / `pr address-comments` as before. A care start that fails is logged, with no fallback. (Superseded: the watch now always cares, see below.)
 - **fix's iterate after care has pushed to the same branch fails its lease**, which is safe: nothing is overwritten.
+
+## Auto on any PR of yours
+
+Added after step 3 (2026-10-07): `auto ⏻` shows on every PR of the member's, not only a fix's, and turning it on runs the watch, which runs care.
+
+- **`factory pr watch` always follows up with care**, whatever made the PR: it revises care's run when there is one, and otherwise starts care with a `focus`. Its fallback to `pr investigate` / `pr address-comments`, the fix-run lookup behind it and `--continue-session` (which only those used) are deleted. Nothing else lost them: the overseer runs the top-level `factory watch`, and `pr watch` is run only by hand, by `factory fix --watch` and by the board.
+- **The state is the watch's.** The watch is a process the controller relaunches, so it is recorded as a standing board Request (verb `watch`, item `pr`, number, member), beside the board. While the Request stands it stays `Running`: the controller keeps `factory pr watch` running for the PR as the member, relaunched 10 minutes after each one ends, and writes why the last one failed on the Request's status. Turning auto off deletes the Request, and the controller stops the running watch. The watch reporting the PR merged or closed settles the Request. The `board.gemini.google.com/auto-iterate` annotation is deleted.
+- **Default:** off, except that a fix's PR gets a watch Request when the controller first sees the fix sandbox aliased to it, if the board's `autoIterate` policy is on. The sandbox is stamped `board.gemini.google.com/watch-filed: <pr>` either way, so turning auto off on that PR, or the policy on later, does not file it again.

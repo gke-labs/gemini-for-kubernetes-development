@@ -583,11 +583,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 }
 
 type PRWatchFlags struct {
-	PRURL           string
-	PollInterval    time.Duration
-	DryRun          bool
-	ContinueSession bool
-	WatchTimeout    time.Duration
+	PRURL        string
+	PollInterval time.Duration
+	DryRun       bool
+	WatchTimeout time.Duration
 }
 
 func NewPRWatchCommand(ctx context.Context) *cobra.Command {
@@ -595,8 +594,8 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Watch a GitHub pull request for check failures and new review comments to automatically react",
-		Example: `  # Watch a PR and automatically investigate failures or address feedback
+		Short: "Watch a pull request of yours and follow up failed checks and new review comments with care",
+		Example: `  # Watch a PR: care fixes failed checks and addresses new review comments
   factory pr watch --pr-url https://github.com/owner/repo/pull/1`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := ResolveRootFlags(cmd)
@@ -613,21 +612,20 @@ func NewPRWatchCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.ContinueSession, flags.WatchTimeout, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return runPRWatch(ctx, flags.PRURL, flags.PollInterval, flags.DryRun, flags.WatchTimeout)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.PRURL, "pr-url", "", "GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)")
 	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
-	cmd.Flags().BoolVar(&flags.ContinueSession, "continue-session", false, "Continue the Gemini session from previous runs in the sandbox")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
 
 	return cmd
 }
 
-func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun, continueSession bool, watchTimeout time.Duration, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
-	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, continueSession: %v, watchTimeout: %s)...\n", prURL, interval, dryRun, continueSession, watchTimeout)
+func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRun bool, watchTimeout time.Duration) error {
+	fmt.Printf("Starting PR watch for %s (poll interval: %s, dryRun: %v, watchTimeout: %s)...\n", prURL, interval, dryRun, watchTimeout)
 
 	u, err := url.Parse(prURL)
 	if err != nil {
@@ -704,11 +702,9 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			return true
 		}
 
-		// A PR care looks after (design/care-recipe.md) is followed by
-		// revising care's run, and a board fix's PR without one by
-		// starting care; any other with the tasks below.
+		// Care follows the PR up (design/care-recipe.md): a revise of
+		// care's run on the PR, or with none, a start focused on the job.
 		careSandbox := careRunSandbox(ctx, kubeClient, repo, prNum, prURL)
-		follow := followUpOf(careSandbox, fixRunSandbox(ctx, kubeClient, prNum, prURL))
 
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
@@ -737,21 +733,13 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 
 		if hasFailure {
 			if headSHA != lastInvestigatedSHA || time.Since(lastInvestigatedTime) > 30*time.Minute {
-				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
+				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Running care...\n", prNum, headSHA[:7])
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
-				if follow != followOverseer {
-					if dryRun {
-						fmt.Printf("[DRYRUN] Would run care's fix-ci for PR #%d\n", prNum)
-					} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
-						klog.Errorf("Fix CI failed: %v", err)
-					}
-				} else if dryRun {
-					fmt.Printf("[DRYRUN] Would trigger investigate for PR #%d\n", prNum)
-				} else {
-					if err := runInvestigate(ctx, prURL, "Investigate check failures for this PR", continueSession, ephemeralStorage, secrets); err != nil {
-						klog.Errorf("Investigate failed: %v", err)
-					}
+				if dryRun {
+					fmt.Printf("[DRYRUN] Would run care's fix-ci for PR #%d\n", prNum)
+				} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
+					klog.Errorf("Fix CI failed: %v", err)
 				}
 			}
 		}
@@ -775,7 +763,7 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 						continue
 					}
 					// care's own replies and reports.
-					if follow != followOverseer && factoryPosted(c.GetBody()) {
+					if factoryPosted(c.GetBody()) {
 						continue
 					}
 					if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
@@ -785,20 +773,12 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				}
 
 				if hasNewComments {
-					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
+					fmt.Printf("\nFound new review comments for PR #%d. Running care...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					if follow != followOverseer {
-						if dryRun {
-							fmt.Printf("[DRYRUN] Would run care's address-comments for PR #%d\n", prNum)
-						} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
-							klog.Errorf("Address comments failed: %v", err)
-						}
-					} else if dryRun {
-						fmt.Printf("[DRYRUN] Would trigger address-comments for PR #%d\n", prNum)
-					} else {
-						if err := runAddressComments(ctx, prURL, "Address review feedback for this PR", continueSession, ephemeralStorage, secrets); err != nil {
-							klog.Errorf("Address-comments failed: %v", err)
-						}
+					if dryRun {
+						fmt.Printf("[DRYRUN] Would run care's address-comments for PR #%d\n", prNum)
+					} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
+						klog.Errorf("Address comments failed: %v", err)
 					}
 				}
 			}
