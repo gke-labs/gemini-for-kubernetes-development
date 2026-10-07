@@ -264,6 +264,7 @@ outputs:
 task-output:
   kind: Change
   from: change.yaml
+  preview: spec.report
   actions:
     - verb: edit
       field: spec

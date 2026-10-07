@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -30,13 +31,18 @@ const (
 )
 
 // Decl declares a task's result: which kind it is, the task-directory
-// file the agent wrote it to, and what can be done with it (none: its
-// kind's defaults).
+// file the agent wrote it to, what can be done with it (none: its kind's
+// defaults), and the spec field a glance at it shows (Preview).
 type Decl struct {
 	Kind    string   `yaml:"kind" json:"kind"`
 	From    string   `yaml:"from" json:"from"`
 	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
+	Preview string   `yaml:"preview,omitempty" json:"preview,omitempty"`
 }
+
+// PreviewRE is what a preview names: a text field of the spec, such as
+// spec.assessment.
+var PreviewRE = regexp.MustCompile(`^spec(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 
 // Document is one result.
 type Document struct {
@@ -47,6 +53,10 @@ type Document struct {
 	Spec       yaml.Node `yaml:"spec" json:"-"`
 	// Actions are what can be done with the result (Offered).
 	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
+	// Preview is the spec field whoever lists the result shows of it, a
+	// line or two, as its recipe declared it; unset, its edit action's
+	// field when that is markdown.
+	Preview string `yaml:"preview,omitempty" json:"preview,omitempty"`
 }
 
 // Target is the issue, PR or repository the result is about.

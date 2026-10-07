@@ -322,6 +322,9 @@ func (r *Recipe) Validate() error {
 		if err := taskoutput.ValidateActions(to.Kind, to.Actions); err != nil {
 			return fmt.Errorf("task-output: %w", err)
 		}
+		if to.Preview != "" && !taskoutput.PreviewRE.MatchString(to.Preview) {
+			return fmt.Errorf("task-output: preview %q must name a spec field, such as spec.body", to.Preview)
+		}
 		if slices.ContainsFunc(to.Actions, func(a taskoutput.Action) bool { return a.Verb == "revise" }) {
 			return fmt.Errorf("task-output: revise actions come from the recipe's revises, one each; declare them there")
 		}
