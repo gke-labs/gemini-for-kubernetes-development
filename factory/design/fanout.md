@@ -72,7 +72,7 @@ The bot writes the spec in four sections, under headings that are the same for e
 | `## Task` | What to do for one item. `{item}` is replaced by the item's name. | "Migration Steps per Resource" |
 | `## Items` | A checklist; each line is an item. A line already checked is not fanned out. | "Affected Resources & Controllers Checklist" |
 | `## Finally` (optional) | One more child, created when every item is done. | "Final Deprecation & Cleanup" |
-| `## Fan-out` (optional) | Settings, as a YAML block (below). | — |
+| `## Fan-out` (optional) | Settings, as a YAML block (below). Nobody has to write it. | — |
 
 An item's name is its bold text if it has any, otherwise the line up to the first ` (` or ` - `. The whole line, file paths included, goes into the child's body.
 
@@ -85,6 +85,16 @@ window: {start: 2, max: 8}    # the slow start (below)
 checkpoints: [2]              # stop when this many children are done; default [window.start]; [] never
 ```
 
+Where each setting comes from when the bot writes the spec:
+
+| Setting | Source |
+|---|---|
+| `title` | Deduced by the agent from the issue |
+| `labels` | Deduced: the parent's own labels, or labels the issue's text asks children to carry |
+| `create`, `window`, `checkpoints` | Defaults, not deduced. The agent writes them out so that maintainers see them and can edit them |
+
+In a spec written by hand in the body, the whole section can be left out: every setting takes its default (title `{item}: {parent}`, no extra labels).
+
 #13781 as a spec, as the bot would post it (items shortened):
 
 ~~~markdown
@@ -92,7 +102,7 @@ checkpoints: [2]              # stop when this many children are done; default [
 ## Fan-out
 ```yaml
 title: "Migrate {item} to kmsv1beta1.KMSCryptoKeyRef"
-labels: [direct-migration]
+labels: []
 create: all
 window: {start: 2, max: 8}
 checkpoints: [2]
@@ -120,7 +130,7 @@ Every caller in `pkg/controller/direct/` and `apis/` now uses `kmsv1beta1.KMSCry
 Remove `refs.KMSCryptoKeyRef` and `refs.ResolveKMSCryptoKeyRef` from `apis/refs/v1beta1/kmsrefs.go`.
 ~~~
 
-The agent's part was mapping the issue's own headings to these, rewriting the steps for one `{item}`, and picking the title and labels. It copies the items exactly as written, because their file paths go into each child.
+The agent's part was mapping the issue's own headings to these, rewriting the steps for one `{item}`, and picking a title. #13781 has no labels and asks for none, so `labels` is empty; the rest are the defaults. It copies the items exactly as written, because their file paths go into each child.
 
 A child issue looks like this:
 
