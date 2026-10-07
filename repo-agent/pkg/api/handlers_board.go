@@ -748,6 +748,14 @@ func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession 
 // sandbox's URL turns to it); a PR's (by its URL, or a review sandbox's
 // name) on the PR.
 func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured.Unstructured, repo string, catalog []boardv1alpha1.BoardRecipe) {
+	// An issue folded into the PR that fixes it has no row of its own: its
+	// runs are the PR row's.
+	folded := map[string]*models.WorkItem{}
+	for _, item := range items {
+		for _, n := range item.Fixes {
+			folded["issue-"+strconv.Itoa(n)] = item
+		}
+	}
 	for _, sb := range sandboxes {
 		var sessions []models.RunSession
 		annotations := sb.GetAnnotations()
@@ -773,8 +781,14 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 			}
 			sessions = append(sessions, session)
 		}
+		seen := map[*models.WorkItem]bool{}
 		for _, key := range sandboxItems(sb, repo) {
-			if item := items[key]; item != nil {
+			item := items[key]
+			if item == nil {
+				item = folded[key]
+			}
+			if item != nil && !seen[item] {
+				seen[item] = true
 				item.Sessions = append(item.Sessions, sessions...)
 			}
 		}
