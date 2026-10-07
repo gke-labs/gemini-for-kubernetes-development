@@ -525,11 +525,10 @@ describe('ResearchConversation', () => {
         await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
         await flush();
 
-        // The header's call to action; the ⋯ menu has nothing in it yet, so it is not there.
+        // The header's call to action, not an item of the ⋯ menu.
         const button = [...container.querySelectorAll('button')].find(b => b.textContent === '▶ Wake sandbox');
         expect(button).toBeTruthy();
         expect(button.className).toContain('btn-submit');
-        expect(container.querySelector('button[aria-label="More actions"]')).toBeNull();
         await act(async () => { button.click(); });
         await flush();
         await flush();
