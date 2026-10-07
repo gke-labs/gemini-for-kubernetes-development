@@ -511,132 +511,6 @@ describe('anyPosting', () => {
     });
 });
 
-describe('WorkRow draft actions', () => {
-    const triage = {
-        type: 'issue', number: 7, group: 'issues', title: 'crash on start',
-        sessions: [{ recipe: 'triage', label: 'Triage', sandbox: 'fix-r-7', task: 'recipe-triage-1', status: 'ready' }],
-        htmlURL: 'https://github.com/o/r/issues/7', updatedAt: '2026-10-04T10:00:00Z',
-        draft: 'triage:\n  labels: [bug]\n  assessment: A crash.',
-        triageActions: [
-            { verb: 'edit', field: 'spec', format: 'yaml', enabled: true },
-            { verb: 'label', label: 'Add labels', enabled: false, reason: 'labels added' },
-            { verb: 'comment', label: 'Post assessment', enabled: true },
-            { verb: 'reject', enabled: true },
-        ],
-    };
-    const plan = {
-        type: 'issue', number: 8, group: 'issues', title: 'needs a plan',
-        sessions: [{ recipe: 'plan', label: 'Plan', sandbox: 'fix-r-8', task: 'recipe-plan-1', status: 'ready' }],
-        htmlURL: 'https://github.com/o/r/issues/8', updatedAt: '2026-10-04T10:00:00Z',
-        plan: '## Summary\nDo the thing.',
-        planActions: [
-            { verb: 'comment', label: 'Post plan', enabled: true },
-            { verb: 'run', run: 'fix', label: 'Fix with this plan', enabled: true },
-            { verb: 'reject', enabled: true },
-        ],
-    };
-    const ok = () => jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') }));
-    const posted = () => global.fetch.mock.calls
-        .filter(([, opts]) => opts && opts.method === 'POST')
-        .map(([url, opts]) => [url, JSON.parse(opts.body)]);
-    const open = async (item, props = {}) => {
-        await act(async () => {
-            root.render(<table><tbody>
-                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}} onRefresh={() => {}}
-                    runState={{ repoRunbooks: [], instances: [] }} {...props} />
-            </tbody></table>);
-        });
-        await act(async () => { findButton(item.plan ? 'Plan ready' : 'Triage ready').click(); });
-        await flush();
-    };
-
-    beforeEach(() => { window.confirm = jest.fn(() => true); });
-
-    test('a triage offers what its document does, a done one disabled with why', async () => {
-        global.fetch = ok();
-        await open(triage);
-        expect(findButton('Publish')).toBeUndefined();
-        expect(findButton('Add labels').disabled).toBe(true);
-        expect(findButton('Add labels').title).toBe('Not now: labels added');
-        await act(async () => { findButton('Post assessment').click(); });
-        await flush();
-        expect(posted()).toEqual([['/api/board/myboard/issues/7/actions/comment', { kind: 'Triage', run: '', text: '' }]]);
-    });
-
-    test('a write in flight says so, and a failed one says why', async () => {
-        global.fetch = ok();
-        await open({
-            ...triage, triageActions: [
-                { verb: 'label', label: 'Add labels', enabled: false, reason: 'posting' },
-                { verb: 'comment', label: 'Post assessment', enabled: true, error: '403 Resource not accessible' },
-            ],
-        });
-        expect(findButton('Add labels…').disabled).toBe(true);
-        expect(findButton('Post assessment').disabled).toBe(false);
-        expect(container.textContent).toContain('Post assessment failed: 403 Resource not accessible');
-    });
-
-    test('a draft\'s writes are what the API says the viewer may do', async () => {
-        global.fetch = ok();
-        const noTriage = { ...triage, triageActions: triage.triageActions.map(a => (a.verb === 'label'
-            ? { ...a, enabled: false, reason: 'needs triage access on the repo' } : a)) };
-        await open(noTriage);
-        expect(findButton('Add labels').disabled).toBe(true);
-        expect(findButton('Add labels').title).toBe('Not now: needs triage access on the repo');
-        expect(findButton('Post assessment').disabled).toBe(false);
-        expect(findButton('Reject')).toBeDefined();
-    });
-
-    test('saving an edit is the edit action', async () => {
-        global.fetch = ok();
-        await open(triage);
-        await act(async () => { findButton('Edit').click(); });
-        await act(async () => { findButton('Save').click(); });
-        await flush();
-        expect(posted()).toEqual([['/api/board/myboard/issues/7/actions/edit', { kind: 'Triage', run: '', text: triage.draft }]]);
-    });
-
-    test('a plan runs its follow-up by the document\'s label, and offers no edit it does not declare', async () => {
-        global.fetch = ok();
-        await open(plan);
-        expect(findButton('Edit')).toBeUndefined();
-        expect(findButton('Approve & Fix')).toBeUndefined();
-        await act(async () => { findButton('Fix with this plan').click(); });
-        await flush();
-        expect(window.confirm).toHaveBeenCalled();
-        expect(posted()).toContainEqual(['/api/board/myboard/issues/8/actions/run', { kind: 'Plan', run: 'fix', text: '' }]);
-    });
-
-    test('a plan\'s revise is the session\'s to click, not the row\'s', async () => {
-        global.fetch = ok();
-        await open({ ...plan, planActions: [...plan.planActions, { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true }] });
-        expect(findButton('Update plan')).toBeUndefined();
-        expect(findButton('Post plan')).toBeDefined();
-    });
-
-    test('a revise in flight holds the plan\'s writes on the row', async () => {
-        global.fetch = ok();
-        await open({
-            ...plan, planActions: [
-                { verb: 'comment', label: 'Post plan', enabled: false, reason: 'the plan is being revised' },
-                { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: false, reason: 'revising' },
-            ],
-        });
-        expect(findButton('Post plan').disabled).toBe(true);
-        expect(findButton('Post plan').title).toBe('Not now: the plan is being revised');
-    });
-
-    test('a refusal shows in the panel', async () => {
-        global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST' && url.includes('/actions/')
-            ? Promise.resolve({ ok: false, status: 409, text: () => Promise.resolve('{"error":"cannot comment now: plan posted"}') })
-            : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })));
-        await open(plan);
-        await act(async () => { findButton('Post plan').click(); });
-        await flush();
-        expect(container.textContent).toContain('cannot comment now: plan posted');
-    });
-});
-
 describe('WorkRow review', () => {
     const review = {
         type: 'pull', number: 42, reviewPending: true, group: 'prs', title: 'retry the fetch',
@@ -824,10 +698,10 @@ describe('WorkRow run rules', () => {
             act(() => { a.dispatchEvent(e); });
             return e;
         };
-        const ready = link('Summarize ready');
+        const ready = link('Summarize: ready');
         expect(click(ready).defaultPrevented).toBe(true);
         expect(onOpenSession).toHaveBeenCalledWith(item.sessions[0]);
-        expect(click(link('Summarize: ready'), { metaKey: true }).defaultPrevented).toBe(false);
+        expect(click(ready, { metaKey: true }).defaultPrevented).toBe(false);
         expect(onOpenSession).toHaveBeenCalledTimes(1);
         expect(ready.getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
     });
@@ -852,10 +726,15 @@ describe('WorkRow run rules', () => {
         expect(container.textContent).toContain('the agent gave up');
     });
 
-    test('a ready draft of any other recipe is read in its session', async () => {
-        await renderRow({ ...issue, sessions: [run('summarize', 'Summarize', 'ready')] });
-        expect(findButton('Summarize')).toBeUndefined();
-        expect(link('Summarize ready').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-summarize-1');
+    test('a ready draft, of any recipe, is one chip to its session', async () => {
+        await renderRow({ ...issue, sessions: [run('triage', 'Triage', 'ready'), run('plan', 'Plan', 'ready'), run('summarize', 'Summarize', 'ready')] });
+        for (const label of ['Triage', 'Plan', 'Summarize']) {
+            expect(findButton(label)).toBeUndefined();
+            const links = Array.from(container.querySelectorAll('a')).filter(a => a.textContent.includes(label));
+            expect(links.map(a => a.textContent)).toEqual([`${label}: ready ↗`]);
+        }
+        expect(link('Plan: ready').getAttribute('href')).toBe('#/task-session/fix-r-5/recipe-plan-1');
+        expect(container.querySelectorAll('tr').length).toBe(1);
     });
 
     test('an issue is not promoted, its PR is', async () => {
