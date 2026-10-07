@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
@@ -524,5 +525,58 @@ func TestACareSessionOnAPRSandboxActs(t *testing.T) {
 	if spec := applyFiled(t, dyn); spec.Sandbox != "fix-repo-9" || spec.Number != 9 ||
 		*spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-care", Action: "post-replies"}) {
 		t.Errorf("post-replies filed %+v, want care's on fix-repo-9, PR 9", spec)
+	}
+}
+
+// A care session in a PR's fix sandbox no run of has ended yet (no board
+// stamped) offers its revises, and files them on the one board for its
+// repository.
+func TestASessionWithoutAStampedBoardFindsItsBoard(t *testing.T) {
+	unstamped := func() *unstructured.Unstructured {
+		sb := careSandbox()
+		a := sb.GetAnnotations()
+		delete(a, annoBoard)
+		sb.SetAnnotations(a)
+		return sb
+	}
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(), unstamped())
+	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"fix-ci"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("fix-ci: %d %s", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 || reqs[0].Spec.Verb != boardv1alpha1.VerbRevise || reqs[0].Spec.Board != "myboard" ||
+		reqs[0].Spec.Sandbox != "fix-repo-9" || reqs[0].Spec.Revise != "fix-ci" {
+		t.Errorf("filed %+v, want fix-ci on fix-repo-9 for myboard", reqs)
+	}
+}
+
+// A sandbox whose repository has no board, or several, is left without
+// one.
+func TestFillSessionBoardNeedsOneBoard(t *testing.T) {
+	other := bareBoardCR()
+	other.SetName("other")
+	for _, tc := range []struct {
+		name   string
+		boards []*unstructured.Unstructured
+		want   string
+	}{
+		{"one", []*unstructured.Unstructured{bareBoardCR()}, "myboard"},
+		{"none", nil, ""},
+		{"several", []*unstructured.Unstructured{bareBoardCR(), other}, ""},
+	} {
+		sb := careSandbox()
+		a := sb.GetAnnotations()
+		delete(a, annoBoard)
+		sb.SetAnnotations(a)
+		objs := []runtime.Object{sb}
+		for _, b := range tc.boards {
+			objs = append(objs, b)
+		}
+		server, _, _, _ := boardTestServerWithRT(t, issueFeed(42), objs...)
+		server.fillSessionBoard(context.Background(), "alice", sb)
+		if got := sb.GetAnnotations()[annoBoard]; got != tc.want {
+			t.Errorf("%s: board %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
