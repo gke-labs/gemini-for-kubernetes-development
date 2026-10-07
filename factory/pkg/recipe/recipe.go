@@ -22,6 +22,7 @@ package recipe
 import (
 	"embed"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -179,6 +180,22 @@ type Input struct {
 	// --input` sets it, or factory does, and a built-in's command has no
 	// flag for it. Factory's too: ForSandbox drops it.
 	Revise bool `yaml:"revise,omitempty"`
+	// From is a task output kind the input takes: a result of that kind
+	// whose actions offer `run: <this recipe>` starts it with its draft
+	// (markdown, or spec as YAML) as this input. Factory's: ForSandbox
+	// drops it.
+	From string `yaml:"from,omitempty"`
+}
+
+// InputFrom is the input that takes a kind's result, the one a `run:
+// <recipe>` action on it fills.
+func (r *Recipe) InputFrom(kind string) (string, bool) {
+	for _, name := range slices.Sorted(maps.Keys(r.Inputs)) {
+		if r.Inputs[name].From == kind {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // InstructionsType is an input given any number of times on the command
@@ -286,6 +303,17 @@ func (r *Recipe) Validate() error {
 		if in.Type != "" && in.Type != InstructionsType {
 			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
 		}
+		if in.From != "" {
+			if !taskoutput.Known(in.From) {
+				return fmt.Errorf("input %s: from %q is not one of: %s", name, in.From, strings.Join(taskoutput.KnownKinds(), ", "))
+			}
+			if in.Required || in.Revise || in.Type != "" {
+				return fmt.Errorf("input %s: an input from a result is an optional string", name)
+			}
+			if other, _ := r.InputFrom(in.From); other != name {
+				return fmt.Errorf("inputs %s and %s both take a %s", other, name, in.From)
+			}
+		}
 	}
 	for _, on := range r.On {
 		if !slices.Contains(onTargets, on) {
@@ -307,6 +335,11 @@ func (r *Recipe) Validate() error {
 		}
 		if slices.ContainsFunc(to.Actions, func(a taskoutput.Action) bool { return a.Verb == "revise" }) {
 			return fmt.Errorf("task-output: revise actions come from the recipe's revises, one each; declare them there")
+		}
+		for _, a := range to.Actions {
+			if a.Verb == "run" && !takesFrom(r, a.Run, to.Kind) {
+				return fmt.Errorf("task-output: action run %s: recipe %s has no input from a %s", a.Run, a.Run, to.Kind)
+			}
 		}
 	}
 	for _, o := range r.Outputs {
@@ -625,7 +658,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 			if inputs.Content[i].Kind != yaml.MappingNode {
 				continue
 			}
-			for _, k := range []string{"type", "revise"} {
+			for _, k := range []string{"type", "revise", "from"} {
 				if dropKey(inputs.Content[i], k) {
 					changed = true
 				}
@@ -720,6 +753,25 @@ func BuiltinNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// takesFrom reports whether recipe name, r itself or a built-in, has an
+// input from a kind's result. A built-in is read, not validated: two
+// recipes may follow each other.
+func takesFrom(r *Recipe, name, kind string) bool {
+	follow := r
+	if name != r.Name {
+		data, err := builtinFS.ReadFile("recipes/" + name + ".yaml")
+		if err != nil {
+			return false
+		}
+		follow = &Recipe{}
+		if err := yaml.Unmarshal(data, follow); err != nil {
+			return false
+		}
+	}
+	_, ok := follow.InputFrom(kind)
+	return ok
 }
 
 // Builtin returns the recipe that ships with factory under name, as bytes

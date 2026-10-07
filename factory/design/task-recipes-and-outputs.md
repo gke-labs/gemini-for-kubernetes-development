@@ -142,7 +142,7 @@ actions:
 | Class | Verbs | Who executes it | Meaning |
 |---|---|---|---|
 | Apply | `comment`, `label`; later `review`, `close-duplicate` | `factory apply --action <verb>` | A write to the document's `target`, using the caller's token, idempotent as in part 4. |
-| Follow-up | `run` | `factory apply --action run` | Starts the named follow-up task (`fix` → `factory fix --with-plan` today, a recipe later) in the target's sandbox, with this document as its input. |
+| Follow-up | `run` | `factory apply --action run` | Starts the named recipe on the target, with this document (its markdown, else its spec as YAML) as the recipe's input declared `from:` this kind — fix's `plan: {from: Plan}`. |
 | Draft | `edit`, `reject` | The caller that keeps the draft | `edit` names the field and format to edit (`spec.markdown` as markdown; `spec` as YAML for a Triage). `reject` discards the draft. factory executes neither; from the CLI, editing is editing the file before `apply -f`, and rejecting is not applying. |
 
 The registry also records which kinds each verb accepts: for example, `label` is a Triage verb, and `comment` refuses a PR target where the kind does.

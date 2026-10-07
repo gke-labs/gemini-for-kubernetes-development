@@ -1,13 +1,14 @@
-# factory recipe fix --url <issue> [--with-plan true] [--instruction …] [--apply]:
+# factory recipe fix --url <issue> [--plan <markdown>] [--instruction …] [--apply]:
 # a fix for an issue, in the issue's sandbox (design/fix-recipe.md). The
 # agent commits and never pushes; the push step ends the task, pushing the
 # branch to the member's fork and nowhere else. The task's result is a
 # Change task output, whose open-pr (`factory apply`, or --apply) opens
 # the branch as a draft PR, with the caller's token.
 #
-# With --with-plan true the first ask follows the approved plan at
-# /workspaces/plan-issue-<n>.md, where a plan task (and `factory apply
-# --action run:fix`) leaves it.
+# With a plan the first ask follows it. The plan input takes a Plan's
+# result (from: Plan): a plan whose actions offer `run: fix` (`factory
+# apply --action run:fix`, or the board's "Fix with this plan") starts
+# this recipe with its markdown, as edited, as the plan.
 #
 # On a PR you opened from your fork there is nothing to start (start: on:
 # [issue]): the PR already is what the start makes. factory recipe fix
@@ -26,8 +27,9 @@ on: [issue, my-pr]
 task-type: fix
 
 inputs:
-  with_plan:
-    description: '"true" to follow the approved plan at /workspaces/plan-issue-<n>.md'
+  plan:
+    description: An approved implementation plan to follow, in markdown
+    from: Plan
   labels:
     description: Labels for the PR, comma-separated; open-pr adds them
   instructions:
@@ -73,18 +75,6 @@ start:
         git checkout -B "issue-${INPUT_ISSUE_NUMBER}-$(date +%s)"
         git symbolic-ref --short HEAD > "$TASK_DIR/branch"
         git rev-parse HEAD > "$TASK_DIR/base"
-    # The approved plan, with --with-plan true.
-    - run: |
-        : > "$TASK_DIR/plan.md"
-        case "${INPUT_WITH_PLAN}" in
-          true)
-            plan="/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
-            test -s "$plan" || { echo "with_plan: there is no plan at $plan" >&2; exit 1; }
-            cp "$plan" "$TASK_DIR/plan.md"
-            ;;
-          "" | false) ;;
-          *) echo "with_plan is \"true\" or \"false\", not \"${INPUT_WITH_PLAN}\"" >&2; exit 1 ;;
-        esac
 
     - ask: |
         Fix this GitHub issue, and commit the fix.
@@ -95,7 +85,7 @@ start:
         <issue_description>
         {{ .Inputs.issue_body }}
         </issue_description>
-        {{ with file "plan.md" }}
+        {{ with .Inputs.plan }}
         A maintainer reviewed and approved this implementation plan. Follow
         it. Where the code shows a step to be wrong, deviate, and say where
         and why in your summary.
