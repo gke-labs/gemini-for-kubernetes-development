@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ResearchPanel, AllResearchPanel, ResearchConversation } from './Research';
+import agentSandboxIcon from './agent-sandbox-icon.svg';
 import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
 import geminiIcon from './gemini-icon.svg';
@@ -437,15 +438,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           Agent (machine facts, incl. run outcomes), then the one-action
           rail — launch verbs and the row's GitHub moves. */}
       <td style={{ padding: '6px 8px' }}>
-        {/* The icon is the sandbox's presence on the row: click for the
+        {/* The icon is the sandbox's presence on the row (agent-sandbox's
+            logo; the engine is on each run's chip): click for the
             card (tasks, logs, lifecycle). Resting lifecycle (paused /
             active) is deliberately NOT a board-level chip — pause/wake
             is automatic, and every flow that needs a manual wake goes
             through the card anyway. The state lives in the tooltip. */}
         {item.sandbox && (
           <span onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)} style={{ cursor: 'pointer' }}>
-            <EngineIcon engine={item.sandbox.engine}
-              title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`} />
+            <img src={agentSandboxIcon} alt="sandbox"
+              title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`}
+              style={{ height: '20px', verticalAlign: 'middle', marginRight: '6px' }} />
           </span>
         )}
         {chips.map(c => {

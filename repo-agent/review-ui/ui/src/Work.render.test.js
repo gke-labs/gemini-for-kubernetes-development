@@ -598,6 +598,13 @@ describe('WorkRow your PR', () => {
         expect(chip('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
     });
 
+    test('the sandbox is agent-sandbox\'s icon; its engine is in the hover', async () => {
+        await renderRow({ ...pr, sandbox: { name: 'fix-r-7', engine: 'claude', replicas: '1' } });
+        const icon = container.querySelector('img[alt="sandbox"]');
+        expect(icon.getAttribute('title')).toBe('fix-r-7 (claude) — tasks & logs');
+        expect(container.querySelector('img[alt="claude"]')).toBeNull();
+    });
+
     test('auto follow-up shows on a PR the board fixed, and toggles', async () => {
         global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
         const sandbox = { name: 'fix-r-7', engine: 'gemini', autoIterate: 'on' };
