@@ -157,9 +157,14 @@ type RunSession struct {
 	// in), for #/task-session/<sandbox>/<task>.
 	Task string `json:"task"`
 	// Run is the annotation the run is recorded under.
-	Run       string `json:"run"`
-	Kind      string `json:"kind,omitempty"`
-	State     string `json:"state,omitempty"`
+	Run   string `json:"run"`
+	Kind  string `json:"kind,omitempty"`
+	State string `json:"state,omitempty"`
+	// Status is what the row makes of the run, the same for every recipe:
+	// running; ready (ended with a draft nothing but edit was applied to:
+	// the member's move); done (ended, its draft applied, or none); or
+	// failed.
+	Status    string `json:"status"`
 	StartedAt string `json:"startedAt,omitempty"`
 	EndedAt   string `json:"endedAt,omitempty"`
 	// Output is whether the board stores a task output of the run.

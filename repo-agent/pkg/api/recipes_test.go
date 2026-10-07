@@ -133,13 +133,32 @@ func TestRunSessions(t *testing.T) {
 		plan.Applied["comment"] == "" || len(plan.Revises) != 1 || plan.Revises[0] != "revise" {
 		t.Errorf("plan session = %+v", plan)
 	}
-	if issue[0].Output || issue[0].EndedAt != "" {
+	if issue[0].Output || issue[0].EndedAt != "" || issue[0].Status != "running" {
 		t.Errorf("fix session = %+v, want running with no output", issue[0])
+	}
+	if plan.Status != "done" {
+		t.Errorf("plan status = %q, want done: its draft was posted", plan.Status)
 	}
 	if got := items["pr-30"].Sessions; len(got) != 2 {
 		t.Errorf("PR 30 sessions = %+v, want the issue sandbox's two", got)
 	}
 	if got := items["pr-9"].Sessions; len(got) != 1 || got[0].Task != "s-0" {
 		t.Errorf("PR 9 sessions = %+v, want summarize's, in the session it revised in", got)
+	}
+}
+
+// A run's status is the same rule for every recipe: running, failed, or
+// ended, and ready only while its draft waits for the member.
+func TestRunStatus(t *testing.T) {
+	for want, s := range map[string]models.RunSession{
+		"running":     {State: "Running", Output: true},
+		"failed":      {State: "Failed"},
+		"done":        {State: "Completed"},
+		"ready":       {State: "Completed", Output: true, Applied: map[string]string{"edit": "t"}},
+		"done (post)": {State: "Completed", Output: true, Applied: map[string]string{"edit": "t", "comment": "t"}},
+	} {
+		if got := runStatus(s); got != strings.Fields(want)[0] {
+			t.Errorf("%s: %+v → %q", want, s, got)
+		}
 	}
 }

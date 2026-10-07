@@ -844,6 +844,7 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 			if run.EndedAt != nil {
 				session.EndedAt = run.EndedAt.UTC().Format(time.RFC3339)
 			}
+			session.Status = runStatus(session)
 			for _, rv := range run.Revises {
 				session.Revises = append(session.Revises, rv.ID)
 			}
@@ -860,6 +861,25 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 			return strings.Compare(b.StartedAt, a.StartedAt)
 		})
 	}
+}
+
+// runStatus is a run's status on the row (models.RunSession.Status).
+func runStatus(s models.RunSession) string {
+	switch s.State {
+	case "Running":
+		return "running"
+	case "Failed":
+		return "failed"
+	}
+	if !s.Output {
+		return "done"
+	}
+	for action := range s.Applied {
+		if action != "edit" {
+			return "done"
+		}
+	}
+	return "ready"
 }
 
 // sandboxItems are the items keys of the issue and the PR sb is for.
