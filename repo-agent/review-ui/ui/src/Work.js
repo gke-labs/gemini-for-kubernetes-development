@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel, AllResearchPanel, ResearchConversation, DRAFT_VERBS, ageOf } from './Research';
+import { ResearchPanel, AllResearchPanel, ResearchConversation, DRAFT_VERBS } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
 import antigravityIcon from './antigravity-icon.svg';
 import claudeIcon from './claude-icon.svg';
