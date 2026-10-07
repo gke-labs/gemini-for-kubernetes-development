@@ -225,7 +225,8 @@ func TestTheBoardNamesTheRecordedRunsSession(t *testing.T) {
 
 // A plan session offers its recipe's revises, from its recorded run, and
 // the draft with the output's actions minus the revises; another session
-// offers neither; an approved plan's revise is disabled, saying why.
+// offers neither; an approved plan's revise is disabled, saying why, and
+// its draft stays.
 func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	withDraft := func(approved bool) *unstructured.Unstructured {
 		sb := issueSandboxCR("alice", 1)
@@ -245,7 +246,8 @@ func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
 	for _, want := range []string{
 		`"revises":[{"verb":"revise","revise":"plan","label":"Update plan","enabled":true}]`,
-		`"draft":{"kind":"Plan","markdown":"## Summary\nA plan.","actions":[{"verb":"comment","enabled":true}]}`,
+		// A sandbox on no board offers no writes.
+		`"draft":{"kind":"Plan","markdown":"## Summary\nA plan.","actions":[]}`,
 	} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("status lacks %s: %s", want, w.Body.String())
@@ -258,7 +260,7 @@ func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
 	r = taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(true)},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
 	w = doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	if !strings.Contains(w.Body.String(), `"reason":"the plan is approved"`) || strings.Contains(w.Body.String(), `"draft"`) {
+	if !strings.Contains(w.Body.String(), `"reason":"the plan is approved"`) || !strings.Contains(w.Body.String(), `"draft"`) {
 		t.Errorf("an approved plan: %s", w.Body.String())
 	}
 }

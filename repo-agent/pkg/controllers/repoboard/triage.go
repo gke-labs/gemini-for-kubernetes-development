@@ -42,14 +42,13 @@ import (
 // factorycli.AnnotationTriageOutput so that neither reads as the plan's,
 // fix's or a review's.
 
-const (
-	// AnnotationTriagedAt marks a stored triage draft.
-	AnnotationTriagedAt = "board.gemini.google.com/triaged-at"
-	// AnnotationTriageRejected tombstones a rejected draft: auto-triage
-	// must not redo work a human threw away, and a stale invocation
-	// result must not resurrect the draft. A fresh Triage click re-arms.
-	AnnotationTriageRejected = "board.gemini.google.com/triage-rejected-at"
-)
+// AnnotationTriagedAt marks a stored triage draft.
+const AnnotationTriagedAt = "board.gemini.google.com/triaged-at"
+
+// AnnotationTriageRejected tombstones a rejected draft: auto-triage must
+// not redo work a human threw away, and a stale invocation result must
+// not resurrect the draft. A fresh Triage click re-arms.
+var AnnotationTriageRejected = factorycli.RejectedAnnotation(factorycli.AnnotationTriageRun)
 
 // discoverTriage lists open issues needing auto-triage: not PRs, eligible
 // under the universal auto filters (recency, labels, veto), and — for the

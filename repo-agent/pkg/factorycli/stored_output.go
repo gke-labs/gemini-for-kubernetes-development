@@ -54,6 +54,13 @@ func AppliedAnnotation(runKey string) string {
 	return boardAnnotationPrefix + RunTaskType(runKey) + "-applied"
 }
 
+// RejectedAnnotation is where the board tombstones a rejected draft of
+// the run recorded under runKey: a pass that starts the recipe on its own
+// must not redo work a member threw away, nor a stale result resurrect it.
+func RejectedAnnotation(runKey string) string {
+	return boardAnnotationPrefix + RunTaskType(runKey) + "-rejected-at"
+}
+
 // TaskOutputKind is a task output's kind, "" when doc is none.
 func TaskOutputKind(doc string) string {
 	var m struct {

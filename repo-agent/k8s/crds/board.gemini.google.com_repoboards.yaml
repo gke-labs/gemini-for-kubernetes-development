@@ -188,6 +188,8 @@ spec:
                             type: string
                           description:
                             type: string
+                          from:
+                            type: string
                           name:
                             type: string
                           required:

@@ -1802,7 +1802,7 @@ func (s *Server) rejectBoardTriage(c *gin.Context) {
 				return
 			}
 		}
-		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, "board.gemini.google.com/triage-rejected-at", nowRFC3339()); err != nil {
+		if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, name, factorycli.RejectedAnnotation(factorycli.AnnotationTriageRun), nowRFC3339()); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reject triage", "details": err.Error()})
 			return
 		}
