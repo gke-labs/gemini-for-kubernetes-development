@@ -121,7 +121,7 @@ func TestRunSessions(t *testing.T) {
 			"sandbox.gemini.google.com/recipe-summarize-run": `{"task":"x","startedAt":"2026-10-03T10:00:00Z"}`,
 		}),
 	}
-	addRunSessions(items, sandboxes, "repo")
+	addRunSessions(items, sandboxes, "repo", nil)
 
 	issue := items["issue-12"].Sessions
 	if len(issue) != 2 || issue[0].Recipe != "fix" || issue[1].Recipe != "plan" {

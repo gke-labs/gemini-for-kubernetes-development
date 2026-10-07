@@ -34,49 +34,41 @@ const ATTENTION_STYLE = {
 // Status is the human inbox: it shows text only when a person's move (or
 // wait) matters. Machine motion lives in the Agent column; resting rows
 // are blank.
-// One action per row: when a draft awaits the member's verdict, the whole
-// row collapses to a single color-coded stage button — clicking opens the
-// panel, and the verdict verbs (publish/approve/reject/…) live there,
-// under the content they judge. Amber = your verdict is the bottleneck;
+// A row follows its runs by one set of rules, the same for every recipe
+// (the API's row rules): each recipe's newest run is a chip in the Agent
+// column, ‹label›: running / ready / done / failed (or starting / queued
+// while a click waits for its run), opening the run's session; the rail
+// offers a recipe not run yet by its label, one done or failed as
+// ‹label› again, and a ready one as its draft's button — clicking opens
+// the panel, and the verdict verbs (publish/approve/reject/…) live there,
+// under the content they judge.
+const RUN_STYLE = {
+  running: { color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
+  starting: { color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
+  queued: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
+  ready: { color: '#b08800', bg: 'rgba(176,136,0,0.16)' },
+  done: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
+  failed: { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
+};
+// READY_STYLE is a draft's button: amber = your verdict is the bottleneck;
 // purple = your saved review awaits finalize.
-const STAGE_BUTTON = {
-  'triage-ready': { label: 'Triage ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'Triage suggestions await your verdict — open to edit, post, or reject' },
-  'plan-ready': { label: 'Plan ready', color: '#b08800', bg: 'rgba(176,136,0,0.16)', title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' },
-  'review-pending': { label: 'Review ready', color: '#8250df', bg: 'rgba(130,80,223,0.14)', title: 'Your draft review is saved on GitHub — open to finalize or abandon' },
-};
+const READY_STYLE = { color: '#b08800', bg: 'rgba(176,136,0,0.16)' };
+const REVIEW_READY_STYLE = { color: '#8250df', bg: 'rgba(130,80,223,0.14)' };
 
-// Agent-column wording for stages the machine owns (covers the mailbox
-// window before any sandbox exists) — plus run outcomes: a failure is a
-// fact about the run, not a work-state, so it lives here in red while the
-// launch verbs return on the right (running the verb again IS the retry).
-const AGENT_STAGE = {
-  'fix-starting': 'starting',
-  'review-starting': 'starting',
-  'fixing': 'fixing',
-  'reviewing': 'reviewing',
-  'triaging': 'triaging',
-  'planning': 'planning',
-  'queued': 'queued',
-  'iterating': 'iterating',
-  'addressing': 'addressing comments',
-  'investigating': 'investigating CI',
-  'iterating-failed': 'iterate failed !',
-  'addressing-failed': 'address failed !',
-  'investigating-failed': 'investigate failed !',
-  'plan-failed': 'plan failed !',
-  'fix-failed': 'fix failed !',
-  'review-failed': 'review failed !',
-  'fix-done': 'done — no PR',
-};
-const AGENT_STYLE = {
-  'iterating-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'addressing-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'investigating-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'plan-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'fix-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'review-failed': { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
-  'fix-done': { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
-};
+// latestRuns is the newest run of each recipe on the row (its sessions
+// are newest first).
+function latestRuns(item) {
+  const seen = new Set();
+  return (item.sessions || []).filter(s => !seen.has(s.recipe) && seen.add(s.recipe));
+}
+
+// bareReviewRequest is a row that needs the member only because their
+// review was requested: nothing is prepared for them yet, so it waits
+// behind finished agent work in Up Next.
+function bareReviewRequest(item) {
+  return item.type !== 'issue' && !!item.reviewRequested && !item.reviewPending && !item.error &&
+    !latestRuns(item).some(r => r.status === 'ready' || r.status === 'failed');
+}
 
 // Done verbs turn into green receipts: the pipeline's history stays on
 // the rail (Triage ✓ → Plan ✓ → Fix ✓), and clicking a receipt shows the
@@ -260,9 +252,6 @@ const POSTING_POLL_EVERY = 3000;
 
 // taskSessionHref opens a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
-// FIX_STAGES are the fix's sandbox at work: the fix, or a follow-up.
-const FIX_STAGES = ['fixing', 'iterating', 'addressing', 'investigating'];
-
 function taskSessionHref(session) {
   return `#/task-session/${session.sandbox}/${session.task}`;
 }
@@ -342,7 +331,16 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     text: draftText, setErr: setDraftErr, onOk: () => setEditingDraft(false),
   });
 
+  // The row's runs: each recipe's newest, and what it is now — a click
+  // not started yet is starting (or queued), until its run is.
+  const runs = latestRuns(item);
+  const runOf = name => runs.find(r => r.recipe === name);
+  const statusOf = name => ((item.launching || {})[name]) || (runOf(name) || {}).status || '';
+  const planReady = statusOf('plan') === 'ready';
+  const fixBusy = ['running', 'starting', 'queued'].includes(statusOf('fix'));
+
   const [showPlan, setShowPlan] = useState(false);
+  const [showError, setShowError] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showIterate, setShowIterate] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
@@ -357,7 +355,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const [freshPlan, setFreshPlan] = useState(null);
   useEffect(() => { setFreshPlan(null); }, [item.plan]);
   useEffect(() => {
-    if (!showPlan || item.stage !== 'plan-ready' || !item.plan) return;
+    if (!showPlan || !planReady || !item.plan) return;
     fetch(`/api/board/${boardName}/issues/${item.number}/plan-refresh`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     }).then(res => (res.ok ? res.json() : null)).then(data => {
@@ -369,22 +367,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const planShown = freshPlan || item.plan;
 
   const group = groupOf(item);
+  const isPR = item.type !== 'issue';
 
-  // One-action rail (chip + verbs share the last column). A verdict stage
-  // collapses the row to its single stage button — the verdict verbs live
-  // in the panel it opens, under the content they judge. A failed run is
-  // an Agent-column fact, and the launch verb returns: the verb IS the
-  // retry. Green receipts carry the pipeline history (Triage ✓ → Plan ✓ →
-  // Fix ✓); clicking one shows the artifact it produced.
-  const prNumFromURL = (u) => {
-    const m = (u || '').match(/\/pull\/(\d+)/);
-    return m ? m[1] : null;
-  };
-  const stageBtn = STAGE_BUTTON[item.stage];
-  const liveSession = item.stage === 'planning' ? item.planSession
-    : item.stage === 'triaging' ? item.triageSession
-    : item.stage === 'reviewing' ? item.reviewSession
-    : FIX_STAGES.includes(item.stage) ? item.fixSession : null;
+  // The rail (chip + verbs share the last column): a ready run's draft
+  // button, the recipes to launch, and the row's own GitHub moves. Green
+  // receipts carry the history (Triage ✓ → Plan ✓ → Fix ✓); clicking one
+  // shows the artifact it produced.
   // The fix's follow-ups are revises of its session, filed on it.
   const reviseFix = (revise, label, inputs) => {
     const s = item.fixSession;
@@ -399,95 +387,96 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       return false;
     }).catch(err => { window.alert(`${label}: ${err}`); return false; });
   };
+
+  // A ready run is its draft's button: triage's and plan's open their
+  // panels here; any other recipe's draft is read and applied in its
+  // session. A pending review on GitHub is the review's.
+  const ready = [];
+  for (const run of runs) {
+    if (statusOf(run.recipe) !== 'ready') continue;
+    const label = run.label || run.recipe;
+    if (run.recipe === 'triage' && item.draft) {
+      ready.push({ key: 'triage', label: `${label} ready`, open: showDraft, onClick: () => setShowDraft(v => !v), style: READY_STYLE,
+        title: 'Triage suggestions await your verdict — open to edit, post, or reject' });
+    } else if (run.recipe === 'plan' && item.plan) {
+      ready.push({ key: 'plan', label: `${label} ready`, open: showPlan, onClick: () => setShowPlan(v => !v), style: READY_STYLE,
+        title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' });
+    } else {
+      ready.push({ key: run.recipe, label: `${label} ready ↗`, href: taskSessionHref(run), style: READY_STYLE,
+        title: `${label}'s draft awaits your verdict — open its session to read and apply it` });
+    }
+  }
+  if (item.reviewPending) {
+    ready.push({ key: 'review-pending', label: 'Review ready', open: showReview, onClick: () => setShowReview(v => !v), style: REVIEW_READY_STYLE,
+      title: 'Your draft review is saved on GitHub — open to finalize or abandon' });
+  }
+
   const actions = [];
-  if (!stageBtn && item.type === 'issue') {
-    if (['untriaged', 'open', 'triaged', 'plan-failed'].includes(item.stage)) {
-      // Triage is draft-only (discovery identity) — available even on
-      // read-only boards; not re-offered once done (the receipt stands).
-      if (!item.draft && !item.triagePublished && ['untriaged', 'open'].includes(item.stage)) {
-        actions.push({ label: 'Triage', path: `issues/${item.number}/triage`, title: 'Run the triage agent for this issue — suggestions appear on the board, nothing is written to GitHub' });
-      }
-      // Fixing is fork-based (no push rights needed); Plan writes nothing
-      // to GitHub until approved. On plan-failed these ARE the retry.
-      actions.push({ label: 'Plan', path: `issues/${item.number}/plan`, title: 'Agent drafts an implementation plan for you to refine and approve — nothing is written to GitHub until you approve' });
-      actions.push({ label: 'Fix', path: `issues/${item.number}/fix` });
-    } else if (item.stage === 'fix-failed' || item.stage === 'fix-done') {
-      // Nothing shipped (failed, or completed without a PR): Fix relaunches
-      // in the same sandbox. The Agent chip explains why it stopped.
-      actions.push({ label: 'Fix', path: `issues/${item.number}/rerun`, title: 'Run the fix again in the same sandbox' });
-    } else if (item.stage === 'pr-open') {
-      const prNum = prNumFromURL(item.prURL);
-      if (prNum) {
-        actions.push({ label: 'Promote PR', path: `prs/${prNum}/promote`, title: 'Mark the draft PR ready for review' });
-      }
-    }
-  } else if (!stageBtn && item.mine) {
-    if (item.draftPR) {
-      // Promoting your own draft PR is an author right, not a repo write.
-      actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
-    }
-    // The agent's follow-up verbs fold into one drawer — the rail keeps a
-    // single owed action (Promote) plus one door. Hidden while a
-    // follow-up runs; a failed one re-opens the door — the verb is the
-    // retry.
-    // They are the revises the fix's run recorded, and they push to the
-    // PR's branch: a PR the board's fix did not open (a hand-made one), or
-    // one not on the member's fork, has none.
-    if (item.myPR && item.fixSession && (item.fixRevises || []).length && !FIX_STAGES.includes(item.stage)) {
-      actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: `Send the agent to this PR — ${item.fixRevises.map(r => r.label).join(', ')}. Each is a turn in the fix's conversation.` });
-    }
-  } else if (!stageBtn) {
-    // Stage is the guard — a leftover paused sandbox must not hide Review.
-    // A requested review is the same verb wearing the urgency: someone is
-    // waiting on you, so the button tints red instead of adding a chip.
-    if (['open', 'review-requested', 'review-failed'].includes(item.stage)) {
-      const requested = item.stage === 'review-requested';
-      actions.push({
-        label: 'Review', path: `prs/${item.number}/review`,
-        tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
-        title: requested
-          ? 'Your review was requested — agent reviews as you and leaves a pending review on GitHub for you to finalize'
-          : 'Agent reviews as you and leaves a pending review on GitHub for you to finalize',
-      });
-    } else if (item.stage === 'review-submitted') {
-      actions.push({ label: 'Review again', path: `prs/${item.number}/review`, title: 'Run a fresh review as you — posts a new pending review on GitHub' });
-    }
+  for (const rec of item.recipes || []) {
+    const status = statusOf(rec.name);
+    // Running, a click starting, or a draft to judge: the chip and the
+    // draft's button are the row's move, not another run.
+    if (['running', 'starting', 'queued', 'ready'].includes(status)) continue;
+    if (rec.name === 'review' && item.reviewPending) continue;
+    const again = status === 'done' || status === 'failed';
+    // A requested review is the same verb wearing the urgency: someone
+    // is waiting on you, so the button tints red instead of adding a chip.
+    const requested = rec.name === 'review' && item.reviewRequested && !again;
+    actions.push({
+      label: again ? `${rec.label} again` : rec.label,
+      path: `${isPR ? 'prs' : 'issues'}/${item.number}/recipes/${rec.name}`,
+      inputs: rec.inputs,
+      tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
+      title: requested ? `Your review was requested — run ${rec.label} as you` : `Run ${rec.label} as you`,
+    });
+  }
+  if (isPR && item.mine && item.draftPR) {
+    // Promoting your own draft PR is an author right, not a repo write.
+    actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
+  }
+  // The agent's follow-up verbs fold into one drawer — the rail keeps a
+  // single owed action (Promote) plus one door, hidden while the fix's
+  // session is at work. They are the revises the fix's run recorded, and
+  // they push to the PR's branch: a PR the board's fix did not open (a
+  // hand-made one), or one not on the member's fork, has none.
+  if (isPR && item.myPR && item.fixSession && (item.fixRevises || []).length && !fixBusy) {
+    actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: `Send the agent to this PR — ${item.fixRevises.map(r => r.label).join(', ')}. Each is a turn in the fix's conversation.` });
   }
 
   // Runbooks deploy pull requests too. runState is the board's Runs
   // state, present only on a single board's view.
-  const isPR = item.type !== 'issue';
   const runbooks = (runState && runState.repoRunbooks) || [];
   const prRuns = isPR ? ((runState && runState.instances) || []).filter(r => r.target === item.number) : [];
-  if (!stageBtn && isPR && runbooks.length) {
+  if (isPR && runbooks.length) {
     actions.push({ label: showDeploy ? 'Deploy ▴' : 'Deploy ▾', onClick: () => setShowDeploy(v => !v), title: 'Plan a run of this pull request from one of the repository\'s runbooks' });
   }
 
   // Receipts: done verbs turned green. Click = view the artifact.
   const receipts = [];
   if (item.type === 'issue') {
-    if (item.triagePublished || item.stage === 'triaged') {
+    if (item.triagePublished) {
       receipts.push({ label: 'Triage ✓', onClick: item.draft ? () => setShowDraft(v => !v) : undefined, title: 'Triage published — view the suggestions' });
     }
     if (item.planApproved && item.plan) {
       receipts.push({ label: 'Plan ✓', onClick: () => setShowPlan(v => !v), title: 'Approved plan — view it' });
     }
-    if (item.stage === 'pr-open' && item.prURL) {
+    if (item.prURL) {
       receipts.push({ label: 'Fix ✓', href: item.prURL, title: 'Fix shipped — open the PR' });
     }
-  } else if (item.stage === 'review-submitted') {
+  } else if (item.reviewed) {
     receipts.push({ label: 'Review ✓', href: item.htmlURL, title: 'Your review is submitted — open the PR' });
   }
 
-  // The stage button toggles its verdict panel.
-  const stagePanelOpen = item.stage === 'triage-ready' ? showDraft
-    : item.stage === 'plan-ready' ? showPlan
-      : item.stage === 'review-pending' ? showReview : false;
-  const toggleStagePanel = () => {
-    if (item.stage === 'triage-ready') setShowDraft(v => !v);
-    else if (item.stage === 'plan-ready') setShowPlan(v => !v);
-    else if (item.stage === 'review-pending') setShowReview(v => !v);
-  };
+  // The Agent column: each recipe's newest run, or the click waiting for
+  // it. A failed run with an error to show opens it first (the "why");
+  // the session is one more click from there.
+  const chips = runs.map(run => ({ recipe: run.recipe, label: run.label || run.recipe, status: statusOf(run.recipe), run }));
+  for (const [name, state] of Object.entries(item.launching || {})) {
+    if (runOf(name)) continue;
+    const rec = (item.recipes || []).find(r => r.name === name);
+    chips.push({ recipe: name, label: rec ? rec.label : name, status: state });
+  }
+  const failedChip = chips.some(c => c.status === 'failed');
 
   return (
     <React.Fragment>
@@ -544,7 +533,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right:
           Agent (machine facts, incl. run outcomes), then the one-action
-          rail — receipts, the stage button, or launch verbs. */}
+          rail — receipts, drafts' buttons, or launch verbs. */}
       <td style={{ padding: '6px 8px' }}>
         {/* The icon is the sandbox's presence on the row: click for the
             card (tasks, logs, lifecycle). Resting lifecycle (paused /
@@ -557,29 +546,36 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               title={`${item.sandbox.name} (${item.sandbox.engine}${item.sandbox.replicas === '0' ? ', paused' : ''}) — tasks & logs`} />
           </span>
         )}
-        {AGENT_STAGE[item.stage] ? (
-          // A failure chip opens the error first (the "why"); the sandbox
-          // card with the full logs is one more click from there.
-          <span
-            onClick={() => {
-              if (item.error) setShowDraft(v => !v);
-              else if (item.sandbox && onOpenSandbox) onOpenSandbox(item.sandbox.name);
-            }}
-            style={{ cursor: (item.error || item.sandbox) ? 'pointer' : 'default' }}
-            title={item.error ? 'Show why the run stopped' : (item.sandbox ? `${item.sandbox.name} — tasks & logs` : 'Launching — the sandbox is not created yet')}>
-            <Chip text={AGENT_STAGE[item.stage]}
-              color={(AGENT_STYLE[item.stage] || { color: '#b08800' }).color}
-              bg={(AGENT_STYLE[item.stage] || { bg: 'rgba(176,136,0,0.12)' }).bg} />
+        {chips.map(c => {
+          const style = RUN_STYLE[c.status] || RUN_STYLE.running;
+          const text = `${c.label}: ${c.status}`;
+          if (c.status === 'failed' && item.error) {
+            return (
+              <span key={c.recipe} onClick={() => setShowError(v => !v)} style={{ cursor: 'pointer', marginLeft: '4px' }}
+                title="Show why the run stopped">
+                <Chip text={`${text} !`} color={style.color} bg={style.bg} />
+              </span>
+            );
+          }
+          // A running task's session can be watched, not driven; an
+          // ended one continued.
+          return c.run ? (
+            <a key={c.recipe} href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
+              style={{ textDecoration: 'none', marginLeft: '4px' }}
+              title={c.status === 'running' ? 'Watch the agent\'s conversation as it runs' : 'Continue the conversation, in its own tab'}>
+              <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
+            </a>
+          ) : (
+            <span key={c.recipe} style={{ marginLeft: '4px' }}
+              title={c.status === 'queued' ? 'Waiting for a free slot on the board' : 'Launching — the run has not started yet'}>
+              <Chip text={text} color={style.color} bg={style.bg} />
+            </span>
+          );
+        })}
+        {item.error && !failedChip && (
+          <span onClick={() => setShowError(v => !v)} style={{ cursor: 'pointer', marginLeft: '4px' }} title="Show why the run stopped">
+            <Chip text="failed !" color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
           </span>
-        ) : null}
-        {/* The agent at work, in the conversation it is asking in. A
-            running task's session can be watched, not driven. */}
-        {liveSession && (
-          <a href={taskSessionHref(liveSession)} target="_blank" rel="noopener noreferrer"
-            style={{ textDecoration: 'none', marginLeft: '4px' }}
-            title="Watch the agent's conversation as it runs">
-            <Chip text="watch ↗" color="var(--text-secondary)" bg="var(--bg-secondary)" />
-          </a>
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -592,24 +588,19 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             <Chip text={r.label} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
           </span>
         ))}
-        {stageBtn && (
-          // A real button, not a chip: the stage verdict is THE action on
-          // the row, so it must look pressable — chips are for facts. The
-          // tint keeps the urgency grammar (amber = your verdict blocks,
-          // purple = finalize your review).
-          <button className="btn btn-sm" onClick={toggleStagePanel} title={stageBtn.title}
-            style={{ marginLeft: '4px', color: stageBtn.color, backgroundColor: stageBtn.bg, borderColor: stageBtn.color, fontWeight: 600 }}>
-            {stageBtn.label + (stagePanelOpen ? ' ▴' : ' ▾')}
+        {ready.map(r => r.href ? (
+          <a key={r.key} className="btn btn-sm" href={r.href} target="_blank" rel="noopener noreferrer" title={r.title}
+            style={{ marginLeft: '4px', textDecoration: 'none', color: r.style.color, backgroundColor: r.style.bg, borderColor: r.style.color, fontWeight: 600 }}>
+            {r.label}
+          </a>
+        ) : (
+          // A real button, not a chip: the verdict is THE action on the
+          // row, so it must look pressable — chips are for facts.
+          <button key={r.key} className="btn btn-sm" onClick={r.onClick} title={r.title}
+            style={{ marginLeft: '4px', color: r.style.color, backgroundColor: r.style.bg, borderColor: r.style.color, fontWeight: 600 }}>
+            {r.label + (r.open ? ' ▴' : ' ▾')}
           </button>
-        )}
-        {item.draft && !item.triagePublished && !['triage-ready', 'triaged'].includes(item.stage) && (
-          <button
-            className="btn btn-sm"
-            style={{ marginLeft: '4px' }}
-            title="Show the agent's suggestions"
-            onClick={() => setShowDraft(v => !v)}
-          >{showDraft ? 'Hide suggestions' : 'Suggestions'}</button>
-        )}
+        ))}
         {actions.map(a => a.onClick ? (
           <button key={a.label} className="btn btn-sm" style={{ marginLeft: '4px' }} title={a.title} onClick={a.onClick}>{a.label}</button>
         ) : a.href ? (
@@ -631,8 +622,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               : { marginLeft: '4px' }}
             title={a.title}
             onClick={() => {
-              if (a.confirm && !window.confirm(a.confirm)) return;
-              onAction(a.path, a.label);
+              // A recipe's required inputs with no default are asked here.
+              const inputs = {};
+              for (const name of a.inputs || []) {
+                const v = window.prompt(`${a.label}: ${name}`);
+                if (!v || !v.trim()) return;
+                inputs[name] = v.trim();
+              }
+              onAction(a.path, a.label, (a.inputs || []).length ? { inputs } : {});
             }}
           >{a.label}</button>
         ))}
@@ -740,7 +737,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
                 textAlign: 'left',
               }}>{planShown}</pre>
-              {(item.stage === 'plan-ready' || (item.planActions || []).length > 0) && (
+              {(planReady || (item.planActions || []).length > 0) && (
                 <div style={{ marginTop: '6px' }}>
                   {planErr && (
                     <div style={{
@@ -750,12 +747,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                     }}>{planErr}</div>
                   )}
                   <div style={{ textAlign: 'right' }}>
-                    {item.stage === 'plan-ready' && item.planSession ? (
+                    {planReady && item.planSession ? (
                       <a className="btn btn-sm" href={taskSessionHref(item.planSession)}
                         target="_blank" rel="noopener noreferrer"
                         title="Continue the planning conversation where the plan left it, in its own tab"
                       >Continue session ↗</a>
-                    ) : item.stage === 'plan-ready' && item.sandbox && (
+                    ) : planReady && item.sandbox && (
                       // A plan from before task sessions: the terminal
                       // resumes it in the agent's own CLI.
                       <a className="btn btn-sm" href={`#/terminal/${namespace}/${item.sandbox.name}?chat=plan`}
@@ -774,7 +771,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-    {showReview && item.stage === 'review-pending' && (
+    {showReview && item.reviewPending && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{
@@ -876,7 +873,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-        {showDraft && item.error && (
+    {showError && item.error && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
           <div style={{
@@ -889,7 +886,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               <button className="btn btn-sm" style={{ marginLeft: '8px' }}
                 onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)}>agent logs</button>
             )}
-            {item.fixSession && !FIX_STAGES.includes(item.stage) && (
+            {item.fixSession && !fixBusy && (
               <a className="btn btn-sm" href={taskSessionHref(item.fixSession)}
                 target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }}
                 title="Continue the fix's conversation where it left off, in its own tab"
@@ -1841,11 +1838,11 @@ function Work({ onBack, namespace }) {
     return () => clearInterval(t);
   }, [posting, fetchWork]);
 
-  const handleAction = (path, label, boardName) => {
+  const handleAction = (path, label, boardName, body) => {
     fetch(`/api/board/${boardName || activeBoard}/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify(body || {}),
     })
       .then(res => {
         if (res.ok) { fetchWork(); }
@@ -2018,10 +2015,9 @@ function Work({ onBack, namespace }) {
         // demands first, actions inline (each row posts to its own
         // board). Just Up Next — a cross-repo triage queue would mix
         // hats, but an inbox of things waiting on YOU is one hat.
-        const stageDeferred = i => (i.stage === 'review-requested' ? 1 : 0);
         const upNextAll = work
           .filter(i => i.attention === 'needs-you')
-          .sort((x, y) => (stageDeferred(x) - stageDeferred(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
+          .sort((x, y) => (bareReviewRequest(x) - bareReviewRequest(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
         const allTab = ['all-research', 'all-runs'].includes(activeGroup) ? activeGroup : 'up-next';
         return (
           <div>
@@ -2061,7 +2057,7 @@ function Work({ onBack, namespace }) {
                   )}
                   {!loadingWork && upNextAll.map(item => (
                     <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={item} boardName={item.board}
-                      onAction={(p, l) => handleAction(p, l, item.board)} onRefresh={fetchWork}
+                      onAction={(p, l, b) => handleAction(p, l, item.board, b)} onRefresh={fetchWork}
                       namespace={namespace} groupTag={item.board}
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
                       onOpenSandbox={setCardSandbox} />
@@ -2081,8 +2077,7 @@ function Work({ onBack, namespace }) {
         // The feed is the full universe; the view narrows it here, client
         // side. In-flight items (sandbox, agent motion) always surface —
         // tightening a filter must never hide running work.
-        const inFlight = i => !!i.sandbox ||
-          ['queued', 'fix-starting', 'review-starting', 'planning', 'triaging', 'fixing', 'reviewing'].includes(i.stage);
+        const inFlight = i => !!i.sandbox || i.attention === 'working' || Object.keys(i.launching || {}).length > 0;
         const labelFilters = (view.labels || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
         const visible = work.filter(item => {
           if (inFlight(item)) return true;
@@ -2210,7 +2205,7 @@ function Work({ onBack, namespace }) {
                   {!loadingWork && rows.map(item => (
                     <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
                       onOpenSandbox={setCardSandbox}
-                      onAction={handleAction} onRefresh={fetchWork} namespace={namespace}
+                      onAction={(p, l, b) => handleAction(p, l, undefined, b)} onRefresh={fetchWork} namespace={namespace}
                       groupTag={shown === UP_NEXT ? groupLabel(item) : undefined}
                       runState={runState} onRunStarted={onRunStarted} />
                   ))}
