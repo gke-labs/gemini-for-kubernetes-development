@@ -515,7 +515,6 @@ describe('WorkRow review', () => {
     const review = {
         type: 'pull', number: 42, reviewPending: true, group: 'prs', title: 'retry the fetch',
         htmlURL: 'https://github.com/o/r/pull/42', updatedAt: '2026-10-05T10:00:00Z',
-        reviewSession: { sandbox: 'review-r-42', task: 'recipe-review-1' },
     };
     const renderRow = async (item) => {
         await act(async () => {
@@ -527,26 +526,42 @@ describe('WorkRow review', () => {
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
 
-    test('a pending review links to GitHub and to its session, with no draft of its own', async () => {
-        await renderRow(review);
-        await act(async () => { findButton('Review ready').click(); });
-        expect(link('Finalize').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
-        expect(link('Continue session').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
-        expect(findButton('Post as pending review')).toBeUndefined();
+    const reviewRun = (status) => ({ recipe: 'review', label: 'Review', sandbox: 'review-r-42', task: 'recipe-review-1', status });
+
+    test('a pending review whose run is gone is the review chip, linking GitHub, with Abandon', async () => {
+        const onAction = jest.fn();
+        window.confirm = jest.fn(() => true);
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={review} boardName="myboard" namespace="alice" onAction={onAction}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+        expect(link('Review: pending').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+        expect(findButton('Review ready')).toBeUndefined();
+        expect(link('Finalize')).toBeUndefined();
+        await act(async () => { findButton('✕').click(); });
+        expect(onAction).toHaveBeenCalledWith('prs/42/abandon', 'Abandon review');
+    });
+
+    test('a pending review with its run recorded is the run\'s ready chip, to its session', async () => {
+        await renderRow({ ...review, sessions: [reviewRun('done')] });
+        expect(link('Review: ready').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
+        expect(link('Review: pending')).toBeUndefined();
+    });
+
+    test('a submitted review whose run is gone is a done chip linking the PR', async () => {
+        await renderRow({ ...review, reviewPending: false, reviewed: true, recipes: [{ name: 'review', label: 'Review' }] });
+        expect(link('Review: done').getAttribute('href')).toBe('https://github.com/o/r/pull/42');
+        expect(link('Review ✓')).toBeUndefined();
+        expect(findButton('Review')).toBeDefined();
     });
 
     test('a review at work can be watched', async () => {
         await renderRow({ ...review, reviewPending: false, recipes: [{ name: 'review', label: 'Review' }],
-            sessions: [{ recipe: 'review', label: 'Review', sandbox: 'review-r-42', task: 'recipe-review-1', status: 'running' }] });
+            sessions: [reviewRun('running')] });
         expect(link('Review: running').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
         expect(findButton('Review')).toBeUndefined();
-    });
-
-    test('a review run before sessions has no session link', async () => {
-        await renderRow({ ...review, reviewSession: undefined });
-        await act(async () => { findButton('Review ready').click(); });
-        expect(link('Finalize')).toBeDefined();
-        expect(link('Continue session')).toBeUndefined();
     });
 });
 
@@ -748,7 +763,14 @@ describe('WorkRow run rules', () => {
     test('an issue with an open PR offers nothing more, and links the PR', async () => {
         await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6' });
         expect(container.querySelectorAll('button').length).toBe(0);
-        expect(link('Fix ✓').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
+        expect(link('Fix: done').getAttribute('href')).toBe('https://github.com/o/r/pull/6');
+        expect(link('Fix ✓')).toBeUndefined();
+    });
+
+    test('an issue whose fix run is recorded shows the run, not the PR fact', async () => {
+        await renderRow({ ...issue, recipes: undefined, prURL: 'https://github.com/o/r/pull/6', sessions: [run('fix', 'Fix', 'done')] });
+        const fixes = Array.from(container.querySelectorAll('a')).filter(a => a.textContent.startsWith('Fix:'));
+        expect(fixes.map(a => a.getAttribute('href'))).toEqual(['#/task-session/fix-r-5/recipe-fix-1']);
     });
 });
 
