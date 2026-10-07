@@ -62,7 +62,7 @@ func TestRecipeLaunch(t *testing.T) {
 		item, sandbox, url string
 	}{
 		{"issue", "fix-repo-12", "https://github.com/test/repo/issues/12"},
-		{"pr", "recipe-repo-12", "https://github.com/test/repo/pull/12"},
+		{"pr", "fix-repo-12", "https://github.com/test/repo/pull/12"},
 	} {
 		t.Run(tc.item, func(t *testing.T) {
 			g := gomega.NewWithT(t)
@@ -100,18 +100,18 @@ func TestRecipeStoresItsOutput(t *testing.T) {
 	fake.results["alice/recipe-summarize-repo-pr-12"] = factorycli.Result{FinishedAt: time.Now().Add(time.Minute), Output: summaryOutput}
 	req := launchOn("pr", 12, nil)
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(),
-		recipeSandbox("recipe-repo-12", "https://github.com/test/repo/pull/12"), req)
+		recipeSandbox("fix-repo-12", "https://github.com/test/repo/pull/12"), req)
 	r.reconcileBoard(t)
 
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 	sb := &unstructured.Unstructured{}
 	sb.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "recipe-repo-12", Namespace: "alice"}, sb)).To(gomega.Succeed())
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-12", Namespace: "alice"}, sb)).To(gomega.Succeed())
 	g.Expect(sb.GetAnnotations()["board.gemini.google.com/recipe-summarize-output"]).To(gomega.ContainSubstring("kind: Summary"))
 	g.Expect(sb.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
 	status := requestStatus(t, r, req)
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(status.Sandbox).To(gomega.Equal("recipe-repo-12"))
+	g.Expect(status.Sandbox).To(gomega.Equal("fix-repo-12"))
 }
 
 // A click buys one run: a failed run, one with no output, a recipe
@@ -153,8 +153,9 @@ func TestRecipeFailures(t *testing.T) {
 	}
 }
 
-// A recipe on [my-pr] starts on a PR, in the PR's recipe sandbox; factory
-// refuses it on a PR that is not the member's.
+// A recipe on [my-pr] starts on a PR, in the PR's fix sandbox: the fix's
+// that opened it, else one of its own; factory refuses it on a PR that is
+// not the member's.
 func TestCareLaunchesOnAPR(t *testing.T) {
 	g := gomega.NewWithT(t)
 	fake := newFakeLauncher()
@@ -166,7 +167,7 @@ func TestCareLaunchesOnAPR(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].RecipeOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].RecipeOpts.Recipe).To(gomega.Equal("care"))
-	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("recipe-repo-12"))
+	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("fix-repo-12"))
 }
 
 // The board publishes factory's catalog on its status, for the API.
@@ -188,4 +189,20 @@ func (r *Reconciler) reconcileBoard(t *testing.T) {
 	if _, err := r.Reconcile(context.Background(), boardRequest()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
+}
+
+// A PR's recipes run in the sandbox of the fix that opened it.
+func TestPRRecipeRunsInTheFixSandbox(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	fix := recipeSandbox("fix-repo-10", "https://github.com/test/repo/pull/12")
+	fix.SetLabels(map[string]string{"factory.gemini.google.com/managed": "true", factorycli.LabelPR: "12"})
+	fix.SetAnnotations(map[string]string{"htmlURL": "https://github.com/test/repo/pull/12", "repo": "repo"})
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), fix, req)
+	r.reconcileBoard(t)
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("fix-repo-10"))
 }

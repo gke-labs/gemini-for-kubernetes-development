@@ -234,17 +234,15 @@ func OrderRecipes(recipes []boardv1alpha1.BoardRecipe) {
 }
 
 // RecipeSandboxName is the sandbox factory runs recipe in on an issue or
-// PR (item) of repo: an issue's is the issue's own, beside its triage,
-// plan and fix (FixSandboxName); a PR's is recipe-<repo>-<n>, or for a
-// credentials: clone recipe, one of its own named after it, as the
-// review's is (factory's RecipeSandboxName).
+// PR (item) of repo when there is none yet: an issue's is the issue's
+// own, beside its triage, plan and fix (FixSandboxName); a PR's is the
+// fix sandbox of the fix that opened it (PRFixSandbox), else one made for
+// the PR, fix-<repo>-<pr>; a credentials: clone recipe's on a PR is one
+// of its own named after it, as the review's is (factory's
+// RecipeSandboxName and EnsurePRSandbox).
 func RecipeSandboxName(recipe boardv1alpha1.BoardRecipe, item, repo string, number int) string {
-	switch {
-	case item != "pr":
-		return FixSandboxName(repo, number)
-	case recipe.Credentials == "clone":
+	if item == "pr" && recipe.Credentials == "clone" {
 		return fmt.Sprintf("%s-%s-%d", recipe.Name, repo, number)
-	default:
-		return fmt.Sprintf("recipe-%s-%d", repo, number)
 	}
+	return FixSandboxName(repo, number)
 }

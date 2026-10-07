@@ -21,11 +21,11 @@ func (f *fakeProber) Probe(_ context.Context, _, _, taskType string) (TaskProbe,
 
 func waitResult(t *testing.T, r *Runner, key string) Result {
 	t.Helper()
-	for i := 0; i < 100; i++ {
+	// Generous: a loaded machine takes seconds to start a process.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if res, ok := r.LastResult(key); ok {
 			return res
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("no result for %s", key)
 	return Result{}

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
@@ -104,11 +105,19 @@ func runSandbox(name, url string, annotations map[string]string) *unstructured.U
 	return sb
 }
 
+// prSandbox is a fix sandbox factory made for a PR no fix opened.
+func prSandbox(name, url string, annotations map[string]string) *unstructured.Unstructured {
+	sb := runSandbox(name, url, annotations)
+	_, n, _ := strings.Cut(url, "/pull/")
+	sb.SetLabels(map[string]string{factorycli.LabelPR: n})
+	return sb
+}
+
 // Every run recorded on an item's sandboxes is one of its sessions, newest
 // first, whichever recipe it is: an issue's sandbox's on the issue and on
 // the PR its fix opened, a PR's on the PR.
 func TestRunSessions(t *testing.T) {
-	items := map[string]*models.WorkItem{"issue-12": {}, "pr-30": {}, "pr-9": {}}
+	items := map[string]*models.WorkItem{"issue-12": {}, "pr-30": {}, "pr-9": {}, "issue-9": {}}
 	sandboxes := []*unstructured.Unstructured{
 		runSandbox("fix-repo-12", "https://github.com/o/repo/pull/30", map[string]string{
 			"sandbox.gemini.google.com/plan-run":   `{"name":"p","task":"plan-1","startedAt":"2026-10-01T10:00:00Z","recipe":"plan","kind":"Plan","state":"Completed","endedAt":"2026-10-01T10:05:00Z","revises":[{"id":"revise"}]}`,
@@ -116,7 +125,7 @@ func TestRunSessions(t *testing.T) {
 			"board.gemini.google.com/plan-output":  "kind: Plan\n",
 			"board.gemini.google.com/plan-applied": `{"comment":"2026-10-01T11:00:00Z"}`,
 		}),
-		runSandbox("recipe-repo-9", "https://github.com/o/repo/pull/9", map[string]string{
+		prSandbox("fix-repo-9", "https://github.com/o/repo/pull/9", map[string]string{
 			"sandbox.gemini.google.com/recipe-summarize-run": `{"task":"s-1","session":"s-0","startedAt":"2026-10-03T10:00:00Z","recipe":"summarize","kind":"Summary","state":"Completed"}`,
 			"sandbox.gemini.google.com/last-task-engine":     "claude",
 		}),
@@ -154,6 +163,9 @@ func TestRunSessions(t *testing.T) {
 	}
 	if plan.Engine != "gemini" {
 		t.Errorf("plan session engine = %q, want gemini (unstamped sandbox)", plan.Engine)
+	}
+	if got := items["issue-9"].Sessions; len(got) != 0 {
+		t.Errorf("issue 9 sessions = %+v, want none: fix-repo-9 was made for PR 9", got)
 	}
 }
 

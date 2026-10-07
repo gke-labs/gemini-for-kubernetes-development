@@ -30,14 +30,15 @@ func TriageTaskState(a map[string]string) string {
 }
 
 // IssueOf returns the issue of repo whose sandbox sb is: by its label,
-// else by the fix-<repo>-<N> name.
+// else by the fix-<repo>-<N> name, unless factory made it for PR N
+// (PRFixSandbox), which no issue has.
 func IssueOf(sb *unstructured.Unstructured, repo string) (int, bool) {
 	if v := sb.GetLabels()[LabelIssue]; v != "" && sb.GetAnnotations()["repo"] == repo {
 		n, err := strconv.Atoi(v)
 		return n, err == nil && n > 0
 	}
 	rest, ok := strings.CutPrefix(sb.GetName(), "fix-"+repo+"-")
-	if !ok {
+	if !ok || sb.GetLabels()[LabelPR] == rest {
 		return 0, false
 	}
 	n, err := strconv.Atoi(rest)
@@ -127,4 +128,18 @@ func TriageSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, 
 		}
 	}
 	return best
+}
+
+// PRFixSandbox picks PR pr's fix sandbox of repo out of sandboxes, all in
+// one namespace: the fix's that opened it, aliased to it, or the one
+// factory made for it, fix-<repo>-<pr>. A PR's recipes run there, but a
+// credentials: clone one's (RecipeSandboxName). Pass slices.Values or
+// maps.Values.
+func PRFixSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, pr int) *unstructured.Unstructured {
+	for sb := range sandboxes {
+		if strings.HasPrefix(sb.GetName(), "fix-") && sb.GetLabels()[LabelPR] == strconv.Itoa(pr) && sb.GetAnnotations()["repo"] == repo {
+			return sb
+		}
+	}
+	return nil
 }
