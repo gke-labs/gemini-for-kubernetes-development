@@ -245,7 +245,22 @@ The controller keeps no local state. GitHub holds everything, so a restarted dae
 
 The `fanout` recipe is `on: [issue]` and writes a `FanOut` task output: the spec in the standard markdown form. It has no revises. Changes are made by maintainers, in the comment.
 
-The controller runs it the way the watch runs any task, in a sandbox of its own (`fanout-<repo>-<N>`), queued and capped like everything else. When the run ends, the controller posts the spec comment from the output and adds the stop label.
+It has one action, `post-spec`. Applying it posts the bot's spec comment (or edits it, if there is one) and adds the stop label. Both touch only the run's own issue, so it fits the rule that an action never writes to another issue.
+
+It runs as any recipe does, from the command line:
+
+```sh
+# Write the spec: task-output.yaml (kind FanOut). Nothing is posted.
+factory recipe fanout --url https://github.com/GoogleCloudPlatform/k8s-config-connector/issues/13781
+
+# Show what applying it would post.
+factory recipe fanout --url …/issues/13781 --apply --dry-run
+
+# Post it: the spec comment and the stop label.
+factory recipe fanout --url …/issues/13781 --apply
+```
+
+The controller makes the same call in-process, as `factory pr watch` already runs `care` (`runRecipe`, `pr_watch_care.go`), with `--apply` and the run name `fanout-<N>`. The run name makes it idempotent: a daemon restarted mid-run that calls it again follows the same task, or applies its result, instead of starting another. `runRecipe` lives in `pkg/commands`, which the `watch` package cannot import, so `watch_cmd.go` passes it in as a function, the way watch gets its other dependencies. The run uses a sandbox of its own (`fanout-<repo>-<N>`), and is capped by `--max-pending` like any other task.
 
 The agent only reads and writes text. It never creates or labels issues; the controller does that.
 
@@ -267,9 +282,10 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - The `watch/fanout` controller: children, the window, checkpoints, the final step, the progress comment.
    - The scanner skips parents.
    - The Nudger wakes a parent when one of its children closes.
-4. **The proposal:** the `fanout` recipe and its `FanOut` kind. The controller runs it on a parent without a spec and posts the spec comment.
+4. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 5. **Verify on KCC:**
-   - #13781 as written: label it, check and edit the proposed spec, then `factory fanout sync --dry-run`.
+   - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory fanout sync --issue 13781 --dry-run`.
+   - Then label it `overseer/fanout` and let the daemon carry on.
    - Then remove `overseer/stop`, with a window of 2 and the default checkpoint.
 
 Steps 2 and 3 serve parents that already use the headings. Step 4 is only for issues that don't.
@@ -277,6 +293,10 @@ Steps 2 and 3 serve parents that already use the headings. Step 4 is only for is
 ## Later: a repo-agent board front end
 
 This design does not need repo-agent. A board could later show a fan-out as a row: the spec as a draft to edit, the children as chips, and removing the stop label as its button. That is a thought experiment for now. The controller and the GitHub conventions above are the contract either way.
+
+## Later: detecting a fan-out from the issue
+
+For now a fan-out is asked for with the `overseer/fanout` label. Later, an issue labelled only `overseer` could be recognised as a fan-out: by the standard headings (deterministic), or, for a body with a task list of several items, by running the `fanout` recipe first and letting it answer "not a fan-out" when it isn't one. A false positive would cost one proposal comment, since the stop label holds it. The label would remain as the way to force a fan-out, and removing it as the way to refuse one.
 
 ## Open questions
 
