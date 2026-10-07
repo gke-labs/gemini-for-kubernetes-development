@@ -37,6 +37,12 @@ import (
 // stored on the sandbox as its run's (factorycli.KeepOutput), where the
 // board's drafts, revises and applies find it.
 
+// recipeApplies are the actions the runner applies to a recipe's task
+// output itself, by its kind, as reviseHooks' for a revise: a Change's
+// commits are pushed by its run, so the replies and report that answer
+// for them are posted with them, not held back for a click.
+var recipeApplies = map[string]string{"Change": "post-replies"}
+
 // hookedRecipes are the recipes with passes of their own.
 var hookedRecipes = []string{"triage", "plan", "fix", "review"}
 
@@ -130,7 +136,7 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	}
 	if res, ok := r.Factory.LastResult(key); ok && !res.FinishedAt.Before(req.CreationTimestamp.Time) {
 		if res.Err == nil && sb != nil && rec.Kind != "" {
-			r.keepRecipeOutput(ctx, work, sb, rec, spec.Member, factorycli.HarvestedOutput(rec.Kind, res.Output))
+			r.keepRecipeOutput(ctx, work, sb, rec, spec.Member, factorycli.HarvestedOutput(rec.Kind, res.Output), res.FinishedAt)
 		}
 		// settleRecipe reads the rest of the result.
 		return
@@ -153,18 +159,24 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, rec.Name, spec.Member, name, itemURL(work, spec.Item, spec.Number), token, recipeRunName(req))
 	opts.Inputs = spec.Inputs
+	opts.Apply = recipeApplies[rec.Kind]
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe", "recipe", rec.Name, "item", spec.Item, "number", spec.Number, "board", work.board.Name, "executor", spec.Member)
 	}
 }
 
-// keepRecipeOutput stores doc on sb as the output of rec's run there.
-func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *unstructured.Unstructured, rec boardv1alpha1.BoardRecipe, member, doc string) {
+// keepRecipeOutput stores doc on sb as the output of rec's run there,
+// which ended at, with what its runner applied stamped.
+func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *unstructured.Unstructured, rec boardv1alpha1.BoardRecipe, member, doc string, at time.Time) {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	if !factorycli.KeepOutput(annotations, factorycli.RunAnnotation(rec.TaskType), doc, time.Now()) {
+	var applied []string
+	if a := recipeApplies[rec.Kind]; a != "" {
+		applied = []string{a}
+	}
+	if !factorycli.KeepOutput(annotations, factorycli.RunAnnotation(rec.TaskType), doc, at, applied...) {
 		return
 	}
 	annotations[AnnotationBoard] = work.board.Name

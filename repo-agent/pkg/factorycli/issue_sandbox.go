@@ -130,6 +130,20 @@ func TriageSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, 
 	return best
 }
 
+// PRSandboxOf is the PR a fix sandbox of repo was made for (factory's
+// fix-<repo>-<pr>, labelled with the PR and no issue); false for any other
+// sandbox, an issue's fix sandbox aliased to the PR it opened included.
+func PRSandboxOf(sb *unstructured.Unstructured, repo string) (int, bool) {
+	if !strings.HasPrefix(sb.GetName(), "fix-") || sb.GetAnnotations()["repo"] != repo {
+		return 0, false
+	}
+	if _, ok := IssueOf(sb, repo); ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(sb.GetLabels()[LabelPR])
+	return n, err == nil && n > 0
+}
+
 // PRFixSandbox picks PR pr's fix sandbox of repo out of sandboxes, all in
 // one namespace: the fix's that opened it, aliased to it, or the one
 // factory made for it, fix-<repo>-<pr>. A PR's recipes run there, but a

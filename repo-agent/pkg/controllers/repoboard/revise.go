@@ -82,6 +82,9 @@ var reviseHooks = map[string]reviseHook{
 	},
 	"Change": {
 		busy: func(r *Reconciler, work *workState, member string, sb *unstructured.Unstructured) bool {
+			if pr, ok := factorycli.PRSandboxOf(sb, work.repo); ok {
+				return r.Factory.IsRunning(recipeKey(work, member, "care", "pr", pr))
+			}
 			issue, ok := factorycli.IssueOf(sb, work.repo)
 			return ok && r.Factory.IsRunning(fixKey(work, member, issue))
 		},
