@@ -125,15 +125,82 @@ func MarkApplied(annotations map[string]string, appliedKey, action string, at ti
 
 // Draft is the draft in a stored task output of kind, in the shape the
 // board edits it in: a Triage's spec as a triage: block, a Plan's or
-// Notes' markdown. "" for no output, or one of another kind.
+// Notes' markdown, and any other kind's markdown when its spec has one
+// (DraftIsMarkdown), else its spec as YAML. "" for no output, or one of
+// another kind.
 func Draft(kind, doc string) string {
-	switch kind {
-	case "Triage":
+	switch {
+	case kind == "Triage":
 		return triageFromTaskOutput(doc)
-	case "Plan", "Notes":
+	case DraftIsMarkdown(kind, doc):
 		return markdownFromTaskOutput(kind, doc)
 	}
-	return ""
+	root := headerNode(kind, doc)
+	if root == nil {
+		return ""
+	}
+	spec := mapValue(root, "spec")
+	if spec == nil {
+		return ""
+	}
+	out, err := yaml.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// DraftIsMarkdown is whether the draft in a stored task output of kind is
+// markdown: a Plan's or Notes', or another kind's whose spec has one.
+func DraftIsMarkdown(kind, doc string) bool {
+	switch kind {
+	case "Plan", "Notes":
+		return true
+	case "Triage":
+		return false
+	}
+	return markdownFromTaskOutput(kind, doc) != ""
+}
+
+// HarvestedTaskOutput is the task output in a run's result, whatever its
+// kind, or "": the runner puts it after a banner (a triage's, a plan's or
+// a revise's, a change's, a review's), and the closer after it.
+func HarvestedTaskOutput(output string) string {
+	for _, banner := range []string{changeBanner, reviewBanner, planBanner} {
+		start := strings.Index(output, banner)
+		if start < 0 {
+			continue
+		}
+		rest := output[start+len(banner):]
+		if end := strings.LastIndex(rest, bannerCloser); end >= 0 {
+			rest = rest[:end]
+		}
+		if rest = strings.TrimSpace(rest); TaskOutputKind(rest) != "" {
+			return rest + "\n"
+		}
+	}
+	return TriageTaskOutput(output)
+}
+
+// KeepOutput stores doc, in annotations, as the output of the run
+// recorded under runKey, with applied stamped at at: the actions the run
+// applied itself (a fix's open-pr). A new output replaces what was
+// applied of the one before; the same output again keeps it. "" keeps
+// nothing, and reports false.
+func KeepOutput(annotations map[string]string, runKey, doc string, at time.Time, applied ...string) bool {
+	if doc == "" {
+		return false
+	}
+	if annotations[OutputAnnotation(runKey)] != doc {
+		annotations[OutputAnnotation(runKey)] = doc
+		delete(annotations, AppliedAnnotation(runKey))
+	}
+	for _, action := range applied {
+		if !IsApplied(annotations, AppliedAnnotation(runKey), action) {
+			MarkApplied(annotations, AppliedAnnotation(runKey), action, at)
+		}
+	}
+	return true
 }
 
 // PlanDraft is the plan draft stored in annotations, or "".
@@ -146,14 +213,15 @@ func NotesDraft(annotations map[string]string) string {
 	return Draft("Notes", annotations[AnnotationNotesOutput])
 }
 
-// WithDraft is a stored task output of kind with draft, as edited, as its
-// spec. A Plan's or Notes' other spec fields stay.
+// WithDraft is a stored task output of kind with draft, as edited (in
+// Draft's shape), as its spec. A markdown draft's other spec fields stay.
 func WithDraft(kind, doc, draft string) (string, error) {
 	root := headerNode(kind, doc)
 	if root == nil {
 		return "", fmt.Errorf("there is no %s to edit", strings.ToLower(kind))
 	}
-	spec, err := draftSpec(kind, draft)
+	markdown := DraftIsMarkdown(kind, doc)
+	spec, err := draftSpec(kind, draft, markdown)
 	if err != nil {
 		return "", err
 	}
@@ -161,7 +229,7 @@ func WithDraft(kind, doc, draft string) (string, error) {
 	if err := specNode.Encode(spec); err != nil {
 		return "", fmt.Errorf("encoding the %s's spec: %w", kind, err)
 	}
-	if kind != "Triage" {
+	if kind != "Triage" && markdown {
 		if old := mapValue(root, "spec"); old != nil && old.Kind == yaml.MappingNode {
 			setKey(old, "markdown", mapValue(specNode, "markdown"))
 			specNode = old

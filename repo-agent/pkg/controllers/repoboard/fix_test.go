@@ -97,8 +97,9 @@ func TestFixRecordsItsResult(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results[fixKeyAt] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "================= CHANGE ====================\n...\nError: the fork has no branch issue-7-1\n",
-		Err:        errors.New("applying open-pr: exit status 1"),
+		Output: "================= CHANGE ====================\n" + changeDoc("Fix it") + "\n" + closer +
+			"\nError: the fork has no branch issue-7-1\n",
+		Err: errors.New("applying open-pr: exit status 1"),
 	}
 	sb := issueSandbox("fix-repo-7", "7", fixedSandbox(factorycli.TaskStateCompleted, fixRun("fix/test-board/7/100", ""), nil))
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
@@ -111,6 +112,37 @@ func TestFixRecordsItsResult(t *testing.T) {
 	g.Expect(a[AnnotationFixError]).To(gomega.Equal("the fork has no branch issue-7-1"))
 	_, unread := fixRunUnread(a, "test-board", 7)
 	g.Expect(unread).To(gomega.BeFalse())
+	// Its Change is kept, its PR not opened: Open draft PR is the retry.
+	g.Expect(a["board.gemini.google.com/fix-output"]).To(gomega.ContainSubstring("title: Fix it"))
+	g.Expect(factorycli.IsApplied(a, "board.gemini.google.com/fix-applied", "open-pr")).To(gomega.BeFalse())
+}
+
+// closer closes a harvested task output.
+const closer = "================================================"
+
+// changeDoc is a Change task output titled title.
+func changeDoc(title string) string {
+	return "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\nsource:\n  task: recipe-fix-1\n" +
+		"spec:\n  title: " + title + "\n  body: Fixes #7.\n"
+}
+
+// A fix whose PR opened keeps its Change with open-pr applied.
+func TestFixKeepsItsChange(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	fake.results[fixKeyAt] = factorycli.Result{
+		FinishedAt: time.Now(),
+		Output:     "================= CHANGE ====================\n" + changeDoc("Fix it") + "\n" + closer + "\nopened #9\n",
+	}
+	sb := issueSandbox("fix-repo-7", "7", fixedSandbox(factorycli.TaskStateCompleted, fixRun("fix/test-board/7/100", ""), nil))
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
+
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	a := sandboxAnnotations(t, r, "fix-repo-7")
+	g.Expect(a).NotTo(gomega.HaveKey(AnnotationFixError))
+	g.Expect(a["board.gemini.google.com/fix-output"]).To(gomega.Equal(changeDoc("Fix it")))
+	g.Expect(factorycli.IsApplied(a, "board.gemini.google.com/fix-applied", "open-pr")).To(gomega.BeTrue())
 }
 
 // Fix again relaunches the fix in its sandbox, under a new run name.
@@ -185,12 +217,19 @@ func TestFixReviseIterates(t *testing.T) {
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestRunning))
 
 	delete(fake.running, fixReviseKeyAt)
-	fake.results[fixReviseKeyAt] = factorycli.Result{FinishedAt: time.Now().Add(time.Second), Output: "posted 2 replies\n"}
+	fake.results[fixReviseKeyAt] = factorycli.Result{
+		FinishedAt: time.Now().Add(time.Second),
+		Output:     "================== ISSUE PLAN ==================\n" + changeDoc("Renamed") + "\n" + closer + "\nposted 2 replies\n",
+	}
 	_, err = r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	status := requestStatus(t, r, req)
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	g.Expect(status.Reason).To(gomega.Equal("Revised"))
+	// The revise's Change is the run's output now, its replies posted.
+	a := sandboxAnnotations(t, r, "fix-repo-7")
+	g.Expect(a["board.gemini.google.com/fix-output"]).To(gomega.ContainSubstring("title: Renamed"))
+	g.Expect(factorycli.Applied(a, "board.gemini.google.com/fix-applied")).To(gomega.HaveKey("post-replies"))
 	// The fix itself is not relaunched by any of this.
 	for _, l := range fake.launches() {
 		g.Expect(l.FixOpts).To(gomega.BeNil())

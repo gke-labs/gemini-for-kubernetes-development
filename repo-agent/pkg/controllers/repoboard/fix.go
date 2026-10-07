@@ -72,8 +72,8 @@ func fixRunUnread(annotations map[string]string, board string, issue int) (strin
 }
 
 // recordFixResult writes down, on the sandbox, that the controller read
-// the fix's newest result: when, and why it failed if it did. The PR it
-// opened is on the sandbox already (open-pr aliased it).
+// the fix's newest result: when, why it failed if it did, and its Change.
+// The PR it opened is on the sandbox already (open-pr aliased it).
 func (r *Reconciler) recordFixResult(ctx context.Context, sb *unstructured.Unstructured, key string) {
 	res, ok := r.Factory.LastResult(key)
 	if !ok {
@@ -87,11 +87,16 @@ func (r *Reconciler) recordFixResult(ctx context.Context, sb *unstructured.Unstr
 		return
 	}
 	annotations[AnnotationFixHarvestedAt] = res.FinishedAt.UTC().Format(time.RFC3339)
+	var applied []string
 	if res.Err != nil {
 		annotations[AnnotationFixError] = fixErrorLine(res)
 	} else {
 		delete(annotations, AnnotationFixError)
+		applied = []string{"open-pr"}
 	}
+	// The Change, kept whether or not its PR opened: Open draft PR is
+	// the retry.
+	factorycli.KeepOutput(annotations, factorycli.AnnotationFixRun, factorycli.HarvestedTaskOutput(res.Output), res.FinishedAt, applied...)
 	sb.SetAnnotations(annotations)
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to record the fix's result", "sandbox", sb.GetName())

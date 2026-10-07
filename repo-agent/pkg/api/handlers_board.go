@@ -1505,7 +1505,8 @@ func (s *Server) promoteBoardPR(c *gin.Context) {
 
 // abandonBoardReview deletes the clicker's pending review on GitHub (only
 // one pending review may exist per user, so this is how a bad agent review
-// is discarded) and clears the board's memory of the run.
+// is discarded) and clears the board's memory of the run, its stored
+// Review included.
 func (s *Server) abandonBoardReview(c *gin.Context) {
 	ctx, board, owner, repo, token, number, ok := s.boardWriteContext(c)
 	if !ok {
@@ -1545,6 +1546,8 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 		}
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "reviewState", "")
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
+		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.OutputAnnotation(factorycli.AnnotationReviewRun), "")
+		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun), "")
 		_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": deleted})

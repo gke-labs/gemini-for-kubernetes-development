@@ -49,12 +49,16 @@ type reviseHook struct {
 	missing func(sb *unstructured.Unstructured) string
 	// options adjusts how the revise runs.
 	options func(opts *factorycli.ReviseOptions, sb *unstructured.Unstructured)
-	// done settles a revise that ran. Unset, it succeeded.
+	// done settles a revise that ran. Unset, the revise's task output is
+	// kept as its run's (keptRevise), and it succeeded.
 	done func(r *Reconciler, ctx context.Context, work *workState, spec boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, res factorycli.Result) requestOutcome
+	// applies are the actions the runner applies to the revise's task
+	// output itself, stamped on it when kept.
+	applies []string
 }
 
 // reviseHooks are by the kind of task output the run writes. A kind with
-// none is revised and kept nowhere but its session.
+// none has its revise's task output kept as its run's, and nothing more.
 var reviseHooks = map[string]reviseHook{
 	"Plan": {
 		busy: func(r *Reconciler, work *workState, member string, sb *unstructured.Unstructured) bool {
@@ -87,6 +91,7 @@ var reviseHooks = map[string]reviseHook{
 		options: func(opts *factorycli.ReviseOptions, _ *unstructured.Unstructured) {
 			opts.Timeout, opts.PostReplies = 45*time.Minute, true
 		},
+		applies: []string{"post-replies"},
 	},
 	"Review": {
 		busy: func(r *Reconciler, work *workState, member string, sb *unstructured.Unstructured) bool {
@@ -238,7 +243,7 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 			message: "a revise names the sandbox and the recipe revise to run",
 		}
 	}
-	sb, _, hook, found := reviseTarget(work, spec)
+	sb, run, hook, found := reviseTarget(work, spec)
 	key := sandboxReviseKey(spec.Member, spec.Sandbox)
 	res, ran := r.Factory.LastResult(key)
 	ran = ran && res.FinishedAt.After(req.CreationTimestamp.Time)
@@ -252,7 +257,7 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 	case ran && hook.done != nil:
 		return hook.done(r, ctx, work, spec, sb, res)
 	case ran:
-		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised", sandbox: spec.Sandbox}
+		return r.keptRevise(ctx, sb, run, hook, res)
 	case r.Factory.IsRunning(key):
 		return requestOutcome{phase: boardv1alpha1.RequestRunning}
 	case !found:
@@ -269,6 +274,26 @@ func (r *Reconciler) settleRevise(ctx context.Context, work *workState, req *boa
 		}
 	}
 	return pendingOutcome(req, now)
+}
+
+// keptRevise keeps a revise's task output as its run's, with what the
+// runner applied of it.
+func (r *Reconciler) keptRevise(ctx context.Context, sb *unstructured.Unstructured, run factorycli.RecordedRun, hook reviseHook, res factorycli.Result) requestOutcome {
+	revised := requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
+	if sb == nil {
+		return revised
+	}
+	revised.sandbox = sb.GetName()
+	annotations := sb.GetAnnotations()
+	if !factorycli.KeepOutput(annotations, run.Key, factorycli.HarvestedTaskOutput(res.Output), res.FinishedAt, hook.applies...) {
+		return revised
+	}
+	sb.SetAnnotations(annotations)
+	if err := r.Update(ctx, sb); err != nil {
+		log.FromContext(ctx).Error(err, "keeping the revise's task output", "sandbox", sb.GetName())
+		return stillPending
+	}
+	return revised
 }
 
 // revisedPlan stores a revise's plan as the draft, as ensurePlan stores a
@@ -302,11 +327,11 @@ func (r *Reconciler) revisedPlan(ctx context.Context, work *workState, spec boar
 
 // revisedReview marks the review the revise posted pending, even when the
 // member had submitted the one before.
-func (r *Reconciler) revisedReview(ctx context.Context, work *workState, _ boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, _ factorycli.Result) requestOutcome {
+func (r *Reconciler) revisedReview(ctx context.Context, work *workState, _ boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, res factorycli.Result) requestOutcome {
 	if sb == nil {
 		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
 	}
-	if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
+	if err := r.markReviewPending(ctx, sb, work.board.Name, res); err != nil {
 		log.FromContext(ctx).Error(err, "unable to mark review pending", "sandbox", sb.GetName())
 		return stillPending
 	}

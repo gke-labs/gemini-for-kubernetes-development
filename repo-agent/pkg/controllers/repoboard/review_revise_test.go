@@ -77,11 +77,19 @@ func TestUpdateReviewRevisesAndPosts(t *testing.T) {
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestRunning))
 
 	delete(fake.running, reviewReviseKeyAt)
-	fake.results[reviewReviseKeyAt] = factorycli.Result{FinishedAt: time.Now().Add(time.Second), Output: "posted\n"}
+	fake.results[reviewReviseKeyAt] = factorycli.Result{
+		FinishedAt: time.Now().Add(time.Second),
+		Output: "================= PR REVIEW ====================\n" +
+			"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Review\nspec:\n  body: Looks good.\n" +
+			"================================================\nposted\n",
+	}
 	_, err = r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	a := sandboxAnnotations(t, r, "review-repo-42")
+	// The Review it posted is kept, as posted.
+	g.Expect(a["board.gemini.google.com/recipe-review-output"]).To(gomega.ContainSubstring("body: Looks good."))
+	g.Expect(factorycli.IsApplied(a, "board.gemini.google.com/recipe-review-applied", "post-review")).To(gomega.BeTrue())
 	g.Expect(a[AnnotationReviewState]).To(gomega.Equal("pending"))
 	g.Expect(a).To(gomega.HaveKey(AnnotationReviewedAt))
 	// The review itself is not relaunched by any of this.

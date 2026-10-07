@@ -857,7 +857,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		if res.Err == nil && sb != nil {
 			// The pending review is on GitHub; record that so the board
 			// points the member there.
-			if err := r.markReviewPending(ctx, sb, work.board.Name); err != nil {
+			if err := r.markReviewPending(ctx, sb, work.board.Name, res); err != nil {
 				logger.Error(err, "unable to mark review pending", "pr", plan.pr)
 			}
 			return
@@ -1023,12 +1023,14 @@ func (r *Reconciler) settleSubmittedReviews(ctx context.Context, work *workState
 }
 
 // markReviewPending records that the review was posted as a pending review
-// on GitHub under the executor's identity — the member finalizes it there.
-func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Unstructured, boardName string) error {
+// on GitHub under the executor's identity — the member finalizes it there
+// — and keeps the Review it posted (res's) as its run's output.
+func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Unstructured, boardName string, res factorycli.Result) error {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
+	factorycli.KeepOutput(annotations, factorycli.AnnotationReviewRun, factorycli.HarvestedTaskOutput(res.Output), res.FinishedAt, "post-review")
 	annotations[AnnotationReviewState] = reviewStatePending
 	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
 	annotations[AnnotationBoard] = boardName
