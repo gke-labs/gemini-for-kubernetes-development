@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting } = require('./Work');
+const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting, matchesSearch } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -358,6 +358,84 @@ describe('Work, all boards', () => {
         // And it is the cross-board list that was asked for, not a
         // board's own tab reached sideways.
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
+    });
+});
+
+// A board's issues and pull requests are one Work list: what needs you or
+// is running first, the rest after, narrowed by type, scope and search.
+describe('Work, one board', () => {
+    const boards = [{ name: 'repo-agent', repoURL: 'https://github.com/gke-labs/repo-agent', needsHuman: 1, active: 1 }];
+    const feed = [
+        { type: 'issue', group: 'issues', number: 11, title: 'flaky retry', attention: 'needs-you', author: 'bob', labels: ['bug'], updatedAt: '2026-10-07T10:00:00Z' },
+        { type: 'pull', group: 'prs', number: 22, title: 'care for it', attention: 'working', mine: true, myPR: true, author: 'alice', labels: [], updatedAt: '2026-10-07T09:00:00Z' },
+        { type: 'pull', group: 'prs', number: 33, title: 'someone else', attention: 'waiting', author: 'carol', labels: [], updatedAt: '2026-10-07T08:00:00Z' },
+        { type: 'issue', group: 'issues', number: 44, title: 'old idea', attention: '', author: 'dave', labels: [], updatedAt: '2026-10-07T07:00:00Z' },
+    ];
+    const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    const serve = () => jest.fn((url) => {
+        if (url === '/api/boards') return json(boards);
+        if (url === '/api/board/repo-agent/work') return json(feed);
+        if (url === '/api/board/repo-agent/runbook') return json({ repoRunbooks: [], instances: [], pending: [], sandboxes: [] });
+        return json([]);
+    });
+    const settle = async () => { await flush(); await flush(); };
+    const filter = (text) => Array.from(container.querySelectorAll('button.btn-sm')).find(b => b.textContent.trim() === text);
+    // The numbers of the rows under each section header, in order.
+    const sections = () => {
+        const out = {};
+        let current = null;
+        container.querySelectorAll('tbody > tr').forEach(tr => {
+            if (tr.classList.contains('work-section')) {
+                current = tr.textContent.replace(/\s*\(\d+\)$/, '');
+                out[current] = [];
+                return;
+            }
+            const m = /#(\d+)/.exec((tr.querySelector('.work-num') || {}).textContent || '');
+            if (current && m) out[current].push(Number(m[1]));
+        });
+        return out;
+    };
+    const open = async () => {
+        global.fetch = serve();
+        await act(async () => { root.render(<Work namespace="alice" />); });
+        await settle();
+        await act(async () => { findButton('repo-agent').click(); });
+        await settle();
+    };
+
+    test('one Work tab, active rows first', async () => {
+        await open();
+        expect(findButton('Work')).toBeTruthy();
+        expect(Array.from(container.querySelectorAll('.group-tab')).map(b => b.textContent)).not.toContain('Issues');
+        expect(sections()).toEqual({ Active: [11, 22], 'Everything else': [33, 44] });
+    });
+
+    test('type, scope and search narrow it', async () => {
+        await open();
+        await act(async () => { filter('Issues').click(); });
+        expect(sections()).toEqual({ Active: [11], 'Everything else': [44] });
+        await act(async () => { filter('Both').click(); });
+        // Mine never hides running work, and keeps your own.
+        await act(async () => { filter('Mine').click(); });
+        expect(sections()).toEqual({ Active: [22] });
+        await act(async () => { filter('All').click(); });
+        const search = container.querySelector('input[type="search"]');
+        await act(async () => {
+            const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            set.call(search, 'carol');
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(sections()).toEqual({ Active: [], 'Everything else': [33] });
+    });
+});
+
+describe('matchesSearch', () => {
+    const item = { number: 1234, title: 'Fix the Retry loop', author: 'carol', labels: ['area/net'] };
+    test.each([
+        ['', true], ['retry', true], ['#12', true], ['1234', true], ['999', false],
+        ['CAROL', true], ['area/net', true], ['nope', false],
+    ])('%s', (q, want) => {
+        expect(matchesSearch(item, q)).toBe(want);
     });
 });
 
