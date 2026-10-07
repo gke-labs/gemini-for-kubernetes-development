@@ -85,7 +85,7 @@ func applyLabels(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 }
 
 // applyComment comments the result on its issue, once: a Triage's
-// assessment, a Plan's plan.
+// assessment, a Plan's plan, a Summary.
 func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
 	var comment, what string
 	switch doc.Kind {
@@ -104,6 +104,12 @@ func applyComment(ctx context.Context, gh *githubv39.Client, doc *Document, dryR
 			return err
 		}
 		comment, what = PlanComment(p), "plan"
+	case "Summary":
+		sum, err := doc.SummarySpec()
+		if err != nil {
+			return err
+		}
+		comment, what = SummaryComment(sum), "summary"
 	default:
 		return fmt.Errorf("cannot comment a %s", doc.Kind)
 	}

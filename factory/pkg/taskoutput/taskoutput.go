@@ -78,11 +78,12 @@ type kind struct {
 }
 
 var kinds = map[string]kind{
-	"Triage": {parse: parseTriage},
-	"Plan":   {parse: parsePlan},
-	"Notes":  {parse: parseNotes},
-	"Review": {parse: parseReview},
-	"Change": {parse: parseChange},
+	"Triage":  {parse: parseTriage},
+	"Plan":    {parse: parsePlan},
+	"Notes":   {parse: parseNotes},
+	"Review":  {parse: parseReview},
+	"Change":  {parse: parseChange},
+	"Summary": {parse: parseSummary},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.
