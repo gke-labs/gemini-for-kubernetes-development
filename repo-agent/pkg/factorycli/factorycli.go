@@ -39,6 +39,8 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
+
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 )
 
 // Labels and annotations factory puts on the sandboxes it manages
@@ -274,6 +276,9 @@ type Launcher interface {
 	// StartApply launches `factory apply --action`: one write of a draft's
 	// task output to its issue, with the member's token.
 	StartApply(key string, opts ApplyOptions) bool
+	// Recipes is the catalog of recipes factory runs, in the board's
+	// order.
+	Recipes(ctx context.Context) ([]boardv1alpha1.BoardRecipe, error)
 	IsRunning(key string) bool
 	// LastResult returns the outcome of the most recently finished
 	// invocation for key, if any.

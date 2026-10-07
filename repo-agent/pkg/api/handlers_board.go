@@ -636,21 +636,24 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 		for _, req := range requests {
 			n := strconv.Itoa(req.Spec.Number)
-			switch req.Spec.Verb {
-			case boardv1alpha1.VerbReview:
+			if req.Spec.Verb != boardv1alpha1.VerbRecipe {
+				continue
+			}
+			switch req.Spec.Recipe {
+			case "review":
 				if item, found := items["pr-"+n]; found && preRunPR[item.Stage] {
 					mark(item, "review-starting")
 				}
-			case boardv1alpha1.VerbFix:
+			case "fix":
 				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
 					mark(item, "fix-starting")
 				}
-			case boardv1alpha1.VerbTriage:
+			case "triage":
 				if item, found := items["issue-"+n]; found && (item.Stage == "untriaged" || item.Stage == "open") {
 					// Triage is only board-capacity gated, not per-user.
 					item.Stage, item.Attention = "triaging", attentionWorking
 				}
-			case boardv1alpha1.VerbPlan:
+			case "plan":
 				if item, found := items["issue-"+n]; found && preRunIssue[item.Stage] {
 					mark(item, "planning")
 				}
@@ -658,6 +661,7 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 		}
 	}
 
+	addRunSessions(items, allSandboxes, repo)
 	s.markApplies(ctx, board, items)
 
 	work := make([]models.WorkItem, 0, len(items))
@@ -815,6 +819,64 @@ func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession 
 		return nil
 	}
 	return &models.TaskSession{Sandbox: sb.GetName(), Task: task}
+}
+
+// addRunSessions gives every item the runs recorded on its sandboxes: an
+// issue's own sandbox's on the issue, and on the PR its fix opened (the
+// sandbox's URL turns to it); a PR's (by its URL, or a review sandbox's
+// name) on the PR.
+func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured.Unstructured, repo string) {
+	for _, sb := range sandboxes {
+		var sessions []models.RunSession
+		annotations := sb.GetAnnotations()
+		for _, run := range factorycli.Runs(annotations) {
+			session := models.RunSession{
+				Recipe:    run.Recipe,
+				Sandbox:   sb.GetName(),
+				Task:      run.SessionOf(),
+				Run:       run.Key,
+				Kind:      run.Kind,
+				State:     run.State,
+				StartedAt: run.StartedAt.UTC().Format(time.RFC3339),
+				Output:    annotations[factorycli.OutputAnnotation(run.Key)] != "",
+				Applied:   factorycli.Applied(annotations, factorycli.AppliedAnnotation(run.Key)),
+			}
+			if run.EndedAt != nil {
+				session.EndedAt = run.EndedAt.UTC().Format(time.RFC3339)
+			}
+			for _, rv := range run.Revises {
+				session.Revises = append(session.Revises, rv.ID)
+			}
+			sessions = append(sessions, session)
+		}
+		for _, key := range sandboxItems(sb, repo) {
+			if item := items[key]; item != nil {
+				item.Sessions = append(item.Sessions, sessions...)
+			}
+		}
+	}
+	for _, item := range items {
+		slices.SortStableFunc(item.Sessions, func(a, b models.RunSession) int {
+			return strings.Compare(b.StartedAt, a.StartedAt)
+		})
+	}
+}
+
+// sandboxItems are the items keys of the issue and the PR sb is for.
+func sandboxItems(sb *unstructured.Unstructured, repo string) []string {
+	var keys []string
+	if n, ok := factorycli.IssueOf(sb, repo); ok {
+		keys = append(keys, "issue-"+strconv.Itoa(n))
+	}
+	if n, ok := factorycli.ReviewPROf(sb, repo); ok {
+		return append(keys, "pr-"+strconv.Itoa(n))
+	}
+	if _, rest, ok := strings.Cut(sb.GetAnnotations()["htmlURL"], "/pull/"); ok {
+		if n, err := strconv.Atoi(strings.TrimRight(rest, "/")); err == nil && n > 0 {
+			keys = append(keys, "pr-"+strconv.Itoa(n))
+		}
+	}
+	return keys
 }
 
 // headOnMemberFork is whether pr's head is a branch on member's fork of
@@ -1252,32 +1314,106 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 }
 
 // kickoffFix handles the Fix click: best-effort GitHub-native claim
-// (assignment) and trigger label, plus the authoritative Request the
-// controller consumes. Consent is the click — the session user is the
-// executor.
+// (assignment), plus the authoritative Request the controller consumes.
+// Consent is the click — the session user is the executor.
 func (s *Server) kickoffFix(c *gin.Context) {
-	s.kickoff(c, "issue")
+	s.kickoff(c, "issue", "fix", nil)
 }
 
-// kickoffReview handles the Review click: best-effort self-requested review
-// and trigger label, plus the Request.
+// kickoffReview handles the Review click: best-effort self-requested
+// review, plus the Request.
 func (s *Server) kickoffReview(c *gin.Context) {
-	s.kickoff(c, "pr")
+	s.kickoff(c, "pr", "review", nil)
+}
+
+// kickoffPlan handles the Plan click: a Request only — planning is
+// draft-only (nothing written to GitHub) and claims happen at fix time.
+func (s *Server) kickoffPlan(c *gin.Context) {
+	s.kickoff(c, "issue", "plan", nil)
 }
 
 // kickoffTriage handles the Triage click: a Request only — triage is
 // draft-only, so there is no GitHub-side claim to make.
-// kickoffPlan handles the Plan click: a Request only — planning is
-// draft-only (nothing written to GitHub) and claims happen at fix time.
-func (s *Server) kickoffPlan(c *gin.Context) {
-	s.kickoff(c, "plan")
-}
-
 func (s *Server) kickoffTriage(c *gin.Context) {
-	s.kickoff(c, "triage")
+	s.kickoff(c, "issue", "triage", nil)
 }
 
-func (s *Server) kickoff(c *gin.Context, kind string) {
+// launchRecipe handles any recipe's launch button on an issue or PR row:
+// the recipe Request, with the inputs the member gave. The recipe must be
+// one the board's factory lists (status.recipes) and start on the row.
+func (s *Server) launchRecipe(item string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var payload struct {
+			Inputs map[string]string `json:"inputs"`
+		}
+		if c.Request.ContentLength != 0 {
+			if err := c.ShouldBindJSON(&payload); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body", "details": err.Error()})
+				return
+			}
+		}
+		s.kickoff(c, item, c.Param("recipe"), payload.Inputs)
+	}
+}
+
+// getBoardRecipes lists the recipes the board's rows offer, in its order:
+// what the controller's factory runs (factory recipe list), published on
+// the board's status.
+func (s *Server) getBoardRecipes(c *gin.Context) {
+	ctx := c.Request.Context()
+	board, _, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), c.Param("board"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	recipes, err := boardRecipes(board)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid recipes on board", "details": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, recipes)
+}
+
+// boardRecipes is the catalog on board's status; empty until the
+// controller has read it.
+func boardRecipes(board *unstructured.Unstructured) ([]boardv1alpha1.BoardRecipe, error) {
+	raw, found, err := unstructured.NestedSlice(board.Object, "status", "recipes")
+	if err != nil || !found {
+		return []boardv1alpha1.BoardRecipe{}, err
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	recipes := []boardv1alpha1.BoardRecipe{}
+	return recipes, json.Unmarshal(b, &recipes)
+}
+
+// hookedRecipeItems are the recipes the controller has passes of its own
+// for, and what the board starts each on: known whether or not the
+// controller has published its catalog yet.
+var hookedRecipeItems = map[string]string{"triage": "issue", "plan": "issue", "fix": "issue", "review": "pr"}
+
+// boardStarts reports whether the board starts recipe on item.
+func (s *Server) boardStarts(board *unstructured.Unstructured, recipe, item string) (bool, error) {
+	if want, ok := hookedRecipeItems[recipe]; ok {
+		return item == want, nil
+	}
+	recipes, err := boardRecipes(board)
+	if err != nil {
+		return false, err
+	}
+	i := slices.IndexFunc(recipes, func(rec boardv1alpha1.BoardRecipe) bool { return rec.Name == recipe })
+	return i >= 0 && recipeStartsOn(recipes[i], item), nil
+}
+
+// recipeStartsOn reports whether rec starts on item: it runs there, and
+// has a start there, not only revises.
+func recipeStartsOn(rec boardv1alpha1.BoardRecipe, item string) bool {
+	return (len(rec.On) == 0 || slices.Contains(rec.On, item)) && !slices.Contains(rec.RevisesOn, item)
+}
+
+func (s *Server) kickoff(c *gin.Context, item, recipe string, inputs map[string]string) {
 	log := klog.FromContext(c.Request.Context())
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -1293,6 +1429,13 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
+	if ok, err := s.boardStarts(board, recipe, item); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid recipes on board", "details": err.Error()})
+		return
+	} else if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the board has no recipe %q to start on this %s", recipe, item)})
+		return
+	}
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
 	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
@@ -1304,9 +1447,11 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 	// The trigger label is deliberately NOT written: a click is a one-time
 	// consent, while a label is a standing trigger that would relaunch the
 	// item forever after cleanup.
-	if token, err := s.memberToken(ctx, namespace); err == nil && kind != "triage" && kind != "plan" {
+	if token, err := s.memberToken(ctx, namespace); err != nil {
+		log.Info("member token unavailable; request-only kickoff", "err", err)
+	} else if recipe == "fix" || recipe == "review" {
 		gh := githubClientForToken(ctx, token)
-		if kind == "issue" {
+		if recipe == "fix" {
 			if _, _, err := gh.Issues.AddAssignees(ctx, owner, repo, number, []string{member}); err != nil {
 				log.Info("best-effort assignment failed", "issue", number, "err", err)
 			}
@@ -1315,14 +1460,12 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 				log.Info("best-effort self review-request failed", "pr", number, "err", err)
 			}
 		}
-	} else {
-		log.Info("member token unavailable; request-only kickoff", "err", err)
 	}
 
 	// A fresh review consent also stamps the re-review marker on the PR's
 	// review sandbox, if there is one, so a previously finished (or
 	// abandoned) review relaunches instead of staying terminal.
-	if kind == "pr" {
+	if recipe == "review" {
 		for _, ns := range []string{namespace, board.GetNamespace()} {
 			if sb := s.reviewSandbox(ctx, ns, owner, repo, number); sb != nil {
 				_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoRereviewRequest, nowRFC3339())
@@ -1332,20 +1475,13 @@ func (s *Server) kickoff(c *gin.Context, kind string) {
 
 	// Authoritative record of the click; the controller serves it and
 	// writes back what came of it.
-	verb := map[string]string{
-		"issue":  boardv1alpha1.VerbFix,
-		"pr":     boardv1alpha1.VerbReview,
-		"triage": boardv1alpha1.VerbTriage,
-		"plan":   boardv1alpha1.VerbPlan,
-	}[kind]
-	if verb == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown kickoff kind"})
-		return
-	}
 	if _, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
-		Verb:   verb,
+		Verb:   boardv1alpha1.VerbRecipe,
+		Recipe: recipe,
+		Item:   item,
 		Member: member,
 		Number: number,
+		Inputs: inputs,
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record request", "details": err.Error()})
 		return
@@ -1865,7 +2001,7 @@ func (s *Server) planBoardApprove(c *gin.Context) {
 		return
 	}
 	// The fix kickoff does the rest: GitHub claim (assignment) + the Request.
-	s.kickoff(c, "issue")
+	s.kickoff(c, "issue", "fix", nil)
 }
 
 // planBoardReject discards the draft: plan annotations are cleared and the

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -127,14 +128,21 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 	for _, req := range work.activeRequests() {
 		spec := req.Spec
 		switch spec.Verb {
-		case boardv1alpha1.VerbFix:
-			box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member})
-		case boardv1alpha1.VerbReview:
-			box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
-		case boardv1alpha1.VerbTriage:
-			box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID)})
-		case boardv1alpha1.VerbPlan:
-			box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
+		case boardv1alpha1.VerbRecipe:
+			// The recipes with passes of their own, on what they start
+			// on; settleHooked fails one on anything else.
+			switch {
+			case spec.Recipe == "fix" && spec.Item == "issue":
+				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member})
+			case spec.Recipe == "review" && spec.Item == "pr":
+				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
+			case spec.Recipe == "triage" && spec.Item == "issue":
+				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID)})
+			case spec.Recipe == "plan" && spec.Item == "issue":
+				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member})
+			case !slices.Contains(hookedRecipes, spec.Recipe):
+				box.recipes = append(box.recipes, req)
+			}
 		case boardv1alpha1.VerbRun:
 			if claim, ok := runClaimFrom(req); ok {
 				box.runbooks = append(box.runbooks, claim)
@@ -326,56 +334,12 @@ func (r *Reconciler) reapRequests(ctx context.Context, work *workState) error {
 func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
 	spec := req.Spec
 	switch spec.Verb {
-	case boardv1alpha1.VerbFix:
-		// The issue's sandbox may predate the click — a triage or plan made
-		// it — so it is served by a fix in it: stamped, running, or run
-		// since the click.
-		key := fixKey(work, spec.Member, spec.Number)
-		res, ran := r.Factory.LastResult(key)
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil &&
-			(sb.GetAnnotations()[factorycli.AnnotationTaskType] == "fix" || r.Factory.IsRunning(key) ||
-				(ran && res.FinishedAt.After(req.CreationTimestamp.Time))) {
-			return served(sb.GetName())
+	case boardv1alpha1.VerbRecipe:
+		if !slices.Contains(hookedRecipes, spec.Recipe) {
+			return r.settleRecipe(work, req, now)
 		}
-
-	case boardv1alpha1.VerbReview:
-		if sb := work.reviewSandbox(spec.Member, spec.Number); sb != nil {
-			// Persist the consenting executor on the sandbox before the
-			// Request stops being read: it is the durable record that
-			// this review was a member's click.
-			if sb.GetAnnotations()[AnnotationExecutor] != spec.Member {
-				annotations := sb.GetAnnotations()
-				if annotations == nil {
-					annotations = map[string]string{}
-				}
-				annotations[AnnotationExecutor] = spec.Member
-				sb.SetAnnotations(annotations)
-				if err := r.Update(ctx, sb); err != nil {
-					// Not settled: try again next reconcile rather than
-					// drop the consent on the floor.
-					log.FromContext(ctx).Error(err, "stamping executor", "sandbox", sb.GetName())
-					return stillPending
-				}
-			}
-			return served(sb.GetName())
-		}
-
-	case boardv1alpha1.VerbTriage:
-		// The click stands until a draft is stored: the sandbox may be a
-		// rejected leftover whose tombstone the click overrides.
-		member := spec.Member
-		if member == "" {
-			member = work.board.Namespace
-		}
-		if sb := work.triageSandbox(member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
-			return served(sb.GetName())
-		}
-
-	case boardv1alpha1.VerbPlan:
-		// Likewise: the fix sandbox may predate the click, so its
-		// existence proves nothing. A stored draft does.
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
-			return served(sb.GetName())
+		if out, done := r.settleHooked(ctx, work, req); done {
+			return out
 		}
 
 	case boardv1alpha1.VerbRun:
@@ -425,6 +389,77 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 	// Nothing served it. Report what the launcher is doing, so that a
 	// click sitting there for minutes says which kind of waiting it is.
 	return pendingOutcome(req, now)
+}
+
+// settleHooked settles a recipe Request a pass of its own serves: true
+// with its outcome once there is one.
+func (r *Reconciler) settleHooked(ctx context.Context, work *workState, req *boardv1alpha1.Request) (requestOutcome, bool) {
+	spec := req.Spec
+	want := "issue"
+	if spec.Recipe == "review" {
+		want = "pr"
+	}
+	if spec.Item != want {
+		return requestOutcome{
+			phase:   boardv1alpha1.RequestFailed,
+			reason:  "NotLaunchable",
+			message: fmt.Sprintf("the board starts %s on an %s, not an %s", spec.Recipe, want, spec.Item),
+		}, true
+	}
+	switch spec.Recipe {
+	case "fix":
+		// The issue's sandbox may predate the click — a triage or plan made
+		// it — so it is served by a fix in it: stamped, running, or run
+		// since the click.
+		key := fixKey(work, spec.Member, spec.Number)
+		res, ran := r.Factory.LastResult(key)
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil &&
+			(sb.GetAnnotations()[factorycli.AnnotationTaskType] == "fix" || r.Factory.IsRunning(key) ||
+				(ran && res.FinishedAt.After(req.CreationTimestamp.Time))) {
+			return served(sb.GetName()), true
+		}
+
+	case "review":
+		if sb := work.reviewSandbox(spec.Member, spec.Number); sb != nil {
+			// Persist the consenting executor on the sandbox before the
+			// Request stops being read: it is the durable record that
+			// this review was a member's click.
+			if sb.GetAnnotations()[AnnotationExecutor] != spec.Member {
+				annotations := sb.GetAnnotations()
+				if annotations == nil {
+					annotations = map[string]string{}
+				}
+				annotations[AnnotationExecutor] = spec.Member
+				sb.SetAnnotations(annotations)
+				if err := r.Update(ctx, sb); err != nil {
+					// Not settled: try again next reconcile rather than
+					// drop the consent on the floor.
+					log.FromContext(ctx).Error(err, "stamping executor", "sandbox", sb.GetName())
+					return stillPending, true
+				}
+			}
+			return served(sb.GetName()), true
+		}
+
+	case "triage":
+		// The click stands until a draft is stored: the sandbox may be a
+		// rejected leftover whose tombstone the click overrides.
+		member := spec.Member
+		if member == "" {
+			member = work.board.Namespace
+		}
+		if sb := work.triageSandbox(member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationTriagedAt] != "" {
+			return served(sb.GetName()), true
+		}
+
+	case "plan":
+		// Likewise: the fix sandbox may predate the click, so its
+		// existence proves nothing. A stored draft does.
+		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && sb.GetAnnotations()[AnnotationPlannedAt] != "" {
+			return served(sb.GetName()), true
+		}
+	}
+	return requestOutcome{}, false
 }
 
 // served is the ordinary happy ending: the thing the click asked for

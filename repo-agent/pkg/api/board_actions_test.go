@@ -210,7 +210,7 @@ actions:
 	if !factorycli.IsApplied(h.annotations(), factorycli.AnnotationPlanApplied, "run") {
 		t.Error("run fix did not approve the plan")
 	}
-	if filed := h.requestOf(boardv1alpha1.VerbFix); filed.Spec.Number != 42 {
+	if filed := h.requestOf(boardv1alpha1.VerbRecipe); filed.Spec.Number != 42 {
 		t.Errorf("run fix filed %+v", filed.Spec)
 	}
 	// Approved: nothing left to do with the draft.

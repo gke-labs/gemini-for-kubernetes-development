@@ -141,6 +141,33 @@ type WorkItem struct {
 	// is on their fork, which a recipe may push to.
 	Mine bool `json:"mine,omitempty"`
 	MyPR bool `json:"myPR,omitempty"`
+	// Sessions are the runs recorded on the item's sandboxes, whichever
+	// recipes they are, newest first: what the row's chips, attention and
+	// session links follow.
+	Sessions []RunSession `json:"sessions,omitempty"`
+}
+
+// RunSession is one recipe run on an item: its recipe, the session its
+// revises go into, its state, and its stored task output's applied
+// actions.
+type RunSession struct {
+	Recipe  string `json:"recipe,omitempty"`
+	Sandbox string `json:"sandbox"`
+	// Task is the run's agent session (a revise's is the one it revised
+	// in), for #/task-session/<sandbox>/<task>.
+	Task string `json:"task"`
+	// Run is the annotation the run is recorded under.
+	Run       string `json:"run"`
+	Kind      string `json:"kind,omitempty"`
+	State     string `json:"state,omitempty"`
+	StartedAt string `json:"startedAt,omitempty"`
+	EndedAt   string `json:"endedAt,omitempty"`
+	// Output is whether the board stores a task output of the run.
+	Output bool `json:"output,omitempty"`
+	// Applied is the actions applied to the output: action → RFC3339.
+	Applied map[string]string `json:"applied,omitempty"`
+	// Revises are the revise ids the run's recipe offers into its session.
+	Revises []string `json:"revises,omitempty"`
 }
 
 // TaskSession names a factory task's agent session: the sandbox it ran in

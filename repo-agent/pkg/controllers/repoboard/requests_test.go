@@ -225,7 +225,7 @@ func TestARefusedRunLaunchIsStillAClick(t *testing.T) {
 // are the caller's because the whole point of the collection rules is
 // which of several receipts for the same subject survive.
 func settled(name, phase string, subject int, age time.Duration) *boardv1alpha1.Request {
-	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbTriage, Number: subject})
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "triage", Item: "issue", Number: subject})
 	req.Name = name
 	at := metav1.NewTime(time.Now().Add(-age))
 	req.CreationTimestamp = at
@@ -329,7 +329,7 @@ func TestRequestHistoryIsCappedPerSubject(t *testing.T) {
 // board forever, and the member watched a row that would never fill.
 func TestAClickNothingServesExpires(t *testing.T) {
 	g := gomega.NewWithT(t)
-	stale := click(boardv1alpha1.VerbTriage, 44)
+	stale := launch("triage", 44)
 	stale.CreationTimestamp = metav1.NewTime(time.Now().Add(-25 * time.Hour))
 
 	r := newTestReconciler(newFakeLauncher(), testGithubClient(`[]`), testBoard(nil), githubSecret(), stale)
@@ -347,8 +347,8 @@ func TestAClickNothingServesExpires(t *testing.T) {
 // per click has to say it.
 func TestDuplicateClicksLaunchOnce(t *testing.T) {
 	g := gomega.NewWithT(t)
-	first := click(boardv1alpha1.VerbFix, 12)
-	second := click(boardv1alpha1.VerbFix, 12)
+	first := launch("fix", 12)
+	second := launch("fix", 12)
 	second.Name = first.Name + "-again"
 
 	fake := newFakeLauncher()

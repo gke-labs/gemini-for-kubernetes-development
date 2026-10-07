@@ -424,6 +424,14 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	if !slices.Equal(iterate.Inputs, []string{"instruction"}) {
 		t.Errorf("fix iterate = %+v, want it to ask for instruction", iterate)
 	}
+	for name, want := range map[string]string{"fix": "fix", "plan": "plan", "triage": "recipe-triage", "review": "recipe-review", "research": "research"} {
+		if got := byName[name].TaskType; got != want {
+			t.Errorf("%s's task type = %q, want %q", name, got, want)
+		}
+	}
+	if byName["review"].Credentials != "clone" || fix.Credentials != "" {
+		t.Errorf("credentials: review %q, fix %q; want clone and none", byName["review"].Credentials, fix.Credentials)
+	}
 	for _, in := range fix.Inputs {
 		if in.Name == "instruction" && !in.Revise {
 			t.Errorf("fix's instruction input is not marked revise: %+v", in)

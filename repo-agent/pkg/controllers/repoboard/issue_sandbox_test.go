@@ -77,7 +77,7 @@ func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
 		AnnotationTriagedAt:                        time.Now().UTC().Format(time.RFC3339),
 	})
 	fake := newFakeLauncher()
-	req := click(boardv1alpha1.VerbFix, 77)
+	req := launch("fix", 77)
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -123,7 +123,7 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 	bob := githubSecret()
 	bob.Namespace = "bob"
 	bob.Data = map[string][]byte{"oauth_pat": []byte("gho_bob")}
-	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbTriage, Number: 40, Member: "bob"})
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "triage", Item: "issue", Number: 40, Member: "bob"})
 	req.UID = "uid-40"
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), bob, req)

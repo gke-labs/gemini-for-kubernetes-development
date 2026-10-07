@@ -329,6 +329,9 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 		c.Next()
 	})
 	r.GET("/board/:board/work", server.getBoardWork)
+	r.GET("/board/:board/recipes", server.getBoardRecipes)
+	r.POST("/board/:board/issues/:id/recipes/:recipe", server.launchRecipe("issue"))
+	r.POST("/board/:board/prs/:id/recipes/:recipe", server.launchRecipe("pr"))
 	r.GET("/repo-suggestions", server.getRepoSuggestions)
 	r.POST("/board/:board/issues/:id/fix", server.kickoffFix)
 	r.POST("/board/:board/prs/:id/review", server.kickoffReview)
@@ -586,12 +589,12 @@ func TestKickoffFixFilesARequest(t *testing.T) {
 	}
 
 	filed := theRequest(t, dyn, "alice")
-	if filed.Spec.Verb != boardv1alpha1.VerbFix || filed.Spec.Number != 77 || filed.Spec.Member != "alice" {
+	if filed.Spec.Verb != boardv1alpha1.VerbRecipe || filed.Spec.Recipe != "fix" || filed.Spec.Number != 77 || filed.Spec.Member != "alice" {
 		t.Errorf("filed %+v, want alice's fix on 77", filed.Spec)
 	}
 	// The controller lists by these, so a click that carries neither is
 	// a click no board ever sees.
-	if filed.Labels[boardv1alpha1.LabelBoard] != "myboard" || filed.Labels[boardv1alpha1.LabelVerb] != boardv1alpha1.VerbFix {
+	if filed.Labels[boardv1alpha1.LabelBoard] != "myboard" || filed.Labels[boardv1alpha1.LabelVerb] != boardv1alpha1.VerbRecipe {
 		t.Errorf("labels = %v, want the board and the verb", filed.Labels)
 	}
 	// Owned by the board: deleting the board takes its clicks with it.
@@ -1121,7 +1124,7 @@ func TestKickoffFeedbackStages(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbReview, Number: 5})
+	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "pr", Number: 5})
 	provisioning := sandboxCR("review-repo-6",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
 		map[string]interface{}{"htmlURL": "https://github.com/test/repo/pull/6"}, 1)
@@ -1436,7 +1439,7 @@ func TestPlanEndpoints(t *testing.T) {
 		t.Error("approval not stamped")
 	}
 	filed := theRequest(t, dyn, "alice")
-	if filed.Spec.Verb != boardv1alpha1.VerbFix || filed.Spec.Number != 42 {
+	if filed.Spec.Verb != boardv1alpha1.VerbRecipe || filed.Spec.Recipe != "fix" || filed.Spec.Number != 42 {
 		t.Errorf("approve filed %+v, want a fix click on 42", filed.Spec)
 	}
 
@@ -1523,7 +1526,7 @@ func TestRequestQueuedAtCapacity(t *testing.T) {
 	board := boardCR()
 	// Single limit knob: capacity for this test is the board's maxActive.
 	_ = unstructured.SetNestedField(board.Object, int64(2), "spec", "limits", "maxActive")
-	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbReview, Number: 92})
+	clicked := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "pr", Number: 92})
 
 	_, r, _ := boardTestServer(t, ghResponses, board, clicked,
 		running("factory-pr-repo-90", "90"), running("factory-pr-repo-91", "91"))
