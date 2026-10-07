@@ -204,49 +204,8 @@ function prRunChip(run) {
   ) : <span key={run.name} style={{ marginLeft: '6px' }}>{chip}</span>;
 }
 
-// DRAFT_VERBS: what a verb a draft's task output offers looks like on
-// the board when the document gives it no label, and what to confirm
-// before taking it. Whether the viewer may take one is the API's word,
-// in its enabled and reason, not the board's role: posting an assessment
-// needs no access to the repo, adding labels needs triage.
-const DRAFT_VERBS = {
-  Triage: {
-    edit: { label: 'Edit', title: 'Edit the suggestion before it is posted' },
-    label: {
-      label: 'Add labels', title: 'Adds the suggested labels to the issue under your identity',
-      confirm: n => `Add the suggested labels to issue #${n} as you?`,
-    },
-    comment: {
-      label: 'Post assessment', title: 'Posts the assessment as a comment on the issue under your identity',
-      confirm: n => `Post the triage assessment on issue #${n} as you?`,
-    },
-    reject: {
-      label: 'Reject', title: 'Discards the draft and resets the row — auto-triage will not redo it; a fresh Triage click will',
-      confirm: n => `Discard the triage suggestions for issue #${n}?`,
-    },
-  },
-  Plan: {
-    edit: { label: 'Edit', title: 'Edit the plan text directly' },
-    comment: {
-      label: 'Post plan', title: 'Posts the plan as a comment on the issue under your identity',
-      confirm: n => `Post this plan on issue #${n} as you?`,
-    },
-    run: {
-      label: 'Approve & Fix', title: 'Approves the plan and launches the fix — the plan ships in the PR description',
-      confirm: n => `Approve this plan and launch the fix for issue #${n} as you?`,
-    },
-    reject: {
-      label: 'Reject', title: 'Discards this plan draft',
-      confirm: n => `Discard the plan for issue #${n}?`,
-    },
-  },
-};
-
-// DraftActions: the buttons for what a draft's task output offers (a work
-// item's triageActions or planActions), in the document's order. One the
-// draft's state rules out just now stays, disabled, saying why.
-// A write is the controller's (factory apply): filed, it shows as posting
-// until done; failed, it says why and can be clicked again.
+// A draft's write is the controller's (factory apply), taken in the
+// draft's session.
 // POSTING_POLL_EVERY is the feed's cadence while a write stands.
 const POSTING_POLL_EVERY = 3000;
 
@@ -304,123 +263,34 @@ function SessionSlideOver({ session, onClose }) {
   );
 }
 
-// anyPosting is whether a row has a write or a revise standing. A revise
-// (Update plan) is clicked in the plan's session, not here, but it holds
-// the row's writes until the plan it writes is the draft.
+// anyPosting is whether a row has a write or a revise standing, taken in
+// its triage's or plan's session.
 function anyPosting(items) {
   return (items || []).some(item => [...(item.triageActions || []), ...(item.planActions || [])]
     .some(a => a.reason === 'posting' || a.reason === 'revising'));
 }
 
-// draftVerb is how a verb looks on a draft of kind: the kind's look, else
-// a write's generic one — any verb the output offers is shown; whether the
-// viewer may take it is the API's enabled.
-function draftVerb(kind, verb) {
-  return (DRAFT_VERBS[kind] || {})[verb] || {
-    label: verb, title: `Applies "${verb}" under your identity`,
-    confirm: n => `Apply "${verb}" to #${n} as you?`,
-  };
-}
-
-function DraftActions({ kind, actions, number, onEdit, onTake }) {
-  // A revise is clicked in the draft's session, not on the row.
-  const shown = (actions || []).filter(a => a.verb !== 'revise');
-  const buttons = shown.map(a => {
-    const v = draftVerb(kind, a.verb);
-    const label = a.label || v.label;
-    return (
-      <button key={a.verb + (a.run || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
-        disabled={!a.enabled} title={a.enabled ? v.title : `Not now: ${a.reason}`}
-        onClick={() => {
-          if (a.verb === 'edit') { onEdit(); return; }
-          if (v.confirm && !window.confirm(v.confirm(number))) return;
-          onTake(a);
-        }}>{a.reason === 'posting' ? `${label}…` : label}</button>
-    );
-  });
-  const failures = shown.filter(a => a.error).map(a => (
-    <div key={`err-${a.verb}`} style={{ color: '#c62828', fontSize: '12px', marginTop: '4px' }}>
-      {a.label || draftVerb(kind, a.verb).label} failed: {a.error}
-    </div>
-  ));
-  return [...buttons, ...failures];
-}
-
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, onOpenSession, runState, onRunStarted }) {
-  const [showDraft, setShowDraft] = useState(false);
-  const [editingDraft, setEditingDraft] = useState(false);
-  const [draftText, setDraftText] = useState('');
-  const [draftErr, setDraftErr] = useState('');
-
-  // takeAction takes one action a draft's task output offers; text is an
-  // edit's new draft. A refusal shows in the panel, with the reason.
-  const takeAction = (kind, verb, { run = '', text = '', onOk, setErr }) => {
-    fetch(`/api/board/${boardName}/issues/${item.number}/actions/${verb}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, run, text }),
-    }).then(async res => {
-      if (res.ok) {
-        setErr('');
-        if (onOk) onOk();
-        if (onRefresh) onRefresh();
-      } else {
-        const t = await res.text();
-        let msg = t;
-        try { const j = JSON.parse(t); msg = j.details || j.error || t; } catch (e) { /* raw text */ }
-        setErr(msg);
-      }
-    }).catch(err => setErr(String(err)));
-  };
-
-  // Edits are validated server-side against the publish schema; a rejected
-  // save keeps the editor open with the reason.
-  const saveDraft = () => takeAction('Triage', 'edit', {
-    text: draftText, setErr: setDraftErr, onOk: () => setEditingDraft(false),
-  });
-
   // The row's runs: each recipe's newest, and what it is now — a click
   // not started yet is starting (or queued), until its run is.
   const runs = latestRuns(item);
   const runOf = name => runs.find(r => r.recipe === name);
   const statusOf = name => ((item.launching || {})[name]) || (runOf(name) || {}).status || '';
-  const planReady = statusOf('plan') === 'ready';
   const fixBusy = ['running', 'starting', 'queued'].includes(statusOf('fix'));
 
-  const [showPlan, setShowPlan] = useState(false);
   const [showError, setShowError] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showIterate, setShowIterate] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
   // Text for the fix revises that take an input, by revise id.
   const [reviseText, setReviseText] = useState({});
-  const [editingPlan, setEditingPlan] = useState(false);
-  const [planText, setPlanText] = useState('');
-  const [planErr, setPlanErr] = useState('');
-  // The plan file in the sandbox is the source of truth (a continued chat
-  // session edits it there); opening the panel re-reads it, so chat edits
-  // surface without any session-end event.
-  const [freshPlan, setFreshPlan] = useState(null);
-  useEffect(() => { setFreshPlan(null); }, [item.plan]);
-  useEffect(() => {
-    if (!showPlan || !planReady || !item.plan) return;
-    fetch(`/api/board/${boardName}/issues/${item.number}/plan-refresh`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-    }).then(res => (res.ok ? res.json() : null)).then(data => {
-      if (data && data.plan) setFreshPlan(data.plan);
-      if (data && data.changed && onRefresh) onRefresh();
-    }).catch(() => { /* the cached draft still shows */ });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPlan]);
-  const planShown = freshPlan || item.plan;
 
   const group = groupOf(item);
   const isPR = item.type !== 'issue';
 
-  // The rail (chip + verbs share the last column): a ready run's draft
-  // button, the recipes to launch, and the row's own GitHub moves. Green
-  // receipts carry the history (Triage ✓ → Plan ✓ → Fix ✓); clicking one
-  // shows the artifact it produced.
+  // The rail (the last column): a pending review's button, the recipes
+  // to launch, and the row's own GitHub moves. Green receipts link what
+  // shipped (Fix ✓, Review ✓); a run's history is its chip's session.
   // The fix's follow-ups are revises of its session, filed on it.
   const reviseFix = (revise, label, inputs) => {
     const s = item.fixSession;
@@ -436,24 +306,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     }).catch(err => { window.alert(`${label}: ${err}`); return false; });
   };
 
-  // A ready run is its draft's button: triage's and plan's open their
-  // panels here; any other recipe's draft is read and applied in its
-  // session. A pending review on GitHub is the review's.
+  // A ready run's draft is read and applied in its session: its chip is
+  // the row's move. A pending review on GitHub is the review's, run or not.
   const ready = [];
-  for (const run of runs) {
-    if (statusOf(run.recipe) !== 'ready') continue;
-    const label = run.label || run.recipe;
-    if (run.recipe === 'triage' && item.draft) {
-      ready.push({ key: 'triage', label: `${label} ready`, open: showDraft, onClick: () => setShowDraft(v => !v), style: READY_STYLE,
-        title: 'Triage suggestions await your verdict — open to edit, post, or reject' });
-    } else if (run.recipe === 'plan' && item.plan) {
-      ready.push({ key: 'plan', label: `${label} ready`, open: showPlan, onClick: () => setShowPlan(v => !v), style: READY_STYLE,
-        title: 'The plan awaits your verdict — open to refine, approve & fix, or reject' });
-    } else {
-      ready.push({ key: run.recipe, label: `${label} ready ↗`, href: taskSessionHref(run), session: run, style: READY_STYLE,
-        title: `${label}'s draft awaits your verdict — open its session to read and apply it` });
-    }
-  }
   if (item.reviewPending) {
     ready.push({ key: 'review-pending', label: 'Review ready', open: showReview, onClick: () => setShowReview(v => !v), style: REVIEW_READY_STYLE,
       title: 'Your draft review is saved on GitHub — open to finalize or abandon' });
@@ -462,8 +317,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const actions = [];
   for (const rec of item.recipes || []) {
     const status = statusOf(rec.name);
-    // Running, a click starting, or a draft to judge: the chip and the
-    // draft's button are the row's move, not another run.
+    // Running, a click starting, or a draft to judge: the chip is the
+    // row's move, not another run.
     if (['running', 'starting', 'queued', 'ready'].includes(status)) continue;
     if (rec.name === 'review' && item.reviewPending) continue;
     const again = status === 'done' || status === 'failed';
@@ -499,15 +354,9 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     actions.push({ label: showDeploy ? 'Deploy ▴' : 'Deploy ▾', onClick: () => setShowDeploy(v => !v), title: 'Plan a run of this pull request from one of the repository\'s runbooks' });
   }
 
-  // Receipts: done verbs turned green. Click = view the artifact.
+  // Receipts: done verbs turned green, linking what they shipped.
   const receipts = [];
   if (item.type === 'issue') {
-    if (item.triagePublished) {
-      receipts.push({ label: 'Triage ✓', onClick: item.draft ? () => setShowDraft(v => !v) : undefined, title: 'Triage published — view the suggestions' });
-    }
-    if (item.planApproved && item.plan) {
-      receipts.push({ label: 'Plan ✓', onClick: () => setShowPlan(v => !v), title: 'Approved plan — view it' });
-    }
     if (item.prURL) {
       receipts.push({ label: 'Fix ✓', href: item.prURL, title: 'Fix shipped — open the PR' });
     }
@@ -605,6 +454,18 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               </span>
             );
           }
+          // A ready run's chip is the row's move: it looks pressable, and
+          // opens the session its draft is read and applied in.
+          if (c.status === 'ready' && c.run) {
+            return (
+              <a key={c.recipe} className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
+                onClick={sessionClick(onOpenSession, c.run)}
+                title={`${c.label}'s draft awaits your verdict — open its session to read and apply it`}
+                style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
+                {`${text} ↗`}
+              </a>
+            );
+          }
           // A running task's session can be watched, not driven; an
           // ended one continued.
           return c.run ? (
@@ -628,22 +489,12 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {receipts.map(r => r.href ? (
+        {receipts.map(r => (
           <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
             <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
           </a>
-        ) : (
-          <span key={r.label} onClick={r.onClick} style={{ cursor: r.onClick ? 'pointer' : 'default', marginLeft: '4px' }} title={r.title}>
-            <Chip text={r.label} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
-          </span>
         ))}
-        {ready.map(r => r.href ? (
-          <a key={r.key} className="btn btn-sm" href={r.href} target="_blank" rel="noopener noreferrer" title={r.title}
-            onClick={r.session ? sessionClick(onOpenSession, r.session) : undefined}
-            style={{ marginLeft: '4px', textDecoration: 'none', color: r.style.color, backgroundColor: r.style.bg, borderColor: r.style.color, fontWeight: 600 }}>
-            {r.label}
-          </a>
-        ) : (
+        {ready.map(r => (
           // A real button, not a chip: the verdict is THE action on the
           // row, so it must look pressable — chips are for facts.
           <button key={r.key} className="btn btn-sm" onClick={r.onClick} title={r.title}
@@ -685,142 +536,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         ))}
       </td>
     </tr>
-    {showDraft && item.draft && (
-      <tr>
-        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
-          {editingDraft ? (
-            <div>
-              <textarea
-                value={draftText}
-                onChange={e => setDraftText(e.target.value)}
-                spellCheck={false}
-                style={{
-                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace',
-                  fontSize: 'small', padding: '10px', backgroundColor: 'var(--bg-secondary)',
-                  color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
-                  borderRadius: '6px', minHeight: '160px', textAlign: 'left',
-                }}
-              />
-              {draftErr && (
-                <div style={{
-                  fontSize: 'small', marginTop: '4px', padding: '6px 10px', borderRadius: '6px',
-                  backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
-                  textAlign: 'left', whiteSpace: 'pre-wrap',
-                }}>{draftErr}</div>
-              )}
-              <div style={{ marginTop: '6px', textAlign: 'right' }}>
-                <button className="btn btn-sm" onClick={saveDraft} title="Validate against the triage schema and save">Save</button>
-                <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                  onClick={() => { setEditingDraft(false); setDraftErr(''); }}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <pre style={{
-                whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
-                padding: '10px', backgroundColor: 'var(--bg-secondary)',
-                borderRadius: '6px', maxHeight: '300px', overflowY: 'auto',
-                textAlign: 'left',
-              }}>{item.draft}</pre>
-              {item.type === 'issue' && (
-                <div style={{ marginTop: '4px' }}>
-                  {draftErr && (
-                    <div style={{
-                      fontSize: 'small', marginBottom: '4px', padding: '6px 10px', borderRadius: '6px',
-                      backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
-                      textAlign: 'left', whiteSpace: 'pre-wrap',
-                    }}>{draftErr}</div>
-                  )}
-                  <div style={{ textAlign: 'right' }}>
-                    {item.triageSession && (
-                      <a className="btn btn-sm" href={taskSessionHref(item.triageSession)} onClick={sessionClick(onOpenSession, item.triageSession)}
-                        target="_blank" rel="noopener noreferrer"
-                        title="Continue the triage conversation where it left off"
-                      >Continue session ↗</a>
-                    )}
-                    <DraftActions kind="Triage" actions={item.triageActions} number={item.number}
-                      onEdit={() => { setDraftText(item.draft); setEditingDraft(true); setDraftErr(''); }}
-                      onTake={a => takeAction('Triage', a.verb, { run: a.run, setErr: setDraftErr })} />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </td>
-      </tr>
-    )}
-    {showPlan && item.plan && (
-      <tr>
-        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
-          {editingPlan ? (
-            <div>
-              <textarea
-                value={planText}
-                onChange={e => setPlanText(e.target.value)}
-                spellCheck={false}
-                style={{
-                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace',
-                  fontSize: 'small', padding: '10px', backgroundColor: 'var(--bg-secondary)',
-                  color: 'var(--text-primary)', border: '1px solid var(--border-color, #444)',
-                  borderRadius: '6px', minHeight: '220px', textAlign: 'left',
-                }}
-              />
-              {planErr && (
-                <div style={{
-                  fontSize: 'small', marginTop: '4px', padding: '6px 10px', borderRadius: '6px',
-                  backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
-                  textAlign: 'left', whiteSpace: 'pre-wrap',
-                }}>{planErr}</div>
-              )}
-              <div style={{ marginTop: '6px', textAlign: 'right' }}>
-                <button className="btn btn-sm" title="Save your edits as the plan"
-                  onClick={() => takeAction('Plan', 'edit', { text: planText, setErr: setPlanErr, onOk: () => setEditingPlan(false) })}>Save</button>
-                <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                  onClick={() => { setEditingPlan(false); setPlanErr(''); }}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <pre style={{
-                whiteSpace: 'pre-wrap', fontSize: 'small', margin: 0,
-                padding: '10px', backgroundColor: 'var(--bg-secondary)',
-                borderRadius: '6px', maxHeight: '360px', overflowY: 'auto',
-                textAlign: 'left',
-              }}>{planShown}</pre>
-              {(planReady || (item.planActions || []).length > 0) && (
-                <div style={{ marginTop: '6px' }}>
-                  {planErr && (
-                    <div style={{
-                      fontSize: 'small', marginBottom: '4px', padding: '6px 10px', borderRadius: '6px',
-                      backgroundColor: 'color-mix(in srgb, var(--danger, #d33) 10%, transparent)',
-                      textAlign: 'left', whiteSpace: 'pre-wrap',
-                    }}>{planErr}</div>
-                  )}
-                  <div style={{ textAlign: 'right' }}>
-                    {planReady && item.planSession ? (
-                      <a className="btn btn-sm" href={taskSessionHref(item.planSession)} onClick={sessionClick(onOpenSession, item.planSession)}
-                        target="_blank" rel="noopener noreferrer"
-                        title="Continue the planning conversation where the plan left it"
-                      >Continue session ↗</a>
-                    ) : planReady && item.sandbox && (
-                      // A plan from before task sessions: the terminal
-                      // resumes it in the agent's own CLI.
-                      <a className="btn btn-sm" href={`#/terminal/${namespace}/${item.sandbox.name}?chat=plan`}
-                        target="_blank" rel="noopener noreferrer"
-                        title="Continue the planning conversation — opens a terminal tab resuming the same agent session; changes to the plan file ride into Approve & Fix"
-                      >Continue session ↗</a>
-                    )}
-                    <DraftActions kind="Plan" actions={item.planActions} number={item.number}
-                      onEdit={() => { setPlanText(planShown); setEditingPlan(true); setPlanErr(''); }}
-                      onTake={a => takeAction('Plan', a.verb, { run: a.run, setErr: setPlanErr })} />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </td>
-      </tr>
-    )}
     {showReview && item.reviewPending && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>

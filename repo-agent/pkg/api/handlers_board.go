@@ -17,7 +17,6 @@ limitations under the License.
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1882,57 +1881,6 @@ func (s *Server) putBoardPlanDraft(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
-}
-
-// planBoardRefresh re-reads the plan file from the running sandbox — the
-// read-time half of the chat tieback: an agent edits the file during a
-// continued session, and the board picks it up when the plan panel opens.
-// No session-end event exists or is needed: the file is the source of
-// truth, the annotation is its cache for paused pods. An approved plan is
-// frozen — approval covers exactly what was seen.
-func (s *Server) planBoardRefresh(c *gin.Context) {
-	ctx, board, owner, repo, _, number, ok := s.boardWriteContext(c)
-	if !ok {
-		return
-	}
-	sb, ns := s.findPlanSandbox(c, board, owner, repo, number)
-	if sb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no plan to refresh"})
-		return
-	}
-	annotations := sb.GetAnnotations()
-	draft := factorycli.PlanDraft(annotations)
-	if planApproved(annotations) {
-		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft})
-		return
-	}
-	podID, err := sandbox.FindSandboxPodInNamespace(ctx, sb.GetName(), ns)
-	if err != nil || podID == nil {
-		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft, "paused": true})
-		return
-	}
-	var stdout bytes.Buffer
-	if err := sandbox.ExecInPod(ctx, s.K8sManager.KubeClient, *podID, sandbox.ExecOptions{
-		Command: []string{"sh", "-c", fmt.Sprintf("cat /workspaces/plan-issue-%d.md 2>/dev/null", number)},
-		Stdout:  &stdout,
-	}); err != nil {
-		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft})
-		return
-	}
-	fresh := strings.TrimSpace(stdout.String())
-	if fresh == "" || fresh == strings.TrimSpace(draft) {
-		c.JSON(http.StatusOK, gin.H{"changed": false, "plan": draft})
-		return
-	}
-	if err := s.editDraft(ctx, ns, sb, "Plan", factorycli.AnnotationPlanOutput, fresh); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the refreshed plan", "details": err.Error()})
-		return
-	}
-	if err := s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoPlannedAt, nowRFC3339()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store the refreshed plan", "details": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"changed": true, "plan": fresh})
 }
 
 // putBoardTriageDraft saves a member-edited triage suggestion back onto
