@@ -45,7 +45,7 @@ func recipeSandboxFor(sessionID string) *unstructured.Unstructured {
 	sb := researchSandboxCR("alice", sessionID, researchRepo, false)
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: factorycli.ResearchRunName(sessionID), Task: researchTaskID, StartedAt: time.Now().UTC(),
-		Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
+		Kind: "Notes", Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
 	})
 	annotations := sb.GetAnnotations()
 	annotations[factorycli.ResearchRunAnnotation] = string(run)

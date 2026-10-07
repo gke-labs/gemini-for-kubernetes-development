@@ -221,18 +221,20 @@ type RequestSpec struct {
 	Number int `json:"number,omitempty"`
 
 	// Sandbox is the member's sandbox a revise or apply acts on by its
-	// session: a research conversation's, a review's, or a fix's.
+	// session, whichever recipe's: a revise runs in the session of the
+	// run there that offers it. An issue's sandbox's revise names the
+	// issue too (Number), for its row.
 	// It becomes an argument to the factory CLI.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
 	Sandbox string `json:"sandbox,omitempty"`
 
-	// Instruction is the member's own words for this invocation: the
-	// Iterate box, handed to the fix's iterate revise as its instruction
-	// input.
+	// Inputs are a revise's inputs, by name, as its recipe asks for them:
+	// the Iterate box, as the fix's iterate revise's instruction. They
+	// become factory --input arguments.
 	// +kubebuilder:validation:Optional
-	Instruction string `json:"instruction,omitempty"`
+	Inputs map[string]string `json:"inputs,omitempty"`
 
 	// Run is set for verb=run.
 	// +kubebuilder:validation:Optional

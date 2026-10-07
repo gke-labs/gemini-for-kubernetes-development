@@ -39,7 +39,7 @@ func planSessionServer(t *testing.T, approved bool) (*gin.Engine, *fake.FakeDyna
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "plan/myboard/42/1", Task: "recipe-plan-1", StartedAt: time.Unix(1_000_000, 0),
-		Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
+		Kind: "Plan", Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
 	})
 	annotations := map[string]interface{}{
 		"repo":    "repo",
@@ -100,8 +100,8 @@ func TestAPlanSessionActsOnItsIssueRow(t *testing.T) {
 			apply = &req
 		}
 	}
-	if revise == nil || revise.Spec.Number != 42 || revise.Spec.Revise != "plan" || revise.Spec.Sandbox != "" {
-		t.Errorf("revise filed %+v, want Update plan on #42", revise)
+	if revise == nil || revise.Spec.Number != 42 || revise.Spec.Revise != "plan" || revise.Spec.Sandbox != "fix-repo-42" {
+		t.Errorf("revise filed %+v, want Update plan of fix-repo-42, on #42", revise)
 	}
 	if apply == nil || apply.Spec.Number != 42 || apply.Spec.Apply == nil ||
 		*apply.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Plan", Action: "comment"}) {
@@ -133,7 +133,7 @@ func reviewSessionServer(t *testing.T, state, reviewState string) (*gin.Engine, 
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "review/myboard/42/1", Task: "recipe-review-1", StartedAt: time.Unix(1_000_000, 0),
-		Revises: []factorycli.RecordedRevise{{ID: "review", Label: "Update review"}},
+		Kind: "Review", Revises: []factorycli.RecordedRevise{{ID: "review", Label: "Update review"}},
 	})
 	annotations := map[string]interface{}{
 		"repo":    "repo",
@@ -199,7 +199,7 @@ func fixSessionServer(t *testing.T, state string, pr bool) (*gin.Engine, *fake.F
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "fix/myboard/42/1", Task: "recipe-fix-1", StartedAt: time.Unix(1_000_000, 0),
-		Revises: []factorycli.RecordedRevise{{ID: "iterate", Label: "Iterate"}, {ID: "address-comments", Label: "Address comments"}, {ID: "fix-ci", Label: "Fix CI"}},
+		Kind: "Change", Revises: []factorycli.RecordedRevise{{ID: "iterate", Label: "Iterate", Inputs: []string{"instruction"}}, {ID: "address-comments", Label: "Address comments"}, {ID: "fix-ci", Label: "Fix CI"}},
 	})
 	htmlURL := "https://github.com/test/repo/issues/42"
 	if pr {
@@ -249,7 +249,7 @@ func TestAFixSessionFilesItsFollowUpsForItsSandbox(t *testing.T) {
 		t.Fatalf("filed %+v, want one revise", reqs)
 	}
 	if spec := reqs[0].Spec; spec.Verb != boardv1alpha1.VerbRevise || spec.Sandbox != "fix-repo-42" || spec.Revise != "iterate" ||
-		spec.Number != 0 || spec.Member != "alice" || spec.Instruction != "rename it" {
+		spec.Number != 42 || spec.Member != "alice" || spec.Inputs["instruction"] != "rename it" {
 		t.Errorf("iterate filed %+v, want alice's revise of fix-repo-42 with the instruction", spec)
 	}
 }

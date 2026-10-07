@@ -837,11 +837,8 @@ func fixRevises(sb *unstructured.Unstructured) []models.WorkAction {
 	if sb == nil {
 		return nil
 	}
-	var revises []models.WorkAction
-	for _, rv := range factorycli.RecordedRunRevises(sb.GetAnnotations(), factorycli.AnnotationFixRun) {
-		revises = append(revises, models.WorkAction{Verb: "revise", Revise: rv.ID, Label: rv.Label, Inputs: reviseInputs[rv.ID], Enabled: true})
-	}
-	return revises
+	run, _ := factorycli.RecordedRunAt(sb.GetAnnotations(), factorycli.AnnotationFixRun)
+	return reviseActions(run)
 }
 
 func hasLabel(labels []*github.Label, name string) bool {

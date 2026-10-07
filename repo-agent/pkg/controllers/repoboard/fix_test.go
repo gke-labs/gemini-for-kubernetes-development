@@ -36,7 +36,8 @@ func fixRun(name, session string) string {
 	if session != "" {
 		s += `,"session":"` + session + `"`
 	}
-	return s + `,"startedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + `"}`
+	return s + `,"startedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + `","kind":"Change",` +
+		`"revises":[{"id":"iterate","label":"Iterate","inputs":["instruction"]},{"id":"address-comments"},{"id":"fix-ci"}]}`
 }
 
 // fixedSandbox is issue 7's sandbox after its fix: task type fix, the run
@@ -135,12 +136,16 @@ func TestFixAgainRelaunches(t *testing.T) {
 const fixReviseKeyAt = "alice/revise-fix-repo-7"
 
 func fixReviseClick(revise, instruction string) *boardv1alpha1.Request {
-	return testRequest(boardv1alpha1.RequestSpec{
-		Verb:        boardv1alpha1.VerbRevise,
-		Sandbox:     "fix-repo-7",
-		Revise:      revise,
-		Instruction: instruction,
-	})
+	spec := boardv1alpha1.RequestSpec{
+		Verb:    boardv1alpha1.VerbRevise,
+		Sandbox: "fix-repo-7",
+		Number:  7,
+		Revise:  revise,
+	}
+	if instruction != "" {
+		spec.Inputs = map[string]string{"instruction": instruction}
+	}
+	return testRequest(spec)
 }
 
 // prSandbox is issue 7's sandbox once its fix opened PR 9.

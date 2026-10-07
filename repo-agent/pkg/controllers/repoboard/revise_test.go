@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,20 +30,32 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-const reviseKeyFor42 = "alice/revise-plan-repo-42"
+const reviseKeyFor42 = "alice/revise-fix-repo-42"
 
 func reviseClick(number int, revise string) *boardv1alpha1.Request {
 	return testRequest(boardv1alpha1.RequestSpec{
-		Verb:   boardv1alpha1.VerbRevise,
-		Number: number,
-		Revise: revise,
+		Verb:    boardv1alpha1.VerbRevise,
+		Sandbox: fmt.Sprintf("fix-repo-%d", number),
+		Number:  number,
+		Revise:  revise,
 	})
 }
 
+// planRun is a plan run record: run named name, task task, in session
+// (empty: its own), offering Update plan.
+func planRun(name, task, session string, started time.Time) string {
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: name, Task: task, Session: session, StartedAt: started, Kind: "Plan",
+		Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
+	})
+	return string(run)
+}
+
 // planDraftSandbox holds a plan draft whose task output came from a revise
-// in the session of recipe-plan-1.
+// in the session of recipe-plan-1, its plan run recorded.
 func planDraftSandbox(extra map[string]interface{}) *unstructured.Unstructured {
 	annotations := map[string]interface{}{
+		factorycli.AnnotationPlanRun:       planRun("plan/test-board/42/1", "recipe-plan-1", "", time.Unix(1_000_000, 0)),
 		AnnotationPlanDraft:                "## Summary\nFirst plan.",
 		AnnotationPlannedAt:                "2026-10-01T00:00:00Z",
 		factorycli.AnnotationPlanCommented: "2026-10-01T00:05:00Z",
@@ -85,7 +98,7 @@ func TestReviseRewritesThePlanDraft(t *testing.T) {
 	g.Expect(opts.Revise).To(gomega.Equal("plan"))
 	g.Expect(opts.Session).To(gomega.Equal("recipe-plan-1"))
 	g.Expect(opts.GithubToken).To(gomega.Equal("gho_alice"))
-	g.Expect(opts.RunName).To(gomega.HavePrefix("revise/test-board/42/plan/"))
+	g.Expect(opts.RunName).To(gomega.HavePrefix("revise/test-board/fix-repo-42/plan/"))
 
 	fake.running[reviseKeyFor42] = true
 	_, err = r.Reconcile(context.Background(), boardRequest())
@@ -179,14 +192,13 @@ func TestReviseResumesItsRecordedRun(t *testing.T) {
 		name, run string
 		resumed   bool
 	}{
-		{"revise since the click", "revise/test-board/42/plan/1", true},
+		{"revise since the click", "revise/test-board/fix-repo-42/plan/1", true},
 		{"the plan's run", "plan/test-board/42/1", false},
-		{"another issue's revise", "revise/test-board/43/plan/1", false},
+		{"another sandbox's revise", "revise/test-board/fix-repo-43/plan/1", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			run, _ := json.Marshal(factorycli.RecordedRun{Name: tc.run, Task: "recipe-plan-3", Session: "recipe-plan-1", StartedAt: time.Now().Add(time.Second)})
-			sb := planDraftSandbox(map[string]interface{}{factorycli.AnnotationPlanRun: string(run)})
+			sb := planDraftSandbox(map[string]interface{}{factorycli.AnnotationPlanRun: planRun(tc.run, "recipe-plan-3", "recipe-plan-1", time.Now().Add(time.Second))})
 			fake := newFakeLauncher()
 			r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, reviseClick(42, "plan"))
 			_, err := r.Reconcile(context.Background(), boardRequest())
@@ -202,14 +214,21 @@ func TestReviseResumesItsRecordedRun(t *testing.T) {
 // revised in: its session, for a revise, else its task.
 func TestReviseSessionFallsBackToTheRecordedRun(t *testing.T) {
 	g := gomega.NewWithT(t)
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: "plan/test-board/42/1", Task: "recipe-plan-1", StartedAt: time.Unix(1_000_000, 0)})
-	sb := planDraftSandbox(map[string]interface{}{factorycli.AnnotationPlanRun: string(run)})
+	sb := planDraftSandbox(map[string]interface{}{factorycli.AnnotationPlanRun: planRun("revise/test-board/fix-repo-42/plan/1", "recipe-plan-2", "recipe-plan-0", time.Unix(1_000_000, 0))})
 	a := sb.GetAnnotations()
 	delete(a, factorycli.AnnotationPlanOutput)
-	g.Expect(reviseSession(a)).To(gomega.Equal("recipe-plan-1"))
+	sb.SetAnnotations(a)
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, reviseClick(42, "plan"))
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].ReviseOpts.Session).To(gomega.Equal("recipe-plan-0"))
 }
 
-// No draft to revise (rejected, or approved and gone): the click fails.
+// No run offering the revise (the sandbox is gone), or no draft to revise
+// (rejected, or approved and gone): the click fails.
 func TestReviseWithoutDraft(t *testing.T) {
 	g := gomega.NewWithT(t)
 	req := reviseClick(42, "plan")
@@ -218,12 +237,23 @@ func TestReviseWithoutDraft(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
-	g.Expect(requestStatus(t, r, req).Reason).To(gomega.Equal("NoDraft"))
+	g.Expect(requestStatus(t, r, req).Reason).To(gomega.Equal("NoRun"))
+
+	req = reviseClick(42, "plan")
+	sb := planDraftSandbox(nil)
+	a := sb.GetAnnotations()
+	delete(a, AnnotationPlanDraft)
+	sb.SetAnnotations(a)
+	r = newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, req)
+	_, err = r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+	g.Expect(requestStatus(t, r, req).Reason).To(gomega.Equal("NothingToRevise"))
 }
 
 func TestReviseSubjectNamesTheRevise(t *testing.T) {
-	spec := boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Number: 42, Revise: "plan"}
-	if got := spec.Key(); !strings.HasSuffix(got, "revise/42/plan") {
+	spec := boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Sandbox: "fix-repo-42", Number: 42, Revise: "plan"}
+	if got := spec.Key(); !strings.HasSuffix(got, "revise/fix-repo-42/plan") {
 		t.Errorf("key = %q", got)
 	}
 }

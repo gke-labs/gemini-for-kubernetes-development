@@ -19,11 +19,9 @@ package repoboard
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
@@ -31,9 +29,9 @@ import (
 )
 
 // Save notes, for a research conversation `factory recipe research`
-// started: a revise (Request verb revise, with the sandbox) asks the
-// recipe's notes revise into the conversation's session, and its Notes
-// task output is stored on the sandbox as the notes draft. Save to
+// started: a revise (revise.go) asks the recipe's notes revise into the
+// conversation's session, and its Notes task output is stored on the
+// sandbox as the notes draft (revisedNotes). Save to
 // research/notes is an apply (verb apply, kind Notes, push-notes): factory
 // apply pushes the draft, as it is then, to the member's fork. Both are
 // keyed by the sandbox, as an issue's are by its number.
@@ -53,107 +51,6 @@ func notesSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured
 		return nil
 	}
 	return sb
-}
-
-// sandboxReviseKey is the runner key of a revise filed for a sandbox (a
-// conversation's Save notes, a review's Update review): one at a time, as
-// for a plan.
-func sandboxReviseKey(member, sandbox string) string {
-	return fmt.Sprintf("%s/revise-%s", member, sandbox)
-}
-
-// sandboxRevisePrefix is the run names of a sandbox's revise, before the
-// time.
-func sandboxRevisePrefix(board, sandbox, revise string) string {
-	return fmt.Sprintf("revise/%s/%s/%s/", board, sandbox, revise)
-}
-
-// ensureNotesRevise starts a Save notes, as ensureRevises starts an issue's
-// revise.
-func (r *Reconciler) ensureNotesRevise(ctx context.Context, work *workState, req *boardv1alpha1.Request) {
-	logger := log.FromContext(ctx)
-	spec := req.Spec
-	key := sandboxReviseKey(spec.Member, spec.Sandbox)
-	if r.Factory.IsRunning(key) {
-		return
-	}
-	if res, ok := r.Factory.LastResult(key); ok && res.FinishedAt.After(req.CreationTimestamp.Time) {
-		return
-	}
-	sb := notesSandbox(work, spec)
-	if sb == nil {
-		return
-	}
-	token, err := r.executorToken(ctx, spec.Member)
-	if err != nil {
-		logger.Error(err, "revise executor has no token", "executor", spec.Member, "sandbox", spec.Sandbox)
-		return
-	}
-	annotations := sb.GetAnnotations()
-	prefix := sandboxRevisePrefix(work.board.Name, spec.Sandbox, spec.Revise)
-	runName := fmt.Sprintf("%s%d", prefix, time.Now().Unix())
-	if name, ok := r.resumableReviseRun(key, annotations, factorycli.ResearchRunAnnotation, prefix, req); ok {
-		runName = name
-	}
-	if err := r.wake(ctx, sb); err != nil {
-		logger.Error(err, "unable to wake the sandbox for a revise", "sandbox", sb.GetName())
-		return
-	}
-	if r.Factory.StartRevise(key, factorycli.ReviseOptions{
-		Namespace:   spec.Member,
-		SandboxName: sb.GetName(),
-		Revise:      spec.Revise,
-		Session:     factorycli.ResearchTask(annotations),
-		GithubToken: token,
-		RunName:     runName,
-	}) {
-		logger.Info("launched factory recipe revise", "sandbox", sb.GetName(), "revise", spec.Revise, "member", spec.Member)
-	}
-}
-
-// settleNotesRevise is served by the revise's result since the click: its
-// notes, stored as the draft, or its failure.
-func (r *Reconciler) settleNotesRevise(ctx context.Context, work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
-	spec := req.Spec
-	sb := notesSandbox(work, spec)
-	key := sandboxReviseKey(spec.Member, spec.Sandbox)
-	res, ran := r.Factory.LastResult(key)
-	ran = ran && res.FinishedAt.After(req.CreationTimestamp.Time)
-	switch {
-	case ran && res.Err != nil:
-		return requestOutcome{
-			phase:   boardv1alpha1.RequestFailed,
-			reason:  "ReviseFailed",
-			message: clipMessage(strings.TrimSpace(lastLines(res.Output, 3)+"\n"+res.Err.Error()), 400),
-		}
-	case ran:
-		notes := factorycli.ExtractNotes(res.Output)
-		if notes == "" {
-			return requestOutcome{
-				phase:   boardv1alpha1.RequestFailed,
-				reason:  "NoNotes",
-				message: "the revise ended without notes",
-			}
-		}
-		if sb == nil {
-			// Written, and the conversation went since.
-			return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
-		}
-		if err := r.storeNotesDraft(ctx, sb, notes, factorycli.NotesTaskOutput(res.Output)); err != nil {
-			log.FromContext(ctx).Error(err, "storing the notes draft", "sandbox", sb.GetName())
-			return stillPending
-		}
-		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised", sandbox: sb.GetName()}
-	case r.Factory.IsRunning(key):
-		return requestOutcome{phase: boardv1alpha1.RequestRunning}
-	case sb == nil:
-		return requestOutcome{
-			phase:   boardv1alpha1.RequestFailed,
-			reason:  "NoConversation",
-			message: fmt.Sprintf("there is no research conversation in %s to save notes from", spec.Sandbox),
-		}
-	}
-	return pendingOutcome(req, now)
 }
 
 // storeNotesDraft stores a revise's notes as the draft: not yet saved.

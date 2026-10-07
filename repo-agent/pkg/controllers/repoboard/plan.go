@@ -61,7 +61,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 		return
 	}
 	// Nor while a revise rewrites the draft.
-	if r.Factory.IsRunning(key) || r.Factory.IsRunning(reviseKey(work, req.member, req.issue)) {
+	if r.Factory.IsRunning(key) || (sb != nil && r.Factory.IsRunning(sandboxReviseKey(req.member, sb.GetName()))) {
 		return
 	}
 

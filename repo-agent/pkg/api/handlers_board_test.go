@@ -2163,7 +2163,7 @@ func TestFixRevisesFromTheRecordedRun(t *testing.T) {
 		t.Errorf("no sandbox, no revises: %+v", got)
 	}
 	sb := &unstructured.Unstructured{}
-	sb.SetAnnotations(map[string]string{factorycli.AnnotationFixRun: `{"name":"fix/repo/1/1","task":"t","revises":[{"id":"iterate","label":"Iterate"},{"id":"rebase","label":"Rebase"}]}`})
+	sb.SetAnnotations(map[string]string{factorycli.AnnotationFixRun: `{"name":"fix/repo/1/1","task":"t","kind":"Change","revises":[{"id":"iterate","label":"Iterate","inputs":["instruction"]},{"id":"rebase","label":"Rebase"}]}`})
 	got := fixRevises(sb)
 	if len(got) != 2 || got[0].Revise != "iterate" || len(got[0].Inputs) != 1 || got[0].Inputs[0] != "instruction" ||
 		got[1].Revise != "rebase" || got[1].Label != "Rebase" || len(got[1].Inputs) != 0 || !got[1].Enabled || got[1].Verb != "revise" {
