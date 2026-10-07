@@ -34,7 +34,7 @@ import (
 const (
 	notesSandboxName = "rsch-repo-abc12345"
 	notesReviseKeyAt = "alice/revise-" + notesSandboxName
-	notesApplyKeyAt  = "alice/apply-" + notesSandboxName + "-notes-push-notes"
+	notesApplyKeyAt  = "alice/apply-" + notesSandboxName + "-research-push-notes"
 )
 
 // recipeResearchSandbox is a research sandbox `factory recipe research`
@@ -66,7 +66,7 @@ func notesApplyClick() *boardv1alpha1.Request {
 	return testRequest(boardv1alpha1.RequestSpec{
 		Verb:    boardv1alpha1.VerbApply,
 		Sandbox: notesSandboxName,
-		Apply:   &boardv1alpha1.ApplyRequest{Kind: "Notes", Action: "push-notes"},
+		Apply:   &boardv1alpha1.ApplyRequest{Run: "research", Action: "push-notes"},
 	})
 }
 

@@ -29,21 +29,6 @@ func ComposeTaskOutput(kind, header, draft, issueURL, task string) (string, erro
 	return composeTaskOutput(kind, header, spec, issueURL, task)
 }
 
-// ComposeNotes is the Notes task output factory apply --action push-notes
-// takes for a research conversation's notes draft: as ComposeTaskOutput,
-// with the note's file name, the conversation's (empty leaves it to
-// factory: the session's id).
-func ComposeNotes(header, markdown, name, repoURL, task string) (string, error) {
-	if strings.TrimSpace(markdown) == "" {
-		return "", fmt.Errorf("the notes are empty")
-	}
-	spec := map[string]string{"markdown": strings.TrimSpace(markdown)}
-	if name != "" {
-		spec["name"] = name
-	}
-	return composeTaskOutput("Notes", header, spec, repoURL, task)
-}
-
 func composeTaskOutput(kind, header string, spec any, targetURL, task string) (string, error) {
 	root := headerNode(kind, header)
 	if root == nil {

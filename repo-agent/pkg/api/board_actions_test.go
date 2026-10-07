@@ -179,7 +179,7 @@ actions:
 	}
 	filed := h.requestOf(boardv1alpha1.VerbApply)
 	if filed.Spec.Number != 42 || filed.Spec.Member != "alice" || filed.Spec.Apply == nil ||
-		*filed.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Plan", Action: "comment"}) {
+		*filed.Spec.Apply != (boardv1alpha1.ApplyRequest{Run: "plan", Action: "comment"}) {
 		t.Errorf("comment filed %+v", filed.Spec)
 	}
 	if a := h.row().PlanActions[0]; a.Enabled || a.Reason != "posting" {
@@ -313,7 +313,7 @@ func TestTriageActions(t *testing.T) {
 		t.Fatalf("label: %d %s", w.Code, w.Body.String())
 	}
 	label := h.requestOf(boardv1alpha1.VerbApply)
-	if *label.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Triage", Action: "label"}) {
+	if *label.Spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-triage", Action: "label"}) {
 		t.Errorf("label filed %+v", label.Spec)
 	}
 	// Labeling and commenting are separate writes, so both can stand.
@@ -388,4 +388,35 @@ func storedOutput(kind, draft string) string {
 		panic(err)
 	}
 	return doc
+}
+
+// Who may click a write is the verb's: label needs triage, a verb the
+// board does not know needs push, and the rest anyone with the board.
+func TestActionsFor(t *testing.T) {
+	actions := []models.WorkAction{
+		{Verb: "comment", Enabled: true}, {Verb: "label", Enabled: true},
+		{Verb: "frobnicate", Enabled: true}, {Verb: "reject", Enabled: true},
+	}
+	enabled := func(perms repoPerms) []bool {
+		var got []bool
+		for _, a := range actionsFor(actions, perms) {
+			got = append(got, a.Enabled)
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		perms repoPerms
+		want  []bool
+	}{
+		{repoPerms{}, []bool{true, false, false, true}},
+		{repoPerms{triage: true}, []bool{true, true, false, true}},
+		{repoPerms{triage: true, push: true}, []bool{true, true, true, true}},
+	} {
+		if got := enabled(tc.perms); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("actionsFor(%+v) enabled = %v, want %v", tc.perms, got, tc.want)
+		}
+	}
+	if !actions[1].Enabled {
+		t.Error("actionsFor changed its input")
+	}
 }

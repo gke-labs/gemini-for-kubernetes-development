@@ -275,11 +275,21 @@ function anyPosting(items) {
     .some(a => a.reason === 'posting' || a.reason === 'revising'));
 }
 
+// draftVerb is how a verb looks on a draft of kind: the kind's look, else
+// a write's generic one — any verb the output offers is shown; whether the
+// viewer may take it is the API's enabled.
+function draftVerb(kind, verb) {
+  return (DRAFT_VERBS[kind] || {})[verb] || {
+    label: verb, title: `Applies "${verb}" under your identity`,
+    confirm: n => `Apply "${verb}" to #${n} as you?`,
+  };
+}
+
 function DraftActions({ kind, actions, number, onEdit, onTake }) {
-  const verbs = DRAFT_VERBS[kind];
-  const shown = (actions || []).filter(a => verbs[a.verb]);
+  // A revise is clicked in the draft's session, not on the row.
+  const shown = (actions || []).filter(a => a.verb !== 'revise');
   const buttons = shown.map(a => {
-    const v = verbs[a.verb];
+    const v = draftVerb(kind, a.verb);
     const label = a.label || v.label;
     return (
       <button key={a.verb + (a.run || '')} className="btn btn-sm" style={{ marginLeft: '4px' }}
@@ -293,7 +303,7 @@ function DraftActions({ kind, actions, number, onEdit, onTake }) {
   });
   const failures = shown.filter(a => a.error).map(a => (
     <div key={`err-${a.verb}`} style={{ color: '#c62828', fontSize: '12px', marginTop: '4px' }}>
-      {a.label || verbs[a.verb].label} failed: {a.error}
+      {a.label || draftVerb(kind, a.verb).label} failed: {a.error}
     </div>
   ));
   return [...buttons, ...failures];

@@ -82,9 +82,13 @@ actions:
 		t.Error("a plan read as notes")
 	}
 
-	// The stored document is kept; the draft, its name and the repository
-	// are what is pushed.
-	composed, err := ComposeNotes(header, "# Edited\n", "my-notes", "https://github.com/o/r", "board-sb-1")
+	// The stored document is kept, edits included; the name and the
+	// repository are set as it is applied.
+	stored, err := WithDraft("Notes", header, "# Edited\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := ApplyDoc(stored, "board-sb-1", "https://github.com/o/r", map[string]string{"name": "my-notes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,12 +109,8 @@ actions:
 		got.Spec["markdown"] != "# Edited" || got.Spec["name"] != "my-notes" {
 		t.Errorf("composed:\n%s", composed)
 	}
-	if fresh, err := ComposeNotes("", "x", "", "https://github.com/o/r", "board-sb-1"); err != nil || strings.Contains(fresh, "name:") ||
-		!strings.Contains(fresh, "task: board-sb-1") {
-		t.Errorf("fresh notes = %q, %v", fresh, err)
-	}
-	if _, err := ComposeNotes("", " ", "n", "u", "t"); err == nil {
-		t.Error("empty notes composed")
+	if _, err := ApplyDoc("", "t", "u", nil); err == nil {
+		t.Error("no document applied")
 	}
 	if acts := OfferedActions("Notes", ""); len(acts) != 3 {
 		t.Errorf("default Notes actions = %+v", acts)

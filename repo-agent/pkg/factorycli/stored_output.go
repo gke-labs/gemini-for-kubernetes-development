@@ -3,6 +3,8 @@ package factorycli
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,21 +31,69 @@ const (
 	AnnotationNotesApplied = boardAnnotationPrefix + "research-applied"
 )
 
-// runTaskType is the task type a run annotation is recorded for.
-func runTaskType(runKey string) string {
+// RunTaskType is the task type a run annotation is recorded for: what an
+// apply names the run by.
+func RunTaskType(runKey string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(runKey, runAnnotationPrefix), runAnnotationSuffix)
+}
+
+// RunAnnotation is the annotation a run of taskType is recorded under.
+func RunAnnotation(taskType string) string {
+	return runAnnotationPrefix + taskType + runAnnotationSuffix
 }
 
 // OutputAnnotation is where the board stores the task output of the run
 // recorded under runKey.
 func OutputAnnotation(runKey string) string {
-	return boardAnnotationPrefix + runTaskType(runKey) + "-output"
+	return boardAnnotationPrefix + RunTaskType(runKey) + "-output"
 }
 
 // AppliedAnnotation is where the board stamps the actions applied to the
 // task output of the run recorded under runKey.
 func AppliedAnnotation(runKey string) string {
-	return boardAnnotationPrefix + runTaskType(runKey) + "-applied"
+	return boardAnnotationPrefix + RunTaskType(runKey) + "-applied"
+}
+
+// TaskOutputKind is a task output's kind, "" when doc is none.
+func TaskOutputKind(doc string) string {
+	var m struct {
+		Kind string `yaml:"kind"`
+	}
+	if yaml.Unmarshal([]byte(doc), &m) != nil {
+		return ""
+	}
+	return m.Kind
+}
+
+// ApplyDoc is a stored task output as factory apply takes it: as stored,
+// edits included, with task as its source task and targetURL as its
+// target when it names none, and spec's fields set over its spec's.
+func ApplyDoc(doc, task, targetURL string, spec map[string]string) (string, error) {
+	kind := TaskOutputKind(doc)
+	root := headerNode(kind, doc)
+	if root == nil {
+		return "", fmt.Errorf("there is no task output to apply")
+	}
+	if m, _ := parseTaskOutputMeta(kind, doc); m.Source.Task == "" {
+		setKey(root, "source", mapping("task", task))
+	}
+	if !hasTarget(root) {
+		setKey(root, "target", mapping("url", targetURL))
+	}
+	if len(spec) > 0 {
+		specNode := mapValue(root, "spec")
+		if specNode == nil || specNode.Kind != yaml.MappingNode {
+			return "", fmt.Errorf("the %s has no spec", kind)
+		}
+		for _, k := range slices.Sorted(maps.Keys(spec)) {
+			setKey(specNode, k, scalar(spec[k]))
+		}
+	}
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		return "", fmt.Errorf("encoding the %s: %w", kind, err)
+	}
+	return string(out), nil
 }
 
 // Applied is the actions applied to a stored output, from its applied

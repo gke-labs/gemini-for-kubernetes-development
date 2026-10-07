@@ -389,13 +389,13 @@ func (s *Server) taskSessionDraftAction(c *gin.Context) {
 		return
 	}
 	view, _ := sessionResearch(sb)
-	switch verb {
-	case "edit":
+	switch {
+	case verb == "edit":
 		s.editResearchNotes(c, view, req.Text)
-	case "reject":
+	case verb == "reject":
 		s.discardResearchNotes(c, view)
-	case "push-notes":
-		s.saveResearchNotes(c, view)
+	case factorycli.IsApplyVerb(verb):
+		s.applyResearchNotes(c, view, verb)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("notes do not take %s here", verb)})
 	}

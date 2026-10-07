@@ -47,20 +47,16 @@ spec:
               apply:
                 properties:
                   action:
-                    enum:
-                    - label
-                    - comment
-                    - push-notes
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                     type: string
-                  kind:
-                    enum:
-                    - Triage
-                    - Plan
-                    - Notes
+                  run:
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
                     type: string
                 required:
                 - action
-                - kind
+                - run
                 type: object
               board:
                 type: string

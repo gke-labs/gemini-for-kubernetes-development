@@ -23,8 +23,10 @@ import (
 // boardIssueAction takes one action a draft's task output offers:
 // POST …/actions/:verb {kind: Triage|Plan, run, revise, text}, text being
 // an edit's new draft.
-// The action must be on the row (offered, and enabled just now); each is
-// the handler the board's buttons already call.
+// The action must be on the row (offered, and enabled just now, for the
+// viewer). The draft verbs and follow-ups are the handlers the board's
+// buttons already call; any other verb is a write, filed for the
+// controller's factory apply.
 func (s *Server) boardIssueAction(c *gin.Context) {
 	var req struct {
 		Kind string `json:"kind"`
@@ -45,12 +47,15 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	}
 	var sb *unstructured.Unstructured
 	var actions []models.WorkAction
+	var runKey string
 	switch req.Kind {
 	case "Triage":
+		runKey = factorycli.AnnotationTriageRun
 		if sb, _ = s.findTriageDraft(c, board, owner, repo, number); sb != nil {
 			actions = triageWorkActions(sb.GetAnnotations())
 		}
 	case "Plan":
+		runKey = factorycli.AnnotationPlanRun
 		if sb, _ = s.findPlanSandbox(c, board, owner, repo, number); sb != nil {
 			a := sb.GetAnnotations()
 			if factorycli.PlanDraft(a) != "" && !planApproved(a) {
@@ -65,12 +70,8 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("no %s draft on #%d", strings.ToLower(req.Kind), number)})
 		return
 	}
-	if req.Kind == "Triage" {
-		ctx := c.Request.Context()
-		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
-		perms := s.repoPermissions(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), repoURL)
-		actions = triageActionsFor(actions, perms)
-	}
+	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+	actions = actionsFor(actions, s.repoPermissions(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), repoURL))
 	arg := req.Run
 	if req.Verb == "revise" {
 		arg = req.Revise
@@ -85,12 +86,14 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 		return
 	}
 
+	if factorycli.IsApplyVerb(req.Verb) {
+		s.fileApply(c, board, sb.GetName(), number, factorycli.RunTaskType(runKey), req.Verb)
+		return
+	}
 	switch req.Kind + "/" + req.Verb {
 	case "Triage/edit":
 		rebody(c, gin.H{"draft": req.Text})
 		s.putBoardTriageDraft(c)
-	case "Triage/label", "Triage/comment", "Plan/comment":
-		s.fileApply(c, board, number, req.Kind, req.Verb)
 	case "Triage/reject":
 		s.rejectBoardTriage(c)
 	case "Plan/edit":
@@ -107,16 +110,18 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	}
 }
 
-// fileApply files the write for the controller, which runs factory apply
-// --action with the clicker's token and marks the draft once it is done:
-// the board writes nothing to GitHub itself. 202, since the write is the
-// controller's next pass.
-func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, number int, kind, action string) {
+// fileApply files the write of action, of the draft of run on sandbox,
+// for the controller, which runs factory apply --action with the
+// clicker's token and marks the draft once it is done: the board writes
+// nothing to GitHub itself. number is the issue whose row follows it, 0
+// for none. 202, since the write is the controller's next pass.
+func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, sandbox string, number int, run, action string) {
 	filed, err := s.fileRequest(c.Request.Context(), board, boardv1alpha1.RequestSpec{
-		Verb:   boardv1alpha1.VerbApply,
-		Member: s.Auth.GetNamespaceFromContext(c),
-		Number: number,
-		Apply:  &boardv1alpha1.ApplyRequest{Kind: kind, Action: action},
+		Verb:    boardv1alpha1.VerbApply,
+		Member:  s.Auth.GetNamespaceFromContext(c),
+		Sandbox: sandbox,
+		Number:  number,
+		Apply:   &boardv1alpha1.ApplyRequest{Run: run, Action: action},
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the write", "details": err.Error()})
@@ -166,8 +171,11 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 		if spec.Apply == nil {
 			continue
 		}
-		actions := item.TriageActions
-		if spec.Apply.Kind == "Plan" {
+		var actions []models.WorkAction
+		switch spec.Apply.Run {
+		case factorycli.RunTaskType(factorycli.AnnotationTriageRun):
+			actions = item.TriageActions
+		case factorycli.RunTaskType(factorycli.AnnotationPlanRun):
 			actions = item.PlanActions
 		}
 		for i := range actions {
@@ -203,11 +211,14 @@ func markRevise(actions []models.WorkAction, req boardv1alpha1.Request) {
 	}
 }
 
-// needsTriageAccess is why a viewer who may not label the repo's issues
-// cannot add a triage's labels. Its comment needs nothing: anyone may
-// comment on a public issue. Nor does a Review's post-review, for the same
-// reason: a pending review is a review anyone may write.
-const needsTriageAccess = "needs triage access on the repo"
+// Why a viewer may not take a write (factorycli.VerbNeeds): adding labels
+// needs triage access; a write the board does not know needs push.
+// Comments, pending reviews and pushes to the viewer's own fork need
+// nothing.
+const (
+	needsTriageAccess = "needs triage access on the repo"
+	needsPushAccess   = "needs push access on the repo"
+)
 
 // forViewer is the feed as the viewer may act on it. The feed is built and
 // cached per board, for whoever polls; what a viewer may write to GitHub
@@ -215,29 +226,39 @@ const needsTriageAccess = "needs triage access on the repo"
 func (s *Server) forViewer(ctx context.Context, board *unstructured.Unstructured, namespace, sessionUser string, items []models.WorkItem) []models.WorkItem {
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
 	perms := s.repoPermissions(ctx, namespace, sessionUser, repoURL)
-	if perms.triage {
+	if perms.push && perms.triage {
 		return items
 	}
 	out := make([]models.WorkItem, len(items))
 	for i := range items {
 		out[i] = items[i]
 		if len(items[i].TriageActions) > 0 {
-			out[i].TriageActions = triageActionsFor(items[i].TriageActions, perms)
+			out[i].TriageActions = actionsFor(items[i].TriageActions, perms)
+		}
+		if len(items[i].PlanActions) > 0 {
+			out[i].PlanActions = actionsFor(items[i].PlanActions, perms)
 		}
 	}
 	return out
 }
 
-// triageActionsFor is a copy of a triage's actions with what perms say of
-// each: without triage access, its labels cannot be added.
-func triageActionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkAction {
+// actionsFor is a copy of a draft's actions with what perms say of each:
+// one whose verb needs access the viewer lacks cannot be taken.
+func actionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkAction {
 	out := append([]models.WorkAction(nil), actions...)
-	if perms.triage {
-		return out
-	}
 	for i := range out {
-		if out[i].Verb == "label" && out[i].Enabled {
-			out[i].Enabled, out[i].Reason = false, needsTriageAccess
+		if !out[i].Enabled {
+			continue
+		}
+		switch factorycli.VerbNeeds(out[i].Verb) {
+		case factorycli.NeedsTriage:
+			if !perms.triage {
+				out[i].Enabled, out[i].Reason = false, needsTriageAccess
+			}
+		case factorycli.NeedsPush:
+			if !perms.push {
+				out[i].Enabled, out[i].Reason = false, needsPushAccess
+			}
 		}
 	}
 	return out
