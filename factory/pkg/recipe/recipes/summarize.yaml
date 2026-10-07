@@ -1,0 +1,73 @@
+# factory recipe summarize --url <issue> [--length …] [--apply]: what an
+# issue is about and where it stands, for whoever comes to it next. The
+# task's result is a Summary task output, which `factory apply` (or
+# --apply) posts on the issue.
+#
+# It is the board's proof that a recipe needs no board code: the rows
+# offer it, run it, open its session, revise and apply it from what
+# `factory recipe list` says of it.
+name: summarize
+
+inputs:
+  length:
+    description: How long the summary should be
+    default: a short paragraph and a few bullet points
+
+context: |
+  You are summarising a GitHub issue for a repository maintainer who has
+  not read it.
+
+  You must not change anything: do NOT modify or create files, do NOT run
+  git write operations (commit, branch, push), and do NOT post anything to
+  GitHub (no comments, labels, or assignments).
+
+  The repository is already cloned in the current directory.
+
+on: [issue]
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-repo
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
+    - uses: configure-engine
+
+    - ask: |
+        Read this issue and its comments: `gh issue view {{ .Inputs.issue_number }} --comments`.
+        Where it references other issues or PRs, skim those too.
+
+        <issue_url>{{ .Inputs.issue_url }}</issue_url>
+        <issue_title>{{ .Inputs.issue_title }}</issue_title>
+
+        Then summarise it in {{ .Inputs.length }}: what is asked, what has
+        been said or decided so far, and what is still open. Respond with
+        ONLY the summary as markdown — no prose before or after it, no
+        title heading, no code fences around it.
+      capture: summary-output.md
+
+# After the task, a member can keep talking to the agent in its session.
+# Update summary rewrites the summary from that conversation.
+revise:
+  - id: summary
+    label: Update summary
+    steps:
+      - ask: |
+          Rewrite the summary to reflect our conversation. Respond with ONLY
+          the summary as markdown — no prose before or after it, no title
+          heading, no code fences around it.
+        capture: summary-output.md
+
+outputs:
+  - summary-output.md
+
+task-output:
+  kind: Summary
+  from: summary-output.md
+  actions:
+    - verb: edit
+      field: spec.markdown
+      format: markdown
+    - verb: comment
+      label: Post summary
+    - verb: reject

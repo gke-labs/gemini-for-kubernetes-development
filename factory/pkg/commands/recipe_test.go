@@ -401,7 +401,7 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	for _, info := range infos {
 		byName[info.Name] = info
 	}
-	for name, on := range map[string][]string{"triage": {"issue"}, "plan": {"issue"}, "fix": {"issue", "my-pr"}, "review": {"pr"}, "research": {"repo"}} {
+	for name, on := range map[string][]string{"triage": {"issue"}, "plan": {"issue"}, "fix": {"issue", "my-pr"}, "review": {"pr"}, "research": {"repo"}, "summarize": {"issue"}} {
 		if got := byName[name]; !slices.Equal(got.On, on) || got.Kind == "" || got.Label == "" {
 			t.Errorf("%s = %+v, want on %v, a kind and a label", name, got, on)
 		}
