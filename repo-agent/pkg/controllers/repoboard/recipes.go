@@ -135,8 +135,8 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 		return
 	}
 	if res, ok := r.Factory.LastResult(key); ok && !res.FinishedAt.Before(req.CreationTimestamp.Time) {
-		if res.Err == nil && sb != nil && rec.Kind != "" {
-			r.keepRecipeOutput(ctx, work, sb, rec, spec.Member, factorycli.HarvestedOutput(rec.Kind, res.Output), res.FinishedAt)
+		if sb != nil {
+			r.keepRecipeOutput(ctx, work, sb, rec, spec.Member, res)
 		}
 		// settleRecipe reads the rest of the result.
 		return
@@ -165,18 +165,22 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	}
 }
 
-// keepRecipeOutput stores doc on sb as the output of rec's run there,
-// which ended at, with what its runner applied stamped.
-func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *unstructured.Unstructured, rec boardv1alpha1.BoardRecipe, member, doc string, at time.Time) {
+// keepRecipeOutput stores on sb the output of rec's run there, which
+// ended with res, with what its runner applied stamped: nothing if the
+// apply failed, so the draft waits to be applied again. The board and
+// executor are stamped even on a run that left no output, so its
+// session can still revise it.
+func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *unstructured.Unstructured, rec boardv1alpha1.BoardRecipe, member string, res factorycli.Result) {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
 	var applied []string
-	if a := recipeApplies[rec.Kind]; a != "" {
+	if a := recipeApplies[rec.Kind]; a != "" && res.Err == nil {
 		applied = []string{a}
 	}
-	if !factorycli.KeepOutput(annotations, factorycli.RunAnnotation(rec.TaskType), doc, at, applied...) {
+	kept := rec.Kind != "" && factorycli.KeepOutput(annotations, factorycli.RunAnnotation(rec.TaskType), factorycli.HarvestedOutput(rec.Kind, res.Output), res.FinishedAt, applied...)
+	if !kept && annotations[AnnotationBoard] == work.board.Name && annotations[AnnotationExecutor] == member {
 		return
 	}
 	annotations[AnnotationBoard] = work.board.Name

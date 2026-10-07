@@ -203,6 +203,37 @@ func TestCareRepliesAreApplied(t *testing.T) {
 	g.Expect(factorycli.IsApplied(sb.GetAnnotations(), factorycli.AppliedAnnotation(run), "post-replies")).To(gomega.BeTrue())
 }
 
+// A care run whose posting failed keeps its output unapplied, so the
+// draft waits for Post replies; a run that left none still gets the
+// board, so its session can revise it.
+func TestCareFailedApplyKeepsTheDraft(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	finished := time.Now().Add(time.Minute)
+	fake.results["alice/recipe-care-repo-pr-12"] = factorycli.Result{FinishedAt: finished, Err: errors.New("applying post-replies: exit status 1"),
+		Output: "================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\nspec:\n  title: t\n  report: Rebased.\n================================================\n"}
+	fake.results["alice/recipe-care-repo-pr-13"] = factorycli.Result{FinishedAt: finished, Err: errors.New("exit status 1")}
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(),
+		recipeSandbox("fix-repo-12", "https://github.com/test/repo/pull/12"),
+		recipeSandbox("fix-repo-13", "https://github.com/test/repo/pull/13"),
+		testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12}),
+		testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 13}))
+	r.reconcileBoard(t)
+
+	run := factorycli.RunAnnotation("recipe-care")
+	sb := &unstructured.Unstructured{}
+	sb.SetGroupVersionKind(sandboxGVK)
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-12", Namespace: "alice"}, sb)).To(gomega.Succeed())
+	g.Expect(sb.GetAnnotations()[factorycli.OutputAnnotation(run)]).To(gomega.ContainSubstring("report: Rebased."))
+	g.Expect(factorycli.IsApplied(sb.GetAnnotations(), factorycli.AppliedAnnotation(run), "post-replies")).To(gomega.BeFalse())
+	g.Expect(sb.GetAnnotations()[AnnotationBoard]).To(gomega.Equal("test-board"))
+
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-13", Namespace: "alice"}, sb)).To(gomega.Succeed())
+	g.Expect(sb.GetAnnotations()).NotTo(gomega.HaveKey(factorycli.OutputAnnotation(run)))
+	g.Expect(sb.GetAnnotations()[AnnotationBoard]).To(gomega.Equal("test-board"))
+	g.Expect(sb.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
+}
+
 // The board publishes factory's catalog on its status, for the API.
 func TestBoardPublishesRecipes(t *testing.T) {
 	g := gomega.NewWithT(t)
