@@ -729,7 +729,7 @@ func TestTriageIntake(t *testing.T) {
 	fake2 := newFakeLauncher()
 	fake2.results["alice/triage-repo-30"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n  priority: high\n  assessment: broken\n================================================\n",
+		Output:     triageResult("  labels: [bug]\n  priority: high\n  assessment: broken\n"),
 	}
 	r2 := newTestReconciler(fake2, ghClient, testBoardWithTriage(), githubSecret(), triageSandbox)
 	_, err = r2.Reconcile(context.Background(), boardRequest())
@@ -739,7 +739,7 @@ func TestTriageIntake(t *testing.T) {
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageDraft]).To(gomega.ContainSubstring("priority: high"))
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageOutput]).To(gomega.ContainSubstring("priority: high"))
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 }
 
@@ -876,7 +876,7 @@ func TestResumeTriageHarvest(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results["alice/triage-repo-30"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
+		Output:     triageResult("  labels: [bug]\n"),
 	}
 	// No click, no intake: only the resume pass can harvest this.
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), triageSandbox)
@@ -886,7 +886,7 @@ func TestResumeTriageHarvest(t *testing.T) {
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-30", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageDraft]).To(gomega.ContainSubstring("labels: [bug]"))
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationTriageOutput]).To(gomega.ContainSubstring("labels: [bug]"))
 	g.Expect(updated.GetAnnotations()[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
@@ -918,7 +918,7 @@ func TestResumeTriageSkipsOtherLaunchers(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results["alice/triage-repo-31"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
+		Output:     triageResult("  labels: [bug]\n"),
 	}
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), cliSandbox)
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -1059,7 +1059,7 @@ func TestPlanLifecycle(t *testing.T) {
 				"sandbox.gemini.google.com/last-task-type":  "plan",
 				"sandbox.gemini.google.com/last-task-state": "Completed",
 				// The last plan was posted; this one is not.
-				factorycli.AnnotationPlanCommented: "2026-10-01T00:00:00Z",
+				factorycli.AnnotationPlanApplied: `{"comment":"2026-10-01T00:00:00Z"}`,
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -1078,13 +1078,11 @@ func TestPlanLifecycle(t *testing.T) {
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationPlanDraft]).To(gomega.ContainSubstring("Do the thing."))
+	g.Expect(factorycli.PlanDraft(updated.GetAnnotations())).To(gomega.ContainSubstring("Do the thing."))
 	g.Expect(updated.GetAnnotations()[AnnotationPlannedAt]).NotTo(gomega.BeEmpty())
-	// The task output is kept for its actions, without the spec the draft
-	// already is.
-	g.Expect(updated.GetAnnotations()[factorycli.AnnotationPlanOutput]).To(gomega.And(
-		gomega.ContainSubstring("verb: comment"), gomega.Not(gomega.ContainSubstring("Do the thing."))))
-	g.Expect(updated.GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationPlanCommented))
+	// The task output is kept whole: the draft is its spec.
+	g.Expect(updated.GetAnnotations()[factorycli.AnnotationPlanOutput]).To(gomega.ContainSubstring("verb: comment"))
+	g.Expect(updated.GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationPlanApplied))
 
 	// Draft stored: the click is settled and the next reconcile does not
 	// relaunch.
@@ -1116,13 +1114,13 @@ func TestFixWithApprovedPlan(t *testing.T) {
 
 	sbWithPlan := func(approved bool) *unstructured.Unstructured {
 		annotations := map[string]interface{}{
-			"htmlURL":           "https://github.com/test/repo/issues/7",
-			AnnotationPlanDraft: "## Summary\nplanned",
-			AnnotationPlannedAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+			"htmlURL":                       "https://github.com/test/repo/issues/7",
+			factorycli.AnnotationPlanOutput: storedOutput("Plan", "## Summary\nplanned"),
+			AnnotationPlannedAt:             time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 			"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
 		}
 		if approved {
-			annotations[AnnotationPlanApproved] = time.Now().UTC().Format(time.RFC3339)
+			annotations[factorycli.AnnotationPlanApplied] = `{"run":"` + time.Now().UTC().Format(time.RFC3339) + `"}`
 		}
 		return &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -1168,11 +1166,11 @@ func TestApprovedPlanFixLaunchesAfterPlanCompleted(t *testing.T) {
 				"namespace": "alice",
 				"labels":    map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 				"annotations": map[string]interface{}{
-					"htmlURL":              "https://github.com/test/repo/issues/7",
-					AnnotationExecutor:     "alice",
-					AnnotationPlanDraft:    "## Summary\nplanned",
-					AnnotationPlannedAt:    time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-					AnnotationPlanApproved: time.Now().UTC().Format(time.RFC3339),
+					"htmlURL":                        "https://github.com/test/repo/issues/7",
+					AnnotationExecutor:               "alice",
+					factorycli.AnnotationPlanOutput:  storedOutput("Plan", "## Summary\nplanned"),
+					AnnotationPlannedAt:              time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+					factorycli.AnnotationPlanApplied: `{"run":"` + time.Now().UTC().Format(time.RFC3339) + `"}`,
 					// the PLAN's completion stamps — not the fix's
 					factorycli.AnnotationTaskType:  "plan",
 					factorycli.AnnotationTaskState: factorycli.TaskStateCompleted,

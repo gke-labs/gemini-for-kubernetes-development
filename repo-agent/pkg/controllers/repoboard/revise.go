@@ -62,7 +62,7 @@ var reviseHooks = map[string]reviseHook{
 			return ok && r.Factory.IsRunning(planKey(work, member, issue))
 		},
 		missing: func(sb *unstructured.Unstructured) string {
-			if sb.GetAnnotations()[AnnotationPlanDraft] == "" {
+			if factorycli.PlanDraft(sb.GetAnnotations()) == "" {
 				return "there is no plan draft to revise"
 			}
 			return ""
@@ -283,13 +283,12 @@ func (r *Reconciler) revisedPlan(ctx context.Context, work *workState, spec boar
 			message: "the revise ended without a plan",
 		}
 	}
-	if sb == nil || sb.GetAnnotations()[AnnotationPlanDraft] == "" {
+	if sb == nil || factorycli.PlanDraft(sb.GetAnnotations()) == "" {
 		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
 	}
 	annotations := sb.GetAnnotations()
-	annotations[AnnotationPlanDraft] = plan
-	setOrDelete(annotations, factorycli.AnnotationPlanOutput, factorycli.PlanTaskOutput(res.Output))
-	delete(annotations, factorycli.AnnotationPlanCommented)
+	annotations[factorycli.AnnotationPlanOutput] = factorycli.PlanTaskOutput(res.Output)
+	delete(annotations, factorycli.AnnotationPlanApplied)
 	annotations[AnnotationPlannedAt] = time.Now().UTC().Format(time.RFC3339)
 	annotations[AnnotationBoard] = work.board.Name
 	annotations[AnnotationExecutor] = spec.Member
@@ -316,8 +315,7 @@ func (r *Reconciler) revisedReview(ctx context.Context, work *workState, _ board
 
 // revisedNotes stores a revise's notes as the draft: not yet saved.
 func (r *Reconciler) revisedNotes(ctx context.Context, _ *workState, _ boardv1alpha1.RequestSpec, sb *unstructured.Unstructured, res factorycli.Result) requestOutcome {
-	notes := factorycli.ExtractNotes(res.Output)
-	if notes == "" {
+	if factorycli.ExtractNotes(res.Output) == "" {
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "NoNotes",
@@ -327,7 +325,7 @@ func (r *Reconciler) revisedNotes(ctx context.Context, _ *workState, _ boardv1al
 	if sb == nil {
 		return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Revised"}
 	}
-	if err := r.storeNotesDraft(ctx, sb, notes, factorycli.NotesTaskOutput(res.Output)); err != nil {
+	if err := r.storeNotesDraft(ctx, sb, factorycli.NotesTaskOutput(res.Output)); err != nil {
 		log.FromContext(ctx).Error(err, "storing the notes draft", "sandbox", sb.GetName())
 		return stillPending
 	}

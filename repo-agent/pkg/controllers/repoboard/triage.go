@@ -38,9 +38,9 @@ import (
 // (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,
 // as a clicked plan or fix runs, under their token; auto-triage, which has
 // no clicker, in the board owner's, under the discovery identity. It
-// records its state in its own annotation and its draft in
-// AnnotationTriageDraft so that neither reads as the plan's, fix's or a
-// review's.
+// records its state in its own annotation and its task output in
+// factorycli.AnnotationTriageOutput so that neither reads as the plan's,
+// fix's or a review's.
 
 const (
 	// AnnotationTriagedAt marks a stored triage draft.
@@ -49,8 +49,6 @@ const (
 	// must not redo work a human threw away, and a stale invocation
 	// result must not resurrect the draft. A fresh Triage click re-arms.
 	AnnotationTriageRejected = "board.gemini.google.com/triage-rejected-at"
-	// AnnotationTriagePublished marks a draft the maintainer published.
-	AnnotationTriagePublished = "board.gemini.google.com/triage-published-at"
 )
 
 // discoverTriage lists open issues needing auto-triage: not PRs, eligible
@@ -118,10 +116,9 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 
 	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
 		if res.Err == nil && sb != nil {
-			if report := factorycli.ExtractTriageYAML(res.Output); report != "" {
-				annotations[factorycli.AnnotationTriageDraft] = report
-				setOrDelete(annotations, factorycli.AnnotationTriageOutput, factorycli.TriageTaskOutput(res.Output))
-				delete(annotations, factorycli.AnnotationTriageLabeled)
+			if doc := factorycli.TriageTaskOutput(res.Output); doc != "" {
+				annotations[factorycli.AnnotationTriageOutput] = doc
+				delete(annotations, factorycli.AnnotationTriageApplied)
 				annotations[AnnotationTriagedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				sb.SetAnnotations(annotations)

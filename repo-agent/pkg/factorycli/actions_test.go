@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// The board keeps the document without its spec — the draft is the spec —
-// for its source and the actions it offers.
-func TestPlanTaskOutputKeepsAllButTheSpec(t *testing.T) {
+// The board keeps the whole document: the draft is its spec, and it says
+// its source and the actions it offers.
+func TestPlanTaskOutputKeepsTheDocument(t *testing.T) {
 	doc := planTaskOutput + `actions:
   - verb: comment
     label: Post plan
@@ -16,8 +16,8 @@ func TestPlanTaskOutputKeepsAllButTheSpec(t *testing.T) {
     run: fix
 `
 	got := PlanTaskOutput("Running recipe plan...\n" + planBanner + "\n" + doc + bannerCloser + "\n")
-	if got == "" || strings.Contains(got, "spec:") || strings.Contains(got, "Fix the crash") {
-		t.Fatalf("PlanTaskOutput = %q, want the document without its spec", got)
+	if !strings.HasPrefix(got, "apiVersion: ") || Draft("Plan", got) == "" {
+		t.Fatalf("PlanTaskOutput = %q, want the whole document", got)
 	}
 	if task := TaskOutputTask("Plan", got); task != "recipe-plan-20261003-120000-0001" {
 		t.Errorf("task = %q", task)

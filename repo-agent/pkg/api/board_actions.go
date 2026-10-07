@@ -53,7 +53,7 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	case "Plan":
 		if sb, _ = s.findPlanSandbox(c, board, owner, repo, number); sb != nil {
 			a := sb.GetAnnotations()
-			if a[annoPlanDraft] != "" && a[annoPlanApproved] == "" {
+			if factorycli.PlanDraft(a) != "" && !planApproved(a) {
 				actions = planWorkActions(a, planIsRevising(a), a[annoTaskState] == "Running")
 			}
 		}
@@ -273,11 +273,23 @@ func planIsRevising(annotations map[string]string) bool {
 	return err != nil || fb.After(planned)
 }
 
+// triagePublished reports whether a triage draft's assessment was posted:
+// its comment action applied.
+func triagePublished(annotations map[string]string) bool {
+	return factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "comment")
+}
+
+// planApproved reports whether a plan draft was approved: its run action,
+// a fix with this plan, applied.
+func planApproved(annotations map[string]string) bool {
+	return factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "run")
+}
+
 // triageWorkActions are the actions a triage draft's task output offers,
 // with what its sandbox's annotations say of each just now.
 func triageWorkActions(annotations map[string]string) []models.WorkAction {
-	published := annotations[annoTriagePublished] != ""
-	labeled := annotations[factorycli.AnnotationTriageLabeled] != ""
+	published := triagePublished(annotations)
+	labeled := factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "label")
 	return workActions(factorycli.OfferedActions("Triage", annotations[factorycli.AnnotationTriageOutput]), func(a factorycli.Action) string {
 		switch {
 		case a.Verb == "label" && labeled:
@@ -300,7 +312,7 @@ const planRevisingReason = "the plan is being revised"
 // planWorkActions are the actions a plan draft's task output offers, with
 // what its sandbox's annotations and task say of each just now.
 func planWorkActions(annotations map[string]string, revising, running bool) []models.WorkAction {
-	commented := annotations[factorycli.AnnotationPlanCommented] != ""
+	commented := factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "comment")
 	return workActions(factorycli.OfferedActions("Plan", annotations[factorycli.AnnotationPlanOutput]), func(a factorycli.Action) string {
 		switch {
 		case a.Verb == "reject":

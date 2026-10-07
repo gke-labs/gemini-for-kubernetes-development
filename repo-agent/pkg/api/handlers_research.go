@@ -202,9 +202,10 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 	}
 	view.Legacy = view.Task == ""
 	view.Notes = researchNotesDraft{
-		Markdown:  annotations[annoNotesDraft],
+		Markdown:  factorycli.NotesDraft(annotations),
 		DraftedAt: annotations[annoNotesDraftedAt],
-		SavedAt:   annotations[annoNotesSaved],
+		SavedAt:   factorycli.Applied(annotations, factorycli.AnnotationNotesApplied)["push-notes"],
+		doc:       annotations[factorycli.AnnotationNotesOutput],
 	}
 	if ts := sb.GetCreationTimestamp(); !ts.IsZero() {
 		view.CreatedAt = ts.UTC().Format(time.RFC3339)

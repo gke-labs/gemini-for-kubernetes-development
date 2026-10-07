@@ -915,8 +915,7 @@ func ExtractTriageYAML(output string) string {
 }
 
 // TriageTaskOutput is the Triage task output after the ISSUE TRIAGE banner
-// of a completed triage without its spec, or "": kept for the actions it
-// offers (OfferedActions) and its source; the draft is the spec.
+// of a completed triage, or "": what the board stores (OutputAnnotation).
 func TriageTaskOutput(output string) string {
 	rest, ok := triageSection(output)
 	if !ok {
@@ -928,7 +927,7 @@ func TriageTaskOutput(output string) string {
 	if triageFromTaskOutput(rest) == "" {
 		return ""
 	}
-	return withoutSpec(rest)
+	return rest + "\n"
 }
 
 func triageSection(output string) (string, bool) {
@@ -974,14 +973,13 @@ func ExtractPlan(output string) string {
 }
 
 // PlanTaskOutput is the Plan task output after the ISSUE PLAN banner of a
-// completed plan without its spec, or "": kept for the actions it offers
-// (OfferedActions) and its source; the draft is the spec.
+// completed plan, or "": what the board stores (OutputAnnotation).
 func PlanTaskOutput(output string) string {
 	rest := planSection(output)
 	if planFromTaskOutput(rest) == "" {
 		return ""
 	}
-	return withoutSpec(rest)
+	return rest + "\n"
 }
 
 func planSection(output string) string {
@@ -1009,13 +1007,13 @@ func ExtractNotes(output string) string {
 }
 
 // NotesTaskOutput is the Notes task output of a completed Save notes
-// revise without its spec, or "", as PlanTaskOutput is a plan's.
+// revise, or "", as PlanTaskOutput is a plan's.
 func NotesTaskOutput(output string) string {
 	rest := planSection(output)
 	if markdownFromTaskOutput("Notes", rest) == "" {
 		return ""
 	}
-	return withoutSpec(rest)
+	return rest + "\n"
 }
 
 // markdownFromTaskOutput is the spec.markdown of a task output of kind,

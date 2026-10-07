@@ -54,14 +54,14 @@ func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
 	fake := newFakeLauncher()
 	fake.results["alice/triage-repo-30"] = factorycli.Result{
 		FinishedAt: time.Now(),
-		Output:     "...\n================= ISSUE TRIAGE =================\ntriage:\n  labels: [bug]\n================================================\n",
+		Output:     triageResult("  labels: [bug]\n"),
 	}
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	a := getSandbox(t, r, "repo-30").GetAnnotations()
-	g.Expect(a[factorycli.AnnotationTriageDraft]).To(gomega.ContainSubstring("labels: [bug]"))
+	g.Expect(a[factorycli.AnnotationTriageOutput]).To(gomega.ContainSubstring("labels: [bug]"))
 	g.Expect(a[AnnotationAgentDraft]).To(gomega.BeEmpty())
 	g.Expect(a[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
@@ -73,7 +73,7 @@ func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := issueSandbox("fix-repo-77", "77", map[string]interface{}{
 		factorycli.AnnotationRecipeTriageTaskState: "Completed",
-		factorycli.AnnotationTriageDraft:           "triage: {}",
+		factorycli.AnnotationTriageOutput:          storedOutput("Triage", "triage:\n  assessment: x"),
 		AnnotationTriagedAt:                        time.Now().UTC().Format(time.RFC3339),
 	})
 	fake := newFakeLauncher()

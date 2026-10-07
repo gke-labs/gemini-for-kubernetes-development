@@ -79,13 +79,13 @@ const (
 	AnnotationReviewErrorAt = "review.gemini.google.com/error-at"
 	// Plan-loop annotations live on the issue's FIX sandbox (`factory
 	// plan` runs there so the approved plan sits next to the code the fix
-	// will touch). The draft is board-only until the member approves;
-	// approval publishes it via the fix PR's description.
-	AnnotationPlanDraft      = "board.gemini.google.com/plan"
+	// will touch). The draft (factorycli.AnnotationPlanOutput) is
+	// board-only until the member approves — applies its run action,
+	// factorycli.AnnotationPlanApplied — which publishes it via the fix
+	// PR's description.
 	AnnotationPlannedAt      = "board.gemini.google.com/planned-at"
 	AnnotationPlanFeedback   = "board.gemini.google.com/plan-feedback"
 	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
-	AnnotationPlanApproved   = "board.gemini.google.com/plan-approved-at"
 	AnnotationPlanRejected   = "board.gemini.google.com/plan-rejected-at"
 	// AnnotationFixHarvestedAt is when the controller last read a fix
 	// run's result (the PR it opened, or why it failed): a fix run
@@ -701,7 +701,7 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 			continue
 		}
 		annotations := sb.GetAnnotations()
-		approved := annotations[AnnotationPlanApproved] != "" && annotations[AnnotationPlanDraft] != "" &&
+		approved := planApproved(annotations) &&
 			!fixLike(annotations[factorycli.AnnotationTaskType])
 		_, unread := fixRunUnread(annotations, work.board.Name, n)
 		if !approved && !unread && !(refixRequested(sb) && fixLike(annotations[factorycli.AnnotationTaskType])) {
@@ -795,7 +795,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	// An approved plan on the sandbox rides along: the fix follows it.
 	// Only approval consents this — a plain Fix click on a merely drafted
 	// (or rejected) plan ignores it.
-	withPlan := annotations[AnnotationPlanDraft] != "" && annotations[AnnotationPlanApproved] != ""
+	withPlan := planApproved(annotations)
 	runName := fixRunName(work.board.Name, plan.issue)
 	if follow {
 		runName = followed
@@ -1336,7 +1336,7 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 			needsHuman++
 			continue
 		}
-		if annotations[factorycli.AnnotationTriageDraft] != "" && annotations[AnnotationTriagePublished] == "" {
+		if annotations[factorycli.AnnotationTriageOutput] != "" && !factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "comment") {
 			needsHuman++
 			continue
 		}

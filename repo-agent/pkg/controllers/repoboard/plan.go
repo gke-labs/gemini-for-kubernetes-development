@@ -29,7 +29,7 @@ import (
 // The plan loop: agent PLAN -> human REFINE -> agent UPDATE_PLAN -> human
 // APPROVE/REJECT -> agent FIX. `factory recipe plan` runs in the issue's fix
 // sandbox and writes nothing to GitHub; the draft lives on the sandbox
-// (AnnotationPlanDraft) until the member approves — approval launches the
+// (factorycli.AnnotationPlanOutput) until the member approves — approval launches the
 // fix with --with-plan, which publishes the plan as the PR description's
 // Plan section (the durable record). Refinement rounds are edge-triggered:
 // a feedback stamp newer than the last planned-at re-runs the planner
@@ -67,11 +67,10 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 
 	if res, ok := r.Factory.LastResult(key); ok && !planResultStale(annotations, res.FinishedAt) {
 		if res.Err == nil && sb != nil {
-			if plan := factorycli.ExtractPlan(res.Output); plan != "" {
-				annotations[AnnotationPlanDraft] = plan
-				setOrDelete(annotations, factorycli.AnnotationPlanOutput, factorycli.PlanTaskOutput(res.Output))
-				// A new plan has not been posted.
-				delete(annotations, factorycli.AnnotationPlanCommented)
+			if factorycli.ExtractPlan(res.Output) != "" {
+				annotations[factorycli.AnnotationPlanOutput] = factorycli.PlanTaskOutput(res.Output)
+				// A new plan has not been posted, nor approved.
+				delete(annotations, factorycli.AnnotationPlanApplied)
 				annotations[AnnotationPlannedAt] = time.Now().UTC().Format(time.RFC3339)
 				annotations[AnnotationBoard] = work.board.Name
 				annotations[AnnotationExecutor] = req.member
@@ -198,10 +197,8 @@ func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 }
 
 // setOrDelete sets key to value, or removes it for "".
-func setOrDelete(annotations map[string]string, key, value string) {
-	if value == "" {
-		delete(annotations, key)
-		return
-	}
-	annotations[key] = value
+// planApproved reports whether annotations hold a plan draft the member
+// approved: applied its run action, a fix with this plan.
+func planApproved(annotations map[string]string) bool {
+	return factorycli.PlanDraft(annotations) != "" && factorycli.IsApplied(annotations, factorycli.AnnotationPlanApplied, "run")
 }

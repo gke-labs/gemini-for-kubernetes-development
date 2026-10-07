@@ -35,6 +35,24 @@ func applyClick(number int, kind, action string) *boardv1alpha1.Request {
 	})
 }
 
+// storedOutput is a task output of kind with draft as its spec, as the
+// board stores one, naming no task.
+func storedOutput(kind, draft string) string {
+	doc, err := factorycli.ComposeTaskOutput(kind, "", draft, "", "")
+	if err != nil {
+		panic(err)
+	}
+	return doc
+}
+
+// triageResult is a triage run's output with a Triage task output whose
+// spec is spec's lines.
+func triageResult(spec string) string {
+	return "...\n================= ISSUE TRIAGE =================\n" +
+		"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\nsource:\n  task: recipe-triage-1\nspec:\n" + spec +
+		"================================================\n"
+}
+
 func draftSandbox(annotations map[string]interface{}) *unstructured.Unstructured {
 	annotations["htmlURL"] = "https://github.com/test/repo/issues/42"
 	return &unstructured.Unstructured{Object: map[string]interface{}{
@@ -55,10 +73,10 @@ func draftSandbox(annotations map[string]interface{}) *unstructured.Unstructured
 func TestApplyPlanComment(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := draftSandbox(map[string]interface{}{
-		AnnotationPlanDraft: "## Summary\nEdited plan.",
 		AnnotationPlannedAt: "2026-10-01T00:00:00Z",
 		factorycli.AnnotationPlanOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
-			"target:\n  url: https://github.com/test/repo/issues/42\nsource:\n  task: recipe-plan-1\n",
+			"target:\n  url: https://github.com/test/repo/issues/42\nsource:\n  task: recipe-plan-1\n" +
+			"spec:\n  markdown: |-\n    ## Summary\n    Edited plan.\n",
 	})
 	req := applyClick(42, "Plan", "comment")
 	fake := newFakeLauncher()
@@ -93,7 +111,7 @@ func TestApplyPlanComment(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.HaveLen(1))
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(getSandbox(t, r, "fix-repo-42").GetAnnotations()).To(gomega.HaveKey(factorycli.AnnotationPlanCommented))
+	g.Expect(factorycli.IsApplied(getSandbox(t, r, "fix-repo-42").GetAnnotations(), factorycli.AnnotationPlanApplied, "comment")).To(gomega.BeTrue())
 }
 
 // A failed write fails the click with what factory said, and is not
@@ -101,8 +119,8 @@ func TestApplyPlanComment(t *testing.T) {
 func TestApplyFailure(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := draftSandbox(map[string]interface{}{
-		factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]\n  assessment: A crash.",
-		AnnotationTriagedAt:              "2026-10-01T00:00:00Z",
+		factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]\n  assessment: A crash."),
+		AnnotationTriagedAt:               "2026-10-01T00:00:00Z",
 	})
 	req := applyClick(42, "Triage", "label")
 	fake := newFakeLauncher()
@@ -119,17 +137,16 @@ func TestApplyFailure(t *testing.T) {
 	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
 	g.Expect(status.Reason).To(gomega.Equal("ApplyFailed"))
 	g.Expect(status.Message).To(gomega.ContainSubstring("403 Resource not accessible"))
-	g.Expect(getSandbox(t, r, "fix-repo-42").GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationTriageLabeled))
+	g.Expect(getSandbox(t, r, "fix-repo-42").GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationTriageApplied))
 }
 
-// A triage drafted before task outputs were kept gets a document whose
-// task is stable for the draft, which is what factory dedups on; posting
-// its assessment parks the sandbox.
-func TestApplyTriageCommentWithoutTaskOutput(t *testing.T) {
+// A stored triage that names no task gets one stable for the draft, which
+// is what factory dedups on; posting its assessment parks the sandbox.
+func TestApplyTriageCommentWithoutTask(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := draftSandbox(map[string]interface{}{
-		factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]\n  duplicates: ['#7']\n  assessment: A crash.",
-		AnnotationTriagedAt:              "2026-10-01T00:00:00Z",
+		factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]\n  duplicates: ['#7']\n  assessment: A crash."),
+		AnnotationTriagedAt:               "2026-10-01T00:00:00Z",
 	})
 	req := applyClick(42, "Triage", "comment")
 	fake := newFakeLauncher()
@@ -149,7 +166,7 @@ func TestApplyTriageCommentWithoutTaskOutput(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 	updated := getSandbox(t, r, "fix-repo-42")
-	g.Expect(updated.GetAnnotations()).To(gomega.HaveKey(AnnotationTriagePublished))
+	g.Expect(factorycli.IsApplied(updated.GetAnnotations(), factorycli.AnnotationTriageApplied, "comment")).To(gomega.BeTrue())
 	replicas, _, _ := unstructured.NestedInt64(updated.Object, "spec", "replicas")
 	g.Expect(replicas).To(gomega.BeZero())
 }

@@ -65,7 +65,7 @@ func IssueSandbox(sandboxes iter.Seq[*unstructured.Unstructured], repo string, i
 // left a draft or a rejection there.
 func HasTriage(sb *unstructured.Unstructured) bool {
 	a := sb.GetAnnotations()
-	return TriageTaskState(a) != "" || a[AnnotationTriageDraft] != "" ||
+	return TriageTaskState(a) != "" || a[AnnotationTriageOutput] != "" ||
 		a["board.gemini.google.com/triaged-at"] != "" || a["board.gemini.google.com/triage-rejected-at"] != ""
 }
 
@@ -75,14 +75,9 @@ func OnlyTriaged(sb *unstructured.Unstructured) bool {
 	return sb.GetAnnotations()[AnnotationTaskType] == "" && HasTriage(sb)
 }
 
-// AnnotationTriageDraft holds the board's triage draft. agentDraft, in
-// the issue's sandbox, is a review's.
-const AnnotationTriageDraft = "board.gemini.google.com/triage-draft"
-
-// TriageDraft returns the triage draft stored on sb, as a triage: block
-// (NormalizeTriageDraft).
+// TriageDraft returns the triage draft stored on sb, as a triage: block.
 func TriageDraft(sb *unstructured.Unstructured) string {
-	return NormalizeTriageDraft(sb.GetAnnotations()[AnnotationTriageDraft])
+	return Draft("Triage", sb.GetAnnotations()[AnnotationTriageOutput])
 }
 
 // NormalizeTriageDraft returns draft as the triage: block drafts are kept

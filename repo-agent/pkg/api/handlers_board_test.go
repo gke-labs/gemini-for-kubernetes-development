@@ -926,7 +926,7 @@ func TestGetBoardWorkTriageGroup(t *testing.T) {
 	}
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, board, triageSandbox)
 
@@ -1260,7 +1260,7 @@ func TestPutBoardTriageDraft(t *testing.T) {
 	}
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 
@@ -1313,9 +1313,8 @@ func TestPutBoardTriageDraft(t *testing.T) {
 	}
 }
 
-// A draft stored as a Triage task output, behind factory's progress lines
-// (as a harvest that read stderr stored it), is shown, edited and saved as
-// the triage: block.
+// A draft stored as a Triage task output is shown, edited and saved as the
+// triage: block.
 func TestTriageDraftFromTaskOutput(t *testing.T) {
 	ghResponses := map[string]string{
 		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[]`,
@@ -1326,10 +1325,10 @@ func TestTriageDraftFromTaskOutput(t *testing.T) {
 		"https://api.github.com/repos/test/repo/pulls?direction=desc&per_page=100&sort=updated&state=open": `[]`,
 	}
 	taskOutput := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\ntarget:\n  url: https://github.com/test/repo/issues/20\nspec:\n  labels:\n    - bug\n  assessment: %s\n"
-	stored := "Waiting for sandbox pod fix-repo-20 to become ready...\n" + fmt.Sprintf(taskOutput, "from the agent")
+	stored := fmt.Sprintf(taskOutput, "from the agent")
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageDraft: stored, "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: stored, "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 
 	draft := func() string {
@@ -1383,8 +1382,8 @@ func TestPlanEndpoints(t *testing.T) {
 			"htmlURL": "https://github.com/test/repo/issues/42",
 			"sandbox.gemini.google.com/last-task-type":  "plan",
 			"sandbox.gemini.google.com/last-task-state": "Completed",
-			"board.gemini.google.com/plan":              "## Summary\nDo the thing.",
 			"board.gemini.google.com/planned-at":        "2026-09-17T00:00:00Z",
+			factorycli.AnnotationPlanOutput:             storedOutput("Plan", "## Summary\nDo the thing."),
 		}, 1)
 
 	srv, r, dyn := boardTestServer(t, ghResponses, boardCR(), planSandbox)
@@ -1433,7 +1432,7 @@ func TestPlanEndpoints(t *testing.T) {
 	if w := post("plan-approve", `{}`); w.Code != http.StatusOK {
 		t.Fatalf("approve: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if getAnnotations()["board.gemini.google.com/plan-approved-at"] == "" {
+	if !factorycli.IsApplied(getAnnotations(), factorycli.AnnotationPlanApplied, "run") {
 		t.Error("approval not stamped")
 	}
 	filed := theRequest(t, dyn, "alice")
@@ -1446,7 +1445,7 @@ func TestPlanEndpoints(t *testing.T) {
 		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	annotations = getAnnotations()
-	if annotations["board.gemini.google.com/plan"] != "" || annotations["board.gemini.google.com/plan-rejected-at"] == "" {
+	if annotations[factorycli.AnnotationPlanOutput] != "" || annotations["board.gemini.google.com/plan-rejected-at"] == "" {
 		t.Errorf("reject did not clear the draft: %v", annotations)
 	}
 }
@@ -1611,7 +1610,7 @@ func TestRejectBoardTriage(t *testing.T) {
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
 		map[string]interface{}{
-			factorycli.AnnotationTriageDraft:                     "triage:\n  labels: [bug]",
+			factorycli.AnnotationTriageOutput:                    storedOutput("Triage", "triage:\n  labels: [bug]"),
 			"board.gemini.google.com/triaged-at":                 "2026-09-17T00:00:00Z",
 			"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
 			"htmlURL": "https://github.com/test/repo/issues/20",
@@ -1632,7 +1631,7 @@ func TestRejectBoardTriage(t *testing.T) {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	annotations := sb.GetAnnotations()
-	if annotations[factorycli.AnnotationTriageDraft] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
+	if annotations[factorycli.AnnotationTriageOutput] != "" || annotations["board.gemini.google.com/triaged-at"] != "" {
 		t.Errorf("breadcrumbs not cleared: %v", annotations)
 	}
 	if annotations["board.gemini.google.com/triage-rejected-at"] == "" {
@@ -1708,7 +1707,7 @@ func TestUpNextDefersBareReviewRequests(t *testing.T) {
 	}
 	triageSandbox := sandboxCR("fix-repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
-		map[string]interface{}{factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]", "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
+		map[string]interface{}{factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"), "htmlURL": "https://github.com/test/repo/issues/20"}, 0)
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), triageSandbox)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -2019,10 +2018,10 @@ func TestTriageInIssueSandbox(t *testing.T) {
 	sb := sandboxCR("repo-20",
 		map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "20"},
 		map[string]interface{}{
-			"repo":                           "repo",
-			"htmlURL":                        "https://github.com/test/repo/issues/20",
-			"agentDraft":                     "not a triage",
-			factorycli.AnnotationTriageDraft: "triage:\n  labels: [bug]",
+			"repo":                            "repo",
+			"htmlURL":                         "https://github.com/test/repo/issues/20",
+			"agentDraft":                      "not a triage",
+			factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]"),
 			factorycli.AnnotationRecipeTriageTaskState: "Completed",
 		}, 1)
 	_, r, dyn := boardTestServer(t, ghResponses, boardCR(), sb)
@@ -2044,7 +2043,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		t.Fatalf("issue-20 missing from feed: %s", w.Body.String())
 		return nil
 	}
-	if got := row(); got.Stage != "triage-ready" || got.Draft != "triage:\n  labels: [bug]" ||
+	if got := row(); got.Stage != "triage-ready" || !strings.Contains(got.Draft, "labels:\n    - bug") ||
 		got.Sandbox == nil || got.Sandbox.Name != "repo-20" || got.Sandbox.TaskState != "Completed" {
 		t.Errorf("row = %+v sandbox %+v", got, got.Sandbox)
 	}
@@ -2064,7 +2063,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 		}
 		return got.GetAnnotations()
 	}
-	if a := stored(); !strings.Contains(a[factorycli.AnnotationTriageDraft], "p1") || a["agentDraft"] != "not a triage" {
+	if a := stored(); !strings.Contains(a[factorycli.AnnotationTriageOutput], "p1") || a["agentDraft"] != "not a triage" {
 		t.Errorf("after edit: %v", a)
 	}
 
@@ -2074,7 +2073,7 @@ func TestTriageInIssueSandbox(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("reject: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if a := stored(); a[factorycli.AnnotationTriageDraft] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/triage-rejected-at"] == "" {
+	if a := stored(); a[factorycli.AnnotationTriageOutput] != "" || a["agentDraft"] != "not a triage" || a["board.gemini.google.com/triage-rejected-at"] == "" {
 		t.Errorf("after reject: %v", a)
 	}
 }

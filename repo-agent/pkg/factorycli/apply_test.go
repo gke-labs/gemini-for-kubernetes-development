@@ -10,8 +10,7 @@ import (
 // The stored document keeps what the task said of itself — its actions,
 // its source — and the draft, as edited, is the spec.
 func TestComposeTaskOutput(t *testing.T) {
-	header := withoutSpec(planTaskOutput)
-	out, err := ComposeTaskOutput("Plan", header, "## Edited\n", "https://github.com/o/r/issues/1", "fallback")
+	out, err := ComposeTaskOutput("Plan", planTaskOutput, "## Edited\n", "https://github.com/o/r/issues/1", "fallback")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +54,7 @@ func TestComposeTaskOutput(t *testing.T) {
 }
 
 // A Notes revise's document is read out of the harvest as a plan's is,
-// and stored without its spec; a plan is not notes.
+// and stored whole; a plan is not notes.
 func TestNotesTaskOutput(t *testing.T) {
 	doc := `apiVersion: ` + TaskOutputAPIVersion + `
 kind: Notes
@@ -73,8 +72,8 @@ actions:
 		t.Errorf("ExtractNotes = %q", got)
 	}
 	header := NotesTaskOutput(out)
-	if header == "" || strings.Contains(header, "Findings") {
-		t.Fatalf("NotesTaskOutput = %q, want the document without its spec", header)
+	if Draft("Notes", header) != "# Findings" {
+		t.Fatalf("NotesTaskOutput = %q, want the whole document", header)
 	}
 	if acts := OfferedActions("Notes", header); len(acts) != 1 || acts[0].Verb != "push-notes" {
 		t.Errorf("offered = %+v", acts)
@@ -83,7 +82,7 @@ actions:
 		t.Error("a plan read as notes")
 	}
 
-	// The stored header is kept; the draft, its name and the repository
+	// The stored document is kept; the draft, its name and the repository
 	// are what is pushed.
 	composed, err := ComposeNotes(header, "# Edited\n", "my-notes", "https://github.com/o/r", "board-sb-1")
 	if err != nil {

@@ -6,21 +6,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The task output documents a board keeps next to its drafts, for the
-// actions they offer and the task that made them.
-const (
-	AnnotationTriageOutput = "board.gemini.google.com/triage-output"
-	AnnotationPlanOutput   = "board.gemini.google.com/plan-output"
-	// AnnotationNotesOutput is a research sandbox's Notes task output
-	// without its spec, as AnnotationPlanOutput is a plan's.
-	AnnotationNotesOutput = "board.gemini.google.com/notes-output"
-
-	// AnnotationTriageLabeled stamps a triage whose labels were added, and
-	// AnnotationPlanCommented a plan that was posted: each a verb done.
-	AnnotationTriageLabeled = "board.gemini.google.com/triage-labeled-at"
-	AnnotationPlanCommented = "board.gemini.google.com/plan-commented-at"
-)
-
 // Action is one thing a task output offers to do with its result, as
 // factory declares it (factory/pkg/taskoutput): a verb, what an edit
 // edits, the follow-up a run starts, the recipe revise a revise runs, and
@@ -127,25 +112,4 @@ func TaskOutputSession(kind, doc string) string {
 		return m.Source.Session
 	}
 	return m.Source.Task
-}
-
-// withoutSpec is a task output document without its spec, or "" for one
-// that isn't a YAML mapping.
-func withoutSpec(doc string) string {
-	var m yaml.Node
-	if yaml.Unmarshal([]byte(doc), &m) != nil || len(m.Content) != 1 || m.Content[0].Kind != yaml.MappingNode {
-		return ""
-	}
-	root := m.Content[0]
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "spec" {
-			root.Content = append(root.Content[:i], root.Content[i+2:]...)
-			break
-		}
-	}
-	out, err := yaml.Marshal(root)
-	if err != nil {
-		return ""
-	}
-	return string(out)
 }

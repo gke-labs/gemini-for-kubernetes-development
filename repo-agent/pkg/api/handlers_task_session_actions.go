@@ -122,9 +122,9 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 			return disable(fmt.Sprintf("a %s is not revised from here", kind))
 		}
 		switch {
-		case a[annoPlanApproved] != "":
+		case planApproved(a):
 			return disable("the plan is approved")
-		case a[annoPlanDraft] == "":
+		case factorycli.PlanDraft(a) == "":
 			return disable("there is no plan draft yet")
 		}
 		if from := factorycli.TaskOutputSession("Plan", a[factorycli.AnnotationPlanOutput]); from != "" && from != task {
@@ -190,7 +190,7 @@ func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructu
 	}
 	kind := run.Kind
 	if number, boardName, ok := sessionIssue(sb); ok {
-		if kind != "Plan" || a[annoPlanDraft] == "" || a[annoPlanApproved] != "" {
+		if kind != "Plan" || factorycli.PlanDraft(a) == "" || planApproved(a) {
 			return nil
 		}
 		actions := planWorkActions(a, planIsRevising(a), a[annoTaskState] == "Running")
@@ -200,7 +200,7 @@ func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructu
 			s.markApplies(ctx, board, map[string]*models.WorkItem{"issue-" + strconv.Itoa(number): item})
 			actions = item.PlanActions
 		}
-		return &taskSessionDraft{Kind: "Plan", Markdown: a[annoPlanDraft], DraftedAt: a[annoPlannedAt], Actions: withoutRevises(actions)}
+		return &taskSessionDraft{Kind: "Plan", Markdown: factorycli.PlanDraft(a), DraftedAt: a[annoPlannedAt], Actions: withoutRevises(actions)}
 	}
 	view, ok := sessionResearch(sb)
 	if !ok || kind != "Notes" || view.Notes.Markdown == "" {
