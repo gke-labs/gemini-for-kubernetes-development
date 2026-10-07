@@ -271,34 +271,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const runs = latestRuns(item);
   const runOf = name => runs.find(r => r.recipe === name);
   const statusOf = name => ((item.launching || {})[name]) || (runOf(name) || {}).status || '';
-  const fixBusy = ['running', 'starting', 'queued'].includes(statusOf('fix'));
+  // A failed run's session continues where it stopped.
+  const failedRun = runs.find(r => statusOf(r.recipe) === 'failed');
 
   const [showError, setShowError] = useState(false);
-  const [showIterate, setShowIterate] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
-  // Text for the fix revises that take an input, by revise id.
-  const [reviseText, setReviseText] = useState({});
 
   const group = groupOf(item);
   const isPR = item.type !== 'issue';
 
   // The rail (the last column): the recipes to launch and the row's own
   // GitHub moves; a run's history is its chip's session.
-  // The fix's follow-ups are revises of its session, filed on it.
-  const reviseFix = (revise, label, inputs) => {
-    const s = item.fixSession;
-    return fetch(`/api/task-sessions/${encodeURIComponent(s.sandbox)}/${encodeURIComponent(s.task)}/revise`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(inputs ? { revise, inputs } : { revise }),
-    }).then(async res => {
-      if (res.ok) { setShowIterate(false); if (onRefresh) onRefresh(); return true; }
-      const body = await res.json().catch(() => ({}));
-      window.alert(`${label}: ${body.error || `HTTP ${res.status}`}`);
-      return false;
-    }).catch(err => { window.alert(`${label}: ${err}`); return false; });
-  };
-
   const actions = [];
   for (const rec of item.recipes || []) {
     const status = statusOf(rec.name);
@@ -322,15 +305,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // Promoting your own draft PR is an author right, not a repo write.
     actions.push({ label: 'Promote PR', path: `prs/${item.number}/promote`, title: 'Mark the draft PR ready for review' });
   }
-  // The agent's follow-up verbs fold into one drawer — the rail keeps a
-  // single owed action (Promote) plus one door, hidden while the fix's
-  // session is at work. They are the revises the fix's run recorded, and
-  // they push to the PR's branch: a PR the board's fix did not open (a
-  // hand-made one), or one not on the member's fork, has none.
-  if (isPR && item.myPR && item.fixSession && (item.fixRevises || []).length && !fixBusy) {
-    actions.push({ label: showIterate ? 'Agent ▴' : 'Agent ▾', onClick: () => setShowIterate(v => !v), title: `Send the agent to this PR — ${item.fixRevises.map(r => r.label).join(', ')}. Each is a turn in the fix's conversation.` });
-  }
-
   // Runbooks deploy pull requests too. runState is the board's Runs
   // state, present only on a single board's view.
   const runbooks = (runState && runState.repoRunbooks) || [];
@@ -418,6 +392,24 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           <span style={{ marginLeft: '4px', fontSize: 'x-small', color: 'var(--text-muted)' }}>+{item.labels.length - 4}</span>
         )}
         {prRuns.map(prRunChip)}
+        {/* factory pr watch follows a fix's PR up on its own (fix-ci,
+            address-comments, as care); the chip turns it on or off. */}
+        {isPR && item.myPR && runOf('fix') && item.sandbox && item.sandbox.autoIterate && (
+          <span
+            onClick={() => {
+              fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
+              }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
+            }}
+            style={{ cursor: 'pointer', marginLeft: '6px' }}
+            title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
+            <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
+              color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
+              bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
+          </span>
+        )}
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right:
           Agent (machine facts, incl. run outcomes), then the one-action
@@ -529,70 +521,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         </td>
       </tr>
     )}
-    {showIterate && item.myPR && item.fixSession && (
-      <tr>
-        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
-          <div style={{ fontSize: 'small', padding: '10px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', textAlign: 'left' }}>
-            <div style={{ marginBottom: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)} onClick={sessionClick(onOpenSession, item.fixSession)}
-                target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}
-                title="Continue the fix's conversation where it left off"
-              >Continue session ↗</a>
-              <span style={{ marginLeft: 'auto' }} />
-              {/* The fix's recorded revises: the ones that need no input are
-                  one click; the rest get a box below. */}
-              {(item.fixRevises || []).filter(r => !(r.inputs || []).length).map(r => (
-                <button key={r.revise} className="btn btn-sm"
-                  title={`${r.label} — the agent works on this PR and pushes to its branch, a turn in the fix's conversation`}
-                  onClick={() => reviseFix(r.revise, r.label)}>{r.label}</button>
-              ))}
-              {item.sandbox && item.sandbox.autoIterate && (
-                <span
-                  onClick={() => {
-                    fetch(`/api/board/${boardName}/prs/${item.number}/auto-iterate`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ mode: item.sandbox.autoIterate === 'on' ? 'off' : 'on' }),
-                    }).then(res => { if (res.ok && onRefresh) onRefresh(); }).catch(() => {});
-                  }}
-                  style={{ cursor: 'pointer' }}
-                  title={`Auto follow-up is ${item.sandbox.autoIterate}${item.sandbox.autoIterateOverridden ? ' (set for this PR)' : ' (board default)'} — click to turn ${item.sandbox.autoIterate === 'on' ? 'off' : 'on'} for this PR`}>
-                  <Chip text={item.sandbox.autoIterate === 'on' ? 'auto ⏻' : 'auto ⏸'}
-                    color={item.sandbox.autoIterate === 'on' ? '#22863a' : '#6a737d'}
-                    bg={item.sandbox.autoIterate === 'on' ? 'rgba(34,134,58,0.14)' : 'rgba(106,115,125,0.12)'} />
-                </span>
-              )}
-            </div>
-            {(item.fixRevises || []).filter(r => (r.inputs || []).length).map(r => {
-              const text = reviseText[r.revise] || '';
-              return (
-                <div key={r.revise} style={{ marginTop: '6px' }}>
-                  <textarea
-                    value={text}
-                    onChange={e => setReviseText(t => ({ ...t, [r.revise]: e.target.value }))}
-                    placeholder={`${r.label} — ${r.inputs[0]} for the agent`}
-                    spellCheck={false}
-                    style={{
-                      width: '100%', boxSizing: 'border-box', fontFamily: 'inherit', fontSize: 'small',
-                      padding: '8px', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color, #444)', borderRadius: '6px', minHeight: '56px', textAlign: 'left',
-                    }}
-                  />
-                  <div style={{ marginTop: '6px', textAlign: 'right' }}>
-                    <button className="btn btn-sm" disabled={!text.trim()}
-                      title={`${r.label} — the agent works on this PR as asked and pushes to its branch, a turn in the fix's conversation`}
-                      onClick={() => {
-                        reviseFix(r.revise, r.label, { [r.inputs[0]]: text.trim() })
-                          .then(ok => { if (ok) setReviseText(t => ({ ...t, [r.revise]: '' })); });
-                      }}>{r.label}</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </td>
-      </tr>
-    )}
     {showError && item.error && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
@@ -606,10 +534,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               <button className="btn btn-sm" style={{ marginLeft: '8px' }}
                 onClick={() => onOpenSandbox && onOpenSandbox(item.sandbox.name)}>agent logs</button>
             )}
-            {item.fixSession && !fixBusy && (
-              <a className="btn btn-sm" href={taskSessionHref(item.fixSession)} onClick={sessionClick(onOpenSession, item.fixSession)}
+            {failedRun && (
+              <a className="btn btn-sm" href={taskSessionHref(failedRun)} onClick={sessionClick(onOpenSession, failedRun)}
                 target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }}
-                title="Continue the fix's conversation where it left off"
+                title="Continue the run's conversation where it left off"
               >Continue session ↗</a>
             )}
           </div>

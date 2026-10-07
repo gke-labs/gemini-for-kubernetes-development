@@ -185,43 +185,52 @@ func TestRunStatus(t *testing.T) {
 }
 
 // A PR the member authored offers no Review: GitHub takes no verdict from
-// a PR's author.
-func TestOwnPROffersNoReview(t *testing.T) {
+// a PR's author. Care runs on one whose head is on their fork alone.
+func TestOwnPROffersCareNotReview(t *testing.T) {
 	catalog, err := boardRecipes(boardCR())
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := map[string]*models.WorkItem{"pr-1": {Type: "pr", Mine: true}, "pr-2": {Type: "pr"}}
+	items := map[string]*models.WorkItem{
+		"pr-1": {Type: "pr", Mine: true, MyPR: true},
+		"pr-2": {Type: "pr"},
+		"pr-3": {Type: "pr", Mine: true},
+	}
 	applyRowRules(items, catalog, nil, false, time.Now())
-	for key, want := range map[string]bool{"pr-1": false, "pr-2": true} {
-		got := slices.ContainsFunc(items[key].Recipes, func(rec models.RowRecipe) bool { return rec.Name == "review" })
-		if got != want {
-			t.Errorf("%s offers review = %v, want %v", key, got, want)
+	offers := func(key, name string) bool {
+		return slices.ContainsFunc(items[key].Recipes, func(rec models.RowRecipe) bool { return rec.Name == name })
+	}
+	for key, want := range map[string][2]bool{"pr-1": {false, true}, "pr-2": {true, false}, "pr-3": {false, false}} {
+		if got := [2]bool{offers(key, "review"), offers(key, "care")}; got != want {
+			t.Errorf("%s offers review, care = %v, want %v", key, got, want)
 		}
 	}
 }
 
-// The rows offer what the catalog says, built-ins included: fix starts on
-// issues only (on a PR of the member's it has revises, no start), review
-// on PRs only, and nothing before the controller has published.
+// The rows offer what the catalog says, built-ins included: fix on issues,
+// review on PRs, care on a PR of the member's from their fork only, and
+// nothing before the controller has published.
 func TestRowRecipesFollowTheCatalog(t *testing.T) {
 	catalog, err := boardRecipes(boardCR())
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := func(item string, catalog []boardv1alpha1.BoardRecipe) (out []string) {
-		for _, rec := range rowRecipes(catalog, item) {
+	names := func(item string, catalog []boardv1alpha1.BoardRecipe, myPR bool) (out []string) {
+		for _, rec := range rowRecipes(catalog, item, myPR) {
 			out = append(out, rec.Name)
 		}
 		return out
 	}
-	if got := strings.Join(names("issue", catalog), ","); got != "fix,plan,summarize,triage" {
+	if got := strings.Join(names("issue", catalog, false), ","); got != "fix,plan,summarize,triage" {
 		t.Errorf("issue row = %s", got)
 	}
-	if got := strings.Join(names("pr", catalog), ","); got != "review" {
+	if got := strings.Join(names("pr", catalog, false), ","); got != "review" {
 		t.Errorf("PR row = %s", got)
 	}
-	if got := names("issue", nil); len(got) != 0 {
+	if got := strings.Join(names("pr", catalog, true), ","); got != "care,review" {
+		t.Errorf("my PR row = %s", got)
+	}
+	if got := names("issue", nil, false); len(got) != 0 {
 		t.Errorf("no catalog: %v, want no buttons", got)
 	}
 }

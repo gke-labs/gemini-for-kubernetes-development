@@ -555,83 +555,55 @@ describe('WorkRow review', () => {
     });
 });
 
-describe('WorkRow fix follow-ups', () => {
+// A PR of yours is looked after by care, a recipe like any other: no
+// drawer of the fix's revises (those are care's and the sessions' now).
+describe('WorkRow your PR', () => {
     const pr = {
         type: 'pull', number: 9, group: 'prs', mine: true, myPR: true, title: 'the fix',
-        recipes: [{ name: 'review', label: 'Review' }],
+        recipes: [{ name: 'care', label: 'Care' }, { name: 'summarize', label: 'Summarize' }],
         htmlURL: 'https://github.com/o/r/pull/9', updatedAt: '2026-10-06T10:00:00Z',
-        fixSession: { sandbox: 'fix-r-7', task: 'recipe-fix-1' },
-        // As the fix run recorded them.
-        fixRevises: [
-            { verb: 'revise', revise: 'iterate', label: 'Iterate', inputs: ['instruction'], enabled: true },
-            { verb: 'revise', revise: 'address-comments', label: 'Address comments', enabled: true },
-            { verb: 'revise', revise: 'fix-ci', label: 'Fix CI', enabled: true },
-            { verb: 'revise', revise: 'rebase', label: 'Rebase', enabled: true },
-        ],
     };
-    const renderRow = async (item) => {
+    const fixRun = status => ({ recipe: 'fix', label: 'Fix', sandbox: 'fix-r-7', task: 'recipe-fix-1', status });
+    const renderRow = async (item, onAction = () => {}) => {
         await act(async () => {
             root.render(<table><tbody>
-                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={() => {}}
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={onAction}
                     runState={{ repoRunbooks: [], instances: [] }} />
             </tbody></table>);
         });
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
-    const ok = () => jest.fn(() => Promise.resolve({ ok: true, status: 202, json: () => Promise.resolve({}) }));
-    const posted = () => global.fetch.mock.calls
-        .filter(([, opts]) => opts && opts.method === 'POST')
-        .map(([url, opts]) => [url, JSON.parse(opts.body)]);
-    const reviseAt = '/api/task-sessions/fix-r-7/recipe-fix-1/revise';
 
-    test('the follow-ups are revises of the fix session', async () => {
-        global.fetch = ok();
-        await renderRow(pr);
-        await act(async () => { findButton('Agent ▾').click(); });
-        expect(link('Continue session').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
-        await act(async () => { findButton('Address comments').click(); });
-        expect(posted()).toEqual([[reviseAt, { revise: 'address-comments' }]]);
-    });
-
-    test('every recorded revise is offered, Rebase included', async () => {
-        global.fetch = ok();
-        await renderRow(pr);
-        await act(async () => { findButton('Agent ▾').click(); });
-        await act(async () => { findButton('Rebase').click(); });
-        expect(posted()).toEqual([[reviseAt, { revise: 'rebase' }]]);
-    });
-
-    test('a PR not on the member\'s fork has no follow-ups', async () => {
-        await renderRow({ ...pr, myPR: false });
+    test('Care launches as a recipe, and there is no Agent drawer', async () => {
+        const onAction = jest.fn();
+        await renderRow({ ...pr, sessions: [fixRun('done')] }, onAction);
         expect(findButton('Agent ▾')).toBeUndefined();
+        await act(async () => { findButton('Care').click(); });
+        expect(onAction).toHaveBeenCalledWith('prs/9/recipes/care', 'Care', {});
     });
 
     test('a PR that is not mine is reviewed, not promoted', async () => {
-        await renderRow({ ...pr, mine: false, myPR: false, draftPR: true, author: 'carol' });
+        await renderRow({ ...pr, mine: false, myPR: false, draftPR: true, author: 'carol', recipes: [{ name: 'review', label: 'Review' }] });
         expect(findButton('Review')).toBeDefined();
         expect(findButton('Promote PR')).toBeUndefined();
         expect(container.textContent).toContain('carol');
     });
 
-    test('Iterate asks for an instruction and passes it as the input', async () => {
-        global.fetch = ok();
-        await renderRow(pr);
-        await act(async () => { findButton('Agent ▾').click(); });
-        expect(findButton('Iterate').disabled).toBe(true);
-        await act(async () => { setValue(container.querySelector('textarea'), ' rename it '); });
-        await act(async () => { findButton('Iterate').click(); });
-        expect(posted()).toEqual([[reviseAt, { revise: 'iterate', inputs: { instruction: 'rename it' } }]]);
-    });
-
-    test('a PR the board did not fix has no follow-ups', async () => {
-        await renderRow({ ...pr, fixSession: undefined });
-        expect(findButton('Agent ▾')).toBeUndefined();
-    });
-
-    test('a follow-up at work can be watched', async () => {
-        await renderRow({ ...pr, sessions: [{ recipe: 'fix', label: 'Fix', sandbox: 'fix-r-7', task: 'recipe-fix-1', status: 'running' }] });
+    test('a fix at work can be watched', async () => {
+        await renderRow({ ...pr, sessions: [fixRun('running')] });
         expect(link('Fix: running').getAttribute('href')).toBe('#/task-session/fix-r-7/recipe-fix-1');
-        expect(findButton('Agent ▾')).toBeUndefined();
+    });
+
+    test('auto follow-up shows on a PR the board fixed, and toggles', async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
+        const sandbox = { name: 'fix-r-7', engine: 'gemini', autoIterate: 'on' };
+        await renderRow({ ...pr, sandbox });
+        expect(container.textContent).not.toContain('auto ⏻');
+        await renderRow({ ...pr, sandbox, sessions: [fixRun('done')] });
+        const chip = Array.from(container.querySelectorAll('span')).find(s => (s.title || '').startsWith('Auto follow-up'));
+        expect(chip).toBeDefined();
+        await act(async () => { chip.click(); });
+        expect(global.fetch).toHaveBeenCalledWith('/api/board/myboard/prs/9/auto-iterate', expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'off' }) }));
     });
 });
 

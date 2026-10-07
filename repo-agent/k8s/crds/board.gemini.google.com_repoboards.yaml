@@ -228,10 +228,6 @@ spec:
                         - label
                         type: object
                       type: array
-                    revisesOn:
-                      items:
-                        type: string
-                      type: array
                     taskType:
                       type: string
                   required:

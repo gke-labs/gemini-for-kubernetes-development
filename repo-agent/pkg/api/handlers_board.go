@@ -826,17 +826,6 @@ func headOnMemberFork(pr *github.PullRequest, member string) bool {
 		!strings.EqualFold(head.GetFullName(), pr.GetBase().GetRepo().GetFullName())
 }
 
-// fixRevises are the revises of the fix run recorded on sb, the PR row's
-// follow-ups: whatever the fix recipe offers, with the inputs each asks
-// for.
-func fixRevises(sb *unstructured.Unstructured) []models.WorkAction {
-	if sb == nil {
-		return nil
-	}
-	run, _ := factorycli.RecordedRunAt(sb.GetAnnotations(), factorycli.AnnotationFixRun)
-	return reviseActions(run)
-}
-
 func hasLabel(labels []*github.Label, name string) bool {
 	for _, l := range labels {
 		if strings.EqualFold(l.GetName(), name) {
@@ -931,7 +920,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Sandbox:   workSandbox(sb, autoDefault),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
-	items[key].FixSession = taskSession(planSB, factorycli.AnnotationFixRun)
 	if planSB != nil && state == "Failed" && taskType == "fix" {
 		items[key].Error = planSB.GetAnnotations()[annoFixError]
 	}
@@ -1086,8 +1074,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Fixes:           closingRefs(pr.GetBody()),
 		Sandbox:         workSandbox(sb, autoDefault),
 		ReviewSession:   taskSession(rsb, factorycli.AnnotationReviewRun),
-		FixSession:      taskSession(sb, factorycli.AnnotationFixRun),
-		FixRevises:      fixRevises(sb),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 	if sb == nil {
@@ -1146,20 +1132,23 @@ func boardRecipes(board *unstructured.Unstructured) ([]boardv1alpha1.BoardRecipe
 	return recipes, json.Unmarshal(b, &recipes)
 }
 
-// boardStarts reports whether the board starts recipe on item.
+// boardStarts reports whether the board starts recipe on item. A PR may be
+// the member's: whether it is, factory checks when the run starts.
 func (s *Server) boardStarts(board *unstructured.Unstructured, recipe, item string) (bool, error) {
 	recipes, err := boardRecipes(board)
 	if err != nil {
 		return false, err
 	}
 	i := slices.IndexFunc(recipes, func(rec boardv1alpha1.BoardRecipe) bool { return rec.Name == recipe })
-	return i >= 0 && recipeStartsOn(recipes[i], item), nil
+	return i >= 0 && recipeRunsOn(recipes[i], item, true), nil
 }
 
-// recipeStartsOn reports whether rec starts on item: it runs there, and
-// has a start there, not only revises.
-func recipeStartsOn(rec boardv1alpha1.BoardRecipe, item string) bool {
-	return (len(rec.On) == 0 || slices.Contains(rec.On, item)) && !slices.Contains(rec.RevisesOn, item)
+// recipeRunsOn reports whether rec runs on a row of item (no on: runs
+// anywhere); myPR is a PR the member authored from their fork, where a
+// recipe on [my-pr] runs as well as one on [pr] (factory's on: rule).
+func recipeRunsOn(rec boardv1alpha1.BoardRecipe, item string, myPR bool) bool {
+	return len(rec.On) == 0 || slices.Contains(rec.On, item) ||
+		(item == "pr" && myPR && slices.Contains(rec.On, "my-pr"))
 }
 
 func (s *Server) kickoff(c *gin.Context, item, recipe string, inputs map[string]string) {

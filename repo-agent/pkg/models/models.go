@@ -125,12 +125,6 @@ type WorkItem struct {
 	// ReviewSession is a PR's review session (the review recipe's), for
 	// Continue session and Update review.
 	ReviewSession *TaskSession `json:"reviewSession,omitempty"`
-	// FixSession is the fix's session (the fix recipe's), on the issue's
-	// row and on the PR it opened: watch while it runs, Continue session
-	// after, and its revises (Iterate, Address comments, Fix CI).
-	FixSession *TaskSession `json:"fixSession,omitempty"`
-	// FixRevises are the fix run's revises, the PR row's follow-ups.
-	FixRevises []WorkAction `json:"fixRevises,omitempty"`
 	// Mine is a PR the member authored; MyPR one they authored whose head
 	// is on their fork, which a recipe may push to.
 	Mine bool `json:"mine,omitempty"`

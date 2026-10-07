@@ -32,12 +32,13 @@ func recipeLabel(catalog []boardv1alpha1.BoardRecipe, name string) string {
 	return name
 }
 
-// rowRecipes are the launch buttons of a row of item: the recipes the
-// controller published that start there, none before it has.
-func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string) []models.RowRecipe {
+// rowRecipes are the launch buttons of a row of item, a PR of the
+// member's from their fork if myPR: the recipes the controller published
+// that run there, none before it has.
+func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string, myPR bool) []models.RowRecipe {
 	var out []models.RowRecipe
 	for _, rec := range catalog {
-		if !recipeStartsOn(rec, item) {
+		if !recipeRunsOn(rec, item, myPR) {
 			continue
 		}
 		button := models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name)}
@@ -74,7 +75,7 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 		if item.Type == "issue" && item.PRURL != "" {
 			continue
 		}
-		item.Recipes = rowRecipes(catalog, item.Type)
+		item.Recipes = rowRecipes(catalog, item.Type, item.MyPR)
 		if item.Type == "pr" && item.Mine {
 			// GitHub takes no verdict from a PR's author on their own PR.
 			item.Recipes = slices.DeleteFunc(item.Recipes, func(rec models.RowRecipe) bool { return rec.Name == "review" })

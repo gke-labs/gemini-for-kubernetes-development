@@ -68,9 +68,11 @@ func findRecipe(catalog []boardv1alpha1.BoardRecipe, name string) (boardv1alpha1
 }
 
 // startsOn reports whether rec starts on item: it runs on it (no on:
-// runs anywhere), and has a start there, not only revises.
+// runs anywhere). A recipe on [my-pr] starts on a PR; factory refuses it
+// on one that is not the member's.
 func startsOn(rec boardv1alpha1.BoardRecipe, item string) bool {
-	return (len(rec.On) == 0 || slices.Contains(rec.On, item)) && !slices.Contains(rec.RevisesOn, item)
+	return len(rec.On) == 0 || slices.Contains(rec.On, item) ||
+		(item == "pr" && slices.Contains(rec.On, "my-pr"))
 }
 
 // recipeKey is the single-flight key of a recipe's run on an item.
