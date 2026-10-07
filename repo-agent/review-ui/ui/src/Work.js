@@ -53,7 +53,6 @@ const RUN_STYLE = {
 // READY_STYLE is a draft's button: amber = your verdict is the bottleneck;
 // purple = your saved review awaits finalize.
 const READY_STYLE = { color: '#b08800', bg: 'rgba(176,136,0,0.16)' };
-const REVIEW_READY_STYLE = { color: '#8250df', bg: 'rgba(130,80,223,0.14)' };
 
 // latestRuns is the newest run of each recipe on the row (its sessions
 // are newest first).
@@ -69,11 +68,6 @@ function bareReviewRequest(item) {
   return item.type !== 'issue' && !!item.reviewRequested && !item.reviewPending && !item.error &&
     !latestRuns(item).some(r => r.status === 'ready' || r.status === 'failed');
 }
-
-// Done verbs turn into green receipts: the pipeline's history stays on
-// the rail (Triage ✓ → Plan ✓ → Fix ✓), and clicking a receipt shows the
-// artifact it produced.
-const RECEIPT_STYLE = { color: '#22863a', bg: 'rgba(34,134,58,0.14)' };
 
 // The cross-board inbox: a synthetic board whose only view is Up Next —
 // "what do I owe right now" is a question about you, not a repo.
@@ -279,7 +273,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const fixBusy = ['running', 'starting', 'queued'].includes(statusOf('fix'));
 
   const [showError, setShowError] = useState(false);
-  const [showReview, setShowReview] = useState(false);
   const [showIterate, setShowIterate] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
   // Text for the fix revises that take an input, by revise id.
@@ -288,9 +281,8 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const group = groupOf(item);
   const isPR = item.type !== 'issue';
 
-  // The rail (the last column): a pending review's button, the recipes
-  // to launch, and the row's own GitHub moves. Green receipts link what
-  // shipped (Fix ✓, Review ✓); a run's history is its chip's session.
+  // The rail (the last column): the recipes to launch and the row's own
+  // GitHub moves; a run's history is its chip's session.
   // The fix's follow-ups are revises of its session, filed on it.
   const reviseFix = (revise, label, inputs) => {
     const s = item.fixSession;
@@ -305,14 +297,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       return false;
     }).catch(err => { window.alert(`${label}: ${err}`); return false; });
   };
-
-  // A ready run's draft is read and applied in its session: its chip is
-  // the row's move. A pending review on GitHub is the review's, run or not.
-  const ready = [];
-  if (item.reviewPending) {
-    ready.push({ key: 'review-pending', label: 'Review ready', open: showReview, onClick: () => setShowReview(v => !v), style: REVIEW_READY_STYLE,
-      title: 'Your draft review is saved on GitHub — open to finalize or abandon' });
-  }
 
   const actions = [];
   for (const rec of item.recipes || []) {
@@ -354,24 +338,30 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     actions.push({ label: showDeploy ? 'Deploy ▴' : 'Deploy ▾', onClick: () => setShowDeploy(v => !v), title: 'Plan a run of this pull request from one of the repository\'s runbooks' });
   }
 
-  // Receipts: done verbs turned green, linking what they shipped.
-  const receipts = [];
-  if (item.type === 'issue') {
-    if (item.prURL) {
-      receipts.push({ label: 'Fix ✓', href: item.prURL, title: 'Fix shipped — open the PR' });
-    }
-  } else if (item.reviewed) {
-    receipts.push({ label: 'Review ✓', href: item.htmlURL, title: 'Your review is submitted — open the PR' });
-  }
-
   // The Agent column: each recipe's newest run, or the click waiting for
   // it. A failed run with an error to show opens it first (the "why");
   // the session is one more click from there.
-  const chips = runs.map(run => ({ recipe: run.recipe, label: run.label || run.recipe, status: statusOf(run.recipe), run }));
+  // A pending review of the member's on GitHub is the review's draft, run
+  // or not: it awaits their verdict.
+  const chips = runs.map(run => ({ recipe: run.recipe, label: run.label || run.recipe, run,
+    status: run.recipe === 'review' && item.reviewPending ? 'ready' : statusOf(run.recipe) }));
   for (const [name, state] of Object.entries(item.launching || {})) {
     if (runOf(name)) continue;
     const rec = (item.recipes || []).find(r => r.name === name);
     chips.push({ recipe: name, label: rec ? rec.label : name, status: state });
+  }
+  // What GitHub still records of a review or a fix whose run is gone
+  // (its sandbox deleted) is the recipe's chip too, linking GitHub.
+  if (!runOf('review') && !(item.launching || {}).review) {
+    if (item.reviewPending) {
+      chips.push({ recipe: 'review', label: 'Review', status: 'pending', href: `${item.htmlURL}/files`, abandon: true,
+        title: 'Your pending review is saved on GitHub, visible only to you — finalize it there' });
+    } else if (item.reviewed) {
+      chips.push({ recipe: 'review', label: 'Review', status: 'done', href: item.htmlURL, title: 'Your review is submitted — open the PR' });
+    }
+  }
+  if (item.type === 'issue' && item.prURL && !runOf('fix') && !(item.launching || {}).fix) {
+    chips.push({ recipe: 'fix', label: 'Fix', status: 'done', href: item.prURL, title: 'Fix shipped — open the PR' });
   }
   const failedChip = chips.some(c => c.status === 'failed');
 
@@ -430,7 +420,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
       </td>
       {/* GitHub facts on the left …, repo-agent state on the right:
           Agent (machine facts, incl. run outcomes), then the one-action
-          rail — receipts, drafts' buttons, or launch verbs. */}
+          rail — launch verbs and the row's GitHub moves. */}
       <td style={{ padding: '6px 8px' }}>
         {/* The icon is the sandbox's presence on the row: click for the
             card (tasks, logs, lifecycle). Resting lifecycle (paused /
@@ -452,6 +442,25 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                 title="Show why the run stopped">
                 <Chip text={`${text} !`} color={style.color} bg={style.bg} />
               </span>
+            );
+          }
+          if (c.href) {
+            return c.abandon ? (
+              <span key={c.recipe} style={{ marginLeft: '4px', whiteSpace: 'nowrap' }}>
+                <a className="btn btn-sm" href={c.href} target="_blank" rel="noopener noreferrer" title={c.title}
+                  style={{ textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
+                  {`${text} ↗`}
+                </a>
+                <button className="btn btn-sm" style={{ marginLeft: '2px' }} title="Abandon: delete your pending review on GitHub"
+                  onClick={() => {
+                    if (!window.confirm(`Delete your pending review on PR #${item.number}?`)) return;
+                    onAction(`prs/${item.number}/abandon`, 'Abandon review');
+                  }}>✕</button>
+              </span>
+            ) : (
+              <a key={c.recipe} href={c.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={c.title}>
+                <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
+              </a>
             );
           }
           // A ready run's chip is the row's move: it looks pressable, and
@@ -489,19 +498,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {receipts.map(r => (
-          <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={r.title}>
-            <Chip text={r.label + ' ↗'} color={RECEIPT_STYLE.color} bg={RECEIPT_STYLE.bg} />
-          </a>
-        ))}
-        {ready.map(r => (
-          // A real button, not a chip: the verdict is THE action on the
-          // row, so it must look pressable — chips are for facts.
-          <button key={r.key} className="btn btn-sm" onClick={r.onClick} title={r.title}
-            style={{ marginLeft: '4px', color: r.style.color, backgroundColor: r.style.bg, borderColor: r.style.color, fontWeight: 600 }}>
-            {r.label + (r.open ? ' ▴' : ' ▾')}
-          </button>
-        ))}
         {actions.map(a => a.onClick ? (
           <button key={a.label} className="btn btn-sm" style={{ marginLeft: '4px' }} title={a.title} onClick={a.onClick}>{a.label}</button>
         ) : a.href ? (
@@ -536,36 +532,6 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         ))}
       </td>
     </tr>
-    {showReview && item.reviewPending && (
-      <tr>
-        <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
-          <div style={{
-            fontSize: 'small', padding: '10px', borderRadius: '6px',
-            backgroundColor: 'var(--bg-secondary)', textAlign: 'left',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <span>Your draft review is saved on GitHub (visible only to you) — finalize it there, or abandon it to start over.</span>
-            <span style={{ whiteSpace: 'nowrap' }}>
-              {/* The draft is the pending review on GitHub; the session is
-                  where to ask the agent about it, or have it Update review. */}
-              {item.reviewSession && (
-                <a className="btn btn-sm" href={taskSessionHref(item.reviewSession)} onClick={sessionClick(onOpenSession, item.reviewSession)}
-                  target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginRight: '4px' }}
-                  title="Continue the review conversation where it left off — Update review posts a new pending review over this one"
-                >Continue session ↗</a>
-              )}
-              <a className="btn btn-sm" href={`${item.htmlURL}/files`} target="_blank" rel="noopener noreferrer"
-                style={{ textDecoration: 'none' }} title="Open your pending review on GitHub">Finalize ↗</a>
-              <button className="btn btn-sm" style={{ marginLeft: '4px' }}
-                onClick={() => {
-                  if (!window.confirm(`Delete your pending review on PR #${item.number}?`)) return;
-                  onAction(`prs/${item.number}/abandon`, 'Abandon review');
-                }}>Abandon</button>
-            </span>
-          </div>
-        </td>
-      </tr>
-    )}
     {showDeploy && isPR && runbooks.length > 0 && (
       <tr>
         <td colSpan="5" style={{ padding: '0 8px 10px 8px' }}>
