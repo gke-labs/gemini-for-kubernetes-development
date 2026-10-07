@@ -1146,16 +1146,8 @@ func boardRecipes(board *unstructured.Unstructured) ([]boardv1alpha1.BoardRecipe
 	return recipes, json.Unmarshal(b, &recipes)
 }
 
-// hookedRecipeItems are the recipes the controller has passes of its own
-// for, and what the board starts each on: known whether or not the
-// controller has published its catalog yet.
-var hookedRecipeItems = map[string]string{"triage": "issue", "plan": "issue", "fix": "issue", "review": "pr"}
-
 // boardStarts reports whether the board starts recipe on item.
 func (s *Server) boardStarts(board *unstructured.Unstructured, recipe, item string) (bool, error) {
-	if want, ok := hookedRecipeItems[recipe]; ok {
-		return item == want, nil
-	}
 	recipes, err := boardRecipes(board)
 	if err != nil {
 		return false, err
