@@ -117,8 +117,9 @@ func TestFillChange(t *testing.T) {
 		t.Errorf("filled %+v, commit %s", c, d.Target.Commit)
 	}
 
-	// A revise's is about the PR, and keeps the PR's title and body where
-	// the agent wrote none.
+	// A Change on a PR — a revise's, or a start's on one, such as care's —
+	// is about the PR, and keeps its title and body where the agent wrote
+	// none.
 	rev, err := taskoutput.Wrap("Change", "change:\n  report: fixed the lint\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{})
 	if err != nil {
 		t.Fatal(err)
@@ -142,5 +143,12 @@ func TestFillChange(t *testing.T) {
 	}
 	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" {
 		t.Errorf("retitled %+v", c)
+	}
+	started, _ := taskoutput.Wrap("Change", "change:\n  report: rebased\n", taskoutput.Target{}, taskoutput.Source{})
+	if err := fillChange(started, spool.Task{}, dir, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = started.ChangeSpec(); c.Title != "t0" || c.Body != "b0" || started.Target.URL != "https://github.com/o/r/pull/9" {
+		t.Errorf("care start filled %+v, target %+v", c, started.Target)
 	}
 }
