@@ -34,8 +34,9 @@ const reviewReviseKeyAt = "alice/revise-review-repo-42"
 // run (task recipe-review-1) recorded.
 func postedReviewSandbox(state string) map[string]interface{} {
 	return map[string]interface{}{
-		AnnotationReviewState:          state,
-		factorycli.AnnotationReviewRun: `{"name":"review/test-board/42/1","task":"recipe-review-1","startedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + `"}`,
+		AnnotationReviewState: state,
+		factorycli.AnnotationReviewRun: `{"name":"review/test-board/42/1","task":"recipe-review-1","startedAt":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) +
+			`","kind":"Review","revises":[{"id":"review","label":"Update review"}]}`,
 	}
 }
 

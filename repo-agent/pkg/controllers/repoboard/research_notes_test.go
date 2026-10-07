@@ -41,7 +41,10 @@ const (
 // started: its start, task research-1, recorded under research-run.
 func recipeResearchSandbox(extra map[string]string) *unstructured.Unstructured {
 	sb := researchSandboxObj("alice", notesSandboxName)
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: "research/" + testSession, Task: "research-1", StartedAt: time.Now().Add(-time.Hour)})
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "research/" + testSession, Task: "research-1", StartedAt: time.Now().Add(-time.Hour), Kind: "Notes",
+		Revises: []factorycli.RecordedRevise{{ID: "notes", Label: "Save notes"}},
+	})
 	a := sb.GetAnnotations()
 	a[factorycli.ResearchRunAnnotation] = string(run)
 	for k, v := range extra {
@@ -153,7 +156,10 @@ func TestSaveNotesNeedsARecipeConversation(t *testing.T) {
 func TestSaveNotesResumesItsRecordedRun(t *testing.T) {
 	g := gomega.NewWithT(t)
 	name := "revise/test-board/" + notesSandboxName + "/notes/1"
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: name, Task: "research-2", Session: "research-1", StartedAt: time.Now().Add(time.Second)})
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: name, Task: "research-2", Session: "research-1", StartedAt: time.Now().Add(time.Second), Kind: "Notes",
+		Revises: []factorycli.RecordedRevise{{ID: "notes", Label: "Save notes"}},
+	})
 	sb := recipeResearchSandbox(map[string]string{factorycli.ResearchRunAnnotation: string(run)})
 	fake := newFakeLauncher()
 	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb, notesReviseClick())

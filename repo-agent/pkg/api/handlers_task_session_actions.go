@@ -88,21 +88,19 @@ func sessionResearch(sb *unstructured.Unstructured) (researchSandboxView, bool) 
 // with why.
 func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) []models.WorkAction {
 	a := sb.GetAnnotations()
-	run, kind, ok := factorycli.SessionRun(a, task)
+	run, ok := factorycli.SessionRun(a, task)
 	if !ok || len(run.Revises) == 0 {
 		return nil
 	}
-	revises := make([]models.WorkAction, 0, len(run.Revises))
-	for _, rv := range run.Revises {
-		revises = append(revises, models.WorkAction{Verb: "revise", Revise: rv.ID, Label: rv.Label, Enabled: true})
-	}
+	kind := run.Kind
+	revises := reviseActions(run)
 	disable := func(reason string) []models.WorkAction {
 		for i := range revises {
 			revises[i].Enabled, revises[i].Reason = false, reason
 		}
 		return revises
 	}
-	if number, board, ok := sessionIssue(sb); ok {
+	if _, _, ok := sessionIssue(sb); ok {
 		if kind == "Change" {
 			// The fix's follow-ups push to its PR and answer on it: there
 			// must be one, and the fix's sandbox must be idle.
@@ -111,9 +109,6 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 				return disable("the fix is running")
 			case !strings.Contains(a["htmlURL"], "/pull/"):
 				return disable("the fix has no PR yet")
-			}
-			for i := range revises {
-				revises[i].Inputs = reviseInputs[revises[i].Revise]
 			}
 			s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
 			for i := range revises {
@@ -141,7 +136,7 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 				revises[i].Enabled, revises[i].Reason = act.Enabled, act.Reason
 			}
 		}
-		s.markRevises(ctx, s.Auth.GetNamespaceFromContext(c), board, number, revises)
+		s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
 		return revises
 	}
 	if _, board, ok := sessionReview(sb); ok {
@@ -174,20 +169,26 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 	return revises
 }
 
-// reviseInputs are the inputs a recipe's revise asks for. factory does not
-// record them on the run, so the board knows them: the fix's iterate is
-// asked with the member's instruction.
-var reviseInputs = map[string][]string{"iterate": {"instruction"}}
+// reviseActions are run's revises as buttons, with the inputs each asks
+// for.
+func reviseActions(run factorycli.RecordedRun) []models.WorkAction {
+	revises := make([]models.WorkAction, 0, len(run.Revises))
+	for _, rv := range run.Revises {
+		revises = append(revises, models.WorkAction{Verb: "revise", Revise: rv.ID, Label: rv.Label, Inputs: rv.Inputs, Enabled: true})
+	}
+	return revises
+}
 
 // sessionDraft is task's draft, nil when it has none: an issue's plan, or
 // a research conversation's notes. A triage's draft is YAML for the board
 // row's form, not a document, and stays there.
 func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) *taskSessionDraft {
 	a := sb.GetAnnotations()
-	_, kind, ok := factorycli.SessionRun(a, task)
+	run, ok := factorycli.SessionRun(a, task)
 	if !ok {
 		return nil
 	}
+	kind := run.Kind
 	if number, boardName, ok := sessionIssue(sb); ok {
 		if kind != "Plan" || a[annoPlanDraft] == "" || a[annoPlanApproved] != "" {
 			return nil
@@ -275,54 +276,54 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot revise now: %s", action.Reason)})
 		return
 	}
-	// The inputs are the revise's own, all of them given: the one there
-	// is (Iterate's instruction) rides the Request as its Instruction.
-	for name := range req.Inputs {
+	// The inputs are the revise's own, all of them given.
+	inputs := map[string]string{}
+	for name, value := range req.Inputs {
 		if !slices.Contains(action.Inputs, name) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s takes no input %s", req.Revise, name)})
 			return
 		}
+		inputs[name] = strings.TrimSpace(value)
 	}
 	for _, name := range action.Inputs {
-		if strings.TrimSpace(req.Inputs[name]) == "" {
+		if inputs[name] == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s needs %s", req.Revise, name)})
 			return
 		}
 	}
-	if _, kind, _ := factorycli.SessionRun(sb.GetAnnotations(), task); kind == "Change" {
-		_, board, _ := sessionIssue(sb)
-		s.reviseSandbox(c, sb, board, req.Revise, strings.TrimSpace(req.Inputs["instruction"]))
+	if view, ok := sessionResearch(sb); ok {
+		s.saveRecipeNotes(c, view, req.Revise)
 		return
 	}
-	if number, board, ok := sessionIssue(sb); ok {
-		s.asIssueAction(c, board, number, "revise", gin.H{"kind": "Plan", "revise": req.Revise})
-		return
-	}
+	boardName := sb.GetAnnotations()[annoBoard]
+	number, _, _ := sessionIssue(sb)
 	if _, board, ok := sessionReview(sb); ok {
-		s.reviseSandbox(c, sb, board, req.Revise, "")
-		return
+		boardName = board
 	}
-	view, _ := sessionResearch(sb)
-	s.saveRecipeNotes(c, view, req.Revise)
+	s.reviseSandbox(c, sb, boardName, number, req.Revise, inputs)
 }
 
-// reviseSandbox files a revise keyed by its sandbox, as a Save notes is: a
-// review's Update review, which the controller posts over the pending
-// review, or a fix's follow-up, which pushes to its PR and posts its
-// replies there. 202.
-func (s *Server) reviseSandbox(c *gin.Context, sb *unstructured.Unstructured, boardName, revise, instruction string) {
+// reviseSandbox files a revise keyed by its sandbox, whichever recipe's:
+// the controller runs it in the session of the run that offers it. An
+// issue's sandbox names the issue too, so its row follows the revise.
+// 202.
+func (s *Server) reviseSandbox(c *gin.Context, sb *unstructured.Unstructured, boardName string, number int, revise string, inputs map[string]string) {
 	ctx := c.Request.Context()
 	board, member, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
+	if len(inputs) == 0 {
+		inputs = nil
+	}
 	filed, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
-		Verb:        boardv1alpha1.VerbRevise,
-		Member:      member,
-		Sandbox:     sb.GetName(),
-		Revise:      revise,
-		Instruction: instruction,
+		Verb:    boardv1alpha1.VerbRevise,
+		Member:  member,
+		Sandbox: sb.GetName(),
+		Number:  number,
+		Revise:  revise,
+		Inputs:  inputs,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
@@ -331,8 +332,10 @@ func (s *Server) reviseSandbox(c *gin.Context, sb *unstructured.Unstructured, bo
 	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
 }
 
-// markSandboxRevises marks revises with the newest revise Request filed for
-// the sandbox, as markRevises does an issue's.
+// markSandboxRevises says on a session's revises what the revise Requests
+// filed for its sandbox say: one standing is "revising", and the last one
+// failed carries why. This view is where a revise is clicked, so it is
+// where it is followed.
 func (s *Server) markSandboxRevises(ctx context.Context, namespace, sandbox string, revises []models.WorkAction) {
 	reqs, err := s.listRequests(ctx, namespace, v1.ListOptions{
 		LabelSelector: boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRevise,

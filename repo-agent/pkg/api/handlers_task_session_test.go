@@ -34,7 +34,7 @@ const (
 func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured {
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "plan/b/42/1", Task: planTask, StartedAt: time.Unix(1_000_000, 0),
-		Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
+		Kind: "Plan", Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
 	})
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -291,7 +291,7 @@ func TestATaskSessionFollowsItsRevise(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	other := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Number: 7, Revise: "plan"})
+	other := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Sandbox: "fix-granule-7", Number: 7, Revise: "plan"})
 	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, other, v1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestATaskSessionFollowsItsRevise(t *testing.T) {
 		t.Errorf("another issue's revise holds this one: %+v", got)
 	}
 
-	click := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Number: 42, Revise: "plan"})
+	click := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Sandbox: issueSandbox, Number: 42, Revise: "plan"})
 	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, click, v1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}

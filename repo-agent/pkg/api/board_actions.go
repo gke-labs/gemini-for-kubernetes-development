@@ -103,25 +103,8 @@ func (s *Server) boardIssueAction(c *gin.Context) {
 	case "Plan/reject":
 		s.planBoardReject(c)
 	case "Plan/revise":
-		s.fileRevise(c, board, number, action.Revise)
+		s.reviseSandbox(c, sb, board.GetName(), number, action.Revise, nil)
 	}
-}
-
-// fileRevise files a revise for the controller, which runs factory recipe
-// revise in the plan's session and stores the plan it writes as the
-// draft. 202, as for a write.
-func (s *Server) fileRevise(c *gin.Context, board *unstructured.Unstructured, number int, revise string) {
-	filed, err := s.fileRequest(c.Request.Context(), board, boardv1alpha1.RequestSpec{
-		Verb:   boardv1alpha1.VerbRevise,
-		Member: s.Auth.GetNamespaceFromContext(c),
-		Number: number,
-		Revise: revise,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
-		return
-	}
-	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
 }
 
 // fileApply files the write for the controller, which runs factory apply
@@ -174,7 +157,10 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 			continue
 		}
 		if spec.Verb == boardv1alpha1.VerbRevise {
-			markRevise(item.PlanActions, req)
+			// The plan's own: the issue's sandbox has other runs' too.
+			if _, ok := findWorkAction(item.PlanActions, "revise", spec.Revise); ok {
+				markRevise(item.PlanActions, req)
+			}
 			continue
 		}
 		if spec.Apply == nil {
