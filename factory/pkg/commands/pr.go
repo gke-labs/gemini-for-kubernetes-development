@@ -704,8 +704,11 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			return true
 		}
 
-		// A fix recipe's PR is followed by revising its run instead.
-		fixSandbox := fixRunSandbox(ctx, kubeClient, prNum, prURL)
+		// A PR care looks after (design/care-recipe.md) is followed by
+		// revising care's run, and a board fix's PR without one by
+		// starting care; any other with the tasks below.
+		careSandbox := careRunSandbox(ctx, kubeClient, repo, prNum, prURL)
+		follow := followUpOf(careSandbox, fixRunSandbox(ctx, kubeClient, prNum, prURL))
 
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
@@ -737,10 +740,10 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				fmt.Printf("\nFound failing checks for PR #%d (SHA: %s). Triggering investigate...\n", prNum, headSHA[:7])
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
-				if fixSandbox != "" {
+				if follow != followOverseer {
 					if dryRun {
-						fmt.Printf("[DRYRUN] Would revise the fix in %s with fix-ci for PR #%d\n", fixSandbox, prNum)
-					} else if err := reviseFixRun(ctx, ghClient, fixSandbox, "fix-ci"); err != nil {
+						fmt.Printf("[DRYRUN] Would run care's fix-ci for PR #%d\n", prNum)
+					} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
 						klog.Errorf("Fix CI failed: %v", err)
 					}
 				} else if dryRun {
@@ -771,8 +774,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					if strings.Contains(c.GetUser().GetLogin(), "bot") {
 						continue
 					}
-					// The fix run's own replies and reports.
-					if fixSandbox != "" && factoryPosted(c.GetBody()) {
+					// care's own replies and reports.
+					if follow != followOverseer && factoryPosted(c.GetBody()) {
 						continue
 					}
 					if c.GetCreatedAt().After(lastCommitTime) && c.GetCreatedAt().After(lastCommentAddressedTime) {
@@ -784,10 +787,10 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				if hasNewComments {
 					fmt.Printf("\nFound new review comments for PR #%d. Triggering address-comments...\n", prNum)
 					lastCommentAddressedTime = time.Now()
-					if fixSandbox != "" {
+					if follow != followOverseer {
 						if dryRun {
-							fmt.Printf("[DRYRUN] Would revise the fix in %s with address-comments for PR #%d\n", fixSandbox, prNum)
-						} else if err := reviseFixRun(ctx, ghClient, fixSandbox, "address-comments"); err != nil {
+							fmt.Printf("[DRYRUN] Would run care's address-comments for PR #%d\n", prNum)
+						} else if err := careFollowUp(ctx, ghClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
 							klog.Errorf("Address comments failed: %v", err)
 						}
 					} else if dryRun {

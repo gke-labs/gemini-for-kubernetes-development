@@ -219,7 +219,7 @@ func followUpInput(d *taskoutput.Document, name string) (string, string, error) 
 
 // runFollowUp is runFollowUps' sandbox call.
 var runFollowUp = func(ctx context.Context, name, url string, inputs map[string]string) error {
-	return runRecipe(ctx, name, url, "", "", applyMode{}, inputs, nil, reviseRun{})
+	return runRecipe(ctx, name, url, "", "", applyMode{}, inputs, nil)
 }
 
 // runRevises runs the revise each document offers, in the conversation of

@@ -50,16 +50,8 @@ type Recipe struct {
 	// Inputs declares what the recipe takes beyond what its caller always
 	// sets, so a missing or misspelt one fails before a sandbox is made.
 	Inputs map[string]Input `yaml:"inputs,omitempty"`
-	// Setup prepares the workspace, asking nothing: it runs ahead of the
-	// start, or where there is no start, of the first revise in the
-	// sandbox. factory folds it into that part (ForSandbox,
-	// SetupBeforeRevise); a runner never sees it. Unset, the start
-	// prepares its own.
-	Setup Part `yaml:"setup,omitempty"`
-	// Start is what runs when the task is launched. Its On, a subset of
-	// the recipe's, is where it runs (unset, everywhere the recipe does);
-	// elsewhere the revises are the recipe's entry points, and the first
-	// one opens the session: on a PR of yours, fix has nothing to start.
+	// Start is what runs when the task is launched, wherever the recipe
+	// runs: it opens the session its revises continue.
 	Start Part `yaml:"start"`
 	// Revise are parts that run later, into the started task's session,
 	// to write its output again from the conversation since: each one a
@@ -127,18 +119,15 @@ const (
 // write with it: setup-fork may fork, push pushes.
 var fullCredentialSteps = []string{"setup-git", "setup-repo", "setup-fork", "checkout-default-branch", "checkout-pr-branch", "push"}
 
-// Part is a list of steps run in order: the recipe's setup, its start,
-// or a revise.
+// Part is a list of steps run in order: the recipe's start, or a revise.
 type Part struct {
-	// On is the start's only: where it runs (StartsOn).
-	On    []string `yaml:"on,omitempty"`
-	Steps []Step   `yaml:"steps"`
+	Steps []Step `yaml:"steps"`
 }
 
-// StartsOn reports whether the start runs on target: a my-pr is a PR too.
-func (r *Recipe) StartsOn(target string) bool {
-	on := r.Start.On
-	return len(on) == 0 || slices.Contains(on, target) || (target == OnMyPR && slices.Contains(on, OnPR))
+// RunsOn reports whether the recipe runs on target (On; unset, any): a
+// my-pr is a PR too.
+func (r *Recipe) RunsOn(target string) bool {
+	return len(r.On) == 0 || slices.Contains(r.On, target) || (target == OnMyPR && slices.Contains(r.On, OnPR))
 }
 
 // Steps is the part to run: start's for "", else the named revise's.
@@ -347,30 +336,8 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("output %q must be a plain file name", o)
 		}
 	}
-	if err := validateSteps(r.Setup.Steps); err != nil {
-		return fmt.Errorf("setup: %w", err)
-	}
-	if len(r.Setup.On) > 0 {
-		return fmt.Errorf("setup: on is the start's: setup runs wherever the recipe does")
-	}
-	for i, s := range r.Setup.Steps {
-		if s.Kind() == "ask" {
-			return fmt.Errorf("setup: step %d: setup asks nothing; it runs before the session opens", i+1)
-		}
-	}
 	if err := validateSteps(r.Start.Steps); err != nil {
 		return fmt.Errorf("start: %w", err)
-	}
-	for _, on := range r.Start.On {
-		if !slices.Contains(onTargets, on) {
-			return fmt.Errorf("start: on %q is not one of: %s", on, strings.Join(onTargets, ", "))
-		}
-		if len(r.On) > 0 && !slices.Contains(r.On, on) {
-			return fmt.Errorf("start: on %s, which recipe %s does not run on (on: %s)", on, r.Name, strings.Join(r.On, ", "))
-		}
-	}
-	if len(r.Start.On) > 0 && len(r.Revise) == 0 && (len(r.On) == 0 || slices.ContainsFunc(r.On, func(t string) bool { return !r.StartsOn(t) })) {
-		return fmt.Errorf("recipe %s starts only on %s and has no revises: elsewhere nothing would run", r.Name, strings.Join(r.Start.On, ", "))
 	}
 	if err := r.validateCredentials(); err != nil {
 		return err
@@ -422,10 +389,7 @@ func (r *Recipe) validateCredentials() error {
 	default:
 		return fmt.Errorf("credentials %q is not one of: %s, %s", r.Credentials, CredentialsFull, CredentialsClone)
 	}
-	if len(r.Start.On) > 0 {
-		return fmt.Errorf("credentials: clone: the start runs everywhere, for its clone; a revise has no token to clone with")
-	}
-	parts := map[string][]Step{"setup": r.Setup.Steps, "start": r.Start.Steps}
+	parts := map[string][]Step{"start": r.Start.Steps}
 	for _, rv := range r.Revise {
 		parts["revise "+rv.ID] = rv.Steps
 	}
@@ -434,18 +398,12 @@ func (r *Recipe) validateCredentials() error {
 			if slices.Contains(fullCredentialSteps, s.Uses) {
 				return fmt.Errorf("%s: step %d: %s leaves the GitHub token behind; credentials: clone allows only %s", part, i+1, s.Uses, CloneStep)
 			}
-			if s.Uses == CloneStep && part != "start" && part != "setup" {
+			if s.Uses == CloneStep && part != "start" {
 				return fmt.Errorf("%s: step %d: a revise has no token to clone with", part, i+1)
 			}
 		}
 	}
-	// Setup runs first, and asks nothing.
 	clones, asked := 0, false
-	for _, s := range r.Setup.Steps {
-		if s.Uses == CloneStep {
-			clones++
-		}
-	}
 	for i, s := range r.Start.Steps {
 		switch {
 		case s.Uses == CloneStep && asked:
@@ -606,21 +564,8 @@ func safeFileName(name string) bool {
 	return name != "" && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".")
 }
 
-// expandAliases replaces every alias under n with a copy of what it
-// names, and drops the anchors.
-func expandAliases(n *yaml.Node) {
-	if n.Kind == yaml.AliasNode && n.Alias != nil {
-		*n = *n.Alias
-	}
-	n.Anchor = ""
-	for _, c := range n.Content {
-		expandAliases(c)
-	}
-}
-
-// ForSandbox is the recipe as a sandbox's runner gets it: its setup
-// folded into its start, and without label, on (the recipe's and the
-// start's), task-output, task-type, input types and revise inputs, which
+// ForSandbox is the recipe as a sandbox's runner gets it: without label,
+// on, task-output, task-type, input types and revise inputs, which
 // runners older than them reject as unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
@@ -632,15 +577,6 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	if start := mapValue(m, "start"); start != nil && start.Kind == yaml.MappingNode && dropKey(start, "on") {
-		changed = true
-	}
-	if mapValue(m, "setup") != nil {
-		if err := foldSetup(m, mapValue(m, "start")); err != nil {
-			return nil, err
-		}
-		changed = true
-	}
 	for _, k := range []string{"label", "on", "task-output", "task-type"} {
 		if dropKey(m, k) {
 			changed = true
@@ -669,55 +605,6 @@ func ForSandbox(data []byte) ([]byte, error) {
 		return data, nil
 	}
 	return yaml.Marshal(&doc)
-}
-
-// SetupBeforeRevise folds the recipe's setup into revise rather than its
-// start: the first task in a sandbox where the start does not run.
-func SetupBeforeRevise(data []byte, revise string) ([]byte, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parsing recipe: %w", err)
-	}
-	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode || mapValue(doc.Content[0], "setup") == nil {
-		return data, nil
-	}
-	m := doc.Content[0]
-	var part *yaml.Node
-	if revises := mapValue(m, "revise"); revises != nil && revises.Kind == yaml.SequenceNode {
-		for _, rv := range revises.Content {
-			if id := mapValue(rv, "id"); rv.Kind == yaml.MappingNode && id != nil && id.Value == revise {
-				part = rv
-			}
-		}
-	}
-	if part == nil {
-		return nil, fmt.Errorf("no revise %q", revise)
-	}
-	if err := foldSetup(m, part); err != nil {
-		return nil, err
-	}
-	return yaml.Marshal(&doc)
-}
-
-// foldSetup puts setup's steps ahead of part's and drops setup.
-func foldSetup(m, part *yaml.Node) error {
-	// An anchor setup defines may be used further on.
-	expandAliases(m)
-	setup := mapValue(m, "setup")
-	dropKey(m, "setup")
-	if part == nil || part.Kind != yaml.MappingNode {
-		return fmt.Errorf("recipe has no part to run its setup in")
-	}
-	var before []*yaml.Node
-	if s := mapValue(setup, "steps"); s != nil && s.Kind == yaml.SequenceNode {
-		before = s.Content
-	}
-	steps := mapValue(part, "steps")
-	if steps == nil || steps.Kind != yaml.SequenceNode {
-		return fmt.Errorf("recipe part has no steps")
-	}
-	steps.Content = append(slices.Clone(before), steps.Content...)
-	return nil
 }
 
 func dropKey(m *yaml.Node, key string) bool {

@@ -422,13 +422,12 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 		t.Errorf("sandbox recipe's instructions input = %+v, want it without its type", in)
 	}
 
-	// The fix's revise inputs lose their mark; its anchored revise steps
-	// stay.
+	// The fix's revise inputs lose their mark.
 	data, rec, err = Builtin("fix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rec.Inputs["instruction"].Revise || !rec.Inputs["pr_url"].Revise || rec.Inputs["plan"].From != "Plan" {
+	if !rec.Inputs["instruction"].Revise || rec.Inputs["plan"].From != "Plan" {
 		t.Fatalf("fix inputs = %+v", rec.Inputs)
 	}
 	if out, err = ForSandbox(data); err != nil {
@@ -437,8 +436,22 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	if got, err = Parse(out); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Inputs["instruction"].Revise || got.Inputs["plan"].From != "" || len(got.Revise) != len(rec.Revise) || got.Revise[1].Steps[0].Run != rec.Revise[0].Steps[0].Run {
+	if got.Inputs["instruction"].Revise || got.Inputs["plan"].From != "" || len(got.Revise) != len(rec.Revise) {
 		t.Errorf("sandbox fix recipe = %+v", got)
+	}
+
+	// care's revises share the start's anchored step.
+	if data, rec, err = Builtin("care"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err = ForSandbox(data); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = Parse(out); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Revise[1].Steps[0].Run == "" || got.Revise[1].Steps[0].Run != rec.Revise[0].Steps[0].Run {
+		t.Errorf("sandbox care recipe lost its anchored step:\n%s", out)
 	}
 }
 
@@ -534,7 +547,7 @@ func TestBuiltinReviewRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CheckRender("", inputs); err != nil {
+	if err := r.CheckRender(inputs); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.OutputDecl().Actions; got[len(got)-1].Verb != "revise" || got[len(got)-1].Revise != "review" {
@@ -552,7 +565,7 @@ func TestTaskOutputActionsValidated(t *testing.T) {
 
 // The built-in recipes declare what their results offer.
 func TestBuiltinActions(t *testing.T) {
-	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject", "review": "edit post-review reject", "fix": "edit open-pr post-replies reject"} {
+	for name, want := range map[string]string{"triage": "edit label comment reject", "plan": "edit comment run reject", "review": "edit post-review reject", "fix": "edit open-pr reject", "care": "edit post-replies reject"} {
 		_, r, err := Builtin(name)
 		if err != nil {
 			t.Fatal(err)
@@ -784,7 +797,7 @@ func TestBuiltinResearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rec.CheckRender("", inputs); err != nil {
+	if err := rec.CheckRender(inputs); err != nil {
 		t.Fatalf("CheckRender: %v", err)
 	}
 	if _, err := rec.ResolveInputs(repo, nil); err == nil {
@@ -805,7 +818,7 @@ func TestBuiltinResearch(t *testing.T) {
 	}
 	if inputs, err := plan.ResolveInputs(repo, nil); err != nil {
 		t.Fatal(err)
-	} else if err := plan.CheckRender("", inputs); err == nil || !strings.Contains(err.Error(), "issue_url") {
+	} else if err := plan.CheckRender(inputs); err == nil || !strings.Contains(err.Error(), "issue_url") {
 		t.Errorf("plan on a repository: CheckRender = %v, want issue_url missing", err)
 	}
 }
@@ -818,11 +831,11 @@ func TestBuiltinFixRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" || len(r.Revise) != 4 {
+	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" || len(r.Revise) != 1 {
 		t.Fatalf("fix task-type %q, credentials %q, task-output %+v, %d revises", r.TaskType, r.Credentials, r.TaskOutput, len(r.Revise))
 	}
 	var uses []string
-	for _, s := range append(slices.Clone(r.Setup.Steps), r.Start.Steps...) {
+	for _, s := range r.Start.Steps {
 		if s.Uses != "" {
 			uses = append(uses, s.Uses)
 		}
@@ -843,7 +856,7 @@ func TestBuiltinFixRenders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.CheckRender("", inputs); err != nil {
+		if err := r.CheckRender(inputs); err != nil {
 			t.Fatal(err)
 		}
 		var all strings.Builder
@@ -876,8 +889,8 @@ func TestBuiltinFixRenders(t *testing.T) {
 	}
 }
 
-// TestBuiltinFixRevises: each of the fix's revises starts from the push
-// the fix last made, writes a Change, and ends with the push; their asks
+// TestBuiltinFixRevises: the fix's one revise, iterate, starts from the
+// push the fix last made, writes a Change, and ends with the push; its asks
 // render with the start's inputs and say what they must.
 func TestBuiltinFixRevises(t *testing.T) {
 	_, r, err := Builtin("fix")
@@ -898,7 +911,7 @@ func TestBuiltinFixRevises(t *testing.T) {
 			t.Errorf("%s does not capture change.yaml before the push", rv.ID)
 		}
 	}
-	if got := strings.Join(ids, " "); got != "iterate address-comments fix-ci rebase" {
+	if got := strings.Join(ids, " "); got != "iterate" {
 		t.Errorf("revises = %s", got)
 	}
 	acts := r.OutputDecl().Actions
@@ -906,7 +919,7 @@ func TestBuiltinFixRevises(t *testing.T) {
 	for _, a := range acts {
 		verbs = append(verbs, strings.TrimSpace(a.Verb+" "+a.Revise))
 	}
-	if got := strings.Join(verbs, ","); got != "edit,open-pr,post-replies,reject,revise iterate,revise address-comments,revise fix-ci,revise rebase" {
+	if got := strings.Join(verbs, ","); got != "edit,open-pr,reject,revise iterate" {
 		t.Errorf("actions = %s", got)
 	}
 
@@ -939,10 +952,7 @@ func TestBuiltinFixRevises(t *testing.T) {
 		asks[rv.ID] = all.String()
 	}
 	for id, want := range map[string][]string{
-		"iterate":          {"rename foo", "change: {}"},
-		"address-comments": {"pulls/12/comments", "issues/12/comments", "inReplyTo", "since you last pushed\n   (h1)", "written by an AI"},
-		"fix-ci":           {"gh pr checks 12", "--log-failed", "report:"},
-		"rebase":           {"git rebase b2", "change: {}"},
+		"iterate": {"rename foo", "change: {}"},
 	} {
 		for _, w := range want {
 			if !strings.Contains(asks[id], w) {
@@ -952,47 +962,65 @@ func TestBuiltinFixRevises(t *testing.T) {
 	}
 }
 
-// The revises' first step points the push at the fix's branch, leased
-// against the head last pushed, and checks that branch out.
-func TestFixRevisePointsThePushAtTheBranch(t *testing.T) {
-	_, r, err := Builtin("fix")
+// The step a revise of fix, and care's start and revises, begin with points
+// the push at the PR's branch, leased against the head last pushed, and
+// checks that branch out; care's also remembers the PR.
+func TestPushedStepPointsThePushAtTheBranch(t *testing.T) {
+	_, fix, err := Builtin("fix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := r.Revise[0].Steps[0].Run
-	repo, taskDir := t.TempDir(), t.TempDir()
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@e", "-c", "init.defaultBranch=main"}, args...)...)
-		cmd.Dir = repo
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	git("init", "-q")
-	git("commit", "-q", "--allow-empty", "-m", "base")
-	git("branch", "issue-7-1")
-	run := func(env ...string) error {
-		cmd := exec.Command("bash", "-eo", "pipefail", "-c", script)
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(), append(env, "TASK_DIR="+taskDir)...)
-		_, err := cmd.CombinedOutput()
-		return err
-	}
-	if err := run("INPUT_PUSHED_BRANCH=", "INPUT_PUSHED_HEAD=", "INPUT_PR_URL="); err == nil {
-		t.Error("a revise of a fix that pushed nothing ran")
-	}
-	if err := run("INPUT_PUSHED_BRANCH=issue-7-1", "INPUT_PUSHED_BASE=b0", "INPUT_PUSHED_HEAD=h1", "INPUT_PR_URL=https://github.com/o/r/pull/12"); err != nil {
+	_, care, err := Builtin("care")
+	if err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1", "pr": "12"} {
-		if got, _ := os.ReadFile(filepath.Join(taskDir, name)); string(got) != want {
-			t.Errorf("%s = %q, want %q", name, got, want)
+	carePushed := care.Start.Steps[4].Run
+	for _, rv := range care.Revise {
+		if rv.Steps[0].Run != carePushed {
+			t.Errorf("care's %s does not start from the push", rv.ID)
 		}
 	}
-	out, _ := exec.Command("git", "-C", repo, "symbolic-ref", "--short", "HEAD").Output()
-	if strings.TrimSpace(string(out)) != "issue-7-1" {
-		t.Errorf("checked out %q", out)
+	for name, tc := range map[string]struct {
+		script string
+		want   map[string]string
+	}{
+		"fix iterate": {fix.Revise[0].Steps[0].Run, map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1"}},
+		"care":        {carePushed, map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1", "pr": "12"}},
+	} {
+		repo, taskDir := t.TempDir(), t.TempDir()
+		git := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@e", "-c", "init.defaultBranch=main"}, args...)...)
+			cmd.Dir = repo
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		git("init", "-q")
+		git("commit", "-q", "--allow-empty", "-m", "base")
+		git("branch", "issue-7-1")
+		run := func(env ...string) error {
+			cmd := exec.Command("bash", "-eo", "pipefail", "-c", tc.script)
+			cmd.Dir = repo
+			cmd.Env = append(os.Environ(), append(env, "TASK_DIR="+taskDir)...)
+			_, err := cmd.CombinedOutput()
+			return err
+		}
+		if err := run("INPUT_PUSHED_BRANCH=", "INPUT_PUSHED_HEAD=", "INPUT_PR_URL="); err == nil {
+			t.Errorf("%s: ran with nothing pushed", name)
+		}
+		if err := run("INPUT_PUSHED_BRANCH=issue-7-1", "INPUT_PUSHED_BASE=b0", "INPUT_PUSHED_HEAD=h1", "INPUT_PR_URL=https://github.com/o/r/pull/12"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for file, want := range tc.want {
+			if got, _ := os.ReadFile(filepath.Join(taskDir, file)); string(got) != want {
+				t.Errorf("%s: %s = %q, want %q", name, file, got, want)
+			}
+		}
+		out, _ := exec.Command("git", "-C", repo, "symbolic-ref", "--short", "HEAD").Output()
+		if strings.TrimSpace(string(out)) != "issue-7-1" {
+			t.Errorf("%s: checked out %q", name, out)
+		}
 	}
 }
 
@@ -1053,60 +1081,34 @@ func TestOnAndReviseInputs(t *testing.T) {
 	}
 }
 
-// setup runs ahead of the start, or where the start does not run
-// (start.on), of the first revise; a runner sees neither.
-func TestSetupAndStartOn(t *testing.T) {
-	withSetup := "on: [issue, my-pr]\n" + strings.Replace(reviseRecipe, "start:\n  steps:", "setup:\n  steps:\n    - run: prepare\nstart:\n  on: [issue]\n  steps:", 1)
-	rec, err := Parse([]byte(withSetup))
+// A recipe runs on its on: targets, a PR of yours on [pr] as well, and
+// everywhere with none; setup: and start.on are gone, and refused.
+func TestRunsOn(t *testing.T) {
+	plain, err := Parse([]byte(reviseRecipe))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Setup.Steps) != 1 || !rec.StartsOn(OnIssue) || rec.StartsOn(OnMyPR) {
-		t.Fatalf("setup %+v, start on %v", rec.Setup, rec.Start.On)
+	if !plain.RunsOn(OnRepo) || !plain.RunsOn(OnMyPR) {
+		t.Error("a recipe with no on: does not run everywhere")
 	}
-	if plain, _ := Parse([]byte(reviseRecipe)); !plain.StartsOn(OnRepo) {
-		t.Error("a start with no on does not run everywhere")
+	for on, want := range map[string]map[string]bool{
+		"[issue]": {OnIssue: true, OnPR: false, OnMyPR: false},
+		"[pr]":    {OnIssue: false, OnPR: true, OnMyPR: true},
+		"[my-pr]": {OnIssue: false, OnPR: false, OnMyPR: true},
+	} {
+		rec, err := Parse([]byte("on: " + on + "\n" + reviseRecipe))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for target, w := range want {
+			if rec.RunsOn(target) != w {
+				t.Errorf("on %s: runs on %s = %v", on, target, !w)
+			}
+		}
 	}
-	if onPR, _ := Parse([]byte(strings.Replace(withSetup, "on: [issue]\n  steps", "on: [issue, my-pr]\n  steps", 1))); onPR == nil || !onPR.StartsOn(OnMyPR) {
-		t.Error("start on every target of the recipe does not run on my-pr")
-	}
-
-	sandbox, err := ForSandbox([]byte(withSetup))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := Parse(sandbox)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, sandbox)
-	}
-	if strings.Contains(string(sandbox), "setup:") || got.Start.On != nil || len(got.Start.Steps) != 4 || got.Start.Steps[0].Run != "prepare" || len(got.Revise[0].Steps) != 2 {
-		t.Errorf("sandbox recipe:\n%s", sandbox)
-	}
-
-	first, err := SetupBeforeRevise([]byte(withSetup), "plan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sandbox, err = ForSandbox(first); err != nil {
-		t.Fatal(err)
-	}
-	if got, err = Parse(sandbox); err != nil {
-		t.Fatalf("%v\n%s", err, sandbox)
-	}
-	// The save step's anchor, used in the revise, survives.
-	if len(got.Start.Steps) != 3 || len(got.Revise[0].Steps) != 3 || got.Revise[0].Steps[0].Run != "prepare" || got.Revise[0].Steps[2].Run != "cp plan.md /somewhere" {
-		t.Errorf("first revise's recipe:\n%s", sandbox)
-	}
-	if _, err := SetupBeforeRevise([]byte(withSetup), "nope"); err == nil {
-		t.Error("setup folded into a revise that does not exist")
-	}
-
 	for name, bad := range map[string]string{
-		"setup asks":            strings.Replace(withSetup, "run: prepare", "ask: prepare", 1),
-		"setup on":              strings.Replace(withSetup, "setup:\n", "setup:\n  on: [issue]\n", 1),
-		"start on elsewhere":    strings.Replace(withSetup, "on: [issue]\n  steps", "on: [repo]\n  steps", 1),
-		"start on unknown":      strings.Replace(withSetup, "on: [issue]\n  steps", "on: [commit]\n  steps", 1),
-		"nothing runs on my-pr": withSetup[:strings.Index(withSetup, "revise:")],
+		"setup":    strings.Replace(reviseRecipe, "start:\n  steps:", "setup:\n  steps:\n    - run: prepare\nstart:\n  steps:", 1),
+		"start.on": strings.Replace(reviseRecipe, "start:\n  steps:", "start:\n  on: [issue]\n  steps:", 1),
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -1114,8 +1116,7 @@ func TestSetupAndStartOn(t *testing.T) {
 	}
 }
 
-// A revise into a fresh session, the first where the start does not run, sends
-// the context as a start would.
+// A revise into a fresh session sends the context as a start would.
 func TestAReviseIntoAFreshSessionSendsTheContext(t *testing.T) {
 	rec, err := Parse([]byte(reviseRecipe))
 	if err != nil {
@@ -1136,27 +1137,94 @@ type freshSession struct{ *fakeSession }
 
 func (freshSession) Fresh() bool { return true }
 
-// The built-in fix renders on a PR's inputs as on an issue's: on a PR of
-// yours it has no start, and its revises name no issue.
-func TestFixOnAPR(t *testing.T) {
-	_, rec, err := Builtin("fix")
+// The built-in care renders on a PR's inputs, whatever its focus; its
+// revises render on the start's, and each ends with the push.
+func TestBuiltinCareRenders(t *testing.T) {
+	_, rec, err := Builtin("care")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.StartsOn(OnMyPR) || !rec.StartsOn(OnIssue) || len(rec.Setup.Steps) == 0 {
-		t.Fatalf("fix starts on %v, setup %d steps", rec.Start.On, len(rec.Setup.Steps))
+	if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+		t.Fatalf("care on %v, task-output %+v", rec.On, rec.TaskOutput)
 	}
-	inputs, err := rec.ResolveInputs(map[string]string{
+	std := map[string]string{
 		"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r/pull/9", "pr_url": "https://github.com/o/r/pull/9",
-		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "false",
-	}, map[string]string{"instruction": "rename it"})
+		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "true",
+	}
+	dir := t.TempDir()
+	for name, v := range map[string]string{"pr": "9", "lease": "h1", "base": "b2", "upstream": "u3"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asks := func(steps []Step, inputs map[string]string) string {
+		t.Helper()
+		var all strings.Builder
+		for i, s := range steps {
+			if s.Ask == "" {
+				continue
+			}
+			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
+			if err != nil {
+				t.Fatalf("step %s: %v", s.Label(i), err)
+			}
+			all.WriteString(out)
+		}
+		return all.String()
+	}
+	for focus, want := range map[string][]string{
+		"":         {"git rebase u3", "gh pr checks 9", "pulls/9/comments", "inReplyTo", "written by an AI"},
+		"rebase":   {"git rebase u3"},
+		"ci":       {"gh pr checks 9"},
+		"comments": {"pulls/9/comments"},
+	} {
+		inputs, err := rec.ResolveInputs(std, map[string]string{"focus": focus})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rec.CheckRender(inputs); err != nil {
+			t.Fatalf("focus %q: %v", focus, err)
+		}
+		got := asks(rec.Start.Steps, inputs)
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("focus %q lacks %q:\n%s", focus, w, got)
+			}
+		}
+		for other, job := range map[string]string{"rebase": "git rebase u3", "ci": "gh pr checks 9", "comments": "pulls/9/comments"} {
+			if focus != "" && focus != other && strings.Contains(got, job) {
+				t.Errorf("focus %q asks for %s too", focus, other)
+			}
+		}
+	}
+	if last := rec.Start.Steps[len(rec.Start.Steps)-1]; last.Uses != "push" {
+		t.Errorf("the start ends with %s, not the push", last.Label(len(rec.Start.Steps)-1))
+	}
+
+	inputs, err := rec.ResolveInputs(std, map[string]string{"instruction": "rename foo"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rec.CheckRender(OnMyPR, inputs); err != nil {
-		t.Fatal(err)
-	}
-	if err := rec.CheckRender("", inputs); err == nil {
-		t.Error("fix's start, which names the issue, rendered on a PR's inputs")
+	for id, want := range map[string][]string{
+		"address-comments": {"pulls/9/comments", "since you last pushed\n   (h1)", "inReplyTo"},
+		"fix-ci":           {"gh pr checks 9", "--log-failed", "report:"},
+		"rebase":           {"git rebase b2"},
+		"iterate":          {"rename foo"},
+	} {
+		i := slices.IndexFunc(rec.Revise, func(rv Revise) bool { return rv.ID == id })
+		if i < 0 {
+			t.Errorf("care has no %s", id)
+			continue
+		}
+		steps := rec.Revise[i].Steps
+		if steps[len(steps)-1].Uses != "push" || steps[len(steps)-2].Capture != "change.yaml" {
+			t.Errorf("%s does not capture change.yaml and push", id)
+		}
+		got := asks(steps, inputs)
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s lacks %q:\n%s", id, w, got)
+			}
+		}
 	}
 }

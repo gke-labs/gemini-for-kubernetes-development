@@ -59,8 +59,7 @@ type Runner struct {
 	// Revise selects the part to run: "" for start, else a revise's id.
 	// A revise asks in a session that already has the recipe's context,
 	// so it is not sent again, unless the session is a fresh one
-	// (FreshSession): the first revise where the recipe has no start
-	// (start.on), or one after a start that asked nothing.
+	// (FreshSession): one after a start that asked nothing.
 	Revise string
 	// Log receives a line per step and everything the steps print.
 	Log io.Writer
@@ -157,14 +156,8 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 // be done before anything has run (step results and files empty), so an
 // ask reading an input its target does not set — an issue's, on a
 // repository — fails before a sandbox is made rather than in it.
-//
-// On target, the start is left out where it does not run (StartsOn); ""
-// is any target.
-func (r *Recipe) CheckRender(target string, inputs map[string]string) error {
-	parts := map[string][]Step{}
-	if target == "" || r.StartsOn(target) {
-		parts["start"] = r.Start.Steps
-	}
+func (r *Recipe) CheckRender(inputs map[string]string) error {
+	parts := map[string][]Step{"start": r.Start.Steps}
 	for _, rv := range r.Revise {
 		parts["revise "+rv.ID] = rv.Steps
 	}
