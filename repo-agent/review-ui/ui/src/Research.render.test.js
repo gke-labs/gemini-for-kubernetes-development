@@ -518,6 +518,26 @@ describe('ResearchConversation', () => {
         expect(container.querySelector('textarea').disabled).toBe(true);
     });
 
+    test('a paused session wakes its sandbox from the session view', async () => {
+        global.fetch = jest.fn(url => url.includes('/lifecycle')
+            ? reply(200, {})
+            : reply(409, { error: 'research session is paused', paused: true, sandbox: 'rsch-s1' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
+        await flush();
+
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Wake sandbox');
+        expect(button).toBeTruthy();
+        await act(async () => { button.click(); });
+        await flush();
+        await flush();
+
+        expect(global.fetch).toHaveBeenCalledWith('/api/sandbox-card/rsch-s1/lifecycle', expect.objectContaining({
+            method: 'POST', body: JSON.stringify({ action: 'wake' }),
+        }));
+        expect(container.textContent).toContain('waking the sandbox');
+        expect(container.textContent).not.toContain('scaled to zero');
+    });
+
     // The modes gemini advertises, as the API forwards them.
     const modes = [
         { id: 'default', name: 'Default', description: 'Prompts for approval' },

@@ -748,6 +748,7 @@ export function ResearchConversation({
   const [sending, setSending] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
+  const [waking, setWaking] = useState(false);
   // The approval mode the session is in, and the set the engine will
   // accept. Seeded from whichever of the probe and the open frame
   // answers first; the transcript takes over once it is caught up,
@@ -1356,6 +1357,24 @@ export function ResearchConversation({
   }[phase];
 
   const repo = (info && info.repo) || '';
+  // Waking is the sandbox card's wake: scale the sandbox back up. The
+  // probe, still polling the paused session, attaches once acpd answers.
+  const wake = () => {
+    setWaking(true);
+    setError('');
+    fetch(`/api/sandbox-card/${encodeURIComponent(task.sandbox)}/lifecycle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'wake' }),
+    })
+      .then(res => {
+        if (!res.ok) return res.text().then(t => setError(`wake failed: ${t || `HTTP ${res.status}`}`));
+        setPhase('starting');
+        setDetail('waking the sandbox');
+      })
+      .catch(err => setError(`wake failed: ${err}`))
+      .finally(() => setWaking(false));
+  };
+
   const composerDisabled = phase !== 'live' || busy || sending || taskState.held;
 
   // Why the composer will not send, as a line beside the Send button.
@@ -1745,6 +1764,15 @@ export function ResearchConversation({
               <p style={{ color: 'var(--term-dim)' }}>
                 This session is paused: the sandbox is scaled to zero. Its transcript survives on the
                 sandbox's disk, but nothing is running to answer. {detail}
+                {task && (
+                  <>
+                    {' '}
+                    <button className="btn btn-sm" onClick={wake} disabled={waking}
+                      title={`Scale ${task.sandbox} back up and reconnect to this session`}>
+                      {waking ? 'Waking…' : 'Wake sandbox'}
+                    </button>
+                  </>
+                )}
               </p>
             )}
             {(phase === 'starting' || phase === 'probing') && !transcript.items.length && (
