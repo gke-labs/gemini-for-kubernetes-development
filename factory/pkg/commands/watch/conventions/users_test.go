@@ -52,25 +52,43 @@ func TestIsFeedbackAuthor(t *testing.T) {
 	selfLogin := "factory-bot"
 	allowlistedBots := []string{"trusted-bot"}
 	reviewerLogins := []string{"gemini-code-assist[bot]"}
+	// As config.FactoryConfig.TrustedLogins builds it: allowlisted users,
+	// then the allowlisted bots and reviewer accounts.
+	trustedLogins := []string{"private-member", "trusted-bot", "gemini-code-assist[bot]"}
 
 	tests := []struct {
-		user     *githubv39.User
-		expected bool
+		name        string
+		user        *githubv39.User
+		association string
+		expected    bool
 	}{
-		{&githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, true},
-		{&githubv39.User{Login: stringPtr("factory-bot")}, false},
-		{&githubv39.User{Login: stringPtr("trusted-bot"), Type: stringPtr("Bot")}, true},
-		{&githubv39.User{Login: stringPtr("untrusted-bot"), Type: stringPtr("Bot")}, false},
+		{"collaborator", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "COLLABORATOR", true},
+		{"member", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "MEMBER", true},
+		{"owner", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "OWNER", true},
+		// Without write access, a human's feedback is not acted on.
+		{"stranger", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "NONE", false},
+		{"contributor", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "CONTRIBUTOR", false},
+		{"no association", &githubv39.User{Login: stringPtr("human-dev"), Type: stringPtr("User")}, "", false},
+		// A configured allowlisted user counts whatever GitHub reports.
+		{"allowlisted user", &githubv39.User{Login: stringPtr("Private-Member"), Type: stringPtr("User")}, "NONE", true},
+		{"self", &githubv39.User{Login: stringPtr("factory-bot")}, "COLLABORATOR", false},
+		{"allowlisted bot", &githubv39.User{Login: stringPtr("trusted-bot"), Type: stringPtr("Bot")}, "NONE", true},
+		{"unallowlisted bot", &githubv39.User{Login: stringPtr("untrusted-bot"), Type: stringPtr("Bot")}, "NONE", false},
 		// A review bot counts even though it is an automated account that was
 		// not allowlisted.
-		{&githubv39.User{Login: stringPtr("gemini-code-assist[bot]"), Type: stringPtr("Bot")}, true},
+		{"reviewer bot", &githubv39.User{Login: stringPtr("gemini-code-assist[bot]"), Type: stringPtr("Bot")}, "NONE", true},
+		// The 'reviewbot' name fallback makes an account a reviewer, but
+		// grants no trust on its own.
+		{"reviewbot lookalike", &githubv39.User{Login: stringPtr("other-reviewbot"), Type: stringPtr("User")}, "NONE", false},
 	}
 
 	for _, tc := range tests {
-		got := IsFeedbackAuthor(tc.user, selfLogin, allowlistedBots, reviewerLogins)
-		if got != tc.expected {
-			t.Errorf("IsFeedbackAuthor(%v) = %v, want %v", tc.user.GetLogin(), got, tc.expected)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsFeedbackAuthor(tc.user, tc.association, selfLogin, allowlistedBots, reviewerLogins, trustedLogins)
+			if got != tc.expected {
+				t.Errorf("IsFeedbackAuthor(%v, %q) = %v, want %v", tc.user.GetLogin(), tc.association, got, tc.expected)
+			}
+		})
 	}
 }
 

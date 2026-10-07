@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -226,6 +227,15 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		"name":  "FACTORY_ROLES",
 		"value": string(rolesJSON),
 	})
+
+	if len(o.Spec.AllowlistedUsers) > 0 {
+		// GitHub logins cannot contain commas, so a comma-separated list is
+		// unambiguous; run.sh splits it into the factory config.
+		env = append(env, map[string]interface{}{
+			"name":  "ALLOWLISTED_USERS",
+			"value": strings.Join(o.Spec.AllowlistedUsers, ","),
+		})
+	}
 
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {
 		env = append(env, map[string]interface{}{

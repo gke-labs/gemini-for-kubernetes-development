@@ -186,6 +186,7 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		BotUsers:          w.allBotUsers,
 		ReviewerLogins:    w.reviewerLogins(),
 		AllowlistedBots:   w.allowlistedBots(),
+		TrustedLogins:     w.cfg.TrustedLogins(),
 		ScanLimit:         w.ScanLimit,
 		MinNumber:         w.minIssueNumber(),
 		InactivityTimeout: w.PRInactivityTimeout,
@@ -383,6 +384,7 @@ func (c *watcherTaskCoordinator) NotifyTaskFinished(ctx context.Context, task *a
 		SelfLogin:       w.githubLogin,
 		AllowlistedBots: w.cfg.AllowlistedBots,
 		ReviewerLogins:  w.reviewerLogins(),
+		TrustedLogins:   w.cfg.TrustedLogins(),
 		// The scanner times an address-comments task from the oldest
 		// feedback it picked up, so nothing older can be this task's.
 		Since: task.TriggerEventTime,

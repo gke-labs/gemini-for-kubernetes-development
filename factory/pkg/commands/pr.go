@@ -188,7 +188,9 @@ func runInvestigate(ctx context.Context, prURL, prompt string, continueSession b
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
 	var prComments []tasks.PRComment
-	for _, c := range comments {
+	// Only trusted authors' comments reach the prompt. The PR's author is
+	// trusted: their description is already in the prompt.
+	for _, c := range trustedIssueComments(comments, trustedLogins(cfg, pr.GetUser().GetLogin())) {
 		prComments = append(prComments, tasks.PRComment{
 			ID:        c.GetID(),
 			UserLogin: c.GetUser().GetLogin(),
@@ -418,9 +420,12 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	if err != nil {
 		return fmt.Errorf("listing PR comments: %w", err)
 	}
+	// Only trusted authors' feedback reaches the prompt. The PR's author is
+	// trusted: their description is already in the prompt.
+	trusted := trustedLogins(cfg, pr.GetUser().GetLogin())
 	var oldComments []tasks.PRComment
 	var newComments []tasks.PRComment
-	for _, c := range comments {
+	for _, c := range trustedIssueComments(comments, trusted) {
 		cmt := tasks.PRComment{
 			ID:        c.GetID(),
 			UserLogin: c.GetUser().GetLogin(),
@@ -442,6 +447,10 @@ func runAddressComments(ctx context.Context, prURL, prompt string, continueSessi
 	var oldReviews []tasks.PRReview
 	var newReviews []tasks.PRReview
 	for _, r := range reviews {
+		if !github.IsTrustedAuthor(r.GetUser(), r.GetAuthorAssociation(), trusted) {
+			fmt.Printf("Leaving review %d by @%s (%s) out of the prompt: author is not trusted\n", r.GetID(), r.GetUser().GetLogin(), r.GetAuthorAssociation())
+			continue
+		}
 		rev := tasks.PRReview{
 			ID:        r.GetID(),
 			UserLogin: r.GetUser().GetLogin(),

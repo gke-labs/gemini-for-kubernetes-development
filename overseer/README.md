@@ -27,9 +27,9 @@ Overseer is that somebody. It works from GitHub state (labels, assignees, commen
 
 ### Pull request care
 For PRs written by its bot pool that carry the trigger label or are assigned to a bot, each sweep picks one action:
-- **Address feedback** (`pr-comments`): new comments, reviews and inline comments from humans or allowlisted review bots are handed to the agent. Reactions record what happened to each comment: 👀 picked up, 👍 resolved, 😕 failed. A human adds 🚀 to ask for another pass. A line starting with `/overseer-ignore` (or `/<trigger>-ignore`) opts a comment out. Approvals and `/lgtm` are not treated as feedback.
+- **Address feedback** (`pr-comments`): new comments, reviews and inline comments from trusted humans (repository owners, members and collaborators, plus `allowlistedUsers`) or allowlisted review bots are handed to the agent. Feedback from anyone else is ignored. Reactions record what happened to each comment: 👀 picked up, 👍 resolved, 😕 failed. A human adds 🚀 to ask for another pass. A line starting with `/overseer-ignore` (or `/<trigger>-ignore`) opts a comment out. Approvals and `/lgtm` are not treated as feedback.
 - **Rebase on conflict** (`pr-iterate`): a PR that conflicts with its base branch gets a rebase task, at most once per head commit.
-- **Investigate CI** (`pr-investigate`): failing checks get an investigation that starts from the earliest failure. Both the Checks API and commit statuses are read. After 3 attempts on the same revision, Overseer gives up and applies the stop label. A new commit or a human comment resets the count.
+- **Investigate CI** (`pr-investigate`): failing checks get an investigation that starts from the earliest failure. Both the Checks API and commit statuses are read. After 3 attempts on the same revision, Overseer gives up and applies the stop label. A new commit or a trusted human's comment resets the count.
 - **Automated review** (`pr-review`, opt-in): when a PR or an issue it closes carries `overseer/review`, the reviewer bot reviews each green, unreviewed head commit. Review instructions are collected from the PR and issue descriptions.
 - **Ready for human**: when the PR is mergeable, has no conflicts, CI is green, no comments are outstanding, no task is queued or running, any required review is done, and the PR is not a draft or stopped, Overseer adds `overseer/ready-for-human`. It also assigns the human assignees of the parent issues, unassigns the bot, and removes the review label.
 - PRs in the merge queue are left alone. With `prInactivityTimeout` set, a PR that has had no human activity for that long is paused with the stop label and a comment.
@@ -97,6 +97,7 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 |---|---|
 | `repoURL` | Repository to watch (required). |
 | `roles` | Bot account pools: `watcher`, `coder`, `agent`, `reviewer`. |
+| `allowlistedUsers` | GitHub logins trusted as feedback authors although GitHub does not report them as owner, member or collaborator (e.g. private org members). |
 | `robotAccount`, `geminiAPIKeySecretName` | Secrets (in `overseer-system`) that hold the default GitHub identity and the Gemini key. |
 | `repo.issueMode` / `repo.prMode` | Turn issue intake or PR care on or off. |
 | `chores.mode` / `include` / `exclude` | Chore scheduling. |

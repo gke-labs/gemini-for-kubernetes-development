@@ -690,10 +690,11 @@ func TestEvaluate_CommentsPrioritizedOverCIFailures(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			comments := []*githubv39.IssueComment{
 				{
-					ID:        githubv39.Int64(100),
-					User:      &githubv39.User{Login: stringPtr("human-alice")},
-					CreatedAt: &commentTime,
-					Body:      stringPtr("Please fix the typo in the config"),
+					ID:                githubv39.Int64(100),
+					User:              &githubv39.User{Login: stringPtr("human-alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					CreatedAt:         &commentTime,
+					Body:              stringPtr("Please fix the typo in the config"),
 				},
 			}
 			_ = json.NewEncoder(w).Encode(comments)
@@ -823,10 +824,11 @@ func TestEvaluate_CommentsPrioritizedOverMergeConflicts(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			comments := []*githubv39.IssueComment{
 				{
-					ID:        githubv39.Int64(100),
-					User:      &githubv39.User{Login: stringPtr("human-alice")},
-					CreatedAt: &commentTime,
-					Body:      stringPtr("Please fix the typo in the config"),
+					ID:                githubv39.Int64(100),
+					User:              &githubv39.User{Login: stringPtr("human-alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					CreatedAt:         &commentTime,
+					Body:              stringPtr("Please fix the typo in the config"),
 				},
 			}
 			_ = json.NewEncoder(w).Encode(comments)
@@ -1217,6 +1219,8 @@ type testOpts struct {
 	ReviewerLogins []string
 	// AllowlistedBots are the automated accounts whose comments are acted on.
 	AllowlistedBots []string
+	// AllowlistedUsers are trusted regardless of author_association.
+	AllowlistedUsers []string
 	// MinNumber skips pull requests numbered below it.
 	MinNumber int
 }
@@ -1260,7 +1264,9 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 		BotUsers:        opts.BotUsers,
 		ReviewerLogins:  opts.ReviewerLogins,
 		AllowlistedBots: opts.AllowlistedBots,
-		MinNumber:       opts.MinNumber,
+		// As config.FactoryConfig.TrustedLogins composes it.
+		TrustedLogins: append(append(append([]string(nil), opts.AllowlistedUsers...), opts.AllowlistedBots...), opts.ReviewerLogins...),
+		MinNumber:     opts.MinNumber,
 	}, Deps{
 		GitHub:    github.ForRepo(opts.GitHub, "test-owner", "test-repo"),
 		Queue:     queue,

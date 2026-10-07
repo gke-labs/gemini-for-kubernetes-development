@@ -64,6 +64,18 @@ function writeFactoryConfig {
     for bot in "${BOTS_ARR[@]}"; do
         echo "  - $bot" >> "$CFG_FILE"
     done
+
+    # Allowlisted users: humans whose comments are trusted although GitHub
+    # does not report them as OWNER/MEMBER/COLLABORATOR (e.g. private org members).
+    if [ -n "$ALLOWLISTED_USERS" ]; then
+        IFS=',' read -ra USERS_ARR <<< "$ALLOWLISTED_USERS"
+        echo "allowlistedUsers:" >> "$CFG_FILE"
+        for login in "${USERS_ARR[@]}"; do
+            if [ -n "$login" ]; then
+                echo "  - $login" >> "$CFG_FILE"
+            fi
+        done
+    fi
     
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"

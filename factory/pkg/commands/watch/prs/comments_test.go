@@ -75,9 +75,10 @@ func TestGetInvestigationCount(t *testing.T) {
 					CreatedAt: timePtr(time.Now().Add(-3 * time.Hour)),
 				},
 				{
-					User:      &githubv39.User{Login: stringPtr("real-human"), Type: stringPtr("User")},
-					Body:      stringPtr("Can you look into this?"),
-					CreatedAt: timePtr(time.Now().Add(-2 * time.Hour)),
+					User:              &githubv39.User{Login: stringPtr("real-human"), Type: stringPtr("User")},
+					AuthorAssociation: stringPtr("COLLABORATOR"),
+					Body:              stringPtr("Can you look into this?"),
+					CreatedAt:         timePtr(time.Now().Add(-2 * time.Hour)),
 				},
 				{
 					User:      &githubv39.User{Login: stringPtr("pool-bot")},
@@ -88,12 +89,35 @@ func TestGetInvestigationCount(t *testing.T) {
 			allBotUsers:   []string{"pool-bot"},
 			expectedCount: 1,
 		},
+		{
+			name: "Untrusted comments should not reset the circuit breaker",
+			comments: []*githubv39.IssueComment{
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-3 * time.Hour)),
+				},
+				{
+					User:              &githubv39.User{Login: stringPtr("stranger"), Type: stringPtr("User")},
+					AuthorAssociation: stringPtr("NONE"),
+					Body:              stringPtr("Try again!"),
+					CreatedAt:         timePtr(time.Now().Add(-2 * time.Hour)),
+				},
+				{
+					User:      &githubv39.User{Login: stringPtr("pool-bot")},
+					Body:      stringPtr("🤖 AI Factory started investigating CI check failures"),
+					CreatedAt: timePtr(time.Now().Add(-1 * time.Hour)),
+				},
+			},
+			allBotUsers:   []string{"pool-bot"},
+			expectedCount: 2,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lastCommitTime := time.Now().Add(-24 * time.Hour)
-			count := getInvestigationCount(tc.comments, lastCommitTime, tc.allBotUsers, tc.githubLogin, tc.allowlist, "factory")
+			count := getInvestigationCount(tc.comments, lastCommitTime, tc.allBotUsers, tc.githubLogin, tc.allowlist, nil, "factory")
 			if count != tc.expectedCount {
 				t.Errorf("expected count %d, got %d", tc.expectedCount, count)
 			}
@@ -132,10 +156,11 @@ func TestEvaluateComments(t *testing.T) {
 			name: "human comment after lastCommentAddressedTime triggers hasNewComments",
 			comments: []*githubv39.IssueComment{
 				{
-					ID:        int64Ptr(1),
-					User:      &githubv39.User{Login: stringPtr("alice")},
-					Body:      stringPtr("Please fix this"),
-					CreatedAt: timePtr(lastCommentAddressedTime.Add(5 * time.Minute)),
+					ID:                int64Ptr(1),
+					User:              &githubv39.User{Login: stringPtr("alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					Body:              stringPtr("Please fix this"),
+					CreatedAt:         timePtr(lastCommentAddressedTime.Add(5 * time.Minute)),
 				},
 			},
 			lastCommitTime:     lastCommitTime,
@@ -147,10 +172,11 @@ func TestEvaluateComments(t *testing.T) {
 			name: "human comment before lastCommentAddressedTime is ignored",
 			comments: []*githubv39.IssueComment{
 				{
-					ID:        int64Ptr(1),
-					User:      &githubv39.User{Login: stringPtr("alice")},
-					Body:      stringPtr("Please fix this"),
-					CreatedAt: timePtr(lastCommentAddressedTime.Add(-5 * time.Minute)),
+					ID:                int64Ptr(1),
+					User:              &githubv39.User{Login: stringPtr("alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					Body:              stringPtr("Please fix this"),
+					CreatedAt:         timePtr(lastCommentAddressedTime.Add(-5 * time.Minute)),
 				},
 			},
 			lastCommitTime:     lastCommitTime,
@@ -178,10 +204,11 @@ func TestEvaluateComments(t *testing.T) {
 			name: "unrelated bot comment after human comment does not suppress human comment",
 			comments: []*githubv39.IssueComment{
 				{
-					ID:        int64Ptr(1),
-					User:      &githubv39.User{Login: stringPtr("alice")},
-					Body:      stringPtr("Please fix this"),
-					CreatedAt: timePtr(lastCommentAddressedTime.Add(5 * time.Minute)),
+					ID:                int64Ptr(1),
+					User:              &githubv39.User{Login: stringPtr("alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					Body:              stringPtr("Please fix this"),
+					CreatedAt:         timePtr(lastCommentAddressedTime.Add(5 * time.Minute)),
 				},
 				{
 					ID:        int64Ptr(2),
@@ -238,10 +265,10 @@ func TestEvaluateComments_CollectsReviewNodeIDs(t *testing.T) {
 	})
 	res := s.evaluateComments(context.Background(), pr, &prHistory{
 		reviews: []*githubv39.PullRequestReview{
-			{ID: int64Ptr(1), NodeID: stringPtr("PRR_changes"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("CHANGES_REQUESTED"), Body: stringPtr("Please rework"), SubmittedAt: after},
-			{ID: int64Ptr(2), NodeID: stringPtr("PRR_approved"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("APPROVED"), Body: stringPtr("LGTM"), SubmittedAt: after},
-			{ID: int64Ptr(3), NodeID: stringPtr("PRR_empty"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: after},
-			{ID: int64Ptr(4), NodeID: stringPtr("PRR_old"), User: &githubv39.User{Login: stringPtr("alice")}, State: stringPtr("COMMENTED"), Body: stringPtr("Stale"), SubmittedAt: timePtr(baseTime.Add(-time.Minute))},
+			{ID: int64Ptr(1), NodeID: stringPtr("PRR_changes"), User: &githubv39.User{Login: stringPtr("alice")}, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("CHANGES_REQUESTED"), Body: stringPtr("Please rework"), SubmittedAt: after},
+			{ID: int64Ptr(2), NodeID: stringPtr("PRR_approved"), User: &githubv39.User{Login: stringPtr("alice")}, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("APPROVED"), Body: stringPtr("LGTM"), SubmittedAt: after},
+			{ID: int64Ptr(3), NodeID: stringPtr("PRR_empty"), User: &githubv39.User{Login: stringPtr("alice")}, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: after},
+			{ID: int64Ptr(4), NodeID: stringPtr("PRR_old"), User: &githubv39.User{Login: stringPtr("alice")}, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("COMMENTED"), Body: stringPtr("Stale"), SubmittedAt: timePtr(baseTime.Add(-time.Minute))},
 		},
 	}, baseTime, baseTime)
 
@@ -269,10 +296,10 @@ func TestEvaluateComments_InlineCommentTimedByReview(t *testing.T) {
 	res := s.evaluateComments(context.Background(), pr, &prHistory{
 		reviews: []*githubv39.PullRequestReview{
 			// An empty body: the inline comments are the whole review.
-			{ID: int64Ptr(1), NodeID: stringPtr("PRR_1"), User: alice, State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: timePtr(submitted)},
+			{ID: int64Ptr(1), NodeID: stringPtr("PRR_1"), User: alice, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("COMMENTED"), Body: stringPtr(""), SubmittedAt: timePtr(submitted)},
 		},
 		revCommentsMap: map[int64][]*githubv39.PullRequestComment{
-			1: {{ID: int64Ptr(100), PullRequestReviewID: int64Ptr(1), User: alice, Body: stringPtr("Rename this"), CreatedAt: drafted}},
+			1: {{ID: int64Ptr(100), PullRequestReviewID: int64Ptr(1), User: alice, AuthorAssociation: stringPtr("MEMBER"), Body: stringPtr("Rename this"), CreatedAt: drafted}},
 		},
 	}, lastCommit, time.Time{})
 
@@ -349,10 +376,10 @@ func TestEvaluateComments_ReviewReactionGate(t *testing.T) {
 	after := timePtr(baseTime.Add(5 * time.Minute))
 	alice := &githubv39.User{Login: stringPtr("alice")}
 	review := func(id int64, nodeID string) *githubv39.PullRequestReview {
-		return &githubv39.PullRequestReview{ID: int64Ptr(id), NodeID: stringPtr(nodeID), User: alice, State: stringPtr("COMMENTED"), Body: stringPtr("Please fix"), SubmittedAt: after}
+		return &githubv39.PullRequestReview{ID: int64Ptr(id), NodeID: stringPtr(nodeID), User: alice, AuthorAssociation: stringPtr("MEMBER"), State: stringPtr("COMMENTED"), Body: stringPtr("Please fix"), SubmittedAt: after}
 	}
 	inline := func(id int64) *githubv39.PullRequestComment {
-		return &githubv39.PullRequestComment{ID: int64Ptr(id), User: alice, Body: stringPtr("Nit"), CreatedAt: after}
+		return &githubv39.PullRequestComment{ID: int64Ptr(id), User: alice, AuthorAssociation: stringPtr("MEMBER"), Body: stringPtr("Nit"), CreatedAt: after}
 	}
 
 	s, _ := newTestScanner(t, t.TempDir(), testOpts{
@@ -386,6 +413,103 @@ func TestEvaluateComments_ReviewReactionGate(t *testing.T) {
 	}
 	if len(res.unackPRCommentIDs) != 2 || res.unackPRCommentIDs[0] != 100 || res.unackPRCommentIDs[1] != 102 {
 		t.Errorf("unackPRCommentIDs = %v, want [100 102]", res.unackPRCommentIDs)
+	}
+}
+
+// TestEvaluateComments_Trust covers the trust gate: feedback from an account
+// without write access is never picked up, unless an operator listed the
+// login as an allowlisted user.
+func TestEvaluateComments_Trust(t *testing.T) {
+	baseTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	after := timePtr(baseTime.Add(5 * time.Minute))
+	pr := &githubv39.PullRequest{User: &githubv39.User{Login: stringPtr("pool-bot")}}
+	comment := func(login, association string) *githubv39.IssueComment {
+		return &githubv39.IssueComment{
+			ID:                int64Ptr(1),
+			User:              &githubv39.User{Login: stringPtr(login), Type: stringPtr("User")},
+			AuthorAssociation: stringPtr(association),
+			Body:              stringPtr("Please fix this"),
+			CreatedAt:         after,
+		}
+	}
+	review := func(login, association string) *githubv39.PullRequestReview {
+		return &githubv39.PullRequestReview{
+			ID: int64Ptr(2), NodeID: stringPtr("PRR_2"),
+			User:              &githubv39.User{Login: stringPtr(login), Type: stringPtr("User")},
+			AuthorAssociation: stringPtr(association),
+			State:             stringPtr("CHANGES_REQUESTED"), Body: stringPtr("Please rework"), SubmittedAt: after,
+		}
+	}
+	inline := func(login, association string) map[int64][]*githubv39.PullRequestComment {
+		return map[int64][]*githubv39.PullRequestComment{2: {{
+			ID: int64Ptr(3), PullRequestReviewID: int64Ptr(2),
+			User:              &githubv39.User{Login: stringPtr(login), Type: stringPtr("User")},
+			AuthorAssociation: stringPtr(association),
+			Body:              stringPtr("Nit"), CreatedAt: after,
+		}}}
+	}
+
+	for _, tc := range []struct {
+		name        string
+		login       string
+		association string
+		want        bool
+	}{
+		{"stranger is ignored", "stranger", "NONE", false},
+		{"contributor is ignored", "stranger", "CONTRIBUTOR", false},
+		{"collaborator is acted on", "maintainer", "COLLABORATOR", true},
+		{"allowlisted user is acted on", "Private-Member", "NONE", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// No GitHub client: a request for reactions would mean an
+			// untrusted comment got past the trust gate.
+			s, _ := newTestScanner(t, t.TempDir(), testOpts{
+				Kube:             newTestKubeClient(),
+				BotUsers:         []string{"pool-bot"},
+				TriggerLabel:     "factory",
+				AllowlistedUsers: []string{"private-member"},
+			})
+			if !tc.want {
+				res := s.evaluateComments(context.Background(), pr, &prHistory{
+					comments:       []*githubv39.IssueComment{comment(tc.login, tc.association)},
+					reviews:        []*githubv39.PullRequestReview{review(tc.login, tc.association)},
+					revCommentsMap: inline(tc.login, tc.association),
+				}, baseTime, baseTime)
+				if res.hasNewComments {
+					t.Errorf("hasNewComments = true, want untrusted feedback ignored: %+v", res)
+				}
+				return
+			}
+			// Trusted feedback goes on to the reaction read; serve none.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/graphql" {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"data": map[string]interface{}{"node": map[string]interface{}{"reactions": map[string]interface{}{"nodes": []interface{}{}}}},
+					})
+					return
+				}
+				_ = json.NewEncoder(w).Encode([]interface{}{})
+			}))
+			defer server.Close()
+			gh := githubv39.NewClient(nil)
+			gh.BaseURL, _ = url.Parse(server.URL + "/")
+			s, _ = newTestScanner(t, t.TempDir(), testOpts{
+				GitHub:           gh,
+				Kube:             newTestKubeClient(),
+				BotUsers:         []string{"pool-bot"},
+				TriggerLabel:     "factory",
+				AllowlistedUsers: []string{"private-member"},
+			})
+			res := s.evaluateComments(context.Background(), pr, &prHistory{
+				comments:       []*githubv39.IssueComment{comment(tc.login, tc.association)},
+				reviews:        []*githubv39.PullRequestReview{review(tc.login, tc.association)},
+				revCommentsMap: inline(tc.login, tc.association),
+			}, baseTime, baseTime)
+			if len(res.unackCommentIDs) != 1 || len(res.unackReviewNodeIDs) != 1 || len(res.unackPRCommentIDs) != 1 {
+				t.Errorf("picked up comments=%v reviews=%v inline=%v, want one of each", res.unackCommentIDs, res.unackReviewNodeIDs, res.unackPRCommentIDs)
+			}
+		})
 	}
 }
 

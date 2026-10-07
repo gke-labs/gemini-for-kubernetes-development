@@ -62,9 +62,10 @@ func (s *Scanner) evaluateComments(
 
 	for _, c := range comments {
 		if s.ignoreFeedback(pr, feedback{
-			user: c.GetUser(),
-			body: c.GetBody(),
-			at:   c.GetCreatedAt(),
+			user:        c.GetUser(),
+			association: c.GetAuthorAssociation(),
+			body:        c.GetBody(),
+			at:          c.GetCreatedAt(),
 		}, lastCommitTime, lastCommentAddressedTime) {
 			continue
 		}
@@ -83,6 +84,7 @@ func (s *Scanner) evaluateComments(
 		// otherwise count costs a (GraphQL) request.
 		if !s.ignoreFeedback(pr, feedback{
 			user:        r.GetUser(),
+			association: r.GetAuthorAssociation(),
 			body:        r.GetBody(),
 			reviewState: r.GetState(),
 			at:          r.GetSubmittedAt(),
@@ -99,9 +101,10 @@ func (s *Scanner) evaluateComments(
 			// submitted, so it is timed from then rather than from its draft.
 			at := conventions.ReviewCommentTime(rc, r.GetSubmittedAt())
 			if s.ignoreFeedback(pr, feedback{
-				user: rc.GetUser(),
-				body: rc.GetBody(),
-				at:   at,
+				user:        rc.GetUser(),
+				association: rc.GetAuthorAssociation(),
+				body:        rc.GetBody(),
+				at:          at,
 			}, lastCommitTime, lastCommentAddressedTime) {
 				continue
 			}
@@ -121,7 +124,9 @@ func (s *Scanner) evaluateComments(
 // review comment, as far as deciding whether it needs addressing goes.
 type feedback struct {
 	user *githubv39.User
-	body string
+	// association is the author_association GitHub reported for the author.
+	association string
+	body        string
 	// reviewState is the review's state (e.g. APPROVED); empty for comments.
 	reviewState string
 	at          time.Time
@@ -134,6 +139,7 @@ var approvalCommands = []string{"/lgtm", "/approve"}
 // ignoreFeedback reports whether a piece of feedback should not count as
 // outstanding. It is ignored when:
 //   - it comes from an ignored user (reviewer bots are never ignored),
+//   - it comes from an untrusted author (see conventions.IsTrustedAuthor),
 //   - it comes from the pull request's own author,
 //   - it predates the last commit or the last address-comments task,
 //   - its body opts out via the ignore prefix,
@@ -141,7 +147,7 @@ var approvalCommands = []string{"/lgtm", "/approve"}
 //   - it is an approving review, or
 //   - a line of its body starts with an approval command such as /lgtm.
 func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastCommitTime, lastCommentAddressedTime time.Time) bool {
-	if !conventions.IsFeedbackAuthor(f.user, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.ReviewerLogins) {
+	if !conventions.IsFeedbackAuthor(f.user, f.association, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.ReviewerLogins, s.cfg.TrustedLogins) {
 		return true
 	}
 	// The pull request's own author talking to itself is not feedback.
@@ -190,11 +196,11 @@ func hasBotReviewAfterLastCommit(reviews []*githubv39.PullRequestReview, lastCom
 // getInvestigationCount counts how many times the watcher has investigated CI
 // failures since the last thing that ought to reset its patience.
 //
-// The counter resets on a new commit or on any human comment, because either
-// one changes the situation the previous attempts failed against. Without the
-// reset a pull request a human has just given a hint on would stay stuck at the
-// retry limit.
-func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots []string, triggerLabel string) int {
+// The counter resets on a new commit or on any trusted human comment, because
+// either one changes the situation the previous attempts failed against.
+// Without the reset a pull request a human has just given a hint on would stay
+// stuck at the retry limit. An untrusted comment does not reset it.
+func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) int {
 	lastResetTime := lastCommitTime
 	for _, c := range comments {
 		isPoolBot := false
@@ -204,7 +210,8 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 				break
 			}
 		}
-		isHuman := !isPoolBot && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots)
+		isHuman := !isPoolBot && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots) &&
+			conventions.IsTrustedAuthor(c.GetUser(), c.GetAuthorAssociation(), trustedLogins)
 		if isHuman && conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
 			isHuman = false
 		}

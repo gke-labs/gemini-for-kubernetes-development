@@ -12,6 +12,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -252,9 +253,19 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		if err != nil {
 			return fmt.Errorf("fetching comments: %w", err)
 		}
+		// Only trusted authors' comments reach the prompt. On
+		// a PR its author is trusted too: their description is already here.
+		cfg, cfgErr := config.LoadConfig()
+		if cfgErr != nil {
+			klog.Warningf("Failed to load factory config: %v", cfgErr)
+		}
+		var prAuthor string
+		if isPR {
+			prAuthor = issue.GetUser().GetLogin()
+		}
 		var commentMsgs []string
 		var commentBodies []string
-		for _, c := range comments {
+		for _, c := range trustedIssueComments(comments, trustedLogins(cfg, prAuthor)) {
 			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
 			commentBodies = append(commentBodies, c.GetBody())
 		}

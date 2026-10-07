@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	githubv39 "github.com/google/go-github/v39/github"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 // AssignedBotUser returns the first bot account from the pool assigned to an
@@ -107,12 +109,29 @@ func ShouldIgnoreUser(user *githubv39.User, githubLogin string, allowlistedBots 
 // IsFeedbackAuthor reports whether feedback from a user is something the
 // watcher acts on: anyone ShouldIgnoreUser lets through, plus the review bots,
 // whose feedback counts even though they are automated accounts that were not
-// allowlisted.
+// allowlisted - and in either case only if the author is trusted (see
+// IsTrustedAuthor). association is the author_association GitHub reported on
+// the comment or review.
 //
 // The scanner deciding what to pick up and the task lifecycle deciding what to
 // resolve must answer this identically. When they did not, the scanner marked
 // review-bot feedback as picked up and the resolver skipped it, so it never
 // received an outcome.
-func IsFeedbackAuthor(user *githubv39.User, githubLogin string, allowlistedBots, reviewerLogins []string) bool {
-	return IsReviewerBot(user, reviewerLogins) || !ShouldIgnoreUser(user, githubLogin, allowlistedBots)
+func IsFeedbackAuthor(user *githubv39.User, association, githubLogin string, allowlistedBots, reviewerLogins, trustedLogins []string) bool {
+	if !IsReviewerBot(user, reviewerLogins) && ShouldIgnoreUser(user, githubLogin, allowlistedBots) {
+		return false
+	}
+	return IsTrustedAuthor(user, association, trustedLogins)
+}
+
+// IsTrustedAuthor reports whether text written by user may cause the watcher
+// to queue work. Only feedback from trusted authors is acted on.
+//
+// The rule is github.IsTrustedAuthor's - write access, a GitHub App bot, or a
+// login in trustedLogins - so the watcher and the agent commands agree on
+// whose feedback counts. trustedLogins is expected to be the factory config's
+// TrustedLogins, which already includes the allowlisted bots and reviewer
+// accounts; the reviewer name fallback in IsReviewerBot grants no trust.
+func IsTrustedAuthor(user *githubv39.User, association string, trustedLogins []string) bool {
+	return github.IsTrustedAuthor(user, association, trustedLogins)
 }

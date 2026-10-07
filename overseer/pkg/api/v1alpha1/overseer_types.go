@@ -163,6 +163,14 @@ type OverseerSpec struct {
 	// Roles defines the user account pools per role.
 	// +kubebuilder:validation:Optional
 	Roles map[string]RoleSpec `json:"roles,omitempty"`
+
+	// AllowlistedUsers is a list of GitHub logins whose comments and reviews
+	// are trusted even though GitHub does not report them as OWNER, MEMBER or
+	// COLLABORATOR of the repository - typically organisation members whose
+	// membership is private. Feedback from untrusted accounts is neither
+	// acted on by the watcher nor placed in an agent prompt.
+	// +kubebuilder:validation:Optional
+	AllowlistedUsers []string `json:"allowlistedUsers,omitempty"`
 }
 
 type RoleSpec struct {
