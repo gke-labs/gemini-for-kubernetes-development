@@ -19,7 +19,7 @@ Each row button then starts a recipe, and each revise lives in its run's session
 2. **care runs where a PR's recipes already run:** `recipe-<repo>-<n>` (`EnsureRecipeSandbox`). It does not use the fix's sandbox. It clones the PR's branch from the fork, so it has the code. No sandbox code changes.
 3. **care's start does what the PR needs.** It rebases if the PR is behind or conflicting, then fixes failing checks, then works through unanswered review comments. A rebase changes both the checks and the code the comments are on, hence that order. An optional `focus` input (`comments`, `ci`, `rebase`) narrows a run to one job.
 4. **Its revises are fix's three PR revises plus `iterate`**, with the same ids and prompts (moved, with "your fix" reworded to "this PR"). They continue care's conversation.
-5. **fix loses its PR mode.** It is `on: [issue]`, with one revise. The generic mechanism (`start.on`, `revisesOn`, `firstRevise`) stays in factory for any recipe that wants it. No built-in uses it after this.
+5. **fix loses its PR mode, and factory loses the machinery behind it.** fix is `on: [issue]`, with one revise. After the split every recipe's start runs on every target in its `on:`, and a revise always continues a run. Nothing needs a start that skips some targets, a revise that opens a session, or a `setup:` that can run ahead of either. Those pieces are deleted rather than kept for a recipe that might want them (see [What goes](#what-goes)).
 6. **The overseer is left as it is.** `factory pr address-comments`, `pr investigate` and the watch's fallback to them do not change.
 
 ## care.yaml
@@ -37,10 +37,13 @@ inputs:
   pr_url:       { revise: true }
 
 context: |      # fix's: commit only; factory pushes; never comment
-setup:          # fix's: setup-git, setup-fork, configure-engine
 
 start:
   steps:
+    - uses: setup-git                   # fix's setup steps, now plain start steps
+    - uses: setup-fork
+    - run: sleep 5                      # lib.sh's HACK, as in fix
+    - uses: configure-engine
     - run: *pushed                      # fix's step: branch/base/lease/pr from pushed_*,
                                         # checking out the PR's branch from the fork
     - ask: rebase if behind, fix checks this PR broke, address unanswered comments; commit
@@ -60,14 +63,28 @@ task-output:
   actions: [edit, post-replies, reject]
 ```
 
-The PR's push facts reach the start the way they reach fix's first revise in PR mode today. `prPushInputs` sets `pushed_branch`, `pushed_head`, `pushed_base`, `pushed_fork`, `pushed_title`, `pushed_body` and `pr_url` from the PR. `runRecipe` calls it for a start on a PR whose output is a `Change`, as `firstRevise` does now.
+The PR's push facts reach the start the way they reach fix's first revise in PR mode today. `prPushInputs` sets `pushed_branch`, `pushed_head`, `pushed_base`, `pushed_fork`, `pushed_title`, `pushed_body` and `pr_url` from the PR. `runRecipe` calls it for a start on a PR whose output is a `Change`; `firstRevise`, its only caller today, is deleted.
 
 ## fix.yaml after
 
 - `on: [issue]`; `start.on` goes.
+- `setup:` goes: its steps become the first steps of `start:`.
 - `revise:` keeps `iterate` only. Its `*pushed` step loses the "no fix made it: fetch the PR's branch" path, which care's start keeps.
 - `task-output.actions`: `edit`, `open-pr`, `reject`. `post-replies` goes, because only the moved revises wrote replies.
 - The header comment on PR mode goes.
+
+## What goes
+
+| Piece | Where | Why it existed |
+|---|---|---|
+| `start.on` | `Recipe.Start.On`, its validation, the start filter in `runner.go` | fix had no start on my-pr |
+| `setup:` | `Recipe.Setup`, `foldSetup`, its validation | steps that could go ahead of a start or of a first revise |
+| `SetupBeforeRevise` | `pkg/recipe` | folding setup into a first revise |
+| `firstRevise` | `pkg/commands/recipe.go` | a revise with no run opened the session |
+| `recipe run --revise` | `pkg/commands/recipe.go` | ran a revise from `recipe run`, first revise included; nothing calls it and `recipe revise` covers the rest |
+| `revisesOn` | `recipe list`, `BoardRecipe.RevisesOn` in the RepoBoard CRD, the checks in `handlers_board.go` and `controllers/repoboard/recipes.go` | kept the board from offering a start where fix had none |
+
+What stays: the `on:` rule that a my-pr is a PR too (today inside `StartsOn`, which keeps only that), and `prPushInputs`, which moves to care's start.
 
 ## factory pr watch
 
@@ -83,7 +100,7 @@ The controller keeps launching the watch per fix sandbox aliased to a PR (`follo
 
 care is a catalog recipe like summarize. The controller runs it through the generic path (`settleRecipe`), and its run's chip and session come from the run scan. The changes:
 
-- **Rows know `my-pr`.** A PR row that is `MyPR` matches recipes `on: [my-pr]` as well as `on: [pr]` (factory's `StartsOn` rule). This applies in `rowRecipes` and `boardStarts`.
+- **Rows know `my-pr`.** A PR row that is `MyPR` matches recipes `on: [my-pr]` as well as `on: [pr]` (factory's `on:` rule). This applies in `rowRecipes` and `boardStarts`.
 - **Deleted:** `Agent ▾` (`Work.js`), `WorkItem.FixSession` / `FixRevises`, and what fills them.
 - **Unchanged:** the session view (fix's run offers Iterate, care's its four revises), revise Requests, and `auto ⏻`.
 
@@ -104,10 +121,12 @@ Someone else's PR      #1488  Review: ready ↗                     Summarize
    - trim `fix.yaml`
    - have `runRecipe` give a start on a PR the PR's push facts
    - switch `pr watch` to care
-   - tests: recipe validation, `recipe list` (care on my-pr; fix with no `revisesOn`), the watch's choice of revise/start/fallback
+   - delete `start.on`, `setup:`, `SetupBeforeRevise`, `firstRevise`, `recipe run --revise` and `revisesOn`
+   - tests: recipe validation (a `setup:` or `start.on` is refused as an unknown field), `recipe list` (care on my-pr, fix on issue), the watch's choice of revise/start/fallback
 2. **repo-agent**, one PR:
    - make rows know `my-pr`
    - delete `Agent ▾` and `fixSession` / `fixRevises`
+   - delete `RevisesOn` from `BoardRecipe` (CRD) and the two checks on it
    - tests: a `MyPR` row offers Care, a PR row of someone else's does not
 3. **Verify in-cluster:**
    - Care on #1774, which has no fix run
