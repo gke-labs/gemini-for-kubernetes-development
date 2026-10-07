@@ -19,16 +19,48 @@ type Action struct {
 	Label  string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
-// boardVerbs are the verbs the board executes, by kind; a run, only the
-// fix follow-up. Anything else a document offers is not shown. Only a
-// plan's revises so far: triage's are factory's phase 4. A review's
-// draft is the pending review on GitHub, edited and discarded there, so
-// the board only posts it and revises it.
-var boardVerbs = map[string][]string{
-	"Triage": {"edit", "label", "comment", "reject"},
-	"Plan":   {"edit", "comment", "run", "revise", "reject"},
-	"Notes":  {"edit", "push-notes", "reject"},
-	"Review": {"post-review", "revise"},
+// What a verb needs of the viewer on the repository, to be offered
+// enabled: nothing (anyone may comment on a public issue, or write a
+// pending review), triage access, or push access.
+const (
+	NeedsNothing = ""
+	NeedsTriage  = "triage"
+	NeedsPush    = "push"
+)
+
+// verbNeeds are the verbs the board knows what they need. The draft verbs
+// (edit, reject) and the follow-ups (run, revise) are the board's own;
+// the rest are factory apply's writes, with the caller's token, to the
+// target or the caller's fork. A verb not here needs push access.
+var verbNeeds = map[string]string{
+	"edit":         NeedsNothing,
+	"reject":       NeedsNothing,
+	"run":          NeedsNothing,
+	"revise":       NeedsNothing,
+	"comment":      NeedsNothing,
+	"post-review":  NeedsNothing,
+	"push-notes":   NeedsNothing,
+	"open-pr":      NeedsNothing,
+	"post-replies": NeedsNothing,
+	"label":        NeedsTriage,
+}
+
+// VerbNeeds is what verb needs of the viewer on the repository.
+func VerbNeeds(verb string) string {
+	if needs, ok := verbNeeds[verb]; ok {
+		return needs
+	}
+	return NeedsPush
+}
+
+// IsApplyVerb is whether verb is one factory apply executes: not a draft
+// verb or a follow-up, which are the board's.
+func IsApplyVerb(verb string) bool {
+	switch verb {
+	case "edit", "reject", "run", "revise":
+		return false
+	}
+	return true
 }
 
 // defaultActions are a kind's actions when its document declares none (or
@@ -57,6 +89,12 @@ var defaultActions = map[string][]Action{
 		{Verb: "post-review", Label: "Post as pending review"},
 		{Verb: "reject"},
 	},
+	"Change": {
+		{Verb: "edit", Field: "spec", Format: "yaml"},
+		{Verb: "open-pr", Label: "Open draft PR"},
+		{Verb: "post-replies", Label: "Post replies"},
+		{Verb: "reject"},
+	},
 }
 
 // taskOutputMeta is what the board reads of a task output besides its
@@ -78,9 +116,11 @@ func parseTaskOutputMeta(kind, doc string) (taskOutputMeta, bool) {
 	return m, true
 }
 
-// OfferedActions are the actions a kind's task output offers that the
-// board executes: the document's, or the kind's defaults when it declares
-// none or there is none.
+// OfferedActions are the actions a kind's task output offers: the
+// document's, or the kind's defaults when it declares none or there is
+// none. Whatever the kind, every verb is offered — what the viewer may
+// take is VerbNeeds' — but for the follow-ups the board cannot start: a
+// run other than fix, a revise with no id.
 func OfferedActions(kind, doc string) []Action {
 	actions := defaultActions[kind]
 	if m, ok := parseTaskOutputMeta(kind, doc); ok && len(m.Actions) > 0 {
@@ -88,12 +128,17 @@ func OfferedActions(kind, doc string) []Action {
 	}
 	var out []Action
 	for _, a := range actions {
-		if !slices.Contains(boardVerbs[kind], a.Verb) || (a.Verb == "run" && a.Run != "fix") || (a.Verb == "revise" && a.Revise == "") {
+		if a.Verb == "" || (a.Verb == "run" && a.Run != "fix") || (a.Verb == "revise" && a.Revise == "") {
 			continue
 		}
 		out = append(out, a)
 	}
 	return out
+}
+
+// Offers is whether a kind's task output offers verb.
+func Offers(kind, doc, verb string) bool {
+	return slices.ContainsFunc(OfferedActions(kind, doc), func(a Action) bool { return a.Verb == verb })
 }
 
 // TaskOutputTask is the task a kind's task output came from, or "": what

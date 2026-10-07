@@ -142,9 +142,10 @@ func (s *Server) saveRecipeNotes(c *gin.Context, view researchSandboxView, revis
 	c.JSON(http.StatusAccepted, gin.H{"note": note, "request": filed.Name})
 }
 
-// saveResearchNotes is Save to research/notes (push-notes): files the push
-// of the draft as it is now. 202, as for any write.
-func (s *Server) saveResearchNotes(c *gin.Context, view researchSandboxView) {
+// applyResearchNotes files a write of the notes draft as it is now:
+// Save to research/notes (push-notes), or any other the notes offer.
+// 202, as for any write.
+func (s *Server) applyResearchNotes(c *gin.Context, view researchSandboxView, action string) {
 	ctx := c.Request.Context()
 	board, err := s.researchBoard(ctx, view)
 	if err != nil {
@@ -155,7 +156,7 @@ func (s *Server) saveResearchNotes(c *gin.Context, view researchSandboxView) {
 		Verb:    boardv1alpha1.VerbApply,
 		Member:  view.Namespace,
 		Sandbox: view.Sandbox,
-		Apply:   &boardv1alpha1.ApplyRequest{Kind: "Notes", Action: "push-notes"},
+		Apply:   &boardv1alpha1.ApplyRequest{Run: factorycli.RunTaskType(factorycli.ResearchRunAnnotation), Action: action},
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the save", "details": err.Error()})

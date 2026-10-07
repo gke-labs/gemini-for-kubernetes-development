@@ -39,7 +39,8 @@ func TestOfferedActions(t *testing.T) {
 			t.Errorf("OfferedActions(%q) = %+v, want the defaults", doc, got)
 		}
 	}
-	// Verbs the board does not execute, or the wrong kind's, are left out.
+	// Any verb the document offers is offered, whatever the kind: the
+	// board does not filter writes by kind; who may click them is VerbNeeds.
 	doc := `kind: Triage
 actions:
   - verb: run
@@ -47,14 +48,18 @@ actions:
   - verb: label
   - verb: frobnicate
   - verb: reject
+  - verb: ""
 `
-	want := []Action{{Verb: "label"}, {Verb: "reject"}}
+	want := []Action{{Verb: "run", Run: "fix"}, {Verb: "label"}, {Verb: "frobnicate"}, {Verb: "reject"}}
 	if got := OfferedActions("Triage", doc); !reflect.DeepEqual(got, want) {
 		t.Errorf("OfferedActions = %+v, want %+v", got, want)
 	}
 	// Another kind's document is no declaration for this one.
 	if got := OfferedActions("Plan", doc); !reflect.DeepEqual(got, defaultActions["Plan"]) {
 		t.Errorf("OfferedActions(Plan, triage doc) = %+v", got)
+	}
+	if !Offers("Triage", doc, "label") || Offers("Triage", doc, "comment") || Offers("Plan", doc, "frobnicate") {
+		t.Error("Offers disagrees with OfferedActions")
 	}
 	// Only fix is a follow-up the board runs.
 	if got := OfferedActions("Plan", "kind: Plan\nactions:\n  - verb: run\n    run: deploy\n"); len(got) != 0 {
@@ -85,8 +90,30 @@ actions:
 	if got := TaskOutputSession("Plan", "kind: Plan\nsource:\n  task: recipe-plan-1\n"); got != "recipe-plan-1" {
 		t.Errorf("session of a start = %q, want its task", got)
 	}
-	// Not yet a triage's.
-	if got := OfferedActions("Triage", "kind: Triage\nactions:\n  - verb: revise\n    revise: comment\n"); len(got) != 0 {
-		t.Errorf("triage revise offered: %+v", got)
+	// Any kind's.
+	want = []Action{{Verb: "revise", Revise: "comment"}}
+	if got := OfferedActions("Triage", "kind: Triage\nactions:\n  - verb: revise\n    revise: comment\n"); !reflect.DeepEqual(got, want) {
+		t.Errorf("triage revise offered: %+v, want %+v", got, want)
+	}
+}
+
+// Writes the board does not know need push; follow-ups and draft verbs
+// are no writes.
+func TestVerbs(t *testing.T) {
+	for verb, want := range map[string]string{
+		"label": NeedsTriage, "comment": NeedsNothing, "open-pr": NeedsNothing,
+		"post-review": NeedsNothing, "edit": NeedsNothing, "frobnicate": NeedsPush,
+	} {
+		if got := VerbNeeds(verb); got != want {
+			t.Errorf("VerbNeeds(%s) = %q, want %q", verb, got, want)
+		}
+	}
+	for verb, want := range map[string]bool{
+		"comment": true, "label": true, "push-notes": true, "open-pr": true, "frobnicate": true,
+		"edit": false, "reject": false, "run": false, "revise": false,
+	} {
+		if got := IsApplyVerb(verb); got != want {
+			t.Errorf("IsApplyVerb(%s) = %v, want %v", verb, got, want)
+		}
 	}
 }

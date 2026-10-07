@@ -17,7 +17,6 @@ package repoboard
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -26,81 +25,109 @@ import (
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// applyWrites are the writes an apply Request may ask for, by kind.
-var applyWrites = map[string][]string{
-	"Triage": {"label", "comment"},
-	"Plan":   {"comment"},
-	"Notes":  {"push-notes"},
+// An apply, whichever recipe's: a member clicks one of the writes the
+// task output stored for a run offers (Add labels, Post plan, Save to
+// research/notes), and the controller runs factory apply --action on that
+// output as it is then — edits included — with the clicker's token. The
+// Request names the sandbox, the run and the action; success stamps the
+// action applied in the run's applied annotation. What else a kind does
+// once applied is its applyHook's.
+
+// applyHook is what an apply of a run's output of one kind does beyond
+// the write. Every field may be nil.
+type applyHook struct {
+	// spec is what the kind sets over the output's spec as it is applied.
+	spec func(sb *unstructured.Unstructured) map[string]string
+	// applied adjusts sb, once action is stamped applied there.
+	applied func(sb *unstructured.Unstructured, action string) error
 }
 
-// appliedKeys are where a kind's draft is stamped with what was applied of
-// it: its run's applied annotation.
-var appliedKeys = map[string]string{
-	"Triage": factorycli.AnnotationTriageApplied,
-	"Plan":   factorycli.AnnotationPlanApplied,
-	"Notes":  factorycli.AnnotationNotesApplied,
-}
-
-// applyStamp is the applied annotation an apply's write stamps, or "" for
-// a write nothing serves.
-func applyStamp(spec boardv1alpha1.RequestSpec) string {
-	if spec.Apply == nil || !slices.Contains(applyWrites[spec.Apply.Kind], spec.Apply.Action) {
-		return ""
-	}
-	return appliedKeys[spec.Apply.Kind]
+// applyHooks are by the kind of task output.
+var applyHooks = map[string]applyHook{
+	// A posted triage is finished with, so its sandbox is parked, unless a
+	// plan or fix is running in it.
+	"Triage": {
+		applied: func(sb *unstructured.Unstructured, action string) error {
+			if action != "comment" || sb.GetAnnotations()[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning {
+				return nil
+			}
+			return unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
+		},
+	},
+	// Notes go under the file name the conversation pinned.
+	"Notes": {
+		spec: func(sb *unstructured.Unstructured) map[string]string {
+			if name := sb.GetAnnotations()[research.NoteAnnotation]; name != "" {
+				return map[string]string{"name": name}
+			}
+			return nil
+		},
+	},
 }
 
 // applyKey is the runner key of one write.
-func applyKey(work *workState, spec boardv1alpha1.RequestSpec) string {
-	if spec.Sandbox != "" {
-		return fmt.Sprintf("%s/apply-%s-%s-%s", spec.Member, spec.Sandbox, strings.ToLower(spec.Apply.Kind), spec.Apply.Action)
-	}
-	return fmt.Sprintf("%s/apply-%s-%d-%s-%s", spec.Member, work.repo, spec.Number, strings.ToLower(spec.Apply.Kind), spec.Apply.Action)
+func applyKey(spec boardv1alpha1.RequestSpec) string {
+	return fmt.Sprintf("%s/apply-%s-%s-%s", spec.Member, spec.Sandbox, spec.Apply.Run, spec.Apply.Action)
 }
 
-// applyDraftSandbox is the sandbox holding the draft an apply writes: for
-// a triage, the member's, else the board's, where auto-triage runs; for a
-// plan, the member's issue sandbox; for notes, the research sandbox the
-// Request names.
-func applyDraftSandbox(work *workState, spec boardv1alpha1.RequestSpec) *unstructured.Unstructured {
-	switch spec.Apply.Kind {
-	case "Triage":
-		for _, ns := range []string{spec.Member, work.board.Namespace} {
-			if sb := work.triageSandbox(ns, spec.Number); sb != nil && factorycli.TriageDraft(sb) != "" {
-				return sb
-			}
-		}
-	case "Plan":
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && factorycli.PlanDraft(sb.GetAnnotations()) != "" {
-			return sb
-		}
-	case "Notes":
-		return notesDraftSandbox(work, spec)
+// applyMalformed is why an apply Request cannot be served as it is
+// written, "" when it can.
+func applyMalformed(spec boardv1alpha1.RequestSpec) string {
+	switch {
+	case spec.Apply == nil || spec.Sandbox == "" || spec.Apply.Run == "" || spec.Apply.Action == "":
+		return "an apply names the sandbox, the run and the action"
+	case !factorycli.IsApplyVerb(spec.Apply.Action):
+		return fmt.Sprintf("%s is not a write factory apply makes", spec.Apply.Action)
 	}
-	return nil
+	return ""
 }
 
-// applyDoc is the task output to apply: the one stored on sb, as it is
-// now — edits included.
-func applyDoc(work *workState, spec boardv1alpha1.RequestSpec, sb *unstructured.Unstructured) (string, error) {
-	if spec.Apply.Kind == "Notes" {
-		return notesDoc(work, sb)
+// applyDraft is the sandbox an apply names, its run there and the output
+// stored for it, when that output offers the action; nil when there is
+// none. The sandbox is the member's, or the board's: auto-triage's, which
+// shares its name.
+func applyDraft(work *workState, spec boardv1alpha1.RequestSpec) (*unstructured.Unstructured, factorycli.RecordedRun, string) {
+	runKey := factorycli.RunAnnotation(spec.Apply.Run)
+	for _, ns := range []string{spec.Member, work.board.Namespace} {
+		sb := work.findSandbox(ns, spec.Sandbox)
+		if sb == nil {
+			continue
+		}
+		a := sb.GetAnnotations()
+		doc := a[factorycli.OutputAnnotation(runKey)]
+		if doc == "" {
+			continue
+		}
+		if !factorycli.Offers(factorycli.TaskOutputKind(doc), doc, spec.Apply.Action) {
+			break
+		}
+		run, _ := factorycli.RecordedRunAt(a, runKey)
+		return sb, run, doc
 	}
-	a := sb.GetAnnotations()
-	doc, draftAt := a[factorycli.AnnotationTriageOutput], a[AnnotationTriagedAt]
-	if spec.Apply.Kind == "Plan" {
-		doc, draftAt = a[factorycli.AnnotationPlanOutput], a[AnnotationPlannedAt]
+	return nil, factorycli.RecordedRun{}, ""
+}
+
+// applyDoc is the task output to apply: doc, the one stored on sb, as it
+// is now. One that names no task is given the run's — factory dedups its
+// comments on it — or else the sandbox's, and one with no target, the
+// sandbox's issue, else the repository.
+func applyDoc(work *workState, sb *unstructured.Unstructured, run factorycli.RecordedRun, doc string) (string, error) {
+	task := run.Task
+	if task == "" {
+		task = "board-" + sb.GetName()
 	}
-	// A document that names no task: what factory dedups its comment on is
-	// the task, so name one that is stable for this draft.
-	task := "board-" + sb.GetName()
-	if t, err := time.Parse(time.RFC3339, draftAt); err == nil {
-		task = fmt.Sprintf("%s-%d", task, t.Unix())
+	url := sb.GetAnnotations()["htmlURL"]
+	if url == "" {
+		url = fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo)
 	}
-	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, spec.Number)
-	return factorycli.ComposeTaskOutput(spec.Apply.Kind, doc, factorycli.Draft(spec.Apply.Kind, doc), url, task)
+	var spec map[string]string
+	if hook := applyHooks[factorycli.TaskOutputKind(doc)]; hook.spec != nil {
+		spec = hook.spec(sb)
+	}
+	return factorycli.ApplyDoc(doc, task, url, spec)
 }
 
 // ensureApplies starts the write each apply Request asks for, once: not
@@ -112,32 +139,32 @@ func (r *Reconciler) ensureApplies(ctx context.Context, work *workState, reqs []
 	logger := log.FromContext(ctx)
 	for _, req := range reqs {
 		spec := req.Spec
-		if applyStamp(spec) == "" {
+		if applyMalformed(spec) != "" {
 			continue
 		}
-		key := applyKey(work, spec)
+		key := applyKey(spec)
 		if r.Factory.IsRunning(key) {
 			continue
 		}
 		if res, ok := r.Factory.LastResult(key); ok && res.FinishedAt.After(req.CreationTimestamp.Time) {
 			continue
 		}
-		sb := applyDraftSandbox(work, spec)
+		sb, run, stored := applyDraft(work, spec)
 		if sb == nil {
 			continue
 		}
-		doc, err := applyDoc(work, spec, sb)
+		doc, err := applyDoc(work, sb, run, stored)
 		if err != nil {
-			logger.Error(err, "unable to compose the task output", "issue", spec.Number, "kind", spec.Apply.Kind)
+			logger.Error(err, "unable to compose the task output", "sandbox", spec.Sandbox, "run", spec.Apply.Run)
 			continue
 		}
 		token, err := r.executorToken(ctx, spec.Member)
 		if err != nil {
-			logger.Error(err, "apply executor has no token", "executor", spec.Member, "issue", spec.Number)
+			logger.Error(err, "apply executor has no token", "executor", spec.Member, "sandbox", spec.Sandbox)
 			continue
 		}
 		if r.Factory.StartApply(key, factorycli.ApplyOptions{Doc: doc, Action: spec.Apply.Action, GithubToken: token}) {
-			logger.Info("launched factory apply", "issue", spec.Number, "kind", spec.Apply.Kind, "action", spec.Apply.Action, "member", spec.Member)
+			logger.Info("launched factory apply", "sandbox", spec.Sandbox, "run", spec.Apply.Run, "action", spec.Apply.Action, "member", spec.Member)
 		}
 	}
 }
@@ -147,16 +174,11 @@ func (r *Reconciler) ensureApplies(ctx context.Context, work *workState, reqs []
 // the write as done from; the Request is only the receipt.
 func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
 	spec := req.Spec
-	stamp := applyStamp(spec)
-	if stamp == "" {
-		return requestOutcome{
-			phase:   boardv1alpha1.RequestFailed,
-			reason:  "Malformed",
-			message: "an apply is a Triage's label or comment, a Plan's comment, or Notes' push-notes",
-		}
+	if why := applyMalformed(spec); why != "" {
+		return requestOutcome{phase: boardv1alpha1.RequestFailed, reason: "Malformed", message: why}
 	}
-	sb := applyDraftSandbox(work, spec)
-	key := applyKey(work, spec)
+	sb, _, _ := applyDraft(work, spec)
+	key := applyKey(spec)
 	res, ran := r.Factory.LastResult(key)
 	ran = ran && res.FinishedAt.After(req.CreationTimestamp.Time)
 	switch {
@@ -172,7 +194,7 @@ func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boar
 			// to stamp.
 			return requestOutcome{phase: boardv1alpha1.RequestSucceeded, reason: "Applied"}
 		}
-		if err := r.stampApplied(ctx, sb, spec, stamp); err != nil {
+		if err := r.stampApplied(ctx, sb, spec); err != nil {
 			log.FromContext(ctx).Error(err, "stamping the applied draft", "sandbox", sb.GetName())
 			return stillPending
 		}
@@ -183,24 +205,24 @@ func (r *Reconciler) settleApply(ctx context.Context, work *workState, req *boar
 		return requestOutcome{
 			phase:   boardv1alpha1.RequestFailed,
 			reason:  "NoDraft",
-			message: fmt.Sprintf("there is no %s draft on %s to post", strings.ToLower(spec.Apply.Kind), applyTarget(spec)),
+			message: fmt.Sprintf("there is no %s draft on %s that offers %s", spec.Apply.Run, spec.Sandbox, spec.Apply.Action),
 		}
 	}
 	return pendingOutcome(req, now)
 }
 
 // stampApplied marks the write done on the draft's sandbox, in its run's
-// applied annotation. A posted triage is finished with, so its sandbox is
-// parked too, unless a plan or fix is running in it.
-func (r *Reconciler) stampApplied(ctx context.Context, sb *unstructured.Unstructured, spec boardv1alpha1.RequestSpec, stamp string) error {
+// applied annotation, and does what the output's kind does once applied.
+func (r *Reconciler) stampApplied(ctx context.Context, sb *unstructured.Unstructured, spec boardv1alpha1.RequestSpec) error {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	factorycli.MarkApplied(annotations, stamp, spec.Apply.Action, time.Now())
+	runKey := factorycli.RunAnnotation(spec.Apply.Run)
+	factorycli.MarkApplied(annotations, factorycli.AppliedAnnotation(runKey), spec.Apply.Action, time.Now())
 	sb.SetAnnotations(annotations)
-	if spec.Apply.Kind == "Triage" && spec.Apply.Action == "comment" && annotations[factorycli.AnnotationTaskState] != factorycli.TaskStateRunning {
-		if err := unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas"); err != nil {
+	if hook := applyHooks[factorycli.TaskOutputKind(annotations[factorycli.OutputAnnotation(runKey)])]; hook.applied != nil {
+		if err := hook.applied(sb, spec.Apply.Action); err != nil {
 			return err
 		}
 	}
@@ -220,13 +242,4 @@ func lastLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
-}
-
-// applyTarget is what an apply writes from, for a message: its issue, or
-// its sandbox.
-func applyTarget(spec boardv1alpha1.RequestSpec) string {
-	if spec.Sandbox != "" {
-		return spec.Sandbox
-	}
-	return fmt.Sprintf("#%d", spec.Number)
 }

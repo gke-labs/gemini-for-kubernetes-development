@@ -148,17 +148,21 @@ type RunRequest struct {
 	Target int `json:"target,omitempty"`
 }
 
-// ApplyRequest is which draft of the issue (or, with the spec's Sandbox,
-// of the research conversation), and which of its actions.
+// ApplyRequest is which run's draft on the spec's Sandbox, and which of
+// its actions: the controller runs factory apply --action on the task
+// output stored for the run, whichever recipe's.
 type ApplyRequest struct {
-	// Kind is the task output: Triage | Plan | Notes.
-	// +kubebuilder:validation:Enum=Triage;Plan;Notes
-	Kind string `json:"kind"`
+	// Run is the run, by the task type it is recorded under on the
+	// sandbox (sandbox.gemini.google.com/<run>-run): recipe-triage, plan,
+	// research.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Run string `json:"run"`
 
-	// Action is the write: label (a Triage's labels) | comment (a
-	// Triage's assessment, or a Plan) | push-notes (Notes, to the
-	// member's research/notes).
-	// +kubebuilder:validation:Enum=label;comment;push-notes
+	// Action is the verb of one of the output's actions that factory
+	// apply executes: label, comment, push-notes, post-review, …
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
 	Action string `json:"action"`
 }
 
@@ -220,10 +224,11 @@ type RequestSpec struct {
 	// +kubebuilder:validation:Optional
 	Number int `json:"number,omitempty"`
 
-	// Sandbox is the member's sandbox a revise or apply acts on by its
-	// session, whichever recipe's: a revise runs in the session of the
-	// run there that offers it. An issue's sandbox's revise names the
-	// issue too (Number), for its row.
+	// Sandbox is the sandbox a revise or apply acts on, whichever
+	// recipe's: a revise runs in the session of the run there that offers
+	// it, an apply applies a run's draft there. It is the member's, or
+	// for an apply, the board's (auto-triage's). An issue's sandbox's
+	// revise or apply names the issue too (Number), for its row.
 	// It becomes an argument to the factory CLI.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
@@ -345,7 +350,7 @@ func (s RequestSpec) Subject() string {
 		if s.Apply == nil {
 			return ""
 		}
-		return s.target() + "/" + s.Apply.Kind + "/" + s.Apply.Action
+		return s.target() + "/" + s.Apply.Run + "/" + s.Apply.Action
 	case VerbRevise:
 		return s.target() + "/" + s.Revise
 	default:

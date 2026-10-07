@@ -206,7 +206,7 @@ func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
 	setNotesAnnotations(t, dyn, map[string]string{factorycli.AnnotationNotesOutput: storedOutput("Notes", "# Findings"), annoNotesDraftedAt: "2026-10-05T10:00:00Z"})
 	failed := requestCR(boardv1alpha1.RequestSpec{
 		Verb: boardv1alpha1.VerbApply, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(),
-		Apply: &boardv1alpha1.ApplyRequest{Kind: "Notes", Action: "push-notes"},
+		Apply: &boardv1alpha1.ApplyRequest{Run: "research", Action: "push-notes"},
 	})
 	_ = unstructured.SetNestedField(failed.Object, string(boardv1alpha1.RequestFailed), "status", "phase")
 	_ = unstructured.SetNestedField(failed.Object, "push refused", "status", "message")
@@ -275,7 +275,7 @@ func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 	}
 	req := theRequest(t, dyn, "alice")
 	if req.Spec.Verb != boardv1alpha1.VerbApply || req.Spec.Apply == nil ||
-		req.Spec.Apply.Kind != "Notes" || req.Spec.Apply.Action != "push-notes" || req.Spec.Sandbox != recipeResearchSandboxCR().GetName() {
+		req.Spec.Apply.Run != "research" || req.Spec.Apply.Action != "push-notes" || req.Spec.Sandbox != recipeResearchSandboxCR().GetName() {
 		t.Errorf("filed %+v, want push-notes of the sandbox", req.Spec)
 	}
 }

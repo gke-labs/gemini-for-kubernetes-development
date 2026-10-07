@@ -107,7 +107,7 @@ func TestAPlanSessionActsOnItsIssueRow(t *testing.T) {
 		t.Errorf("revise filed %+v, want Update plan of fix-repo-42, on #42", revise)
 	}
 	if apply == nil || apply.Spec.Number != 42 || apply.Spec.Apply == nil ||
-		*apply.Spec.Apply != (boardv1alpha1.ApplyRequest{Kind: "Plan", Action: "comment"}) {
+		*apply.Spec.Apply != (boardv1alpha1.ApplyRequest{Run: "plan", Action: "comment"}) {
 		t.Errorf("comment filed %+v, want the plan's comment on #42", apply)
 	}
 }
