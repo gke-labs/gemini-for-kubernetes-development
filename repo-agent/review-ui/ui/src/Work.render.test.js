@@ -526,20 +526,12 @@ describe('WorkRow review', () => {
 
     const reviewRun = (status) => ({ recipe: 'review', label: 'Review', sandbox: 'review-r-42', task: 'recipe-review-1', status });
 
-    test('a pending review whose run is gone is the review chip, linking GitHub, with Abandon', async () => {
-        const onAction = jest.fn();
-        window.confirm = jest.fn(() => true);
-        await act(async () => {
-            root.render(<table><tbody>
-                <WorkRow item={review} boardName="myboard" namespace="alice" onAction={onAction}
-                    runState={{ repoRunbooks: [], instances: [] }} />
-            </tbody></table>);
-        });
+    test('a pending review whose run is gone is the review chip, linking GitHub to finalize or discard it', async () => {
+        await renderRow(review);
         expect(link('Review: pending').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
         expect(findButton('Review ready')).toBeUndefined();
         expect(link('Finalize')).toBeUndefined();
-        await act(async () => { findButton('✕').click(); });
-        expect(onAction).toHaveBeenCalledWith('prs/42/abandon', 'Abandon review');
+        expect(findButton('✕')).toBeUndefined();
     });
 
     test('a pending review with its run recorded is the run\'s ready chip, to its session', async () => {

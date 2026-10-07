@@ -47,6 +47,8 @@ const RUN_STYLE = {
   starting: { color: '#b08800', bg: 'rgba(176,136,0,0.12)' },
   queued: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
   ready: { color: '#b08800', bg: 'rgba(176,136,0,0.16)' },
+  // A pending review on GitHub with no run left: finalize or discard it there.
+  pending: { color: '#b08800', bg: 'rgba(176,136,0,0.16)' },
   done: { color: '#6a737d', bg: 'rgba(106,115,125,0.12)' },
   failed: { color: 'var(--danger, #d33)', bg: 'rgba(221,51,51,0.12)' },
 };
@@ -353,7 +355,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   // (its sandbox deleted) is the recipe's chip too, linking GitHub.
   if (!runOf('review') && !(item.launching || {}).review) {
     if (item.reviewPending) {
-      chips.push({ recipe: 'review', label: 'Review', status: 'pending', href: `${item.htmlURL}/files`, abandon: true,
+      chips.push({ recipe: 'review', label: 'Review', status: 'pending', href: `${item.htmlURL}/files`,
         title: 'Your pending review is saved on GitHub, visible only to you — finalize it there' });
     } else if (item.reviewed) {
       chips.push({ recipe: 'review', label: 'Review', status: 'done', href: item.htmlURL, title: 'Your review is submitted — open the PR' });
@@ -444,19 +446,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             );
           }
           if (c.href) {
-            return c.abandon ? (
-              <span key={c.recipe} style={{ marginLeft: '4px', whiteSpace: 'nowrap' }}>
-                <a className="btn btn-sm" href={c.href} target="_blank" rel="noopener noreferrer" title={c.title}
-                  style={{ textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
-                  {`${text} ↗`}
-                </a>
-                <button className="btn btn-sm" style={{ marginLeft: '2px' }} title="Abandon: delete your pending review on GitHub"
-                  onClick={() => {
-                    if (!window.confirm(`Delete your pending review on PR #${item.number}?`)) return;
-                    onAction(`prs/${item.number}/abandon`, 'Abandon review');
-                  }}>✕</button>
-              </span>
-            ) : (
+            return (
               <a key={c.recipe} href={c.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '4px' }} title={c.title}>
                 <Chip text={`${text} ↗`} color={style.color} bg={style.bg} />
               </a>
