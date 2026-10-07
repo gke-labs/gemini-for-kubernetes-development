@@ -212,10 +212,6 @@ type BoardRecipe struct {
 	Kind string `json:"kind,omitempty"`
 	// +kubebuilder:validation:Optional
 	Revises []BoardRecipeRevise `json:"revises,omitempty"`
-	// RevisesOn are the targets where it has no start: its revises are
-	// offered there before any run.
-	// +kubebuilder:validation:Optional
-	RevisesOn []string `json:"revisesOn,omitempty"`
 	// TaskType is what its runs are recorded under on a sandbox.
 	// +kubebuilder:validation:Optional
 	TaskType string `json:"taskType,omitempty"`

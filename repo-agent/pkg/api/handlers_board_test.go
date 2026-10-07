@@ -430,7 +430,8 @@ func theRequest(t *testing.T, dyn *fake.FakeDynamicClient, namespace string) boa
 func boardCR() *unstructured.Unstructured {
 	board := bareBoardCR()
 	board.Object["status"] = map[string]interface{}{"recipes": []interface{}{
-		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue", "my-pr"}, "revisesOn": []interface{}{"my-pr"}, "kind": "Change"},
+		map[string]interface{}{"name": "care", "label": "Care", "on": []interface{}{"my-pr"}, "kind": "Change"},
+		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue"}, "kind": "Change"},
 		map[string]interface{}{"name": "plan", "label": "Plan", "on": []interface{}{"issue"}, "kind": "Plan"},
 		map[string]interface{}{"name": "research", "label": "Research", "on": []interface{}{"repo"}, "kind": "Notes"},
 		map[string]interface{}{"name": "review", "label": "Review", "on": []interface{}{"pr"}, "kind": "Review"},
@@ -574,9 +575,6 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 		}
 		if len(row.Sessions) != 1 || row.Sessions[0].Status != tc.status || row.Attention != tc.attention {
 			t.Errorf("%s: sessions %+v, attention %q; want %s, %s", tc.state, row.Sessions, row.Attention, tc.status, tc.attention)
-		}
-		if fs := row.FixSession; fs == nil || fs.Sandbox != "fix-repo-7" || fs.Task != "recipe-fix-1" {
-			t.Errorf("%s: fix session %+v, want the fix's", tc.state, fs)
 		}
 		if failed := tc.state == "Failed"; failed != (row.Error != "") {
 			t.Errorf("%s: error %q", tc.state, row.Error)
@@ -1988,20 +1986,5 @@ func TestHeadOnMemberFork(t *testing.T) {
 		if got := headOnMemberFork(tc.pr, "alice"); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
-	}
-}
-
-// The PR row's follow-ups are the fix run's recorded revises, each with the
-// inputs it asks for.
-func TestFixRevisesFromTheRecordedRun(t *testing.T) {
-	if got := fixRevises(nil); got != nil {
-		t.Errorf("no sandbox, no revises: %+v", got)
-	}
-	sb := &unstructured.Unstructured{}
-	sb.SetAnnotations(map[string]string{factorycli.AnnotationFixRun: `{"name":"fix/repo/1/1","task":"t","kind":"Change","revises":[{"id":"iterate","label":"Iterate","inputs":["instruction"]},{"id":"rebase","label":"Rebase"}]}`})
-	got := fixRevises(sb)
-	if len(got) != 2 || got[0].Revise != "iterate" || len(got[0].Inputs) != 1 || got[0].Inputs[0] != "instruction" ||
-		got[1].Revise != "rebase" || got[1].Label != "Rebase" || len(got[1].Inputs) != 0 || !got[1].Enabled || got[1].Verb != "revise" {
-		t.Errorf("revises wrong: %+v", got)
 	}
 }

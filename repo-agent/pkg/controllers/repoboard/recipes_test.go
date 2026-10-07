@@ -131,6 +131,8 @@ func TestRecipeFailures(t *testing.T) {
 			nil, "NotLaunchable"},
 		"review on an issue": {testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "issue", Number: 12}),
 			nil, "NotLaunchable"},
+		"care on an issue": {testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "issue", Number: 12}),
+			nil, "NotLaunchable"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
@@ -151,6 +153,22 @@ func TestRecipeFailures(t *testing.T) {
 	}
 }
 
+// A recipe on [my-pr] starts on a PR, in the PR's recipe sandbox; factory
+// refuses it on a PR that is not the member's.
+func TestCareLaunchesOnAPR(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), req)
+	r.reconcileBoard(t)
+
+	launches := fake.launches()
+	g.Expect(launches).To(gomega.HaveLen(1))
+	g.Expect(launches[0].RecipeOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].RecipeOpts.Recipe).To(gomega.Equal("care"))
+	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("recipe-repo-12"))
+}
+
 // The board publishes factory's catalog on its status, for the API.
 func TestBoardPublishesRecipes(t *testing.T) {
 	g := gomega.NewWithT(t)
@@ -162,7 +180,7 @@ func TestBoardPublishesRecipes(t *testing.T) {
 	for _, rec := range board.Status.Recipes {
 		names = append(names, rec.Name)
 	}
-	g.Expect(names).To(gomega.Equal([]string{"triage", "plan", "fix", "review", "research", "summarize"}))
+	g.Expect(names).To(gomega.Equal([]string{"triage", "plan", "fix", "care", "review", "research", "summarize"}))
 }
 
 func (r *Reconciler) reconcileBoard(t *testing.T) {
