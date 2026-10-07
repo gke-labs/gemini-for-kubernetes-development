@@ -684,6 +684,17 @@ const DRAFT_VERBS = {
     confirm: 'Approve this plan and launch the fix as you?',
   },
   'push-notes': { label: 'Save to research/notes', title: 'Push this draft to research/notes in your fork' },
+  'open-pr': {
+    label: 'Open draft PR', title: 'Opens a draft PR with this change under your identity',
+    confirm: 'Open a draft PR with this change as you?',
+  },
+  'post-replies': {
+    label: 'Post replies', title: 'Posts the replies to the PR comments under your identity',
+    confirm: 'Post these replies on the PR as you?',
+  },
+  'post-review': {
+    label: 'Post review', title: 'Posts this review as a pending review on the PR, for you to submit',
+  },
   reject: {
     label: 'Discard', title: 'Drop the draft',
     confirm: 'Discard this draft?',
@@ -1628,7 +1639,7 @@ export function ResearchConversation({
           </div>
         ))}
         {/* The draft: the session's task output, whatever its kind, with
-            the actions it offers. One line until Show (or Edit) opens
+            the actions it offers — its markdown, or its spec as YAML. One line until Show (or Edit) opens
             it, and then a bounded box, so it never pushes the
             conversation away. */}
         {sessionDraft && (
@@ -1657,7 +1668,7 @@ export function ResearchConversation({
                       <button key={key} className="btn btn-sm" disabled={!a.enabled || !!drafting}
                         title={a.enabled ? (v.title || label) : `Not now: ${a.reason}`}
                         onClick={() => {
-                          if (a.verb === 'edit') { setDraftEdit(sessionDraft.markdown); return; }
+                          if (a.verb === 'edit') { setDraftEdit(sessionDraft.markdown || sessionDraft.spec || ''); return; }
                           if (v.confirm && !window.confirm(v.confirm)) return;
                           takeDraftAction(a);
                         }}>
@@ -1678,7 +1689,9 @@ export function ResearchConversation({
             </div>
             {draftEdit === null ? (draftOpen && (
               <div style={{ fontSize: 'small' }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{sessionDraft.markdown}</ReactMarkdown>
+                {sessionDraft.markdown
+                  ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{sessionDraft.markdown}</ReactMarkdown>
+                  : <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0' }}>{sessionDraft.spec}</pre>}
               </div>
             )) : (
               <textarea value={draftEdit} onChange={e => setDraftEdit(e.target.value)} aria-label="Edit the draft"

@@ -1948,6 +1948,26 @@ describe('ResearchConversation revises and draft', () => {
         expect(button('Post plan')).toBeTruthy();
     });
 
+    test('a kind without markdown shows, and edits, its spec as YAML', async () => {
+        const spec = 'title: Fix the backoff\nbranch: issue-908';
+        const calls = await open({
+            draft: {
+                kind: 'Change', spec,
+                actions: [{ verb: 'edit', enabled: true }, { verb: 'open-pr', enabled: false, reason: 'applied' }],
+            },
+        });
+        expect(container.textContent).toContain('Change draft');
+        await click(button('Show'));
+        expect(container.querySelector('pre').textContent).toBe(spec);
+        expect(button('Open draft PR').disabled).toBe(true);
+        await click(button('Edit'));
+        expect(container.querySelector('textarea[aria-label="Edit the draft"]').value).toBe(spec);
+        await click(button('Store edit'));
+        expect(calls).toEqual([
+            { url: `${at}/draft/edit`, method: 'POST', body: JSON.stringify({ run: '', text: spec }) },
+        ]);
+    });
+
     test('what is running and what failed is said, and what waits says why', async () => {
         await open({
             revises: [{ ...saveNotes, enabled: false, reason: 'revising' }],

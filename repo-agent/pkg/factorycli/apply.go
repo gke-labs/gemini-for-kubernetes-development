@@ -22,7 +22,7 @@ const TaskOutputAPIVersion = "factory.gemini.google.com/v1alpha1"
 //
 // A Triage draft is a triage: block; a Plan draft is the plan's markdown.
 func ComposeTaskOutput(kind, header, draft, issueURL, task string) (string, error) {
-	spec, err := draftSpec(kind, draft)
+	spec, err := draftSpec(kind, draft, kind == "Plan" || kind == "Notes")
 	if err != nil {
 		return "", err
 	}
@@ -55,15 +55,22 @@ func composeTaskOutput(kind, header string, spec any, targetURL, task string) (s
 	return string(out), nil
 }
 
-// draftSpec is a draft as its kind's spec.
-func draftSpec(kind, draft string) (any, error) {
-	switch kind {
-	case "Plan", "Notes":
+// draftSpec is a draft as its kind's spec: a triage: block's, markdown's
+// when the draft is markdown, else the draft, a YAML mapping, as it is.
+func draftSpec(kind, draft string, markdown bool) (any, error) {
+	switch {
+	case kind != "Triage" && markdown:
 		if strings.TrimSpace(draft) == "" {
 			return nil, fmt.Errorf("the %s is empty", strings.ToLower(kind))
 		}
 		return map[string]string{"markdown": strings.TrimSpace(draft)}, nil
-	case "Triage":
+	case kind != "Triage":
+		var doc yaml.Node
+		if yaml.Unmarshal([]byte(draft), &doc) != nil || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("the %s's spec is not a YAML mapping", strings.ToLower(kind))
+		}
+		return doc.Content[0], nil
+	default:
 		var d struct {
 			Triage struct {
 				Labels     []string `yaml:"labels"`
@@ -95,7 +102,6 @@ func draftSpec(kind, draft string) (any, error) {
 		}
 		return spec, nil
 	}
-	return nil, fmt.Errorf("no task output of kind %q", kind)
 }
 
 // headerNode is a stored document of kind as a mapping, or nil.

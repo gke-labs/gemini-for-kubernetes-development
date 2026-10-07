@@ -17,16 +17,21 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic/fake"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
 // planSessionAt is the plan's session on the board test's issue 42.
@@ -131,8 +136,8 @@ const reviewSessionAt = "/api/task-sessions/review-repo-42/recipe-review-1"
 
 // reviewSessionServer is the board test server with PR 42's review
 // sandbox, whose recorded run offers Update review, in state (the
-// review's last-task-state) with reviewState.
-func reviewSessionServer(t *testing.T, state, reviewState string) (*gin.Engine, *fake.FakeDynamicClient) {
+// review's last-task-state) with reviewState, and the extra annotations.
+func reviewSessionServer(t *testing.T, state, reviewState string, extra ...map[string]interface{}) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "review/myboard/42/1", Task: "recipe-review-1", StartedAt: time.Unix(1_000_000, 0),
@@ -147,6 +152,9 @@ func reviewSessionServer(t *testing.T, state, reviewState string) (*gin.Engine, 
 		"reviewState":                  reviewState,
 		factorycli.AnnotationReviewRun: string(run),
 	}
+	for _, e := range extra {
+		maps.Copy(annotations, e)
+	}
 	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(1), boardCR(),
 		sandboxCR("review-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true"}, annotations, 1))
 	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
@@ -160,7 +168,7 @@ func reviewSessionServer(t *testing.T, state, reviewState string) (*gin.Engine, 
 func TestAReviewSessionFilesUpdateReviewForItsSandbox(t *testing.T) {
 	r, dyn := reviewSessionServer(t, "Completed", "pending")
 	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/post-review", `{}`); w.Code != http.StatusNotFound {
-		t.Errorf("a draft action: %d %s, want 404: the review's draft is on GitHub", w.Code, w.Body.String())
+		t.Errorf("a draft action: %d %s, want 404: no Review is kept", w.Code, w.Body.String())
 	}
 	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/revise", `{"revise":"review"}`); w.Code != http.StatusAccepted {
 		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
@@ -197,8 +205,8 @@ const fixSessionAt = "/api/task-sessions/fix-repo-42/recipe-fix-1"
 
 // fixSessionServer is the board test server with issue 42's sandbox after
 // its fix, whose recorded run offers the follow-ups, in state; aliased to
-// PR 9 when pr is set, as open-pr leaves it.
-func fixSessionServer(t *testing.T, state string, pr bool) (*gin.Engine, *fake.FakeDynamicClient) {
+// PR 9 when pr is set, as open-pr leaves it; with the extra annotations.
+func fixSessionServer(t *testing.T, state string, pr bool, extra ...map[string]interface{}) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "fix/myboard/42/1", Task: "recipe-fix-1", StartedAt: time.Unix(1_000_000, 0),
@@ -215,6 +223,9 @@ func fixSessionServer(t *testing.T, state string, pr bool) (*gin.Engine, *fake.F
 		"sandbox.gemini.google.com/last-task-type":  "fix",
 		"sandbox.gemini.google.com/last-task-state": state,
 		factorycli.AnnotationFixRun:                 string(run),
+	}
+	for _, e := range extra {
+		maps.Copy(annotations, e)
 	}
 	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(),
 		sandboxCR("fix-repo-42", map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelIssue: "42"}, annotations, 1))
@@ -245,7 +256,7 @@ func TestAFixSessionFilesItsFollowUpsForItsSandbox(t *testing.T) {
 		t.Errorf("a second follow-up: %d %s, want 409 while the first stands", w.Code, w.Body.String())
 	}
 	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/draft/open-pr", `{}`); w.Code != http.StatusNotFound {
-		t.Errorf("a draft action: %d %s, want 404: the fix's draft is the PR", w.Code, w.Body.String())
+		t.Errorf("a draft action: %d %s, want 404: no Change is kept", w.Code, w.Body.String())
 	}
 	reqs := filedRequests(t, dyn, "alice")
 	if len(reqs) != 1 {
@@ -270,5 +281,102 @@ func TestAFixSessionRefusesFollowUpsUntilItsPR(t *testing.T) {
 		if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
 			t.Errorf("filed %+v", reqs)
 		}
+	}
+}
+
+// sessionSandboxAnnotations are the annotations of alice's sandbox name.
+func sessionSandboxAnnotations(t *testing.T, dyn *fake.FakeDynamicClient, name string) map[string]string {
+	t.Helper()
+	sb, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), name, v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sb.GetAnnotations()
+}
+
+// applyFiled is the one apply Request filed, failing the test without.
+func applyFiled(t *testing.T, dyn *fake.FakeDynamicClient) boardv1alpha1.RequestSpec {
+	t.Helper()
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 || reqs[0].Spec.Verb != boardv1alpha1.VerbApply || reqs[0].Spec.Apply == nil {
+		t.Fatalf("filed %+v, want one apply", reqs)
+	}
+	return reqs[0].Spec
+}
+
+// A review's kept Review is its session's draft: posted, its post-review
+// waits for an edit, which makes it a draft to post again.
+func TestAReviewSessionsDraftIsItsKeptReview(t *testing.T) {
+	r, dyn := reviewSessionServer(t, "Completed", "pending", map[string]interface{}{
+		factorycli.OutputAnnotation(factorycli.AnnotationReviewRun): "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Review\n" +
+			"source:\n  task: recipe-review-1\nspec:\n  body: Looks good.\n",
+		factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun): `{"post-review":"2026-10-06T00:00:00Z"}`,
+	})
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/post-review", `{}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), appliedReason) {
+		t.Errorf("post-review once posted: %d %s, want 409 applied", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/edit", `{"text":"- not a spec"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("an edit that is no mapping: %d %s, want 400", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/edit", `{"text":"body: Better.\n"}`); w.Code != http.StatusOK {
+		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
+	}
+	a := sessionSandboxAnnotations(t, dyn, "review-repo-42")
+	if doc := a[factorycli.OutputAnnotation(factorycli.AnnotationReviewRun)]; !strings.Contains(doc, "body: Better.") || !strings.Contains(doc, "task: recipe-review-1") {
+		t.Errorf("edited Review = %q", doc)
+	}
+	if applied := a[factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun)]; applied != "" {
+		t.Errorf("applied after an edit = %q, want none", applied)
+	}
+	if w := doJSON(t, r, http.MethodPost, reviewSessionAt+"/draft/post-review", `{}`); w.Code != http.StatusAccepted {
+		t.Fatalf("post-review: %d %s", w.Code, w.Body.String())
+	}
+	if spec := applyFiled(t, dyn); spec.Sandbox != "review-repo-42" || spec.Number != 42 ||
+		*spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-review", Action: "post-review"}) {
+		t.Errorf("post-review filed %+v, want the review run's on review-repo-42, PR 42", spec)
+	}
+}
+
+// A fix's kept Change is its session's draft: what was applied of it
+// waits, the rest is filed on its run, and a reject discards it.
+func TestAFixSessionsDraftIsItsChange(t *testing.T) {
+	r, dyn := fixSessionServer(t, "Completed", true, map[string]interface{}{
+		factorycli.OutputAnnotation(factorycli.AnnotationFixRun): "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\n" +
+			"source:\n  task: recipe-fix-1\nspec:\n  title: Fix it\n",
+		factorycli.AppliedAnnotation(factorycli.AnnotationFixRun): `{"open-pr":"2026-10-06T00:00:00Z"}`,
+	})
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/draft/open-pr", `{}`); w.Code != http.StatusConflict {
+		t.Errorf("open-pr once opened: %d %s, want 409", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/draft/post-replies", `{}`); w.Code != http.StatusAccepted {
+		t.Fatalf("post-replies: %d %s", w.Code, w.Body.String())
+	}
+	if spec := applyFiled(t, dyn); spec.Sandbox != "fix-repo-42" || spec.Number != 42 ||
+		*spec.Apply != (boardv1alpha1.ApplyRequest{Run: "fix", Action: "post-replies"}) {
+		t.Errorf("post-replies filed %+v, want the fix run's on fix-repo-42, issue 42", spec)
+	}
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/draft/reject", `{}`); w.Code != http.StatusOK {
+		t.Fatalf("reject: %d %s", w.Code, w.Body.String())
+	}
+	if doc := sessionSandboxAnnotations(t, dyn, "fix-repo-42")[factorycli.OutputAnnotation(factorycli.AnnotationFixRun)]; doc != "" {
+		t.Errorf("Change after a reject = %q, want none", doc)
+	}
+}
+
+// A triage's session acts on its issue's row, as a plan's does.
+func TestATriageSessionActsOnItsIssueRow(t *testing.T) {
+	run, _ := json.Marshal(factorycli.RecordedRun{
+		Name: "triage/myboard/42/1", Task: "recipe-triage-1", StartedAt: time.Unix(1_000_000, 0), Kind: "Triage",
+	})
+	r, dyn := fixSessionServer(t, "Completed", false, map[string]interface{}{
+		factorycli.AnnotationTriageRun: string(run),
+		factorycli.AnnotationTriageOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\n" +
+			"source:\n  task: recipe-triage-1\nspec:\n  labels: [bug]\n  assessment: A crash.\n",
+	})
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-42/recipe-triage-1/draft/comment", `{}`); w.Code != http.StatusAccepted {
+		t.Fatalf("comment: %d %s", w.Code, w.Body.String())
+	}
+	if spec := applyFiled(t, dyn); spec.Number != 42 || *spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-triage", Action: "comment"}) {
+		t.Errorf("comment filed %+v, want the triage's on #42", spec)
 	}
 }
