@@ -34,7 +34,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -111,7 +113,52 @@ func (s *Server) taskSessionSandbox(c *gin.Context) (*unstructured.Unstructured,
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the sandbox", "details": err.Error()})
 		return nil, "", false
 	}
+	s.fillSessionBoard(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), sb)
 	return sb, task, true
+}
+
+// fillSessionBoard names, on sb as read, the board its row is on when its
+// controller has not stamped one yet (no run of it has ended): the one
+// board in namespace for the repository of the item sb works on. None or
+// several leave it unnamed.
+func (s *Server) fillSessionBoard(ctx context.Context, namespace string, sb *unstructured.Unstructured) {
+	a := sb.GetAnnotations()
+	if a[annoBoard] != "" {
+		return
+	}
+	owner, repo, ok := itemRepo(a["htmlURL"])
+	if !ok {
+		return
+	}
+	name := ""
+	for _, board := range s.visibleBoards(ctx, namespace, "") {
+		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+		o, r, err := parseRepoURL(repoURL)
+		if err != nil || !strings.EqualFold(o, owner) || !strings.EqualFold(r, repo) {
+			continue
+		}
+		if name != "" {
+			return
+		}
+		name = board.GetName()
+	}
+	if name != "" {
+		a[annoBoard] = name
+		sb.SetAnnotations(a)
+	}
+}
+
+// itemRepo is the owner and repository of a GitHub issue or PR URL.
+func itemRepo(htmlURL string) (string, string, bool) {
+	u, err := url.Parse(htmlURL)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 || (parts[2] != "pull" && parts[2] != "issues") {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // resolveTaskSession turns the sandbox and task in the URL into a session
