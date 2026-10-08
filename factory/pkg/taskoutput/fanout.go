@@ -59,22 +59,25 @@ func FanOutComment(f *FanOut) string {
 	return fanout.SpecMarker + "\n" + strings.TrimSpace(f.Markdown)
 }
 
-// fanOutStopLabel is the stop label for an issue: <prefix>/stop for the
-// issue's <prefix>/fanout label, else overseer/stop, which the watch daemon
-// honours whatever its trigger label.
-func fanOutStopLabel(labels []*githubv39.Label) string {
+// fanOutLabels are the labels posting a spec adds to an issue: its fan-out
+// label, so the watch daemon carries the fan-out, unless it has one; and the
+// stop label, so it does not start before maintainers have read the spec.
+// The prefix is the issue's <prefix>/fanout label's, else overseer, which
+// the watch daemon honours whatever its trigger label.
+func fanOutLabels(labels []*githubv39.Label) []string {
 	for _, l := range labels {
 		name := l.GetName()
 		if i := strings.LastIndex(name, "/"); i > 0 && strings.EqualFold(name[i+1:], "fanout") {
-			return name[:i] + "/stop"
+			return []string{name[:i] + "/stop"}
 		}
 	}
-	return "overseer/stop"
+	return []string{"overseer/fanout", "overseer/stop"}
 }
 
 // applyPostSpec posts a FanOut as the spec comment on its issue, or edits
-// the caller's spec comment there, and adds the stop label first, so the
-// fan-out does not start before maintainers have read the spec. Once this
+// the caller's spec comment there. It adds the fan-out and stop labels
+// first (fanOutLabels): the watch daemon carries the fan-out, but does not
+// start it before maintainers have read the spec. Once this
 // task's spec is posted, applying again does nothing: a maintainer may have
 // edited the comment, or removed the stop label to start.
 func applyPostSpec(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
@@ -119,11 +122,11 @@ func applyPostSpec(ctx context.Context, gh *githubv39.Client, doc *Document, dry
 		opts.Page = resp.NextPage
 	}
 
-	stop := fanOutStopLabel(issue.Labels)
-	fmt.Fprintf(out, "%s %s to %s\n", doing(dryRun, "Adding", "add"), stop, doc.Target.URL)
+	labels := fanOutLabels(issue.Labels)
+	fmt.Fprintf(out, "%s %s to %s\n", doing(dryRun, "Adding", "add"), strings.Join(labels, ", "), doc.Target.URL)
 	if !dryRun {
-		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, []string{stop}); err != nil {
-			return fmt.Errorf("adding %s: %w", stop, err)
+		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, labels); err != nil {
+			return fmt.Errorf("adding %s: %w", strings.Join(labels, ", "), err)
 		}
 	}
 	comment := FanOutComment(f)

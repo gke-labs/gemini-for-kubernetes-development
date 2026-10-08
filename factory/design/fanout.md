@@ -356,7 +356,7 @@ The controller keeps no local state. GitHub holds everything, so a restarted dae
 
 The `fanout` recipe is `on: [issue]` and writes a `FanOut` task output: the spec in the standard markdown form. It has no revises. Changes are made by maintainers, in the comment.
 
-It has one action, `post-spec`. Applying it adds the stop label, then posts the bot's spec comment (or edits it, if there is one), so the fan-out cannot start before the spec is read. The stop label is `<prefix>/stop` for the issue's `<prefix>/fanout` label, else `overseer/stop`, which the daemon always honours. Once a task's spec is posted, applying it again does nothing: a maintainer may have edited the comment or removed the stop label since. Both touch only the run's own issue, so it fits the rule that an action never writes to another issue.
+It has one action, `post-spec`. Applying it adds the stop label, then posts the bot's spec comment (or edits it, if there is one), so the fan-out cannot start before the spec is read. The stop label is `<prefix>/stop` for the issue's `<prefix>/fanout` label. An issue with no fan-out label gets both `overseer/fanout` and `overseer/stop`, so a spec written by hand with `factory recipe fanout --apply` leaves a parent the daemon finds, stopped. Once a task's spec is posted, applying it again does nothing: a maintainer may have edited the comment or removed the stop label since. Both touch only the run's own issue, so it fits the rule that an action never writes to another issue.
 
 It runs as any recipe does, from the command line:
 
