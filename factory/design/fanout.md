@@ -34,7 +34,7 @@ If the proposal is too far off, delete the spec comment and the bot writes a new
 
 The bot creates the children and labels the first batch (`window.start`, 2 by default) `overseer`. From there each child is an ordinary overseer issue: a coder bot picks it up and opens a PR, and the PR goes through review as usual.
 
-The progress comment shows each child's PR and state. (Listing children as GitHub sub-issues is left for later.)
+The progress comment shows each child's PR and state. Each child is also a GitHub sub-issue of the parent, so GitHub lists them under it with a progress bar.
 
 ### 5. Checkpoint: the bot stops after the first batch
 
@@ -151,7 +151,7 @@ Part of #13781.
 <!-- factory:fanout parent=13781 items=apigeeinstance -->
 ```
 
-The marker comment makes children findable: the controller finds a parent's children by it, never by title. "Part of #N" puts each child on the parent's timeline, where the controller looks for markers; the state (below) also records every child it created, since a timeline can lag a creation. Linking children as GitHub sub-issues, so GitHub shows a progress bar, is left for later.
+The marker comment makes children findable: the controller finds a parent's children by it, never by title. "Part of #N" puts each child on the parent's timeline, where the controller looks for markers; the state (below) also records every child it created, since a timeline can lag a creation. Each pass also links every child not yet linked as a GitHub sub-issue, so GitHub shows a progress bar. The link is for show, never for finding children: a failure to link (a child with another parent, GitHub's limit on sub-issues) is logged and the pass carries on.
 
 A child is an ordinary issue, so the existing workflow features apply to it. If the Task section links a workflow file (for example `.agents/workflows/kcc-example.txt` with `{{.item.name}}` as its kind), each child becomes a workflow issue: a fan-out of multi-step workflows, with no extra design needed.
 
@@ -417,7 +417,7 @@ For now a fan-out is asked for with the `overseer/fanout` label. Later, an issue
 
 ## Open questions
 
-- **Triage access in KCC:** does the bot have it? Without it, it cannot label children; and sub-issue linking, if added, needs it too.
+- **Triage access in KCC:** does the bot have it? Without it, it cannot label children; and sub-issue linking needs it too.
 - **Label name:** `overseer/fanout`, or something that says "parent" more plainly, such as `overseer/fanout-parent`?
 - **Ordering:** is item order (the checklist's) right, or should the window prefer items whose services nobody else is working on, to avoid merge conflicts?
 - **Ramp on review, not merge:** should a PR approved but waiting on a human merge already count as a success? Counting only merges is slower but stricter.

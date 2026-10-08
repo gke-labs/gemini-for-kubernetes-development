@@ -145,3 +145,52 @@ func (c *Client) CloseIssue(ctx context.Context, number int) error {
 	}
 	return nil
 }
+
+// ListSubIssues returns the numbers of an issue's sub-issues.
+func (c *Client) ListSubIssues(ctx context.Context, number int) ([]int, error) {
+	if !c.Ready() {
+		return nil, errNoClient
+	}
+
+	var out []int
+	for page := 1; ; page++ {
+		req, err := c.gh.NewRequest("GET", fmt.Sprintf("repos/%s/%s/issues/%d/sub_issues?per_page=100&page=%d", c.owner, c.repo, number, page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var subs []struct {
+			Number int `json:"number"`
+		}
+		resp, err := c.gh.Do(ctx, req, &subs)
+		if err != nil {
+			return nil, fmt.Errorf("listing the sub-issues of #%d: %w", number, err)
+		}
+		for _, s := range subs {
+			out = append(out, s.Number)
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+	}
+}
+
+// AddSubIssue makes child a sub-issue of parent. GitHub takes the child's
+// id, not its number, so the child is fetched first.
+func (c *Client) AddSubIssue(ctx context.Context, parent, child int) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+
+	issue, _, err := c.gh.Issues.Get(ctx, c.owner, c.repo, child)
+	if err != nil {
+		return fmt.Errorf("fetching issue #%d: %w", child, err)
+	}
+	req, err := c.gh.NewRequest("POST", fmt.Sprintf("repos/%s/%s/issues/%d/sub_issues", c.owner, c.repo, parent), map[string]int64{"sub_issue_id": issue.GetID()})
+	if err != nil {
+		return err
+	}
+	if _, err := c.gh.Do(ctx, req, nil); err != nil {
+		return fmt.Errorf("adding #%d as a sub-issue of #%d: %w", child, parent, err)
+	}
+	return nil
+}
