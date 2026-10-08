@@ -67,9 +67,10 @@ type Settings struct {
 }
 
 // ItemSource is where a spec's items come from when they are not a
-// checklist: a JSON file in the repository.
+// checklist: a JSON file in the repository, or at an https URL.
 type ItemSource struct {
-	// From is the file's path, read from the default branch.
+	// From is the file's path, read from the default branch, or an https
+	// URL, read as it is on every pass.
 	From string `yaml:"from"`
 	// Select is a dotted path to the array (".a.b"); empty, the file is it.
 	Select string `yaml:"select"`
@@ -294,6 +295,11 @@ func parseSettings(section string) (Settings, error) {
 	if s.Items != nil {
 		if strings.TrimSpace(s.Items.From) == "" {
 			return Settings{}, fmt.Errorf("## Fan-out: items has no from")
+		}
+		if isItemsURL(s.Items.From) {
+			if err := checkItemsURL(s.Items.From); err != nil {
+				return Settings{}, fmt.Errorf("## Fan-out: %w", err)
+			}
 		}
 		if s.Items.Name == "" {
 			s.Items.Name = defaultItemName

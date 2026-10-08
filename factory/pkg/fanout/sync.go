@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -47,6 +48,9 @@ type SyncOptions struct {
 	DryRun bool
 	// Logf, when set, is told what the pass does (or would do).
 	Logf func(format string, args ...any)
+	// HTTPClient reads an items URL; nil, one that reaches only public
+	// addresses.
+	HTTPClient *http.Client
 }
 
 // SyncResult is what a pass found and did.
@@ -112,7 +116,7 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 	}
 	spec, err := Parse(markdown)
 	if err == nil && spec.Settings.Items != nil {
-		err = loadItems(ctx, gh, &spec)
+		err = loadItems(ctx, gh, opts.HTTPClient, &spec)
 	}
 	var rerr retryable
 	if errors.As(err, &rerr) {
@@ -187,9 +191,22 @@ type retryable struct{ err error }
 
 func (r retryable) Error() string { return r.err.Error() }
 
-// loadItems reads the spec's items file and loads its items.
-func loadItems(ctx context.Context, gh GitHub, spec *Spec) error {
+// loadItems reads the spec's items file, or URL, and loads its items.
+func loadItems(ctx context.Context, gh GitHub, client *http.Client, spec *Spec) error {
 	path := spec.Settings.Items.From
+	if isItemsURL(path) {
+		if client == nil {
+			client = itemsURLClient
+		}
+		data, sum, err := fetchItemsURL(ctx, client, path)
+		switch {
+		case errors.Is(err, errUnreadableURL):
+			return fmt.Errorf("items.from: %w", err)
+		case err != nil:
+			return retryable{err}
+		}
+		return spec.LoadItems(data, fmt.Sprintf("%s (sha256 %.7s)", path, sum))
+	}
 	data, commit, err := gh.ReadFile(ctx, path)
 	switch {
 	case errors.Is(err, github.ErrUnreadableFile):
