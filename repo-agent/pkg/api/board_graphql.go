@@ -189,6 +189,9 @@ func fetchBoardSnapshot(ctx context.Context, hc *http.Client, owner, repo, membe
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("github graphql: %w", errGitHubUnauthorized)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github graphql: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}

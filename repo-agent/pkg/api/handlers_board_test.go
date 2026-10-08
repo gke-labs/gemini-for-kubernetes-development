@@ -277,6 +277,9 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	repoPermCache.Lock()
 	repoPermCache.entries = map[string]repoPermEntry{}
 	repoPermCache.Unlock()
+	rejectedTokens.Lock()
+	rejectedTokens.until = map[[32]byte]time.Time{}
+	rejectedTokens.Unlock()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox:   "SandboxList",
