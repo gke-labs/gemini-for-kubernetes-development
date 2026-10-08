@@ -18,7 +18,7 @@ Describe the task, the items and, optionally, a final step. The headings can be 
 
 Within a sweep, the bot does three things:
 
-- It posts a **spec comment**: your issue rewritten under the standard headings, with the task written for one `{item}` and settings filled in (see *The spec* below).
+- It posts a **spec comment**: your issue rewritten under the standard headings, with the task written as a template for one child (`{{.item.name}}`) and settings filled in (see *The spec* below).
 - It adds **`overseer/stop`**: nothing more happens until a maintainer has read the spec.
 - It posts a **progress comment**, a table of items, which it keeps up to date from then on.
 
@@ -69,8 +69,8 @@ The bot writes the spec in four sections, under headings that are the same for e
 
 | Heading | Meaning | In #13781 |
 |---|---|---|
-| `## Task` | What to do for one item. `{item}` is replaced by the item's name. | "Migration Steps per Resource" |
-| `## Items` | A checklist; each line is an item. A line already checked is not fanned out. | "Affected Resources & Controllers Checklist" |
+| `## Task` | What to do for one child: one item, or a group of them. A template (see *Templates*). | "Migration Steps per Resource" |
+| `## Items` | A checklist; each line is an item. A line already checked is not fanned out. Not needed when the items come from a file (see *Items from a JSON file*). | "Affected Resources & Controllers Checklist" |
 | `## Finally` (optional) | One more child, created when every item is done. | "Final Deprecation & Cleanup" |
 | `## Fan-out` (optional) | Settings, as a YAML block (below). Nobody has to write it. | — |
 
@@ -78,11 +78,16 @@ An item's name is its bold text if it has any, otherwise the line up to the firs
 
 ```yaml
 # ## Fan-out
-title: "{item}: {parent}"     # child issue title; {parent} is the parent's title
+title: "{{.item.name}}: {{.parent.title}}"  # child issue title, a template
 labels: [direct-migration]    # labels for every child, besides the trigger label
-create: all                   # all: create every child at the start; batch: as each is labelled
-window: {start: 2, max: 8}    # the slow start (below)
-checkpoints: [2]              # stop when this many children are done; default [window.start]; [] never
+create: all                   # all: create every child at the start; lazy: as each is labelled
+group: 1                      # items per child; {start: 1, max: 5} grows (see *Groups*)
+window: {start: 2, max: 8}    # children in flight: the slow start (below)
+checkpoints: [2]              # stop when this many items are done; any number of them; [] never
+items:                        # optional: the items from a JSON file instead of ## Items
+  from: config/kms-resources.json
+  select: .resources
+  name: "{{.kind}}"
 ```
 
 Where each setting comes from when the bot writes the spec:
@@ -93,7 +98,7 @@ Where each setting comes from when the bot writes the spec:
 | `labels` | Deduced: the parent's own labels, or labels the issue's text asks children to carry |
 | `create`, `window`, `checkpoints` | Defaults, not deduced. The agent writes them out so that maintainers see them and can edit them |
 
-In a spec written by hand in the body, the whole section can be left out: every setting takes its default (title `{item}: {parent}`, no extra labels).
+In a spec written by hand in the body, the whole section can be left out: every setting takes its default (title `{{.item.name}}: {{.parent.title}}`, or `{{range .items}}…` names when `group` is above 1, no extra labels, one item per child).
 
 #13781 as a spec, as the bot would post it (items shortened):
 
@@ -101,7 +106,7 @@ In a spec written by hand in the body, the whole section can be left out: every 
 <!-- factory:fanout-spec -->
 ## Fan-out
 ```yaml
-title: "Migrate {item} to kmsv1beta1.KMSCryptoKeyRef"
+title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
 create: all
 window: {start: 2, max: 8}
@@ -109,7 +114,7 @@ checkpoints: [2]
 ```
 
 ## Task
-For `{item}`, switch its KMS reference from `refs.KMSCryptoKeyRef` to
+For `{{.item.name}}`, switch its KMS reference from `refs.KMSCryptoKeyRef` to
 `kmsv1beta1.KMSCryptoKeyRef`. The files to change are listed under Item below.
 
 1. **Update API types.** In the item's `*_types.go`, import `kmsv1beta1` and change the
@@ -130,23 +135,63 @@ Every caller in `pkg/controller/direct/` and `apis/` now uses `kmsv1beta1.KMSCry
 Remove `refs.KMSCryptoKeyRef` and `refs.ResolveKMSCryptoKeyRef` from `apis/refs/v1beta1/kmsrefs.go`.
 ~~~
 
-The agent's part was mapping the issue's own headings to these, rewriting the steps for one `{item}`, and picking a title. #13781 has no labels and asks for none, so `labels` is empty; the rest are the defaults. It copies the items exactly as written, because their file paths go into each child.
+The agent's part was mapping the issue's own headings to these, rewriting the steps for one `{{.item.name}}`, and picking a title. #13781 has no labels and asks for none, so `labels` is empty; the rest are the defaults. It copies the items exactly as written, because their file paths go into each child.
 
 A child issue looks like this:
 
 ```markdown
-<the Task section, with {item} replaced>
+<the Task section, rendered for this child>
 
 ### Item
 - **ApigeeInstance** (`apis/apigee/v1alpha1/instance_types.go`, …)
 
 Part of #13781.
-<!-- factory:fanout parent=13781 item=apigeeinstance -->
+<!-- factory:fanout parent=13781 items=apigeeinstance -->
 ```
 
 The marker comment makes children findable: the controller finds a parent's children by it, never by title. "Part of #N" puts each child on the parent's timeline, where the controller looks for markers; the state (below) also records every child it created, since a timeline can lag a creation. Linking children as GitHub sub-issues, so GitHub shows a progress bar, is left for later.
 
-A child is an ordinary issue, so the existing workflow features apply to it. If the Task section links a workflow file (for example `.agents/workflows/kcc-example.txt` with `{item}` as its kind), each child becomes a workflow issue: a fan-out of multi-step workflows, with no extra design needed.
+A child is an ordinary issue, so the existing workflow features apply to it. If the Task section links a workflow file (for example `.agents/workflows/kcc-example.txt` with `{{.item.name}}` as its kind), each child becomes a workflow issue: a fan-out of multi-step workflows, with no extra design needed.
+
+### Templates
+
+The Task, the title and `items.name` are Go [`text/template`](https://pkg.go.dev/text/template)s. Each is rendered with:
+
+| Name | Value |
+|---|---|
+| `.item` | The child's first item; its only one when `group` is 1 |
+| `.items` | Every item of the child, in order |
+| `.parent` | The parent issue: `.number`, `.title` |
+
+An item is an object. From `## Items` it has `name` (the bold text, or the line up to ` (` or ` - `) and `line` (the whole line without its checkbox). From a JSON file it is the element itself, plus `name`, so `{{.item.kind}}` reads the element's own field. Conditions and loops work as in any Go template:
+
+```markdown
+## Task
+Migrate {{range .items}}`{{.kind}}` ({{.file}}), {{end}}to `kmsv1beta1.KMSCryptoKeyRef`.
+{{if .item.beta}}This is a beta resource: keep the old field, deprecated.{{end}}
+```
+
+Templates are rendered with `missingkey=error`, and every item is rendered once when the spec is parsed, so a typo such as `{{.kidn}}` is a spec error in the progress comment, never a broken child. Only the built-in functions (`if`, `range`, `eq`, `index`, …) exist: a template cannot run commands or read files.
+
+The child's body is the rendered Task, then the items' lines under `### Item` (or `### Items`), then "Part of #N." and the marker, whose `items=` lists the keys of every item in the child.
+
+### Items from a JSON file
+
+The items can come from a JSON file in the repository instead of a checklist:
+
+```yaml
+items:
+  from: config/kms-resources.json   # read from the default branch, every pass
+  select: .resources                # a dotted path to the array; left out, the file is the array
+  name: "{{.kind}}"                 # an item's name; its key is the name, lowercased, folded to '-'
+```
+
+- `select` is a plain dotted path (`.a.b`), not jq.
+- An element can be an object or a string; a string is its own name.
+- **Leaving items out** is a condition in `name`: an element whose name renders empty is not an item. `name: "{{if ne .status \"done\"}}{{.kind}}{{end}}"` fans out only the resources not yet done. There is no separate filter.
+- Two items with the same key, a missing file, or a file that is not JSON are spec errors.
+- The file is re-read on every pass, and the commit it was read at is shown in the progress comment. Changing it is like editing the checklist (see *Changing the spec*): items are matched across passes by key.
+- A spec has `## Items` or `items.from`, not both.
 
 ## Options
 
@@ -228,6 +273,41 @@ It works the way TCP ramps up: a window that grows on success and shrinks on fai
 - A child whose linked PR closed without merging halves the window, with a minimum of 1. The child stays open: what happens to it is the existing watch's business (a person relabels it, closes it, or the bot retries).
 - A child closed as not planned is a person skipping the item. The window is unchanged, and the item counts as done, for checkpoints and for the `Finally` step.
 
+### Groups
+
+A child can cover several items, so one PR does a batch of them. `group` is how many, and like the window it can grow:
+
+```yaml
+group:  {start: 1, max: 5}   # items per child; `group: 5` is {start: 5, max: 5}; default 1
+window: {start: 1, max: 3}   # children in flight
+checkpoints: [3, 15]         # items done
+```
+
+The ramp has two phases. The group grows first, then the window: first find out how big a PR reviewers take, then how many at once.
+
+1. **Grow the group.** While the group is below `group.max`, the window stays at `window.start`, and each child closed as completed doubles the group, up to `group.max`.
+2. **Grow the window.** Once the group is at `group.max`, each child completed adds 1 to the window, as above.
+
+A PR closed unmerged backs off in the reverse order: it halves the window, and only once the window is 1 does it halve the group, down to 1.
+
+With the settings above:
+
+| Child | Items | Children in flight | Items done after |
+|---|---|---|---|
+| 1 | 1 | 1 | 1 |
+| 2 | 2 | 1 | 3 (checkpoint 3) |
+| 3 | 4 | 1 | 7 |
+| 4 | 5 | 1 | 12 |
+| 5, 6 | 5 each | 2 | 22 (checkpoint 15) |
+| … | 5 each | 3 | |
+
+- **Units.** The window counts children (PRs in flight). Everything else counts items: checkpoints, the progress comment, and what `Finally` waits for. A child closed as completed counts all its items done; closed as not planned, all of them skipped.
+- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
+- **Default checkpoint**: the items of the first batch, `group.start × window.start`.
+- `group: 1`, the default, is the one-item-per-child fan-out described above.
+
+`create: lazy` is the value called `batch` before groups; renamed so "batch" does not mean two things.
+
 ### Changing the spec
 
 The controller re-reads the spec every pass, so a change takes effect on the next one:
@@ -235,10 +315,10 @@ The controller re-reads the spec every pass, so a change takes effect on the nex
 | Change | Effect |
 |---|---|
 | Item added | A new child, labelled when its turn in the window comes |
-| Item removed | Its child is not labelled. A child that already exists is left as it is; the controller closes nothing |
+| Item removed | Its child is not labelled. A child that already exists is left as it is; the controller closes nothing. With `create: lazy`, an item without a child just drops out |
 | Task or title changed | Children **not yet labelled** are rewritten with the new text. Labelled ones, being worked on, are left alone |
 | `Finally` changed | Used when the final child is created |
-| Window or checkpoints changed | Apply from the next pass. Lowering the window labels nothing new and unlabels nothing |
+| Window, group or checkpoints changed | Apply from the next pass. Lowering the window labels nothing new and unlabels nothing; a new group size applies to the next child made |
 
 Rewriting children that have not been labelled is what makes the slow start useful. The first few PRs are where a task's description shows its gaps. With `create: all`, the remaining children already exist, so without the rewrite a fixed spec would only reach children created afterwards. Children not yet labelled have not been started, so nothing changes under a bot that is working.
 
@@ -248,7 +328,7 @@ The controller keeps no local state. GitHub holds everything, so a restarted dae
 
 - **The spec** is the bot's spec comment, or the body.
 - **The children** are found by the marker, on the parent's timeline and in the state.
-- **The window, what was already counted against it, the checkpoints passed, the children created and the children labelled** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"counted":[1201,1207],"checkpoints":[2],"children":{"apigeeinstance":1201},"started":[1201]} -->`. `counted` holds the children closed and the PRs closed unmerged that moved the window, so a pass never counts one twice. A child in `started` is never labelled again, so a person who unlabels a child has the last word. If the block is lost, the window is recomputed as `start + completed`, capped at `max`, and the checkpoints at or below the number done count as passed.
+- **The window, what was already counted against it, the checkpoints passed, the children created and the children labelled** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"group":1,"counted":[1201,1207],"checkpoints":[2],"children":{"apigeeinstance":1201},"started":[1201]} -->`. `counted` holds the children closed and the PRs closed unmerged that moved the window, so a pass never counts one twice. A child in `started` is never labelled again, so a person who unlabels a child has the last word. If the block is lost, the group is recomputed as the largest completed child's size, doubled and capped at `group.max` (just the largest when nothing completed), and the window as `start + completed` once the group is at its max, capped at `max`, and the checkpoints at or below the number done count as passed.
 - **The progress comment** has one row per item (child, PR, state) and the current window. It is edited in place and never re-posted, so the parent does not fill up with progress comments.
 
 ### The `fanout` recipe
@@ -293,13 +373,16 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - The `watch/fanouts` controller: a sweep calling `Sync` on each parent.
    - The scanner skips parents and children the fan-out has not labelled (adoption too).
    - The reconciler's closed-issue hook wakes a parent when one of its children closes.
-4. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
-5. **Verify on KCC:**
+4. **Templates, item files and groups** (two PRs):
+   - Templates (`text/template`, `.item` / `.items` / `.parent`, `missingkey=error`) replacing `{item}` / `{parent}`, and `items.from` / `select` / `name` read through the contents API.
+   - `group` with the two-phase ramp, `create: lazy`, `items=` markers and the state's `group`.
+5. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
+6. **Verify on KCC:**
    - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.
    - Then label it `overseer/fanout` and let the daemon carry on.
    - Then remove `overseer/stop`, with a window of 2 and the default checkpoint.
 
-Steps 2 and 3 serve parents that already use the headings. Step 4 is only for issues that don't.
+Steps 2 to 4 serve parents that already use the headings or an item file. Step 5 is only for issues that don't.
 
 ## Later: a repo-agent board front end
 
