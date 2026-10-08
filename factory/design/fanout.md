@@ -87,6 +87,7 @@ checkpoints: [2]              # stop when this many items are done; any number o
 items:                        # optional: the items from a JSON file instead of ## Items
   from: config/kms-resources.json
   select: .resources
+  where: '{{ne .status "done"}}'
   name: "{{.kind}}"
 ```
 
@@ -155,7 +156,7 @@ A child is an ordinary issue, so the existing workflow features apply to it. If 
 
 ### Templates
 
-The Task, the title and `items.name` are Go [`text/template`](https://pkg.go.dev/text/template)s. Each is rendered with:
+The Task, the title, `items.name` and `items.where` are Go [`text/template`](https://pkg.go.dev/text/template)s. Each is rendered with:
 
 | Name | Value |
 |---|---|
@@ -183,12 +184,14 @@ The items can come from a JSON file in the repository instead of a checklist:
 items:
   from: config/kms-resources.json   # read from the default branch, every pass
   select: .resources                # a dotted path to the array; left out, the file is the array
+  where: '{{ne .status "done"}}'    # optional: only the elements for which this renders true
   name: "{{.kind}}"                 # an item's name; its key is the name, lowercased, folded to '-'
 ```
 
 - `select` is a plain dotted path (`.a.b`), not jq.
 - An element can be an object or a string; a string is its own name.
-- **Leaving items out** is a condition in `name`: an element whose name renders empty is not an item. `name: "{{if ne .status \"done\"}}{{.kind}}{{end}}"` fans out only the resources not yet done. There is no separate filter.
+- **Leaving items out** is `where`, a template rendered for each element: `true` keeps it, `false` leaves it out, and anything else is a spec error. The example fans out only the resources not yet done. Without `where`, every element is an item.
+- A name that renders empty is a spec error, so a typo in `name` is caught rather than silently dropping items.
 - Two items with the same key, a missing file, or a file that is not JSON are spec errors.
 - The file is re-read on every pass, and the commit it was read at is shown in the progress comment. Changing it is like editing the checklist (see *Changing the spec*): items are matched across passes by key.
 - A spec has `## Items` or `items.from`, not both.
@@ -374,7 +377,7 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - The scanner skips parents and children the fan-out has not labelled (adoption too).
    - The reconciler's closed-issue hook wakes a parent when one of its children closes.
 4. **Templates, item files and groups** (two PRs):
-   - Templates (`text/template`, `.item` / `.items` / `.parent`, `missingkey=error`) replacing `{item}` / `{parent}`, and `items.from` / `select` / `name` read through the contents API.
+   - Templates (`text/template`, `.item` / `.items` / `.parent`, `missingkey=error`) replacing `{item}` / `{parent}`, and `items.from` / `select` / `where` / `name` read through the contents API.
    - `group` with the two-phase ramp, `create: lazy`, `items=` markers and the state's `group`.
 5. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 6. **Verify on KCC:**
