@@ -94,7 +94,10 @@ export function ageOf(ts) {
 // auto is the other half of "will it ask me": null means the transcript
 // has not said either way, which is not the same as no — see the
 // mode_changed fold.
-export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '', mode: '', auto: null };
+//
+// retrying is the model call the engine is retrying right now (an
+// engine_retry payload), until the engine says anything else.
+export const emptyTranscript = { items: [], plan: null, busy: false, stopReason: '', mode: '', auto: null, retrying: null };
 
 // applyResearchEvent folds one transcript event into the render model.
 //
@@ -109,6 +112,8 @@ export const emptyTranscript = { items: [], plan: null, busy: false, stopReason:
 // session updates verbatim and is allowed to grow new ones.
 export function applyResearchEvent(state, event) {
   if (!event || !event.kind) return state;
+  // Anything the engine says means its model call went through.
+  if (state.retrying && event.kind !== 'engine_retry') state = { ...state, retrying: null };
   const data = event.data || {};
   const items = state.items;
   const last = items.length ? items[items.length - 1] : null;
@@ -241,6 +246,20 @@ export function applyResearchEvent(state, event) {
       return { ...ended, items: items.concat([{ key, role: 'stop', stopReason }]) };
     }
 
+    // A model call the engine retried: a rate limit, an exhausted quota,
+    // an overloaded model. Retries in a row are one line — the silence
+    // they explain is one stretch, however many attempts it took.
+    case 'engine_retry': {
+      const status = data.status || '?';
+      const retrying = { status: data.status || '', attempt: data.attempt || 0 };
+      if (last && last.role === 'retry') {
+        const statuses = { ...last.statuses, [status]: (last.statuses[status] || 0) + 1 };
+        const next = items.slice(0, -1).concat([{ ...last, statuses, attempt: retrying.attempt }]);
+        return { ...state, items: next, retrying };
+      }
+      return { ...push({ role: 'retry', statuses: { [status]: 1 }, attempt: retrying.attempt }), retrying };
+    }
+
     // An engine that failed ends the turn without a turn_end — see the
     // prompt goroutine in factory/pkg/acpd. Clearing busy here is what
     // keeps the composer from staying dead after a crash.
@@ -250,6 +269,21 @@ export function applyResearchEvent(state, event) {
     default:
       return push({ role: 'unknown', kind: event.kind, data });
   }
+}
+
+// retrySummary is retries by status, most first: "429×49, 503×14".
+export function retrySummary(statuses) {
+  return Object.entries(statuses || {})
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([status, n]) => `${status}×${n}`)
+    .join(', ');
+}
+
+// retryText says what a retrying engine is waiting on.
+export function retryText(retrying) {
+  const status = retrying.status ? ` (${retrying.status})` : '';
+  const attempt = retrying.attempt ? `, attempt ${retrying.attempt}` : '';
+  return `model call failed${status}, retrying${attempt}`;
 }
 
 export function buildResearchTranscript(events) {
@@ -489,6 +523,12 @@ function TerminalItem({ item, onResolve, resolving, rendered }) {
       return <div className="term-line term-dim">— approval mode: {item.mode}{modeSuffix(item.auto)} —</div>;
     case 'stop':
       return <div className="term-line term-dim">— turn ended: {item.stopReason} —</div>;
+    case 'retry':
+      return (
+        <div className="term-line term-urgent" title="The engine's model calls failed and it retried them; its log is session/engine.stderr.log in the task directory">
+          <span className="term-sigil">⟳ </span>model call failed, retried: {retrySummary(item.statuses)}
+        </div>
+      );
     case 'error':
       return (
         <div className="term-line term-error">
@@ -743,6 +783,7 @@ export function ResearchConversation({
   const beginRename = (seed) => { focusTitleRef.current = true; editName(seed); };
   const [transcript, setTranscript] = useState(emptyTranscript);
   const [openBusy, setOpenBusy] = useState(false);
+  const [openRetrying, setOpenRetrying] = useState(null);
   const [caughtUp, setCaughtUp] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -858,6 +899,7 @@ export function ResearchConversation({
   // frame's session.busy is the live answer; the fold only takes over
   // once something new has actually happened.
   const busy = caughtUp ? transcript.busy : openBusy;
+  const retrying = busy ? (caughtUp ? transcript.retrying : openRetrying) : null;
 
   // Probe, then attach. Split in two because the websocket cannot report
   // "not up yet" — the server answers 409 before the upgrade, which the
@@ -895,6 +937,7 @@ export function ResearchConversation({
           setPhase('live');
           setError('');
           setOpenBusy(!!session.busy);
+          setOpenRetrying(session.retrying || null);
           setCaughtUp(false);
           setTaskState({ held: !!session.held, loaded: !session.task || !!session.loaded });
           setModeState(m => ({
@@ -1395,6 +1438,7 @@ export function ResearchConversation({
   const composerState = phase !== 'live' ? { text: 'Not connected', urgent: false }
     : taskState.held ? { text: 'The task is still running — watch it here, and continue once it ends', urgent: false }
     : waiting ? { text: 'Waiting for you to answer the permission above', urgent: true }
+      : retrying ? { text: `The agent's ${retryText(retrying)} — Stop to interrupt`, urgent: true }
       : busy ? { text: 'The agent is working — Stop to interrupt', urgent: false }
         : null;
 
@@ -2028,6 +2072,12 @@ function sessionState(s) {
   if (s.waiting) {
     return <Pill text="needs you" color="var(--text-danger)" bg="var(--bg-danger-light)"
       title="Stopped on a permission request. Open it and answer, or the turn is cancelled after ten minutes." />;
+  }
+  // Between needs-you and working…: nothing is asked of you, but the
+  // silence is not thinking either — the model calls are failing.
+  if (s.busy && s.retrying) {
+    return <Pill text={`retrying${s.retrying.status ? ` ${s.retrying.status}` : ''}…`} color="#b08800" bg="rgba(176,136,0,0.12)"
+      title={`A turn is in flight, but its ${retryText(s.retrying)}: a rate limit, an exhausted quota or an overloaded model`} />;
   }
   if (s.busy) {
     return <Pill text="working…" color="var(--link-color, #0969da)" bg="rgba(9,105,218,0.12)"

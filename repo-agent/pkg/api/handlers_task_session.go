@@ -266,6 +266,9 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		body["live"] = true
 		body["busy"] = session.Busy
 		body["waiting"] = session.Waiting
+		if session.Retrying != nil {
+			body["retrying"] = session.Retrying
+		}
 		body["offset"] = session.Offset
 		body["engine"] = session.Engine
 		body["createdAt"] = session.CreatedAt

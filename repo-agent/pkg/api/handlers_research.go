@@ -151,6 +151,9 @@ type researchSandboxView struct {
 	// stopped on a permission request. Waiting implies Busy.
 	Busy    bool `json:"busy,omitempty"`
 	Waiting bool `json:"waiting,omitempty"`
+	// Retrying is a busy turn whose model calls are failing and being
+	// retried: the last retry the engine logged.
+	Retrying *acpd.EngineRetry `json:"retrying,omitempty"`
 	// Held is a task session whose task is still running (the recipe's
 	// start, asking the opening question): it can be watched, not driven.
 	Held bool `json:"held,omitempty"`
@@ -465,6 +468,7 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 				view.Live = true
 				view.Busy = session.Busy
 				view.Waiting = session.Waiting
+				view.Retrying = session.Retrying
 				view.Held = session.Held
 			case errors.Is(err, acpd.ErrNotFound):
 				// A running pod with no session loaded: the resting state of

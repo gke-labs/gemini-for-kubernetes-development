@@ -10,6 +10,8 @@ import {
     pendingPermission,
     normaliseView,
     grownHeight,
+    retrySummary,
+    retryText,
 } from './Research';
 
 // react-markdown ships as ESM and jest does not transform node_modules,
@@ -346,6 +348,33 @@ describe('applyResearchEvent', () => {
             textChunk(5, 'agent_message_chunk', 'b'),
         ]);
         expect(t.items[0].key).toBe('e4');
+    });
+});
+
+describe('engine retries', () => {
+    const retry = (seq, status, attempt) => ev(seq, 'engine_retry', { status, attempt, time: '2026-10-08T19:00:00Z' });
+
+    test('retries in a row are one line, where they happened, and the engine speaking again ends them', () => {
+        let t = buildResearchTranscript([
+            ev(1, 'user_prompt', { text: 'review it' }),
+            retry(2, '503', 1),
+            retry(3, '429', 2),
+            retry(4, '429', 3),
+        ]);
+        expect(t.items.map(i => i.role)).toEqual(['user', 'retry']);
+        expect(t.items[1].statuses).toEqual({ '503': 1, '429': 2 });
+        expect(t.retrying).toEqual({ status: '429', attempt: 3 });
+
+        t = applyResearchEvent(t, textChunk(5, 'agent_message_chunk', 'review:'));
+        expect(t.retrying).toBeNull();
+        t = applyResearchEvent(t, retry(6, '503', 1));
+        expect(t.items.map(i => i.role)).toEqual(['user', 'retry', 'agent', 'retry']);
+    });
+
+    test('summaries', () => {
+        expect(retrySummary({ '503': 14, '429': 49 })).toBe('429×49, 503×14');
+        expect(retryText({ status: '429', attempt: 3 })).toBe('model call failed (429), retrying, attempt 3');
+        expect(retryText({ status: '', attempt: 0 })).toBe('model call failed, retrying');
     });
 });
 
