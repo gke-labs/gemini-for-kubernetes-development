@@ -1243,7 +1243,7 @@ func TestBuiltinFanoutRenders(t *testing.T) {
 	}
 	last := r.Start.Steps[len(r.Start.Steps)-1]
 	ask, err := render("spec", last.Ask, templateData{Inputs: inputs}, "")
-	if err != nil || !strings.Contains(ask, "write {{.item.name}} wherever") {
+	if err != nil || !strings.Contains(ask, "{{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}}") {
 		t.Errorf("the spec ask (%v):\n%s", err, ask)
 	}
 }
