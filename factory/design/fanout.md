@@ -355,7 +355,7 @@ The controller keeps no local state. GitHub holds everything, so a restarted dae
 
 The `fanout` recipe is `on: [issue]` and writes a `FanOut` task output: the spec in the standard markdown form. It has no revises. Changes are made by maintainers, in the comment.
 
-It has one action, `post-spec`. Applying it posts the bot's spec comment (or edits it, if there is one) and adds the stop label. Both touch only the run's own issue, so it fits the rule that an action never writes to another issue.
+It has one action, `post-spec`. Applying it adds the stop label, then posts the bot's spec comment (or edits it, if there is one), so the fan-out cannot start before the spec is read. The stop label is `<prefix>/stop` for the issue's `<prefix>/fanout` label, else `overseer/stop`, which the daemon always honours. Once a task's spec is posted, applying it again does nothing: a maintainer may have edited the comment or removed the stop label since. Both touch only the run's own issue, so it fits the rule that an action never writes to another issue.
 
 It runs as any recipe does, from the command line:
 
@@ -396,7 +396,9 @@ The agent only reads and writes text. It never creates or labels issues; the con
 4. **Templates, item files and groups** (two PRs):
    - Templates (`text/template`, `.item` / `.items` / `.parent`, `missingkey=error`) replacing `{item}` / `{parent}`, and `items.from` / `select` / `where` / `name` read through the contents API.
    - `group` with the two-phase ramp, `create: lazy`, `items=` markers and the state's `group`.
-5. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
+5. **The proposal** (two PRs):
+   - The `fanout` recipe, its `FanOut` kind and its `post-spec` action (`factory recipe fanout`).
+   - The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 6. **Verify on KCC:**
    - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.
    - Then label it `overseer/fanout` and let the daemon carry on.
