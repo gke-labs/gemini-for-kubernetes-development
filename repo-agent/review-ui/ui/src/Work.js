@@ -455,9 +455,13 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     const g = runGroup(run);
     const launching = launchingOf(g);
     const pendingReview = run.recipe === 'review' && item.reviewPending;
+    // A review's draft lives on GitHub: pending, to finalize on the PR's
+    // files; submitted, on the PR.
+    const github = !launching && run.recipe === 'review' && (item.reviewPending
+      ? { href: `${item.htmlURL}/files`, title: 'Your pending review on GitHub, visible only to you — finalize or discard it there' }
+      : item.reviewed ? { href: item.htmlURL, title: 'Your review is submitted — open the PR' } : undefined);
     return { recipe: g, label: launching ? labelOf(launching[0]) : (run.label || run.recipe), run,
-      status: pendingReview ? 'ready' : statusOf(g),
-      github: pendingReview ? `${item.htmlURL}/files` : undefined };
+      status: pendingReview ? 'ready' : statusOf(g), github };
   });
   for (const [name, state] of Object.entries(item.launching || {})) {
     const g = groupOfRecipe(name);
@@ -597,9 +601,13 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               </a>
             );
           }
+          // A review's ↗, beside its chip: where the review is on GitHub.
+          const github = c.github && (
+            <a href={c.github.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '2px' }}
+              title={c.github.title}>↗</a>
+          );
           // A ready run's chip is the row's move: it looks pressable, and
-          // opens the session its draft is read and applied in. A pending
-          // review's draft is on GitHub too: ↗ goes there to finalize it.
+          // opens the session its draft is read and applied in.
           if (c.status === 'ready' && c.run) {
             return (
               <span key={c.recipe}>
@@ -609,22 +617,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                   style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
                   {text}<SessionMark engine={c.run.engine} />
                 </a>
-                {c.github && (
-                  <a href={c.github} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '2px' }}
-                    title="Your pending review on GitHub, visible only to you — finalize or discard it there">↗</a>
-                )}
+                {github}
               </span>
             );
           }
           // A running task's session can be watched, not driven; an
           // ended one continued.
           return c.run ? (
-            <a key={c.recipe} href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
-              onClick={sessionClick(onOpenSession, c.run)}
-              style={{ textDecoration: 'none', marginLeft: '4px' }}
-              title={chipTitle(c)}>
-              <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
-            </a>
+            <span key={c.recipe}>
+              <a href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
+                onClick={sessionClick(onOpenSession, c.run)}
+                style={{ textDecoration: 'none', marginLeft: '4px' }}
+                title={chipTitle(c)}>
+                <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
+              </a>
+              {github}
+            </span>
           ) : (
             <span key={c.recipe} style={{ marginLeft: '4px' }}
               title={chipTitle(c, c.status === 'queued' ? 'waiting for a free slot on the board' : 'launching — the run has not started yet')}>
