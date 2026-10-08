@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,6 +74,11 @@ type Flags struct {
 type Watcher struct {
 	common.RootFlags
 	Flags
+
+	// ProposeFanout runs the fanout recipe on an issue and applies its
+	// result (pkg/commands' runRecipe, which this package cannot import).
+	// Nil, fan-out parents without a spec wait for a person to write one.
+	ProposeFanout func(ctx context.Context, issueURL string) error
 
 	cfg          *config.FactoryConfig
 	triggerLabel string

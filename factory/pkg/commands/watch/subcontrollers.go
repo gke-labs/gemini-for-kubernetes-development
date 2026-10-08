@@ -96,9 +96,32 @@ func (w *Watcher) newFanoutController() *fanouts.Controller {
 		MinNumber:    w.minIssueNumber(),
 		DryRun:       w.DryRun,
 	}, fanouts.Deps{
-		GitHub: w.repoClient,
-		Paused: w.draining,
+		GitHub:   w.repoClient,
+		Paused:   w.draining,
+		Propose:  w.proposeFanout,
+		CanStart: w.belowMaxPending,
 	})
+}
+
+// proposeFanout runs ProposeFanout on parent n, if it is set.
+func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
+	if w.ProposeFanout == nil {
+		return fmt.Errorf("this watcher cannot run recipes")
+	}
+	return w.ProposeFanout(ctx, fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, n))
+}
+
+// belowMaxPending reports whether fewer sandbox tasks run than --max-pending.
+func (w *Watcher) belowMaxPending(ctx context.Context) bool {
+	if w.sandboxes == nil || w.MaxPending <= 0 {
+		return true
+	}
+	running, err := w.sandboxes.CountRunningTasks(ctx)
+	if err != nil {
+		klog.Errorf("Counting running sandbox tasks: %v", err)
+		return false
+	}
+	return running < w.MaxPending
 }
 
 // newChoreScheduler constructs the chore scheduler, which runs as its own

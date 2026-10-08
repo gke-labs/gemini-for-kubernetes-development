@@ -7,11 +7,14 @@
 // It owns no workers. Parents are synced one after another from a single
 // goroutine, on a slow sweep and whenever a child is reported closed, because
 // a pass is a handful of GitHub requests and the work it starts is done by the
-// issue scanner and the dispatcher, not here.
+// issue scanner and the dispatcher, not here. The exception is a parent with
+// no spec: an agent writes one (Deps.Propose), which takes minutes, so it
+// runs in a goroutine of its own, one per parent.
 package fanouts
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -25,6 +28,10 @@ import (
 // closing wakes its parent sooner; the sweep catches what no wake reports,
 // such as a pull request closed unmerged or a stop label removed.
 const DefaultInterval = 5 * time.Minute
+
+// ProposeBackoff is how long a parent whose proposal failed waits before the
+// next one is started.
+const ProposeBackoff = time.Hour
 
 // GitHub is what the controller needs of the repository: what fanout.Sync
 // needs, and listing the parents.
@@ -55,16 +62,36 @@ type Deps struct {
 	// Paused reports whether the watcher is draining, in which case no pass
 	// runs: labelling children is starting work.
 	Paused func() bool
+	// Propose runs the fanout recipe on a parent with no spec and applies
+	// its result, posting the spec comment and adding the stop label. It
+	// blocks until then. A second call for the same parent follows the run
+	// the first started rather than starting another. Nil, parents without
+	// a spec wait for a person to write one.
+	Propose func(ctx context.Context, parent int) error
+	// CanStart reports whether another sandbox task may start now, under
+	// the watcher's --max-pending. Nil, it always may.
+	CanStart func(ctx context.Context) bool
 }
 
 // Controller syncs the open fan-out parents.
 type Controller struct {
-	cfg    Config
-	gh     GitHub
-	paused func() bool
-	// wake carries the parents whose child just closed. It is buffered so the
-	// reconciler that reports a closure never waits on a pass.
+	cfg      Config
+	gh       GitHub
+	paused   func() bool
+	propose  func(ctx context.Context, parent int) error
+	canStart func(ctx context.Context) bool
+	// wake carries the parents whose child just closed, or whose proposal
+	// just landed. It is buffered so that whoever reports one never waits on
+	// a pass.
 	wake chan int
+
+	mu sync.Mutex
+	// proposing is the parents whose proposal is running.
+	proposing map[int]bool
+	// failed is when each parent's last proposal failed.
+	failed map[int]time.Time
+	// now is time.Now, replaced in tests.
+	now func() time.Time
 }
 
 // New constructs a Controller.
@@ -72,7 +99,10 @@ func New(cfg Config, deps Deps) *Controller {
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
-	return &Controller{cfg: cfg, gh: deps.GitHub, paused: deps.Paused, wake: make(chan int, 64)}
+	return &Controller{
+		cfg: cfg, gh: deps.GitHub, paused: deps.Paused, propose: deps.Propose, canStart: deps.CanStart,
+		wake: make(chan int, 64), proposing: map[int]bool{}, failed: map[int]time.Time{}, now: time.Now,
+	}
 }
 
 // Run sweeps every parent each interval, and syncs a single parent as soon
@@ -165,12 +195,63 @@ func (c *Controller) sync(ctx context.Context, parent *githubv39.Issue) {
 	case err != nil:
 		klog.Errorf("Fan-out #%d: %v", n, err)
 	case res.NoSpec:
-		klog.V(2).Infof("Fan-out #%d has no spec yet", n)
+		c.startProposal(ctx, n)
 	case res.SpecError != nil:
 		klog.V(2).Infof("Fan-out #%d spec does not parse: %v", n, res.SpecError)
 	case res.Plan.CloseParent && !c.cfg.DryRun:
 		klog.Infof("Fan-out #%d is done", n)
 	}
+}
+
+// startProposal starts the agent that writes parent n's spec, unless one is
+// running, the last one failed within ProposeBackoff, or the watcher is at
+// --max-pending. When it lands, the parent is synced again.
+func (c *Controller) startProposal(ctx context.Context, n int) {
+	if c.propose == nil {
+		klog.V(2).Infof("Fan-out #%d has no spec yet", n)
+		return
+	}
+	if c.cfg.DryRun {
+		klog.Infof("Fan-out #%d has no spec: would run the fanout recipe to propose one", n)
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.proposing[n] {
+		return
+	}
+	if at, ok := c.failed[n]; ok && c.now().Sub(at) < ProposeBackoff {
+		klog.V(2).Infof("Fan-out #%d: the last proposal failed at %s; waiting before the next", n, at.Format(time.RFC3339))
+		return
+	}
+	if c.canStart != nil && !c.canStart(ctx) {
+		klog.Infof("Fan-out #%d has no spec: at --max-pending, proposing on a later pass", n)
+		return
+	}
+	c.proposing[n] = true
+	klog.Infof("Fan-out #%d has no spec: running the fanout recipe to propose one", n)
+	go func() {
+		err := c.propose(ctx, n)
+		c.mu.Lock()
+		delete(c.proposing, n)
+		if err != nil {
+			c.failed[n] = c.now()
+		} else {
+			delete(c.failed, n)
+		}
+		c.mu.Unlock()
+		if err != nil {
+			if ctx.Err() == nil {
+				klog.Errorf("Fan-out #%d: proposing a spec: %v", n, err)
+			}
+			return
+		}
+		klog.Infof("Fan-out #%d: spec proposed", n)
+		select {
+		case c.wake <- n:
+		default:
+		}
+	}()
 }
 
 // listParents lists every open issue labelled as a fan-out parent, in each of
@@ -202,6 +283,12 @@ func (c *Controller) listParents(ctx context.Context) ([]*githubv39.Issue, error
 		}
 	}
 	return parents, nil
+}
+
+func (c *Controller) isProposing(n int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.proposing[n]
 }
 
 func (c *Controller) isPaused() bool {

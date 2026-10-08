@@ -56,6 +56,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			}
 
 			watcher := watch.NewWatcher(rootFlags, flags)
+			watcher.ProposeFanout = proposeFanout
 			return watcher.Run(ctx)
 		},
 	}
