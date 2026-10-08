@@ -18,7 +18,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -104,15 +106,18 @@ var githubHTTPForToken = func(token string) *http.Client {
 }
 
 // memberToken resolves the session member's GitHub token (manual_pat >
-// oauth_pat > pat) from their namespace.
+// oauth_pat > pat, then factory-user's GITHUB_TOKEN) from their namespace,
+// skipping any GitHub has just rejected: a stale manual PAT must not hide a
+// working login token behind it.
 func (s *Server) memberToken(ctx context.Context, namespace string) (string, error) {
 	sec, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "github-pat", v1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
+	var tokens []string
 	for _, key := range []string{"manual_pat", "oauth_pat", "pat"} {
 		if v, ok := sec.Data[key]; ok && len(v) > 0 {
-			return string(v), nil
+			tokens = append(tokens, string(v))
 		}
 	}
 	// Secret Manager reference mode: the controller (the only component
@@ -120,10 +125,55 @@ func (s *Server) memberToken(ctx context.Context, namespace string) (string, err
 	// into factory-user — read it from there.
 	if fu, ferr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{}); ferr == nil {
 		if v, ok := fu.Data["GITHUB_TOKEN"]; ok && len(v) > 0 {
-			return string(v), nil
+			tokens = append(tokens, string(v))
 		}
 	}
-	return "", fmt.Errorf("no github token in secret %s/github-pat", namespace)
+	if len(tokens) == 0 {
+		return "", fmt.Errorf("no github token in secret %s/github-pat", namespace)
+	}
+	for _, t := range tokens {
+		if !tokenRejected(t) {
+			return t, nil
+		}
+	}
+	return "", errGitHubTokenRejected
+}
+
+// errGitHubUnauthorized is GitHub's 401: the token is expired or revoked.
+var errGitHubUnauthorized = errors.New("401 Bad credentials")
+
+// errGitHubTokenRejected is a member none of whose tokens GitHub accepts.
+var errGitHubTokenRejected = errors.New("GitHub rejected your token (401 Bad credentials): update it in Settings")
+
+// rejectedTokens are the tokens GitHub answered 401 for, by hash, until
+// when they are skipped. A new token is a new hash, so one pasted into
+// Settings is tried at once.
+var rejectedTokens = struct {
+	sync.Mutex
+	until map[[32]byte]time.Time
+}{until: map[[32]byte]time.Time{}}
+
+const rejectedTokenTTL = 15 * time.Minute
+
+func markTokenRejected(token string) {
+	rejectedTokens.Lock()
+	defer rejectedTokens.Unlock()
+	rejectedTokens.until[sha256.Sum256([]byte(token))] = time.Now().Add(rejectedTokenTTL)
+}
+
+func tokenRejected(token string) bool {
+	rejectedTokens.Lock()
+	defer rejectedTokens.Unlock()
+	return time.Now().Before(rejectedTokens.until[sha256.Sum256([]byte(token))])
+}
+
+// isUnauthorized is a GitHub answer of 401, from GraphQL or go-github.
+func isUnauthorized(err error) bool {
+	if errors.Is(err, errGitHubUnauthorized) {
+		return true
+	}
+	var er *github.ErrorResponse
+	return errors.As(err, &er) && er.Response != nil && er.Response.StatusCode == http.StatusUnauthorized
 }
 
 func (s *Server) getBoard(ctx context.Context, namespace, name string) (*unstructured.Unstructured, error) {
@@ -175,12 +225,19 @@ func (s *Server) repoPermissions(ctx context.Context, namespace, sessionUser, re
 	if err != nil {
 		return repoPerms{}
 	}
-	token, err := s.memberToken(ctx, namespace)
-	if err != nil {
-		return s.stalePermsOrNone(key)
+	var repository *github.Repository
+	// A rejected token is skipped, and the check made again with the next.
+	for range 2 {
+		token, terr := s.memberToken(ctx, namespace)
+		if terr != nil {
+			return s.stalePermsOrNone(key)
+		}
+		repository, _, err = githubClientForToken(ctx, token).Repositories.Get(ctx, owner, repo)
+		if !isUnauthorized(err) {
+			break
+		}
+		markTokenRejected(token)
 	}
-	gh := githubClientForToken(ctx, token)
-	repository, _, err := gh.Repositories.Get(ctx, owner, repo)
 	if err != nil {
 		klog.FromContext(ctx).Info("repo-permission check failed; keeping previous verdict", "repo", repoURL, "err", err)
 		return s.stalePermsOrNone(key)
@@ -422,10 +479,18 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	}
 
 	items, err := s.buildBoardWork(ctx, board, member, namespace)
+	if isUnauthorized(err) {
+		// That token is now skipped: build again with the next one.
+		items, err = s.buildBoardWork(ctx, board, member, namespace)
+	}
 	if err != nil {
 		// Nothing cached and no budget to build with: say so. An empty
 		// feed would read as "no work", which is a lie the board cannot
 		// afford to tell.
+		if isUnauthorized(err) || errors.Is(err, errGitHubTokenRejected) {
+			c.JSON(http.StatusFailedDependency, gin.H{"error": errGitHubTokenRejected.Error(), "details": err.Error()})
+			return
+		}
 		if ghquota.IsRateLimited(err) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "GitHub rate limit reached", "details": err.Error()})
 			return
@@ -506,6 +571,9 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	if err != nil {
 		if ghquota.IsRateLimited(err) {
 			return nil, fmt.Errorf("github budget spent while building the feed: %w", err)
+		}
+		if isUnauthorized(err) {
+			markTokenRejected(token)
 		}
 		return nil, fmt.Errorf("failed to read the board from github: %w", err)
 	}
