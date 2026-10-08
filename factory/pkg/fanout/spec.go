@@ -317,10 +317,7 @@ func parseSettings(section string) (Settings, error) {
 	}
 	switch s.Create {
 	case "":
-		s.Create = CreateAll
-		if grouped {
-			s.Create = CreateLazy
-		}
+		s.Create = CreateLazy
 	case CreateAll:
 		if grouped {
 			return Settings{}, fmt.Errorf("## Fan-out: create: all with group above 1: a group is made when its child is labelled, so use create: lazy")

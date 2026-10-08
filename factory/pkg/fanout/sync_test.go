@@ -140,7 +140,7 @@ func (f *fakeGitHub) removeLabel(n int, label string) {
 
 func TestSyncFanOut(t *testing.T) {
 	ctx := context.Background()
-	body := "## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
+	body := "## Fan-out\ncreate: all\n\n## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
 	gh := newFake(body, "overseer/fanout")
 	opts := SyncOptions{Issue: parent, TriggerLabel: "overseer", BotLogin: "bot"}
 	sync := func() SyncResult {
@@ -277,7 +277,8 @@ func TestSyncItemsFile(t *testing.T) {
 	if _, err := Sync(ctx, gh, opts); err != nil {
 		t.Fatal(err)
 	}
-	if gh.next != parent+4 || !strings.HasPrefix(gh.issues[parent+1].Body, "Fix A.") {
+	// Lazily: the first window's two.
+	if gh.next != parent+3 || !strings.HasPrefix(gh.issues[parent+1].Body, "Fix A.") {
 		t.Fatalf("got %d children, the first %q", gh.next-parent-1, gh.issues[parent+1].Body)
 	}
 	if progress := gh.comments[parent][0].GetBody(); !strings.Contains(progress, "Items from `kinds.json` at 0123456.") {

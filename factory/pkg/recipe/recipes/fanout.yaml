@@ -63,7 +63,7 @@ start:
         title: "<child issue title, with {{ "{{.item.name}}" }} where the item's name goes>"
         labels: []      # only labels the issue asks children to carry; never a
                         # label ending in /fanout or /stop, nor the trigger label
-        create: all
+        group: 1        # items per child; {start: 1, max: 4} groups more as children merge
         window: {start: 2, max: 8}
         checkpoints: [2]
         ```

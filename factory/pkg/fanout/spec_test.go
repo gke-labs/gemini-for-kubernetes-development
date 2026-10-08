@@ -70,22 +70,22 @@ func TestParseDefaults(t *testing.T) {
 	}{
 		{
 			name: "no section",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{2}},
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{2}},
 		},
 		{
 			name: "start only, checkpoint follows it",
 			yaml: "window: {start: 3}",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 3, Max: 8}, Checkpoints: []int{3}},
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 3, Max: 8}, Checkpoints: []int{3}},
 		},
 		{
 			name: "start above the default max",
 			yaml: "window: {start: 10}",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 10, Max: 10}, Checkpoints: []int{10}},
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 10, Max: 10}, Checkpoints: []int{10}},
 		},
 		{
-			name: "no checkpoints",
-			yaml: "create: lazy\ncheckpoints: []",
-			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
+			name: "no checkpoints, every child at the start",
+			yaml: "create: all\ncheckpoints: []",
+			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
 		},
 	}
 	for _, tc := range tests {
