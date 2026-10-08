@@ -99,6 +99,16 @@ func sessionReview(sb *unstructured.Unstructured) (int, string, bool) {
 	return n, a[annoBoard], ok && a["repo"] != ""
 }
 
+// pendingReviewURL is where a review sandbox's pending review is
+// finalized on GitHub, "" when it has none there.
+func pendingReviewURL(sb *unstructured.Unstructured) string {
+	a := sb.GetAnnotations()
+	if _, _, ok := sessionReview(sb); !ok || a["reviewState"] != "pending" || !strings.Contains(a["htmlURL"], "/pull/") {
+		return ""
+	}
+	return strings.TrimSuffix(a["htmlURL"], "/") + "/files"
+}
+
 // sessionResearch is the research conversation the sandbox is, false for
 // any other sandbox.
 func sessionResearch(sb *unstructured.Unstructured) (researchSandboxView, bool) {

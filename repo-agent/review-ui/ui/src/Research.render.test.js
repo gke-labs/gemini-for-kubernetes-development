@@ -1994,6 +1994,18 @@ describe('ResearchConversation revises and draft', () => {
         expect(button('Post plan')).toBeTruthy();
     });
 
+    test('a review session links its pending review on GitHub', async () => {
+        await open({ pendingReview: 'https://github.com/o/r/pull/42/files' });
+        const link = [...container.querySelectorAll('a')].find(a => a.textContent.includes('finalize or discard it there'));
+        expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+        expect(container.textContent).toContain('Your review is pending on GitHub');
+    });
+
+    test('no pending review, no link', async () => {
+        await open({ revises: [saveNotes] });
+        expect(container.textContent).not.toContain('pending on GitHub');
+    });
+
     test('a kind without markdown shows, and edits, its spec as YAML', async () => {
         const spec = 'title: Fix the backoff\nbranch: issue-908';
         const calls = await open({

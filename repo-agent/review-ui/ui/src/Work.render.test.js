@@ -660,6 +660,13 @@ describe('WorkRow review', () => {
         await renderRow({ ...review, sessions: [reviewRun('done')] });
         expect(chip('Review: ready').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
         expect(chip('Review: pending')).toBeUndefined();
+        expect(link('↗').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+    });
+
+    test('a review run with nothing pending on GitHub has no GitHub link', async () => {
+        await renderRow({ ...review, reviewPending: false, sessions: [reviewRun('ready')] });
+        expect(chip('Review: ready')).toBeDefined();
+        expect(link('↗')).toBeUndefined();
     });
 
     test('a submitted review whose run is gone is a done chip linking the PR', async () => {

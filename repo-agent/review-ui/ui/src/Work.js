@@ -454,8 +454,10 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const chips = runs.map(run => {
     const g = runGroup(run);
     const launching = launchingOf(g);
+    const pendingReview = run.recipe === 'review' && item.reviewPending;
     return { recipe: g, label: launching ? labelOf(launching[0]) : (run.label || run.recipe), run,
-      status: run.recipe === 'review' && item.reviewPending ? 'ready' : statusOf(g) };
+      status: pendingReview ? 'ready' : statusOf(g),
+      github: pendingReview ? `${item.htmlURL}/files` : undefined };
   });
   for (const [name, state] of Object.entries(item.launching || {})) {
     const g = groupOfRecipe(name);
@@ -596,15 +598,22 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             );
           }
           // A ready run's chip is the row's move: it looks pressable, and
-          // opens the session its draft is read and applied in.
+          // opens the session its draft is read and applied in. A pending
+          // review's draft is on GitHub too: ↗ goes there to finalize it.
           if (c.status === 'ready' && c.run) {
             return (
-              <a key={c.recipe} className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
-                onClick={sessionClick(onOpenSession, c.run)}
-                title={chipTitle(c)}
-                style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
-                {text}<SessionMark engine={c.run.engine} />
-              </a>
+              <span key={c.recipe}>
+                <a className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
+                  onClick={sessionClick(onOpenSession, c.run)}
+                  title={chipTitle(c)}
+                  style={{ marginLeft: '4px', textDecoration: 'none', color: READY_STYLE.color, backgroundColor: READY_STYLE.bg, borderColor: READY_STYLE.color, fontWeight: 600 }}>
+                  {text}<SessionMark engine={c.run.engine} />
+                </a>
+                {c.github && (
+                  <a href={c.github} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '2px' }}
+                    title="Your pending review on GitHub, visible only to you — finalize or discard it there">↗</a>
+                )}
+              </span>
             );
           }
           // A running task's session can be watched, not driven; an

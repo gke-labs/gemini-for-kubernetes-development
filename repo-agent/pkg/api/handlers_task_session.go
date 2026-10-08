@@ -252,6 +252,9 @@ func (s *Server) getTaskSession(c *gin.Context) {
 	if draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task); draft != nil {
 		body["draft"] = draft
 	}
+	if url := pendingReviewURL(conn.sandbox); url != "" {
+		body["pendingReview"] = url
+	}
 	// A research conversation's name, and its id for renaming and
 	// deleting it.
 	if id := annotations[researchSessionIDAnnotation]; id != "" {
