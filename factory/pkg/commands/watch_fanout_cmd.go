@@ -6,37 +6,28 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/fanout"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
-// NewFanoutCommand groups the fan-out's commands: one task, many items,
-// child issues labelled for the coder bots a few at a time.
-func NewFanoutCommand(ctx context.Context) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "fanout",
-		Short: "Fan an issue's task out to a child issue per item, in a slow start",
-		Long: `Fan an issue's task out to a child issue per item.
-
-The parent issue's spec has the sections ## Task (what to do for one
-{item}), ## Items (a checklist), and optionally ## Finally (one more child
-once every item is done) and ## Fan-out (settings, a YAML block). The spec
-is the newest comment marked <!-- factory:fanout-spec --> by you or a
-maintainer, else the issue body.
-
-See factory/design/fanout.md.`,
-	}
-	cmd.AddCommand(newFanoutSyncCommand(ctx))
-	return cmd
-}
-
-func newFanoutSyncCommand(ctx context.Context) *cobra.Command {
+// newWatchFanoutCommand runs one fan-out pass over a parent issue: what the
+// watch daemon does for every parent labelled <trigger>/fanout, by hand.
+func newWatchFanoutCommand(ctx context.Context) *cobra.Command {
 	var rawURL, trigger string
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "sync --url <issue>",
+		Use:   "fanout --url <issue>",
 		Short: "Run one fan-out pass over a parent issue",
 		Long: `Run one fan-out pass over a parent issue, as the watch daemon will.
+
+A fan-out is one task for many items: a child issue per item, labelled for
+the coder bots a few at a time. The parent's spec has the sections ## Task
+(what to do for one {item}), ## Items (a checklist), and optionally
+## Finally (one more child once every item is done) and ## Fan-out
+(settings, a YAML block). The spec is the newest comment marked
+<!-- factory:fanout-spec --> by you or a maintainer, else the issue body.
+See factory/design/fanout.md.
 
 A pass reads the spec, the children (found by their marker) and the state
 kept in the progress comment, then:
@@ -55,8 +46,8 @@ kept in the progress comment, then:
 With --dry-run it writes nothing, and prints what it would write. On a
 stopped parent it also prints what the next pass would do once the stop
 label is removed.`,
-		Example: `  factory fanout sync --url https://github.com/owner/repo/issues/123 --dry-run
-  factory fanout sync --url https://github.com/owner/repo/issues/123`,
+		Example: `  factory watch fanout --url https://github.com/owner/repo/issues/123 --dry-run
+  factory watch fanout --url https://github.com/owner/repo/issues/123`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			item, err := parseGitHubItemURL(rawURL)
@@ -65,6 +56,9 @@ label is removed.`,
 			}
 			if item.IsPR {
 				return fmt.Errorf("%s is a pull request; a fan-out parent is an issue", rawURL)
+			}
+			if trigger == "" {
+				trigger = watchTriggerLabel()
 			}
 			gh, err := github.NewClient(ctx)
 			if err != nil {
@@ -98,8 +92,17 @@ label is removed.`,
 		},
 	}
 	cmd.Flags().StringVar(&rawURL, "url", "", "the parent issue's URL")
-	cmd.Flags().StringVar(&trigger, "trigger-label", "overseer", "the label that hands a child to the coder bots")
+	cmd.Flags().StringVar(&trigger, "trigger-label", "", "the label that hands a child to the coder bots (default: the factory config's triggerLabel, as watch uses)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "write nothing; print what the pass would write")
 	_ = cmd.MarkFlagRequired("url")
 	return cmd
+}
+
+// watchTriggerLabel is the trigger label factory watch uses: the factory
+// config's, else "factory".
+func watchTriggerLabel() string {
+	if cfg, err := config.LoadConfig(); err == nil && cfg != nil && cfg.TriggerLabel != "" {
+		return cfg.TriggerLabel
+	}
+	return "factory"
 }

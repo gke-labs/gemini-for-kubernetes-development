@@ -89,9 +89,9 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - **Post it as a draft.** `apply --action post-review` posts it as your pending review on the PR, at that commit, folding comments that are not on a line of the diff into the body. You read, change and submit it on GitHub. Posting again replaces the pending review factory posted, and refuses to touch one you started yourself.
 - `factory pr review` and the watch's reviews are unchanged.
 
-### Fan-out (`factory fanout sync`)
+### Fan-out (`factory watch fanout`)
 - **One task, many items.** A parent issue with `## Task` (for one `{item}`), `## Items` (a checklist), and optionally `## Finally` and `## Fan-out` (settings) gets a child issue per item. The spec is the newest comment marked `<!-- factory:fanout-spec -->` by you or a maintainer, else the body.
-- **Slow start.** `fanout sync --url <issue>` runs one pass: children are labelled `overseer` within a window that starts at 2, grows by one per child completed and halves per PR closed unmerged. It stops (`overseer/stop`) at checkpoints, rewrites children not yet labelled from an edited spec, runs the `Finally` child last, and keeps a progress comment on the parent. `--dry-run` writes nothing. The watch daemon will run it next; see [design/fanout.md](design/fanout.md).
+- **Slow start.** `watch fanout --url <issue>` runs one pass: children are labelled `overseer` within a window that starts at 2, grows by one per child completed and halves per PR closed unmerged. It stops (`overseer/stop`) at checkpoints, rewrites children not yet labelled from an edited spec, runs the `Finally` child last, and keeps a progress comment on the parent. `--dry-run` writes nothing. The watch daemon will run it next; see [design/fanout.md](design/fanout.md).
 
 ### Engines and models
 - **Choosing an engine.** `--engine gemini|claude|antigravity` (config key `engine`) picks the agent:
@@ -225,7 +225,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
 | `recipe research` | Start a research conversation in a sandbox; `recipe revise` continues it |
-| `fanout sync` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
+| `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `pr review` | Review a PR; `--publish no\|ask\|yes\|draft` |
 | `pr investigate` | Investigate and fix CI failures on a PR |

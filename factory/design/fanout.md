@@ -288,14 +288,14 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - The parser: `Spec`, items, settings.
    - `Decide(Input) Plan`, a pure function returning the issues to create or rewrite, the labels to add, the checkpoint to stop at, and the new state. All the rules above live here, tested by table.
    - `Sync`, one pass on GitHub: read, `Decide`, write, the progress comment. The watch controller (step 3) calls it.
-   - `factory fanout sync --url <issue> [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
+   - `factory watch fanout --url <issue> [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
 3. **watch:**
    - The `watch/fanout` controller: children, the window, checkpoints, the final step, the progress comment.
    - The scanner skips parents.
    - The Nudger wakes a parent when one of its children closes.
 4. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 5. **Verify on KCC:**
-   - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory fanout sync --url …/issues/13781 --dry-run`.
+   - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.
    - Then label it `overseer/fanout` and let the daemon carry on.
    - Then remove `overseer/stop`, with a window of 2 and the default checkpoint.
 

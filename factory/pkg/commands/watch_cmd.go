@@ -81,5 +81,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", common.GetEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
 	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
+	cmd.AddCommand(newWatchFanoutCommand(ctx))
+
 	return cmd
 }
