@@ -115,7 +115,7 @@ type WorkItem struct {
 	Number          int          `json:"number"`
 	Title           string       `json:"title"`
 	HTMLURL         string       `json:"htmlURL"`
-	Attention       string       `json:"attention,omitempty"` // needs-you | working | waiting
+	Attention       string       `json:"attention,omitempty"` // needs-you | working | done | waiting
 	Assignee        string       `json:"assignee,omitempty"`
 	Author          string       `json:"author,omitempty"`          // PR author (review rows show it as a chip)
 	ReviewRequested bool         `json:"reviewRequested,omitempty"` // PR asks for the viewer's review (client-side scope)

@@ -61,6 +61,7 @@ const (
 	attentionNeedsYou = "needs-you"
 	attentionWorking  = "working"
 	attentionWaiting  = "waiting"
+	attentionDone     = "done"
 )
 
 // Factory CLI wire contract: sandbox labels and annotations the board reads
@@ -88,6 +89,11 @@ func nowRFC3339() string {
 // reviewRequestFreshWindow bounds how long a bare review request counts as
 // needs-you; older requests stay listed but out of UP NEXT.
 const reviewRequestFreshWindow = 14 * 24 * time.Hour
+
+// doneFreshWindow bounds how long finished work (a run done, a review
+// submitted, a fix's PR open) counts as done, at the top of the feed;
+// older, it rests with everything else.
+const doneFreshWindow = 30 * 24 * time.Hour
 
 // githubClientForToken is injectable for tests. ghquota owns the transport
 // stack: conditional requests, where a 304 costs ZERO rate-limit quota,
