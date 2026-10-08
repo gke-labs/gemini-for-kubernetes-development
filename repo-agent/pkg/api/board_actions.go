@@ -70,7 +70,8 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 func markRevise(actions []models.WorkAction, req boardv1alpha1.Request) {
 	for i := range actions {
 		a := &actions[i]
-		mine := a.Verb == "revise" && a.Revise == req.Spec.Revise
+		mine := (a.Verb == "revise" && req.Spec.Verb == boardv1alpha1.VerbRevise && a.Revise == req.Spec.Revise) ||
+			(a.Verb == "recipe" && req.Spec.Verb == boardv1alpha1.VerbRecipe && a.Revise == req.Spec.Recipe)
 		switch {
 		case req.Active() && mine:
 			a.Enabled, a.Reason = false, revisingReason

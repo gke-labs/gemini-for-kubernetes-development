@@ -700,6 +700,63 @@ describe('WorkRow your PR', () => {
     });
 });
 
+// A session's recipes are one group on the row: one button, the recipe
+// named like the session, with the rest in its ▾ menu; one chip, the
+// group's newest run; and nothing to launch while any of them runs.
+describe('WorkRow session groups', () => {
+    const pr = {
+        type: 'pull', number: 9, group: 'prs', mine: true, myPR: true, title: 'the fix',
+        recipes: [
+            { name: 'care', label: 'Care', session: 'care' }, { name: 'care-ci', label: 'Fix CI', session: 'care' },
+            { name: 'care-iterate', label: 'Iterate', session: 'care', inputs: ['instruction'] },
+            { name: 'summarize', label: 'Summarize' },
+        ],
+        htmlURL: 'https://github.com/o/r/pull/9', updatedAt: '2026-10-06T10:00:00Z',
+    };
+    const run = (recipe, label, status) => ({ recipe, label, session: recipe.startsWith('care') ? 'care' : undefined,
+        sandbox: 'fix-r-9', task: `recipe-${recipe}-1`, status });
+    const renderRow = async (item, onAction = () => {}) => {
+        await act(async () => {
+            root.render(<table><tbody>
+                <WorkRow item={item} boardName="myboard" namespace="alice" onAction={onAction}
+                    runState={{ repoRunbooks: [], instances: [] }} />
+            </tbody></table>);
+        });
+    };
+    const chips = () => Array.from(container.querySelectorAll('[title]'))
+        .map(e => e.getAttribute('title').split(' — ')[0]).filter(t => /^[\w ]+: \w+$/.test(t));
+
+    test('one button for the group, the rest in its menu', async () => {
+        const onAction = jest.fn();
+        window.prompt = jest.fn(() => ' rename it ');
+        await renderRow(pr, onAction);
+        expect(Array.from(container.querySelectorAll('button')).map(b => b.textContent)).toEqual(['Care', '▾', 'Summarize']);
+        await act(async () => { findButton('▾').click(); });
+        expect(Array.from(container.querySelectorAll('[role=menuitem]')).map(b => b.textContent)).toEqual(['Fix CI', 'Iterate…']);
+        await act(async () => { findButton('Iterate').click(); });
+        expect(onAction).toHaveBeenCalledWith('prs/9/recipes/care-iterate', 'Iterate', { inputs: { instruction: 'rename it' } });
+        expect(container.querySelector('[role=menu]')).toBeNull();
+        await act(async () => { findButton('Care').click(); });
+        expect(onAction).toHaveBeenLastCalledWith('prs/9/recipes/care', 'Care', {});
+    });
+
+    test('one chip per group, its newest run', async () => {
+        await renderRow({ ...pr, sessions: [run('care-ci', 'Fix CI', 'done'), run('care', 'Care', 'done'), run('summarize', 'Summarize', 'done')] });
+        expect(chips()).toEqual(['Fix CI: done', 'Summarize: done']);
+        expect(findButton('Care')).toBeDefined();
+    });
+
+    test('nothing of the group launches while any of it runs or starts', async () => {
+        await renderRow({ ...pr, sessions: [run('care-ci', 'Fix CI', 'running')] });
+        expect(findButton('Care')).toBeUndefined();
+        expect(findButton('▾')).toBeUndefined();
+        expect(findButton('Summarize')).toBeDefined();
+        await renderRow({ ...pr, sessions: [run('care', 'Care', 'done')], launching: { 'care-iterate': 'starting' } });
+        expect(findButton('Care')).toBeUndefined();
+        expect(chips()).toEqual(['Iterate: starting']);
+    });
+});
+
 // A row follows its runs by one set of rules, the same for every recipe:
 // a recipe not run yet is its label, one done or failed is ‹label› again,
 // a running one is a chip to its session, and a ready one is its draft.

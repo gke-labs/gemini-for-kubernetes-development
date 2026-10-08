@@ -161,6 +161,9 @@ type WorkItem struct {
 type RowRecipe struct {
 	Name  string `json:"name"`
 	Label string `json:"label"`
+	// Session is its session tag: the row offers a group's recipes as one
+	// button, the one named like the tag, and a menu of the rest.
+	Session string `json:"session,omitempty"`
 	// Inputs are the inputs a launch must be given: required, with no
 	// default.
 	Inputs []string `json:"inputs,omitempty"`
@@ -171,6 +174,9 @@ type RowRecipe struct {
 // actions.
 type RunSession struct {
 	Recipe string `json:"recipe,omitempty"`
+	// Session is the recipe's session tag: a group's runs are one
+	// conversation, one chip on the row.
+	Session string `json:"session,omitempty"`
 	// Label is the recipe's, from the board's catalog.
 	Label   string `json:"label,omitempty"`
 	Sandbox string `json:"sandbox"`

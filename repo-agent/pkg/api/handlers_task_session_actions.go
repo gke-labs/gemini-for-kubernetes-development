@@ -113,7 +113,13 @@ func sessionResearch(sb *unstructured.Unstructured) (researchSandboxView, bool) 
 func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) []models.WorkAction {
 	a := sb.GetAnnotations()
 	run, ok := factorycli.SessionRun(a, task)
-	if !ok || len(run.Revises) == 0 {
+	if !ok {
+		return nil
+	}
+	if group, ok := s.sessionGroup(ctx, c, sb, run); ok {
+		return group.actions
+	}
+	if len(run.Revises) == 0 {
 		return nil
 	}
 	kind := run.Kind
@@ -190,6 +196,74 @@ func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstruc
 		}
 	}
 	return revises
+}
+
+// sessionRecipes is what a session of a recipe group (a session tag)
+// offers in place of revises: every recipe of the group, each a run
+// into the same conversation, on the PR whose sandbox it is.
+type sessionRecipes struct {
+	board   *unstructured.Unstructured
+	pr      int
+	actions []models.WorkAction
+}
+
+// sessionGroup is the group run's recipe is in, if it has a session tag,
+// with what stands in the way of each of its recipes and what its newest
+// Request says; false for a recipe in none.
+func (s *Server) sessionGroup(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, run factorycli.RecordedRun) (sessionRecipes, bool) {
+	a := sb.GetAnnotations()
+	if a[annoBoard] == "" {
+		return sessionRecipes{}, false
+	}
+	board, _, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), a[annoBoard])
+	if err != nil {
+		return sessionRecipes{}, false
+	}
+	catalog, err := boardRecipes(board)
+	if err != nil {
+		return sessionRecipes{}, false
+	}
+	tag := recipeSessionTag(catalog, run.Recipe)
+	if tag == "" {
+		return sessionRecipes{}, false
+	}
+	group := sessionRecipes{board: board}
+	for _, rec := range catalog {
+		if rec.Session == tag {
+			group.actions = append(group.actions, models.WorkAction{Verb: "recipe", Revise: rec.Name, Label: recipeLabel(catalog, rec.Name), Inputs: launchInputs(rec), Enabled: true})
+		}
+	}
+	disable := func(reason string) (sessionRecipes, bool) {
+		for i := range group.actions {
+			group.actions[i].Enabled, group.actions[i].Reason = false, reason
+		}
+		return group, true
+	}
+	pr, err := strconv.Atoi(sb.GetLabels()[factorycli.LabelPR])
+	switch {
+	case err != nil || pr <= 0 || !strings.Contains(a["htmlURL"], "/pull/"):
+		return disable("the sandbox has no PR")
+	case a[annoTaskState] == "Running":
+		return disable(fmt.Sprintf("%s is running", recipeLabel(catalog, run.Recipe)))
+	}
+	group.pr = pr
+	reqs, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
+		LabelSelector: boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRecipe,
+	})
+	if err != nil {
+		return group, true
+	}
+	seen := map[string]bool{}
+	// Newest first: the newest Request for a recipe is the word on it.
+	for _, req := range reqs {
+		spec := req.Spec
+		if spec.Board != board.GetName() || spec.Item != "pr" || spec.Number != pr || recipeSessionTag(catalog, spec.Recipe) != tag || seen[spec.Recipe] {
+			continue
+		}
+		seen[spec.Recipe] = true
+		markRevise(group.actions, req)
+	}
+	return group, true
 }
 
 // reviseActions are run's revises as buttons, with the inputs each asks
@@ -459,7 +533,16 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "revise is required"})
 		return
 	}
-	action, offered := findWorkAction(s.sessionRevises(c.Request.Context(), c, sb, task), "revise", req.Revise)
+	offers := s.sessionRevises(c.Request.Context(), c, sb, task)
+	action, offered := findWorkAction(offers, "revise", req.Revise)
+	if !offered {
+		// A recipe of the session's group: it runs into this
+		// conversation as a launch on the PR does.
+		if action, offered = findWorkAction(offers, "recipe", req.Revise); offered && action.Enabled {
+			s.runSessionRecipe(c, sb, task, action, req.Inputs)
+			return
+		}
+	}
 	switch {
 	case !offered:
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the session does not offer revise %s", req.Revise)})
@@ -493,6 +576,50 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		boardName = board
 	}
 	s.reviseSandbox(c, sb, boardName, number, req.Revise, inputs)
+}
+
+// runSessionRecipe files a launch of one of the session's group's recipes
+// on its PR, as the row's button does. 202.
+func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured, task string, action models.WorkAction, given map[string]string) {
+	ctx := c.Request.Context()
+	run, _ := factorycli.SessionRun(sb.GetAnnotations(), task)
+	group, _ := s.sessionGroup(ctx, c, sb, run)
+	inputs := map[string]string{}
+	for name, value := range given {
+		if !slices.Contains(action.Inputs, name) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s takes no input %s", action.Revise, name)})
+			return
+		}
+		inputs[name] = strings.TrimSpace(value)
+	}
+	for _, name := range action.Inputs {
+		if inputs[name] == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s needs %s", action.Revise, name)})
+			return
+		}
+	}
+	if len(inputs) == 0 {
+		inputs = nil
+	}
+	_, member, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), group.board.GetName())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
+		return
+	}
+	filed, err := s.fileRequest(ctx, group.board, boardv1alpha1.RequestSpec{
+		Verb:   boardv1alpha1.VerbRecipe,
+		Recipe: action.Revise,
+		Item:   "pr",
+		Member: member,
+		Number: group.pr,
+		Inputs: inputs,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the run", "details": err.Error()})
+		return
+	}
+	invalidateWorkFeed(group.board.GetNamespace(), group.board.GetName())
+	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
 }
 
 // reviseSandbox files a revise keyed by its sandbox, whichever recipe's:

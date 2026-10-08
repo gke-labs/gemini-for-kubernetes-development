@@ -431,7 +431,10 @@ func theRequest(t *testing.T, dyn *fake.FakeDynamicClient, namespace string) boa
 func boardCR() *unstructured.Unstructured {
 	board := bareBoardCR()
 	board.Object["status"] = map[string]interface{}{"recipes": []interface{}{
-		map[string]interface{}{"name": "care", "label": "Care", "on": []interface{}{"my-pr"}, "kind": "Change"},
+		map[string]interface{}{"name": "care", "label": "Care", "on": []interface{}{"my-pr"}, "kind": "Change", "session": "care"},
+		map[string]interface{}{"name": "care-ci", "label": "Fix CI", "on": []interface{}{"my-pr"}, "kind": "Change", "session": "care"},
+		map[string]interface{}{"name": "care-iterate", "label": "Iterate", "on": []interface{}{"my-pr"}, "kind": "Change", "session": "care",
+			"inputs": []interface{}{map[string]interface{}{"name": "instruction", "required": true}}},
 		map[string]interface{}{"name": "fix", "label": "Fix", "on": []interface{}{"issue"}, "kind": "Change"},
 		map[string]interface{}{"name": "plan", "label": "Plan", "on": []interface{}{"issue"}, "kind": "Plan"},
 		map[string]interface{}{"name": "research", "label": "Research", "on": []interface{}{"repo"}, "kind": "Notes"},

@@ -15,6 +15,7 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // boardWithRecipes is the board once its controller has published the
@@ -255,8 +256,14 @@ func TestRowRecipesFollowTheCatalog(t *testing.T) {
 	if got := strings.Join(names("pr", catalog, false), ","); got != "review" {
 		t.Errorf("PR row = %s", got)
 	}
-	if got := strings.Join(names("pr", catalog, true), ","); got != "care,review" {
+	// care's group, each with its tag: the board folds them into one button.
+	if got := strings.Join(names("pr", catalog, true), ","); got != "care,care-ci,care-iterate,review" {
 		t.Errorf("my PR row = %s", got)
+	}
+	for _, rec := range rowRecipes(catalog, "pr", true) {
+		if want := map[bool]string{true: "care"}[strings.HasPrefix(rec.Name, "care")]; rec.Session != want {
+			t.Errorf("%s's session = %q, want %q", rec.Name, rec.Session, want)
+		}
 	}
 	if got := names("issue", nil, false); len(got) != 0 {
 		t.Errorf("no catalog: %v, want no buttons", got)
@@ -316,5 +323,40 @@ func TestMarkAutos(t *testing.T) {
 	}
 	if items["pr-3"].Auto != nil {
 		t.Errorf("pr-3 auto = %+v, want none: not alice's", items["pr-3"].Auto)
+	}
+}
+
+// A session's runs are one group: a click on any of its recipes has its
+// run once the group's newest run started since, whichever recipe it ran,
+// and the row keeps one run per group.
+func TestASessionsRunsAreOneGroup(t *testing.T) {
+	catalog, err := boardRecipes(boardCR())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	click := func(recipe string, at time.Time) boardv1alpha1.Request {
+		req := boardv1alpha1.Request{Spec: boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: recipe, Item: "pr", Number: 1}}
+		req.CreationTimestamp = metav1.NewTime(at)
+		return req
+	}
+	items := map[string]*models.WorkItem{"pr-1": {Type: "pr", Mine: true, MyPR: true, Sessions: []models.RunSession{
+		{Recipe: "care-ci", Session: "care", StartedAt: ran.Format(time.RFC3339)},
+		{Recipe: "care", Session: "care", StartedAt: ran.Add(-time.Hour).Format(time.RFC3339)},
+		{Recipe: "review", StartedAt: ran.Add(-2 * time.Hour).Format(time.RFC3339)},
+	}}}
+	applyRowRules(items, catalog, []boardv1alpha1.Request{
+		click("care-iterate", ran.Add(-time.Minute)),
+		click("care", ran.Add(time.Minute)),
+	}, false, ran)
+	if got := items["pr-1"].Launching; len(got) != 1 || got["care"] != "starting" {
+		t.Errorf("launching = %v, want care's click after the run only", got)
+	}
+	var runs []string
+	for _, s := range latestRuns(items["pr-1"]) {
+		runs = append(runs, s.Recipe)
+	}
+	if got := strings.Join(runs, ","); got != "care-ci,review" {
+		t.Errorf("latest runs = %s, want care's newest and review's", got)
 	}
 }
