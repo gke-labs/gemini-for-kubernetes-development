@@ -140,6 +140,29 @@ function bareReviewRequest(item) {
 // "what do I owe right now" is a question about you, not a repo.
 const ALL_BOARDS = '__all__';
 
+// fetchWorkFeed reads a board's feed, failing with the API's reason (a
+// rejected GitHub token says to update it in Settings) rather than a bare
+// status.
+export function fetchWorkFeed(board) {
+  return fetch(`/api/board/${board}/work`).then(res => {
+    if (res.ok) return res.json();
+    return res.json().catch(() => ({})).then(body => {
+      let msg = body.error || res.statusText || `HTTP ${res.status}`;
+      if (body.details && res.status !== 424) msg += `: ${String(body.details).slice(0, 300)}`;
+      throw new Error(msg);
+    });
+  });
+}
+
+// WorkErrorRow is why a feed could not be read, where its rows would be.
+function WorkErrorRow({ error }) {
+  return (
+    <tr><td colSpan="5" className="warning-banner" style={{ padding: '12px 8px', whiteSpace: 'pre-line' }}>
+      {error}
+    </td></tr>
+  );
+}
+
 // How long a window nobody is using keeps polling before it gives up.
 // document.hidden does not cover the case that actually spends the GitHub
 // budget: a board left visible on a second monitor, unfocused and unread,
@@ -1453,6 +1476,9 @@ function Work({ onBack, namespace }) {
   const [activeBoard, setActiveBoard] = useState('');
   const [work, setWork] = useState([]);
   const [loadingWork, setLoadingWork] = useState(false);
+  // Why the feed could not be read: shown in its place, never an empty
+  // list (that reads as "no work") or a spinner that never ends.
+  const [workError, setWorkError] = useState('');
   const [syncing, setSyncing] = useState(false);
   // Guards against the stale-response race: a fetch launched for the
   // previous board must never overwrite the board you switched to.
@@ -1505,20 +1531,30 @@ function Work({ onBack, namespace }) {
     if (board === ALL_BOARDS) {
       // Aggregate every board's (server-cached) feed; rows are tagged
       // with their board so actions post to the right endpoints.
+      const failed = [];
       Promise.all(boards.map(b =>
-        fetch(`/api/board/${b.name}/work`)
-          .then(res => (res.ok ? res.json() : []))
+        fetchWorkFeed(b.name)
           .then(rows => (Array.isArray(rows) ? rows.map(i => ({ ...i, board: b.name })) : []))
-          .catch(() => [])
+          .catch(err => { failed.push(`${b.name}: ${err.message}`); return []; })
       ))
-        .then(all => done(all.flat()))
+        .then(all => {
+          if (board === activeBoardRef.current) setWorkError(failed.join('\n'));
+          done(all.flat());
+        })
         .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
       return;
     }
-    fetch(`/api/board/${board}/work`)
-      .then(res => res.ok ? res.json() : Promise.reject(res.statusText))
-      .then(done)
-      .catch(err => console.error('Failed to fetch work feed', err))
+    fetchWorkFeed(board)
+      .then(rows => {
+        if (board === activeBoardRef.current) setWorkError('');
+        done(rows);
+      })
+      .catch(err => {
+        console.error('Failed to fetch work feed', err);
+        if (board !== activeBoardRef.current) return;
+        setWorkError(err.message);
+        setLoadingWork(false);
+      })
       .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
   }, [activeBoard, boards]);
 
@@ -1563,6 +1599,7 @@ function Work({ onBack, namespace }) {
     // Board switch: clear the previous board's rows immediately and show
     // the loading state — never render another board's items.
     setWork([]);
+    setWorkError('');
     setLoadingWork(true);
     if (activeBoard === ALL_BOARDS) return; // no per-board view state
     try {
@@ -1851,6 +1888,7 @@ function Work({ onBack, namespace }) {
                       Gathering your boards…
                     </td></tr>
                   )}
+                  {!loadingWork && workError && <WorkErrorRow error={workError} />}
                   {!loadingWork && upNextAll.map(item => (
                     <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={item} boardName={item.board}
                       onAction={(p, l, b) => handleAction(p, l, item.board, b)} onRefresh={fetchWork}
@@ -1858,7 +1896,7 @@ function Work({ onBack, namespace }) {
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
                       onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession} />
                   ))}
-                  {!loadingWork && !upNextAll.length && (
+                  {!loadingWork && !upNextAll.length && !workError && (
                     <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
                       ✓ Nothing needs you anywhere.
                     </td></tr>
@@ -1900,6 +1938,9 @@ function Work({ onBack, namespace }) {
         // its order.
         const active = visible.filter(isActive);
         const rest = visible.filter(i => !isActive(i));
+        // A failed refresh keeps the rows already shown; a feed never read
+        // shows only why.
+        const listing = !loadingWork && !(workError && !work.length);
         const needs = visible.filter(i => i.attention === 'needs-you').length;
         // Always land on Work: consistent muscle memory, and its empty
         // first section ("nothing needs you") is the good news, not a dead end.
@@ -2021,15 +2062,16 @@ function Work({ onBack, namespace }) {
                       Loading {activeBoard}…
                     </td></tr>
                   )}
-                  {!loadingWork && section('Active', active.length)}
-                  {!loadingWork && active.map(row)}
-                  {!loadingWork && !active.length && (
+                  {!loadingWork && workError && <WorkErrorRow error={workError} />}
+                  {listing && section('Active', active.length)}
+                  {listing && active.map(row)}
+                  {listing && !active.length && (
                     <tr><td colSpan="5" style={{ padding: '8px 8px 12px', color: 'var(--status-green)' }}>
                       ✓ Nothing needs you right now.
                     </td></tr>
                   )}
-                  {!loadingWork && rest.length > 0 && section('Everything else', rest.length)}
-                  {!loadingWork && rest.map(row)}
+                  {listing && rest.length > 0 && section('Everything else', rest.length)}
+                  {listing && rest.map(row)}
                 </tbody>
               </table>
             </div>
