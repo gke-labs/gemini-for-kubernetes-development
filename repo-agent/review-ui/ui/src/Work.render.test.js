@@ -362,12 +362,14 @@ describe('Work, all boards', () => {
 });
 
 // A board's issues and pull requests are one Work list: what needs you or
-// is running first, the rest after, narrowed by type, scope and search.
+// is running first, then what finished lately, the rest after, narrowed by
+// type, scope and search.
 describe('Work, one board', () => {
     const boards = [{ name: 'repo-agent', repoURL: 'https://github.com/gke-labs/repo-agent', needsHuman: 1, active: 1 }];
     const feed = [
         { type: 'issue', group: 'issues', number: 11, title: 'flaky retry', attention: 'needs-you', author: 'bob', labels: ['bug'], updatedAt: '2026-10-07T10:00:00Z' },
         { type: 'pull', group: 'prs', number: 22, title: 'care for it', attention: 'working', mine: true, myPR: true, author: 'alice', labels: [], updatedAt: '2026-10-07T09:00:00Z' },
+        { type: 'pull', group: 'prs', number: 55, title: 'reviewed it', attention: 'done', reviewed: true, author: 'erin', labels: [], updatedAt: '2026-10-07T08:30:00Z' },
         { type: 'pull', group: 'prs', number: 33, title: 'someone else', attention: 'waiting', author: 'carol', labels: [], updatedAt: '2026-10-07T08:00:00Z' },
         { type: 'issue', group: 'issues', number: 44, title: 'old idea', attention: '', author: 'dave', labels: [], updatedAt: '2026-10-07T07:00:00Z' },
     ];
@@ -407,7 +409,20 @@ describe('Work, one board', () => {
         await open();
         expect(findButton('Work')).toBeTruthy();
         expect(Array.from(container.querySelectorAll('.group-tab')).map(b => b.textContent)).not.toContain('Issues');
-        expect(sections()).toEqual({ Active: [11, 22], 'Everything else': [33, 44] });
+        expect(sections()).toEqual({ Active: [11, 22], Done: [55], 'Everything else': [33, 44] });
+        expect(container.textContent).not.toContain('Nothing needs you');
+    });
+
+    test('finished work has its own section, after the good news', async () => {
+        await open();
+        const search = container.querySelector('input[type="search"]');
+        await act(async () => {
+            const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            set.call(search, 'erin');
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(sections()).toEqual({ Active: [], Done: [55] });
+        expect(container.textContent).toContain('Nothing needs you right now');
     });
 
     test('type, scope and search narrow it', async () => {

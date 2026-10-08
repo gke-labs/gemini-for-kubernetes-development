@@ -174,14 +174,17 @@ const IDLE_AFTER = 5 * 60 * 1000;
 const RUN_STATE_EVERY = 2 * 60 * 1000;
 
 // The board's one list of issues and pull requests: what needs you or is
-// running first, the rest after, narrowed by the filters above it.
+// running first, then what finished lately, the rest after, narrowed by
+// the filters above it.
 const WORK = 'work';
-const WORK_HINT = 'Open issues and pull requests — what needs you or is running first; actions follow each row';
+const WORK_HINT = 'Open issues and pull requests — what needs you or is running first, then what finished in the last 30 days, then the rest; actions follow each row';
 
-// isActive is whether a row belongs in Work's first section: it needs
-// you, or an agent is working on it.
+// isActive is whether a row belongs above Everything else: it needs
+// you, an agent is working on it (Active), or its work finished lately
+// (Done: a run done, a review submitted, a fix's PR open).
 function isActive(item) {
-  return item.attention === 'needs-you' || item.attention === 'working' || Object.keys(item.launching || {}).length > 0;
+  return item.attention === 'needs-you' || item.attention === 'working' || item.attention === 'done' ||
+    Object.keys(item.launching || {}).length > 0;
 }
 
 // matchesSearch is whether a row has q in its title, number (#12 or 12),
@@ -1934,9 +1937,11 @@ function Work({ onBack, namespace }) {
           if (labelFilters.length && !(item.labels || []).some(l => labelFilters.includes(l.toLowerCase()))) return false;
           return inScope(item);
         });
-        // The feed comes needs-you first, then working: each section keeps
-        // its order.
+        // The feed comes needs-you first, then working, then done: each
+        // section keeps its order.
         const active = visible.filter(isActive);
+        const busy = active.filter(i => i.attention !== 'done');
+        const done = active.filter(i => i.attention === 'done');
         const rest = visible.filter(i => !isActive(i));
         // A failed refresh keeps the rows already shown; a feed never read
         // shows only why.
@@ -2063,13 +2068,15 @@ function Work({ onBack, namespace }) {
                     </td></tr>
                   )}
                   {!loadingWork && workError && <WorkErrorRow error={workError} />}
-                  {listing && section('Active', active.length)}
-                  {listing && active.map(row)}
-                  {listing && !active.length && (
+                  {listing && section('Active', busy.length)}
+                  {listing && busy.map(row)}
+                  {listing && !busy.length && (
                     <tr><td colSpan="5" style={{ padding: '8px 8px 12px', color: 'var(--status-green)' }}>
                       ✓ Nothing needs you right now.
                     </td></tr>
                   )}
+                  {listing && done.length > 0 && section('Done', done.length)}
+                  {listing && done.map(row)}
                   {listing && rest.length > 0 && section('Everything else', rest.length)}
                   {listing && rest.map(row)}
                 </tbody>

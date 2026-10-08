@@ -209,6 +209,7 @@ func attentionOf(item *models.WorkItem, now time.Time) string {
 	}
 	updated, _ := time.Parse(time.RFC3339, item.UpdatedAt)
 	fresh := now.Sub(updated) <= reviewRequestFreshWindow
+	doneAt := finishedAt(item, updated)
 	switch {
 	case working:
 		return attentionWorking
@@ -220,10 +221,40 @@ func attentionOf(item *models.WorkItem, now time.Time) string {
 		// Under the draft-PR policy the agent opens drafts for a human to
 		// promote; a parked one decays out of the inbox like a request.
 		return attentionNeedsYou
-	case queued, item.Type == "pr" && (item.ReviewRequested || item.Mine):
+	case queued:
+		return attentionWaiting
+	case !doneAt.IsZero() && now.Sub(doneAt) <= doneFreshWindow:
+		return attentionDone
+	case item.Type == "pr" && (item.ReviewRequested || item.Mine):
 		return attentionWaiting
 	}
 	return ""
+}
+
+// finishedAt is when the item's work last finished, zero if none did: its
+// newest done run's end or last applied action, else, for a review
+// submitted or a fix's PR open (no run left to time), the item's last
+// update.
+func finishedAt(item *models.WorkItem, updated time.Time) time.Time {
+	var at time.Time
+	later := func(s string) {
+		if t, err := time.Parse(time.RFC3339, s); err == nil && t.After(at) {
+			at = t
+		}
+	}
+	for _, s := range latestRuns(item) {
+		if s.Status != "done" {
+			continue
+		}
+		later(s.EndedAt)
+		for _, t := range s.Applied {
+			later(t)
+		}
+	}
+	if at.IsZero() && (item.Reviewed || (item.Type == "issue" && item.PRURL != "")) {
+		at = updated
+	}
+	return at
 }
 
 // bareReviewRequest is a row that needs the member only because their
@@ -243,7 +274,7 @@ func bareReviewRequest(item models.WorkItem) bool {
 // sortWork orders the feed by attention, then finished agent work awaiting
 // a verdict before a bare review request, then the newest first.
 func sortWork(work []models.WorkItem) {
-	rank := map[string]int{attentionNeedsYou: 0, attentionWorking: 1, attentionWaiting: 2, "": 3}
+	rank := map[string]int{attentionNeedsYou: 0, attentionWorking: 1, attentionDone: 2, attentionWaiting: 3, "": 4}
 	deferred := func(item models.WorkItem) int {
 		if bareReviewRequest(item) {
 			return 1
