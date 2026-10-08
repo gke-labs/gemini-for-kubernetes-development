@@ -532,6 +532,10 @@ func TestACareSessionOffersItsGroup(t *testing.T) {
 			t.Errorf("want %s in %s", want, w.Body.String())
 		}
 	}
+	// The recipe named like the session leads: New conversation runs it.
+	if i, j := strings.Index(w.Body.String(), `"revise":"care"`), strings.Index(w.Body.String(), `"revise":"care-ci"`); i < 0 || j < i {
+		t.Errorf("care should lead its group in %s", w.Body.String())
+	}
 	if strings.Contains(w.Body.String(), `"revise":"fix"`) {
 		t.Errorf("fix is in no group of care's: %s", w.Body.String())
 	}
@@ -640,5 +644,26 @@ func TestFillSessionBoardNeedsOneBoard(t *testing.T) {
 		if got := sb.GetAnnotations()[annoBoard]; got != tc.want {
 			t.Errorf("%s: board %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// New conversation runs a recipe of the group in a new conversation of the
+// session.
+func TestACareSessionOpensANewConversation(t *testing.T) {
+	r, dyn := careSessionServer(t, "Completed")
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"care","newSession":true}`); w.Code != http.StatusAccepted {
+		t.Fatalf("new conversation: %d %s", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 || reqs[0].Spec.Recipe != "care" || !reqs[0].Spec.NewSession {
+		t.Errorf("filed %+v, want care in a new conversation", reqs)
+	}
+}
+
+// A revise has no conversation of its own to open.
+func TestARevisesNewConversationIsRefused(t *testing.T) {
+	r, _ := fixSessionServer(t, "Completed", true)
+	if w := doJSON(t, r, http.MethodPost, fixSessionAt+"/revise", `{"revise":"iterate","inputs":{"instruction":"x"},"newSession":true}`); w.Code != http.StatusBadRequest {
+		t.Errorf("iterate in a new conversation: %d %s, want 400", w.Code, w.Body.String())
 	}
 }

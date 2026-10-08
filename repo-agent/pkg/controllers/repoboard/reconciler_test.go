@@ -163,7 +163,7 @@ func (f *fakeLauncher) Recipes(context.Context) ([]boardv1alpha1.BoardRecipe, er
 		{Name: "triage", Label: "Triage", On: []string{"issue"}, Kind: "Triage", TaskType: "recipe-triage"},
 		{Name: "plan", Label: "Plan", On: []string{"issue"}, Kind: "Plan", TaskType: "plan"},
 		{Name: "fix", Label: "Fix", On: []string{"issue"}, Kind: "Change", TaskType: "fix"},
-		{Name: "care", Label: "Care", On: []string{"my-pr"}, Kind: "Change", TaskType: "recipe-care"},
+		{Name: "care", Label: "Care", On: []string{"my-pr"}, Kind: "Change", TaskType: "recipe-care", Session: "care"},
 		{Name: "review", Label: "Review", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-review", Credentials: "clone"},
 		{Name: "research", Label: "Research", On: []string{"repo"}, Kind: "Notes", TaskType: "research"},
 		{Name: "summarize", Label: "Summarize", On: []string{"issue", "pr"}, Kind: "Summary", TaskType: "recipe-summarize"},

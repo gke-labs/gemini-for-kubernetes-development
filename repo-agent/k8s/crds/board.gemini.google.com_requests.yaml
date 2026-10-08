@@ -64,6 +64,12 @@ spec:
                 additionalProperties:
                   type: string
                 type: object
+              newSession:
+                description: |-
+                  NewSession, for verb=recipe on a recipe in a session, opens a new
+                  conversation of the session instead of continuing it (factory
+                  --new-session).
+                type: boolean
               item:
                 enum:
                 - issue

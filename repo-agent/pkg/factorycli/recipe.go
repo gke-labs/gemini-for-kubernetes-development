@@ -31,6 +31,9 @@ type RecipeOptions struct {
 	// Namespace the task (and its sandbox) runs in; factory resolves the
 	// task identity from the factory-user Secret in this namespace.
 	Namespace string
+	// NewSession opens a new conversation of the recipe's session instead
+	// of continuing it (factory --new-session).
+	NewSession bool
 	// Inputs are the recipe's inputs (factory --input name=value).
 	Inputs map[string]string
 	// Instructions are passed as repeated --instruction flags, which
@@ -109,6 +112,9 @@ func recipeArgs(opts RecipeOptions, timeout time.Duration) []string {
 	}
 	if opts.Detached {
 		args = append(args, "--detached")
+	}
+	if opts.NewSession {
+		args = append(args, "--new-session")
 	}
 	for _, name := range slices.Sorted(maps.Keys(opts.Inputs)) {
 		args = append(args, "--input", name+"="+opts.Inputs[name])

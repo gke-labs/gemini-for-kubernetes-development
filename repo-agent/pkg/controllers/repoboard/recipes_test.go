@@ -270,3 +270,26 @@ func TestPRRecipeRunsInTheFixSandbox(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("fix-repo-10"))
 }
+
+// A click for a new conversation opens one, on a recipe in a session;
+// any other recipe has no session to open.
+func TestRecipeNewSession(t *testing.T) {
+	g := gomega.NewWithT(t)
+	fake := newFakeLauncher()
+	fix := recipeSandbox("fix-repo-10", "https://github.com/test/repo/pull/12")
+	fix.SetLabels(map[string]string{"factory.gemini.google.com/managed": "true", factorycli.LabelPR: "12"})
+	fix.SetAnnotations(map[string]string{"htmlURL": "https://github.com/test/repo/pull/12", "repo": "repo"})
+	care := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12, NewSession: true})
+	summarize := launchOn("issue", 7, nil)
+	summarize.Spec.NewSession = true
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), fix, care, summarize)
+	r.reconcileBoard(t)
+
+	byRecipe := map[string]bool{}
+	for _, l := range fake.launches() {
+		if l.RecipeOpts != nil {
+			byRecipe[l.RecipeOpts.Recipe] = l.RecipeOpts.NewSession
+		}
+	}
+	g.Expect(byRecipe).To(gomega.Equal(map[string]bool{"care": true, "summarize": false}))
+}

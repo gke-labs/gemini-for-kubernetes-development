@@ -261,6 +261,12 @@ type RequestSpec struct {
 	// +kubebuilder:validation:Optional
 	Inputs map[string]string `json:"inputs,omitempty"`
 
+	// NewSession, for verb=recipe on a recipe in a session, opens a new
+	// conversation of the session instead of continuing it (factory
+	// --new-session).
+	// +kubebuilder:validation:Optional
+	NewSession bool `json:"newSession,omitempty"`
+
 	// Run is set for verb=run.
 	// +kubebuilder:validation:Optional
 	Run *RunRequest `json:"run,omitempty"`

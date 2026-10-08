@@ -1816,6 +1816,30 @@ describe('ResearchConversation on a task session', () => {
         expect(container.textContent).not.toContain('The task is still running');
     });
 
+    test('a session\'s group runs its recipes here, and its leader in a new conversation', async () => {
+        const care = { verb: 'recipe', revise: 'care', label: 'Care', enabled: true };
+        const ci = { verb: 'recipe', revise: 'care-ci', label: 'Fix CI', enabled: true };
+        await render({ sessionId: task.task, repo: 'granule', revises: [care, ci] });
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
+        });
+        global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST'
+            ? reply(202, { request: 'r' })
+            : reply(200, { sessionId: task.task, revises: [care, ci] })));
+        await act(async () => { [...container.querySelectorAll('button')].find(b => b.textContent === 'Fix CI').click(); });
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise',
+            expect.objectContaining({ method: 'POST', body: JSON.stringify({ revise: 'care-ci' }) }));
+        await flush();
+
+        window.confirm = jest.fn(() => true);
+        await act(async () => { container.querySelector('[aria-label="More actions"]').click(); });
+        await act(async () => { [...container.querySelectorAll('[role=menuitem]')].find(b => b.textContent === 'New conversation').click(); });
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise',
+            expect.objectContaining({ method: 'POST', body: JSON.stringify({ revise: 'care', newSession: true }) }));
+    });
+
     test('the recipe\'s revises are buttons that file the revise on the session, and follow it', async () => {
         const offered = { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true };
         await render({ sessionId: task.task, repo: 'granule', revises: [offered] });
