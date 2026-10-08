@@ -25,6 +25,8 @@ type GitHub interface {
 	AddComment(ctx context.Context, number int, body string) error
 	EditComment(ctx context.Context, commentID int64, body string) error
 	CloseIssue(ctx context.Context, number int) error
+	ListSubIssues(ctx context.Context, number int) ([]int, error)
+	AddSubIssue(ctx context.Context, parent, child int) error
 	// ReadFile returns a file on the default branch and the commit it was
 	// read at; github.ErrUnreadableFile when the file is missing or unusable.
 	ReadFile(ctx context.Context, path string) ([]byte, string, error)
@@ -160,9 +162,11 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 	if opts.DryRun {
 		logPlan(logf, would, in, plan)
 		logf("%swrite the progress comment:\n%s", would, Progress(withStop(in, plan), plan.State, children))
+		linkSubIssues(ctx, gh, opts.Issue, children, true, logf)
 		return SyncResult{Plan: plan}, nil
 	}
 	err = apply(ctx, gh, in, &plan, &children, logf)
+	linkSubIssues(ctx, gh, opts.Issue, children, false, logf)
 	// The progress comment is written even after a failed write, so that
 	// what was created is remembered.
 	if perr := writeProgress(ctx, gh, opts.Issue, progress, Progress(withStop(in, plan), plan.State, children)); perr != nil {
@@ -340,6 +344,35 @@ func apply(ctx context.Context, gh GitHub, in Input, p *Plan, children *[]Child,
 		}
 	}
 	return nil
+}
+
+// linkSubIssues makes every child a sub-issue of the parent, so GitHub lists
+// them under it with a progress bar. It is for show: the children are found
+// by their markers, so a failure (a child with another parent, GitHub's limit
+// on sub-issues) is logged and the pass carries on.
+func linkSubIssues(ctx context.Context, gh GitHub, parent int, children []Child, dryRun bool, logf func(string, ...any)) {
+	if len(children) == 0 {
+		return
+	}
+	linked, err := gh.ListSubIssues(ctx, parent)
+	if err != nil {
+		logf("sub-issues: %v", err)
+		return
+	}
+	for _, c := range children {
+		if slices.Contains(linked, c.Number) {
+			continue
+		}
+		if dryRun {
+			logf("would add #%d as a sub-issue", c.Number)
+			continue
+		}
+		if err := gh.AddSubIssue(ctx, parent, c.Number); err != nil {
+			logf("sub-issues: %v", err)
+			continue
+		}
+		logf("added #%d as a sub-issue", c.Number)
+	}
 }
 
 func logPlan(logf func(string, ...any), prefix string, in Input, p Plan) {

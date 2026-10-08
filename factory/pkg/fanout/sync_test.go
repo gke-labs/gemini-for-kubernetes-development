@@ -21,6 +21,7 @@ type fakeGitHub struct {
 	nextComment  int64
 	hideTimeline bool
 	closed       []int
+	subIssues    map[int][]int
 	files        map[string]string
 }
 
@@ -116,6 +117,18 @@ func (f *fakeGitHub) ReadFile(_ context.Context, path string) ([]byte, string, e
 	return []byte(data), "0123456789abcdef", nil
 }
 
+func (f *fakeGitHub) ListSubIssues(_ context.Context, n int) ([]int, error) {
+	return f.subIssues[n], nil
+}
+
+func (f *fakeGitHub) AddSubIssue(_ context.Context, parent, child int) error {
+	if f.subIssues == nil {
+		f.subIssues = map[int][]int{}
+	}
+	f.subIssues[parent] = append(f.subIssues[parent], child)
+	return nil
+}
+
 // closeChild closes a child with a merged PR, as a coder bot's merge would.
 func (f *fakeGitHub) closeChild(n int) {
 	f.issues[n].Open = false
@@ -170,6 +183,9 @@ func TestSyncFanOut(t *testing.T) {
 	if gh.next != 105 || len(gh.comments[parent]) != 1 {
 		t.Fatalf("got %d children and %d comments, want 4 and 1", gh.next-parent-1, len(gh.comments[parent]))
 	}
+	if got, want := gh.subIssues[parent], []int{101, 102, 103, 104}; !slices.Equal(got, want) {
+		t.Fatalf("sub-issues %v, want %v", got, want)
+	}
 
 	// A pass whose timeline lags still knows its children, by the state.
 	gh.hideTimeline = true
@@ -214,6 +230,9 @@ func TestSyncFanOut(t *testing.T) {
 	final := gh.next - 1
 	if _, _, isFinal, _ := ParseMarker(gh.issues[final].Body); !isFinal || !slices.Contains(gh.issues[final].Labels, "overseer") {
 		t.Fatalf("#%d is not a labelled final child: %+v", final, gh.issues[final])
+	}
+	if subs := gh.subIssues[parent]; len(subs) != 5 || subs[4] != final {
+		t.Fatalf("sub-issues %v, want the four and the final child, each once", subs)
 	}
 	gh.closeChild(final)
 	sync()

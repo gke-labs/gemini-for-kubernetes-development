@@ -68,8 +68,10 @@ func (f *fakeGitHub) AddComment(context.Context, int, string) error {
 	f.comments++
 	return nil
 }
-func (f *fakeGitHub) EditComment(context.Context, int64, string) error { return nil }
-func (f *fakeGitHub) CloseIssue(context.Context, int) error            { return nil }
+func (f *fakeGitHub) EditComment(context.Context, int64, string) error  { return nil }
+func (f *fakeGitHub) CloseIssue(context.Context, int) error             { return nil }
+func (f *fakeGitHub) ListSubIssues(context.Context, int) ([]int, error) { return nil, nil }
+func (f *fakeGitHub) AddSubIssue(context.Context, int, int) error       { return nil }
 func (f *fakeGitHub) ReadFile(context.Context, string) ([]byte, string, error) {
 	return nil, "", github.ErrUnreadableFile
 }
