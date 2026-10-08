@@ -17,7 +17,7 @@ func TestTemplates(t *testing.T) {
 	if got := spec.ChildTitle(7, "P", spec.Items[:1]); got != "a (P #7)" {
 		t.Errorf("ChildTitle() = %q", got)
 	}
-	if got := spec.ChildBody(7, "P", spec.Items[:1]); !strings.HasPrefix(got, "Fix a.\n\n### Item\n- **a** (one)\n") {
+	if got := spec.ChildBody(7, "P", spec.Items[:1]); !strings.HasPrefix(got, "Fix a.\n\n### Items\n- **a** (one)\n") {
 		t.Errorf("ChildBody(a) = %q", got)
 	}
 	if got := spec.ChildBody(7, "P", spec.Items[1:2]); !strings.HasPrefix(got, "Fix b. Carefully.\n") {
@@ -124,7 +124,7 @@ func TestItemsFileBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := spec.ChildBody(9, "P", spec.Items[:1])
-	if !strings.HasPrefix(body, "Fix A in a.go.\n\n### Item\n- A\n") {
+	if !strings.HasPrefix(body, "Fix A in a.go.\n\n### Items\n- A\n") {
 		t.Errorf("ChildBody() = %q", body)
 	}
 	if _, keys, _, _ := ParseMarker(body); !slices.Equal(keys, []string{"a"}) {

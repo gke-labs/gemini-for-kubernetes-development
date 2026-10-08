@@ -60,7 +60,7 @@ start:
         ## Fan-out
         A YAML block, written out in full so maintainers see the settings:
         ```yaml
-        title: "<child issue title, with {{ "{{.item.name}}" }} where the item's name goes>"
+        title: "<child issue title, with the names (below) where the item's name goes>"
         labels: []      # only labels the issue asks children to carry; never a
                         # label ending in /fanout or /stop, nor the trigger label
         group: 1        # items per child; {start: 1, max: 4} groups more as children merge
@@ -71,12 +71,19 @@ start:
         ```
 
         ## Task
-        What to do for ONE item, rewritten from the issue's own steps. It is a
-        Go template: write {{ "{{.item.name}}" }} wherever the item's name goes,
-        and {{ "{{.parent.title}}" }} for this issue's title. The item's whole
-        line, file paths included, is added to each child under "Item", so
-        refer to "the files listed under Item below" instead of repeating them.
-        Do not write `{{ "{{" }}` anywhere else: it starts a template action.
+        What to do for the child's items, rewritten from the issue's own steps.
+        A child may get more than one item when maintainers raise `group`, so
+        write it for "each item listed under Items below", not for exactly
+        one. It is a Go template: wherever the items' names go, write exactly
+
+            {{ `{{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}}` }}
+
+        (the names, comma-separated; one name when the child has one item),
+        and {{ "{{.parent.title}}" }} for this issue's title. Use the same
+        names in the title. Each item's whole line, file paths included, is
+        added to the child under "Items", so refer to "the files listed under
+        Items below" instead of repeating them. Do not write `{{ "{{" }}`
+        anywhere else: it starts a template action.
 
         ## Items
         The items as a checklist, one per line, copied exactly as the issue

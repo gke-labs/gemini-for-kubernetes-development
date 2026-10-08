@@ -31,19 +31,15 @@ func (s Spec) ChildTitle(parent int, parentTitle string, items []Item) string {
 }
 
 // ChildBody is the body of the child for items: the task for them, their
-// lines, and the marker that ties the child to the parent.
+// lines under ### Items (one or many), and the marker that ties the child to the parent.
 func (s Spec) ChildBody(parent int, parentTitle string, items []Item) string {
 	task := strings.TrimSpace(renderChecked("## Task", s.Task, childData(parent, parentTitle, items)))
-	heading := "Item"
-	if len(items) > 1 {
-		heading = "Items"
-	}
 	var lines strings.Builder
 	for _, it := range items {
 		fmt.Fprintf(&lines, "- %s\n", it.Line)
 	}
-	return fmt.Sprintf("%s\n\n### %s\n%s\nPart of #%d.\n<!-- factory:fanout parent=%d items=%s -->\n",
-		task, heading, lines.String(), parent, parent, strings.Join(itemKeys(items), ","))
+	return fmt.Sprintf("%s\n\n### Items\n%s\nPart of #%d.\n<!-- factory:fanout parent=%d items=%s -->\n",
+		task, lines.String(), parent, parent, strings.Join(itemKeys(items), ","))
 }
 
 // itemKeys are the keys of items, in order.

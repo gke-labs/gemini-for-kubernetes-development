@@ -107,7 +107,7 @@ In a spec written by hand in the body, the whole section can be left out: every 
 <!-- factory:fanout-spec -->
 ## Fan-out
 ```yaml
-title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
+title: "Migrate {{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
 group: 1
 create: lazy
@@ -116,8 +116,8 @@ checkpoints: [2]
 ```
 
 ## Task
-For `{{.item.name}}`, switch its KMS reference from `refs.KMSCryptoKeyRef` to
-`kmsv1beta1.KMSCryptoKeyRef`. The files to change are listed under Item below.
+For {{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}}, switch the KMS reference from `refs.KMSCryptoKeyRef` to
+`kmsv1beta1.KMSCryptoKeyRef`. The files to change are listed under Items below.
 
 1. **Update API types.** In the item's `*_types.go`, import `kmsv1beta1` and change the
    KMS reference field(s) from `*refs.KMSCryptoKeyRef` to `*kmsv1beta1.KMSCryptoKeyRef`.
@@ -137,14 +137,14 @@ Every caller in `pkg/controller/direct/` and `apis/` now uses `kmsv1beta1.KMSCry
 Remove `refs.KMSCryptoKeyRef` and `refs.ResolveKMSCryptoKeyRef` from `apis/refs/v1beta1/kmsrefs.go`.
 ~~~
 
-The agent's part was mapping the issue's own headings to these, rewriting the steps for one `{{.item.name}}`, and picking a title. #13781 has no labels and asks for none, so `labels` is empty; the rest are the defaults. It copies the items exactly as written, because their file paths go into each child.
+The agent's part was mapping the issue's own headings to these, rewriting the steps for the child's items, and picking a title. Both the title and the task name the items with a `range` over `.items`, not `{{.item.name}}`, so they stay right when a maintainer raises `group`: with one item it is just its name. #13781 has no labels and asks for none, so `labels` is empty; the rest are the defaults. It copies the items exactly as written, because their file paths go into each child.
 
 A child issue looks like this:
 
 ```markdown
 <the Task section, rendered for this child>
 
-### Item
+### Items
 - **ApigeeInstance** (`apis/apigee/v1alpha1/instance_types.go`, …)
 
 Part of #13781.
