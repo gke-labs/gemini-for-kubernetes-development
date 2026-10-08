@@ -74,6 +74,22 @@ type Recipe struct {
 	// (unset) or CredentialsClone. Unlike task-type it is the runner's,
 	// which enforces it, so it reaches the sandbox.
 	Credentials string `yaml:"credentials,omitempty"`
+	// Session is a tag (design/recipe-sessions.md): recipes with the same
+	// one, on one target, run into one conversation in its sandbox, and a
+	// board shows them as one group. A run continues the conversation the
+	// tag's last run recorded, or opens one. Nothing else is shared: each
+	// recipe in it is whole. Unset, the recipe keeps a conversation of its
+	// own. Like TaskOutput it is factory's.
+	Session string `yaml:"session,omitempty"`
+}
+
+// SessionName is the conversation the recipe's runs are recorded under:
+// its session tag, or its own name.
+func (r *Recipe) SessionName() string {
+	if r.Session != "" {
+		return r.Session
+	}
+	return r.Name
 }
 
 // What a recipe runs on.
@@ -311,6 +327,16 @@ func (r *Recipe) Validate() error {
 	}
 	if r.TaskType != "" && !taskTypeRE.MatchString(r.TaskType) {
 		return fmt.Errorf("task-type %q must match %s", r.TaskType, taskTypeRE)
+	}
+	if r.Session != "" {
+		switch {
+		case !taskTypeRE.MatchString(r.Session):
+			return fmt.Errorf("session %q must match %s", r.Session, taskTypeRE)
+		case r.TaskType != "":
+			return fmt.Errorf("a recipe in a session is recorded under it; it takes no task-type")
+		case len(r.Revise) > 0:
+			return fmt.Errorf("a recipe in a session has no revises: the session's other recipes are its follow-ups")
+		}
 	}
 	if to := r.TaskOutput; to != nil {
 		if !taskoutput.Known(to.Kind) {
@@ -568,7 +594,7 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without label,
-// on, task-output, task-type, input types and revise inputs, which
+// on, task-output, task-type, session, input types and revise inputs, which
 // runners older than them reject as unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
@@ -580,7 +606,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	for _, k := range []string{"label", "on", "task-output", "task-type"} {
+	for _, k := range []string{"label", "on", "task-output", "task-type", "session"} {
 		if dropKey(m, k) {
 			changed = true
 		}
@@ -662,6 +688,54 @@ func takesFrom(r *Recipe, name, kind string) bool {
 	}
 	_, ok := follow.InputFrom(kind)
 	return ok
+}
+
+// CheckSessions holds recipes that share a session tag to what makes
+// them one group: they agree on what they run on and on their
+// credentials, so they land in one sandbox, and one of them is named
+// like the tag, the group's default.
+func CheckSessions(recs []*Recipe) error {
+	groups := map[string][]*Recipe{}
+	var tags []string
+	for _, r := range recs {
+		if r.Session == "" {
+			continue
+		}
+		if _, ok := groups[r.Session]; !ok {
+			tags = append(tags, r.Session)
+		}
+		groups[r.Session] = append(groups[r.Session], r)
+	}
+	sort.Strings(tags)
+	for _, tag := range tags {
+		group := groups[tag]
+		first := group[0]
+		on := slices.Clone(first.On)
+		slices.Sort(on)
+		named := false
+		for _, r := range group {
+			other := slices.Clone(r.On)
+			slices.Sort(other)
+			if !slices.Equal(on, other) {
+				return fmt.Errorf("session %s: recipes %s and %s run on different targets", tag, first.Name, r.Name)
+			}
+			if credentialsOf(r) != credentialsOf(first) {
+				return fmt.Errorf("session %s: recipes %s and %s hold different credentials", tag, first.Name, r.Name)
+			}
+			named = named || r.Name == tag
+		}
+		if !named {
+			return fmt.Errorf("session %s: no recipe is named %s, the group's default", tag, tag)
+		}
+	}
+	return nil
+}
+
+func credentialsOf(r *Recipe) string {
+	if r.Credentials == "" {
+		return CredentialsFull
+	}
+	return r.Credentials
 }
 
 // Builtin returns the recipe that ships with factory under name, as bytes

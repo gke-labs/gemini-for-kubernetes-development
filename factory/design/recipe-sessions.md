@@ -1,6 +1,6 @@
 # Recipe sessions: a tag that groups recipes
 
-**Status:** Design. Changes care ([care-recipe.md](care-recipe.md)); the other recipes are unchanged.
+**Status:** Step 1 (factory) built. Changes care ([care-recipe.md](care-recipe.md)); the other recipes are unchanged.
 
 care has one start and four revises. To rebase a PR you first run the start (rebase, then fix checks, then answer comments) and only then the `rebase` revise. Its revises are not follow-ups to the start. Each is a job of its own, as useful first as fifth.
 
@@ -103,3 +103,12 @@ Session `care` records at `recipe-care`, the annotation care's runs use today. T
    - Fix CI after it (continues the session);
    - the fix's session untouched;
    - New conversation.
+
+## As built (step 1)
+
+- `recipe.Recipe.Session`, `SessionName()` (the tag, else the name), and `recipe.CheckSessions`, which `recipe list` runs over the built-ins.
+- `runRecipe` looks the session up after `refuseIfBusy`: the recorded run at `RunAnnotation("recipe-<session>")`, its `session` (else its `task`), if that task is still among the sandbox's. It sets `task.Session`, and the runner opens that session (`OpenDaemonSession`) instead of starting one. The run's record carries the conversation on, so every later run finds it. The runner still sends the recipe's context, which a continued conversation already has; that is harmless.
+- `--new-session` exists only for a recipe in a session. A repository's runs (`--session`, research) are untouched.
+- care-iterate takes its instruction as `--instruction`. It has no `instructions` input, whose flag has the same name.
+- `pr watch` runs `care-ci` and `care-comments` under a `watch-<recipe>-<unix>` run name, then posts their replies (`post-replies`).
+

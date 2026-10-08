@@ -9,60 +9,22 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 )
 
-// careRunSandbox is PR prNum's fix sandbox when it records a run of the
-// care recipe on the PR, or "". The watch revises that run.
-func careRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, repo string, prNum int, prURL string) string {
-	name, err := factorysandbox.PRFixSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, prURL)
-	if err != nil || name == "" {
-		return ""
-	}
-	sb, err := k8s.NewManager(kubeClient).GetSandbox(ctx, rootFlags.Namespace, name)
-	if err != nil {
-		return ""
-	}
-	if !careRunOn(sb.GetAnnotations(), prURL) {
-		return ""
-	}
-	return name
-}
-
-func careRunOn(annotations map[string]string, prURL string) bool {
-	return annotations[factorysandbox.RunAnnotation(careTaskType)] != "" && normalizeItemURL(annotations["htmlURL"]) == normalizeItemURL(prURL)
-}
-
-// careTaskType is what the care recipe's runs are recorded under: it
-// declares no task-type.
-const careTaskType = "recipe-care"
-
-// careFollowUp runs care on prURL for one job — revise (fix-ci,
-// address-comments) in care's run in careSandbox, or with none, a start
-// focused on it (ci, comments) — waits for it, and posts what it answers
-// on the PR (post-replies).
-func careFollowUp(ctx context.Context, gh *githubv39.Client, kubeClient *clients.KubernetesClient, prURL, careSandbox, revise, focus string) error {
-	if careSandbox != "" {
-		sb, err := taskapi.Connect(ctx, rootFlags.Namespace, careSandbox)
-		if err != nil {
-			return fmt.Errorf("connecting to sandbox %s: %w", careSandbox, err)
-		}
-		defer sb.Close()
-		id, err := reviseIn(ctx, sb, revise, reviseFlags{recipe: "care"}, nil)
-		if err != nil {
-			return err
-		}
-		return awaitAndApply(ctx, sb, gh, nil, careSandbox, id, "post-replies", false)
-	}
+// careFollowUp runs one of care's recipes on prURL (care-ci,
+// care-comments) — in session care, it continues care's conversation in
+// the PR's sandbox, or opens one — waits for it, and posts what it
+// answers on the PR (post-replies).
+func careFollowUp(ctx context.Context, gh *githubv39.Client, kubeClient *clients.KubernetesClient, prURL, recipeName string) error {
 	it, err := parseRecipeTarget(prURL)
 	if err != nil {
 		return err
 	}
-	runName := fmt.Sprintf("watch-care-%s-%d", focus, time.Now().Unix())
-	if err := runRecipe(ctx, "care", prURL, runName, "", applyMode{}, map[string]string{"focus": focus}, nil); err != nil {
+	runName := fmt.Sprintf("watch-%s-%d", recipeName, time.Now().Unix())
+	if err := runRecipe(ctx, recipeName, prURL, runName, "", false, applyMode{}, map[string]string{}, nil); err != nil {
 		return err
 	}
 	name, err := factorysandbox.PRFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, prURL)

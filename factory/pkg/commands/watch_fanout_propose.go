@@ -18,5 +18,5 @@ func proposeFanout(ctx context.Context, issueURL string) error {
 		return err
 	}
 	runName := fmt.Sprintf("fanout-%d-%d", it.Number, time.Now().Unix())
-	return runRecipe(ctx, "fanout", issueURL, runName, "", applyMode{on: true}, map[string]string{}, nil)
+	return runRecipe(ctx, "fanout", issueURL, runName, "", false, applyMode{on: true}, map[string]string{}, nil)
 }

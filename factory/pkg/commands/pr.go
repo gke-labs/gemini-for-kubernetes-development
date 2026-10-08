@@ -702,9 +702,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 			return true
 		}
 
-		// Care follows the PR up (design/care-recipe.md): a revise of
-		// care's run on the PR, or with none, a start focused on the job.
-		careSandbox := careRunSandbox(ctx, kubeClient, repo, prNum, prURL)
+		// Care follows the PR up (design/recipe-sessions.md): care-ci on
+		// failed checks, care-comments on new comments, in care's session.
 
 		// Check 1: Check CI check runs and commit statuses
 		headSHA := pr.GetHead().GetSHA()
@@ -737,8 +736,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 				lastInvestigatedSHA = headSHA
 				lastInvestigatedTime = time.Now()
 				if dryRun {
-					fmt.Printf("[DRYRUN] Would run care's fix-ci for PR #%d\n", prNum)
-				} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, careSandbox, "fix-ci", "ci"); err != nil {
+					fmt.Printf("[DRYRUN] Would run care-ci for PR #%d\n", prNum)
+				} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, "care-ci"); err != nil {
 					klog.Errorf("Fix CI failed: %v", err)
 				}
 			}
@@ -776,8 +775,8 @@ func runPRWatch(ctx context.Context, prURL string, interval time.Duration, dryRu
 					fmt.Printf("\nFound new review comments for PR #%d. Running care...\n", prNum)
 					lastCommentAddressedTime = time.Now()
 					if dryRun {
-						fmt.Printf("[DRYRUN] Would run care's address-comments for PR #%d\n", prNum)
-					} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, careSandbox, "address-comments", "comments"); err != nil {
+						fmt.Printf("[DRYRUN] Would run care-comments for PR #%d\n", prNum)
+					} else if err := careFollowUp(ctx, ghClient, kubeClient, prURL, "care-comments"); err != nil {
 						klog.Errorf("Address comments failed: %v", err)
 					}
 				}

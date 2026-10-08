@@ -307,19 +307,26 @@ func TestRecordedRunCarriesRevises(t *testing.T) {
 		t.Errorf("revises = %+v", run.Revises)
 	}
 
-	// A revise's inputs are recorded with it: care's iterate asks for an
+	// A revise's inputs are recorded with it: fix's iterate asks for an
 	// instruction.
-	_, rec, err = recipe.Builtin("care")
+	_, rec, err = recipe.Builtin("fix")
 	if err != nil {
 		t.Fatal(err)
 	}
 	run = recordedRun(spool.Task{ID: "t2"}, rec, started)
-	byID := map[string]factorysandbox.RecordedRevise{}
-	for _, rv := range run.Revises {
-		byID[rv.ID] = rv
+	if len(run.Revises) != 1 || run.Revises[0].ID != "iterate" || !slices.Equal(run.Revises[0].Inputs, []string{"instruction"}) || run.Kind != "Change" {
+		t.Errorf("fix run = %+v", run)
 	}
-	if !slices.Equal(byID["iterate"].Inputs, []string{"instruction"}) || byID["rebase"].Label != "Rebase" || byID["rebase"].Inputs != nil || run.Kind != "Change" {
-		t.Errorf("care run = %+v", run)
+
+	// A run in a session records the recipe it ran, and the conversation
+	// it continued.
+	_, rec, err = recipe.Builtin("care-ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run = recordedRun(spool.Task{ID: "t3", Session: "t1"}, rec, started)
+	if run.Recipe != "care-ci" || run.Session != "t1" || run.Revises != nil {
+		t.Errorf("care-ci run = %+v", run)
 	}
 }
 
@@ -388,14 +395,17 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	if len(fix.Revises) != 1 || fix.Revises[0].ID != "iterate" || !slices.Equal(fix.Revises[0].Inputs, []string{"instruction"}) {
 		t.Errorf("fix revises = %+v, want iterate alone, asking for instruction", fix.Revises)
 	}
-	var careRevises []string
-	for _, rv := range byName["care"].Revises {
-		careRevises = append(careRevises, rv.ID)
+	// care's jobs are recipes of session care, each a Change, none with
+	// revises: the others are its follow-ups.
+	for name, label := range map[string]string{"care": "Care", "care-comments": "Address comments", "care-ci": "Fix CI", "care-rebase": "Rebase", "care-iterate": "Iterate"} {
+		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != "care" || got.Revises != nil || !slices.Equal(got.On, []string{"my-pr"}) {
+			t.Errorf("%s = %+v, want %q, a Change in session care with no revises", name, got, label)
+		}
 	}
-	if care := byName["care"]; care.Kind != "Change" || strings.Join(careRevises, ",") != "address-comments,fix-ci,rebase,iterate" {
-		t.Errorf("care = %+v, want a Change with address-comments, fix-ci, rebase, iterate", care)
+	if byName["fix"].Session != "" {
+		t.Errorf("fix is in session %q, want none: care never continues it", byName["fix"].Session)
 	}
-	for name, want := range map[string]string{"fix": "fix", "plan": "plan", "triage": "recipe-triage", "review": "recipe-review", "research": "research", "care": careTaskType} {
+	for name, want := range map[string]string{"fix": "fix", "plan": "plan", "triage": "recipe-triage", "review": "recipe-review", "research": "research", "care": "recipe-care", "care-ci": "recipe-care", "care-iterate": "recipe-care"} {
 		if got := byName[name].TaskType; got != want {
 			t.Errorf("%s's task type = %q, want %q", name, got, want)
 		}
@@ -442,5 +452,28 @@ func TestPRPushInputs(t *testing.T) {
 	}
 	if fmt.Sprint(inputs) != fmt.Sprint(want) {
 		t.Errorf("inputs = %v, want %v", inputs, want)
+	}
+}
+
+// A run in a session continues the conversation its group's recorded run
+// is in, the one that run opened or continued, while it is the
+// sandbox's; otherwise it opens one.
+func TestContinuedSession(t *testing.T) {
+	entries := []spool.Entry{{Task: spool.Task{ID: "care-2"}}, {Task: spool.Task{ID: "care-1"}}}
+	for _, tc := range []struct {
+		why, recorded, want string
+	}{
+		{"none recorded", "", ""},
+		{"the run opened it", `{"task":"care-1"}`, "care-1"},
+		{"the run continued it", `{"task":"care-2","session":"care-1"}`, "care-1"},
+		{"the sandbox was recreated", `{"task":"care-0"}`, ""},
+		{"unreadable", "{", ""},
+	} {
+		if got := continuedSession(tc.recorded, entries); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.why, got, tc.want)
+		}
+	}
+	if factorysandbox.RunAnnotation("recipe-care") != "sandbox.gemini.google.com/recipe-care-run" {
+		t.Errorf("session care records at %s, not where care's runs did", factorysandbox.RunAnnotation("recipe-care"))
 	}
 }

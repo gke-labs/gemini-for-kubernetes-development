@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
@@ -14,19 +13,6 @@ import (
 func TestFactoryPosted(t *testing.T) {
 	if !factoryPosted("Done.\n\n<!-- factory:task-output kind=Change task=fix-2 reply=1 -->") || factoryPosted("please fix") {
 		t.Error("factoryPosted")
-	}
-}
-
-// The watch revises care's run where the PR's sandbox records one on
-// the PR.
-func TestCareRunOn(t *testing.T) {
-	pr := "https://github.com/o/r/pull/12"
-	run := factorysandbox.RunAnnotation(careTaskType)
-	if !careRunOn(map[string]string{"htmlURL": "https://github.com/O/r/pull/12/", run: `{"task":"c-1"}`}, pr) {
-		t.Error("care's run on the PR not found")
-	}
-	if careRunOn(map[string]string{"htmlURL": pr}, pr) || careRunOn(map[string]string{"htmlURL": "https://github.com/o/r/pull/13", run: "{}"}, pr) {
-		t.Error("found a care run where there is none on the PR")
 	}
 }
 
