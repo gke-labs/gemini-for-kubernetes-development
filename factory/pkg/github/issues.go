@@ -102,3 +102,46 @@ func (c *Client) SearchIssues(ctx context.Context, query string, opts *githubv39
 	}
 	return result, nil
 }
+
+// CreateIssue opens an issue and returns its number.
+func (c *Client) CreateIssue(ctx context.Context, title, body string, labels []string) (int, error) {
+	if !c.Ready() {
+		return 0, errNoClient
+	}
+
+	req := &githubv39.IssueRequest{Title: githubv39.String(title), Body: githubv39.String(body)}
+	if len(labels) > 0 {
+		req.Labels = &labels
+	}
+	issue, _, err := c.gh.Issues.Create(ctx, c.owner, c.repo, req)
+	if err != nil {
+		return 0, fmt.Errorf("creating issue %q: %w", title, err)
+	}
+	return issue.GetNumber(), nil
+}
+
+// EditIssue replaces an issue's title and body.
+func (c *Client) EditIssue(ctx context.Context, number int, title, body string) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+
+	req := &githubv39.IssueRequest{Title: githubv39.String(title), Body: githubv39.String(body)}
+	if _, _, err := c.gh.Issues.Edit(ctx, c.owner, c.repo, number, req); err != nil {
+		return fmt.Errorf("editing #%d: %w", number, err)
+	}
+	return nil
+}
+
+// CloseIssue closes an issue as completed.
+func (c *Client) CloseIssue(ctx context.Context, number int) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+
+	req := &githubv39.IssueRequest{State: githubv39.String("closed")}
+	if _, _, err := c.gh.Issues.Edit(ctx, c.owner, c.repo, number, req); err != nil {
+		return fmt.Errorf("closing #%d: %w", number, err)
+	}
+	return nil
+}

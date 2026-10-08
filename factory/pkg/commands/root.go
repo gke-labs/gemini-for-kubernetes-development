@@ -146,6 +146,10 @@ coding tasks without local side effects or host dependencies.`,
 	applyCmd.GroupID = "workflows"
 	cmd.AddCommand(applyCmd)
 
+	fanoutCmd := NewFanoutCommand(ctx)
+	fanoutCmd.GroupID = "workflows"
+	cmd.AddCommand(fanoutCmd)
+
 	return cmd
 }
 
