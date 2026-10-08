@@ -229,8 +229,15 @@ func (s *Server) sessionGroup(ctx context.Context, c *gin.Context, sb *unstructu
 	}
 	group := sessionRecipes{board: board}
 	for _, rec := range catalog {
-		if rec.Session == tag {
-			group.actions = append(group.actions, models.WorkAction{Verb: "recipe", Revise: rec.Name, Label: recipeLabel(catalog, rec.Name), Inputs: launchInputs(rec), Enabled: true})
+		if rec.Session != tag {
+			continue
+		}
+		action := models.WorkAction{Verb: "recipe", Revise: rec.Name, Label: recipeLabel(catalog, rec.Name), Inputs: launchInputs(rec), Enabled: true}
+		// The recipe named like the session first: New conversation runs it.
+		if rec.Name == tag {
+			group.actions = append([]models.WorkAction{action}, group.actions...)
+		} else {
+			group.actions = append(group.actions, action)
 		}
 	}
 	disable := func(reason string) (sessionRecipes, bool) {
@@ -528,6 +535,9 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 	var req struct {
 		Revise string            `json:"revise"`
 		Inputs map[string]string `json:"inputs"`
+		// NewSession runs a recipe of the session's group in a new
+		// conversation of the session.
+		NewSession bool `json:"newSession"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Revise == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "revise is required"})
@@ -539,9 +549,13 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 		// A recipe of the session's group: it runs into this
 		// conversation as a launch on the PR does.
 		if action, offered = findWorkAction(offers, "recipe", req.Revise); offered && action.Enabled {
-			s.runSessionRecipe(c, sb, task, action, req.Inputs)
+			s.runSessionRecipe(c, sb, task, action, req.Inputs, req.NewSession)
 			return
 		}
+	}
+	if req.NewSession {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "only a recipe of the session's group opens a new conversation"})
+		return
 	}
 	switch {
 	case !offered:
@@ -580,7 +594,7 @@ func (s *Server) reviseTaskSession(c *gin.Context) {
 
 // runSessionRecipe files a launch of one of the session's group's recipes
 // on its PR, as the row's button does. 202.
-func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured, task string, action models.WorkAction, given map[string]string) {
+func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured, task string, action models.WorkAction, given map[string]string, newSession bool) {
 	ctx := c.Request.Context()
 	run, _ := factorycli.SessionRun(sb.GetAnnotations(), task)
 	group, _ := s.sessionGroup(ctx, c, sb, run)
@@ -607,12 +621,13 @@ func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured,
 		return
 	}
 	filed, err := s.fileRequest(ctx, group.board, boardv1alpha1.RequestSpec{
-		Verb:   boardv1alpha1.VerbRecipe,
-		Recipe: action.Revise,
-		Item:   "pr",
-		Member: member,
-		Number: group.pr,
-		Inputs: inputs,
+		Verb:       boardv1alpha1.VerbRecipe,
+		Recipe:     action.Revise,
+		Item:       "pr",
+		Member:     member,
+		Number:     group.pr,
+		Inputs:     inputs,
+		NewSession: newSession,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the run", "details": err.Error()})

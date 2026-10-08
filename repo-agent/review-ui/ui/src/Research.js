@@ -1272,7 +1272,11 @@ export function ResearchConversation({
     if (done && !done.error) setRevised(done.label || done.revise);
   }, [revises]);
 
-  const revise = (r) => {
+  // A session's group leads with the recipe named like the session: a
+  // new conversation starts with it.
+  const newConversation = revises.find(r => r.verb === 'recipe');
+
+  const revise = (r, newSession) => {
     // A revise that asks for inputs (Iterate's instruction) gets them
     // asked for, one at a time; cancelling any files nothing.
     const inputs = {};
@@ -1287,7 +1291,11 @@ export function ResearchConversation({
     fetch(`${api}/revise`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(r.inputs && r.inputs.length ? { revise: r.revise, inputs } : { revise: r.revise }),
+      body: JSON.stringify({
+        revise: r.revise,
+        ...(r.inputs && r.inputs.length ? { inputs } : {}),
+        ...(newSession ? { newSession: true } : {}),
+      }),
     })
       .then(async res => {
         if (res.ok) {
@@ -1605,7 +1613,7 @@ export function ResearchConversation({
               the controls used every turn, which both crowded those and
               put Delete a stray click from Stop. */}
           {/* Only when there is something in it. */}
-          {((info && info.sandbox && info.namespace) || researchId) && (
+          {((info && info.sandbox && info.namespace) || researchId || newConversation) && (
           <span style={{ position: 'relative', display: 'inline-flex' }}>
             <button className="btn btn-sm" aria-label="More actions" aria-expanded={menuOpen}
               onClick={() => setMenuOpen(o => !o)} title="More actions">⋯</button>
@@ -1629,6 +1637,20 @@ export function ResearchConversation({
                       target="_blank" rel="noopener noreferrer" onClick={() => setMenuOpen(false)}
                       style={{ fontSize: 'x-small', padding: '4px 6px' }}
                       title={`Shell into ${info.sandbox}`}>terminal ↗</a>
+                  )}
+                  {/* A session's group (care's) starts over in a new
+                      conversation with its leading recipe; this one stays
+                      readable, and the row's chip follows the new one. */}
+                  {newConversation && (
+                    <button role="menuitem" className="btn btn-sm"
+                      disabled={!newConversation.enabled || busy || taskState.held || !!revising}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        if (window.confirm(`Run ${newConversation.label || newConversation.revise} in a new conversation? This one stays as it is.`)) revise(newConversation, true);
+                      }}
+                      title={newConversation.enabled ? `Run ${newConversation.label || newConversation.revise} in a new conversation of the session` : `Not now: ${newConversation.reason}`}>
+                      New conversation
+                    </button>
                   )}
                   {/* A task's sandbox is the issue's, and not this
                       conversation's to delete. */}

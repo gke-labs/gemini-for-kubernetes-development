@@ -71,6 +71,8 @@ spec:
                 type: string
               member:
                 type: string
+              newSession:
+                type: boolean
               number:
                 type: integer
               recipe:

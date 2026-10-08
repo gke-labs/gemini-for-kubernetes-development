@@ -301,3 +301,15 @@ func TestNormalizeTriageDraft(t *testing.T) {
 		}
 	}
 }
+
+// A run for a new conversation says so; any other continues its session's.
+func TestRecipeArgsNewSession(t *testing.T) {
+	opts := RecipeOptions{Recipe: "care-ci", URL: "https://github.com/o/repo/pull/9", Namespace: "alice", RunName: "r/1"}
+	if args := strings.Join(recipeArgs(opts, time.Minute), " "); strings.Contains(args, "--new-session") {
+		t.Errorf("args = %q, want no --new-session", args)
+	}
+	opts.NewSession = true
+	if args := strings.Join(recipeArgs(opts, time.Minute), " "); !strings.Contains(args, " --new-session") {
+		t.Errorf("args = %q, want --new-session", args)
+	}
+}

@@ -159,6 +159,7 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, rec.Name, spec.Member, name, itemURL(work, spec.Item, spec.Number), token, recipeRunName(req))
 	opts.Inputs = spec.Inputs
+	opts.NewSession = spec.NewSession && rec.Session != ""
 	opts.Apply = recipeApplies[rec.Kind]
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe", "recipe", rec.Name, "item", spec.Item, "number", spec.Number, "board", work.board.Name, "executor", spec.Member)
