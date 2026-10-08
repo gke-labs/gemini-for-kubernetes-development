@@ -63,7 +63,6 @@ type lineWriter struct {
 
 	mu      sync.Mutex
 	partial []byte
-	long    bool
 }
 
 func (l *lineWriter) Write(p []byte) (int, error) {
