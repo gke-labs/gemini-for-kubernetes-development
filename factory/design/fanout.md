@@ -206,7 +206,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 
 ### The controller
 
-`watch/fanout` runs on the slow issue sweep, and when the Nudger sees a child close (the Nudger finds a child's parent by the marker, as it finds a workflow by its link). For each open parent labelled `<trigger>/fanout`:
+`watch/fanouts` is a subcontroller of its own, one goroutine with no workers. It sweeps every open parent labelled `<trigger>/fanout` (either spelling) every 5 minutes, one after another. When the sandbox reconciler collects a closed issue's sandbox, it tells the fan-out controller as well as the Nudger, and a closed child (found by its marker) wakes its parent straight away. Nothing wakes a parent when a PR closes unmerged or a stop label comes off; the sweep catches those. While the queue drains, no pass runs. For each parent:
 
 1. **Read** the spec (above), the children (issues with the marker on the parent's timeline, plus the ones the state records), and the state in the progress comment.
 2. **Propose**, if there is no spec: run the recipe, post the spec comment, add the stop label. Nothing else happens on this pass.
@@ -217,7 +217,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order, with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
 8. **Final.** Once every item's child is closed, create the `Finally` child (labelled at once). When that one closes as completed, or straight away if there is no `Finally` section, close the parent. If the bot cannot close it, it comments instead.
 
-The issue scanner skips a parent labelled `<trigger>/fanout`. Otherwise a coder bot would pick up the whole parent as one fix task.
+The issue scanner skips a parent labelled `<trigger>/fanout`. Otherwise a coder bot would pick up the whole parent as one fix task. It also leaves alone a child that has the marker but not the trigger label, both when it adopts issues filed by the bot's login and when it queues. The fan-out files its children as that same login, so adoption would otherwise label every child at once and defeat the window. Once the fan-out labels a child, the scanner handles it like any other labelled issue.
 
 ### The slow start
 
@@ -290,9 +290,9 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - `Sync`, one pass on GitHub: read, `Decide`, write, the progress comment. The watch controller (step 3) calls it.
    - `factory watch fanout --url <issue> [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
 3. **watch:**
-   - The `watch/fanout` controller: children, the window, checkpoints, the final step, the progress comment.
-   - The scanner skips parents.
-   - The Nudger wakes a parent when one of its children closes.
+   - The `watch/fanouts` controller: a sweep calling `Sync` on each parent.
+   - The scanner skips parents and children the fan-out has not labelled (adoption too).
+   - The reconciler's closed-issue hook wakes a parent when one of its children closes.
 4. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 5. **Verify on KCC:**
    - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.

@@ -333,6 +333,10 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return
 	}
+	if why := s.fanoutWork(issue); why != "" {
+		klog.Infof("Skipping issue #%d because %s", num, why)
+		return
+	}
 	if refIssues[num] {
 		klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
 		return

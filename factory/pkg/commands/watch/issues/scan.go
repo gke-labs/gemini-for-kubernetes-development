@@ -9,6 +9,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/fanout"
 )
 
 // scanLabelled lists every open issue carrying the trigger label, following
@@ -122,6 +123,12 @@ func (s *Scanner) adoptCreatedIssues(ctx context.Context, created []*githubv39.I
 			klog.Infof("Skipping auto labeling/assigning issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 			continue
 		}
+		// The fan-out files its children as the operator too, and labels them
+		// a window at a time; adopting them all would start every one at once.
+		if why := s.fanoutWork(issue); why != "" {
+			klog.V(2).Infof("Not adopting issue #%d: %s", num, why)
+			continue
+		}
 
 		hasTriggerLabel := conventions.HasTriggerLabel(issue.Labels, s.cfg.TriggerLabel)
 		hasAssignee := s.assignedToPool(issue)
@@ -150,6 +157,19 @@ func (s *Scanner) adoptCreatedIssues(ctx context.Context, created []*githubv39.I
 		adopted = append(adopted, issue)
 	}
 	return adopted
+}
+
+// fanoutWork says why an issue belongs to a fan-out rather than to the issue
+// scanner, or "" when it does not: a parent is never worked on itself, and a
+// child is worked on only once the fan-out has labelled it.
+func (s *Scanner) fanoutWork(issue *githubv39.Issue) string {
+	if conventions.HasFanoutLabel(issue.Labels, s.cfg.TriggerLabel) {
+		return "it is a fan-out parent"
+	}
+	if parent, _, _, ok := fanout.ParseMarker(issue.GetBody()); ok && !conventions.HasTriggerLabel(issue.Labels, s.cfg.TriggerLabel) {
+		return fmt.Sprintf("it is a child of fan-out #%d the fan-out has not started", parent)
+	}
+	return ""
 }
 
 // assignedToPool reports whether any bot account is already assigned to the issue.

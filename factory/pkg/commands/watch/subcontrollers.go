@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
@@ -12,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -57,18 +59,45 @@ func (w *Watcher) newReconciler() *sandbox.Reconciler {
 }
 
 // newLinkedWork constructs what the reconciler tells about the issues it finds
-// closed, which queues the workflows waiting on them. Queueing workflow runs is
-// the issue scanner's business, so a watcher that does not scan issues gets
-// nil and nudges nothing.
+// closed: the nudger, which queues the workflows waiting on them, and the
+// fan-out controller, which wakes the parent of a closed child. Both start
+// issue work, the issue scanner's business, so a watcher that does not scan
+// issues gets nil and nudges nothing.
 func (w *Watcher) newLinkedWork() sandbox.LinkedWork {
 	if !w.issuesEnabled() {
 		return nil
 	}
-	return issues.NewNudger(w.issueScannerConfig(), issues.NudgerDeps{
+	nudger := issues.NewNudger(w.issueScannerConfig(), issues.NudgerDeps{
 		GitHub:    w.repoClient,
 		Queue:     w.queueMgr,
 		Sandboxes: w.sandboxes,
 		Users:     watcherUserSelector{w: w},
+	})
+	return linkedWorks{nudger, w.fanouts}
+}
+
+// linkedWorks tells each of its members about every closed issue, in order.
+type linkedWorks []sandbox.LinkedWork
+
+func (l linkedWorks) NudgeLinkedWorkflows(ctx context.Context, closed *githubv39.Issue) {
+	for _, lw := range l {
+		lw.NudgeLinkedWorkflows(ctx, closed)
+	}
+}
+
+// newFanoutController constructs the fan-out controller, which runs as its
+// own goroutine and keeps every open fan-out parent moving. It is built before
+// the reconciler, which wakes it when a child's sandbox is collected.
+func (w *Watcher) newFanoutController() *fanouts.Controller {
+	return fanouts.New(fanouts.Config{
+		Interval:     fanouts.DefaultInterval,
+		TriggerLabel: w.triggerLabel,
+		GitHubLogin:  w.githubLogin,
+		MinNumber:    w.minIssueNumber(),
+		DryRun:       w.DryRun,
+	}, fanouts.Deps{
+		GitHub: w.repoClient,
+		Paused: w.draining,
 	})
 }
 

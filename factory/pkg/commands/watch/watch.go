@@ -27,6 +27,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.reconciler.ReconcileOnce(ctx)
 		if w.issuesEnabled() {
 			w.issueScanner.ScanOnce(ctx)
+			w.fanouts.SyncOnce(ctx)
 		}
 		if w.prsEnabled() {
 			w.prScanner.ScanOnce(ctx)
@@ -60,6 +61,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			_ = w.issueScanner.Run(daemonCtx)
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = w.fanouts.Run(daemonCtx)
 		}()
 	}
 	if w.prsEnabled() {

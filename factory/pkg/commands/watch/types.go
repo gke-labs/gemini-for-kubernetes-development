@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/chores"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/dispatcher"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/fanouts"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
@@ -98,6 +99,7 @@ type Watcher struct {
 	chores           *chores.Scheduler
 	issueScanner     *issues.Scanner
 	prScanner        *prs.Scanner
+	fanouts          *fanouts.Controller
 	timeoutChan      <-chan time.Time
 }
 
@@ -138,6 +140,7 @@ func (w *Watcher) initComponents() {
 		GitHub: w.ghClient,
 	})
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
+	w.fanouts = w.newFanoutController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.issueScanner = w.newIssueScanner()
