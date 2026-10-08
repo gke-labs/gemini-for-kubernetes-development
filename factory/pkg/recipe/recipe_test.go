@@ -32,24 +32,27 @@ func TestBuiltinTriageParses(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	for name, y := range map[string]string{
-		"no name":          "start: {steps: [{run: x}]}",
-		"no steps":         "name: a",
-		"two kinds":        "name: a\nstart: {steps: [{run: x, ask: y}]}",
-		"no kind":          "name: a\nstart: {steps: [{id: x}]}",
-		"unknown uses":     "name: a\nstart: {steps: [{uses: curl-the-token}]}",
-		"with on run":      "name: a\nstart: {steps: [{run: x, with: {a: b}}]}",
-		"capture on run":   "name: a\nstart: {steps: [{run: x, capture: out.txt}]}",
-		"capture path":     "name: a\nstart: {steps: [{ask: x, capture: ../out.txt}]}",
-		"capture dotfile":  "name: a\nstart: {steps: [{ask: x, capture: .bashrc}]}",
-		"duplicate id":     "name: a\nstart: {steps: [{id: a, run: x}, {id: a, run: y}]}",
-		"bad id":           "name: a\nstart: {steps: [{id: A-1, run: x}]}",
-		"unknown field":    "name: a\nstart: {steps: [{run: x, shell: zsh}]}",
-		"continue on uses": "name: a\nstart: {steps: [{uses: setup-git, continue-on-error: true}]}",
-		"bad input name":   "name: a\ninputs: {Focus: {}}\nstart: {steps: [{run: x}]}",
-		"output path":      "name: a\noutputs: [../x]\nstart: {steps: [{run: x}]}",
-		"output dotfile":   "name: a\noutputs: [.env]\nstart: {steps: [{run: x}]}",
-		"required default": "name: a\ninputs: {focus: {required: true, default: x}}\nstart: {steps: [{run: x}]}",
-		"bad task type":    "name: a\ntask-type: Plan_1\nstart: {steps: [{run: x}]}",
+		"no name":                       "start: {steps: [{run: x}]}",
+		"no steps":                      "name: a",
+		"two kinds":                     "name: a\nstart: {steps: [{run: x, ask: y}]}",
+		"no kind":                       "name: a\nstart: {steps: [{id: x}]}",
+		"unknown uses":                  "name: a\nstart: {steps: [{uses: curl-the-token}]}",
+		"with on run":                   "name: a\nstart: {steps: [{run: x, with: {a: b}}]}",
+		"capture on run":                "name: a\nstart: {steps: [{run: x, capture: out.txt}]}",
+		"capture path":                  "name: a\nstart: {steps: [{ask: x, capture: ../out.txt}]}",
+		"capture dotfile":               "name: a\nstart: {steps: [{ask: x, capture: .bashrc}]}",
+		"duplicate id":                  "name: a\nstart: {steps: [{id: a, run: x}, {id: a, run: y}]}",
+		"bad id":                        "name: a\nstart: {steps: [{id: A-1, run: x}]}",
+		"unknown field":                 "name: a\nstart: {steps: [{run: x, shell: zsh}]}",
+		"continue on uses":              "name: a\nstart: {steps: [{uses: setup-git, continue-on-error: true}]}",
+		"bad input name":                "name: a\ninputs: {Focus: {}}\nstart: {steps: [{run: x}]}",
+		"output path":                   "name: a\noutputs: [../x]\nstart: {steps: [{run: x}]}",
+		"output dotfile":                "name: a\noutputs: [.env]\nstart: {steps: [{run: x}]}",
+		"required default":              "name: a\ninputs: {focus: {required: true, default: x}}\nstart: {steps: [{run: x}]}",
+		"bad task type":                 "name: a\ntask-type: Plan_1\nstart: {steps: [{run: x}]}",
+		"applicable-when empty":         "name: a\napplicable-when: {}\nstart: {steps: [{run: x}]}",
+		"applicable-when bad template":  "name: a\napplicable-when: {label: \"{{ .Trigger\"}\nstart: {steps: [{run: x}]}",
+		"applicable-when unknown field": "name: a\napplicable-when: {label: \"{{ .Repo }}/x\"}\nstart: {steps: [{run: x}]}",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
@@ -449,6 +452,39 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	}
 	if strings.Contains(string(out), "session:") {
 		t.Errorf("sandbox care-ci recipe kept its session:\n%s", out)
+	}
+
+	// So is where a board offers it.
+	if data, rec, err = Builtin("fanout"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.ApplicableWhen == nil || rec.ApplicableWhen.Label != "{{ .Trigger }}/fanout" {
+		t.Fatalf("fanout applicable-when = %+v, want it on fan-out parents", rec.ApplicableWhen)
+	}
+	if out, err = ForSandbox(data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "applicable-when:") {
+		t.Errorf("sandbox fanout recipe kept its applicable-when:\n%s", out)
+	}
+}
+
+// An applicable-when label is spelled once per trigger, without repeats.
+func TestApplicableWhenLabels(t *testing.T) {
+	aw := &ApplicableWhen{Label: "{{ .Trigger }}/fanout"}
+	for _, c := range []struct {
+		triggers []string
+		want     []string
+	}{
+		{[]string{"overseer", "kcc"}, []string{"overseer/fanout", "kcc/fanout"}},
+		{[]string{"overseer", "Overseer"}, []string{"overseer/fanout"}},
+	} {
+		if got, err := aw.Labels(c.triggers...); err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("Labels(%v) = %v, %v, want %v", c.triggers, got, err, c.want)
+		}
+	}
+	if got, _ := (&ApplicableWhen{Label: "help wanted"}).Labels("overseer", "kcc"); !slices.Equal(got, []string{"help wanted"}) {
+		t.Errorf("a plain label = %v, want it alone", got)
 	}
 }
 

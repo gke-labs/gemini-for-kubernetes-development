@@ -81,6 +81,16 @@ func Priority(labels []*githubv39.Label) api.TaskPriority {
 	return api.PriorityMedium
 }
 
+// Prefixes are the label prefixes a watch with triggerLabel honours:
+// overseer, and triggerLabel when it is another.
+func Prefixes(triggerLabel string) []string {
+	prefixes := []string{defaultPrefix}
+	if triggerLabel != "" && !strings.EqualFold(triggerLabel, defaultPrefix) {
+		prefixes = append(prefixes, triggerLabel)
+	}
+	return prefixes
+}
+
 // namespaced returns the accepted spellings of a label suffix: the
 // 'overseer/' default plus the deployment's own trigger label namespace.
 func namespaced(triggerLabel, suffix string) []string {

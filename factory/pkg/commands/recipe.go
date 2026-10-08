@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -366,6 +367,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	}
 	var standard map[string]string
 	var htmlURL string
+	var labels []string
 	var pr *githubv39.PullRequest
 	switch {
 	case it.IsRepo():
@@ -380,15 +382,20 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 			return fmt.Errorf("fetching PR #%d: %w", it.Number, err)
 		}
 		standard, htmlURL = prInputs(it, pr), pr.GetHTMLURL()
+		labels = labelNames(pr.Labels)
 	default:
 		issue, _, err := ghClient.Issues.Get(ctx, it.Owner, it.Repo, it.Number)
 		if err != nil {
 			return fmt.Errorf("fetching issue #%d: %w", it.Number, err)
 		}
 		standard, htmlURL = issueInputs(it, issue), issue.GetHTMLURL()
+		labels = labelNames(issue.Labels)
 	}
 	target := recipeTarget(it, pr, string(secret.Data[constants.KeyGithubLogin]))
 	if err := checkOn(rec, it, target); err != nil {
+		return err
+	}
+	if err := checkApplicable(rec, it, labels, watchTriggerLabel()); err != nil {
 		return err
 	}
 	if rec.Credentials == recipe.CredentialsClone && !it.IsPR && !it.IsRepo() {
@@ -616,6 +623,48 @@ func checkOn(rec *recipe.Recipe, it githubItem, target string) error {
 	}
 	what := map[string]string{recipe.OnRepo: "repository", recipe.OnIssue: "issue", recipe.OnPR: "pull request", recipe.OnMyPR: "pull request"}[target]
 	return fmt.Errorf("recipe %s runs on %s, not on a %s", rec.Name, strings.Join(rec.On, ", "), what)
+}
+
+// applicableLabels are the labels rec applies to items with one of
+// (recipe.ApplicableWhen), as a watch with triggerLabel spells them; none
+// when it applies to every item.
+func applicableLabels(rec *recipe.Recipe, triggerLabel string) ([]string, error) {
+	if rec.ApplicableWhen == nil {
+		return nil, nil
+	}
+	return rec.ApplicableWhen.Labels(conventions.Prefixes(triggerLabel)...)
+}
+
+// checkApplicable refuses an item the recipe does not apply to
+// (applicableLabels): one with none of its labels. A repository has no
+// labels.
+func checkApplicable(rec *recipe.Recipe, it githubItem, labels []string, triggerLabel string) error {
+	want, err := applicableLabels(rec, triggerLabel)
+	if err != nil || len(want) == 0 {
+		return err
+	}
+	for _, w := range want {
+		if slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, w) }) {
+			return nil
+		}
+	}
+	what := "issue"
+	switch {
+	case it.IsRepo():
+		return fmt.Errorf("recipe %s applies only to items labelled %s; a repository has no labels", rec.Name, strings.Join(want, " or "))
+	case it.IsPR:
+		what = "PR"
+	}
+	return fmt.Errorf("recipe %s applies only to items labelled %s; %s #%d is not", rec.Name, strings.Join(want, " or "), what, it.Number)
+}
+
+// labelNames are the names of GitHub labels.
+func labelNames(labels []*githubv39.Label) []string {
+	var out []string
+	for _, l := range labels {
+		out = append(out, l.GetName())
+	}
+	return out
 }
 
 // isMyPR reports whether login authored pr and its head is a branch on

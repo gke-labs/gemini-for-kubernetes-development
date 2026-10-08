@@ -34,6 +34,16 @@ type RecipeInfo struct {
 	// group a board shows as one, whose runs share one conversation and
 	// TaskType.
 	Session string `json:"session,omitempty"`
+	// ApplicableWhen is which items it applies to (recipe.ApplicableWhen),
+	// its label spelled for this factory's trigger label; unset, every one
+	// On names.
+	ApplicableWhen *RecipeApplicableInfo `json:"applicableWhen,omitempty"`
+}
+
+// RecipeApplicableInfo is which items a recipe applies to: those with one
+// of Labels.
+type RecipeApplicableInfo struct {
+	Labels []string `json:"labels"`
 }
 
 // RecipeInputInfo is one declared input. Revise marks one only revises
@@ -58,6 +68,9 @@ type RecipeReviseInfo struct {
 
 func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType, Session: rec.Session}
+	if labels, err := applicableLabels(rec, watchTriggerLabel()); err == nil && len(labels) > 0 {
+		info.ApplicableWhen = &RecipeApplicableInfo{Labels: labels}
+	}
 	if info.TaskType == "" {
 		info.TaskType = "recipe-" + rec.SessionName()
 	}

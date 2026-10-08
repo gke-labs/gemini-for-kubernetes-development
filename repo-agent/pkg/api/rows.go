@@ -72,17 +72,30 @@ func runGroup(s models.RunSession) string {
 }
 
 // rowRecipes are the launch buttons of a row of item, a PR of the
-// member's from their fork if myPR: the recipes the controller published
-// that run there, none before it has.
-func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string, myPR bool) []models.RowRecipe {
+// member's from their fork if myPR, labelled labels: the recipes the
+// controller published that run there and are offered there, none before
+// it has.
+func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string, myPR bool, labels []string) []models.RowRecipe {
 	var out []models.RowRecipe
 	for _, rec := range catalog {
-		if !recipeRunsOn(rec, item, myPR) {
+		if !recipeRunsOn(rec, item, myPR) || !recipeOffered(rec, labels) {
 			continue
 		}
 		out = append(out, models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name), Session: rec.Session, Inputs: launchInputs(rec)})
 	}
 	return out
+}
+
+// recipeOffered reports whether a row labelled labels offers rec as a
+// button: unless its applicableWhen names labels the row has none of.
+func recipeOffered(rec boardv1alpha1.BoardRecipe, labels []string) bool {
+	if rec.ApplicableWhen == nil {
+		return true
+	}
+	return slices.ContainsFunc(rec.ApplicableWhen.Labels, func(want string) bool {
+		// GitHub labels are case-insensitive.
+		return slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, want) })
+	})
 }
 
 // latestRuns is the newest run of each group (runGroup) on the item.
@@ -108,7 +121,7 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 		if item.Type == "issue" && item.PRURL != "" {
 			continue
 		}
-		item.Recipes = rowRecipes(catalog, item.Type, item.MyPR)
+		item.Recipes = rowRecipes(catalog, item.Type, item.MyPR, item.Labels)
 		if item.Type == "pr" && item.Mine {
 			// GitHub takes no verdict from a PR's author on their own PR.
 			item.Recipes = slices.DeleteFunc(item.Recipes, func(rec models.RowRecipe) bool { return rec.Name == "review" })

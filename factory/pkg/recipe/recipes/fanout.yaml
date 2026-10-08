@@ -11,6 +11,10 @@
 name: fanout
 label: Fan out
 on: [issue]
+# Applies only to an issue marked a fan-out parent, as the watch daemon
+# marks one: overseer/fanout or <trigger>/fanout.
+applicable-when:
+  label: "{{ .Trigger }}/fanout"
 
 context: |
   You are writing a fan-out spec for a GitHub issue: a description of one

@@ -27,6 +27,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 
@@ -81,6 +82,39 @@ type Recipe struct {
 	// recipe in it is whole. Unset, the recipe keeps a conversation of its
 	// own. Like TaskOutput it is factory's.
 	Session string `yaml:"session,omitempty"`
+	// ApplicableWhen narrows the items on: names to those the recipe
+	// applies to. Unset, all of them. Like TaskOutput it is factory's.
+	ApplicableWhen *ApplicableWhen `yaml:"applicable-when,omitempty"`
+}
+
+// ApplicableWhen is which items a recipe applies to: factory refuses to
+// run it on others, and a board offers it only on these.
+type ApplicableWhen struct {
+	// Label is a label the item must have. It is a template of the trigger
+	// label, as the watch spells its labels: "{{ .Trigger }}/fanout" is
+	// overseer/fanout or <trigger>/fanout (Labels).
+	Label string `yaml:"label" json:"label"`
+}
+
+// Labels are the labels Label names, one of which the item must have:
+// Label rendered for each of triggers, without repeats.
+func (a *ApplicableWhen) Labels(triggers ...string) ([]string, error) {
+	tmpl, err := template.New("label").Option("missingkey=error").Parse(a.Label)
+	if err != nil {
+		return nil, fmt.Errorf("applicable-when label %q: %w", a.Label, err)
+	}
+	var out []string
+	for _, trigger := range triggers {
+		var b strings.Builder
+		if err := tmpl.Execute(&b, struct{ Trigger string }{trigger}); err != nil {
+			return nil, fmt.Errorf("applicable-when label %q: %w", a.Label, err)
+		}
+		label := strings.TrimSpace(b.String())
+		if label != "" && !slices.ContainsFunc(out, func(l string) bool { return strings.EqualFold(l, label) }) {
+			out = append(out, label)
+		}
+	}
+	return out, nil
 }
 
 // SessionName is the conversation the recipe's runs are recorded under:
@@ -336,6 +370,13 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("a recipe in a session is recorded under it; it takes no task-type")
 		case len(r.Revise) > 0:
 			return fmt.Errorf("a recipe in a session has no revises: the session's other recipes are its follow-ups")
+		}
+	}
+	if aw := r.ApplicableWhen; aw != nil {
+		if labels, err := aw.Labels("overseer"); err != nil {
+			return err
+		} else if len(labels) == 0 {
+			return fmt.Errorf("applicable-when needs a label")
 		}
 	}
 	if to := r.TaskOutput; to != nil {
@@ -594,7 +635,8 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without label,
-// on, task-output, task-type, session, input types and revise inputs, which
+// on, task-output, task-type, session, applicable-when, input types and
+// revise inputs, which
 // runners older than them reject as unknown fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
@@ -606,7 +648,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	for _, k := range []string{"label", "on", "task-output", "task-type", "session"} {
+	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when"} {
 		if dropKey(m, k) {
 			changed = true
 		}
