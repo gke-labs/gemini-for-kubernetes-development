@@ -602,6 +602,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
             );
           }
           // A review's ↗, beside its chip: where the review is on GitHub.
+          // The chip and its ↗ wrap together, never apart.
           const github = c.github && (
             <a href={c.github.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', marginLeft: '2px' }}
               title={c.github.title}>↗</a>
@@ -610,7 +611,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           // opens the session its draft is read and applied in.
           if (c.status === 'ready' && c.run) {
             return (
-              <span key={c.recipe}>
+              <span key={c.recipe} style={{ whiteSpace: 'nowrap' }}>
                 <a className="btn btn-sm" href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
                   onClick={sessionClick(onOpenSession, c.run)}
                   title={chipTitle(c)}
@@ -624,7 +625,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           // A running task's session can be watched, not driven; an
           // ended one continued.
           return c.run ? (
-            <span key={c.recipe}>
+            <span key={c.recipe} style={{ whiteSpace: 'nowrap' }}>
               <a href={taskSessionHref(c.run)} target="_blank" rel="noopener noreferrer"
                 onClick={sessionClick(onOpenSession, c.run)}
                 style={{ textDecoration: 'none', marginLeft: '4px' }}
