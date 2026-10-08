@@ -27,7 +27,7 @@ func testSpec(t *testing.T, fanout string) Spec {
 func child(spec Spec, n int, key string, mods ...func(*Child)) Child {
 	for _, it := range spec.Items {
 		if it.Key == key {
-			c := Child{Number: n, Key: key, Title: spec.ChildTitle(parent, "P", it), Body: spec.ChildBody(parent, "P", it), Open: true}
+			c := Child{Number: n, Keys: []string{key}, Title: spec.ChildTitle(parent, "P", []Item{it}), Body: spec.ChildBody(parent, "P", []Item{it}), Open: true}
 			for _, m := range mods {
 				m(&c)
 			}
@@ -63,7 +63,7 @@ type summary struct {
 func summarize(p Plan) summary {
 	s := summary{Window: p.State.Window, Stop: p.Stop != "", CloseParent: p.CloseParent, Checkpoints: p.State.Checkpoints, Counted: p.State.Counted}
 	for _, c := range p.Create {
-		k := c.Key
+		k := strings.Join(c.Keys, ",")
 		if c.Final {
 			k = "final"
 		}
@@ -194,7 +194,7 @@ func TestDecide(t *testing.T) {
 		{
 			name: "a child for an item removed from the spec is left alone",
 			in: input(testSpec(t, ""), &State{Window: 2},
-				child(spec, 1, "a", labelled), Child{Number: 9, Key: "gone", Open: true}),
+				child(spec, 1, "a", labelled), Child{Number: 9, Keys: []string{"gone"}, Open: true}),
 			want: summary{Window: 2, Label: nil, Create: []string{"b*", "c", "d"}},
 		},
 	}

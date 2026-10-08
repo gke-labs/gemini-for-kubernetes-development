@@ -56,6 +56,8 @@ type Settings struct {
 	Labels []string
 	// Create is CreateAll or CreateLazy.
 	Create string
+	// Group is how many items a child is made with, and how far it grows.
+	Group  Window
 	Window Window
 	// Checkpoints are the numbers of items done at which the fan-out stops.
 	Checkpoints []int
@@ -78,11 +80,25 @@ type ItemSource struct {
 	Name string `yaml:"name"`
 }
 
-// Window is the slow start's: how many children are labelled at first, and
-// at most.
+// Window is a ramp's start and its most: of children labelled at once for
+// the window, of items per child for the group. Written as one number, it
+// is a ramp that does not grow.
 type Window struct {
 	Start int `yaml:"start"`
 	Max   int `yaml:"max"`
+}
+
+func (w *Window) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		var v int
+		if err := n.Decode(&v); err != nil {
+			return err
+		}
+		*w = Window{Start: v, Max: v}
+		return nil
+	}
+	type plain Window
+	return n.Decode((*plain)(w))
 }
 
 const (
@@ -92,6 +108,7 @@ const (
 	CreateLazy = "lazy"
 
 	defaultTitle       = "{{.item.name}}: {{.parent.title}}"
+	defaultGroupTitle  = "{{range $i, $it := .items}}{{if $i}}, {{end}}{{$it.name}}{{end}}: {{.parent.title}}"
 	defaultItemName    = "{{.name}}"
 	defaultWindowStart = 2
 	defaultWindowMax   = 8
@@ -103,6 +120,7 @@ type rawSettings struct {
 	Title       string      `yaml:"title"`
 	Labels      []string    `yaml:"labels"`
 	Create      string      `yaml:"create"`
+	Group       Window      `yaml:"group"`
 	Window      Window      `yaml:"window"`
 	Checkpoints *[]int      `yaml:"checkpoints"`
 	Items       *ItemSource `yaml:"items"`
@@ -272,7 +290,7 @@ func parseSettings(section string) (Settings, error) {
 			return Settings{}, fmt.Errorf("## Fan-out: %w", err)
 		}
 	}
-	s := Settings{Title: raw.Title, Labels: raw.Labels, Create: raw.Create, Window: raw.Window, Items: raw.Items}
+	s := Settings{Title: raw.Title, Labels: raw.Labels, Create: raw.Create, Group: raw.Group, Window: raw.Window, Items: raw.Items}
 	if s.Items != nil {
 		if strings.TrimSpace(s.Items.From) == "" {
 			return Settings{}, fmt.Errorf("## Fan-out: items has no from")
@@ -281,13 +299,33 @@ func parseSettings(section string) (Settings, error) {
 			s.Items.Name = defaultItemName
 		}
 	}
+	if s.Group.Start == 0 {
+		s.Group.Start = 1
+	}
+	if s.Group.Max == 0 {
+		s.Group.Max = s.Group.Start
+	}
+	if s.Group.Start < 1 || s.Group.Max < s.Group.Start {
+		return Settings{}, fmt.Errorf("## Fan-out: group {start: %d, max: %d}: want 1 <= start <= max", s.Group.Start, s.Group.Max)
+	}
+	grouped := s.Group.Max > 1
 	if s.Title == "" {
 		s.Title = defaultTitle
+		if grouped {
+			s.Title = defaultGroupTitle
+		}
 	}
 	switch s.Create {
 	case "":
 		s.Create = CreateAll
-	case CreateAll, CreateLazy:
+		if grouped {
+			s.Create = CreateLazy
+		}
+	case CreateAll:
+		if grouped {
+			return Settings{}, fmt.Errorf("## Fan-out: create: all with group above 1: a group is made when its child is labelled, so use create: lazy")
+		}
+	case CreateLazy:
 	default:
 		return Settings{}, fmt.Errorf("## Fan-out: create is %q, want %q or %q", s.Create, CreateAll, CreateLazy)
 	}
@@ -301,7 +339,7 @@ func parseSettings(section string) (Settings, error) {
 		return Settings{}, fmt.Errorf("## Fan-out: window {start: %d, max: %d}: want 1 <= start <= max", s.Window.Start, s.Window.Max)
 	}
 	if raw.Checkpoints == nil {
-		s.Checkpoints = []int{s.Window.Start}
+		s.Checkpoints = []int{s.Group.Start * s.Window.Start}
 	} else {
 		s.Checkpoints = *raw.Checkpoints
 	}

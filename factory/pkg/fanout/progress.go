@@ -12,7 +12,7 @@ func Progress(in Input, st State, children []Child) string {
 	v := newView(Input{Spec: in.Spec, Children: children, TriggerLabel: in.TriggerLabel})
 	done, _ := v.done()
 	active := 0
-	for _, c := range v.byKey {
+	for _, c := range v.itemChildren() {
 		if c.Open && c.Labelled {
 			active++
 		}
@@ -20,8 +20,11 @@ func Progress(in Input, st State, children []Child) string {
 
 	var b strings.Builder
 	b.WriteString(ProgressMarker + "\n")
-	fmt.Fprintf(&b, "### Fan-out progress\n\n%d of %d done · %d in progress · window %d (max %d)",
-		done, len(in.Spec.Items), active, st.Window, in.Spec.Settings.Window.Max)
+	fmt.Fprintf(&b, "### Fan-out progress\n\n%d of %d done · %d in progress · ", done, len(in.Spec.Items), active)
+	if g := in.Spec.Settings.Group; g.Max > 1 {
+		fmt.Fprintf(&b, "group %d (max %d) · ", st.Group, g.Max)
+	}
+	fmt.Fprintf(&b, "window %d (max %d)", st.Window, in.Spec.Settings.Window.Max)
 	if in.Stopped {
 		fmt.Fprintf(&b, " · stopped: remove `%s` to continue", in.StopLabel)
 	}

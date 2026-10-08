@@ -7,31 +7,52 @@ import (
 	"strings"
 )
 
-// markerRe matches a child's marker: <!-- factory:fanout parent=N item=key -->
-// for an item's child, <!-- factory:fanout parent=N final --> for the last.
-var markerRe = regexp.MustCompile(`<!--\s*factory:fanout\s+parent=(\d+)\s+(?:item=([a-z0-9-]+)|(final))\s*-->`)
+// markerRe matches a child's marker: <!-- factory:fanout parent=N items=a,b -->
+// for an items' child, <!-- factory:fanout parent=N final --> for the last.
+var markerRe = regexp.MustCompile(`<!--\s*factory:fanout\s+parent=(\d+)\s+(?:items=([a-z0-9-]+(?:,[a-z0-9-]+)*)|(final))\s*-->`)
 
-// ParseMarker reads a child's marker from its body: its parent, and its item's
-// key or that it is the final child.
-func ParseMarker(body string) (parent int, key string, final, ok bool) {
+// ParseMarker reads a child's marker from its body: its parent, and its
+// items' keys or that it is the final child.
+func ParseMarker(body string) (parent int, keys []string, final, ok bool) {
 	m := markerRe.FindStringSubmatch(body)
 	if m == nil {
-		return 0, "", false, false
+		return 0, nil, false, false
 	}
 	parent, _ = strconv.Atoi(m[1])
-	return parent, m[2], m[3] != "", true
+	if m[2] != "" {
+		keys = strings.Split(m[2], ",")
+	}
+	return parent, keys, m[3] != "", true
 }
 
-// ChildTitle is the title of an item's child.
-func (s Spec) ChildTitle(parent int, parentTitle string, it Item) string {
-	return renderChecked("title", s.Settings.Title, childData(parent, parentTitle, []Item{it}))
+// ChildTitle is the title of the child for items.
+func (s Spec) ChildTitle(parent int, parentTitle string, items []Item) string {
+	return renderChecked("title", s.Settings.Title, childData(parent, parentTitle, items))
 }
 
-// ChildBody is the body of an item's child: the task for the item, the
-// item's line, and the marker that ties it to the parent.
-func (s Spec) ChildBody(parent int, parentTitle string, it Item) string {
-	task := strings.TrimSpace(renderChecked("## Task", s.Task, childData(parent, parentTitle, []Item{it})))
-	return fmt.Sprintf("%s\n\n### Item\n- %s\n\nPart of #%d.\n<!-- factory:fanout parent=%d item=%s -->\n", task, it.Line, parent, parent, it.Key)
+// ChildBody is the body of the child for items: the task for them, their
+// lines, and the marker that ties the child to the parent.
+func (s Spec) ChildBody(parent int, parentTitle string, items []Item) string {
+	task := strings.TrimSpace(renderChecked("## Task", s.Task, childData(parent, parentTitle, items)))
+	heading := "Item"
+	if len(items) > 1 {
+		heading = "Items"
+	}
+	var lines strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&lines, "- %s\n", it.Line)
+	}
+	return fmt.Sprintf("%s\n\n### %s\n%s\nPart of #%d.\n<!-- factory:fanout parent=%d items=%s -->\n",
+		task, heading, lines.String(), parent, parent, strings.Join(itemKeys(items), ","))
+}
+
+// itemKeys are the keys of items, in order.
+func itemKeys(items []Item) []string {
+	keys := make([]string, len(items))
+	for i, it := range items {
+		keys[i] = it.Key
+	}
+	return keys
 }
 
 // renderChecked renders a template Parse or LoadItems already rendered for

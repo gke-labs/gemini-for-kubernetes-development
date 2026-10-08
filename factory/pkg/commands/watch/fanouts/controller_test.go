@@ -121,7 +121,7 @@ func TestNudge(t *testing.T) {
 		t.Fatalf("woke %d parents for an issue that is no child", len(c.wake))
 	}
 
-	c.NudgeLinkedWorkflows(ctx, &githubv39.Issue{Number: githubv39.Int(101), Body: githubv39.String("<!-- factory:fanout parent=100 item=a -->")})
+	c.NudgeLinkedWorkflows(ctx, &githubv39.Issue{Number: githubv39.Int(101), Body: githubv39.String("<!-- factory:fanout parent=100 items=a -->")})
 	if len(c.wake) != 1 {
 		t.Fatalf("woke %d parents, want 1", len(c.wake))
 	}
@@ -141,7 +141,7 @@ func TestNudge(t *testing.T) {
 
 func TestNudge_NeverBlocks(t *testing.T) {
 	c := New(Config{}, Deps{GitHub: newFake()})
-	closed := &githubv39.Issue{Number: githubv39.Int(101), Body: githubv39.String("<!-- factory:fanout parent=100 item=a -->")}
+	closed := &githubv39.Issue{Number: githubv39.Int(101), Body: githubv39.String("<!-- factory:fanout parent=100 items=a -->")}
 	for range cap(c.wake) + 1 {
 		c.NudgeLinkedWorkflows(context.Background(), closed)
 	}

@@ -22,7 +22,7 @@ func fanoutIssue(n int, body string, labels ...string) *githubv39.Issue {
 	return issue
 }
 
-const childBody = "Do a.\n\nPart of #100.\n\n<!-- factory:fanout parent=100 item=a -->\n"
+const childBody = "Do a.\n\nPart of #100.\n\n<!-- factory:fanout parent=100 items=a -->\n"
 
 // TestAdoptCreatedIssues_LeavesFanoutsAlone pins that the issues a fan-out
 // files as the operator are not adopted: adopting would label every child at

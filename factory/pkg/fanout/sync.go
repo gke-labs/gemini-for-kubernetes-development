@@ -149,7 +149,7 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 		StopLabel:    stopLabel,
 	}
 	plan := Decide(in)
-	logf("%d items, %d children, window %d, stopped %v", len(spec.Items), len(children), plan.State.Window, in.Stopped)
+	logf("%d items, %d children, group %d, window %d, stopped %v", len(spec.Items), len(children), plan.State.Group, plan.State.Window, in.Stopped)
 	if opts.DryRun && in.Stopped {
 		resumed := in
 		resumed.Stopped = false
@@ -238,14 +238,14 @@ func readChildren(ctx context.Context, gh GitHub, parent int, trigger string, st
 	found := map[int]bool{}
 	var children []Child
 	add := func(ref github.IssueRef) {
-		p, key, final, ok := ParseMarker(ref.Body)
+		p, keys, final, ok := ParseMarker(ref.Body)
 		if ref.IsPR || !ok || p != parent || found[ref.Number] {
 			return
 		}
 		found[ref.Number] = true
 		children = append(children, Child{
 			Number:     ref.Number,
-			Key:        key,
+			Keys:       keys,
 			Final:      final,
 			Title:      ref.Title,
 			Body:       ref.Body,
@@ -263,6 +263,7 @@ func readChildren(ctx context.Context, gh GitHub, parent int, trigger string, st
 			remembered = append(remembered, n)
 		}
 		slices.Sort(remembered)
+		remembered = slices.Compact(remembered)
 		for _, n := range remembered {
 			if n == 0 || found[n] {
 				continue
@@ -299,7 +300,7 @@ func readChildren(ctx context.Context, gh GitHub, parent int, trigger string, st
 // the plan's state and in children. It stops at the first write that fails.
 func apply(ctx context.Context, gh GitHub, in Input, p *Plan, children *[]Child, logf func(string, ...any)) error {
 	for _, r := range p.Rewrite {
-		logf("rewrite #%d (%s) from the spec", r.Number, r.Key)
+		logf("rewrite #%d (%s) from the spec", r.Number, strings.Join(r.Keys, ","))
 		if err := gh.EditIssue(ctx, r.Number, r.Title, r.Body); err != nil {
 			return err
 		}
@@ -316,7 +317,7 @@ func apply(ctx context.Context, gh GitHub, in Input, p *Plan, children *[]Child,
 		}
 		logf("created #%d %q %s", n, c.Title, labelNote(c.Labels))
 		p.State.Created(c, n)
-		*children = append(*children, Child{Number: n, Key: c.Key, Final: c.Final, Title: c.Title, Body: c.Body, Open: true, Labelled: len(c.Labels) > 0})
+		*children = append(*children, Child{Number: n, Keys: c.Keys, Final: c.Final, Title: c.Title, Body: c.Body, Open: true, Labelled: len(c.Labels) > 0})
 	}
 	for _, l := range p.Label {
 		logf("label #%d %s", l.Number, strings.Join(l.Labels, ", "))
@@ -344,7 +345,7 @@ func apply(ctx context.Context, gh GitHub, in Input, p *Plan, children *[]Child,
 func logPlan(logf func(string, ...any), prefix string, in Input, p Plan) {
 	acted := false
 	for _, r := range p.Rewrite {
-		logf("%srewrite #%d (%s) from the spec", prefix, r.Number, r.Key)
+		logf("%srewrite #%d (%s) from the spec", prefix, r.Number, strings.Join(r.Keys, ","))
 		acted = true
 	}
 	for _, c := range p.Create {
