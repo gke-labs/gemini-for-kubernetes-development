@@ -157,7 +157,8 @@ func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDi
 }
 
 // Ask sends one turn and returns the agent's reply: the text after its
-// last tool call, which is its answer rather than its narration.
+// last tool call, which is its answer rather than its narration, and after
+// its last restart (see turn.event).
 func (a *ACPSession) Ask(ctx context.Context, prompt string) (string, error) {
 	t := a.s.Transcript()
 	offset := t.Size()
@@ -209,6 +210,11 @@ func (t *turn) event(line []byte) (reply string, done bool, err error) {
 	}
 	switch ev.Kind {
 	case acp.UpdateToolCall:
+		t.reply.Reset()
+	case acp.UpdateAgentThoughtChunk:
+		// A thought after reply text is a new generation: gemini retries a
+		// call that fails mid-stream (429, 503) from the start, and ACP has
+		// no way to take back what was already sent. Keep only the last.
 		t.reply.Reset()
 	case acp.UpdateAgentMessageChunk:
 		var u acp.SessionUpdate
