@@ -37,6 +37,7 @@
 - **Fix an issue.** `factory fix` clones the repository into a sandbox and checks out an issue branch. It runs the agent, then pushes to the bot's fork and opens a PR. It also accepts a bare repository with `--name` and `--instruction` / `--instruction-file`, and `--no-pr` pushes without opening one. `--watch` hands the new PR straight to `pr watch`.
 - **Plan first.** `factory recipe plan --url <issue>` drafts an implementation plan in the issue's sandbox, as a task output, without posting anything. Run again, it revises the plan it finds there, against `--feedback` if given. `factory fix --with-plan` folds the approved plan into the fix, and `--apply` (or `factory apply -f`) comments it on the issue.
 - **Triage.** `factory recipe triage --url <issue>` suggests labels, priority, duplicates and an assessment, as a task output. `--apply` waits for it and applies the labels and posts the comment, and so does `factory apply -f` on the output.
+- **Fan-out spec.** `factory recipe fanout --url <issue>` writes a fan-out spec (see *One task, many items*) for an issue that lists one task for many items, as a task output. `--apply` adds the stop label and posts it as the spec comment, for maintainers to edit before they remove the label.
 - **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` writes the plan, as edited, to the issue's sandbox and runs `factory fix --with-plan`.
 - **PR lifecycle.**
   - `pr review` reviews the diff using repeatable `--instruction` files or strings. `--publish` takes `no`, `ask`, `yes` or `draft`.
@@ -224,6 +225,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
+| `recipe fanout` | Write a fan-out spec for an issue; `--apply` posts it and adds the stop label |
 | `recipe research` | Start a research conversation in a sandbox; `recipe revise` continues it |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |

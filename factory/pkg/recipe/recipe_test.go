@@ -1246,3 +1246,31 @@ func TestBuiltinCareRenders(t *testing.T) {
 		}
 	}
 }
+
+// TestBuiltinFanoutRenders: `recipe fanout` renders from an issue alone,
+// and shows the agent the spec's template syntax as written.
+func TestBuiltinFanoutRenders(t *testing.T) {
+	_, r, err := Builtin("fanout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TaskOutput == nil || r.TaskOutput.Kind != "FanOut" || len(r.Revise) != 0 {
+		t.Fatalf("fanout task-output %+v, revises %d", r.TaskOutput, len(r.Revise))
+	}
+	std := map[string]string{
+		"repo_owner": "o", "repo_name": "r", "url": "u",
+		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
+	}
+	inputs, err := r.ResolveInputs(std, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CheckRender(inputs); err != nil {
+		t.Fatal(err)
+	}
+	last := r.Start.Steps[len(r.Start.Steps)-1]
+	ask, err := render("spec", last.Ask, templateData{Inputs: inputs}, "")
+	if err != nil || !strings.Contains(ask, "write {{.item.name}} wherever") {
+		t.Errorf("the spec ask (%v):\n%s", err, ask)
+	}
+}

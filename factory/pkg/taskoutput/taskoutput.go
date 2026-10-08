@@ -94,6 +94,7 @@ var kinds = map[string]kind{
 	"Review":  {parse: parseReview},
 	"Change":  {parse: parseChange},
 	"Summary": {parse: parseSummary},
+	"FanOut":  {parse: parseFanOut},
 }
 
 // Known reports whether kind is one taskoutput can wrap and apply.
