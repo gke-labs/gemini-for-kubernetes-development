@@ -23,15 +23,25 @@ func ParseMarker(body string) (parent int, key string, final, ok bool) {
 }
 
 // ChildTitle is the title of an item's child.
-func (s Spec) ChildTitle(parentTitle string, it Item) string {
-	return strings.NewReplacer("{item}", it.Name, "{parent}", parentTitle).Replace(s.Settings.Title)
+func (s Spec) ChildTitle(parent int, parentTitle string, it Item) string {
+	return renderChecked("title", s.Settings.Title, childData(parent, parentTitle, []Item{it}))
 }
 
 // ChildBody is the body of an item's child: the task for the item, the
 // item's line, and the marker that ties it to the parent.
-func (s Spec) ChildBody(parent int, it Item) string {
-	task := strings.ReplaceAll(s.Task, "{item}", it.Name)
+func (s Spec) ChildBody(parent int, parentTitle string, it Item) string {
+	task := strings.TrimSpace(renderChecked("## Task", s.Task, childData(parent, parentTitle, []Item{it})))
 	return fmt.Sprintf("%s\n\n### Item\n- %s\n\nPart of #%d.\n<!-- factory:fanout parent=%d item=%s -->\n", task, it.Line, parent, parent, it.Key)
+}
+
+// renderChecked renders a template Parse or LoadItems already rendered for
+// every item, so it cannot fail; were it to, the template's text stands in.
+func renderChecked(name, text string, data any) string {
+	out, err := render(name, text, data)
+	if err != nil {
+		return text
+	}
+	return out
 }
 
 // FinalTitle is the title of the final child.

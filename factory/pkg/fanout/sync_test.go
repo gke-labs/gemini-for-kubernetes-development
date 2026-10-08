@@ -21,6 +21,7 @@ type fakeGitHub struct {
 	nextComment  int64
 	hideTimeline bool
 	closed       []int
+	files        map[string]string
 }
 
 func newFake(body string, labels ...string) *fakeGitHub {
@@ -107,6 +108,14 @@ func (f *fakeGitHub) CloseIssue(_ context.Context, n int) error {
 	return nil
 }
 
+func (f *fakeGitHub) ReadFile(_ context.Context, path string) ([]byte, string, error) {
+	data, ok := f.files[path]
+	if !ok {
+		return nil, "", fmt.Errorf("%s: %w", path, github.ErrUnreadableFile)
+	}
+	return []byte(data), "0123456789abcdef", nil
+}
+
 // closeChild closes a child with a merged PR, as a coder bot's merge would.
 func (f *fakeGitHub) closeChild(n int) {
 	f.issues[n].Open = false
@@ -131,7 +140,7 @@ func (f *fakeGitHub) removeLabel(n int, label string) {
 
 func TestSyncFanOut(t *testing.T) {
 	ctx := context.Background()
-	body := "## Task\nDo {item}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
+	body := "## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
 	gh := newFake(body, "overseer/fanout")
 	opts := SyncOptions{Issue: parent, TriggerLabel: "overseer", BotLogin: "bot"}
 	sync := func() SyncResult {
@@ -182,7 +191,7 @@ func TestSyncFanOut(t *testing.T) {
 	}
 
 	// Stopped, the spec is edited: nothing changes until the stop label goes.
-	gh.issues[parent].Body = strings.Replace(body, "Do {item}.", "Do {item}, carefully.", 1)
+	gh.issues[parent].Body = strings.Replace(body, "Do {{.item.name}}.", "Do {{.item.name}}, carefully.", 1)
 	sync()
 	if strings.Contains(gh.issues[103].Body, "carefully") {
 		t.Fatal("a child was rewritten while stopped")
@@ -221,7 +230,7 @@ func TestSyncFanOut(t *testing.T) {
 
 func TestSyncSpecSources(t *testing.T) {
 	ctx := context.Background()
-	spec := SpecMarker + "\n## Task\nDo {item}.\n\n## Items\n- [ ] only\n"
+	spec := SpecMarker + "\n## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] only\n"
 	comment := func(login, assoc, body string) *githubv39.IssueComment {
 		return &githubv39.IssueComment{User: &githubv39.User{Login: githubv39.String(login)}, AuthorAssociation: githubv39.String(assoc), Body: githubv39.String(body)}
 	}
@@ -255,5 +264,30 @@ func TestSyncSpecSources(t *testing.T) {
 				t.Errorf("created %d children", created)
 			}
 		})
+	}
+}
+
+func TestSyncItemsFile(t *testing.T) {
+	ctx := context.Background()
+	body := "## Fan-out\n```yaml\nitems: {from: kinds.json, name: \"{{.kind}}\"}\n```\n\n## Task\nFix {{.item.kind}}.\n"
+	opts := SyncOptions{Issue: parent, TriggerLabel: "overseer", BotLogin: "bot"}
+
+	gh := newFake(body)
+	gh.files = map[string]string{"kinds.json": `[{"kind": "A"}, {"kind": "B"}, {"kind": "C"}]`}
+	if _, err := Sync(ctx, gh, opts); err != nil {
+		t.Fatal(err)
+	}
+	if gh.next != parent+4 || !strings.HasPrefix(gh.issues[parent+1].Body, "Fix A.") {
+		t.Fatalf("got %d children, the first %q", gh.next-parent-1, gh.issues[parent+1].Body)
+	}
+	if progress := gh.comments[parent][0].GetBody(); !strings.Contains(progress, "Items from `kinds.json` at 0123456.") {
+		t.Errorf("the progress comment does not say where the items came from:\n%s", progress)
+	}
+
+	// A missing file is the spec's error, reported in the progress comment.
+	gh = newFake(body)
+	res, err := Sync(ctx, gh, opts)
+	if err != nil || res.SpecError == nil || !strings.Contains(gh.comments[parent][0].GetBody(), "items.from") {
+		t.Errorf("a missing file: err %v, SpecError %v", err, res.SpecError)
 	}
 }

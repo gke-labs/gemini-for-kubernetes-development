@@ -21,37 +21,61 @@ const SpecMarker = "<!-- factory:fanout-spec -->"
 
 // Spec is a fan-out: the task for one item, the items, and the final step.
 type Spec struct {
-	// Task is what to do for one item; {item} is replaced by its name.
+	// Task is what to do for one child, a template (see childData).
 	Task string
-	// Items are the checklist's unchecked lines, in order.
+	// Items are the checklist's unchecked lines, in order, or the elements
+	// of the file Settings.Items names, once LoadItems has read it.
 	Items []Item
+	// Source says where file items were read: the path and the commit.
+	Source string
 	// Finally is the last child's body, created once every item is done.
 	// Empty when there is no final step.
 	Finally  string
 	Settings Settings
 }
 
-// Item is one line of the items checklist.
+// Item is one line of the items checklist, or one element of an items file.
 type Item struct {
 	// Key identifies the item's child across passes: its name, lowercased,
 	// non-alphanumerics folded to '-'.
 	Key  string
 	Name string
-	// Line is the whole line, as written, without its checkbox.
+	// Line is the whole line, as written, without its checkbox; a file
+	// item's name.
 	Line string
+	// Fields are what templates see as the item: name and line for a
+	// checklist line; the element's own fields, and name, for a file item.
+	Fields map[string]any
 }
 
 // Settings are the spec's Fan-out section, with the defaults filled in.
 type Settings struct {
-	// Title is the child's title; {item} and {parent} are replaced.
+	// Title is the child's title, a template like the Task.
 	Title string
 	// Labels go on every child, besides the trigger label.
 	Labels []string
-	// Create is CreateAll or CreateBatch.
+	// Create is CreateAll or CreateLazy.
 	Create string
 	Window Window
 	// Checkpoints are the numbers of items done at which the fan-out stops.
 	Checkpoints []int
+	// Items, when set, reads the items from a JSON file instead of the
+	// ## Items checklist.
+	Items *ItemSource
+}
+
+// ItemSource is where a spec's items come from when they are not a
+// checklist: a JSON file in the repository.
+type ItemSource struct {
+	// From is the file's path, read from the default branch.
+	From string `yaml:"from"`
+	// Select is a dotted path to the array (".a.b"); empty, the file is it.
+	Select string `yaml:"select"`
+	// Where, a template rendering true or false, keeps an element or not.
+	// Empty keeps every element.
+	Where string `yaml:"where"`
+	// Name, a template, is an item's name. Default {{.name}}.
+	Name string `yaml:"name"`
 }
 
 // Window is the slow start's: how many children are labelled at first, and
@@ -64,10 +88,11 @@ type Window struct {
 const (
 	// CreateAll creates every child at the start, unlabelled.
 	CreateAll = "all"
-	// CreateBatch creates a child only when it is labelled.
-	CreateBatch = "batch"
+	// CreateLazy creates a child only when it is labelled.
+	CreateLazy = "lazy"
 
-	defaultTitle       = "{item}: {parent}"
+	defaultTitle       = "{{.item.name}}: {{.parent.title}}"
+	defaultItemName    = "{{.name}}"
 	defaultWindowStart = 2
 	defaultWindowMax   = 8
 )
@@ -75,11 +100,12 @@ const (
 // rawSettings is the YAML as written. Checkpoints is a pointer so that an
 // explicit [] (never stop) is told apart from leaving it out (the default).
 type rawSettings struct {
-	Title       string   `yaml:"title"`
-	Labels      []string `yaml:"labels"`
-	Create      string   `yaml:"create"`
-	Window      Window   `yaml:"window"`
-	Checkpoints *[]int   `yaml:"checkpoints"`
+	Title       string      `yaml:"title"`
+	Labels      []string    `yaml:"labels"`
+	Create      string      `yaml:"create"`
+	Window      Window      `yaml:"window"`
+	Checkpoints *[]int      `yaml:"checkpoints"`
+	Items       *ItemSource `yaml:"items"`
 }
 
 const (
@@ -147,16 +173,20 @@ func sections(markdown string) map[string]string {
 }
 
 // HasSpecHeadings reports whether markdown is written as a spec: it has a
-// Task and an Items section. Parse says whether the spec is a good one.
+// Task section, and an Items section or a Fan-out section (which can name an
+// items file). Parse says whether the spec is a good one.
 func HasSpecHeadings(markdown string) bool {
 	s := sections(markdown)
 	_, task := s[sectionTask]
 	_, items := s[sectionItems]
-	return task && items
+	_, fanOut := s[sectionFanOut]
+	return task && (items || fanOut)
 }
 
 // Parse reads a spec from markdown with the standard headings: ## Task,
-// ## Items, and optionally ## Finally and ## Fan-out.
+// ## Items, and optionally ## Finally and ## Fan-out. When the Fan-out
+// section names an items file instead, the spec has no items until the
+// caller reads the file and hands it to LoadItems.
 func Parse(markdown string) (Spec, error) {
 	s := sections(markdown)
 	var spec Spec
@@ -164,8 +194,20 @@ func Parse(markdown string) (Spec, error) {
 	if spec.Task == "" {
 		return Spec{}, fmt.Errorf("no ## Task section, or it is empty")
 	}
-	if _, ok := s[sectionItems]; !ok {
-		return Spec{}, fmt.Errorf("no ## Items section")
+	spec.Finally = s[sectionFinally]
+	settings, err := parseSettings(s[sectionFanOut])
+	if err != nil {
+		return Spec{}, err
+	}
+	spec.Settings = settings
+	_, hasItems := s[sectionItems]
+	switch {
+	case settings.Items != nil && hasItems:
+		return Spec{}, fmt.Errorf("both a ## Items section and items.from: keep one")
+	case settings.Items != nil:
+		return spec, nil
+	case !hasItems:
+		return Spec{}, fmt.Errorf("no ## Items section, and no items.from in ## Fan-out")
 	}
 	seen := map[string]string{}
 	lines := 0
@@ -179,7 +221,8 @@ func Parse(markdown string) (Spec, error) {
 			continue
 		}
 		it := Item{Line: m[2], Name: itemName(m[2])}
-		it.Key = strings.Trim(keyRe.ReplaceAllString(strings.ToLower(it.Name), "-"), "-")
+		it.Key = itemKey(it.Name)
+		it.Fields = map[string]any{"name": it.Name, "line": it.Line}
 		if it.Key == "" {
 			return Spec{}, fmt.Errorf("item %q: no name to make a key from", it.Line)
 		}
@@ -192,13 +235,15 @@ func Parse(markdown string) (Spec, error) {
 	if lines == 0 {
 		return Spec{}, fmt.Errorf("## Items has no checklist lines (- [ ] item)")
 	}
-	spec.Finally = s[sectionFinally]
-	settings, err := parseSettings(s[sectionFanOut])
-	if err != nil {
+	if err := spec.checkTemplates(); err != nil {
 		return Spec{}, err
 	}
-	spec.Settings = settings
 	return spec, nil
+}
+
+// itemKey is the key of an item named name.
+func itemKey(name string) string {
+	return strings.Trim(keyRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
 }
 
 // itemName is an item line's bold text if it has any, otherwise the line up
@@ -227,16 +272,24 @@ func parseSettings(section string) (Settings, error) {
 			return Settings{}, fmt.Errorf("## Fan-out: %w", err)
 		}
 	}
-	s := Settings{Title: raw.Title, Labels: raw.Labels, Create: raw.Create, Window: raw.Window}
+	s := Settings{Title: raw.Title, Labels: raw.Labels, Create: raw.Create, Window: raw.Window, Items: raw.Items}
+	if s.Items != nil {
+		if strings.TrimSpace(s.Items.From) == "" {
+			return Settings{}, fmt.Errorf("## Fan-out: items has no from")
+		}
+		if s.Items.Name == "" {
+			s.Items.Name = defaultItemName
+		}
+	}
 	if s.Title == "" {
 		s.Title = defaultTitle
 	}
 	switch s.Create {
 	case "":
 		s.Create = CreateAll
-	case CreateAll, CreateBatch:
+	case CreateAll, CreateLazy:
 	default:
-		return Settings{}, fmt.Errorf("## Fan-out: create is %q, want %q or %q", s.Create, CreateAll, CreateBatch)
+		return Settings{}, fmt.Errorf("## Fan-out: create is %q, want %q or %q", s.Create, CreateAll, CreateLazy)
 	}
 	if s.Window.Start == 0 {
 		s.Window.Start = defaultWindowStart

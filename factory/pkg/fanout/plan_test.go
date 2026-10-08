@@ -12,7 +12,7 @@ const parent = 100
 
 func testSpec(t *testing.T, fanout string) Spec {
 	t.Helper()
-	md := "## Task\nDo {item}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
+	md := "## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
 	if fanout != "" {
 		md += "\n## Fan-out\n" + fanout + "\n"
 	}
@@ -27,7 +27,7 @@ func testSpec(t *testing.T, fanout string) Spec {
 func child(spec Spec, n int, key string, mods ...func(*Child)) Child {
 	for _, it := range spec.Items {
 		if it.Key == key {
-			c := Child{Number: n, Key: key, Title: spec.ChildTitle("P", it), Body: spec.ChildBody(parent, it), Open: true}
+			c := Child{Number: n, Key: key, Title: spec.ChildTitle(parent, "P", it), Body: spec.ChildBody(parent, "P", it), Open: true}
 			for _, m := range mods {
 				m(&c)
 			}
@@ -83,7 +83,7 @@ func summarize(p Plan) summary {
 
 func TestDecide(t *testing.T) {
 	spec := testSpec(t, "")
-	batch := testSpec(t, "create: batch")
+	batch := testSpec(t, "create: lazy")
 	noFinally := spec
 	noFinally.Finally = ""
 	stale := func(c *Child) { c.Body = "old task" }

@@ -23,7 +23,8 @@ func newWatchFanoutCommand(ctx context.Context) *cobra.Command {
 
 A fan-out is one task for many items: a child issue per item, labelled for
 the coder bots a few at a time. The parent's spec has the sections ## Task
-(what to do for one {item}), ## Items (a checklist), and optionally
+(a Go template for one item, {{.item.name}}), ## Items (a checklist, or
+items.from a JSON file in ## Fan-out), and optionally
 ## Finally (one more child once every item is done) and ## Fan-out
 (settings, a YAML block). The spec is the newest comment marked
 <!-- factory:fanout-spec --> by you or a maintainer, else the issue body.
