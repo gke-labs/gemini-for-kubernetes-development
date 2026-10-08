@@ -196,7 +196,7 @@ The child's body is the rendered Task, then the items' lines under `### Item` (o
 
 ### Items from a JSON file
 
-The items can come from a JSON file in the repository instead of a checklist:
+The items can come from a JSON file in the repository, or at an https URL, instead of a checklist:
 
 ```yaml
 items:
@@ -211,6 +211,10 @@ items:
 - **Leaving items out** is `where`, a template rendered for each element: `true` keeps it, `false` leaves it out, and anything else is a spec error. The example fans out only the resources not yet done. Without `where`, every element is an item.
 - A name that renders empty is a spec error, so a typo in `name` is caught rather than silently dropping items.
 - Two items with the same key, a missing file, or a file that is not JSON are spec errors.
+- `from` can be an `https://` URL instead of a path, for a list another tool publishes (a raw GitHub file, a gist, a bucket). The controller fetches it on every pass and shows its SHA-256 where a file's commit would be.
+  - It must be https, including every redirect. It may serve at most 5 MB, and it must answer within 30 seconds.
+  - Only public addresses are dialled, checked after DNS. The controller runs in the cluster, so a spec must not reach the metadata server, pods or services: loopback, private, link-local and shared (100.64/10) addresses are refused.
+  - A 4xx, an HTML page (link the raw file), too large, or a refused address is a spec error. A 5xx, a 429, or a network failure fails the pass, which is retried.
 - The file is re-read on every pass, and the commit it was read at is shown in the progress comment. Changing it is like editing the checklist (see *Changing the spec*): items are matched across passes by key.
 - A spec has `## Items` or `items.from`, not both.
 
