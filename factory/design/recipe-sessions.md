@@ -1,4 +1,4 @@
-# Recipe sessions: recipes that share a conversation
+# Recipe sessions: a tag that groups recipes
 
 **Status:** Design. Changes care ([care-recipe.md](care-recipe.md)); the other recipes are unchanged.
 
@@ -19,13 +19,13 @@ Recipes on one target already share a sandbox. Each keeps its own conversation: 
 
 ## Decisions
 
-1. **A session is a named conversation that recipes join.** A recipe may say `session: <name>`. Recipes with the same session, on the same target, share one conversation in that target's sandbox. The first run opens it and every later run, of any recipe in it, continues it. A recipe with no `session:` keeps one of its own, as today.
-2. **A session shares nothing but the conversation.** There is no session file and no inheritance: every recipe in a session is a whole recipe, as today, with its own `on`, `context`, `steps` and `task-output`. Steps they all need (the PR checkout, the replies question, the push) are copied into each. Loading the recipes only checks that those naming one session agree on `on` and `credentials`, so that they land in one sandbox, and that one of them is named like the session.
+1. **A session is a tag.** A recipe may say `session: <name>`. The tag groups recipes, and does two things with the group: on one target, its runs go into one conversation in that target's sandbox (the first opens it, every later run of any of them continues it), and the board shows the group as one chip and one button. A recipe with no tag is a group of its own, as today.
+2. **Nothing else is shared.** There is no session file and no inheritance: every tagged recipe is a whole recipe, as today, with its own `on`, `context`, `steps` and `task-output`. Steps several need (the PR checkout, the replies question, the push) are copied into each. Loading the recipes only checks that those with one tag agree on `on` and `credentials`, so that they land in one sandbox, and that one of them is named like the tag.
 3. **The recorded run is the session's.** It lives at `RunAnnotation("recipe-<session>")`; the run record keeps which recipe it ran. One run of a session at a time, as one task per sandbox is today.
 4. **A run in a session is a start that continues.** It opens the session with its steps if the session has no recorded run, or its recorded run's session is gone. Otherwise it asks its steps into that session (`OpenDaemonSession`). Its setup steps run again each time, so they must be idempotent. `--new-session` opens a new one regardless.
 5. **A recipe in a session has no `revise:`.** Its siblings are its follow-ups.
 6. **Sessions never cross.** care's session is `care`, the fix's conversation is the fix's own: care never continues the fix, though both run in the PR's fix sandbox.
-7. **The session is the board's group.** One chip per session per row (its newest run). One button, labelled with the recipe named like the session: it runs that recipe, and the others are its `▾` menu, by their own labels. A recipe with no session is its own group, as today.
+7. **The tag is the board's group.** One chip per group per row (its newest run). One button, labelled with the recipe named like the tag: it runs that recipe, and the others are its `▾` menu, by their own labels.
 
 ## care
 
@@ -67,10 +67,23 @@ task-output:               # care's: Change, preview spec.report, edit / post-re
 
 ## repo-agent
 
-- **Catalog.** `RepoBoard.status.recipes` carries each recipe's `session`. The launch path is today's (`recipe` Request verb, `POST ./recipes/:recipe`), one recipe per click.
-- **Row.** `Care ▾`: the button runs `care`, and the menu lists the session's other recipes (Iterate… prompts for its instruction). The menu is offered while no run of the session is running or starting.
-- **Chip.** Rows group runs by session, else by recipe. Care's one chip opens the care session; its draft is the newest run's Change.
-- **Slide-over.** The session's recipes where care's revises are today, plus ⋯ → New conversation (`--new-session`).
+The board keys runs and buttons by recipe today (`latestRuns` in `Work.js` and `rows.go`). It works unchanged with tagged recipes, but it is noisy:
+
+- five rail buttons on every PR of yours;
+- up to five chips, all opening the one conversation;
+- a button hidden only while its own recipe runs, so Fix CI is offered while Rebase runs, and its click fails on the busy sandbox.
+
+So the board groups by `session || recipe`, where it keys by recipe today:
+
+| Where | Change |
+|---|---|
+| Catalog (`RepoBoard.status.recipes`), `sessions[]` | carry each recipe's `session` |
+| `latestRuns` (`Work.js`, `rows.go`) | key by group: one chip per group, its newest run |
+| Rail | one button per group, the recipe named like the tag, and `▾` for the rest (Iterate… prompts for its instruction) |
+| Running / ready gate | per group: no button or menu while any run of the group is running or starting |
+| Slide-over | the group's recipes where care's revises are today, plus ⋯ → New conversation (`--new-session`) |
+
+Untagged recipes (fix, plan, triage, summarize, review, research) are each their own group, so their rows look as they do now. The launch path is today's (`recipe` Request verb, `POST ./recipes/:recipe`), one recipe per click.
 
 ## No compatibility
 
@@ -83,8 +96,8 @@ Session `care` records at `recipe-care`, the annotation care's runs use today. T
 
 ## Steps
 
-1. factory: `session:` in the recipe shape (validate, recorded run by session, continue-or-open, `--new-session`); care split into five recipes; `pr watch` by recipe; `recipe list`.
-2. repo-agent: catalog sessions, group chips and buttons by session, `Care ▾`, New conversation.
+1. factory: the `session:` tag in the recipe shape (validate, recorded run by session, continue-or-open, `--new-session`); care split into five recipes; `pr watch` by recipe; `recipe list`.
+2. repo-agent: the tag in the catalog and `sessions[]`, chips, buttons and the gate by group, `Care ▾`, New conversation.
 3. Verify on 1774 / 1780:
    - Rebase as the first run (opens the session);
    - Fix CI after it (continues the session);
