@@ -481,6 +481,33 @@ describe('Work, an unattended window', () => {
     });
 });
 
+// A feed the API cannot read says why, where the rows would be: not a
+// "Loading…" that never ends, nor "Nothing needs you", which is a lie.
+describe('Work, a feed that fails', () => {
+    const boards = [
+        { name: 'kubernetes', repoURL: 'https://github.com/kubernetes/kubernetes', needsHuman: 0, active: 0 },
+    ];
+    const json = (status, body) => Promise.resolve({ ok: status === 200, status, json: () => Promise.resolve(body) });
+    const settle = async () => { await flush(); await flush(); await flush(); };
+
+    test('a rejected token says to update it in Settings', async () => {
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/boards') return json(200, boards);
+            if (String(url).endsWith('/work')) {
+                return json(424, { error: 'GitHub rejected your token (401 Bad credentials): update it in Settings', details: 'github graphql: 401' });
+            }
+            return json(200, []);
+        });
+
+        await act(async () => { root.render(<Work namespace="alice" />); });
+        await settle();
+
+        expect(container.textContent).toContain('kubernetes: GitHub rejected your token (401 Bad credentials): update it in Settings');
+        expect(container.textContent).not.toContain('Nothing needs you');
+        expect(container.textContent).not.toContain('Gathering your boards');
+    });
+});
+
 // Deploy ▾ on a pull request row: the repository's runbooks, each a
 // plan of a run named for the runbook and the pull request, pinned to
 // it. The runs pinned to a pull request show on its row.
