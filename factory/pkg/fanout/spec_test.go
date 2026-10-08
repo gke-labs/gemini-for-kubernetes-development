@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,6 +49,7 @@ func TestParse(t *testing.T) {
 			Title:       "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef",
 			Labels:      []string{},
 			Create:      CreateAll,
+			Group:       Window{Start: 1, Max: 1},
 			Window:      Window{Start: 2, Max: 8},
 			Checkpoints: []int{2},
 		},
@@ -68,22 +70,22 @@ func TestParseDefaults(t *testing.T) {
 	}{
 		{
 			name: "no section",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{2}},
+			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{2}},
 		},
 		{
 			name: "start only, checkpoint follows it",
 			yaml: "window: {start: 3}",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Window: Window{Start: 3, Max: 8}, Checkpoints: []int{3}},
+			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 3, Max: 8}, Checkpoints: []int{3}},
 		},
 		{
 			name: "start above the default max",
 			yaml: "window: {start: 10}",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Window: Window{Start: 10, Max: 10}, Checkpoints: []int{10}},
+			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 10, Max: 10}, Checkpoints: []int{10}},
 		},
 		{
 			name: "no checkpoints",
 			yaml: "create: lazy\ncheckpoints: []",
-			want: Settings{Title: defaultTitle, Create: CreateLazy, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
 		},
 	}
 	for _, tc := range tests {
@@ -144,25 +146,25 @@ func TestChildBodyMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := spec.ChildBody(13781, "KMS refs", spec.Items[0])
+	body := spec.ChildBody(13781, "KMS refs", spec.Items[:1])
 	if !strings.HasPrefix(body, "For `ApigeeInstance`, switch") {
 		t.Errorf("body does not start with the task for the item:\n%s", body)
 	}
 	parent, key, final, ok := ParseMarker(body)
-	if !ok || parent != 13781 || key != "apigeeinstance" || final {
+	if !ok || parent != 13781 || !slices.Equal(key, []string{"apigeeinstance"}) || final {
 		t.Errorf("ParseMarker() = %d %q %v %v", parent, key, final, ok)
 	}
 	parent, key, final, ok = ParseMarker(spec.FinalBody(13781))
-	if !ok || parent != 13781 || key != "" || !final {
+	if !ok || parent != 13781 || key != nil || !final {
 		t.Errorf("ParseMarker(final) = %d %q %v %v", parent, key, final, ok)
 	}
-	if got := spec.ChildTitle(13781, "KMS refs", spec.Items[0]); got != "Migrate ApigeeInstance to kmsv1beta1.KMSCryptoKeyRef" {
+	if got := spec.ChildTitle(13781, "KMS refs", spec.Items[:1]); got != "Migrate ApigeeInstance to kmsv1beta1.KMSCryptoKeyRef" {
 		t.Errorf("ChildTitle() = %q", got)
 	}
 }
 
 func TestStateRoundTrip(t *testing.T) {
-	st := State{Window: 3, Counted: []int{1201}, Checkpoints: []int{2}, Children: map[string]int{"a": 1201}, Started: []int{1201}}
+	st := State{Window: 3, Group: 1, Counted: []int{1201}, Checkpoints: []int{2}, Children: map[string]int{"a": 1201}, Started: []int{1201}}
 	in := Input{Spec: Spec{Items: []Item{{Key: "a", Name: "a"}}, Settings: Settings{Window: Window{Start: 2, Max: 8}}}}
 	got, ok := ParseState(Progress(in, st, nil))
 	if !ok {

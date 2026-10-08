@@ -277,9 +277,9 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 2. **Propose**, if there is no spec: run the recipe, post the spec comment, add the stop label. Nothing else happens on this pass.
 3. **Report:** update the progress comment. This runs on every pass, stopped or not.
 4. If the parent has the stop label, stop here.
-5. **Checkpoint:** if the number of children done has reached a checkpoint not yet passed, add the stop label, comment, record the checkpoint, and stop here.
-6. **Create.** With `create: all`, create every missing child, unlabelled. With `create: batch`, create children only as they are labelled. Creation is idempotent by the marker's `item=` key. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
-7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order, with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
+5. **Checkpoint:** if the number of items done has reached a checkpoint not yet passed, add the stop label, comment, record the checkpoint, and stop here.
+6. **Create.** With `create: all`, create every missing child, unlabelled. With `create: lazy`, create children only as they are labelled, each for the next `group` items without a child. Creation is idempotent by the marker's `items=` keys. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
+7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order (existing children not yet started, and new ones), with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
 8. **Final.** Once every item's child is closed, create the `Finally` child (labelled at once). When that one closes as completed, or straight away if there is no `Finally` section, close the parent. If the bot cannot close it, it comments instead.
 
 The issue scanner skips a parent labelled `<trigger>/fanout`. Otherwise a coder bot would pick up the whole parent as one fix task. It also leaves alone a child that has the marker but not the trigger label, both when it adopts issues filed by the bot's login and when it queues. The fan-out files its children as that same login, so adoption would otherwise label every child at once and defeat the window. Once the fan-out labels a child, the scanner handles it like any other labelled issue.
@@ -322,7 +322,7 @@ With the settings above:
 | … | 5 each | 3 | |
 
 - **Units.** The window counts children (PRs in flight). Everything else counts items: checkpoints, the progress comment, and what `Finally` waits for. A child closed as completed counts all its items done; closed as not planned, all of them skipped.
-- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
+- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (it is then the default, and a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
 - **Default checkpoint**: the items of the first batch, `group.start × window.start`.
 - `group: 1`, the default, is the one-item-per-child fan-out described above.
 

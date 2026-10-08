@@ -32,8 +32,9 @@ See factory/design/fanout.md.
 
 A pass reads the spec, the children (found by their marker) and the state
 kept in the progress comment, then:
-  - moves the window: +1 per child closed as completed, halved per PR
-    closed unmerged, up to window.max
+  - moves the ramp: a child closed as completed doubles the group (items
+    per child) up to group.max, then adds 1 to the window up to
+    window.max; a PR closed unmerged halves the window, then the group
   - does nothing more while the parent has the stop label
   - stops at a checkpoint: adds the stop label, and comments what is done
   - creates the children (create: all) and rewrites the ones not yet

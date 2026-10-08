@@ -10,8 +10,8 @@ import (
 // Child is a child issue as GitHub has it.
 type Child struct {
 	Number int
-	// Key is the item the child is for; empty for the final child.
-	Key   string
+	// Keys are the items the child is for; empty for the final child.
+	Keys  []string
 	Final bool
 	Title string
 	Body  string
@@ -62,14 +62,14 @@ type Plan struct {
 // Rewrite brings a child not yet labelled up to date with the spec.
 type Rewrite struct {
 	Number int
-	Key    string
+	Keys   []string
 	Title  string
 	Body   string
 }
 
 // NewChild is a child to create, labelled at once when Labels is set.
 type NewChild struct {
-	Key    string
+	Keys   []string
 	Final  bool
 	Title  string
 	Body   string
@@ -79,11 +79,12 @@ type NewChild struct {
 // Labelling labels an existing child.
 type Labelling struct {
 	Number int
-	Key    string
+	Keys   []string
 	Labels []string
 }
 
-// view is the input indexed: each item's child, and the final child.
+// view is the input indexed: each item's child (a child for a group of
+// items is there once per item), and the final child.
 type view struct {
 	in     Input
 	byKey  map[string]Child
@@ -102,9 +103,11 @@ func newView(in Input) view {
 				c := c
 				v.final = &c
 			}
-		case c.Key != "":
-			if _, dup := v.byKey[c.Key]; !dup {
-				v.byKey[c.Key] = c
+		default:
+			for _, k := range c.Keys {
+				if _, dup := v.byKey[k]; !dup {
+					v.byKey[k] = c
+				}
 			}
 		}
 	}
@@ -149,21 +152,22 @@ func Decide(in Input) Plan {
 	return p
 }
 
-// account moves the window for what closed since the last pass: +1 for a
-// child closed as completed, halved for a PR closed unmerged. A lost state
-// is recomputed instead.
+// account moves the ramp for what closed since the last pass: a child closed
+// as completed doubles the group, or once the group is at its max adds 1 to
+// the window; a PR closed unmerged halves the window, or once the window is
+// 1 the group. A lost state is recomputed instead.
 func (v view) account() State {
-	set := v.in.Spec.Settings
 	if v.in.State == nil {
 		return v.recompute()
 	}
 	st := v.in.State.clone()
+	v.clamp(&st)
 	children := v.itemChildren()
 	for _, c := range children {
 		if !c.Open && !st.counted(c.Number) {
 			st.count(c.Number)
 			if !c.NotPlanned {
-				st.Window++
+				v.grow(&st)
 			}
 		}
 	}
@@ -171,25 +175,56 @@ func (v view) account() State {
 		for _, pr := range c.PRs {
 			if !pr.Open && !pr.Merged && !st.counted(pr.Number) {
 				st.count(pr.Number)
-				st.Window = max(1, st.Window/2)
+				v.shrink(&st)
 			}
 		}
 	}
-	st.Window = min(max(st.Window, 1), set.Window.Max)
+	v.clamp(&st)
 	v.remember(&st)
 	return st
 }
 
-// recompute rebuilds a lost state: the window is start plus the children
-// completed, and the checkpoints at or below the items done are passed.
+func (v view) grow(st *State) {
+	set := v.in.Spec.Settings
+	if st.Group < set.Group.Max {
+		st.Group = min(st.Group*2, set.Group.Max)
+	} else {
+		st.Window++
+	}
+}
+
+func (v view) shrink(st *State) {
+	if st.Window > 1 {
+		st.Window /= 2
+	} else {
+		st.Group = max(1, st.Group/2)
+	}
+}
+
+// clamp keeps the ramp within the spec's settings, which may have changed.
+func (v view) clamp(st *State) {
+	set := v.in.Spec.Settings
+	st.Window = min(max(st.Window, 1), set.Window.Max)
+	st.Group = min(max(st.Group, 1), set.Group.Max)
+}
+
+// recompute rebuilds a lost state. The group is the largest completed
+// child's size doubled (the largest child's when none completed), the window
+// start plus the children completed at the group's max, and the checkpoints
+// at or below the items done are passed.
 func (v view) recompute() State {
 	set := v.in.Spec.Settings
-	st := State{Window: set.Window.Start}
+	st := State{Window: set.Window.Start, Group: set.Group.Start}
+	largest, largestDone, doneAtMax := 0, 0, 0
 	for _, c := range v.itemChildren() {
+		largest = max(largest, len(c.Keys))
 		if !c.Open {
 			st.count(c.Number)
 			if !c.NotPlanned {
-				st.Window++
+				largestDone = max(largestDone, len(c.Keys))
+				if len(c.Keys) >= set.Group.Max {
+					doneAtMax++
+				}
 			}
 		}
 		for _, pr := range c.PRs {
@@ -201,7 +236,17 @@ func (v view) recompute() State {
 			st.started(c.Number)
 		}
 	}
-	st.Window = min(st.Window, set.Window.Max)
+	switch {
+	case largestDone > 0:
+		st.Group = 2 * largestDone
+	case largest > 0:
+		st.Group = largest
+	}
+	v.clamp(&st)
+	if st.Group == set.Group.Max {
+		st.Window += doneAtMax
+	}
+	v.clamp(&st)
 	done, _ := v.done()
 	for _, cp := range set.Checkpoints {
 		if cp <= done && !slices.Contains(st.Checkpoints, cp) {
@@ -225,12 +270,16 @@ func (v view) remember(st *State) {
 	}
 }
 
-// itemChildren are the children for items, the spec's or not, in number
-// order: the window moves for every one of them.
+// itemChildren are the children for items, the spec's or not, each once,
+// in number order: the ramp moves for every one of them.
 func (v view) itemChildren() []Child {
+	seen := map[int]bool{}
 	var out []Child
 	for _, c := range v.byKey {
-		out = append(out, c)
+		if !seen[c.Number] {
+			seen[c.Number] = true
+			out = append(out, c)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
 	return out
@@ -251,11 +300,13 @@ func (v view) checkpoints(st *State, done int) []int {
 
 func (v view) checkpointComment(done int) string {
 	var finished []string
+	seen := map[int]bool{}
 	for _, it := range v.in.Spec.Items {
 		c, ok := v.byKey[it.Key]
-		if !ok || c.Open {
+		if !ok || c.Open || seen[c.Number] {
 			continue
 		}
+		seen[c.Number] = true
 		s := fmt.Sprintf("#%d", c.Number)
 		if pr := mainPR(c); pr != nil {
 			s += fmt.Sprintf(" → PR #%d", pr.Number)
@@ -269,44 +320,85 @@ func (v view) checkpointComment(done int) string {
 		done, strings.Join(finished, ", "), v.in.StopLabel)
 }
 
-// createAndLabel labels the next items in the window, creating or rewriting
-// their children as needed, and with create: all, creates and rewrites the
-// rest unlabelled.
+// createAndLabel labels the next children in the window: the existing ones
+// not yet started, rewritten if out of date, and new ones for the next items
+// without a child, a group of them each. With create: all, it creates and
+// rewrites the rest unlabelled.
 func (v view) createAndLabel(p *Plan) {
 	spec := v.in.Spec
 	active := 0
-	for _, c := range v.byKey {
+	for _, c := range v.itemChildren() {
 		if c.Open && c.Labelled {
 			active++
 		}
 	}
 	slots := p.State.Window - active
+	size := p.State.Group
+	newChild := func(items []Item, labels []string) NewChild {
+		return NewChild{
+			Keys:   itemKeys(items),
+			Title:  spec.ChildTitle(v.in.Parent, v.in.ParentTitle, items),
+			Body:   spec.ChildBody(v.in.Parent, v.in.ParentTitle, items),
+			Labels: labels,
+		}
+	}
+	var group []Item
+	flush := func() {
+		if len(group) > 0 {
+			p.Create = append(p.Create, newChild(group, v.labels))
+			group = nil
+		}
+	}
+	handled := map[int]bool{}
 	for _, it := range spec.Items {
-		title := spec.ChildTitle(v.in.Parent, v.in.ParentTitle, it)
-		body := spec.ChildBody(v.in.Parent, v.in.ParentTitle, it)
 		c, exists := v.byKey[it.Key]
 		if !exists {
 			switch {
+			case len(group) > 0:
+				group = append(group, it)
 			case slots > 0:
-				p.Create = append(p.Create, NewChild{Key: it.Key, Title: title, Body: body, Labels: v.labels})
+				group = []Item{it}
 				slots--
 			case spec.Settings.Create == CreateAll:
-				p.Create = append(p.Create, NewChild{Key: it.Key, Title: title, Body: body})
+				p.Create = append(p.Create, newChild([]Item{it}, nil))
+			}
+			if len(group) >= size {
+				flush()
 			}
 			continue
 		}
+		if handled[c.Number] {
+			continue
+		}
+		handled[c.Number] = true
 		if !c.Open || c.Labelled || slices.Contains(p.State.Started, c.Number) {
 			continue
 		}
+		items := v.childItems(c)
+		title := spec.ChildTitle(v.in.Parent, v.in.ParentTitle, items)
+		body := spec.ChildBody(v.in.Parent, v.in.ParentTitle, items)
 		if c.Title != title || !sameText(c.Body, body) {
-			p.Rewrite = append(p.Rewrite, Rewrite{Number: c.Number, Key: it.Key, Title: title, Body: body})
+			p.Rewrite = append(p.Rewrite, Rewrite{Number: c.Number, Keys: itemKeys(items), Title: title, Body: body})
 		}
 		if slots > 0 {
-			p.Label = append(p.Label, Labelling{Number: c.Number, Key: it.Key, Labels: v.labels})
+			p.Label = append(p.Label, Labelling{Number: c.Number, Keys: itemKeys(items), Labels: v.labels})
 			p.State.started(c.Number)
 			slots--
 		}
 	}
+	flush()
+}
+
+// childItems are the spec's items a child was made with, in spec order: a
+// child keeps its items, less any removed from the spec.
+func (v view) childItems(c Child) []Item {
+	var out []Item
+	for _, it := range v.in.Spec.Items {
+		if slices.Contains(c.Keys, it.Key) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // finish runs the final step once every item is done: the final child, and

@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,13 +14,13 @@ func TestTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := spec.ChildTitle(7, "P", spec.Items[0]); got != "a (P #7)" {
+	if got := spec.ChildTitle(7, "P", spec.Items[:1]); got != "a (P #7)" {
 		t.Errorf("ChildTitle() = %q", got)
 	}
-	if got := spec.ChildBody(7, "P", spec.Items[0]); !strings.HasPrefix(got, "Fix a.\n\n### Item\n- **a** (one)\n") {
+	if got := spec.ChildBody(7, "P", spec.Items[:1]); !strings.HasPrefix(got, "Fix a.\n\n### Item\n- **a** (one)\n") {
 		t.Errorf("ChildBody(a) = %q", got)
 	}
-	if got := spec.ChildBody(7, "P", spec.Items[1]); !strings.HasPrefix(got, "Fix b. Carefully.\n") {
+	if got := spec.ChildBody(7, "P", spec.Items[1:2]); !strings.HasPrefix(got, "Fix b. Carefully.\n") {
 		t.Errorf("ChildBody(b) = %q", got)
 	}
 }
@@ -122,12 +123,12 @@ func TestItemsFileBody(t *testing.T) {
 	if err := spec.LoadItems([]byte(`[{"kind": "A", "file": "a.go"}]`), ""); err != nil {
 		t.Fatal(err)
 	}
-	body := spec.ChildBody(9, "P", spec.Items[0])
+	body := spec.ChildBody(9, "P", spec.Items[:1])
 	if !strings.HasPrefix(body, "Fix A in a.go.\n\n### Item\n- A\n") {
 		t.Errorf("ChildBody() = %q", body)
 	}
-	if _, key, _, _ := ParseMarker(body); key != "a" {
-		t.Errorf("marker key %q, want a", key)
+	if _, keys, _, _ := ParseMarker(body); !slices.Equal(keys, []string{"a"}) {
+		t.Errorf("marker keys %q, want [a]", keys)
 	}
 }
 

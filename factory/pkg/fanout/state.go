@@ -17,12 +17,15 @@ var stateRe = regexp.MustCompile(`<!--\s*factory:fanout-state\s+(\{.*?\})\s*-->`
 type State struct {
 	// Window is how many children may be labelled and open at once.
 	Window int `json:"window"`
+	// Group is how many items the next child is made with.
+	Group int `json:"group"`
 	// Counted are the children closed and the PRs closed unmerged that the
 	// window has already moved for, so a pass never counts one twice.
 	Counted []int `json:"counted,omitempty"`
 	// Checkpoints are the checkpoints already stopped at.
 	Checkpoints []int `json:"checkpoints,omitempty"`
-	// Children are the item children created, by item key. GitHub's search
+	// Children are the item children created, by item key: a child made
+	// for a group of items is there once per item. GitHub's search
 	// and timeline can lag a creation; this cannot.
 	Children map[string]int `json:"children,omitempty"`
 	// Final is the final child, once created.
@@ -39,7 +42,7 @@ func ParseState(body string) (*State, bool) {
 		return nil, false
 	}
 	var st State
-	if err := json.Unmarshal([]byte(m[1]), &st); err != nil || st.Window < 1 {
+	if err := json.Unmarshal([]byte(m[1]), &st); err != nil || st.Window < 1 || st.Group < 1 {
 		return nil, false
 	}
 	return &st, true
@@ -59,7 +62,9 @@ func (st *State) Created(c NewChild, number int) {
 		if st.Children == nil {
 			st.Children = map[string]int{}
 		}
-		st.Children[c.Key] = number
+		for _, k := range c.Keys {
+			st.Children[k] = number
+		}
 	}
 	if len(c.Labels) > 0 {
 		st.started(number)

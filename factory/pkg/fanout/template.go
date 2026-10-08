@@ -58,6 +58,11 @@ func (s Spec) checkTemplates() error {
 				return fmt.Errorf("%s, for item %q: %w", t.name, it.Name, err)
 			}
 		}
+		if s.Settings.Group.Max > 1 && len(s.Items) > 1 {
+			if _, err := render(t.name, t.text, childData(0, "", s.Items[:min(len(s.Items), s.Settings.Group.Max)])); err != nil {
+				return fmt.Errorf("%s, for a group of items: %w", t.name, err)
+			}
+		}
 	}
 	return nil
 }
