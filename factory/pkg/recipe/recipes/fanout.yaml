@@ -64,6 +64,8 @@ start:
         labels: []      # only labels the issue asks children to carry; never a
                         # label ending in /fanout or /stop, nor the trigger label
         group: 1        # items per child; {start: 1, max: 4} groups more as children merge
+        create: lazy    # a child is created when it is labelled; all: every child at
+                        # the start, unlabelled (group 1 only)
         window: {start: 2, max: 8}
         checkpoints: [2]
         ```

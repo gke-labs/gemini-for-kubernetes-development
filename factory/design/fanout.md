@@ -110,6 +110,7 @@ In a spec written by hand in the body, the whole section can be left out: every 
 title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
 group: 1
+create: lazy
 window: {start: 2, max: 8}
 checkpoints: [2]
 ```
