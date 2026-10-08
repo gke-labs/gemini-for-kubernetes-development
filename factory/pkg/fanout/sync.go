@@ -25,6 +25,9 @@ type GitHub interface {
 	AddComment(ctx context.Context, number int, body string) error
 	EditComment(ctx context.Context, commentID int64, body string) error
 	CloseIssue(ctx context.Context, number int) error
+	// ReadFile returns a file on the default branch and the commit it was
+	// read at; github.ErrUnreadableFile when the file is missing or unusable.
+	ReadFile(ctx context.Context, path string) ([]byte, string, error)
 }
 
 // SyncOptions are a pass's.
@@ -106,6 +109,13 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 		return SyncResult{NoSpec: true}, nil
 	}
 	spec, err := Parse(markdown)
+	if err == nil && spec.Settings.Items != nil {
+		err = loadItems(ctx, gh, &spec)
+	}
+	var rerr retryable
+	if errors.As(err, &rerr) {
+		return SyncResult{}, rerr.err
+	}
 	if err != nil {
 		body := fmt.Sprintf("%s\n### Fan-out\n\nThe spec does not parse: %s.\n\nFix it, and the fan-out carries on.\n", ProgressMarker, err)
 		if st, ok := progressState(progress); ok {
@@ -165,6 +175,25 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 		}
 	}
 	return SyncResult{Plan: plan}, err
+}
+
+// retryable is a failure to read an items file that is GitHub's, not the
+// spec's: it fails the pass instead of being reported as a spec error.
+type retryable struct{ err error }
+
+func (r retryable) Error() string { return r.err.Error() }
+
+// loadItems reads the spec's items file and loads its items.
+func loadItems(ctx context.Context, gh GitHub, spec *Spec) error {
+	path := spec.Settings.Items.From
+	data, commit, err := gh.ReadFile(ctx, path)
+	switch {
+	case errors.Is(err, github.ErrUnreadableFile):
+		return fmt.Errorf("items.from: %w", err)
+	case err != nil:
+		return retryable{err}
+	}
+	return spec.LoadItems(data, fmt.Sprintf("`%s` at %.7s", path, commit))
 }
 
 // withStop is the input as the progress comment shows it: stopped, if the

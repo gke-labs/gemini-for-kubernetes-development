@@ -90,7 +90,7 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 - `factory pr review` and the watch's reviews are unchanged.
 
 ### Fan-out (`factory watch fanout`)
-- **One task, many items.** A parent issue with `## Task` (for one `{item}`), `## Items` (a checklist), and optionally `## Finally` and `## Fan-out` (settings) gets a child issue per item. The spec is the newest comment marked `<!-- factory:fanout-spec -->` by you or a maintainer, else the body.
+- **One task, many items.** A parent issue with `## Task` (a Go template for one item: `{{.item.name}}`, `{{.parent.title}}`), `## Items` (a checklist, or `items.from` a JSON file in the repo, with `select`, `where` and `name`), and optionally `## Finally` and `## Fan-out` (settings) gets a child issue per item. The spec is the newest comment marked `<!-- factory:fanout-spec -->` by you or a maintainer, else the body.
 - **Slow start.** `watch fanout --url <issue>` runs one pass: children are labelled `overseer` within a window that starts at 2, grows by one per child completed and halves per PR closed unmerged. It stops (`overseer/stop`) at checkpoints, rewrites children not yet labelled from an edited spec, runs the `Finally` child last, and keeps a progress comment on the parent. `--dry-run` writes nothing. The watch daemon runs the same pass on every open parent labelled `overseer/fanout` (every 5 minutes, and as soon as a child closes); see [design/fanout.md](design/fanout.md).
 
 ### Engines and models

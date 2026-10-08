@@ -10,7 +10,7 @@ import (
 const kmsSpec = SpecMarker + `
 ## Fan-out
 ` + "```yaml" + `
-title: "Migrate {item} to kmsv1beta1.KMSCryptoKeyRef"
+title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
 create: all
 window: {start: 2, max: 8}
@@ -18,7 +18,7 @@ checkpoints: [2]
 ` + "```" + `
 
 ## Task
-For ` + "`{item}`" + `, switch its KMS reference.
+For ` + "`{{.item.name}}`" + `, switch its KMS reference.
 
 ## Items
 - [ ] **ApigeeInstance** (` + "`apis/apigee/v1alpha1/instance_types.go`" + `)
@@ -37,7 +37,7 @@ func TestParse(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Spec{
-		Task: "For `{item}`, switch its KMS reference.",
+		Task: "For `{{.item.name}}`, switch its KMS reference.",
 		Items: []Item{
 			{Key: "apigeeinstance", Name: "ApigeeInstance", Line: "**ApigeeInstance** (`apis/apigee/v1alpha1/instance_types.go`)"},
 			{Key: "bigquerydataset", Name: "BigQueryDataset", Line: "BigQueryDataset (`apis/bigquery/v1beta1/bigquerydataset_types.go`)"},
@@ -45,12 +45,15 @@ func TestParse(t *testing.T) {
 		},
 		Finally: "Remove `refs.KMSCryptoKeyRef`.",
 		Settings: Settings{
-			Title:       "Migrate {item} to kmsv1beta1.KMSCryptoKeyRef",
+			Title:       "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef",
 			Labels:      []string{},
 			Create:      CreateAll,
 			Window:      Window{Start: 2, Max: 8},
 			Checkpoints: []int{2},
 		},
+	}
+	for i, it := range want.Items {
+		want.Items[i].Fields = map[string]any{"name": it.Name, "line": it.Line}
 	}
 	if diff := cmp.Diff(want, spec); diff != "" {
 		t.Errorf("Parse() (-want +got):\n%s", diff)
@@ -79,13 +82,13 @@ func TestParseDefaults(t *testing.T) {
 		},
 		{
 			name: "no checkpoints",
-			yaml: "create: batch\ncheckpoints: []",
-			want: Settings{Title: defaultTitle, Create: CreateBatch, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
+			yaml: "create: lazy\ncheckpoints: []",
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			md := "## Task\ndo {item}\n\n## Items\n- [ ] a\n"
+			md := "## Task\ndo {{.item.name}}\n\n## Items\n- [ ] a\n"
 			if tc.yaml != "" {
 				md += "\n## Fan-out\n```yaml\n" + tc.yaml + "\n```\n"
 			}
@@ -141,7 +144,7 @@ func TestChildBodyMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := spec.ChildBody(13781, spec.Items[0])
+	body := spec.ChildBody(13781, "KMS refs", spec.Items[0])
 	if !strings.HasPrefix(body, "For `ApigeeInstance`, switch") {
 		t.Errorf("body does not start with the task for the item:\n%s", body)
 	}
@@ -153,7 +156,7 @@ func TestChildBodyMarker(t *testing.T) {
 	if !ok || parent != 13781 || key != "" || !final {
 		t.Errorf("ParseMarker(final) = %d %q %v %v", parent, key, final, ok)
 	}
-	if got := spec.ChildTitle("KMS refs", spec.Items[0]); got != "Migrate ApigeeInstance to kmsv1beta1.KMSCryptoKeyRef" {
+	if got := spec.ChildTitle(13781, "KMS refs", spec.Items[0]); got != "Migrate ApigeeInstance to kmsv1beta1.KMSCryptoKeyRef" {
 		t.Errorf("ChildTitle() = %q", got)
 	}
 }

@@ -25,6 +25,9 @@ func Progress(in Input, st State, children []Child) string {
 	if in.Stopped {
 		fmt.Fprintf(&b, " · stopped: remove `%s` to continue", in.StopLabel)
 	}
+	if in.Spec.Source != "" {
+		fmt.Fprintf(&b, "\n\nItems from %s.", in.Spec.Source)
+	}
 	b.WriteString("\n\n| Item | Child | PR | State |\n|---|---|---|---|\n")
 	for _, it := range in.Spec.Items {
 		c, ok := v.byKey[it.Key]

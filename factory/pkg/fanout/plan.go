@@ -282,8 +282,8 @@ func (v view) createAndLabel(p *Plan) {
 	}
 	slots := p.State.Window - active
 	for _, it := range spec.Items {
-		title := spec.ChildTitle(v.in.ParentTitle, it)
-		body := spec.ChildBody(v.in.Parent, it)
+		title := spec.ChildTitle(v.in.Parent, v.in.ParentTitle, it)
+		body := spec.ChildBody(v.in.Parent, v.in.ParentTitle, it)
 		c, exists := v.byKey[it.Key]
 		if !exists {
 			switch {

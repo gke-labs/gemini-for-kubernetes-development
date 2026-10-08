@@ -19,7 +19,7 @@ type fakeGitHub struct {
 	comments int
 }
 
-const spec = "## Task\nDo {item}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n"
+const spec = "## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n"
 
 func newFake() *fakeGitHub {
 	parent := &githubv39.Issue{
@@ -69,6 +69,9 @@ func (f *fakeGitHub) AddComment(context.Context, int, string) error {
 }
 func (f *fakeGitHub) EditComment(context.Context, int64, string) error { return nil }
 func (f *fakeGitHub) CloseIssue(context.Context, int) error            { return nil }
+func (f *fakeGitHub) ReadFile(context.Context, string) ([]byte, string, error) {
+	return nil, "", github.ErrUnreadableFile
+}
 
 func TestSyncOnce(t *testing.T) {
 	gh := newFake()
