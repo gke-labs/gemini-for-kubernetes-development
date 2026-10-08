@@ -172,7 +172,24 @@ Migrate {{range .items}}`{{.kind}}` ({{.file}}), {{end}}to `kmsv1beta1.KMSCrypto
 {{if .item.beta}}This is a beta resource: keep the old field, deprecated.{{end}}
 ```
 
-Templates are rendered with `missingkey=error`, and every item is rendered once when the spec is parsed, so a typo such as `{{.kidn}}` is a spec error in the progress comment, never a broken child. Only the built-in functions (`if`, `range`, `eq`, `index`, …) exist: a template cannot run commands or read files.
+Templates are rendered with `missingkey=error`, and every item is rendered once when the spec is parsed, so a typo such as `{{.kidn}}` is a spec error in the progress comment, never a broken child. Only the built-in functions exist, and a template cannot run commands or read files. They are enough for most conditions:
+
+| Built-in | Use |
+|---|---|
+| `and a b c`, `or a b c`, `not a` | Combine conditions; `and` and `or` take any number of arguments and stop early |
+| `eq x a b c` | `x` equals any of them, so it doubles as "in a list" |
+| `ne`, `lt`, `le`, `gt`, `ge` | Compare strings or numbers |
+| `len` | `{{gt (len .files) 3}}` |
+| `index . "beta"` | A field that may be missing: empty instead of a `missingkey` error |
+| `if` / `else if` / `else`, `range`, `( … )` | Branches, loops, grouping |
+
+```yaml
+where: '{{and (ne .status "done") (or (index . "beta") (eq .service "kms" "kmsautokey"))}}'
+```
+
+There is no string matching (contains, prefix, regex). Helper functions are added when a fan-out needs one, as pure functions only, so a template still cannot reach outside the item: `contains`, `hasPrefix`, `hasSuffix`, `lower` and `join`, from Go's `strings`, are the likely first ones.
+
+CEL was considered for `where`. It is the better condition language (`has()`, `in`, string methods, list macros), but it cannot render text, so a spec would mix two languages, and it adds a dependency factory does not have (`cel-go`, ANTLR). Go templates do conditions well enough. If filters outgrow them, `where` alone can move to CEL later.
 
 The child's body is the rendered Task, then the items' lines under `### Item` (or `### Items`), then "Part of #N." and the marker, whose `items=` lists the keys of every item in the child.
 
