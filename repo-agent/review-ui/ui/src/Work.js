@@ -115,11 +115,17 @@ function chipTitle(c, hint, error) {
   return lines.join('\n');
 }
 
-// latestRuns is the newest run of each recipe on the row (its sessions
+// runGroup is the group a run or a recipe is in: its session tag, else
+// itself. A group's recipes run into one conversation, one at a time.
+function runGroup(s) {
+  return s.session || s.recipe || s.name;
+}
+
+// latestRuns is the newest run of each group on the row (its sessions
 // are newest first).
 function latestRuns(item) {
   const seen = new Set();
-  return (item.sessions || []).filter(s => !seen.has(s.recipe) && seen.add(s.recipe));
+  return (item.sessions || []).filter(s => !seen.has(runGroup(s)) && seen.add(runGroup(s)));
 }
 
 // bareReviewRequest is a row that needs the member only because their
@@ -345,39 +351,58 @@ function anyPosting(items) {
 }
 
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, onOpenSession, runState, onRunStarted }) {
-  // The row's runs: each recipe's newest, and what it is now — a click
-  // not started yet is starting (or queued), until its run is.
+  // The row's runs: each group's newest, and what it is now — a click on
+  // any of its recipes not started yet is starting (or queued), until
+  // its run is.
   const runs = latestRuns(item);
-  const runOf = name => runs.find(r => r.recipe === name);
-  const statusOf = name => ((item.launching || {})[name]) || (runOf(name) || {}).status || '';
+  const runOf = g => runs.find(r => runGroup(r) === g);
+  const recipeOf = name => (item.recipes || []).find(r => r.name === name);
+  const groupOfRecipe = name => runGroup(recipeOf(name) || { name });
+  const launchingOf = g => Object.entries(item.launching || {}).find(([name]) => groupOfRecipe(name) === g);
+  const statusOf = g => (launchingOf(g) || [])[1] || (runOf(g) || {}).status || '';
   // A failed run's session continues where it stopped.
-  const failedRun = runs.find(r => statusOf(r.recipe) === 'failed');
+  const failedRun = runs.find(r => statusOf(runGroup(r)) === 'failed');
 
   const [showError, setShowError] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
+  const [menu, setMenu] = useState('');
 
   const group = groupOf(item);
   const isPR = item.type !== 'issue';
 
   // The rail (the last column): the recipes to launch and the row's own
   // GitHub moves; a run's history is its chip's session.
+  // One button per group: the recipe named like it, the rest its ▾ menu.
   const actions = [];
+  const groups = [];
   for (const rec of item.recipes || []) {
-    const status = statusOf(rec.name);
+    const g = runGroup(rec);
+    const known = groups.find(x => x.group === g);
+    if (known) known.recipes.push(rec);
+    else groups.push({ group: g, recipes: [rec] });
+  }
+  const recipeAction = (rec, again) => ({
+    label: rec.label,
+    path: `${isPR ? 'prs' : 'issues'}/${item.number}/recipes/${rec.name}`,
+    inputs: rec.inputs,
+    title: `Run ${rec.label}${again ? ' again' : ''} as you`,
+  });
+  for (const { group: g, recipes } of groups) {
+    const status = statusOf(g);
     // Running, a click starting, or a draft to judge: the chip is the
     // row's move, not another run.
     if (['running', 'starting', 'queued', 'ready'].includes(status)) continue;
+    const rec = recipes.find(r => r.name === g) || recipes[0];
     if (rec.name === 'review' && item.reviewPending) continue;
     const again = status === 'done' || status === 'failed';
     // A requested review is the same verb wearing the urgency: someone
     // is waiting on you, so the button tints red instead of adding a chip.
     const requested = rec.name === 'review' && item.reviewRequested && !again;
     actions.push({
-      label: rec.label,
-      path: `${isPR ? 'prs' : 'issues'}/${item.number}/recipes/${rec.name}`,
-      inputs: rec.inputs,
+      ...recipeAction(rec, again),
       tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
-      title: requested ? `Your review was requested — run ${rec.label} as you` : `Run ${rec.label}${again ? ' again' : ''} as you`,
+      title: requested ? `Your review was requested — run ${rec.label} as you` : recipeAction(rec, again).title,
+      menu: recipes.length > 1 ? { group: g, items: recipes.filter(r => r !== rec).map(r => recipeAction(r, false)) } : undefined,
     });
   }
   if (isPR && item.mine && item.draftPR) {
@@ -397,12 +422,19 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   // the session is one more click from there.
   // A pending review of the member's on GitHub is the review's draft, run
   // or not: it awaits their verdict.
-  const chips = runs.map(run => ({ recipe: run.recipe, label: run.label || run.recipe, run,
-    status: run.recipe === 'review' && item.reviewPending ? 'ready' : statusOf(run.recipe) }));
+  // A group's chip is labelled by what it runs: its click starting, else
+  // its newest run.
+  const labelOf = name => (recipeOf(name) || {}).label || name;
+  const chips = runs.map(run => {
+    const g = runGroup(run);
+    const launching = launchingOf(g);
+    return { recipe: g, label: launching ? labelOf(launching[0]) : (run.label || run.recipe), run,
+      status: run.recipe === 'review' && item.reviewPending ? 'ready' : statusOf(g) };
+  });
   for (const [name, state] of Object.entries(item.launching || {})) {
-    if (runOf(name)) continue;
-    const rec = (item.recipes || []).find(r => r.name === name);
-    chips.push({ recipe: name, label: rec ? rec.label : name, status: state });
+    const g = groupOfRecipe(name);
+    if (chips.some(c => c.recipe === g)) continue;
+    chips.push({ recipe: g, label: labelOf(name), status: state });
   }
   // What GitHub still records of a review or a fix whose run is gone
   // (its sandbox deleted) is the recipe's chip too, linking GitHub.
@@ -418,6 +450,17 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     chips.push({ recipe: 'fix', label: 'Fix', status: 'done', href: item.prURL, title: 'Fix shipped — open the PR' });
   }
   const failedChip = chips.some(c => c.status === 'failed');
+
+  // A recipe's required inputs with no default are asked here.
+  const runAction = a => {
+    const inputs = {};
+    for (const name of a.inputs || []) {
+      const v = window.prompt(`${a.label}: ${name}`);
+      if (!v || !v.trim()) return;
+      inputs[name] = v.trim();
+    }
+    onAction(a.path, a.label, (a.inputs || []).length ? { inputs } : {});
+  };
 
   return (
     <React.Fragment>
@@ -561,7 +604,34 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
         )}
       </td>
       <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {actions.map(a => a.onClick ? (
+        {actions.map(a => a.menu ? (
+          <span key={a.label} style={{ position: 'relative', display: 'inline-block', marginLeft: '4px' }}>
+            <button className="btn btn-sm" title={a.title} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              onClick={() => runAction(a)}>{a.label}</button>
+            <button className="btn btn-sm" aria-label={`More ${a.label} recipes`} title={`The other recipes of ${a.label}'s session`}
+              style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: 'none', padding: '0 6px' }}
+              onClick={() => setMenu(m => m === a.menu.group ? '' : a.menu.group)}>▾</button>
+            {menu === a.menu.group && (
+              <React.Fragment>
+                <div onClick={() => setMenu('')} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
+                <div role="menu" style={{
+                  position: 'absolute', top: '100%', right: 0, zIndex: 10, marginTop: '4px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '2px',
+                  padding: '6px', minWidth: '140px', textAlign: 'left',
+                  border: '1px solid var(--border-color)', borderRadius: '8px',
+                  background: 'var(--bg-card)', boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+                }}>
+                  {a.menu.items.map(m => (
+                    <button key={m.label} role="menuitem" className="btn btn-sm" title={m.title}
+                      onClick={() => { setMenu(''); runAction(m); }}>
+                      {m.label}{(m.inputs || []).length ? '…' : ''}
+                    </button>
+                  ))}
+                </div>
+              </React.Fragment>
+            )}
+          </span>
+        ) : a.onClick ? (
           <button key={a.label} className="btn btn-sm" style={{ marginLeft: '4px' }} title={a.title} onClick={a.onClick}>{a.label}</button>
         ) : a.href ? (
           <a
@@ -581,16 +651,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
               ? { marginLeft: '4px', color: a.tint.color, backgroundColor: a.tint.bg, borderColor: a.tint.color, fontWeight: 600 }
               : { marginLeft: '4px' }}
             title={a.title}
-            onClick={() => {
-              // A recipe's required inputs with no default are asked here.
-              const inputs = {};
-              for (const name of a.inputs || []) {
-                const v = window.prompt(`${a.label}: ${name}`);
-                if (!v || !v.trim()) return;
-                inputs[name] = v.trim();
-              }
-              onAction(a.path, a.label, (a.inputs || []).length ? { inputs } : {});
-            }}
+            onClick={() => runAction(a)}
           >{a.label}</button>
         ))}
       </td>

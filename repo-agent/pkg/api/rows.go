@@ -32,6 +32,45 @@ func recipeLabel(catalog []boardv1alpha1.BoardRecipe, name string) string {
 	return name
 }
 
+// launchInputs are the inputs a launch of rec must be given: required,
+// with no default.
+func launchInputs(rec boardv1alpha1.BoardRecipe) []string {
+	var out []string
+	for _, in := range rec.Inputs {
+		if in.Required && in.Default == "" && !in.Revise {
+			out = append(out, in.Name)
+		}
+	}
+	return out
+}
+
+// recipeGroup is name's group in catalog: its session tag, else itself.
+// A group's runs are one conversation and one chip on the row, and it is
+// one button.
+func recipeGroup(catalog []boardv1alpha1.BoardRecipe, name string) string {
+	if tag := recipeSessionTag(catalog, name); tag != "" {
+		return tag
+	}
+	return name
+}
+
+// recipeSessionTag is name's session tag in catalog, "" for a recipe in
+// none.
+func recipeSessionTag(catalog []boardv1alpha1.BoardRecipe, name string) string {
+	if i := slices.IndexFunc(catalog, func(rec boardv1alpha1.BoardRecipe) bool { return rec.Name == name }); i >= 0 {
+		return catalog[i].Session
+	}
+	return ""
+}
+
+// runGroup is a run's group: its recipe's session tag, else its recipe.
+func runGroup(s models.RunSession) string {
+	if s.Session != "" {
+		return s.Session
+	}
+	return s.Recipe
+}
+
 // rowRecipes are the launch buttons of a row of item, a PR of the
 // member's from their fork if myPR: the recipes the controller published
 // that run there, none before it has.
@@ -41,25 +80,19 @@ func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string, myPR bool) []m
 		if !recipeRunsOn(rec, item, myPR) {
 			continue
 		}
-		button := models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name)}
-		for _, in := range rec.Inputs {
-			if in.Required && in.Default == "" && !in.Revise {
-				button.Inputs = append(button.Inputs, in.Name)
-			}
-		}
-		out = append(out, button)
+		out = append(out, models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name), Session: rec.Session, Inputs: launchInputs(rec)})
 	}
 	return out
 }
 
-// latestRuns is the newest run of each recipe on the item.
+// latestRuns is the newest run of each group (runGroup) on the item.
 func latestRuns(item *models.WorkItem) []models.RunSession {
 	var out []models.RunSession
 	seen := map[string]bool{}
 	// Sessions are newest first.
 	for _, s := range item.Sessions {
-		if !seen[s.Recipe] {
-			seen[s.Recipe] = true
+		if g := runGroup(s); !seen[g] {
+			seen[g] = true
 			out = append(out, s)
 		}
 	}
@@ -86,7 +119,7 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 			continue
 		}
 		item := items[req.Spec.Item+"-"+strconv.Itoa(req.Spec.Number)]
-		if item == nil || runSince(item, req.Spec.Recipe, req.CreationTimestamp.Time) {
+		if item == nil || runSince(item, recipeGroup(catalog, req.Spec.Recipe), req.CreationTimestamp.Time) {
 			continue
 		}
 		state := "starting"
@@ -124,11 +157,12 @@ func markAutos(items map[string]*models.WorkItem, requests []boardv1alpha1.Reque
 	}
 }
 
-// runSince reports whether recipe's newest run on item started since a
-// click at: the click has its run.
-func runSince(item *models.WorkItem, recipe string, at time.Time) bool {
+// runSince reports whether group's newest run on item started since a
+// click at: the click has its run. A group runs one at a time, so its
+// newest run is the click's, whichever of its recipes it ran.
+func runSince(item *models.WorkItem, group string, at time.Time) bool {
 	for _, s := range latestRuns(item) {
-		if s.Recipe != recipe {
+		if runGroup(s) != group {
 			continue
 		}
 		started, err := time.Parse(time.RFC3339, s.StartedAt)

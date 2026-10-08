@@ -228,6 +228,8 @@ spec:
                         - label
                         type: object
                       type: array
+                    session:
+                      type: string
                     taskType:
                       type: string
                   required:

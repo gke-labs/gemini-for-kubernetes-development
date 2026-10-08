@@ -1557,7 +1557,8 @@ export function ResearchConversation({
                 : !r.enabled ? `Not now: ${r.reason}`
                   : taskState.held ? 'The session is a task\'s until it ends'
                     : busy ? 'The agent is working — once the turn ends'
-                      : 'Runs in this conversation; what it writes becomes the draft below, and nothing is posted'}>
+                      : r.verb === 'recipe' ? `Runs ${r.label || r.revise} in this conversation, on the PR as it is now, as the row's button does`
+                        : 'Runs in this conversation; what it writes becomes the draft below, and nothing is posted'}>
               {revising === r.revise || r.reason === 'revising' ? `${r.label || r.revise}…` : (r.label || r.revise)}
             </button>
           ))}

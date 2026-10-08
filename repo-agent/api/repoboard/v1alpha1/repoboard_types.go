@@ -219,6 +219,10 @@ type BoardRecipe struct {
 	// token; on a PR it runs in a sandbox of its own.
 	// +kubebuilder:validation:Optional
 	Credentials string `json:"credentials,omitempty"`
+	// Session is its session tag: recipes with one share a conversation
+	// on a target (and TaskType), and a row shows them as one group.
+	// +kubebuilder:validation:Optional
+	Session string `json:"session,omitempty"`
 }
 
 // BoardRecipeInput is one input a recipe declares. Revise marks one only

@@ -484,11 +484,11 @@ func TestATriageSessionsEditIsValidated(t *testing.T) {
 	}
 }
 
-// careSandbox is the fix sandbox factory made for PR 9, which care ran in.
-func careSandbox() *unstructured.Unstructured {
+// careSandbox is the fix sandbox factory made for PR 9, which care's
+// session ran in; its run at work when state is Running.
+func careSandbox(state string) *unstructured.Unstructured {
 	run, _ := json.Marshal(factorycli.RecordedRun{
-		Name: "request/1", Task: "recipe-care-1", StartedAt: time.Unix(1_000_000, 0), Recipe: "care", State: "Completed",
-		Kind: "Change", Revises: []factorycli.RecordedRevise{{ID: "fix-ci", Label: "Fix CI"}, {ID: "rebase", Label: "Rebase"}},
+		Name: "request/1", Task: "recipe-care-1", StartedAt: time.Unix(1_000_000, 0), Recipe: "care-ci", State: "Completed", Kind: "Change",
 	})
 	careRun := factorycli.RunAnnotation("recipe-care")
 	return sandboxCR("fix-repo-9", map[string]interface{}{"factory.gemini.google.com/managed": "true", factorycli.LabelPR: "9"},
@@ -496,44 +496,106 @@ func careSandbox() *unstructured.Unstructured {
 			"repo":    "repo",
 			"htmlURL": "https://github.com/test/repo/pull/9",
 			annoBoard: "myboard",
-			"sandbox.gemini.google.com/last-task-state": "Completed",
+			"sandbox.gemini.google.com/last-task-state": state,
 			careRun: string(run),
 			factorycli.OutputAnnotation(careRun): "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\n" +
 				"source:\n  task: recipe-care-1\nspec:\n  title: Fix it\n",
 		}, 1)
 }
 
-// A care session in the fix sandbox made for its PR offers its revises,
-// and files them and its draft's writes on the sandbox, as a fix's.
-func TestACareSessionOnAPRSandboxActs(t *testing.T) {
-	sb := careSandbox()
-	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{sb},
+// careSessionServer is the board test server with care's session on PR 9.
+func careSessionServer(t *testing.T, state string) (*gin.Engine, *fake.FakeDynamicClient) {
+	t.Helper()
+	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(), careSandbox(state))
+	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
+	return r, dyn
+}
+
+// A care session offers its group's recipes, each a run into it on its PR,
+// and files its draft's writes on the sandbox, as a fix's.
+func TestACareSessionOffersItsGroup(t *testing.T) {
+	sb := careSandbox("Completed")
+	r, dyn := taskSessionTestServerDyn(t, nil, true, []*unstructured.Unstructured{sb},
 		researchPod("alice", "fix-repo-9", "10.1.2.3", corev1.PodRunning))
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(), boardCR(), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	w := doJSON(t, r, http.MethodGet, "/api/task-sessions/fix-repo-9/recipe-care-1", "")
-	if !strings.Contains(w.Body.String(), `"revise":"fix-ci","label":"Fix CI","enabled":true`) ||
-		!strings.Contains(w.Body.String(), `"revise":"rebase","label":"Rebase","enabled":true`) {
-		t.Errorf("care's revises in %s, want them enabled", w.Body.String())
+	for _, want := range []string{
+		`"verb":"recipe","revise":"care","label":"Care","enabled":true`,
+		`"verb":"recipe","revise":"care-ci","label":"Fix CI","enabled":true`,
+		`"verb":"recipe","revise":"care-iterate","label":"Iterate","inputs":["instruction"],"enabled":true`,
+	} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("want %s in %s", want, w.Body.String())
+		}
+	}
+	if strings.Contains(w.Body.String(), `"revise":"fix"`) {
+		t.Errorf("fix is in no group of care's: %s", w.Body.String())
 	}
 
-	sb = careSandbox()
-	server, r2, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(), sb)
-	r2.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
-	r2.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
+	r2, dyn2 := careSessionServer(t, "Completed")
 	if w := doJSON(t, r2, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/draft/post-replies", `{}`); w.Code != http.StatusAccepted {
 		t.Fatalf("post-replies: %d %s", w.Code, w.Body.String())
 	}
-	if spec := applyFiled(t, dyn); spec.Sandbox != "fix-repo-9" || spec.Number != 9 ||
+	if spec := applyFiled(t, dyn2); spec.Sandbox != "fix-repo-9" || spec.Number != 9 ||
 		*spec.Apply != (boardv1alpha1.ApplyRequest{Run: "recipe-care", Action: "post-replies"}) {
 		t.Errorf("post-replies filed %+v, want care's on fix-repo-9, PR 9", spec)
 	}
 }
 
+// A recipe of the group is filed as the row's button files it: on the PR,
+// with its inputs, one at a time.
+func TestACareSessionFilesItsGroupsRecipesOnItsPR(t *testing.T) {
+	r, dyn := careSessionServer(t, "Completed")
+	for _, body := range []string{
+		`{"revise":"care-iterate"}`,
+		`{"revise":"care-iterate","inputs":{"instruction":" "}}`,
+		`{"revise":"care-ci","inputs":{"instruction":"x"}}`,
+	} {
+		if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", body, w.Code, w.Body.String())
+		}
+	}
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"fix"}`); w.Code == http.StatusAccepted {
+		t.Errorf("fix: %d, want refused: not in care's group", w.Code)
+	}
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"care-iterate","inputs":{"instruction":" rename it "}}`); w.Code != http.StatusAccepted {
+		t.Fatalf("care-iterate: %d %s", w.Code, w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"care-ci"}`); w.Code != http.StatusConflict {
+		t.Errorf("a second run: %d %s, want 409 while the first stands", w.Code, w.Body.String())
+	}
+	reqs := filedRequests(t, dyn, "alice")
+	if len(reqs) != 1 {
+		t.Fatalf("filed %+v, want one run", reqs)
+	}
+	if spec := reqs[0].Spec; spec.Verb != boardv1alpha1.VerbRecipe || spec.Recipe != "care-iterate" || spec.Item != "pr" ||
+		spec.Number != 9 || spec.Member != "alice" || spec.Inputs["instruction"] != "rename it" {
+		t.Errorf("filed %+v, want alice's care-iterate on PR 9 with the instruction", spec)
+	}
+}
+
+// Not while a run of the session is at work.
+func TestACareSessionRefusesItsGroupWhileRunning(t *testing.T) {
+	r, dyn := careSessionServer(t, "Running")
+	w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"care-ci"}`)
+	if w.Code == http.StatusAccepted {
+		t.Errorf("care-ci while running: %d, want refused", w.Code)
+	}
+	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
+		t.Errorf("filed %+v, want nothing", reqs)
+	}
+}
+
 // A care session in a PR's fix sandbox no run of has ended yet (no board
-// stamped) offers its revises, and files them on the one board for its
+// stamped) offers its group, and files its runs on the one board for its
 // repository.
 func TestASessionWithoutAStampedBoardFindsItsBoard(t *testing.T) {
 	unstamped := func() *unstructured.Unstructured {
-		sb := careSandbox()
+		sb := careSandbox("Completed")
 		a := sb.GetAnnotations()
 		delete(a, annoBoard)
 		sb.SetAnnotations(a)
@@ -541,13 +603,13 @@ func TestASessionWithoutAStampedBoardFindsItsBoard(t *testing.T) {
 	}
 	server, r, dyn, _ := boardTestServerWithRT(t, issueFeed(42), boardCR(), unstamped())
 	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
-	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"fix-ci"}`); w.Code != http.StatusAccepted {
-		t.Fatalf("fix-ci: %d %s", w.Code, w.Body.String())
+	if w := doJSON(t, r, http.MethodPost, "/api/task-sessions/fix-repo-9/recipe-care-1/revise", `{"revise":"care-ci"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("care-ci: %d %s", w.Code, w.Body.String())
 	}
 	reqs := filedRequests(t, dyn, "alice")
-	if len(reqs) != 1 || reqs[0].Spec.Verb != boardv1alpha1.VerbRevise || reqs[0].Spec.Board != "myboard" ||
-		reqs[0].Spec.Sandbox != "fix-repo-9" || reqs[0].Spec.Revise != "fix-ci" {
-		t.Errorf("filed %+v, want fix-ci on fix-repo-9 for myboard", reqs)
+	if len(reqs) != 1 || reqs[0].Spec.Verb != boardv1alpha1.VerbRecipe || reqs[0].Spec.Board != "myboard" ||
+		reqs[0].Spec.Recipe != "care-ci" || reqs[0].Spec.Number != 9 {
+		t.Errorf("filed %+v, want care-ci on PR 9 for myboard", reqs)
 	}
 }
 
@@ -565,7 +627,7 @@ func TestFillSessionBoardNeedsOneBoard(t *testing.T) {
 		{"none", nil, ""},
 		{"several", []*unstructured.Unstructured{bareBoardCR(), other}, ""},
 	} {
-		sb := careSandbox()
+		sb := careSandbox("Completed")
 		a := sb.GetAnnotations()
 		delete(a, annoBoard)
 		sb.SetAnnotations(a)
