@@ -1694,6 +1694,17 @@ export function ResearchConversation({
             {r.label || r.revise}: running in this conversation — the draft appears here when the turn finishes.
           </div>
         ))}
+        {/* A review's draft is a pending review on GitHub, visible only to
+            the member until they finalize or discard it there. */}
+        {info && info.pendingReview && (
+          <div role="status" style={{
+            flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'small',
+            borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
+          }}>
+            Your review is pending on GitHub, visible only to you —{' '}
+            <a href={info.pendingReview} target="_blank" rel="noopener noreferrer">finalize or discard it there ↗</a>
+          </div>
+        )}
         {sessionDraft && sessionDraft.actions.filter(a => a.error).map(a => (
           <div key={`draft-err-${a.verb}${a.run || ''}`} className="warning-banner" style={{ flex: '0 0 auto' }}>
             {a.label || (DRAFT_VERBS[a.verb] || {}).label || a.verb} failed: {a.error}

@@ -667,3 +667,26 @@ func TestARevisesNewConversationIsRefused(t *testing.T) {
 		t.Errorf("iterate in a new conversation: %d %s, want 400", w.Code, w.Body.String())
 	}
 }
+
+// A review session links its pending review on GitHub, to finalize it
+// there; nothing pending, no link.
+func TestAReviewSessionLinksItsPendingReview(t *testing.T) {
+	sb := func(name, state string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{}
+		u.SetName(name)
+		u.SetAnnotations(map[string]string{"repo": "repo", "reviewState": state, "htmlURL": "https://github.com/o/repo/pull/42"})
+		return u
+	}
+	for _, tc := range []struct {
+		name, sandbox, state, want string
+	}{
+		{"pending", "review-repo-42", "pending", "https://github.com/o/repo/pull/42/files"},
+		{"submitted", "review-repo-42", "submitted", ""},
+		{"not posted", "review-repo-42", "", ""},
+		{"not a review sandbox", "fix-repo-42", "pending", ""},
+	} {
+		if got := pendingReviewURL(sb(tc.sandbox, tc.state)); got != tc.want {
+			t.Errorf("%s: pendingReviewURL = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
