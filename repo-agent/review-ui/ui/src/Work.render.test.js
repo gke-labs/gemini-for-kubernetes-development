@@ -784,10 +784,12 @@ describe('WorkRow run rules', () => {
         expect(container.querySelector('span[title^="Fix: queued — "]')).toBeTruthy();
     });
 
-    test('a done or failed recipe is offered again', async () => {
+    test('a done or failed recipe is offered again, under its own name', async () => {
         await renderRow({ ...issue, sessions: [run('fix', 'Fix', 'failed'), run('summarize', 'Summarize', 'done')] });
-        expect(findButton('Fix again')).toBeDefined();
-        expect(findButton('Summarize again')).toBeDefined();
+        expect(findButton('Fix').textContent).toBe('Fix');
+        expect(findButton('Fix').title).toBe('Run Fix again as you');
+        expect(findButton('Summarize').textContent).toBe('Summarize');
+        expect(container.textContent).not.toContain(' again');
         expect(container.textContent).not.toContain('Fix: failed');
         expect(chip('Fix: failed')).toBeDefined();
     });
