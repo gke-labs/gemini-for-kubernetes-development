@@ -233,9 +233,12 @@ type Session struct {
 	busy      bool
 	finished  bool
 	// retry is the last model call the engine logged retrying, until it
-	// is heard from again; parseRetry recognises those lines.
+	// is heard from again; parseRetry recognises those lines, and retries
+	// counts them all, written to RetriesFile in dir.
 	retry      *EngineRetry
 	parseRetry RetryParser
+	retries    EngineRetries
+	dir        string
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -325,6 +328,8 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	// flooding what the user reads. Only its retried model calls reach
 	// the transcript, as markers.
 	s.parseRetry = engine.Retry
+	s.dir = cfg.Dir
+	s.retries = loadRetries(cfg.Dir)
 	cmd.Stderr = &lineWriter{w: engineLog, onLine: s.onEngineLine}
 
 	stdout, err := cmd.StdoutPipe()

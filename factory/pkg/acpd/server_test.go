@@ -171,6 +171,7 @@ for line in sys.stdin:
             # the test opens the gate.
             sys.stderr.write("Attempt 1 failed with status 503. Retrying with backoff... _ApiError: {\n  \"error\": {\"code\": 503}\n}\n")
             sys.stderr.write("Attempt 2 failed with 429 error (no Retry-After header). Retrying with backoff...\n")
+            sys.stderr.write("  \"message\": \"You exceeded your current quota, please check your plan and billing details.\"\n")
             sys.stderr.flush()
             while not os.path.exists(os.environ["FAKE_GATE"]):
                 time.sleep(0.05)

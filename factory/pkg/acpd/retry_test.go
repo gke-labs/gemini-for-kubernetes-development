@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -24,7 +26,7 @@ func TestGeminiRetry(t *testing.T) {
 		{line: "Attempt 2 failed with 429 error (no Retry-After header). Retrying with backoff...", want: EngineRetry{Status: "429", Attempt: 2}, wantOK: true},
 		{line: "Attempt 4 failed with 5xx error. Retrying with backoff...", want: EngineRetry{Status: "5xx", Attempt: 4}, wantOK: true},
 		{line: "Attempt 5 failed. Retrying with backoff...", want: EngineRetry{Attempt: 5}, wantOK: true},
-		{line: `      "message": "You exceeded your current quota, please check your plan and billing details."`},
+		{line: `      "message": "You exceeded your current quota, please check your plan and billing details."`, want: EngineRetry{QuotaExceeded: true}, wantOK: true},
 		{line: "Loaded cached credentials."},
 	}
 	for _, tc := range tests {
@@ -59,7 +61,7 @@ func TestLineWriter(t *testing.T) {
 // session reports the last one as retrying until the engine speaks again.
 func TestEngineRetriesEndToEnd(t *testing.T) {
 	registerFakeEngine(t)
-	_, ts := newTestServer(t)
+	srv, ts := newTestServer(t)
 	gate := strings.TrimPrefix(Engines["fake-retry"].Env[0], "FAKE_GATE=")
 
 	resp := create(t, ts, "s1", "fake-retry", "")
@@ -79,7 +81,8 @@ func TestEngineRetriesEndToEnd(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		s := getSession(t, ts, "s1")
-		if s.Retrying != nil && s.Retrying.Attempt == 2 {
+		// The quota line follows the retry it is about.
+		if s.Retrying != nil && s.Retrying.Attempt == 2 && s.Retrying.QuotaExceeded {
 			if !s.Busy || s.Retrying.Status != "429" {
 				t.Fatalf("session %+v, retrying %+v", s, s.Retrying)
 			}
@@ -105,6 +108,32 @@ func TestEngineRetriesEndToEnd(t *testing.T) {
 	}
 	if r := getSession(t, ts, "s1").Retrying; r != nil {
 		t.Errorf("still retrying after the turn: %+v", r)
+	}
+
+	// The counts, for whoever reads the session directory.
+	data, err := os.ReadFile(filepath.Join(srv.stateDir, "s1", RetriesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var counts EngineRetries
+	if err := json.Unmarshal(data, &counts); err != nil {
+		t.Fatal(err)
+	}
+	if want := (EngineRetries{Statuses: map[string]int{"503": 1, "429": 1}, QuotaExceeded: true}); !maps.Equal(counts.Statuses, want.Statuses) || !counts.QuotaExceeded {
+		t.Errorf("%s = %+v, want %+v", RetriesFile, counts, want)
+	}
+}
+
+func TestLoadRetries(t *testing.T) {
+	dir := t.TempDir()
+	if r := loadRetries(dir); r.Statuses == nil || len(r.Statuses) != 0 {
+		t.Fatalf("no file: %+v", r)
+	}
+	if err := replaceFile(dir, RetriesFile, []byte(`{"statuses":{"429":3}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if r := loadRetries(dir); r.Statuses["429"] != 3 {
+		t.Fatalf("got %+v", r)
 	}
 }
 
