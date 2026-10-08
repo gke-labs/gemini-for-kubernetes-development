@@ -43,7 +43,7 @@ import (
 // With --replay-late as well it answers session/load before replaying, as
 // gemini does.
 const fakeAgent = `
-import json, os, sys
+import json, os, sys, time
 
 modes = "--modes" in sys.argv[1:]
 refuse = "--refuse" in sys.argv[1:]
@@ -166,6 +166,15 @@ for line in sys.stdin:
             remembered = " sid:%s history:%s" % (sid, ",".join(history(sid)))
             with open(history_path(sid), "a") as f:
                 f.write(prompt + "\n")
+        if prompt.startswith("!retry"):
+            # gemini's retryWithBackoff, then the call that succeeds once
+            # the test opens the gate.
+            sys.stderr.write("Attempt 1 failed with status 503. Retrying with backoff... _ApiError: {\n  \"error\": {\"code\": 503}\n}\n")
+            sys.stderr.write("Attempt 2 failed with 429 error (no Retry-After header). Retrying with backoff...\n")
+            sys.stderr.write("  \"message\": \"You exceeded your current quota, please check your plan and billing details.\"\n")
+            sys.stderr.flush()
+            while not os.path.exists(os.environ["FAKE_GATE"]):
+                time.sleep(0.05)
         if prompt.startswith("!mode "):
             current = prompt.split(" ", 1)[1]
             send({"jsonrpc": "2.0", "method": "session/update", "params": {
@@ -232,7 +241,16 @@ func registerFakeEngine(t *testing.T) {
 		AuthMethodID: "fake-auth",
 		Env:          []string{"FAKE_HISTORY=" + t.TempDir()},
 	}
+	Engines["fake-retry"] = Engine{
+		Command:      "python3",
+		Args:         []string{script},
+		APIKeyEnv:    "FAKE_KEY",
+		AuthMethodID: "fake-auth",
+		Env:          []string{"FAKE_GATE=" + filepath.Join(t.TempDir(), "gate")},
+		Retry:        geminiRetry,
+	}
 	t.Cleanup(func() {
+		delete(Engines, "fake-retry")
 		delete(Engines, "fake-load-late")
 		delete(Engines, "fake-load")
 		delete(Engines, "fake")

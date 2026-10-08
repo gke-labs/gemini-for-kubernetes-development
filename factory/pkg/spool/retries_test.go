@@ -9,40 +9,27 @@ import (
 func TestEngineRetries(t *testing.T) {
 	taskDir := t.TempDir()
 	if r := engineRetries(taskDir); r != nil {
-		t.Fatalf("no log: %+v", r)
+		t.Fatalf("no session: %+v", r)
 	}
-	log := filepath.Join(taskDir, EngineLogFile)
-	if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
+	file := filepath.Join(taskDir, EngineRetriesFile)
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	write := func(s string) {
 		t.Helper()
-		f, err := os.OpenFile(log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		if _, err := f.WriteString(s); err != nil {
+		if err := os.WriteFile(file, []byte(s), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	write("Loaded cached credentials.\n")
+	write(`{"statuses":{}}`)
 	if r := engineRetries(taskDir); r != nil {
-		t.Fatalf("a log without retries: %+v", r)
+		t.Fatalf("nothing retried: %+v", r)
 	}
 
-	write("Attempt 1 failed with status 503. Retrying with backoff... _ApiError: {\n" +
-		"Attempt 1 failed with status 429. Retrying with backoff... _ApiError: {\n" +
-		"Attempt 2 failed with status 429. Retrying with backoff... _ApiError: {\n")
+	write(`{"statuses":{"429":2,"503":1},"quota_exceeded":true}`)
 	r := engineRetries(taskDir)
-	if r == nil || r.Statuses["429"] != 2 || r.Statuses["503"] != 1 || r.Total() != 3 || r.QuotaExceeded {
-		t.Fatalf("got %+v", r)
-	}
-
-	// The log grows as the task runs; the counts follow it.
-	write(`  "message": "You exceeded your current quota, please check your plan and billing details."` + "\n")
-	if r := engineRetries(taskDir); r == nil || !r.QuotaExceeded || r.Total() != 3 {
+	if r == nil || r.Statuses["429"] != 2 || r.Statuses["503"] != 1 || r.Total() != 3 || !r.QuotaExceeded {
 		t.Fatalf("got %+v", r)
 	}
 

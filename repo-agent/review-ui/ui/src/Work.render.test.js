@@ -643,6 +643,8 @@ describe('WorkRow review', () => {
         });
     };
     const link = (text) => Array.from(container.querySelectorAll('a')).find(a => a.textContent.includes(text));
+    // The GitHub ↗ alone: an engine-less chip reads "Review ↗" too.
+    const githubLink = () => Array.from(container.querySelectorAll('a')).find(a => a.textContent.trim() === '↗');
     // A chip shows its recipe; its status is the colour and its hover's first line.
     const chip = (status) => Array.from(container.querySelectorAll('a')).find(a => (a.getAttribute('title') || '').split(' — ')[0] === status);
 
@@ -660,19 +662,19 @@ describe('WorkRow review', () => {
         await renderRow({ ...review, sessions: [reviewRun('done')] });
         expect(chip('Review: ready').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
         expect(chip('Review: pending')).toBeUndefined();
-        expect(link('↗').getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
+        expect(githubLink().getAttribute('href')).toBe('https://github.com/o/r/pull/42/files');
     });
 
     test('a submitted review with its run recorded keeps its session chip, and ↗ opens the PR', async () => {
         await renderRow({ ...review, reviewPending: false, reviewed: true, sessions: [reviewRun('done')] });
         expect(chip('Review: done').getAttribute('href')).toBe('#/task-session/review-r-42/recipe-review-1');
-        expect(link('↗').getAttribute('href')).toBe('https://github.com/o/r/pull/42');
+        expect(githubLink().getAttribute('href')).toBe('https://github.com/o/r/pull/42');
     });
 
     test('a review run with nothing pending on GitHub has no GitHub link', async () => {
         await renderRow({ ...review, reviewPending: false, sessions: [reviewRun('ready')] });
         expect(chip('Review: ready')).toBeDefined();
-        expect(link('↗')).toBeUndefined();
+        expect(githubLink()).toBeUndefined();
     });
 
     test('a submitted review whose run is gone is a done chip linking the PR', async () => {

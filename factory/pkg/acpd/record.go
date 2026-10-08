@@ -47,19 +47,27 @@ func writeRecord(dir string, rec Record) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, RecordFile+".*")
-	if err != nil {
+	if err := replaceFile(dir, RecordFile, data); err != nil {
 		return fmt.Errorf("writing session record: %w", err)
+	}
+	return nil
+}
+
+// replaceFile writes data and a newline to dir/name, by rename.
+func replaceFile(dir, name string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, name+".*")
+	if err != nil {
+		return err
 	}
 	_, werr := tmp.Write(append(data, '\n'))
 	cerr := tmp.Close()
 	if err := errors.Join(werr, cerr); err != nil {
 		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("writing session record: %w", err)
+		return err
 	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, RecordFile)); err != nil {
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
 		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("writing session record: %w", err)
+		return err
 	}
 	return nil
 }

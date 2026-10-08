@@ -41,6 +41,9 @@ type Engine struct {
 	// one (SessionConfig.Model). Empty: the engine takes no such flag and
 	// a requested model is ignored.
 	ModelFlag string
+	// Retry recognises the engine's stderr line about a retried model
+	// call (see KindEngineRetry). Nil: the engine's retries are not shown.
+	Retry RetryParser
 }
 
 // AntigravityACPServer is Google's agy_acp_server, which the antigravity
@@ -73,6 +76,7 @@ var Engines = map[string]Engine{
 		// live too: project hooks, stdio MCP servers, project GEMINI.md.
 		Env:       []string{"GEMINI_CLI_TRUST_WORKSPACE=true"},
 		ModelFlag: "--model",
+		Retry:     geminiRetry,
 	},
 	"antigravity": {
 		Command: AntigravityACPServer,
@@ -228,6 +232,13 @@ type Session struct {
 	nextReq   int64
 	busy      bool
 	finished  bool
+	// retry is the last model call the engine logged retrying, until it
+	// is heard from again; parseRetry recognises those lines, and retries
+	// counts them all, written to RetriesFile in dir.
+	retry      *EngineRetry
+	parseRetry RetryParser
+	retries    EngineRetries
+	dir        string
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -314,8 +325,12 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	cmd.Env = append(cmd.Env, engine.Env...)
 	// Engine stderr is diagnostics, not conversation. It goes to a file
 	// beside the transcript so a broken engine is debuggable without
-	// flooding what the user reads.
-	cmd.Stderr = engineLog
+	// flooding what the user reads. Only its retried model calls reach
+	// the transcript, as markers.
+	s.parseRetry = engine.Retry
+	s.dir = cfg.Dir
+	s.retries = loadRetries(cfg.Dir)
+	cmd.Stderr = &lineWriter{w: engineLog, onLine: s.onEngineLine}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -640,6 +655,7 @@ func (s *Session) onNotification(method string, params json.RawMessage) {
 	// An agent may leave a mode on its own — plan mode ends when the plan
 	// does — so the mode acpd reports has to follow the engine's word and
 	// not only its own set_mode calls.
+	s.clearRetry()
 	if notif.Update.SessionUpdateKind == acp.UpdateCurrentMode && notif.Update.CurrentModeID != "" {
 		s.mu.Lock()
 		s.currentMode = notif.Update.CurrentModeID
@@ -793,6 +809,7 @@ func (s *Session) Prompt(text string) error {
 		return fmt.Errorf("session %s is already handling a turn", s.ID)
 	}
 	s.busy = true
+	s.retry = nil
 	s.mu.Unlock()
 
 	// The first prompt ends a load's replay. The engine sends the replay
