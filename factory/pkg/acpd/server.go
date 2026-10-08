@@ -149,8 +149,13 @@ type sessionResponse struct {
 	// unanswered. It is a refinement of Busy, never a replacement: a
 	// waiting session is also busy, and a client that only knows Busy
 	// stays correct.
-	Waiting bool  `json:"waiting,omitempty"`
-	Offset  int64 `json:"offset"`
+	Waiting bool `json:"waiting,omitempty"`
+	// Retrying is the model call the engine is retrying while the turn is
+	// in flight: a session that is busy and silent because its model calls
+	// fail (rate limits, quota, an overloaded model), not because it is
+	// thinking. Another refinement of Busy.
+	Retrying *EngineRetry `json:"retrying,omitempty"`
+	Offset   int64        `json:"offset"`
 	// Mode and AvailableModes let a client that did not create the
 	// session — a browser attaching to one the controller started — show
 	// and change what it is running under.
@@ -574,6 +579,7 @@ func (s *Server) describe(sess *Session) sessionResponse {
 		CreatedAt:      sess.CreatedAt,
 		Busy:           sess.Busy(),
 		Waiting:        sess.Waiting(),
+		Retrying:       sess.Retrying(),
 		Offset:         sess.Transcript().Size(),
 		Mode:           mode,
 		AvailableModes: available,
