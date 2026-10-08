@@ -1,7 +1,9 @@
 package github
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -62,4 +64,17 @@ func (c *Client) Ready() bool { return c != nil && c.gh != nil }
 func IsNotFound(err error) bool {
 	var ghErr *githubv39.ErrorResponse
 	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// AuthenticatedLogin returns the login of the account the client acts as.
+func (c *Client) AuthenticatedLogin(ctx context.Context) (string, error) {
+	if !c.Ready() {
+		return "", errNoClient
+	}
+
+	user, _, err := c.gh.Users.Get(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("fetching the authenticated user: %w", err)
+	}
+	return user.GetLogin(), nil
 }

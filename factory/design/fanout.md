@@ -34,7 +34,7 @@ If the proposal is too far off, delete the spec comment and the bot writes a new
 
 The bot creates the children and labels the first batch (`window.start`, 2 by default) `overseer`. From there each child is an ordinary overseer issue: a coder bot picks it up and opens a PR, and the PR goes through review as usual.
 
-Each child is listed as a sub-issue of the parent, and the progress comment shows its PR and state.
+The progress comment shows each child's PR and state. (Listing children as GitHub sub-issues is left for later.)
 
 ### 5. Checkpoint: the bot stops after the first batch
 
@@ -144,7 +144,7 @@ Part of #13781.
 <!-- factory:fanout parent=13781 item=apigeeinstance -->
 ```
 
-The marker comment makes children findable: the controller finds a parent's children by it, never by title. Children are also linked to the parent as GitHub sub-issues, so GitHub shows the parent's progress bar.
+The marker comment makes children findable: the controller finds a parent's children by it, never by title. "Part of #N" puts each child on the parent's timeline, where the controller looks for markers; the state (below) also records every child it created, since a timeline can lag a creation. Linking children as GitHub sub-issues, so GitHub shows a progress bar, is left for later.
 
 A child is an ordinary issue, so the existing workflow features apply to it. If the Task section links a workflow file (for example `.agents/workflows/kcc-example.txt` with `{item}` as its kind), each child becomes a workflow issue: a fan-out of multi-step workflows, with no extra design needed.
 
@@ -186,13 +186,13 @@ C's useful part, an agent writing a spec that a person approves, is kept in B as
 
 `factory/pkg/fanout` parses a spec from markdown with the standard headings: `Parse(markdown) (Spec, error)`. The controller reads it, every pass, from:
 
-1. **The bot's comment** carrying `<!-- factory:fanout-spec -->`. Only a comment written by the bot counts: a spec comment by anyone else is ignored, so nobody can change what is fanned out by posting a comment. Only people with write access can edit the bot's comment, so editing the spec is a maintainer's action.
+1. **The newest spec comment**, carrying `<!-- factory:fanout-spec -->`, written by the bot or by a maintainer (author association OWNER, MEMBER or COLLABORATOR). A spec comment by anyone else is ignored, so nobody else can change what is fanned out by posting a comment. Only people with write access can edit the bot's comment, so editing the spec is a maintainer's action; a maintainer may also post a spec comment of their own.
 2. **Otherwise the issue body**, if it has the standard headings.
 3. **Otherwise there is no spec.** The controller runs the `fanout` recipe, posts its output as the spec comment, and adds the stop label. This also happens again if the spec comment is deleted.
 
 The spec comment is separate from the progress comment so that the bot never edits a comment a maintainer is editing.
 
-A spec that does not parse (a hand edit gone wrong) gets one comment saying what is missing. The controller then does nothing more until it is fixed.
+A spec that does not parse (a hand edit gone wrong) is reported in the progress comment, edited in place, saying what is missing. The controller then does nothing more until it is fixed.
 
 ### The stop label is the gate
 
@@ -208,7 +208,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 
 `watch/fanout` runs on the slow issue sweep, and when the Nudger sees a child close (the Nudger finds a child's parent by the marker, as it finds a workflow by its link). For each open parent labelled `<trigger>/fanout`:
 
-1. **Read** the spec (above), the children (the parent's sub-issues, plus a search for the marker as a fallback), and the state in the progress comment.
+1. **Read** the spec (above), the children (issues with the marker on the parent's timeline, plus the ones the state records), and the state in the progress comment.
 2. **Propose**, if there is no spec: run the recipe, post the spec comment, add the stop label. Nothing else happens on this pass.
 3. **Report:** update the progress comment. This runs on every pass, stopped or not.
 4. If the parent has the stop label, stop here.
@@ -247,8 +247,8 @@ Rewriting children that have not been labelled is what makes the slow start usef
 The controller keeps no local state. GitHub holds everything, so a restarted daemon (or a second one) carries on where the last one stopped:
 
 - **The spec** is the bot's spec comment, or the body.
-- **The children** are the sub-issues, found by the marker.
-- **The window, the PRs already counted against it, and the checkpoints passed** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"counted":[1201,1207],"checkpoints":[2]} -->`. Recording the counted PRs keeps a pass from counting the same merge twice. If the block is lost, the window is recomputed as `start + completed`, capped at `max`, and the checkpoints at or below the number done count as passed.
+- **The children** are found by the marker, on the parent's timeline and in the state.
+- **The window, what was already counted against it, the checkpoints passed, the children created and the children labelled** live in a hidden block in the progress comment: `<!-- factory:fanout-state {"window":3,"counted":[1201,1207],"checkpoints":[2],"children":{"apigeeinstance":1201},"started":[1201]} -->`. `counted` holds the children closed and the PRs closed unmerged that moved the window, so a pass never counts one twice. A child in `started` is never labelled again, so a person who unlabels a child has the last word. If the block is lost, the window is recomputed as `start + completed`, capped at `max`, and the checkpoints at or below the number done count as passed.
 - **The progress comment** has one row per item (child, PR, state) and the current window. It is edited in place and never re-posted, so the parent does not fill up with progress comments.
 
 ### The `fanout` recipe
@@ -277,7 +277,7 @@ The agent only reads and writes text. It never creates or labels issues; the con
 ### Permissions
 
 - **Creating issues** needs only read access on a public repo.
-- **Labelling, unlabelling `overseer/stop`, and linking sub-issues** need triage access. Without it, the controller still creates children with the marker and "Part of #N", and says once, on the parent, that labelling needs a person (or a bot with triage).
+- **Labelling, and unlabelling `overseer/stop`,** need triage access. Without it, the controller still creates children with the marker and "Part of #N", and says once, on the parent, that labelling needs a person (or a bot with triage).
 - **Closing the parent** needs the same access as editing it; without it, the controller comments.
 - **Editing the spec comment** needs write access, which is what makes it a maintainer's action.
 
@@ -286,15 +286,16 @@ The agent only reads and writes text. It never creates or labels issues; the con
 1. **This note.**
 2. **factory `pkg/fanout`:**
    - The parser: `Spec`, items, settings.
-   - `Plan(spec, children, state, stopped) []Change`, a pure function returning the issues to create or rewrite, the labels to add, the checkpoint to stop at, and the new state. All the rules above live here, tested by table.
-   - `factory fanout sync --issue N [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
+   - `Decide(Input) Plan`, a pure function returning the issues to create or rewrite, the labels to add, the checkpoint to stop at, and the new state. All the rules above live here, tested by table.
+   - `Sync`, one pass on GitHub: read, `Decide`, write, the progress comment. The watch controller (step 3) calls it.
+   - `factory watch fanout --url <issue> [--dry-run]` runs it once by hand, so it can be tried on #13781 before any daemon runs it.
 3. **watch:**
    - The `watch/fanout` controller: children, the window, checkpoints, the final step, the progress comment.
    - The scanner skips parents.
    - The Nudger wakes a parent when one of its children closes.
 4. **The proposal:** the `fanout` recipe, its `FanOut` kind and its `post-spec` action. The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
 5. **Verify on KCC:**
-   - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory fanout sync --issue 13781 --dry-run`.
+   - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.
    - Then label it `overseer/fanout` and let the daemon carry on.
    - Then remove `overseer/stop`, with a window of 2 and the default checkpoint.
 
@@ -310,7 +311,7 @@ For now a fan-out is asked for with the `overseer/fanout` label. Later, an issue
 
 ## Open questions
 
-- **Sub-issues in KCC:** does the bot have triage access there? If not, the parent's checklist (in the progress comment) is the only progress view.
+- **Triage access in KCC:** does the bot have it? Without it, it cannot label children; and sub-issue linking, if added, needs it too.
 - **Label name:** `overseer/fanout`, or something that says "parent" more plainly, such as `overseer/fanout-parent`?
 - **Ordering:** is item order (the checklist's) right, or should the window prefer items whose services nobody else is working on, to avoid merge conflicts?
 - **Ramp on review, not merge:** should a PR approved but waiting on a human merge already count as a success? Counting only merges is slower but stricter.

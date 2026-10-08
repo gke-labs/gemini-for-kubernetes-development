@@ -114,3 +114,16 @@ func (c *Client) AddPullRequestCommentReaction(ctx context.Context, commentID in
 	}
 	return nil
 }
+
+// EditComment replaces the body of an issue or pull request comment.
+func (c *Client) EditComment(ctx context.Context, commentID int64, body string) error {
+	if !c.Ready() {
+		return errNoClient
+	}
+
+	comment := &githubv39.IssueComment{Body: githubv39.String(body)}
+	if _, _, err := c.gh.Issues.EditComment(ctx, c.owner, c.repo, commentID, comment); err != nil {
+		return fmt.Errorf("editing comment %d: %w", commentID, err)
+	}
+	return nil
+}
