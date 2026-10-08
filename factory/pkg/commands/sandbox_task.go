@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -247,6 +249,9 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if e.Reason != "" {
 				fmt.Fprintf(w, "Reason:\t%s\n", e.Reason)
 			}
+			if e.EngineRetries != nil {
+				fmt.Fprintf(w, "Engine retries:\t%s\n", engineRetriesText(e.EngineRetries))
+			}
 			return w.Flush()
 		},
 	}
@@ -470,7 +475,11 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 			if !follow {
-				return sb.Log(ctx, e.ID, os.Stdout)
+				if err := sb.Log(ctx, e.ID, os.Stdout); err != nil {
+					return err
+				}
+				printEngineRetries(e)
+				return nil
 			}
 			if err := awaitTaskStart(ctx, sb, e); err != nil {
 				return err
@@ -478,13 +487,38 @@ func newTaskLogsCommand(ctx context.Context) *cobra.Command {
 			if err := sb.Attach(ctx, e.ID, nil, false); err != nil {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
-			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, sb)
+			if e, err := (&taskSelectFlags{id: e.ID}).find(ctx, sb); err == nil {
+				printEngineRetries(e)
+			}
 			return nil
 		},
 	}
 	sel.add(cmd)
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow the log until the task exits")
 	return cmd
+}
+
+// engineRetriesText is a task's engine retries in a line:
+// "63 (429×49, 503×14); the quota is exceeded".
+func engineRetriesText(r *spool.EngineRetries) string {
+	statuses := slices.Sorted(maps.Keys(r.Statuses))
+	parts := make([]string, len(statuses))
+	for i, s := range statuses {
+		parts[i] = fmt.Sprintf("%s×%d", s, r.Statuses[s])
+	}
+	text := fmt.Sprintf("%d (%s)", r.Total(), strings.Join(parts, ", "))
+	if r.QuotaExceeded {
+		text += "; the quota is exceeded"
+	}
+	return text
+}
+
+// printEngineRetries notes, under a task's log, the model calls its engine
+// retried: the log has the engine's stdout, not its stderr where they are.
+func printEngineRetries(e spool.Entry) {
+	if e.EngineRetries != nil {
+		fmt.Fprintf(os.Stderr, "Engine retries: %s (see %s/%s)\n", engineRetriesText(e.EngineRetries), spool.TaskDir(e.ID), spool.EngineLogFile)
+	}
 }
 
 // awaitTaskStart waits for a spooled task the daemon has not started yet,

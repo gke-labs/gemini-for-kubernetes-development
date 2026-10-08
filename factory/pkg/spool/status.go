@@ -148,8 +148,9 @@ func readCode(path string) string {
 
 // Overlay corrects an entry listed from the plain task files with the
 // task's status, where it has one: the daemon's word on whether it runs
-// and how it ended.
+// and how it ended. It adds the engine's retries too.
 func Overlay(e *Entry, taskDir string) {
+	e.EngineRetries = engineRetries(taskDir)
 	st, ok := ReadStatus(taskDir)
 	if !ok {
 		return

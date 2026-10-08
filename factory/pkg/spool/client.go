@@ -153,6 +153,9 @@ type Entry struct {
 	// Ended and Reason are from the task's status, when it has one.
 	Ended  time.Time `json:"ended,omitzero"`
 	Reason string    `json:"reason,omitempty"`
+	// EngineRetries are the model calls its engine retried, from the
+	// agent session's engine log, as it runs.
+	EngineRetries *EngineRetries `json:"engine_retries,omitempty"`
 }
 
 // taskName splits a task directory name into its kind and the time in it.
