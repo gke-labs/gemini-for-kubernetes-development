@@ -86,7 +86,7 @@ label is removed.`,
 			case res.Closed:
 				fmt.Fprintf(out, "#%d is closed: nothing to do\n", item.Number)
 			case res.NoSpec:
-				fmt.Fprintln(out, "Write a spec: a comment marked <!-- factory:fanout-spec --> with ## Task and ## Items, or those sections in the issue body.")
+				fmt.Fprintln(out, "Write a spec: a comment marked <!-- factory:fanout-spec --> with ## Task and ## Items, or those sections in the issue body; or have an agent propose one: factory recipe fanout --url <issue> --apply. The watch daemon proposes one itself.")
 			case res.SpecError != nil:
 				return fmt.Errorf("the spec does not parse: %w", res.SpecError)
 			}

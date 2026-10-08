@@ -370,7 +370,7 @@ factory recipe fanout --url …/issues/13781 --apply --dry-run
 factory recipe fanout --url …/issues/13781 --apply
 ```
 
-The controller makes the same call in-process, as `factory pr watch` already runs `care` (`runRecipe`, `pr_watch_care.go`), with `--apply` and the run name `fanout-<N>`. The run name makes it idempotent: a daemon restarted mid-run that calls it again follows the same task, or applies its result, instead of starting another. `runRecipe` lives in `pkg/commands`, which the `watch` package cannot import, so `watch_cmd.go` passes it in as a function, the way watch gets its other dependencies. The run uses a sandbox of its own (`fanout-<repo>-<N>`), and is capped by `--max-pending` like any other task.
+The controller makes the same call in-process, as `factory pr watch` already runs `care` (`runRecipe`, `pr_watch_care.go`), with `--apply` and the run name `fanout-<N>-<time>`. `--apply` makes it idempotent: a daemon restarted mid-run that calls it again picks up the recipe's last run on the parent, following it if it is still running or applying its result if it has not been applied, instead of starting another. Once that run is applied, as when the spec comment has been deleted, the next call starts a new one. `runRecipe` lives in `pkg/commands`, which the `watch` package cannot import, so `watch_cmd.go` passes it in as a function (`Watcher.ProposeFanout`). The run uses the issue's sandbox (`fix-<repo>-<N>`), as `factory recipe fanout` by hand does; a parent is never fixed itself, so nothing else runs there. It starts only below `--max-pending`, runs in a goroutine of its own so that the sweep goes on, one at a time per parent, and a failed one waits an hour before the next. The controller syncs the parent again as soon as it lands.
 
 The agent only reads and writes text. It never creates or labels issues; the controller does that.
 
@@ -398,7 +398,7 @@ The agent only reads and writes text. It never creates or labels issues; the con
    - `group` with the two-phase ramp, `create: lazy`, `items=` markers and the state's `group`.
 5. **The proposal** (two PRs):
    - The `fanout` recipe, its `FanOut` kind and its `post-spec` action (`factory recipe fanout`).
-   - The controller runs it in-process (`runRecipe`, run name `fanout-<N>`) on a parent without a spec.
+   - The controller runs it in-process (`runRecipe` with `--apply`, run name `fanout-<N>-<time>`) on a parent without a spec.
 6. **Verify on KCC:**
    - #13781 as written, by hand first: `factory recipe fanout --url … --apply`, edit the spec comment, then `factory watch fanout --url …/issues/13781 --dry-run`.
    - Then label it `overseer/fanout` and let the daemon carry on.

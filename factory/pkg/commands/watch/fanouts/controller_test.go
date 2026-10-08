@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 
@@ -145,4 +146,79 @@ func TestNudge_NeverBlocks(t *testing.T) {
 	for range cap(c.wake) + 1 {
 		c.NudgeLinkedWorkflows(context.Background(), closed)
 	}
+}
+
+func TestPropose(t *testing.T) {
+	gh := newFake()
+	gh.issues[100].Body = githubv39.String("Migrate these:\n- [ ] a\n- [ ] b\n")
+	ctx := context.Background()
+	started := make(chan int, 4)
+	release := make(chan error)
+	canStart := false
+	c := New(Config{TriggerLabel: "factory", GitHubLogin: "bot"}, Deps{
+		GitHub:   gh,
+		Propose:  func(_ context.Context, n int) error { started <- n; return <-release },
+		CanStart: func(context.Context) bool { return canStart },
+	})
+	now := time.Unix(1000, 0)
+	c.now = func() time.Time { return now }
+	// fail ends the running proposal with an error.
+	fail := func() {
+		t.Helper()
+		release <- fmt.Errorf("boom")
+		for c.isProposing(100) {
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// At --max-pending, nothing starts.
+	c.SyncOnce(ctx)
+	if c.isProposing(100) {
+		t.Fatal("proposed at --max-pending")
+	}
+
+	// No spec: one proposal, not a second while it runs.
+	canStart = true
+	c.SyncOnce(ctx)
+	c.SyncOnce(ctx)
+	if n := <-started; n != 100 {
+		t.Fatalf("proposed for #%d, want #100", n)
+	}
+	if len(started) != 0 {
+		t.Fatal("a second proposal started while the first ran")
+	}
+
+	// A failed one waits ProposeBackoff before the next.
+	fail()
+	c.SyncOnce(ctx)
+	if c.isProposing(100) {
+		t.Fatal("proposed again straight after a failure")
+	}
+	now = now.Add(ProposeBackoff)
+	c.SyncOnce(ctx)
+	<-started
+
+	// A landed one wakes the parent.
+	release <- nil
+	select {
+	case n := <-c.wake:
+		if n != 100 {
+			t.Fatalf("woke #%d, want #100", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the parent was not woken after its proposal")
+	}
+	if len(gh.created) != 0 {
+		t.Errorf("created %v on a parent with no spec", gh.created)
+	}
+}
+
+func TestPropose_DryRun(t *testing.T) {
+	gh := newFake()
+	gh.issues[100].Body = githubv39.String("free text")
+	c := New(Config{TriggerLabel: "factory", DryRun: true}, Deps{
+		GitHub:  gh,
+		Propose: func(context.Context, int) error { t.Error("proposed in a dry run"); return nil },
+	})
+	c.SyncOnce(context.Background())
 }
