@@ -50,8 +50,8 @@ const ATTENTION_STYLE = {
 // (the API's row rules): each recipe's newest run is a chip in the Agent
 // column, ‹label›: running / ready / done / failed (or starting / queued
 // while a click waits for its run), opening the run's session; the rail
-// offers a recipe not run yet by its label, one done or failed as
-// ‹label› again, and a ready one as its draft's button — clicking opens
+// offers a recipe not run yet, or one done or failed, by its label (the
+// chip beside it says it ran), and a ready one as its draft's button — clicking opens
 // the panel, and the verdict verbs (publish/approve/reject/…) live there,
 // under the content they judge.
 // A chip says its status by colour alone, the word is in its hover:
@@ -373,11 +373,11 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // is waiting on you, so the button tints red instead of adding a chip.
     const requested = rec.name === 'review' && item.reviewRequested && !again;
     actions.push({
-      label: again ? `${rec.label} again` : rec.label,
+      label: rec.label,
       path: `${isPR ? 'prs' : 'issues'}/${item.number}/recipes/${rec.name}`,
       inputs: rec.inputs,
       tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
-      title: requested ? `Your review was requested — run ${rec.label} as you` : `Run ${rec.label} as you`,
+      title: requested ? `Your review was requested — run ${rec.label} as you` : `Run ${rec.label}${again ? ' again' : ''} as you`,
     });
   }
   if (isPR && item.mine && item.draftPR) {
