@@ -371,6 +371,30 @@ func TestCheckOn(t *testing.T) {
 	}
 }
 
+func TestCheckApplicable(t *testing.T) {
+	fanout := &recipe.Recipe{Name: "fanout", ApplicableWhen: &recipe.ApplicableWhen{Label: "{{ .Trigger }}/fanout"}}
+	issue := githubItem{Owner: "o", Repo: "r", Number: 1}
+	for _, c := range []struct {
+		name   string
+		rec    *recipe.Recipe
+		it     githubItem
+		labels []string
+		ok     bool
+	}{
+		{"unset applies to anything", &recipe.Recipe{Name: "fix"}, issue, nil, true},
+		{"labelled", fanout, issue, []string{"bug", "overseer/fanout"}, true},
+		{"labelled in another case", fanout, issue, []string{"Overseer/Fanout"}, true},
+		{"unlabelled", fanout, issue, []string{"bug"}, false},
+		{"labelled for the trigger", fanout, issue, []string{"kcc/fanout"}, true},
+		{"labelled for another trigger", fanout, issue, []string{"other/fanout"}, false},
+		{"a repository", fanout, githubItem{Owner: "o", Repo: "r"}, nil, false},
+	} {
+		if err := checkApplicable(c.rec, c.it, c.labels, "kcc"); (err == nil) != c.ok {
+			t.Errorf("%s: checkApplicable = %v, want ok %v", c.name, err, c.ok)
+		}
+	}
+}
+
 // recipe list describes the built-ins as a board reads them: where each
 // runs, its result, and its revises with their inputs.
 func TestBuiltinRecipeInfos(t *testing.T) {
@@ -386,6 +410,11 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 		if got := byName[name]; !slices.Equal(got.On, on) || got.Kind == "" || got.Label == "" {
 			t.Errorf("%s = %+v, want on %v, a kind and a label", name, got, on)
 		}
+	}
+	// Fan out is offered only on a fan-out parent.
+	// With no factory config, the trigger is factory.
+	if aw := byName["fanout"].ApplicableWhen; aw == nil || !slices.Equal(aw.Labels, []string{"overseer/fanout", "factory/fanout"}) {
+		t.Errorf("fanout applicableWhen = %+v, want labels overseer/fanout, factory/fanout", aw)
 	}
 	fix := byName["fix"]
 	if fix.Label != "Fix" || fix.Kind != "Change" {

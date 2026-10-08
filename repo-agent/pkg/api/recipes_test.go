@@ -245,7 +245,7 @@ func TestRowRecipesFollowTheCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := func(item string, catalog []boardv1alpha1.BoardRecipe, myPR bool) (out []string) {
-		for _, rec := range rowRecipes(catalog, item, myPR) {
+		for _, rec := range rowRecipes(catalog, item, myPR, nil) {
 			out = append(out, rec.Name)
 		}
 		return out
@@ -260,13 +260,36 @@ func TestRowRecipesFollowTheCatalog(t *testing.T) {
 	if got := strings.Join(names("pr", catalog, true), ","); got != "care,care-ci,care-iterate,review" {
 		t.Errorf("my PR row = %s", got)
 	}
-	for _, rec := range rowRecipes(catalog, "pr", true) {
+	for _, rec := range rowRecipes(catalog, "pr", true, nil) {
 		if want := map[bool]string{true: "care"}[strings.HasPrefix(rec.Name, "care")]; rec.Session != want {
 			t.Errorf("%s's session = %q, want %q", rec.Name, rec.Session, want)
 		}
 	}
 	if got := names("issue", nil, false); len(got) != 0 {
 		t.Errorf("no catalog: %v, want no buttons", got)
+	}
+}
+
+// A recipe applicable when an item has one of its labels is offered only
+// on items with one, in any case.
+func TestRowRecipesFollowTheirUI(t *testing.T) {
+	catalog := []boardv1alpha1.BoardRecipe{
+		{Name: "fix", Label: "Fix", On: []string{"issue"}},
+		{Name: "fanout", Label: "Fan out", On: []string{"issue"}, ApplicableWhen: &boardv1alpha1.BoardRecipeApplicableWhen{Labels: []string{"overseer/fanout", "factory/fanout"}}},
+	}
+	names := func(labels ...string) (out []string) {
+		for _, rec := range rowRecipes(catalog, "issue", false, labels) {
+			out = append(out, rec.Name)
+		}
+		return out
+	}
+	if got := strings.Join(names(), ","); got != "fix" {
+		t.Errorf("unlabelled issue = %s, want fix", got)
+	}
+	for _, label := range []string{"Overseer/Fanout", "factory/fanout"} {
+		if got := strings.Join(names("bug", label), ","); got != "fix,fanout" {
+			t.Errorf("issue labelled %s = %s, want fix,fanout", label, got)
+		}
 	}
 }
 

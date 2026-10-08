@@ -179,6 +179,15 @@ spec:
               recipes:
                 items:
                   properties:
+                    applicableWhen:
+                      properties:
+                        labels:
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - labels
+                      type: object
                     credentials:
                       type: string
                     inputs:

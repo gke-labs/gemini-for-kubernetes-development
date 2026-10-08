@@ -223,6 +223,17 @@ type BoardRecipe struct {
 	// on a target (and TaskType), and a row shows them as one group.
 	// +kubebuilder:validation:Optional
 	Session string `json:"session,omitempty"`
+	// ApplicableWhen is which items it applies to: a row offers it only
+	// on those. Unset, every item On names.
+	// +kubebuilder:validation:Optional
+	ApplicableWhen *BoardRecipeApplicableWhen `json:"applicableWhen,omitempty"`
+}
+
+// BoardRecipeApplicableWhen is which items a recipe applies to.
+type BoardRecipeApplicableWhen struct {
+	// Labels are the labels the item must have one of, as the controller's
+	// factory spells them for its trigger label.
+	Labels []string `json:"labels"`
 }
 
 // BoardRecipeInput is one input a recipe declares. Revise marks one only
