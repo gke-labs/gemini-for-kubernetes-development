@@ -1034,6 +1034,15 @@ describe('ResearchPanel', () => {
         expect(row.textContent).not.toContain('working');
     });
 
+    // Busy and silent because the model calls fail is not thinking.
+    test('a turn whose model calls are failing says it is retrying', async () => {
+        await liveList([{ title: 'the overview', live: true, busy: true, retrying: { status: '429', attempt: 3 } }]);
+
+        const row = rowFor('the overview');
+        expect(row.textContent).toContain('retrying 429');
+        expect(row.textContent).not.toContain('working');
+    });
+
     // Live state is the last thing the row is allowed to say. A sandbox
     // with no pod cannot be busy, and a stale flag on a paused row would
     // send someone to a conversation with no engine in it.

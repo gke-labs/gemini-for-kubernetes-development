@@ -134,6 +134,12 @@ type Session struct {
 	// there, since a daemon that does not publish it has told us nothing
 	// about whether anyone is being asked for something.
 	Waiting bool `json:"waiting,omitempty"`
+	// Retrying narrows Busy too: the turn is in flight but its model
+	// calls are failing (rate limit, quota, an overloaded model) and the
+	// engine is retrying them. It is the last retry the engine logged,
+	// absent once the engine is heard from again — and from an acpd that
+	// does not watch for them.
+	Retrying *EngineRetry `json:"retrying,omitempty"`
 	// Offset is the transcript length in bytes at the time of the reply,
 	// which is where a follower should resume from to see only what
 	// happens next.
@@ -279,4 +285,14 @@ type PermissionResolvedData struct {
 	Outcome   string `json:"outcome"`
 	OptionID  string `json:"optionId,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// EngineRetry is a model call the engine retried: the transcript's
+// engine_retry payload, and a session's Retrying.
+type EngineRetry struct {
+	// Status is the HTTP status that failed the call ("429", "503"),
+	// "5xx" when the engine did not say which, "" when it said nothing.
+	Status  string    `json:"status,omitempty"`
+	Attempt int       `json:"attempt"`
+	Time    time.Time `json:"time"`
 }
