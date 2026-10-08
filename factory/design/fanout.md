@@ -80,7 +80,7 @@ An item's name is its bold text if it has any, otherwise the line up to the firs
 # ## Fan-out
 title: "{{.item.name}}: {{.parent.title}}"  # child issue title, a template
 labels: [direct-migration]    # labels for every child, besides the trigger label
-create: all                   # all: create every child at the start; lazy: as each is labelled
+create: lazy                  # the default; all: create every child at the start (group 1 only)
 group: 1                      # items per child; {start: 1, max: 5} grows (see *Groups*)
 window: {start: 2, max: 8}    # children in flight: the slow start (below)
 checkpoints: [2]              # stop when this many items are done; any number of them; [] never
@@ -109,7 +109,8 @@ In a spec written by hand in the body, the whole section can be left out: every 
 ```yaml
 title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
-create: all
+group: 1
+create: lazy
 window: {start: 2, max: 8}
 checkpoints: [2]
 ```
@@ -278,7 +279,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 3. **Report:** update the progress comment. This runs on every pass, stopped or not.
 4. If the parent has the stop label, stop here.
 5. **Checkpoint:** if the number of items done has reached a checkpoint not yet passed, add the stop label, comment, record the checkpoint, and stop here.
-6. **Create.** With `create: all`, create every missing child, unlabelled. With `create: lazy`, create children only as they are labelled, each for the next `group` items without a child. Creation is idempotent by the marker's `items=` keys. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
+6. **Create.** With `create: lazy` (the default), create children only as they are labelled, each for the next `group` items without a child. With `create: all`, create every missing child at once, unlabelled. Creation is idempotent by the marker's `items=` keys. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
 7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order (existing children not yet started, and new ones), with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
 8. **Final.** Once every item's child is closed, create the `Finally` child (labelled at once). When that one closes as completed, or straight away if there is no `Finally` section, close the parent. If the bot cannot close it, it comments instead.
 
@@ -322,7 +323,7 @@ With the settings above:
 | … | 5 each | 3 | |
 
 - **Units.** The window counts children (PRs in flight). Everything else counts items: checkpoints, the progress comment, and what `Finally` waits for. A child closed as completed counts all its items done; closed as not planned, all of them skipped.
-- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (it is then the default, and a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
+- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (the default, and a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
 - **Default checkpoint**: the items of the first batch, `group.start × window.start`.
 - `group: 1`, the default, is the one-item-per-child fan-out described above.
 

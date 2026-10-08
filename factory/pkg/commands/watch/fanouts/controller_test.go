@@ -84,8 +84,8 @@ func TestSyncOnce(t *testing.T) {
 	if len(gh.listed) != 2 {
 		t.Errorf("listed %v, want overseer/fanout and factory/fanout", gh.listed)
 	}
-	if len(gh.created) != 3 || gh.comments != 1 {
-		t.Errorf("created %v with %d comments, want 3 children and the progress comment", gh.created, gh.comments)
+	if len(gh.created) != 2 || gh.comments != 1 {
+		t.Errorf("created %v with %d comments, want the first window (2) and the progress comment", gh.created, gh.comments)
 	}
 }
 
@@ -127,8 +127,8 @@ func TestNudge(t *testing.T) {
 		t.Fatalf("woke %d parents, want 1", len(c.wake))
 	}
 	c.syncParent(ctx, <-c.wake)
-	if len(gh.created) != 3 {
-		t.Errorf("the woken parent created %v, want 3 children", gh.created)
+	if len(gh.created) != 2 {
+		t.Errorf("the woken parent created %v, want the first window (2)", gh.created)
 	}
 
 	// A parent whose label was removed is out of the fan-out's hands.

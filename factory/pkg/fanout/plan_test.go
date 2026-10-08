@@ -82,8 +82,8 @@ func summarize(p Plan) summary {
 }
 
 func TestDecide(t *testing.T) {
-	spec := testSpec(t, "")
-	batch := testSpec(t, "create: lazy")
+	spec := testSpec(t, "create: all")
+	lazy := testSpec(t, "")
 	noFinally := spec
 	noFinally.Finally = ""
 	stale := func(c *Child) { c.Body = "old task" }
@@ -99,8 +99,8 @@ func TestDecide(t *testing.T) {
 			want: summary{Window: 2, Create: []string{"a*", "b*", "c", "d"}},
 		},
 		{
-			name: "start, create batch: only the window",
-			in:   input(batch, nil),
+			name: "start, create lazy (the default): only the window",
+			in:   input(lazy, nil),
 			want: summary{Window: 2, Create: []string{"a*", "b*"}},
 		},
 		{
@@ -193,7 +193,7 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name: "a child for an item removed from the spec is left alone",
-			in: input(testSpec(t, ""), &State{Window: 2},
+			in: input(spec, &State{Window: 2},
 				child(spec, 1, "a", labelled), Child{Number: 9, Keys: []string{"gone"}, Open: true}),
 			want: summary{Window: 2, Label: nil, Create: []string{"b*", "c", "d"}},
 		},
