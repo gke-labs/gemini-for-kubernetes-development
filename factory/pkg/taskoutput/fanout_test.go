@@ -143,9 +143,18 @@ func TestApplyPostSpec(t *testing.T) {
 	if len(f.comments) != 1 || f.edits != 1 || !strings.Contains(f.comments[0].GetBody(), "- [ ] D") || !strings.Contains(f.comments[0].GetBody(), "task=recipe-fanout-2") {
 		t.Errorf("a second task: comments %q, edits %d", f.comments, f.edits)
 	}
+
+	// An issue that is no fan-out yet becomes one, stopped.
+	f = &fanOutGitHub{labels: []string{"bug"}}
+	if err := Apply(ctx, f.client(t), fanOutDoc(t, "recipe-fanout-3", fanOutSpec), false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(f.labels, ",") != "bug,overseer/fanout,overseer/stop" || len(f.comments) != 1 {
+		t.Errorf("a new fan-out: labels %v, comments %d", f.labels, len(f.comments))
+	}
 }
 
-func TestFanOutStopLabel(t *testing.T) {
+func TestFanOutLabels(t *testing.T) {
 	label := func(names ...string) []*githubv39.Label {
 		var out []*githubv39.Label
 		for _, n := range names {
@@ -154,11 +163,11 @@ func TestFanOutStopLabel(t *testing.T) {
 		return out
 	}
 	for want, labels := range map[string][]*githubv39.Label{
-		"overseer/stop": label("bug"),
-		"kcc-bot/stop":  label("bug", "kcc-bot/fanout"),
+		"overseer/fanout,overseer/stop": label("bug"),
+		"kcc-bot/stop":                  label("bug", "kcc-bot/fanout"),
 	} {
-		if got := fanOutStopLabel(labels); got != want {
-			t.Errorf("fanOutStopLabel(%v) = %q, want %q", labels, got, want)
+		if got := strings.Join(fanOutLabels(labels), ","); got != want {
+			t.Errorf("fanOutLabels(%v) = %q, want %q", labels, got, want)
 		}
 	}
 }

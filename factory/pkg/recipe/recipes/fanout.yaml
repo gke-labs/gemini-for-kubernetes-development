@@ -1,9 +1,9 @@
 # factory recipe fanout --url <issue> [--apply]: a fan-out spec for an
 # issue that describes one task for many items (see
 # factory/design/fanout.md). The task's result is a FanOut task output:
-# the spec in the standard markdown form. Applying it (post-spec) adds the
-# stop label and posts the spec as the bot's comment; maintainers edit
-# that comment, then remove the stop label to start the fan-out.
+# the spec in the standard markdown form. Applying it (post-spec) labels
+# the issue a fan-out, stopped, and posts the spec as the bot's comment;
+# maintainers edit that comment, then remove the stop label to start it.
 #
 # The agent only reads and writes text: the watch daemon creates and
 # labels the children. There are no revises: changes are made in the
