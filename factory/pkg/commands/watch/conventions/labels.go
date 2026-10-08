@@ -46,6 +46,18 @@ func HasStopLabel(labels []*githubv39.Label, triggerLabel string) bool {
 	return hasAny(labels, namespaced(triggerLabel, "stop"))
 }
 
+// FanoutLabels returns the labels that mark a fan-out parent: an issue whose
+// task is fanned out to a child issue per item, never worked on itself. Like
+// the stop label, the 'overseer/' spelling is always honoured.
+func FanoutLabels(triggerLabel string) []string {
+	return namespaced(triggerLabel, "fanout")
+}
+
+// HasFanoutLabel reports whether an issue is a fan-out parent.
+func HasFanoutLabel(labels []*githubv39.Label, triggerLabel string) bool {
+	return hasAny(labels, FanoutLabels(triggerLabel))
+}
+
 // HasTriggerLabel reports whether the trigger label itself is present, which is
 // what marks an issue as the watcher's to work on.
 func HasTriggerLabel(labels []*githubv39.Label, triggerLabel string) bool {

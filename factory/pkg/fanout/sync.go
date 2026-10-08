@@ -30,7 +30,10 @@ type GitHub interface {
 // SyncOptions are a pass's.
 type SyncOptions struct {
 	// Issue is the parent.
-	Issue        int
+	Issue int
+	// Parent, when set, is the parent as the caller already fetched it, so
+	// the pass does not fetch it again.
+	Parent       *githubv39.Issue
 	TriggerLabel string
 	// BotLogin is the account the fan-out runs as: its progress comment is
 	// the only one read, and its spec comment is trusted.
@@ -71,9 +74,12 @@ func Sync(ctx context.Context, gh GitHub, opts SyncOptions) (SyncResult, error) 
 	}
 	stopLabel := conventions.StopLabel(opts.TriggerLabel)
 
-	parent, err := gh.GetIssue(ctx, opts.Issue)
-	if err != nil {
-		return SyncResult{}, err
+	parent := opts.Parent
+	if parent == nil {
+		var err error
+		if parent, err = gh.GetIssue(ctx, opts.Issue); err != nil {
+			return SyncResult{}, err
+		}
 	}
 	if parent.IsPullRequest() {
 		return SyncResult{}, fmt.Errorf("#%d is a pull request, not an issue", opts.Issue)
