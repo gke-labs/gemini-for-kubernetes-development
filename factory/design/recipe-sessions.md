@@ -20,47 +20,20 @@ Recipes on one target already share a sandbox. Each keeps its own conversation: 
 ## Decisions
 
 1. **A session is a named conversation that recipes join.** A recipe may say `session: <name>`. Recipes with the same session, on the same target, share one conversation in that target's sandbox. The first run opens it and every later run, of any recipe in it, continues it. A recipe with no `session:` keeps one of its own, as today.
-2. **A session is defined once,** in `recipes/sessions/<name>.yaml`, carrying what its recipes share:
-   - `label`: the board's name for the group;
-   - `on`, `credentials` (the target, so one sandbox);
-   - `context`;
-   - `setup`: steps run before every recipe's own;
-   - `finish`: steps run after them;
-   - `task-output`.
-
-   A recipe in a session gives its own `name`, `label`, `inputs` and `steps`; the rest comes from the session, and `recipe.Validate` refuses a recipe that sets it too. This is how care's recipes share the PR checkout, the replies question and the push without copying them: `uses:` is a closed set of token-holding steps (`NamedSteps`), not a place for recipe steps.
+2. **A session shares nothing but the conversation.** There is no session file and no inheritance: every recipe in a session is a whole recipe, as today, with its own `on`, `context`, `steps` and `task-output`. Steps they all need (the PR checkout, the replies question, the push) are copied into each. Loading the recipes only checks that those naming one session agree on `on` and `credentials`, so that they land in one sandbox, and that one of them is named like the session.
 3. **The recorded run is the session's.** It lives at `RunAnnotation("recipe-<session>")`; the run record keeps which recipe it ran. One run of a session at a time, as one task per sandbox is today.
-4. **A run in a session is a start that continues.** It opens the session with setup + its steps + finish if the session has no recorded run, or its recorded run's session is gone. Otherwise it asks setup + its steps + finish into that session (`OpenDaemonSession`). `--new-session` opens a new one regardless.
+4. **A run in a session is a start that continues.** It opens the session with its steps if the session has no recorded run, or its recorded run's session is gone. Otherwise it asks its steps into that session (`OpenDaemonSession`). Its setup steps run again each time, so they must be idempotent. `--new-session` opens a new one regardless.
 5. **A recipe in a session has no `revise:`.** Its siblings are its follow-ups.
 6. **Sessions never cross.** care's session is `care`, the fix's conversation is the fix's own: care never continues the fix, though both run in the PR's fix sandbox.
-7. **The session is the board's group.** One chip per session per row (its newest run), labelled with the session's `label`. One button: the recipe named like the session is the default, and the others are its `▾` menu. A recipe with no session is its own group, as today.
+7. **The session is the board's group.** One chip per session per row (its newest run). One button, labelled with the recipe named like the session: it runs that recipe, and the others are its `▾` menu, by their own labels. A recipe with no session is its own group, as today.
 
 ## care
 
-care splits into five recipes in session `care`:
+care splits into five recipes in session `care`, each a whole recipe: today's care setup, its own ask, the replies ask and the push, and today's task output.
 
-```yaml
-# recipes/sessions/care.yaml
-name: care
-label: Care
-on: [my-pr]
-context: |                   # today's care context
-setup:                       # before every run: idempotent
-  - uses: setup-git
-  - uses: setup-fork
-  - run: sleep 5             # lib.sh's HACK
-  - uses: configure-engine
-  - run: the PR's branch from its push facts, reset to the PR's head, leased against it
-finish:                      # after every run
-  - ask: the Change (replies, report)
-    capture: change.yaml
-  - uses: push
-task-output:                 # today's: Change, preview spec.report, edit / post-replies / reject
-```
-
-| Recipe | Label | Steps |
+| Recipe | Label | Its own steps |
 |---|---|---|
-| `care` | Whatever it needs | today's start prompt: rebase if needed, fix checks, answer comments |
+| `care` | Care | today's start prompt: rebase if needed, fix checks, answer comments |
 | `care-comments` | Address comments | today's address-comments ask |
 | `care-ci` | Fix CI | today's fix-ci ask |
 | `care-rebase` | Rebase | fetch upstream → base, today's rebase ask |
@@ -70,20 +43,31 @@ task-output:                 # today's: Change, preview spec.report, edit / post
 # recipes/care-rebase.yaml
 name: care-rebase
 label: Rebase
+on: [my-pr]
 session: care
+context: |                 # care's
 steps:
+  - uses: setup-git
+  - uses: setup-fork
+  - run: sleep 5           # lib.sh's HACK
+  - uses: configure-engine
+  - run: the PR's branch from its push facts, reset to the PR's head, leased against it
   - run: git fetch upstream HEAD && git rev-parse FETCH_HEAD > "$TASK_DIR/base"
   - ask: Rebase the branch onto {{ file "base" }} …
+  - ask: the Change (replies, report)
+    capture: change.yaml
+  - uses: push
+task-output:               # care's: Change, preview spec.report, edit / post-replies / reject
 ```
 
 - `focus` and care's `revise:` are deleted.
 - Every run takes the PR as it is now. It reads push facts from the PR (`prPushInputs`) and leases against its head, where today's revises lease against care's last push.
 - `factory recipe care-rebase --url <PR>` runs one. `factory pr watch` runs `care-comments` on new review comments and `care-ci` on failed checks, instead of starting care or revising it.
-- `recipe list` reports each recipe's session, and each session's label.
+- `recipe list` reports each recipe's session.
 
 ## repo-agent
 
-- **Catalog.** `RepoBoard.status.recipes` carries each recipe's `session` and the session's label. The launch path is today's (`recipe` Request verb, `POST ./recipes/:recipe`), one recipe per click.
+- **Catalog.** `RepoBoard.status.recipes` carries each recipe's `session`. The launch path is today's (`recipe` Request verb, `POST ./recipes/:recipe`), one recipe per click.
 - **Row.** `Care ▾`: the button runs `care`, and the menu lists the session's other recipes (Iterate… prompts for its instruction). The menu is offered while no run of the session is running or starting.
 - **Chip.** Rows group runs by session, else by recipe. Care's one chip opens the care session; its draft is the newest run's Change.
 - **Slide-over.** The session's recipes where care's revises are today, plus ⋯ → New conversation (`--new-session`).
@@ -99,7 +83,7 @@ Session `care` records at `recipe-care`, the annotation care's runs use today. T
 
 ## Steps
 
-1. factory: `session:` and session files in the recipe shape (load, validate, recorded run by session, continue-or-open, `--new-session`); care split into five recipes; `pr watch` by recipe; `recipe list`.
+1. factory: `session:` in the recipe shape (validate, recorded run by session, continue-or-open, `--new-session`); care split into five recipes; `pr watch` by recipe; `recipe list`.
 2. repo-agent: catalog sessions, group chips and buttons by session, `Care ▾`, New conversation.
 3. Verify on 1774 / 1780:
    - Rebase as the first run (opens the session);
