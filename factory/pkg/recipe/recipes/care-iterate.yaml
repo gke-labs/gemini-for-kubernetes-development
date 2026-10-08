@@ -1,8 +1,5 @@
-# factory recipe care --url <PR> [--instruction …]: brings a pull request
-# of yours to mergeable: it rebases it if it is behind or conflicts, fixes
-# checks it broke, and answers review comments not yet answered, in that
-# order, since a rebase changes both the checks and the code the comments
-# are on. The other care recipes each do one of these.
+# factory recipe care-iterate --url <PR> --instruction …: changes a
+# pull request of yours as the instruction asks.
 #
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
@@ -17,15 +14,15 @@
 # leased against the head the PR had, so a commit someone else pushed
 # meanwhile is never overwritten. Its Change carries the replies and
 # report post-replies posts on the PR.
-name: care
-label: Care
+name: care-iterate
+label: Iterate
 on: [my-pr]
 session: care
 
 inputs:
-  instructions:
-    type: instructions
-    description: Additional instructions the agent must follow
+  instruction:
+    description: What to change in the pull request
+    required: true
 
 context: |
   You are an automated coding agent. You look after a pull request: you
@@ -69,52 +66,22 @@ start:
     - run: |
         git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}"
         git reset --hard "${INPUT_PUSHED_HEAD}"
-    # The default branch as it is now, which a rebase goes onto.
-    - run: |
-        git fetch upstream HEAD
-        git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/upstream"
 
     - ask: |
         You look after this pull request:
         https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}
         "{{ .Inputs.pr_title }}". Its branch is checked out, at
         {{ file "lease" }}, the PR's head now.
-        {{- with .Inputs.instructions }}
 
-        Additional instructions you MUST follow:
-        <instructions>
-        {{ . }}
-        </instructions>
-        {{- end }}
+        Change the pull request as this instruction asks, and commit the
+        change:
 
-        Read the pull request first: `gh pr view {{ file "pr" }} --comments`.
-        Then, in this order, since a rebase changes both the checks and the
-        code the comments are on:
+        <instruction>
+        {{ .Inputs.instruction }}
+        </instruction>
 
-        - Rebase. If the branch conflicts with {{ file "upstream" }}, the
-          default branch as it is now, or is far behind it, rebase onto it
-          (`git rebase {{ file "upstream" }}`). Resolve conflicts so that
-          the change still does what it did; build and test what they
-          touched. If it merges cleanly and is not far behind, leave it.
-
-        - Checks. Find the failed ones (`gh pr checks {{ file "pr" }}`) and
-          read their logs (`gh run view <run-id> --log-failed`). If this
-          change caused a failure, fix it and commit. If it did not (a
-          flaky test, an outage, a failure on the default branch too),
-          change nothing and say so.
-
-        - Review comments. Read the review comments on the code,
-          `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
-          the conversation,
-          `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/issues/{{ file "pr" }}/comments --paginate`,
-          and the reviews, `gh pr view {{ file "pr" }} --comments`. Skip
-          what is already answered, and what bots wrote. Change what
-          reviewers ask for, where it is right to, and commit. Where it is
-          not, do not change it: say why in your reply.
-
-        Keep the history clean (`git commit --fixup` and an autosquash
-        rebase for small fixes to earlier commits are fine: factory pushes
-        with a lease). If nothing needs doing, say so and commit nothing.
+        Keep the history clean. If the instruction needs no change, say so
+        and commit nothing.
 
         Commit, never push; do NOT comment on GitHub yourself: factory
         posts the replies you write next.
@@ -155,11 +122,6 @@ start:
         - Do not say anywhere that an agent or AI wrote this.
         {{- end }}
       capture: change.yaml
-    # A rebase onto the default branch moved the base.
-    - run: |
-        if git merge-base --is-ancestor "$(cat "$TASK_DIR/upstream")" HEAD; then
-          cp "$TASK_DIR/upstream" "$TASK_DIR/base"
-        fi
     - uses: push
 
 outputs:

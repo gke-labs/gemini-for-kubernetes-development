@@ -440,18 +440,15 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 		t.Errorf("sandbox fix recipe = %+v", got)
 	}
 
-	// care's revises share the start's anchored step.
-	if data, rec, err = Builtin("care"); err != nil {
+	// The session tag is factory's.
+	if data, _, err = Builtin("care-ci"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err = ForSandbox(data); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = Parse(out); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if got.Revise[1].Steps[0].Run == "" || got.Revise[1].Steps[0].Run != rec.Revise[0].Steps[0].Run {
-		t.Errorf("sandbox care recipe lost its anchored step:\n%s", out)
+	if strings.Contains(string(out), "session:") {
+		t.Errorf("sandbox care-ci recipe kept its session:\n%s", out)
 	}
 }
 
@@ -1155,16 +1152,9 @@ type freshSession struct{ *fakeSession }
 
 func (freshSession) Fresh() bool { return true }
 
-// The built-in care renders on a PR's inputs, whatever its focus; its
-// revises render on the start's, and each ends with the push.
+// Each of care's recipes asks its own job, then the replies, and pushes,
+// leased against the PR's head.
 func TestBuiltinCareRenders(t *testing.T) {
-	_, rec, err := Builtin("care")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
-		t.Fatalf("care on %v, task-output %+v", rec.On, rec.TaskOutput)
-	}
 	std := map[string]string{
 		"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r/pull/9", "pr_url": "https://github.com/o/r/pull/9",
 		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "true",
@@ -1175,74 +1165,57 @@ func TestBuiltinCareRenders(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	asks := func(steps []Step, inputs map[string]string) string {
-		t.Helper()
-		var all strings.Builder
-		for i, s := range steps {
+	jobs := map[string]string{"rebase": "git rebase u3", "ci": "gh pr checks 9", "comments": "pulls/9/comments"}
+	for name, tc := range map[string]struct {
+		want, not []string
+	}{
+		"care":          {want: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}},
+		"care-comments": {want: []string{jobs["comments"]}, not: []string{jobs["rebase"], jobs["ci"]}},
+		"care-ci":       {want: []string{jobs["ci"], "--log-failed"}, not: []string{jobs["rebase"], jobs["comments"]}},
+		"care-rebase":   {want: []string{"git rebase b2"}, not: []string{jobs["ci"], jobs["comments"]}},
+		"care-iterate":  {want: []string{"rename foo"}, not: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}},
+	} {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rec.RunsOn(OnMyPR) || rec.RunsOn(OnPR) || rec.RunsOn(OnIssue) || rec.Session != "care" || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+			t.Fatalf("%s on %v in session %q, task-output %+v", name, rec.On, rec.Session, rec.TaskOutput)
+		}
+		overrides := map[string]string{}
+		if name == "care-iterate" {
+			overrides["instruction"] = "rename foo"
+		}
+		inputs, err := rec.ResolveInputs(std, overrides)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rec.CheckRender(inputs); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var got strings.Builder
+		for i, s := range rec.Start.Steps {
 			if s.Ask == "" {
 				continue
 			}
 			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
 			if err != nil {
-				t.Fatalf("step %s: %v", s.Label(i), err)
+				t.Fatalf("%s step %s: %v", name, s.Label(i), err)
 			}
-			all.WriteString(out)
+			got.WriteString(out)
 		}
-		return all.String()
-	}
-	for focus, want := range map[string][]string{
-		"":         {"git rebase u3", "gh pr checks 9", "pulls/9/comments", "inReplyTo", "written by an AI"},
-		"rebase":   {"git rebase u3"},
-		"ci":       {"gh pr checks 9"},
-		"comments": {"pulls/9/comments"},
-	} {
-		inputs, err := rec.ResolveInputs(std, map[string]string{"focus": focus})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := rec.CheckRender(inputs); err != nil {
-			t.Fatalf("focus %q: %v", focus, err)
-		}
-		got := asks(rec.Start.Steps, inputs)
-		for _, w := range want {
-			if !strings.Contains(got, w) {
-				t.Errorf("focus %q lacks %q:\n%s", focus, w, got)
+		for _, w := range append(tc.want, "at\nh1, the PR's head now", "inReplyTo", "written by an AI") {
+			if !strings.Contains(got.String(), w) {
+				t.Errorf("%s lacks %q:\n%s", name, w, got.String())
 			}
 		}
-		for other, job := range map[string]string{"rebase": "git rebase u3", "ci": "gh pr checks 9", "comments": "pulls/9/comments"} {
-			if focus != "" && focus != other && strings.Contains(got, job) {
-				t.Errorf("focus %q asks for %s too", focus, other)
+		for _, w := range tc.not {
+			if strings.Contains(got.String(), w) {
+				t.Errorf("%s asks for %q too", name, w)
 			}
 		}
-	}
-	if last := rec.Start.Steps[len(rec.Start.Steps)-1]; last.Uses != "push" {
-		t.Errorf("the start ends with %s, not the push", last.Label(len(rec.Start.Steps)-1))
-	}
-
-	inputs, err := rec.ResolveInputs(std, map[string]string{"instruction": "rename foo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for id, want := range map[string][]string{
-		"address-comments": {"pulls/9/comments", "since you last pushed\n   (h1)", "inReplyTo"},
-		"fix-ci":           {"gh pr checks 9", "--log-failed", "report:"},
-		"rebase":           {"git rebase b2"},
-		"iterate":          {"rename foo"},
-	} {
-		i := slices.IndexFunc(rec.Revise, func(rv Revise) bool { return rv.ID == id })
-		if i < 0 {
-			t.Errorf("care has no %s", id)
-			continue
-		}
-		steps := rec.Revise[i].Steps
-		if steps[len(steps)-1].Uses != "push" || steps[len(steps)-2].Capture != "change.yaml" {
-			t.Errorf("%s does not capture change.yaml and push", id)
-		}
-		got := asks(steps, inputs)
-		for _, w := range want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s lacks %q:\n%s", id, w, got)
-			}
+		if last := rec.Start.Steps[len(rec.Start.Steps)-1]; last.Uses != "push" {
+			t.Errorf("%s ends with %s, not the push", name, last.Label(len(rec.Start.Steps)-1))
 		}
 	}
 }
@@ -1272,5 +1245,60 @@ func TestBuiltinFanoutRenders(t *testing.T) {
 	ask, err := render("spec", last.Ask, templateData{Inputs: inputs}, "")
 	if err != nil || !strings.Contains(ask, "write {{.item.name}} wherever") {
 		t.Errorf("the spec ask (%v):\n%s", err, ask)
+	}
+}
+
+// A session's recipes land in one sandbox and one of them names the
+// group; a recipe in one is recorded under it, and has no revises.
+func TestSessions(t *testing.T) {
+	var builtins []*Recipe
+	for _, name := range BuiltinNames() {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		builtins = append(builtins, rec)
+	}
+	if err := CheckSessions(builtins); err != nil {
+		t.Errorf("built-in recipes: %v", err)
+	}
+
+	in := func(name, session string, on ...string) *Recipe {
+		return &Recipe{Name: name, Session: session, On: on}
+	}
+	for _, tc := range []struct {
+		why  string
+		recs []*Recipe
+	}{
+		{"on differs", []*Recipe{in("s", "s", "my-pr"), in("s-a", "s", "pr")}},
+		{"credentials differ", []*Recipe{in("s", "s", "pr"), {Name: "s-a", Session: "s", On: []string{"pr"}, Credentials: CredentialsClone}}},
+		{"none named like the tag", []*Recipe{in("s-a", "s", "pr"), in("s-b", "s", "pr")}},
+	} {
+		if err := CheckSessions(tc.recs); err == nil {
+			t.Errorf("%s: checked", tc.why)
+		}
+	}
+	if err := CheckSessions([]*Recipe{in("s", "s", "pr", "issue"), in("s-a", "s", "issue", "pr"), {Name: "s-b", Session: "s", On: []string{"pr"}, Credentials: CredentialsFull}}); err == nil {
+		t.Error("on [pr issue] and [pr] checked as one")
+	}
+	if err := CheckSessions([]*Recipe{in("s", "s", "pr", "issue"), in("s-a", "s", "issue", "pr")}); err != nil {
+		t.Errorf("on in another order: %v", err)
+	}
+
+	start := Part{Steps: []Step{{Run: "true"}}}
+	for _, r := range []*Recipe{
+		{Name: "x", Session: "Bad Name", Start: start},
+		{Name: "x", Session: "s", TaskType: "fix", Start: start},
+		{Name: "x", Session: "s", Start: start, Revise: []Revise{{ID: "again", Steps: []Step{{Run: "true"}}}}},
+	} {
+		if err := r.Validate(); err == nil {
+			t.Errorf("%+v validated", r)
+		}
+	}
+	if r := (&Recipe{Name: "x-a", Session: "x", Start: start}); r.Validate() != nil || r.SessionName() != "x" {
+		t.Errorf("a recipe in session x: %v, %q", r.Validate(), r.SessionName())
+	}
+	if r := (&Recipe{Name: "x"}); r.SessionName() != "x" {
+		t.Errorf("an untagged recipe's session = %q, want its name", r.SessionName())
 	}
 }

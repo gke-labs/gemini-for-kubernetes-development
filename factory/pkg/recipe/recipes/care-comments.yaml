@@ -1,8 +1,6 @@
-# factory recipe care --url <PR> [--instruction …]: brings a pull request
-# of yours to mergeable: it rebases it if it is behind or conflicts, fixes
-# checks it broke, and answers review comments not yet answered, in that
-# order, since a rebase changes both the checks and the code the comments
-# are on. The other care recipes each do one of these.
+# factory recipe care-comments --url <PR>: answers the review comments on
+# a pull request of yours not yet answered, changing what they ask for
+# where it is right to. factory pr watch runs it on new comments.
 #
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
@@ -17,8 +15,8 @@
 # leased against the head the PR had, so a commit someone else pushed
 # meanwhile is never overwritten. Its Change carries the replies and
 # report post-replies posts on the PR.
-name: care
-label: Care
+name: care-comments
+label: Address comments
 on: [my-pr]
 session: care
 
@@ -69,10 +67,6 @@ start:
     - run: |
         git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}"
         git reset --hard "${INPUT_PUSHED_HEAD}"
-    # The default branch as it is now, which a rebase goes onto.
-    - run: |
-        git fetch upstream HEAD
-        git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/upstream"
 
     - ask: |
         You look after this pull request:
@@ -87,21 +81,8 @@ start:
         </instructions>
         {{- end }}
 
-        Read the pull request first: `gh pr view {{ file "pr" }} --comments`.
-        Then, in this order, since a rebase changes both the checks and the
-        code the comments are on:
-
-        - Rebase. If the branch conflicts with {{ file "upstream" }}, the
-          default branch as it is now, or is far behind it, rebase onto it
-          (`git rebase {{ file "upstream" }}`). Resolve conflicts so that
-          the change still does what it did; build and test what they
-          touched. If it merges cleanly and is not far behind, leave it.
-
-        - Checks. Find the failed ones (`gh pr checks {{ file "pr" }}`) and
-          read their logs (`gh run view <run-id> --log-failed`). If this
-          change caused a failure, fix it and commit. If it did not (a
-          flaky test, an outage, a failure on the default branch too),
-          change nothing and say so.
+        Reviewers have commented on the pull request. Address their
+        comments:
 
         - Review comments. Read the review comments on the code,
           `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,
@@ -112,9 +93,7 @@ start:
           reviewers ask for, where it is right to, and commit. Where it is
           not, do not change it: say why in your reply.
 
-        Keep the history clean (`git commit --fixup` and an autosquash
-        rebase for small fixes to earlier commits are fine: factory pushes
-        with a lease). If nothing needs doing, say so and commit nothing.
+        If nothing is left to answer, say so and commit nothing.
 
         Commit, never push; do NOT comment on GitHub yourself: factory
         posts the replies you write next.
@@ -155,11 +134,6 @@ start:
         - Do not say anywhere that an agent or AI wrote this.
         {{- end }}
       capture: change.yaml
-    # A rebase onto the default branch moved the base.
-    - run: |
-        if git merge-base --is-ancestor "$(cat "$TASK_DIR/upstream")" HEAD; then
-          cp "$TASK_DIR/upstream" "$TASK_DIR/base"
-        fi
     - uses: push
 
 outputs:

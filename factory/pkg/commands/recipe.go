@@ -26,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
@@ -59,6 +60,7 @@ type recipeRunFlags struct {
 	itemURL, runName, session string
 	inputArgs                 []string
 	apply, dryRun             bool
+	newSession                bool
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
@@ -69,6 +71,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.session, "session", "", "With a repository URL: the conversation the run is, which names its sandbox (made if missing). Default: the run name, else a new one")
 	cmd.Flags().StringArrayVar(&f.inputArgs, "input", nil, "An input as name=value; overrides what the URL sets. Repeatable.")
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
+	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
@@ -104,7 +107,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, f.newSession, applyMode{f.apply, f.dryRun}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -330,7 +333,7 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // values of instructions-type inputs, each resolved as
 // `factory pr review --instruction` resolves its own. With apply it applies
 // the task's result, picking up where an interrupted run left off.
-func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -344,6 +347,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	}
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
+	}
+	if newSession && rec.Session == "" {
+		return fmt.Errorf("recipe %s is in no session (session:); every run of it opens a new conversation", rec.Name)
 	}
 
 	ghClient, err := github.NewClient(ctx)
@@ -498,7 +504,16 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 		task.Output = rec.OutputDecl()
 	}
 	task.TaskType = rec.TaskType
-	fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
+	if rec.Session != "" && !newSession && !it.IsRepo() {
+		if task.Session, err = sessionToContinue(ctx, kubeClient, sb, sandboxName, rec, it); err != nil {
+			return err
+		}
+	}
+	if task.Session != "" {
+		fmt.Printf("Running recipe %s (task %s) in session %s's conversation, task %s...\n", rec.Name, task.ID, rec.Session, task.Session)
+	} else {
+		fmt.Printf("Running recipe %s (task %s)...\n", rec.Name, task.ID)
+	}
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
@@ -510,6 +525,43 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	}
 	printResultHint(rec, task, sandboxName)
 	return nil
+}
+
+// sessionToContinue is the conversation a run of rec, a recipe in a
+// session, continues: the one its group's last run in sb recorded, which
+// that run opened or itself continued; "" when there is none, and the
+// run opens one. A conversation the task server has lost is opened
+// again under the same id (recipe.OpenDaemonSession).
+func sessionToContinue(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, sandboxName string, rec *recipe.Recipe, it githubItem) (string, error) {
+	obj, err := k8s.NewManager(kubeClient).GetSandbox(ctx, rootFlags.Namespace, sandboxName)
+	if err != nil {
+		return "", fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+	}
+	entries, err := sb.List(ctx)
+	if err != nil {
+		return "", err
+	}
+	taskType, _ := recipeTaskType(rec, it)
+	return continuedSession(obj.GetAnnotations()[factorysandbox.RunAnnotation(taskType)], entries), nil
+}
+
+// continuedSession is the conversation the recorded run recorded (its
+// RunAnnotation) is in, the one it opened or continued, if its task is
+// one of the sandbox's: a run recorded by a sandbox since recreated is
+// not a conversation here.
+func continuedSession(recorded string, entries []spool.Entry) string {
+	var run factorysandbox.RecordedRun
+	if json.Unmarshal([]byte(recorded), &run) != nil || run.Task == "" {
+		return ""
+	}
+	session := run.Session
+	if session == "" {
+		session = run.Task
+	}
+	if _, err := spool.Find(entries, session, ""); err != nil {
+		return ""
+	}
+	return session
 }
 
 // prPushInputs sets the pushed_* inputs a Change recipe on a PR pushes
@@ -639,15 +691,16 @@ func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factory
 // recipeTaskType is the task type a recipe's task on it records its state
 // under, and whether that is a side task's: in an issue's sandbox a
 // recipe is a side task, and last-task-* stay the plan's or fix's, unless
-// it is the sandbox's main task itself.
+// it is the sandbox's main task itself. Recipes that share a session tag
+// record under it, one run for the group.
 func recipeTaskType(rec *recipe.Recipe, it githubItem) (string, bool) {
 	switch {
 	case rec.TaskType != "":
 		return rec.TaskType, false
 	case !it.IsPR && !it.IsRepo():
-		return "recipe-" + rec.Name, true
+		return "recipe-" + rec.SessionName(), true
 	default:
-		return "recipe-" + rec.Name, false
+		return "recipe-" + rec.SessionName(), false
 	}
 }
 
@@ -1062,14 +1115,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
 				base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
 				// A revise continues the conversation of the task it
-				// revises.
+				// revises; a run in a session, its session's.
 				if task.Session != "" {
 					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir)
 				}
 				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir)
 			}
 			if task.Session != "" {
-				return nil, fmt.Errorf("a revise needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
+				return nil, fmt.Errorf("continuing a conversation needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
 			}
 			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir)
 		},

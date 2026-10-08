@@ -45,10 +45,10 @@ Revising a revise continues the same conversation. Nothing is posted:
 apply the new result as any other. --input sets an input the revise
 takes, such as the fix recipe's iterate instruction.
 
-The revises of fix (iterate) and care (address-comments, fix-ci, rebase,
-iterate) push to the branch the start pushed, leased against the head last
-pushed, and their Change is about the sandbox's PR: post-replies posts a
-care Change's replies and report there.
+fix's iterate pushes to the branch the start pushed, leased against the
+head last pushed, and its Change is about the sandbox's PR. care has no
+revises: its jobs are recipes of one session (care-ci, care-comments, …),
+each run continuing its conversation.
 
 The session must not be mid-turn; the revise fails before sending anything
 if it is.`,
@@ -62,8 +62,8 @@ if it is.`,
   factory recipe revise fix-repo-123 iterate --input instruction="rename foo to bar"
 
   # Fix a PR's checks in care's session, then post what it says
-  factory recipe revise https://github.com/owner/repo/pull/456 fix-ci --recipe care
-  factory sandbox task output recipe-repo-456 | factory apply -f -`,
+  factory recipe care-ci --url https://github.com/owner/repo/pull/456
+  factory sandbox task output fix-repo-456 | factory apply -f - --action post-replies`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
 			return runRevise(ctx, c, args[0], args[1], f)

@@ -30,6 +30,10 @@ type RecipeInfo struct {
 	// sandbox.
 	TaskType    string `json:"taskType"`
 	Credentials string `json:"credentials,omitempty"`
+	// Session is its session tag (recipe.Session), if it has one: the
+	// group a board shows as one, whose runs share one conversation and
+	// TaskType.
+	Session string `json:"session,omitempty"`
 }
 
 // RecipeInputInfo is one declared input. Revise marks one only revises
@@ -53,9 +57,9 @@ type RecipeReviseInfo struct {
 }
 
 func recipeInfo(rec *recipe.Recipe) RecipeInfo {
-	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType}
+	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType, Session: rec.Session}
 	if info.TaskType == "" {
-		info.TaskType = "recipe-" + rec.Name
+		info.TaskType = "recipe-" + rec.SessionName()
 	}
 	if rec.Credentials != recipe.CredentialsFull {
 		info.Credentials = rec.Credentials
@@ -76,12 +80,17 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 // builtinRecipeInfos describes every built-in recipe, by name.
 func builtinRecipeInfos() ([]RecipeInfo, error) {
 	var infos []RecipeInfo
+	var recs []*recipe.Recipe
 	for _, name := range recipe.BuiltinNames() {
 		_, rec, err := recipe.Builtin(name)
 		if err != nil {
 			return nil, err
 		}
+		recs = append(recs, rec)
 		infos = append(infos, recipeInfo(rec))
+	}
+	if err := recipe.CheckSessions(recs); err != nil {
+		return nil, err
 	}
 	return infos, nil
 }
@@ -90,7 +99,7 @@ func newRecipeListCommand() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List the built-in recipes: what each runs on, its result and its revises",
+		Short: "List the built-in recipes: what each runs on, its result, its session and its revises",
 		Example: `  factory recipe list
   factory recipe list -o json`,
 		Args: cobra.NoArgs,
@@ -109,7 +118,7 @@ func newRecipeListCommand() *cobra.Command {
 				return fmt.Errorf("unknown output format %q (want json)", output)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tON\tRESULT\tREVISES")
+			fmt.Fprintln(w, "NAME\tON\tRESULT\tSESSION\tREVISES")
 			for _, info := range infos {
 				on := strings.Join(info.On, ",")
 				if on == "" {
@@ -119,7 +128,7 @@ func newRecipeListCommand() *cobra.Command {
 				for _, rv := range info.Revises {
 					revises = append(revises, rv.ID)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", info.Name, on, orDash(info.Kind), orDash(strings.Join(revises, ",")))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", info.Name, on, orDash(info.Kind), orDash(info.Session), orDash(strings.Join(revises, ",")))
 			}
 			return w.Flush()
 		},
