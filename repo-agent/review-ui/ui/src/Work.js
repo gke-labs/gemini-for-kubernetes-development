@@ -1846,7 +1846,7 @@ function Work({ onBack, namespace }) {
         const groupLabel = item => (groupOf(item) === 'issues' ? 'ISSUE' : item.mine ? 'MY PR' : 'PR');
         const section = (label, n) => (
           <tr className="work-section">
-            <td colSpan="5" style={{ padding: '10px 8px 4px', fontSize: 'x-small', fontWeight: 600, letterSpacing: '0.04em', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+            <td colSpan="5" style={{ padding: '6px 8px', fontSize: 'x-small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-primary)', backgroundColor: 'var(--bg-secondary)', textTransform: 'uppercase' }}>
               {label} ({n})
             </td>
           </tr>
