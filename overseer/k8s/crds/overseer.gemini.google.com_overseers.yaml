@@ -154,12 +154,14 @@ spec:
                   script:
                     type: string
                   scriptPath:
+                    maxLength: 256
                     type: string
                     x-kubernetes-validations:
                     - message: scriptPath must be relative, without ..
                       rule: '!self.startsWith(''/'') && !self.split(''/'').exists(p,
                         p == ''..'')'
                   scriptURL:
+                    maxLength: 2048
                     pattern: ^https://
                     type: string
                 required:
