@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
@@ -17,7 +18,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 )
 
 // newDispatcher constructs the task dispatcher used by the watcher, wiring it to
@@ -115,6 +118,37 @@ func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
 		return fmt.Errorf("choosing the account for the fanout recipe on #%d: %w", n, err)
 	}
 	return w.ProposeFanout(ctx, fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, n), user)
+}
+
+// newWarmWorkspaceController constructs the warm workspace pass, or nil
+// when the config asks for no warming (or asks for it wrongly, which is
+// logged: the rest of the watch runs on).
+func (w *Watcher) newWarmWorkspaceController() *warmworkspace.Controller {
+	if w.cfg == nil || w.cfg.WarmWorkspace == nil || w.WarmWorkspace == nil || w.kubeClient == nil {
+		return nil
+	}
+	cfg := *w.cfg.WarmWorkspace
+	interval, err := cfg.Validate()
+	if err != nil {
+		klog.Errorf("Not warming workspaces: %v", err)
+		return nil
+	}
+	repoURL := fmt.Sprintf("https://github.com/%s/%s", w.Repo.Owner, w.Repo.Repo)
+	return warmworkspace.New(warmworkspace.DefaultInterval, warmworkspace.Deps{
+		Paused: w.draining,
+		Due: func(ctx context.Context) (bool, error) {
+			return factorysandbox.WarmDue(ctx, w.kubeClient, w.Namespace, w.Repo.Repo, interval, time.Now())
+		},
+		Warm: func(ctx context.Context) error {
+			// The account a fix would clone as: the repository may be
+			// private, and the watcher's own may be no coder's.
+			user, err := w.selectUserForTask(ctx, api.TypeIssueFix, 0)
+			if err != nil {
+				return fmt.Errorf("choosing the account for the warm recipe: %w", err)
+			}
+			return w.WarmWorkspace(ctx, repoURL, user, cfg)
+		},
+	})
 }
 
 // belowMaxPending reports whether fewer sandbox tasks run than --max-pending.

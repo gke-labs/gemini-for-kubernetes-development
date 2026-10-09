@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +52,67 @@ type FactoryConfig struct {
 	MinNumber           int                   `yaml:"minNumber"`
 	PRInactivityTimeout string                `yaml:"prInactivityTimeout"`
 	Roles               map[string]RoleConfig `yaml:"roles"`
+	// WarmWorkspace keeps a snapshot of a warmed workspace disk for the
+	// repository, which new sandboxes start from (design/warm-workspace.md).
+	// Unset, no warming.
+	WarmWorkspace *WarmWorkspaceConfig `yaml:"warmWorkspace"`
+}
+
+// WarmWorkspaceConfig is how often the workspace is warmed, how many
+// snapshots are kept, and the script that warms it: exactly one of
+// Script, ScriptURL and ScriptPath.
+type WarmWorkspaceConfig struct {
+	// Interval is how old the newest snapshot may get before a new one is
+	// made, e.g. "24h".
+	Interval string `yaml:"interval"`
+	// Keep is how many snapshots are kept; zero keeps DefaultWarmKeep.
+	Keep int `yaml:"keep"`
+	// Script is a file, where factory runs, holding the script.
+	Script string `yaml:"script"`
+	// ScriptURL is an https URL factory downloads the script from at
+	// each warm.
+	ScriptURL string `yaml:"scriptURL"`
+	// ScriptPath is a path in the repository, run from its default branch.
+	ScriptPath string `yaml:"scriptPath"`
+}
+
+// DefaultWarmKeep is how many warm snapshots are kept when Keep is unset.
+const DefaultWarmKeep = 2
+
+// Validate checks the warm workspace settings: a positive interval and
+// exactly one script source.
+func (c *WarmWorkspaceConfig) Validate() (time.Duration, error) {
+	interval, err := time.ParseDuration(c.Interval)
+	if err != nil || interval <= 0 {
+		return 0, fmt.Errorf("warmWorkspace.interval %q is not a positive duration", c.Interval)
+	}
+	if c.Keep < 0 {
+		return 0, fmt.Errorf("warmWorkspace.keep %d is negative", c.Keep)
+	}
+	n := 0
+	for _, s := range []string{c.Script, c.ScriptURL, c.ScriptPath} {
+		if s != "" {
+			n++
+		}
+	}
+	if n != 1 {
+		return 0, fmt.Errorf("warmWorkspace needs exactly one of script, scriptURL and scriptPath; it has %d", n)
+	}
+	if c.ScriptURL != "" && !strings.HasPrefix(c.ScriptURL, "https://") {
+		return 0, fmt.Errorf("warmWorkspace.scriptURL %q is not https", c.ScriptURL)
+	}
+	if p := c.ScriptPath; p != "" && (strings.HasPrefix(p, "/") || strings.Contains(p, "..")) {
+		return 0, fmt.Errorf("warmWorkspace.scriptPath %q must be relative and must not contain \"..\"", p)
+	}
+	return interval, nil
+}
+
+// KeepOrDefault is Keep, or DefaultWarmKeep when it is unset.
+func (c *WarmWorkspaceConfig) KeepOrDefault() int {
+	if c.Keep > 0 {
+		return c.Keep
+	}
+	return DefaultWarmKeep
 }
 
 func LoadConfig() (*FactoryConfig, error) {

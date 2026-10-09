@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	githubv39 "github.com/google/go-github/v39/github"
@@ -80,6 +81,10 @@ type Watcher struct {
 	// as user, or the watcher's own account if that is empty. Nil, fan-out
 	// parents without a spec wait for a person to write one.
 	ProposeFanout func(ctx context.Context, issueURL, user string) error
+	// WarmWorkspace moves the repository's warm workspace cycle on by a
+	// step (pkg/commands' warmWorkspace), cloning as user. Nil, or no
+	// warmWorkspace in the config, the repository is not warmed.
+	WarmWorkspace func(ctx context.Context, repoURL, user string, cfg config.WarmWorkspaceConfig) error
 
 	cfg          *config.FactoryConfig
 	triggerLabel string
@@ -107,6 +112,7 @@ type Watcher struct {
 	issueScanner     *issues.Scanner
 	prScanner        *prs.Scanner
 	fanouts          *fanouts.Controller
+	warmWorkspace    *warmworkspace.Controller
 	timeoutChan      <-chan time.Time
 }
 
@@ -148,6 +154,7 @@ func (w *Watcher) initComponents() {
 	})
 	w.dispatcher = w.newDispatcher(w.newCLIRunner())
 	w.fanouts = w.newFanoutController()
+	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.issueScanner = w.newIssueScanner()

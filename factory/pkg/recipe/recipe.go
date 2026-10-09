@@ -34,6 +34,11 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
+// WarmRecipe is the built-in recipe that warms a workspace disk for
+// snapshots (design/warm-workspace.md). factory runs it in the
+// repository's warm sandbox rather than a research one.
+const WarmRecipe = "warm"
+
 // Recipe is one task.
 type Recipe struct {
 	Name string `yaml:"name"`
