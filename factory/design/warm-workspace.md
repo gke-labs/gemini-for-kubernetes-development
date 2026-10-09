@@ -26,14 +26,15 @@ This note gives a sandbox a workspace disk restored from a snapshot of a warmed 
 ## End to end
 
 ```
-Overseer CR spec.warmWorkspace {interval, keep, script}
-  └─ overseer.go: env WARM_WORKSPACE_INTERVAL, WARM_WORKSPACE_KEEP, WARM_WORKSPACE_SCRIPT
-       └─ run.sh writeFactoryConfig: script → /workspaces/warm-workspace.sh;
-          .factory.cfg gets warmWorkspace: {interval, keep, script: /workspaces/warm-workspace.sh}
+Overseer CR spec.warmWorkspace {interval, keep, one of script | scriptURL | scriptPath}
+  └─ overseer.go: env WARM_WORKSPACE_{INTERVAL,KEEP,SCRIPT,SCRIPT_URL,SCRIPT_PATH}
+       └─ run.sh writeFactoryConfig: an inline script → /workspaces/warm-workspace.sh;
+          .factory.cfg gets warmWorkspace: {interval, keep, script | scriptURL | scriptPath}
             └─ factory watch: warmworkspace pass (each cycle)
                  └─ hook commands.warmWorkspace(repoURL)
                       ├─ EnsureWarmSandbox warm-<repo> (never restored from a snapshot)
-                      ├─ runRecipe("warm", repoURL, run name from the sandbox, inputs {script})
+                      ├─ scriptURL: download it (https) → script
+                      ├─ runRecipe("warm", repoURL, run name from the sandbox, inputs {script | script_path})
                       │    └─ in the sandbox: clone → run script → clean → credential check
                       ├─ suspend warm-<repo> (replicas 0) → VolumeSnapshot of its PVC
                       └─ readyToUse → keep the newest N → delete warm-<repo>
@@ -57,20 +58,39 @@ spec:
       go test -run '^$' ./pkg/... ./apis/...           # compile the tests, run none
 ```
 
-`overseer_types.go` gets `WarmWorkspace *WarmWorkspaceSpec`. The field is additive, so Overseers without it are unchanged. As with every field, changing it restarts the overseer sandbox.
+The script comes from exactly one of three fields:
+
+| Field | Resolved by | Runs |
+|---|---|---|
+| `script` | the CR itself | the inline text |
+| `scriptURL` | the hook in `factory watch`, at each warm; `https` only | the downloaded text, passed to the recipe as `script` |
+| `scriptPath` | the recipe, in the warm sandbox, after checking out the default branch | `./<path>` in the checkout; relative, no `..` |
+
+```yaml
+  warmWorkspace:
+    interval: 24h
+    scriptPath: dev/tasks/warm-workspace     # in the repository, on its default branch
+  # or
+    scriptURL: https://raw.githubusercontent.com/<org>/<repo>/<sha>/warm.sh
+```
+
+- **`scriptPath`** lets a repository keep its warm script next to the code it builds, so a codegen change updates both in one PR. It never runs from a PR branch; fix sandboxes already run the default branch's `make` and `dev/tasks/*`, so it adds no new trust.
+- **`scriptURL`** is for a script kept outside both the CR and the repository. Whoever controls the URL controls what every restored sandbox starts from. Prefer a URL pinned to a commit.
+- **Provenance.** Each snapshot records its source: `warm-script: inline`, `url <URL> sha256:<digest>`, or `path <path>@<default branch SHA>`.
+
+`overseer_types.go` gets `WarmWorkspace *WarmWorkspaceSpec`. A CEL rule (`x-kubernetes-validations`) requires exactly one of the three; factory checks it again when it reads `.factory.cfg`. The field is additive, so Overseers without it are unchanged. As with every field, changing it restarts the overseer sandbox.
 
 ### 2. Overseer to factory
 
-- `overseer.go` sets `WARM_WORKSPACE_INTERVAL`, `WARM_WORKSPACE_KEEP` and `WARM_WORKSPACE_SCRIPT`. A multi-line env value is fine; the script is a few lines.
-- `run.sh`'s `writeFactoryConfig` writes the script to `/workspaces/warm-workspace.sh` and adds this to `.factory.cfg`:
+- `overseer.go` sets `WARM_WORKSPACE_INTERVAL`, `WARM_WORKSPACE_KEEP`, and whichever of `WARM_WORKSPACE_SCRIPT`, `WARM_WORKSPACE_SCRIPT_URL` and `WARM_WORKSPACE_SCRIPT_PATH` is set. A multi-line env value is fine; an inline script is a few lines.
+- `run.sh`'s `writeFactoryConfig` writes an inline script to `/workspaces/warm-workspace.sh` and adds this to `.factory.cfg`:
   ```yaml
   warmWorkspace:
     interval: 24h
     keep: 2
-    script: /workspaces/warm-workspace.sh
+    script: /workspaces/warm-workspace.sh    # or scriptURL: <url>, or scriptPath: <path>
   ```
 - `FactoryConfig` gets a matching `WarmWorkspace` struct.
-- A later fallback: with no `script`, read `.agents/warm.sh` from the repository's default branch, never from a PR branch.
 
 ### 3. The watch pass
 
@@ -88,7 +108,12 @@ The hook `commands.warmWorkspace`, set on the watcher next to `ProposeFanout`, d
    - **never** a `dataSource`.
 
    The first time, it records a run name on the sandbox (`factory.gemini.google.com/warm-run: warm-<unix>`).
-2. **Run the recipe.** `runRecipe("warm", repoURL, <that run name>, inputs {script: <file contents>})`. It needs a way to be handed the sandbox, since a repository target would otherwise get a research sandbox. A watch cycle that ends mid-run leaves the task running; the next cycle calls again with the same run name and waits on.
+2. **Run the recipe.** The hook resolves the script first:
+   - `script`: the file's contents;
+   - `scriptURL`: downloads it (`https` only, size-capped, non-2xx fails the warm) and records its sha256;
+   - `scriptPath`: passes the path.
+
+   Then it calls `runRecipe("warm", repoURL, <that run name>, inputs {script} or {script_path})`. It needs a way to be handed the sandbox, since a repository target would otherwise get a research sandbox. A watch cycle that ends mid-run leaves the task running; the next cycle calls again with the same run name and waits on.
 3. **Snapshot.** When the run succeeds:
    - suspend the sandbox (`SuspendSandbox`, replicas 0) and wait for the pod to go, so the disk is detached and quiet;
    - create a `VolumeSnapshot` `warm-<repo>-<yyyymmdd-hhmm>` of its PVC, labelled for the repository and annotated with the default branch's SHA, the image digest and the Go version;
@@ -106,15 +131,21 @@ name: warm
 on: [repo]
 credentials: clone       # the token reaches cloneRepo and nothing else
 inputs:
-  script: {required: true}
+  script: {}             # the script's text (inline or downloaded); or
+  script_path: {}        # a path in the repository; the hook passes exactly one
 start:
   steps:
     - uses: clone
     - run: |
         cd "/workspaces/$INPUT_REPO_NAME"
         git checkout -q "$(git symbolic-ref --short refs/remotes/origin/HEAD | cut -d/ -f2)"
-        printf '%s\n' "$INPUT_SCRIPT" > "$TASK_DIR/warm.sh"
-        bash -euo pipefail "$TASK_DIR/warm.sh"
+        if [ -n "$INPUT_SCRIPT_PATH" ]; then
+          case "$INPUT_SCRIPT_PATH" in /*|*..*) echo "script_path must be relative, without .." >&2; exit 1;; esac
+          bash -euo pipefail "./$INPUT_SCRIPT_PATH"
+        else
+          printf '%s\n' "$INPUT_SCRIPT" > "$TASK_DIR/warm.sh"
+          bash -euo pipefail "$TASK_DIR/warm.sh"
+        fi
         test -z "$(git status --porcelain)"   # a dirty tree would be in every fix
     - run: |
         rm -rf /workspaces/.tmp /workspaces/spool
@@ -155,7 +186,7 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
 
 ## Not in this design
 
-- **Repository recipes** (`.agents/recipes/`). warm is built in. Recipes defined by a repository need their own design, for trust above all (a recipe can ask for `credentials: full`).
+- **Repository recipes** (`.agents/recipes/`). warm is built in; with `scriptPath`, only its script comes from the repository. Recipes defined by a repository need their own design, for trust above all (a recipe can ask for `credentials: full`).
 - **One snapshot shared across namespaces.** repo-agent members each have a namespace, and a PVC cannot restore from another namespace's snapshot. A static `VolumeSnapshotContent` per namespace, all pointing at the one GCE snapshot, would share it. Later, if member sandboxes need warm disks.
 - **A remote build cache (`GOCACHEPROG`).** Considered and rejected: a cache every sandbox can write to lets one agent poison everyone's builds.
 
@@ -185,7 +216,7 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
    - `EnsureWarmSandbox`;
    - the hook;
    - the `warmworkspace` pass;
-   - `warmWorkspace` in `FactoryConfig`.
+   - `warmWorkspace` in `FactoryConfig`, with the three script sources.
 
    Runnable by hand before the overseer passes anything: `.factory.cfg` with `warmWorkspace`, then `factory watch`.
 4. **overseer.**
