@@ -51,7 +51,7 @@ func reviewClients(t *testing.T, ns string, objs ...*unstructured.Unstructured) 
 	t.Helper()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
-		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList"})
+		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList", sandbox.VolumeSnapshotGVR: "VolumeSnapshotList"})
 	for _, o := range objs {
 		if _, err := dyn.Resource(k8s.SandboxGVR).Namespace(ns).
 			Create(context.Background(), o, metav1.CreateOptions{}); err != nil {

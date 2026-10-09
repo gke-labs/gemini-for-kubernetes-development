@@ -19,7 +19,11 @@ import (
 // A Service left by a sandbox deleted before Services were owned is
 // adopted rather than refused: its name and selector derive from the
 // sandbox's name, so it is the one this would have made.
+//
+// Every new sandbox's workspace is restored from its repository's warm
+// snapshot, if there is one (restoreFromWarmSnapshot).
 func createSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sbObj *unstructured.Unstructured, svc *corev1.Service) error {
+	restoreFromWarmSnapshot(ctx, kubeClient, namespace, sbObj)
 	created, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Create(ctx, sbObj, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("creating sandbox CR: %w", err)

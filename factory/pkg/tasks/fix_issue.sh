@@ -183,6 +183,10 @@ setupGit
 setupGitRepos
 # HACK: Avoid git lock issues
 sleep 5
+# Branch from upstream's default branch as it is now, not from whatever
+# HEAD the disk had: a workspace restored from a warm snapshot
+# (design/warm-workspace.md) has the snapshot's commit checked out.
+checkoutDefaultBranch
 checkoutNewBranch
 configureGemini
 installExtensions

@@ -19,7 +19,8 @@ import (
 func TestSuspendIdleSandboxes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: fakeDynamic,
@@ -110,7 +111,8 @@ func TestSuspendIdleSandboxes(t *testing.T) {
 func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: fakeDynamic,
@@ -176,7 +178,8 @@ func TestIsCurrentSandbox_And_SuspendSkip(t *testing.T) {
 func TestUpdateSandboxTaskAnnotation_Resume(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: fakeDynamic,
@@ -230,7 +233,8 @@ func TestUpdateSandboxTaskAnnotation_Resume(t *testing.T) {
 func TestMarkSandboxTaskRunningRecordsTheEngine(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{DynamicClient: fakeDynamic}
 	ctx := context.Background()
@@ -268,7 +272,8 @@ func TestMarkSandboxTaskRunningRecordsTheEngine(t *testing.T) {
 func TestSuspendIdleSandboxes_UnpausedAt(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: fakeDynamic,
@@ -313,7 +318,8 @@ func TestSuspendIdleSandboxes_UnpausedAt(t *testing.T) {
 func TestSuspendSandbox(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{
 		DynamicClient: fakeDynamic,
@@ -370,7 +376,8 @@ func TestSuspendSandbox(t *testing.T) {
 func TestMarkResearchReadyRecordsTheEngine(t *testing.T) {
 	scheme := runtime.NewScheme()
 	fakeDynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
-		k8s.SandboxGVR: "SandboxList",
+		k8s.SandboxGVR:            "SandboxList",
+		sandbox.VolumeSnapshotGVR: "VolumeSnapshotList",
 	})
 	kubeClient := &clients.KubernetesClient{DynamicClient: fakeDynamic}
 	ctx := context.Background()

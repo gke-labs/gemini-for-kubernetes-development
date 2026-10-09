@@ -20,7 +20,7 @@ import (
 func fakeKube(t *testing.T, ns string, objs ...*unstructured.Unstructured) *clients.KubernetesClient {
 	t.Helper()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList"})
+		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList", VolumeSnapshotGVR: "VolumeSnapshotList"})
 	for _, o := range objs {
 		if _, err := dyn.Resource(k8s.SandboxGVR).Namespace(ns).Create(context.Background(), o, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("seeding %s: %v", o.GetName(), err)
