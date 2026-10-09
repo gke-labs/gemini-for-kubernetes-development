@@ -102,7 +102,7 @@ func (c *WarmWorkspaceConfig) Validate() (time.Duration, error) {
 		return 0, fmt.Errorf("warmWorkspace.scriptURL %q is not https", c.ScriptURL)
 	}
 	if p := c.ScriptPath; p != "" && (strings.HasPrefix(p, "/") || strings.Contains(p, "..")) {
-		return 0, fmt.Errorf("warmWorkspace.scriptPath %q must be relative, without ..", p)
+		return 0, fmt.Errorf("warmWorkspace.scriptPath %q must be relative and must not contain \"..\"", p)
 	}
 	return interval, nil
 }
