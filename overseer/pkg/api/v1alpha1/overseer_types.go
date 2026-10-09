@@ -204,11 +204,13 @@ type WarmWorkspaceSpec struct {
 	// from: prefer a URL pinned to a commit.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^https://`
+	// +kubebuilder:validation:MaxLength=2048
 	ScriptURL string `json:"scriptURL,omitempty"`
 
 	// ScriptPath is the warm script's path in the repository, run from its
 	// default branch. Relative, without "..".
 	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MaxLength=256
 	// +kubebuilder:validation:XValidation:rule="!self.startsWith('/') && !self.split('/').exists(p, p == '..')",message="scriptPath must be relative, without .."
 	ScriptPath string `json:"scriptPath,omitempty"`
 }
