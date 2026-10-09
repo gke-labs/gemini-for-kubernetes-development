@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** steps 2 (restore), 3 (warm) and 4 (overseer) built.
+**Status:** steps 1 (measured, below), 2 (restore), 3 (warm) and 4 (overseer) built.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -201,6 +201,30 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
 - **Cost.**
   - Storage: about 12–15 GB of snapshot per repository per namespace, `keep` of them.
   - Compute: one warm sandbox per `interval`.
+
+## Measured (step 1, 2026-10-09)
+
+Measured by hand on staging (`barney-s`) on KCC `7106e14276`, which includes [#13869](https://github.com/GoogleCloudPlatform/k8s-config-connector/pull/13869), so `generate-types-and-mappers` no longer empties the build cache. The pods matched the overseer's KCC sandboxes: the `factory-golang` image, 2 CPUs requested and 8 limited, a 40Gi `premium-rwo` workspace. Autopilot gave the warm pod a 6-CPU node and the two restored pods 8-CPU nodes.
+
+| | Time |
+|---|---|
+| Warm from an empty disk: clone / `go mod download` / `generate-types-and-mappers` | 29s / 35s / 1371s |
+| The warmed disk afterwards | 12G used: 4.9G checkout, 4.6G modules, 2.1G build cache |
+| `generate-types-and-mappers` again, same disk | 720s |
+| Snapshot to `readyToUse` (12G used on 40Gi): `snapshots` / `images` | 155s / 140s |
+| `restoreSize`, both types | 40Gi, the source disk's size, not what it holds |
+| Restored sandbox to `Running`: `snapshots` (image cached on the node) | 48s |
+| Restored sandbox to `Running`: `images` (new node, 95s of it was the 2.4 GB image pull) | 137s |
+| `git status` on the restored checkout: native / `snapshots` / `images` | 0.3s / 1.7s / 1.4s |
+| `go build ./cmd/manager`: first build on the warmed disk / restored `snapshots` / restored `images` | 348s / 78s / 62s |
+| `generate-types-and-mappers` on the restored disk: `snapshots` / `images` | 648s / 661s |
+
+- **A restored disk runs as fast as the disk it was taken from.** It took 648–661s on 8-CPU nodes, against 720s on the 6-CPU source. The empty disk took 1371s. Lazy restore shows only in the first reads: `git status` takes 1.5s instead of 0.3s.
+- **Provisioning costs nothing measurable.** A restored claim binds and attaches in well under a minute. Image pulls and node scale-up dominate pod start, as they already do.
+- **Use `snapshots`.** The two types restore equally fast. Standard snapshots are incremental, so `keep` of them cost little more than one, and they are what the class `warm-workspace` uses. `images` adds nothing here.
+- **The warm sandbox's disk must not be larger than a fix sandbox's.** `restoreSize` is the source disk's size, and restore grows the claim to it. The hook uses the repository's `workspaceDiskSize`, as it does today.
+- **The script should build what fixes build.** `generate-types-and-mappers` does not build `cmd/manager`. Its first build on the warmed disk took 348s, and 62–78s once it was in a restored cache. KCC's script should run the builds and test compiles its fixes run, e.g. `go build ./...` and `go test -run '^$' ./...`, as well as the generator.
+- **Cluster objects.** The classes `warm-workspace` (`snapshots`) and `warm-workspace-images` exist on staging. The second was only for this comparison and can go. Every sandbox, claim and snapshot made for the measurement is deleted.
 
 ## Steps
 
