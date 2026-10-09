@@ -25,7 +25,7 @@ func serviceTestSandbox(name string) *unstructured.Unstructured {
 
 func serviceTestClients(svcs ...*corev1.Service) *clients.KubernetesClient {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList"})
+		map[schema.GroupVersionResource]string{k8s.SandboxGVR: "SandboxList", VolumeSnapshotGVR: "VolumeSnapshotList"})
 	cs := k8sfake.NewSimpleClientset()
 	for _, s := range svcs {
 		_, _ = cs.CoreV1().Services(s.Namespace).Create(context.Background(), s, metav1.CreateOptions{})

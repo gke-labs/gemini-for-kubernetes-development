@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** proposed.
+**Status:** step 2 (restore) built.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -227,3 +227,15 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
    - the RBAC;
    - `overseer/examples/kcc.yaml`.
 5. **Verify** on the next KCC fan-out: time to PR and tool time against 2026-10-08.
+
+## As built
+
+### Step 2: restore
+
+- **One place.** `createSandbox` (`pkg/sandbox/service.go`), which every sandbox creator calls, runs `restoreFromWarmSnapshot` before it creates the Sandbox. The builders and their callers are unchanged.
+- **The repository** is the sandbox's `repo` annotation. A sandbox labelled `factory.gemini.google.com/warm-workspace` is the warm one, and is never restored.
+- **The image is the reference, not the digest.** factory knows the image a sandbox will run only by its reference, so a snapshot carries `factory.gemini.google.com/warm-image`, the reference the warm sandbox ran, and restores only into sandboxes with that same reference. A moving tag (`:latest`) is not caught; the expiry below bounds that.
+- **Expiry.** The snapshot carries `factory.gemini.google.com/warm-expires` (RFC 3339), which step 3 sets to its creation time plus 3 × `interval`. Restore skips expired snapshots, so it needs no configuration of its own.
+- **Choice.** The newest snapshot that is labelled for the repository, `readyToUse`, made with the same image and unexpired. The claim gets its `dataSource` and grows to its `restoreSize` if that is larger. The sandbox is annotated `factory.gemini.google.com/warm-restored-from: <snapshot>`.
+- **Failure.** If listing snapshots fails (no snapshot API, no RBAC), the disk is empty and the failure is logged at `-v=1`.
+- **`fix_issue.sh`** runs `checkoutDefaultBranch` before `checkoutNewBranch`.
