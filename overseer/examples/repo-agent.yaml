@@ -25,6 +25,8 @@ spec:
       if command -v npm >/dev/null; then
         (cd repo-agent/review-ui/ui && npm install --no-audit --no-fund)
       fi
+      # go mod download rewrites go.work.sum; warm refuses a dirty tree
+      git checkout -q -- go.work.sum
   repo:
     issueMode: enabled
     prMode: enabled
