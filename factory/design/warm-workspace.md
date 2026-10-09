@@ -149,9 +149,10 @@ start:
         test -z "$(git status --porcelain)"   # a dirty tree would be in every fix
     - run: |
         rm -rf /workspaces/.tmp /workspaces/spool
-        ! test -e /workspaces/.home/.config/gh
-        ! git -C "/workspaces/$INPUT_REPO_NAME" config --get-regexp 'credential|url\..*insteadof'
-        ! grep -rIlE 'gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}' /workspaces/.home --exclude-dir=go --exclude-dir=go-build
+        # set -e ignores a command negated with !, hence the || exit 1
+        ! test -e /workspaces/.home/.config/gh || exit 1
+        ! git -C "/workspaces/$INPUT_REPO_NAME" config --get-regexp 'credential|url\..*insteadof' || exit 1
+        ! grep -rIlE 'gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}' /workspaces/.home --exclude-dir=go --exclude-dir=go-build || exit 1
 ```
 
 There is no `ask`, no engine and no task output. The recipe's own task directory, under `/workspaces/tasks`, is deleted by the hook after the run and before the snapshot.
