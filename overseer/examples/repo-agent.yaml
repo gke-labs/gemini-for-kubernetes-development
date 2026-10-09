@@ -11,6 +11,20 @@ spec:
   ephemeralStorage: 10Gi
   workspaceStorageClassName: premium-rwo
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
+  # Snapshot a disk with the Go modules built and their caches warm once a
+  # day; fix sandboxes start from it instead of an empty disk. Needs the
+  # VolumeSnapshotClass warm-workspace.
+  warmWorkspace:
+    interval: 24h
+    keep: 2
+    script: |
+      for m in factory overseer repo-agent; do
+        (cd $m && go mod download && go build ./... && go test -run '^$' ./...)
+      done
+      (cd dev/tools && go build tool)   # golangci-lint and the other dev tools
+      if command -v npm >/dev/null; then
+        (cd repo-agent/review-ui/ui && npm install --no-audit --no-fund)
+      fi
   repo:
     issueMode: enabled
     prMode: enabled
