@@ -22,6 +22,17 @@ spec:
   sandboxCPULimit: "8000m"
   sandboxMemoryRequest: "4Gi"
   sandboxMemoryLimit: "16Gi"
+  # Snapshot a disk with the repository built and its caches warm once a
+  # day; fix sandboxes start from it instead of an empty disk. Needs the
+  # VolumeSnapshotClass warm-workspace.
+  warmWorkspace:
+    interval: 24h
+    keep: 2
+    script: |
+      go mod download
+      dev/tools/controllerbuilder/generate-proto.sh
+      go build ./...
+      go test -run '^$' ./pkg/... ./apis/...
   secrets:
     - name: projectaccess
       mountPath: "/etc/pakey"

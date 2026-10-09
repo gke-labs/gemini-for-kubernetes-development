@@ -42,6 +42,7 @@ For PRs written by its bot pool that carry the trigger label or are assigned to 
 ### Housekeeping and resilience
 - **Garbage collection**: sandboxes are deleted once their issue or PR closes. Linked workflows are nudged first.
 - **Idle suspension and eviction**: sandboxes are scaled to zero after `sandboxIdleTimeout` (default 1h) and deleted after `sandboxEvictionAge`.
+- **Warm workspaces**: with `warmWorkspace` set, a sandbox `warm-<repo>` clones the repository and runs the warm script every `interval`, and its disk is snapshotted. New sandboxes for the repository start from the newest snapshot made with their image, instead of an empty disk.
 - **Task timeout**: a task that runs longer than `taskTimeout` (default 24h) is marked failed and its sandbox is deleted.
 - **Restart recovery**: tasks run detached inside their sandboxes. On startup, every task still in `processing` is checked. Tasks still running are adopted and supervised to completion. Finished tasks are recorded. Tasks whose sandbox is gone are requeued.
 - **Stop label**: `overseer/stop` (or `<trigger>/stop`) on an issue or PR freezes all activity on it.
@@ -104,6 +105,7 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | `image` | Worker sandbox image, overriding the repository's devcontainer image. |
 | `workspaceDiskSize`, `workspaceStorageClassName`, `ephemeralStorage` | Storage for the Overseer and its sandboxes. |
 | `sandboxCPURequest/Limit`, `sandboxMemoryRequest/Limit` | Worker sandbox resources. |
+| `warmWorkspace` | `interval`, `keep` (default 2) and exactly one of `script`, `scriptURL` (https) or `scriptPath` (in the repository): warm a workspace disk on a schedule and start new sandboxes from its snapshot. Needs the VolumeSnapshotClass `warm-workspace` ([design](../factory/design/warm-workspace.md)). |
 | `secrets`, `env` | Extra secrets and variables for every sandbox, such as cloud credentials for tests. |
 | `minNumber`, `pollInterval`, `taskTimeout`, `sandboxIdleTimeout`, `sandboxEvictionAge`, `prInactivityTimeout` | Scope and timing. |
 | `enableGeminiOrchestrator` | Optional LLM orchestration pass (default `false`). |

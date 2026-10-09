@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** steps 2 (restore) and 3 (warm) built.
+**Status:** steps 2 (restore), 3 (warm) and 4 (overseer) built.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -171,7 +171,7 @@ There is no `ask`, no engine and no task output. The recipe's own task directory
 ### 6. Cluster objects
 
 - **The class.** One `VolumeSnapshotClass` `warm-workspace` (`pd.csi.storage.gke.io`, `deletionPolicy: Delete`). It is cluster-scoped and created once. Step 1 measures `snapshot-type: snapshots` against `images` and records which one to use.
-- **RBAC.** The overseer sandbox's role (`overseer/k8s/sandbox-rbac.yaml`) gets `volumesnapshots`: get, list, create, delete.
+- **RBAC.** The overseer sandbox's role (`overseer/k8s/overseer-rbac.yaml`, ClusterRole `overseer`) gets `volumesnapshots`: get, list, create, delete.
 
 ## What a restored sandbox saves, and what it does not
 
@@ -255,3 +255,10 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
   - **The task directory is not deleted before the snapshot.** The task API has no delete, and a step can't remove the directory its runner still writes to. What is left in it is `task.json`, the recipe, the inputs (the script, no tokens) and step logs. `env.json` and `secrets.json` were deleted when the task started. So a restored sandbox's `task list` shows the warm task.
   - The engine key still reaches the recipe's `run` steps, as it does every recipe's; the last step greps `.home` for it.
 - **Script per cycle.** The script is resolved, and `scriptURL` downloaded, on every call. Only the call that starts the run uses it. Provenance is recorded from the call that snapshots, so pin URLs to a commit.
+
+### Step 4: overseer
+
+- `spec.warmWorkspace {interval, keep, script | scriptURL | scriptPath}`. `interval` is a duration. `keep` is at least 1: in `.factory.cfg`, 0 means the default. Two CEL rules: exactly one script source, and `scriptPath` relative without `..`. `scriptURL` must start with `https://`. The rules were checked with the apiextensions CEL validator, not against a live apiserver.
+- `overseer.go` passes `WARM_WORKSPACE_*`, in a fixed order, so the manifest doesn't change between reconciles.
+- `run.sh` writes an inline script to `/workspaces/warm-workspace.sh`, and writes `scriptURL`/`scriptPath` as JSON strings, which YAML reads unchanged.
+- **RBAC.** The overseer sandbox runs as the ServiceAccount `overseer`, not `overseer-sandbox`, so the rule is in `overseer-rbac.yaml`. That role already had pods get/list, which the snapshot step needs to wait for the warm pod to go.

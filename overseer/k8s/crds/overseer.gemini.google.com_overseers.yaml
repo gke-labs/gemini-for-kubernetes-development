@@ -143,6 +143,33 @@ spec:
                 type: array
               taskTimeout:
                 type: string
+              warmWorkspace:
+                properties:
+                  interval:
+                    type: string
+                  keep:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  script:
+                    type: string
+                  scriptPath:
+                    type: string
+                    x-kubernetes-validations:
+                    - message: scriptPath must be relative, without ..
+                      rule: '!self.startsWith(''/'') && !self.split(''/'').exists(p,
+                        p == ''..'')'
+                  scriptURL:
+                    pattern: ^https://
+                    type: string
+                required:
+                - interval
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of script, scriptURL and scriptPath must be
+                    set
+                  rule: '[has(self.script), has(self.scriptURL), has(self.scriptPath)].filter(x,
+                    x).size() == 1'
               workspaceDiskSize:
                 default: 10Gi
                 type: string
