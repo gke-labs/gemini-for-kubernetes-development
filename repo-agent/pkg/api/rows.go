@@ -121,11 +121,9 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 		if item.Type == "issue" && item.PRURL != "" {
 			continue
 		}
+		// A PR of the member's offers Review too; the UI hides it unless
+		// they turn self-review on, a view preference of theirs.
 		item.Recipes = rowRecipes(catalog, item.Type, item.MyPR, item.Labels)
-		if item.Type == "pr" && item.Mine {
-			// GitHub takes no verdict from a PR's author on their own PR.
-			item.Recipes = slices.DeleteFunc(item.Recipes, func(rec models.RowRecipe) bool { return rec.Name == "review" })
-		}
 	}
 	for _, req := range requests {
 		if req.Spec.Verb != boardv1alpha1.VerbRecipe {

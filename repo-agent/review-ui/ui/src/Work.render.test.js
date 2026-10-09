@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting, matchesSearch } = require('./Work');
+const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting, matchesSearch, withoutSelfReview } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -441,6 +441,20 @@ describe('Work, one board', () => {
             search.dispatchEvent(new Event('input', { bubbles: true }));
         });
         expect(sections()).toEqual({ Active: [], 'Everything else': [33] });
+    });
+});
+
+describe('withoutSelfReview', () => {
+    const recipes = [{ name: 'review', label: 'Review' }, { name: 'care', label: 'Care' }];
+    const names = item => item.recipes.map(r => r.name);
+    test('a PR of yours offers no Review unless self-review is on', () => {
+        const mine = { type: 'pull', mine: true, recipes };
+        expect(names(withoutSelfReview(mine, false))).toEqual(['care']);
+        expect(names(withoutSelfReview(mine, true))).toEqual(['review', 'care']);
+    });
+    test('someone else\'s PR keeps its Review', () => {
+        const theirs = { type: 'pull', mine: false, recipes };
+        expect(withoutSelfReview(theirs, false)).toBe(theirs);
     });
 });
 

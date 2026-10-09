@@ -213,9 +213,9 @@ func TestRunStatus(t *testing.T) {
 	}
 }
 
-// A PR the member authored offers no Review: GitHub takes no verdict from
-// a PR's author. Care runs on one whose head is on their fork alone.
-func TestOwnPROffersCareNotReview(t *testing.T) {
+// Every PR offers Review, the member's own too: the UI decides whether to
+// show it there. Care runs on one whose head is on their fork alone.
+func TestOwnPROffersReviewAndCare(t *testing.T) {
 	catalog, err := boardRecipes(boardCR())
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestOwnPROffersCareNotReview(t *testing.T) {
 	offers := func(key, name string) bool {
 		return slices.ContainsFunc(items[key].Recipes, func(rec models.RowRecipe) bool { return rec.Name == name })
 	}
-	for key, want := range map[string][2]bool{"pr-1": {false, true}, "pr-2": {true, false}, "pr-3": {false, false}} {
+	for key, want := range map[string][2]bool{"pr-1": {true, true}, "pr-2": {true, false}, "pr-3": {true, false}} {
 		if got := [2]bool{offers(key, "review"), offers(key, "care")}; got != want {
 			t.Errorf("%s offers review, care = %v, want %v", key, got, want)
 		}

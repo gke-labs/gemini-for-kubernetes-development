@@ -376,6 +376,18 @@ function anyPosting(items) {
   return (items || []).some(item => item.posting);
 }
 
+// SELF_REVIEW_KEY keeps whether the viewer is offered Review on their own
+// PRs, everywhere: GitHub takes no approval from a PR's author, so a
+// self-review is submitted as a comment. Off by default.
+const SELF_REVIEW_KEY = 'repoboard.selfReview';
+
+// withoutSelfReview is item without the Review button on a PR of the
+// viewer's, unless they turned self-review on.
+function withoutSelfReview(item, selfReview) {
+  if (selfReview || !item.mine || item.type === 'issue' || !(item.recipes || []).some(r => r.name === 'review')) return item;
+  return { ...item, recipes: item.recipes.filter(r => r.name !== 'review') };
+}
+
 function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, onGroupTagClick, onOpenSandbox, onOpenSession, runState, onRunStarted }) {
   // The row's runs: each group's newest, and what it is now — a click on
   // any of its recipes not started yet is starting (or queued), until
@@ -1518,6 +1530,13 @@ function Work({ onBack, namespace }) {
   // touches the board spec, so flipping it can never change what runs.
   const defaultView = { type: 'both', scope: 'all', labels: '' };
   const [view, setView] = useState(defaultView);
+  const [selfReview, setSelfReview] = useState(() => {
+    try { return localStorage.getItem(SELF_REVIEW_KEY) === 'true'; } catch (e) { return false; }
+  });
+  const toggleSelfReview = () => {
+    setSelfReview(!selfReview);
+    try { localStorage.setItem(SELF_REVIEW_KEY, String(!selfReview)); } catch (e) { /* private mode */ }
+  };
   // The search narrows the list while it is typed in; it is not kept.
   const [search, setSearch] = useState('');
   const [cardSandbox, setCardSandbox] = useState(null);
@@ -1911,7 +1930,7 @@ function Work({ onBack, namespace }) {
                   )}
                   {!loadingWork && workError && <WorkErrorRow error={workError} />}
                   {!loadingWork && upNextAll.map(item => (
-                    <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={item} boardName={item.board}
+                    <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={withoutSelfReview(item, selfReview)} boardName={item.board}
                       onAction={(p, l, b) => handleAction(p, l, item.board, b)} onRefresh={fetchWork}
                       namespace={namespace} groupTag={item.board}
                       onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
@@ -1977,7 +1996,7 @@ function Work({ onBack, namespace }) {
           </tr>
         );
         const row = item => (
-          <WorkRow key={`${item.type}-${item.number}`} item={item} boardName={activeBoard}
+          <WorkRow key={`${item.type}-${item.number}`} item={withoutSelfReview(item, selfReview)} boardName={activeBoard}
             onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession}
             onAction={(p, l, b) => handleAction(p, l, undefined, b)} onRefresh={fetchWork} namespace={namespace}
             groupTag={view.type === 'both' ? groupLabel(item) : undefined}
@@ -2045,6 +2064,13 @@ function Work({ onBack, namespace }) {
                           onClick={() => updateView({ scope: v })}
                         >{label}</button>
                       ))}
+                    {view.type !== 'issues' && (
+                      <label style={{ marginLeft: '6px', cursor: 'pointer' }}
+                        title="Offer Review on your own PRs too. GitHub takes no approval or change request from a PR's author: submit the drafted review as a comment.">
+                        <input type="checkbox" checked={selfReview} onChange={toggleSelfReview} style={{ marginRight: '4px', verticalAlign: 'middle' }} />
+                        Review my PRs
+                      </label>
+                    )}
                   </span>
                 )}
                 {syncing && !loadingWork && (
@@ -2226,5 +2252,5 @@ function Work({ onBack, namespace }) {
   );
 }
 
-export { TryPanel, WorkRow, PRDeploy, SessionSlideOver, prRunName, anyPosting };
+export { TryPanel, WorkRow, PRDeploy, SessionSlideOver, prRunName, anyPosting, withoutSelfReview };
 export default Work;
