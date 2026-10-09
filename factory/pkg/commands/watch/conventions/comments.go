@@ -73,6 +73,10 @@ type ResolveOptions struct {
 	// ReviewerLogins are the review bots, whose feedback is acted on even
 	// though they are not allowlisted.
 	ReviewerLogins []string
+	// TrustedLogins are the logins trusted regardless of their
+	// author_association (see IsTrustedAuthor). Feedback from an untrusted
+	// author was never picked up, so it is never resolved either.
+	TrustedLogins []string
 	// Since skips feedback created before it. The scanner only picks up
 	// feedback at or after the oldest outstanding item, which it records as
 	// the task's trigger event time, so anything earlier was never this task's
@@ -101,18 +105,18 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 	// candidate reports whether a piece of feedback could have been picked up
 	// by the task: the author is one the scanner listens to, and it is not
 	// older than the task's trigger.
-	candidate := func(u *githubv39.User, at time.Time) bool {
+	candidate := func(u *githubv39.User, association string, at time.Time) bool {
 		if !opts.Since.IsZero() && at.Before(opts.Since) {
 			return false
 		}
-		return IsFeedbackAuthor(u, opts.SelfLogin, opts.AllowlistedBots, opts.ReviewerLogins)
+		return IsFeedbackAuthor(u, association, opts.SelfLogin, opts.AllowlistedBots, opts.ReviewerLogins, opts.TrustedLogins)
 	}
 
 	if comments, err := client.ListIssueComments(ctx, prNum); err != nil {
 		klog.Warningf("Failed to list comments on PR #%d to resolve reactions: %v", prNum, err)
 	} else {
 		for _, c := range comments {
-			if !candidate(c.GetUser(), c.GetCreatedAt()) {
+			if !candidate(c.GetUser(), c.GetAuthorAssociation(), c.GetCreatedAt()) {
 				continue
 			}
 			id := c.GetID()
@@ -136,7 +140,7 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 			// Reviews are only reachable for reactions by node ID; a review
 			// without one cannot have been acknowledged in the first place.
 			nodeID := r.GetNodeID()
-			if nodeID == "" || !candidate(r.GetUser(), r.GetSubmittedAt()) {
+			if nodeID == "" || !candidate(r.GetUser(), r.GetAuthorAssociation(), r.GetSubmittedAt()) {
 				continue
 			}
 			resolveIfAwaiting(interpreter, fmt.Sprintf("review %d", r.GetID()),
@@ -150,7 +154,7 @@ func ResolveCommentReactions(ctx context.Context, client CommentResolverClient, 
 		klog.Warningf("Failed to list review comments on PR #%d to resolve reactions: %v", prNum, err)
 	} else {
 		for _, rc := range revComments {
-			if !candidate(rc.GetUser(), ReviewCommentTime(rc, reviewSubmittedAt[rc.GetPullRequestReviewID()])) {
+			if !candidate(rc.GetUser(), rc.GetAuthorAssociation(), ReviewCommentTime(rc, reviewSubmittedAt[rc.GetPullRequestReviewID()])) {
 				continue
 			}
 			id := rc.GetID()

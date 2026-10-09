@@ -98,3 +98,46 @@ func TestBuildSandboxManifest_WorkspaceStorageClass(t *testing.T) {
 		}
 	})
 }
+
+// overseerEnv returns the overseer container's env as a name -> value map.
+func overseerEnv(t *testing.T, o *overseerv1alpha1.Overseer) map[string]interface{} {
+	t.Helper()
+	manifest := newOverseerSandboxFromOverseer(o, "test-overseer", "overseer-system", false)
+	containers, found, err := unstructured.NestedSlice(manifest.Object, "spec", "podTemplate", "spec", "containers")
+	if err != nil || !found || len(containers) == 0 {
+		t.Fatalf("Failed to find containers in manifest: %v", err)
+	}
+	envs, found, err := unstructured.NestedSlice(containers[0].(map[string]interface{}), "env")
+	if err != nil || !found {
+		t.Fatalf("Failed to find env in container: %v", err)
+	}
+	out := make(map[string]interface{})
+	for _, envEntry := range envs {
+		e := envEntry.(map[string]interface{})
+		out[e["name"].(string)] = e["value"]
+	}
+	return out
+}
+
+func TestBuildSandboxManifest_AllowlistedUsers(t *testing.T) {
+	t.Run("unset omits ALLOWLISTED_USERS", func(t *testing.T) {
+		env := overseerEnv(t, &overseerv1alpha1.Overseer{
+			Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"},
+		})
+		if v, ok := env["ALLOWLISTED_USERS"]; ok {
+			t.Errorf("expected ALLOWLISTED_USERS to not be set by default, got: %v", v)
+		}
+	})
+
+	t.Run("set passes a comma-separated ALLOWLISTED_USERS", func(t *testing.T) {
+		env := overseerEnv(t, &overseerv1alpha1.Overseer{
+			Spec: overseerv1alpha1.OverseerSpec{
+				RepoURL:          "https://github.com/owner/repo",
+				AllowlistedUsers: []string{"alice", "bob"},
+			},
+		})
+		if got := env["ALLOWLISTED_USERS"]; got != "alice,bob" {
+			t.Errorf("ALLOWLISTED_USERS = %v, want %q", got, "alice,bob")
+		}
+	})
+}

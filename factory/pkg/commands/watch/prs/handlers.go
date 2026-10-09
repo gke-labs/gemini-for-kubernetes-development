@@ -135,7 +135,7 @@ func (s *Scanner) canInvestigatePR(
 	if s.queue.TaskExists(filename) {
 		return false
 	}
-	if getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel) >= maxInvestigations {
+	if getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel) >= maxInvestigations {
 		return true
 	}
 	return state.lastInvestigatedSHA != headSHA ||
@@ -171,7 +171,7 @@ func (s *Scanner) handlePRInvestigate(
 		return true
 	}
 
-	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel)
+	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
 	if investigationCount >= maxInvestigations {
 		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
 		if !s.cfg.DryRun {

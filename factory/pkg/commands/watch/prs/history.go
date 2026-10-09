@@ -98,7 +98,7 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 		return false
 	}
 	num := prIssue.GetNumber()
-	lastActivity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TriggerLabel)
+	lastActivity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
 	if time.Since(lastActivity) <= s.cfg.InactivityTimeout {
 		return false
 	}
@@ -125,17 +125,18 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 // getLastPRActivityTime returns when a human last engaged with the pull
 // request, falling back to when it was opened.
 //
-// Only human activity counts. The watcher's own comments, allowlisted bots and
-// anything opted out with the ignore prefix are all skipped, because otherwise
-// the daemon's own chatter would keep a dead pull request looking alive
-// forever.
-func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.IssueComment, reviews []*githubv39.PullRequestReview, revComments map[int64][]*githubv39.PullRequestComment, githubLogin string, bots []string, triggerLabel string) time.Time {
+// Only trusted human activity counts. The watcher's own comments, allowlisted
+// bots and anything opted out with the ignore prefix are all skipped, because
+// otherwise the daemon's own chatter would keep a dead pull request looking
+// alive forever. Untrusted authors (see conventions.IsTrustedAuthor) are
+// skipped too.
+func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.IssueComment, reviews []*githubv39.PullRequestReview, revComments map[int64][]*githubv39.PullRequestComment, githubLogin string, bots, trustedLogins []string, triggerLabel string) time.Time {
 	lastActivity := pr.GetCreatedAt()
 
 	// 1. Check issue comments
 	for _, c := range comments {
 		isBot := conventions.IsBotReply(c.GetUser(), githubLogin, bots)
-		if !isBot {
+		if !isBot && conventions.IsTrustedAuthor(c.GetUser(), c.GetAuthorAssociation(), trustedLogins) {
 			if conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
 				continue
 			}
@@ -147,7 +148,7 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 
 	// 2. Check reviews and review comments
 	for _, r := range reviews {
-		if !conventions.IsBotReply(r.GetUser(), githubLogin, bots) {
+		if !conventions.IsBotReply(r.GetUser(), githubLogin, bots) && conventions.IsTrustedAuthor(r.GetUser(), r.GetAuthorAssociation(), trustedLogins) {
 			if conventions.HasIgnorePrefix(r.GetBody(), triggerLabel) {
 				continue
 			}
@@ -158,7 +159,7 @@ func getLastPRActivityTime(pr *githubv39.PullRequest, comments []*githubv39.Issu
 
 		if rcList, ok := revComments[r.GetID()]; ok {
 			for _, rc := range rcList {
-				if !conventions.IsBotReply(rc.GetUser(), githubLogin, bots) {
+				if !conventions.IsBotReply(rc.GetUser(), githubLogin, bots) && conventions.IsTrustedAuthor(rc.GetUser(), rc.GetAuthorAssociation(), trustedLogins) {
 					if conventions.HasIgnorePrefix(rc.GetBody(), triggerLabel) {
 						continue
 					}

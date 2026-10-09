@@ -90,20 +90,20 @@ func newAcknowledgedFixture() *fakeResolverClient {
 	acked := []*githubv39.Reaction{reaction(ReactionAcknowledged, testSelfLogin)}
 	return &fakeResolverClient{
 		comments: []*githubv39.IssueComment{
-			{ID: int64Ptr(1), User: user(testHuman)},
-			{ID: int64Ptr(2), User: user(testHuman)},
+			{ID: int64Ptr(1), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
+			{ID: int64Ptr(2), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
 			{ID: int64Ptr(3), User: user(testSelfLogin)},
 		},
 		reviews: []*githubv39.PullRequestReview{
-			{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: user(testHuman)},
-			{ID: int64Ptr(11), NodeID: stringPtr("PRR_11"), User: user(testHuman)},
+			{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
+			{ID: int64Ptr(11), NodeID: stringPtr("PRR_11"), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
 			{ID: int64Ptr(12), NodeID: stringPtr("PRR_12"), User: user(testSelfLogin)},
 			// A review with no node ID cannot be reached for reactions.
-			{ID: int64Ptr(13), User: user(testHuman)},
+			{ID: int64Ptr(13), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
 		},
 		revComments: []*githubv39.PullRequestComment{
-			{ID: int64Ptr(20), User: user(testHuman)},
-			{ID: int64Ptr(21), User: user(testHuman)},
+			{ID: int64Ptr(20), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
+			{ID: int64Ptr(21), User: user(testHuman), AuthorAssociation: stringPtr("MEMBER")},
 			{ID: int64Ptr(22), User: user(testSelfLogin)},
 		},
 		commentReactions:   map[int64][]*githubv39.Reaction{1: acked, 3: acked},
@@ -121,6 +121,8 @@ func testResolveOptions(resolution Reaction) ResolveOptions {
 		SelfLogin:       testSelfLogin,
 		AllowlistedBots: testBots(),
 		ReviewerLogins:  []string{testReviewerBot},
+		// As config.FactoryConfig.TrustedLogins composes it.
+		TrustedLogins: append(testBots(), testReviewerBot),
 	}
 }
 
@@ -187,8 +189,8 @@ func TestResolveCommentReactions_ResolvedIsFinal(t *testing.T) {
 	human := user(testHuman)
 	client := &fakeResolverClient{
 		revComments: []*githubv39.PullRequestComment{
-			{ID: int64Ptr(20), User: human},
-			{ID: int64Ptr(21), User: human},
+			{ID: int64Ptr(20), User: human, AuthorAssociation: stringPtr("MEMBER")},
+			{ID: int64Ptr(21), User: human, AuthorAssociation: stringPtr("MEMBER")},
 		},
 		revCommentReaction: map[int64][]*githubv39.Reaction{
 			20: {reaction(ReactionAcknowledged, testSelfLogin), reaction(ReactionResolved, testSelfLogin)},
@@ -210,7 +212,7 @@ func TestResolveCommentReactions_RetryResolvesFailure(t *testing.T) {
 	bot := &githubv39.User{Login: stringPtr(testReviewerBot), Type: stringPtr("Bot")}
 	failed := []*githubv39.Reaction{reaction(ReactionAcknowledged, testSelfLogin), reaction(ReactionFailed, testSelfLogin)}
 	client := &fakeResolverClient{
-		comments:           []*githubv39.IssueComment{{ID: int64Ptr(1), User: human}},
+		comments:           []*githubv39.IssueComment{{ID: int64Ptr(1), User: human, AuthorAssociation: stringPtr("MEMBER")}},
 		reviews:            []*githubv39.PullRequestReview{{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: bot}},
 		revComments:        []*githubv39.PullRequestComment{{ID: int64Ptr(20), User: bot}},
 		commentReactions:   map[int64][]*githubv39.Reaction{1: failed},
@@ -233,16 +235,16 @@ func TestResolveCommentReactions_Since(t *testing.T) {
 	acked := []*githubv39.Reaction{reaction(ReactionAcknowledged, testSelfLogin)}
 	client := &fakeResolverClient{
 		comments: []*githubv39.IssueComment{
-			{ID: int64Ptr(1), User: human, CreatedAt: before},
-			{ID: int64Ptr(2), User: human, CreatedAt: at},
+			{ID: int64Ptr(1), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: before},
+			{ID: int64Ptr(2), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: at},
 		},
 		reviews: []*githubv39.PullRequestReview{
-			{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: human, SubmittedAt: before},
-			{ID: int64Ptr(11), NodeID: stringPtr("PRR_11"), User: human, SubmittedAt: at},
+			{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: human, AuthorAssociation: stringPtr("MEMBER"), SubmittedAt: before},
+			{ID: int64Ptr(11), NodeID: stringPtr("PRR_11"), User: human, AuthorAssociation: stringPtr("MEMBER"), SubmittedAt: at},
 		},
 		revComments: []*githubv39.PullRequestComment{
-			{ID: int64Ptr(20), User: human, CreatedAt: before},
-			{ID: int64Ptr(21), User: human, CreatedAt: at},
+			{ID: int64Ptr(20), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: before},
+			{ID: int64Ptr(21), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: at},
 		},
 		commentReactions:   map[int64][]*githubv39.Reaction{1: acked, 2: acked},
 		reviewReactions:    map[string][]*githubv39.Reaction{"PRR_10": acked, "PRR_11": acked},
@@ -272,14 +274,14 @@ func TestResolveCommentReactions_InlineCommentTimedByReview(t *testing.T) {
 	newClient := func() *fakeResolverClient {
 		return &fakeResolverClient{
 			reviews: []*githubv39.PullRequestReview{
-				{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: human, SubmittedAt: timePtr(submitted)},
+				{ID: int64Ptr(10), NodeID: stringPtr("PRR_10"), User: human, AuthorAssociation: stringPtr("MEMBER"), SubmittedAt: timePtr(submitted)},
 			},
 			revComments: []*githubv39.PullRequestComment{
 				// Drafted before, submitted with review 10.
-				{ID: int64Ptr(20), PullRequestReviewID: int64Ptr(10), User: human, CreatedAt: drafted},
+				{ID: int64Ptr(20), PullRequestReviewID: int64Ptr(10), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: drafted},
 				// Same draft time, but its review is unknown: only its own
 				// creation time is available, and that predates Since.
-				{ID: int64Ptr(21), PullRequestReviewID: int64Ptr(99), User: human, CreatedAt: drafted},
+				{ID: int64Ptr(21), PullRequestReviewID: int64Ptr(99), User: human, AuthorAssociation: stringPtr("MEMBER"), CreatedAt: drafted},
 			},
 			revCommentReaction: map[int64][]*githubv39.Reaction{20: acked, 21: acked},
 		}

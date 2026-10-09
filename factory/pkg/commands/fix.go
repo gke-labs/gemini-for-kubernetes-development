@@ -175,6 +175,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	var branchName string
 	var issueBody string
 	var issueComments []tasks.IssueComment
+	var rawComments []*githubv39.IssueComment
 	var issue *githubv39.Issue
 
 	if len(parts) >= 4 && parts[2] == "issues" {
@@ -228,12 +229,7 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 
 		comments, err := repoClient.ListIssueComments(ctx, issueNum)
 		if err == nil {
-			for _, c := range comments {
-				issueComments = append(issueComments, tasks.IssueComment{
-					UserLogin: c.GetUser().GetLogin(),
-					Body:      c.GetBody(),
-				})
-			}
+			rawComments = comments
 		}
 	} else {
 		if name == "" {
@@ -267,6 +263,15 @@ func runFix(ctx context.Context, targetURL, prompt, name string, noPR, watch, wi
 	}
 	githubLogin := string(secret.Data[constants.KeyGithubLogin])
 	githubEmail := string(secret.Data[constants.KeyGithubEmail])
+
+	// The agent's own earlier comments on the issue are context it wrote;
+	// anyone else needs write access to the repository to be read.
+	for _, c := range trustedIssueComments(rawComments, trustedLogins(cfg, githubLogin)) {
+		issueComments = append(issueComments, tasks.IssueComment{
+			UserLogin: c.GetUser().GetLogin(),
+			Body:      c.GetBody(),
+		})
+	}
 
 	prLabel := resolvePRLabels(cfg, issue, isIssue)
 

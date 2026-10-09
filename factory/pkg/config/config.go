@@ -28,24 +28,28 @@ type RoleConfig struct {
 }
 
 type FactoryConfig struct {
-	Engine                string                `yaml:"engine"`
-	Chores                ChoresConfig          `yaml:"chores"`
-	EphemeralStorage      string                `yaml:"ephemeralStorage"`
-	Image                 string                `yaml:"image"`
-	WorkspaceDiskSize     string                `yaml:"workspaceDiskSize"`
-	WorkspaceStorageClass string                `yaml:"workspaceStorageClass"`
-	SandboxCPURequest     string                `yaml:"sandboxCPURequest"`
-	SandboxCPULimit       string                `yaml:"sandboxCPULimit"`
-	SandboxMemoryRequest  string                `yaml:"sandboxMemoryRequest"`
-	SandboxMemoryLimit    string                `yaml:"sandboxMemoryLimit"`
-	AdditionalLabels      []string              `yaml:"additionalLabels"`
-	TriggerLabel          string                `yaml:"triggerLabel"`
-	AllowlistedBots       []string              `yaml:"allowlistedBots"`
-	Secrets               []SecretMount         `yaml:"secrets"`
-	Env                   []EnvVar              `yaml:"env"`
-	MinNumber             int                   `yaml:"minNumber"`
-	PRInactivityTimeout   string                `yaml:"prInactivityTimeout"`
-	Roles                 map[string]RoleConfig `yaml:"roles"`
+	Engine                string       `yaml:"engine"`
+	Chores                ChoresConfig `yaml:"chores"`
+	EphemeralStorage      string       `yaml:"ephemeralStorage"`
+	Image                 string       `yaml:"image"`
+	WorkspaceDiskSize     string       `yaml:"workspaceDiskSize"`
+	WorkspaceStorageClass string       `yaml:"workspaceStorageClass"`
+	SandboxCPURequest     string       `yaml:"sandboxCPURequest"`
+	SandboxCPULimit       string       `yaml:"sandboxCPULimit"`
+	SandboxMemoryRequest  string       `yaml:"sandboxMemoryRequest"`
+	SandboxMemoryLimit    string       `yaml:"sandboxMemoryLimit"`
+	AdditionalLabels      []string     `yaml:"additionalLabels"`
+	TriggerLabel          string       `yaml:"triggerLabel"`
+	AllowlistedBots       []string     `yaml:"allowlistedBots"`
+	// AllowlistedUsers are logins whose comments reach agent prompts even
+	// though GitHub does not report them as OWNER, MEMBER or COLLABORATOR -
+	// typically organisation members with private membership.
+	AllowlistedUsers    []string              `yaml:"allowlistedUsers"`
+	Secrets             []SecretMount         `yaml:"secrets"`
+	Env                 []EnvVar              `yaml:"env"`
+	MinNumber           int                   `yaml:"minNumber"`
+	PRInactivityTimeout string                `yaml:"prInactivityTimeout"`
+	Roles               map[string]RoleConfig `yaml:"roles"`
 }
 
 func LoadConfig() (*FactoryConfig, error) {
@@ -84,4 +88,23 @@ func LoadConfig() (*FactoryConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// TrustedLogins are the logins an operator has explicitly configured as
+// sources of feedback, and so are trusted regardless of the
+// author_association GitHub reports for them: the allowlistedUsers, the
+// allowlistedBots and the accounts in the reviewer role.
+//
+// The watcher deciding which feedback to queue work for and the agent
+// deciding which feedback to read must agree on this set; otherwise the
+// watcher queues tasks for comments the agent then never sees.
+func (c *FactoryConfig) TrustedLogins() []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	out = append(out, c.AllowlistedUsers...)
+	out = append(out, c.AllowlistedBots...)
+	out = append(out, c.Roles["reviewer"].Users...)
+	return out
 }

@@ -106,6 +106,10 @@ type Config struct {
 	ReviewerLogins []string
 	// AllowlistedBots are the automated accounts whose comments are acted on.
 	AllowlistedBots []string
+	// TrustedLogins are trusted regardless of the author_association GitHub
+	// reports for them (see conventions.IsTrustedAuthor). Feedback from
+	// anyone else without write access is never acted on.
+	TrustedLogins []string
 	// ScanLimit caps the page size of the fast query. Defaults to defaultScanLimit.
 	ScanLimit int
 	// MinNumber skips pull requests numbered below it. Zero evaluates everything.

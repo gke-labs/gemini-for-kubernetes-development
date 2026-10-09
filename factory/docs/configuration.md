@@ -32,6 +32,7 @@ Every sandbox setting can be overridden per command by the matching flag (shown 
 * **`triggerLabel`** (string, default: `factory`): The GitHub label that triggers automatic issue fixing when detected by `factory watch`.
 * **`additionalLabels`** (array of strings): Additional labels automatically applied to pull requests created by the AI Factory.
 * **`allowlistedBots`** (array of strings): GitHub usernames of bots whose issues, PRs, or comments are allowed to trigger automatic workflows.
+* **`allowlistedUsers`** (array of strings): GitHub logins whose comments and reviews are trusted even though GitHub does not report them as `OWNER`, `MEMBER` or `COLLABORATOR` (typically organization members with private membership). Feedback from any other account without write access is neither acted on by `factory watch` nor placed in an agent prompt. The `allowlistedBots` and the `reviewer` role accounts are trusted the same way.
 
 ### Chores Configuration
 * **`chores`** (object): Configures the automated repository maintenance routines.
@@ -84,6 +85,8 @@ additionalLabels:
   - auto-generated
 allowlistedBots:
   - reviewbot-robot
+allowlistedUsers:
+  - private-org-member
 
 chores:
   mode: enabled

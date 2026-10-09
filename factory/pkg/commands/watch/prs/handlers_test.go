@@ -60,16 +60,18 @@ func TestPRCommentsTriggerMetadata(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/issues/10/comments":
 			comments := []*githubv39.IssueComment{
 				{
-					ID:        int64Ptr(1001),
-					User:      &githubv39.User{Login: stringPtr("reviewer-bob")},
-					Body:      stringPtr("Please add a test."),
-					CreatedAt: &comment2Time,
+					ID:                int64Ptr(1001),
+					User:              &githubv39.User{Login: stringPtr("reviewer-bob")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					Body:              stringPtr("Please add a test."),
+					CreatedAt:         &comment2Time,
 				},
 				{
-					ID:        int64Ptr(1000),
-					User:      &githubv39.User{Login: stringPtr("reviewer-alice")},
-					Body:      stringPtr("Please rename this function."),
-					CreatedAt: &comment1Time,
+					ID:                int64Ptr(1000),
+					User:              &githubv39.User{Login: stringPtr("reviewer-alice")},
+					AuthorAssociation: stringPtr("MEMBER"),
+					Body:              stringPtr("Please rename this function."),
+					CreatedAt:         &comment1Time,
 				},
 			}
 			_ = json.NewEncoder(w).Encode(comments)
@@ -349,10 +351,11 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 
 	comments := []*githubv39.IssueComment{
 		{
-			ID:        int64Ptr(1000),
-			User:      &githubv39.User{Login: stringPtr("reviewer-alice")},
-			Body:      stringPtr("Please fix this"),
-			CreatedAt: &comment1Time,
+			ID:                int64Ptr(1000),
+			User:              &githubv39.User{Login: stringPtr("reviewer-alice")},
+			AuthorAssociation: stringPtr("MEMBER"),
+			Body:              stringPtr("Please fix this"),
+			CreatedAt:         &comment1Time,
 		},
 	}
 
@@ -534,10 +537,11 @@ func TestPRCommentsRetryOnFailure(t *testing.T) {
 	failCurrentTask(time.Now())
 	comment2Time := time.Now().Add(time.Minute)
 	comments = append(comments, &githubv39.IssueComment{
-		ID:        int64Ptr(2000),
-		User:      &githubv39.User{Login: stringPtr("reviewer-bob")},
-		Body:      stringPtr("Another comment"),
-		CreatedAt: &comment2Time,
+		ID:                int64Ptr(2000),
+		User:              &githubv39.User{Login: stringPtr("reviewer-bob")},
+		AuthorAssociation: stringPtr("MEMBER"),
+		Body:              stringPtr("Another comment"),
+		CreatedAt:         &comment2Time,
 	})
 	s.evaluateAll(context.Background(), prIssues)
 	if _, err := os.Stat(incomingTaskFile); err != nil {
@@ -594,18 +598,20 @@ func TestPRCommentsAcknowledgesReviews(t *testing.T) {
 			}})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/reviews":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestReview{{
-				ID:          int64Ptr(500),
-				NodeID:      stringPtr("PRR_500"),
-				User:        &githubv39.User{Login: stringPtr("reviewer-alice")},
-				State:       stringPtr("CHANGES_REQUESTED"),
-				Body:        stringPtr("A few things to fix."),
-				SubmittedAt: &reviewTime,
+				ID:                int64Ptr(500),
+				NodeID:            stringPtr("PRR_500"),
+				User:              &githubv39.User{Login: stringPtr("reviewer-alice")},
+				AuthorAssociation: stringPtr("MEMBER"),
+				State:             stringPtr("CHANGES_REQUESTED"),
+				Body:              stringPtr("A few things to fix."),
+				SubmittedAt:       &reviewTime,
 			}})
 		case r.Method == "GET" && r.URL.Path == "/repos/test-owner/test-repo/pulls/10/comments":
 			_ = json.NewEncoder(w).Encode([]*githubv39.PullRequestComment{{
 				ID:                  int64Ptr(2001),
 				PullRequestReviewID: int64Ptr(500),
 				User:                &githubv39.User{Login: stringPtr("reviewer-alice")},
+				AuthorAssociation:   stringPtr("MEMBER"),
 				Body:                stringPtr("Rename this."),
 				CreatedAt:           &inlineTime,
 			}})

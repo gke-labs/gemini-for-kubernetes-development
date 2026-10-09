@@ -83,7 +83,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	bots := []string{"allowlisted-bot"}
 
 	// Case 1: No comments/reviews
-	got := getLastPRActivityTime(pr, nil, nil, nil, githubLogin, bots, "factory")
+	got := getLastPRActivityTime(pr, nil, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 1 failed: expected %v, got %v", baseTime, got)
 	}
@@ -92,11 +92,12 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	humanTime := baseTime.Add(1 * time.Hour)
 	comments := []*githubv39.IssueComment{
 		{
-			User:      &githubv39.User{Login: stringPtr("human-user")},
-			CreatedAt: &humanTime,
+			User:              &githubv39.User{Login: stringPtr("human-user")},
+			AuthorAssociation: stringPtr("MEMBER"),
+			CreatedAt:         &humanTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(humanTime) {
 		t.Errorf("Case 2 failed: expected %v, got %v", humanTime, got)
 	}
@@ -109,7 +110,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			CreatedAt: &botTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 3 failed: expected %v, got %v", baseTime, got)
 	}
@@ -123,7 +124,7 @@ func TestGetLastPRActivityTime(t *testing.T) {
 			Body:      stringPtr("🤖 AI Factory has paused automated processing on this pull request due to a period of inactivity"),
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 4 failed: expected %v, got %v", baseTime, got)
 	}
@@ -132,12 +133,13 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	reviewTime := baseTime.Add(4 * time.Hour)
 	reviews := []*githubv39.PullRequestReview{
 		{
-			ID:          int64Ptr(1),
-			User:        &githubv39.User{Login: stringPtr("human-user2")},
-			SubmittedAt: &reviewTime,
+			ID:                int64Ptr(1),
+			User:              &githubv39.User{Login: stringPtr("human-user2")},
+			AuthorAssociation: stringPtr("MEMBER"),
+			SubmittedAt:       &reviewTime,
 		},
 	}
-	got = getLastPRActivityTime(pr, nil, reviews, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, nil, reviews, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(reviewTime) {
 		t.Errorf("Case 5 failed: expected %v, got %v", reviewTime, got)
 	}
@@ -155,12 +157,13 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	revComments := map[int64][]*githubv39.PullRequestComment{
 		2: {
 			{
-				User:      &githubv39.User{Login: stringPtr("human-user3")},
-				CreatedAt: &humanReviewCommentTime,
+				User:              &githubv39.User{Login: stringPtr("human-user3")},
+				AuthorAssociation: stringPtr("MEMBER"),
+				CreatedAt:         &humanReviewCommentTime,
 			},
 		},
 	}
-	got = getLastPRActivityTime(pr, nil, reviews, revComments, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, nil, reviews, revComments, githubLogin, bots, nil, "factory")
 	if !got.Equal(humanReviewCommentTime) {
 		t.Errorf("Case 6 failed: expected %v, got %v", humanReviewCommentTime, got)
 	}
@@ -169,12 +172,13 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	ignoreTime := baseTime.Add(7 * time.Hour)
 	comments = []*githubv39.IssueComment{
 		{
-			User:      &githubv39.User{Login: stringPtr("human-user")},
-			CreatedAt: &ignoreTime,
-			Body:      stringPtr("/overseer-ignore: This is side-channel conversation"),
+			User:              &githubv39.User{Login: stringPtr("human-user")},
+			AuthorAssociation: stringPtr("MEMBER"),
+			CreatedAt:         &ignoreTime,
+			Body:              stringPtr("/overseer-ignore: This is side-channel conversation"),
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 7 failed: expected /overseer-ignore comment to be ignored and return %v, got %v", baseTime, got)
 	}
@@ -183,14 +187,34 @@ func TestGetLastPRActivityTime(t *testing.T) {
 	factoryIgnoreTime := baseTime.Add(8 * time.Hour)
 	comments = []*githubv39.IssueComment{
 		{
-			User:      &githubv39.User{Login: stringPtr("human-user")},
-			CreatedAt: &factoryIgnoreTime,
-			Body:      stringPtr("/factory-ignore: This is side-channel conversation with custom prefix"),
+			User:              &githubv39.User{Login: stringPtr("human-user")},
+			AuthorAssociation: stringPtr("MEMBER"),
+			CreatedAt:         &factoryIgnoreTime,
+			Body:              stringPtr("/factory-ignore: This is side-channel conversation with custom prefix"),
 		},
 	}
-	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, "factory")
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
 	if !got.Equal(baseTime) {
 		t.Errorf("Case 8 failed: expected /factory-ignore comment to be ignored when triggerLabel is 'factory' and return %v, got %v", baseTime, got)
+	}
+
+	// Case 9: Untrusted comment (ignored), unless the author is a configured
+	// trusted login.
+	strangerTime := baseTime.Add(9 * time.Hour)
+	comments = []*githubv39.IssueComment{
+		{
+			User:              &githubv39.User{Login: stringPtr("stranger")},
+			AuthorAssociation: stringPtr("NONE"),
+			CreatedAt:         &strangerTime,
+		},
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, nil, "factory")
+	if !got.Equal(baseTime) {
+		t.Errorf("Case 9 failed: expected untrusted comment to be ignored and return %v, got %v", baseTime, got)
+	}
+	got = getLastPRActivityTime(pr, comments, nil, nil, githubLogin, bots, []string{"stranger"}, "factory")
+	if !got.Equal(strangerTime) {
+		t.Errorf("Case 9 failed: expected trusted login's comment to count and return %v, got %v", strangerTime, got)
 	}
 }
 
