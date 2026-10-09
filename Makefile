@@ -13,14 +13,15 @@
 # limitations under the License.
 
 .PHONY: build
-build: bin/overseer-cli
+build: bin/factory
 
 bin:
 	mkdir -p bin
 
-.PHONY: bin/overseer-cli
-bin/overseer-cli: bin
-	GO111MODULE=on go build -o bin/overseer-cli overseer/cmd/overseer-cli/main.go
+.PHONY: bin/factory
+bin/factory: bin
+	go build -o bin/factory ./factory/main.go
+	ln -sf factory bin/overseer-cli
 
 .PHONY: clean
 clean:

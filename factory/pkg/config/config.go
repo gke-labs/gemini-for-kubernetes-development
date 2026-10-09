@@ -22,6 +22,12 @@ type ChoresConfig struct {
 	Mode string `yaml:"mode"`
 }
 
+type RepoConfig struct {
+	ReviewMode string `yaml:"reviewMode"`
+	PRMode     string `yaml:"prMode"`
+	IssueMode  string `yaml:"issueMode"`
+}
+
 type RoleConfig struct {
 	Tasks []string `yaml:"tasks"`
 	Users []string `yaml:"users"`
@@ -30,6 +36,7 @@ type RoleConfig struct {
 type FactoryConfig struct {
 	Engine                string                `yaml:"engine"`
 	Chores                ChoresConfig          `yaml:"chores"`
+	Repo                  RepoConfig            `yaml:"repo"`
 	EphemeralStorage      string                `yaml:"ephemeralStorage"`
 	Image                 string                `yaml:"image"`
 	WorkspaceDiskSize     string                `yaml:"workspaceDiskSize"`

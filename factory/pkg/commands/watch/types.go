@@ -61,9 +61,6 @@ type Flags struct {
 	Mode                string
 	QueueDir            string
 	Once                bool
-	IssueMode           string
-	PRMode              string
-	ChoresMode          string
 	ScanLimit           int
 	TaskTimeout         time.Duration
 	SandboxEvictionAge  string

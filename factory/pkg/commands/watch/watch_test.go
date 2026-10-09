@@ -2,6 +2,8 @@ package watch
 
 import (
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 )
 
 // TestIssuesEnabled pins the modes the issue scanner goroutine starts in.
@@ -22,7 +24,7 @@ func TestIssuesEnabled(t *testing.T) {
 		{mode: "run", want: false},
 		{mode: "all", issueMode: "disabled", want: false},
 	} {
-		w := &Watcher{Flags: Flags{Mode: tc.mode, IssueMode: tc.issueMode}}
+		w := &Watcher{RootFlags: common.RootFlags{IssueMode: tc.issueMode}, Flags: Flags{Mode: tc.mode}}
 		if got := w.issuesEnabled(); got != tc.want {
 			t.Errorf("issuesEnabled(mode=%q, issueMode=%q) = %v, want %v", tc.mode, tc.issueMode, got, tc.want)
 		}
@@ -46,7 +48,7 @@ func TestPRsEnabled(t *testing.T) {
 		{mode: "run", want: false},
 		{mode: "all", prMode: "disabled", want: false},
 	} {
-		w := &Watcher{Flags: Flags{Mode: tc.mode, PRMode: tc.prMode}}
+		w := &Watcher{RootFlags: common.RootFlags{PRMode: tc.prMode}, Flags: Flags{Mode: tc.mode}}
 		if got := w.prsEnabled(); got != tc.want {
 			t.Errorf("prsEnabled(mode=%q, prMode=%q) = %v, want %v", tc.mode, tc.prMode, got, tc.want)
 		}
@@ -69,7 +71,7 @@ func TestChoresEnabled(t *testing.T) {
 		{mode: "run", want: false},
 		{mode: "all", choresMode: "disabled", want: false},
 	} {
-		w := &Watcher{Flags: Flags{Mode: tc.mode, ChoresMode: tc.choresMode}}
+		w := &Watcher{RootFlags: common.RootFlags{ChoresMode: tc.choresMode}, Flags: Flags{Mode: tc.mode}}
 		if got := w.choresEnabled(); got != tc.want {
 			t.Errorf("choresEnabled(mode=%q, choresMode=%q) = %v, want %v", tc.mode, tc.choresMode, got, tc.want)
 		}

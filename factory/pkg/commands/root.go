@@ -57,6 +57,10 @@ coding tasks without local side effects or host dependencies.`,
 	cmd.PersistentFlags().BoolVar(&rootFlags.Disclose, "disclose", true, "State in PR descriptions, comments and reports that an agent wrote them")
 	cmd.PersistentFlags().StringVar(&factorysandbox.Launcher, "launcher", factorysandbox.Launcher, "Recorded on the sandboxes this command creates (label "+factorysandbox.LabelLauncher+"), so programs that adopt sandboxes can tell theirs apart")
 	cmd.PersistentFlags().BoolVar(&rootFlags.AbortOnCancel, "abort-on-cancel", true, "Abort the background task in the sandbox pod if the local CLI command is canceled or killed")
+	cmd.PersistentFlags().StringVar(&rootFlags.IssueMode, "issue-mode", "", "Issue mode: enabled or disabled (defaults to ISSUE_MODE env, config, or enabled)")
+	cmd.PersistentFlags().StringVar(&rootFlags.PRMode, "pr-mode", "", "PR mode: enabled or disabled (defaults to PR_MODE env, config, or enabled)")
+	cmd.PersistentFlags().StringVar(&rootFlags.ReviewMode, "review-mode", "", "Review mode: enabled or disabled (defaults to REVIEW_MODE env, config, or enabled)")
+	cmd.PersistentFlags().StringVar(&rootFlags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env, config, or enabled)")
 
 	cmd.PersistentPreRun = func(_ *cobra.Command, _ []string) {
 		if rootFlags.Namespace == "" {
@@ -335,6 +339,50 @@ func ResolveRootFlags(cmd *cobra.Command) (*config.FactoryConfig, error) {
 		rootFlags.ResolvedEnvs = resolved
 	} else {
 		rootFlags.ResolvedEnvs = ToSandboxEnvs(cfg.Env)
+	}
+
+	if !cmd.Flags().Changed("issue-mode") {
+		if cfg.Repo.IssueMode != "" {
+			rootFlags.IssueMode = cfg.Repo.IssueMode
+		} else if env := os.Getenv("ISSUE_MODE"); env != "" {
+			rootFlags.IssueMode = env
+		}
+	}
+	if rootFlags.IssueMode == "" {
+		rootFlags.IssueMode = "enabled"
+	}
+
+	if !cmd.Flags().Changed("pr-mode") {
+		if cfg.Repo.PRMode != "" {
+			rootFlags.PRMode = cfg.Repo.PRMode
+		} else if env := os.Getenv("PR_MODE"); env != "" {
+			rootFlags.PRMode = env
+		}
+	}
+	if rootFlags.PRMode == "" {
+		rootFlags.PRMode = "enabled"
+	}
+
+	if !cmd.Flags().Changed("review-mode") {
+		if cfg.Repo.ReviewMode != "" {
+			rootFlags.ReviewMode = cfg.Repo.ReviewMode
+		} else if env := os.Getenv("REVIEW_MODE"); env != "" {
+			rootFlags.ReviewMode = env
+		}
+	}
+	if rootFlags.ReviewMode == "" {
+		rootFlags.ReviewMode = "enabled"
+	}
+
+	if !cmd.Flags().Changed("chores-mode") {
+		if cfg.Chores.Mode != "" {
+			rootFlags.ChoresMode = cfg.Chores.Mode
+		} else if env := os.Getenv("CHORES_MODE"); env != "" {
+			rootFlags.ChoresMode = env
+		}
+	}
+	if rootFlags.ChoresMode == "" {
+		rootFlags.ChoresMode = "enabled"
 	}
 
 	return cfg, nil

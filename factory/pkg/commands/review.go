@@ -51,6 +51,15 @@ func NewReviewCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
+			if rootFlags.ReviewMode == "disabled" {
+				fmt.Println("PR review is disabled (REVIEW_MODE=disabled)")
+				return nil
+			}
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+
 			if flags.PRURL == "" {
 				return fmt.Errorf("--pr-url is required")
 			}

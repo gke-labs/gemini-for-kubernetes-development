@@ -347,6 +347,23 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if err != nil {
 		return err
 	}
+	if it.Number > 0 {
+		if it.IsPR {
+			if rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+			if rec.Name == "review" && rootFlags.ReviewMode == "disabled" {
+				fmt.Println("PR review is disabled (REVIEW_MODE=disabled)")
+				return nil
+			}
+		} else {
+			if rootFlags.IssueMode == "disabled" {
+				fmt.Println("Issue handling is disabled (ISSUE_MODE=disabled)")
+				return nil
+			}
+		}
+	}
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}

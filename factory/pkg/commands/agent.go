@@ -35,8 +35,9 @@ type AgentFlags struct {
 
 func NewAgentCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Manage and run custom agents in sandboxes",
+		Use:     "agent",
+		Aliases: []string{"chore"},
+		Short:   "Manage and run custom agents in sandboxes",
 	}
 	cmd.AddCommand(NewAgentCreateCommand(ctx))
 	return cmd
@@ -64,6 +65,19 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 			}
 			if flags.Agent == "" {
 				return fmt.Errorf("--agent is required")
+			}
+
+			if rootFlags.ChoresMode == "disabled" {
+				fmt.Println("Chores handling is disabled (CHORES_MODE=disabled)")
+				return nil
+			}
+			if strings.Contains(flags.URL, "/pull/") && rootFlags.PRMode == "disabled" {
+				fmt.Println("PR handling is disabled (PR_MODE=disabled)")
+				return nil
+			}
+			if strings.Contains(flags.URL, "/issues/") && rootFlags.IssueMode == "disabled" {
+				fmt.Println("Issue handling is disabled (ISSUE_MODE=disabled)")
+				return nil
 			}
 
 			sessionName := "factory-agent"

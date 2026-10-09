@@ -2,12 +2,10 @@ package commands
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/spf13/cobra"
 )
 
@@ -30,31 +28,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 
 			flags.AssigneeChanged = cmd.Flags().Changed("assignee")
 
-			if flags.IssueMode == "" {
-				flags.IssueMode = os.Getenv("ISSUE_MODE")
-			}
-			if flags.IssueMode == "" {
-				flags.IssueMode = "enabled"
-			}
-
-			if flags.PRMode == "" {
-				flags.PRMode = os.Getenv("PR_MODE")
-			}
-			if flags.PRMode == "" {
-				flags.PRMode = "enabled"
-			}
-
-			if flags.ChoresMode == "" {
-				flags.ChoresMode = os.Getenv("CHORES_MODE")
-			}
-			cfg, _ := config.LoadConfig()
-			if cfg != nil && cfg.Chores.Mode == "disabled" {
-				flags.ChoresMode = "disabled"
-			}
-			if flags.ChoresMode == "" {
-				flags.ChoresMode = "enabled"
-			}
-
 			watcher := watch.NewWatcher(rootFlags, flags)
 			watcher.ProposeFanout = proposeFanout
 			return watcher.Run(ctx)
@@ -73,9 +46,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Mode, "mode", "all", "Watch mode: all (scan & run), scan (only scan & queue), run (only process queue)")
 	cmd.Flags().StringVar(&flags.QueueDir, "queue-dir", "/workspaces/queues", "Directory path for the task queues")
 	cmd.Flags().BoolVar(&flags.Once, "once", false, "Run watch once and exit (waits for active tasks to complete)")
-	cmd.Flags().StringVar(&flags.IssueMode, "issue-mode", "", "Issue mode: enabled or disabled (defaults to ISSUE_MODE env or enabled)")
-	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled or disabled (defaults to PR_MODE env or enabled)")
-	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env or enabled)")
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", common.GetEnvDuration("TASK_TIMEOUT", 24*time.Hour), "Timeout for each task execution, after which the task is failed and its sandbox deleted (e.g. '3h', '24h')")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")

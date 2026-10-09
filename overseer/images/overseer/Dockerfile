@@ -57,6 +57,7 @@ WORKDIR /workspaces
 ENV FACTORY_LOGS=/workspaces/logs/factory/
 
 COPY --from=builder /app/factory/factory /usr/local/bin/factory
+RUN ln -s /usr/local/bin/factory /usr/local/bin/overseer-cli
 COPY overseer/images/overseer/run.sh /app/run.sh
 COPY overseer/images/overseer/summarize.sh /app/summarize.sh
 COPY overseer/images/overseer/prompt/ /app/prompt/
