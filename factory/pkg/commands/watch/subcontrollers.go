@@ -103,12 +103,18 @@ func (w *Watcher) newFanoutController() *fanouts.Controller {
 	})
 }
 
-// proposeFanout runs ProposeFanout on parent n, if it is set.
+// proposeFanout runs ProposeFanout on parent n, if it is set, as the
+// account an issue fix of n would run as: the recipe runs in n's fix
+// sandbox, which belongs to that account.
 func (w *Watcher) proposeFanout(ctx context.Context, n int) error {
 	if w.ProposeFanout == nil {
 		return fmt.Errorf("this watcher cannot run recipes")
 	}
-	return w.ProposeFanout(ctx, fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, n))
+	user, err := w.selectUserForTask(ctx, api.TypeIssueFix, n)
+	if err != nil {
+		return fmt.Errorf("choosing the account for the fanout recipe on #%d: %w", n, err)
+	}
+	return w.ProposeFanout(ctx, fmt.Sprintf("https://github.com/%s/%s/issues/%d", w.Repo.Owner, w.Repo.Repo, n), user)
 }
 
 // belowMaxPending reports whether fewer sandbox tasks run than --max-pending.
