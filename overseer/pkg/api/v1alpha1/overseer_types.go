@@ -171,6 +171,46 @@ type OverseerSpec struct {
 	// acted on by the watcher nor placed in an agent prompt.
 	// +kubebuilder:validation:Optional
 	AllowlistedUsers []string `json:"allowlistedUsers,omitempty"`
+
+	// WarmWorkspace keeps a snapshot of a workspace disk with the repository
+	// checked out and its caches filled; new sandboxes for the repository
+	// start from it (factory/design/warm-workspace.md). Unset, no warming.
+	// +kubebuilder:validation:Optional
+	WarmWorkspace *WarmWorkspaceSpec `json:"warmWorkspace,omitempty"`
+}
+
+// WarmWorkspaceSpec is how often to warm a workspace disk, how many
+// snapshots to keep, and the script that warms it: exactly one of script,
+// scriptURL and scriptPath.
+// +kubebuilder:validation:XValidation:rule="[has(self.script), has(self.scriptURL), has(self.scriptPath)].filter(x, x).size() == 1",message="exactly one of script, scriptURL and scriptPath must be set"
+type WarmWorkspaceSpec struct {
+	// Interval is how often to warm (e.g. "24h").
+	// +kubebuilder:validation:Required
+	Interval metav1.Duration `json:"interval"`
+
+	// Keep is how many ready snapshots to keep, the newest included.
+	// Defaults to 2.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	Keep *int32 `json:"keep,omitempty"`
+
+	// Script is the warm script itself, run in the checkout of the default
+	// branch.
+	// +kubebuilder:validation:Optional
+	Script string `json:"script,omitempty"`
+
+	// ScriptURL is where to download the warm script from, at each warm.
+	// Whoever controls the URL controls what every restored sandbox starts
+	// from: prefer a URL pinned to a commit.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^https://`
+	ScriptURL string `json:"scriptURL,omitempty"`
+
+	// ScriptPath is the warm script's path in the repository, run from its
+	// default branch. Relative, without "..".
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('/') && !self.split('/').exists(p, p == '..')",message="scriptPath must be relative, without .."
+	ScriptPath string `json:"scriptPath,omitempty"`
 }
 
 type RoleSpec struct {

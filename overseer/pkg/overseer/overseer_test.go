@@ -1,8 +1,11 @@
 package overseer
 
 import (
+	"strings"
 	"testing"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
@@ -138,6 +141,48 @@ func TestBuildSandboxManifest_AllowlistedUsers(t *testing.T) {
 		})
 		if got := env["ALLOWLISTED_USERS"]; got != "alice,bob" {
 			t.Errorf("ALLOWLISTED_USERS = %v, want %q", got, "alice,bob")
+		}
+	})
+}
+
+func TestBuildSandboxManifest_WarmWorkspace(t *testing.T) {
+	t.Run("unset omits WARM_WORKSPACE_*", func(t *testing.T) {
+		env := overseerEnv(t, &overseerv1alpha1.Overseer{
+			Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"},
+		})
+		for name := range env {
+			if strings.HasPrefix(name, "WARM_WORKSPACE_") {
+				t.Errorf("%s is set without warmWorkspace", name)
+			}
+		}
+	})
+
+	t.Run("set passes the interval, keep and the one script", func(t *testing.T) {
+		keep := int32(3)
+		env := overseerEnv(t, &overseerv1alpha1.Overseer{
+			Spec: overseerv1alpha1.OverseerSpec{
+				RepoURL: "https://github.com/owner/repo",
+				WarmWorkspace: &overseerv1alpha1.WarmWorkspaceSpec{
+					Interval:   metav1.Duration{Duration: 24 * time.Hour},
+					Keep:       &keep,
+					ScriptPath: "dev/tasks/warm-workspace",
+				},
+			},
+		})
+		want := map[string]interface{}{
+			"WARM_WORKSPACE_INTERVAL":    "24h0m0s",
+			"WARM_WORKSPACE_KEEP":        "3",
+			"WARM_WORKSPACE_SCRIPT_PATH": "dev/tasks/warm-workspace",
+		}
+		for name, v := range want {
+			if env[name] != v {
+				t.Errorf("%s = %v, want %q", name, env[name], v)
+			}
+		}
+		for _, name := range []string{"WARM_WORKSPACE_SCRIPT", "WARM_WORKSPACE_SCRIPT_URL"} {
+			if v, ok := env[name]; ok {
+				t.Errorf("%s = %v, want unset", name, v)
+			}
 		}
 	})
 }

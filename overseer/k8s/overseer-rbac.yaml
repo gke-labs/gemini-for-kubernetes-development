@@ -29,6 +29,11 @@ rules:
 - apiGroups: [""]
   resources: ["pods/portforward"]
   verbs: ["create"]
+# Warm workspaces (factory/design/warm-workspace.md): snapshot the warm
+# sandbox's disk, keep the newest, restore new sandboxes from them.
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots"]
+  verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

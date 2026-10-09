@@ -92,6 +92,25 @@ function writeFactoryConfig {
         echo "$FACTORY_ROLES" | jq -r 'to_entries[] | "  \(.key):\n    users:\n" + (.value.users | map("      - " + .) | join("\n"))' >> "$CFG_FILE"
     fi
     
+    # Warm workspace (factory/design/warm-workspace.md): an inline script
+    # goes to a file, which the config names; a URL or path is quoted as a
+    # JSON string, which YAML reads as is.
+    if [ -n "$WARM_WORKSPACE_INTERVAL" ]; then
+        echo "warmWorkspace:" >> "$CFG_FILE"
+        echo "  interval: $WARM_WORKSPACE_INTERVAL" >> "$CFG_FILE"
+        if [ -n "$WARM_WORKSPACE_KEEP" ]; then
+            echo "  keep: $WARM_WORKSPACE_KEEP" >> "$CFG_FILE"
+        fi
+        if [ -n "$WARM_WORKSPACE_SCRIPT" ]; then
+            printf '%s\n' "$WARM_WORKSPACE_SCRIPT" > /workspaces/warm-workspace.sh
+            echo "  script: /workspaces/warm-workspace.sh" >> "$CFG_FILE"
+        elif [ -n "$WARM_WORKSPACE_SCRIPT_URL" ]; then
+            echo "  scriptURL: $(jq -rn --arg v "$WARM_WORKSPACE_SCRIPT_URL" '$v | tojson')" >> "$CFG_FILE"
+        elif [ -n "$WARM_WORKSPACE_SCRIPT_PATH" ]; then
+            echo "  scriptPath: $(jq -rn --arg v "$WARM_WORKSPACE_SCRIPT_PATH" '$v | tojson')" >> "$CFG_FILE"
+        fi
+    fi
+
     export FACTORY_CONFIG="$CFG_FILE"
     echo "$(date): FACTORY_CONFIG set to $FACTORY_CONFIG"
 }

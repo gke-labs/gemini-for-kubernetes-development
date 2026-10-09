@@ -332,6 +332,28 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		}
 	}
 
+	if w := o.Spec.WarmWorkspace; w != nil {
+		env = append(env, map[string]interface{}{
+			"name":  "WARM_WORKSPACE_INTERVAL",
+			"value": w.Interval.Duration.String(),
+		})
+		if w.Keep != nil {
+			env = append(env, map[string]interface{}{
+				"name":  "WARM_WORKSPACE_KEEP",
+				"value": fmt.Sprintf("%d", *w.Keep),
+			})
+		}
+		for _, e := range [][2]string{
+			{"WARM_WORKSPACE_SCRIPT", w.Script},
+			{"WARM_WORKSPACE_SCRIPT_URL", w.ScriptURL},
+			{"WARM_WORKSPACE_SCRIPT_PATH", w.ScriptPath},
+		} {
+			if e[1] != "" {
+				env = append(env, map[string]interface{}{"name": e[0], "value": e[1]})
+			}
+		}
+	}
+
 	ephemeralStorage := o.Spec.EphemeralStorage
 	if ephemeralStorage == "" {
 		ephemeralStorage = "10Gi"
