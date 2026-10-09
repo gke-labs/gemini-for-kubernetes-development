@@ -76,9 +76,10 @@ type Watcher struct {
 	Flags
 
 	// ProposeFanout runs the fanout recipe on an issue and applies its
-	// result (pkg/commands' runRecipe, which this package cannot import).
-	// Nil, fan-out parents without a spec wait for a person to write one.
-	ProposeFanout func(ctx context.Context, issueURL string) error
+	// result (pkg/commands' runRecipe, which this package cannot import),
+	// as user, or the watcher's own account if that is empty. Nil, fan-out
+	// parents without a spec wait for a person to write one.
+	ProposeFanout func(ctx context.Context, issueURL, user string) error
 
 	cfg          *config.FactoryConfig
 	triggerLabel string

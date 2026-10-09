@@ -24,7 +24,7 @@ func careFollowUp(ctx context.Context, gh *githubv39.Client, kubeClient *clients
 		return err
 	}
 	runName := fmt.Sprintf("watch-%s-%d", recipeName, time.Now().Unix())
-	if err := runRecipe(ctx, recipeName, prURL, runName, "", false, applyMode{}, map[string]string{}, nil); err != nil {
+	if err := runRecipe(ctx, recipeName, prURL, runName, "", "", false, applyMode{}, map[string]string{}, nil); err != nil {
 		return err
 	}
 	name, err := factorysandbox.PRFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, prURL)

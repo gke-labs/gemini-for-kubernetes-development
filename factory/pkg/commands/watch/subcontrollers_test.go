@@ -109,6 +109,40 @@ func TestWatcherTaskCoordinator_SelectUser_PrefersTaskAssignee(t *testing.T) {
 	}
 }
 
+// The fanout recipe runs as the account a fix of the parent would, never
+// silently as the watcher's default secret.
+func TestWatcher_ProposeFanout_RunsAsTheIssueFixAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/test-owner/test-repo/issues/5" {
+			_, _ = w.Write([]byte(`{"number":5,"assignees":[{"login":"coder-b"}]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	w := newTestWatcher(t, t.TempDir())
+	w.ghClient = githubv39.NewClient(nil)
+	w.ghClient.BaseURL, _ = url.Parse(server.URL + "/")
+	w.githubLogin = "factory-user-login"
+	w.cfg = &config.FactoryConfig{
+		Roles: map[string]config.RoleConfig{"coder": {Users: []string{"coder-a", "coder-b"}}},
+	}
+	var gotURL, gotUser string
+	w.ProposeFanout = func(_ context.Context, issueURL, user string) error {
+		gotURL, gotUser = issueURL, user
+		return nil
+	}
+
+	if err := w.proposeFanout(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if gotURL != "https://github.com/test-owner/test-repo/issues/5" || gotUser != "coder-b" {
+		t.Errorf("ProposeFanout(%q, %q), want the issue as its assignee coder-b", gotURL, gotUser)
+	}
+}
+
 func TestWatcherTaskCoordinator_ShouldCancelTask_NoGitHubClient(t *testing.T) {
 	w := newTestWatcher(t, t.TempDir())
 	coordinator := &watcherTaskCoordinator{w: w}

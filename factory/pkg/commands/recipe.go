@@ -108,7 +108,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, f.newSession, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{f.apply, f.dryRun}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -333,8 +333,9 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // runRecipe runs recipeArg against itemURL. instructions are the raw
 // values of instructions-type inputs, each resolved as
 // `factory pr review --instruction` resolves its own. With apply it applies
-// the task's result, picking up where an interrupted run left off.
-func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+// the task's result, picking up where an interrupted run left off. user is
+// the account the task runs as; empty, the command's own (--user).
+func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -361,9 +362,15 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
+	secretName := rootFlags.SecretName
+	if user == "" {
+		user = rootFlags.User
+	} else {
+		secretName = fmt.Sprintf("user-%s", user)
+	}
+	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
+		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", secretName, rootFlags.Namespace, err)
 	}
 	var standard map[string]string
 	var htmlURL string
@@ -444,18 +451,18 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session string,
 			session = fmt.Sprintf("%s-%s-%04x", rec.Name, time.Now().Format("20060102-150405"), rand.Intn(1<<16))
 		}
 		fmt.Printf("Ensuring the sandbox for %s/%s, session %s...\n", it.Owner, it.Repo, session)
-		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		sandboxName, err = factorysandbox.EnsureResearchSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, session, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	case it.IsPR:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
 		if rec.Credentials == recipe.CredentialsClone {
 			// No recipe holding the token has run there.
-			sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, rec.Name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+			sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, rec.Name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 		} else {
-			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 		}
 	default:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
-		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
+		sandboxName, err = factorysandbox.EnsureFixSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, strconv.Itoa(it.Number), cloneURL, htmlURL, standard["issue_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
 	if err != nil {
 		return fmt.Errorf("ensuring the sandbox: %w", err)
