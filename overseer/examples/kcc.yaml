@@ -16,7 +16,9 @@ spec:
   image: ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang:latest
   workspaceDiskSize: 40Gi
   workspaceStorageClassName: premium-rwo
-  sandboxCPURequest: "2000m"
+  # KCC fixes run whole-repo codegen and tests (an hour or more of CPU);
+  # at 2000m two fix sandboxes shared one 8-CPU node and both crawled.
+  sandboxCPURequest: "4000m"
   sandboxCPULimit: "8000m"
   sandboxMemoryRequest: "4Gi"
   sandboxMemoryLimit: "16Gi"
