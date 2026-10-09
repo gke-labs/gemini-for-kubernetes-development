@@ -33,7 +33,7 @@ This note gives a sandbox a workspace disk restored from a snapshot of a warmed 
 4. **The warm task holds no credentials.** It runs with no GitHub token and no engine. It does three things:
    - clones the repository anonymously (public repositories only, for now);
    - checks out the default branch;
-   - runs the repository's warm commands: by default `go mod download` and `go build ./...` where there is a `go.mod`, and whatever the repository lists under `warm:` in factory config (KCC: `go vet ./...` and its codegen tools' builds).
+   - runs the repository's warm commands: by default `go mod download` and `go build ./...` where there is a `go.mod`, or the commands given as repeatable `--warm` flags, which the CronJob's args carry (KCC: its proto descriptors, `go build ./...`, and `go test -run '^$'` to compile the tests). No CRD and no factory config change.
 
    Before the snapshot it deletes `/workspaces/.tmp`, `/workspaces/tasks` and `/workspaces/spool`, and fails if `.home/.config/gh` or any git credential exists on the disk. A snapshot is shared by everyone whose sandbox restores it, so nothing personal may be in it.
 5. **A restored checkout is brought up to date before any work.** `setupGitRepos` fetches upstream and resets the default branch to it on an existing checkout; `checkoutNewBranch` branches from upstream's default branch, never from HEAD. A sandbox from a snapshot works on today's code, never on the snapshot's.
@@ -71,6 +71,6 @@ KCC's `generate-types-and-mappers` runs `go clean -cache` before generating CRDs
    - restore a sandbox from it;
    - record here the restore time, the time to the first `go build`, and a fix run's tool time against 2026-10-08. Compare snapshot with image.
 2. **factory: restore.** The label lookup in sandbox creation, `dataSource`, and `restoreSize`. Plus the up-to-date checkout of decision 5 (`setupGitRepos`, `checkoutNewBranch`), which is right with or without a snapshot.
-3. **factory: warm.** `factory workspace warm`, the credential check, retention, `warm:` in factory config.
+3. **factory: warm.** `factory workspace warm`, the credential check, retention, `--warm`.
 4. **The schedule.** A CronJob for KCC in `overseer-kcc`, its RBAC (sandboxes, PVCs, volume snapshots), and an example under `overseer/examples`.
 5. **Verify** on the next KCC fan-out: time to PR and tool time against 2026-10-08.
