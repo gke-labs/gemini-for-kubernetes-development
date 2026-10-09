@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** step 2 (restore) built.
+**Status:** steps 2 (restore) and 3 (warm) built.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -239,3 +239,19 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
 - **Choice.** The newest snapshot that is labelled for the repository, `readyToUse`, made with the same image and unexpired. The claim gets its `dataSource` and grows to its `restoreSize` if that is larger. The sandbox is annotated `factory.gemini.google.com/warm-restored-from: <snapshot>`.
 - **Failure.** If listing snapshots fails (no snapshot API, no RBAC), the disk is empty and the failure is logged at `-v=1`.
 - **`fix_issue.sh`** runs `checkoutDefaultBranch` before `checkoutNewBranch`.
+
+### Step 3: warm
+
+- **Config.** `.factory.cfg` `warmWorkspace: {interval, keep, script | scriptURL | scriptPath}` (`config.WarmWorkspaceConfig`); `script` is a file where factory runs. `Validate` checks a positive interval, exactly one source, `https` and a relative path without `..`. An invalid block is logged and the watch runs on without warming.
+- **The pass** (`pkg/commands/watch/warmworkspace`) runs in `--mode all|run`, every 5 minutes, unless draining. `sandbox.WarmDue` says whether there is anything to do: a warm sandbox exists, or no ready snapshot is younger than `interval`. One `Warm` at a time; it runs in the background and may block for the whole recipe run.
+- **The hook** (`commands.warmWorkspace`, set as `Watcher.WarmWorkspace`) moves the cycle one step from the warm sandbox's annotations:
+  - `warm-snapshot`: `FinishWarm` waits for `readyToUse`, deletes all but the newest `keep`, then deletes the sandbox. A failed snapshot is deleted along with the sandbox.
+  - `warm-failed`: wait one `interval`, then delete the sandbox and start again.
+  - otherwise: `EnsureWarmSandbox`, then `runRecipe("warm", …, run name from warm-run)` with abort-on-cancel off. On success, `SnapshotWarmSandbox` suspends the sandbox, waits for its pod to go, creates `warm-<repo>-<yyyymmdd-hhmm>` (class `warm-workspace`) and records it.
+  - It clones as `selectUserForTask(issue-fix)`.
+- **runRecipe** routes the `warm` recipe on a repository to `EnsureWarmSandbox`, and skips `MarkResearchReady` for it. `recipe list` (the board's catalog) leaves `warm` out; `factory recipe warm --url <repo>` still runs it by hand.
+- **The recipe** writes `warm-head` (the commit) and `warm-go` (`go version`) to its task directory. The hook copies them onto the snapshot with `warm-script` (provenance). For `scriptPath` the provenance is `path <p>@<commit>`.
+- **Not done as designed.**
+  - **The task directory is not deleted before the snapshot.** The task API has no delete, and a step can't remove the directory its runner still writes to. What is left in it is `task.json`, the recipe, the inputs (the script, no tokens) and step logs. `env.json` and `secrets.json` were deleted when the task started. So a restored sandbox's `task list` shows the warm task.
+  - The engine key still reaches the recipe's `run` steps, as it does every recipe's; the last step greps `.home` for it.
+- **Script per cycle.** The script is resolved, and `scriptURL` downloaded, on every call. Only the call that starts the run uses it. Provenance is recorded from the call that snapshots, so pin URLs to a commit.

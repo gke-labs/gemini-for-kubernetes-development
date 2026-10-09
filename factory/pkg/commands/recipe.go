@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
@@ -443,6 +444,15 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
+	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
+		// Its disk becomes every new sandbox's (design/warm-workspace.md):
+		// a sandbox of its own, never restored, with no secret mounted.
+		fmt.Printf("Ensuring the warm sandbox for %s/%s...\n", it.Owner, it.Repo)
+		var warm *unstructured.Unstructured
+		warm, err = factorysandbox.EnsureWarmSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedEnvs, user)
+		if warm != nil {
+			sandboxName = warm.GetName()
+		}
 	case it.IsRepo():
 		if session == "" {
 			session = runName
@@ -794,7 +804,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if it.IsRepo() && task.Revise == "" {
+	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe {
 		// The sandbox is the conversation's from here: the receipt that
 		// keeps EnsureResearchSandbox from taking it for an interrupted
 		// launch's and replacing it.

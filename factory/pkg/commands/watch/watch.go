@@ -38,6 +38,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.reconciler.CollectGarbage(ctx)
 		if w.Mode == "all" || w.Mode == "run" {
 			w.dispatcher.DispatchOnce(ctx)
+			if w.warmWorkspace != nil {
+				w.warmWorkspace.SyncOnce(ctx)
+				w.warmWorkspace.Wait()
+			}
 		}
 		fmt.Println("Running in once mode. Waiting for active tasks to complete...")
 		w.Wait()
@@ -88,6 +92,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 			defer wg.Done()
 			_ = w.dispatcher.Run(daemonCtx)
 		}()
+		if w.warmWorkspace != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = w.warmWorkspace.Run(daemonCtx)
+			}()
+		}
 	}
 
 	doneChan := make(chan struct{})

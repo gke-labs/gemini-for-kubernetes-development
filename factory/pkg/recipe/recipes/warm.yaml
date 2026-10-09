@@ -1,0 +1,41 @@
+# warm fills a workspace disk for factory to snapshot
+# (design/warm-workspace.md): the repository's default branch checked out
+# and the caches its script fills. Every sandbox for the repository
+# starts from that snapshot, so these steps, which keep credentials off
+# the disk, are factory's; only the script is the repository's. factory
+# runs it in the sandbox warm-<repo>, never one restored from a snapshot.
+name: warm
+on: [repo]
+credentials: clone       # the token reaches the clone step and nothing else
+inputs:
+  script:
+    description: the warm script's text (inline, or downloaded from scriptURL)
+  script_path:
+    description: the warm script's path in the repository, run from its default branch
+start:
+  steps:
+    - uses: clone
+    - run: |
+        cd "/workspaces/$INPUT_REPO_NAME"
+        git checkout -q "$(git symbolic-ref --short refs/remotes/origin/HEAD | cut -d/ -f2)"
+        git reset -q --hard "$(git symbolic-ref --short refs/remotes/origin/HEAD)"
+        git rev-parse HEAD > "$TASK_DIR/warm-head"   # recorded on the snapshot
+        if [ -n "$INPUT_SCRIPT_PATH" ]; then
+          case "$INPUT_SCRIPT_PATH" in /*|*..*) echo "script_path must be relative, without .." >&2; exit 1;; esac
+          bash -euo pipefail "./$INPUT_SCRIPT_PATH"
+        elif [ -n "$INPUT_SCRIPT" ]; then
+          printf '%s\n' "$INPUT_SCRIPT" > "$TASK_DIR/warm.sh"
+          bash -euo pipefail "$TASK_DIR/warm.sh"
+        else
+          echo "neither script nor script_path is set" >&2
+          exit 1
+        fi
+        { go version 2>/dev/null || true; } > "$TASK_DIR/warm-go"
+        # a dirty tree would be in every fix
+        test -z "$(git status --porcelain)" || { git status --short >&2; exit 1; }
+    - run: |
+        rm -rf /workspaces/.tmp
+        # set -e ignores a command negated with !, hence the || exit 1
+        ! test -e /workspaces/.home/.config/gh || exit 1
+        ! git -C "/workspaces/$INPUT_REPO_NAME" config --get-regexp 'credential|url\..*insteadof' || exit 1
+        ! grep -rIlE 'gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}' /workspaces/.home --exclude-dir=go --exclude-dir=go-build || exit 1
