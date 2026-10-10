@@ -16,15 +16,20 @@ mkdir -p "${USER_HOME}"
 # evicts the pod. Redirecting also makes the cache survive across task
 # runs — second builds are warm. Pinned to /workspaces explicitly:
 # USER_HOME's /root fallback would silently put the caches back on
-# ephemeral if HOME ever went missing.
+# ephemeral if HOME ever went missing. The cache paths are the sandbox
+# env's (GoCachePath, GoModCachePath in pkg/sandbox/manifests.go), which
+# recipes use too: a warm snapshot's caches are only warm if both agree.
 GO_CACHE_HOME="${USER_HOME}"
 if [ -d "/workspaces" ]; then
     GO_CACHE_HOME="/workspaces/.home"
     mkdir -p "${GO_CACHE_HOME}"
+    export GOMODCACHE="/workspaces/.cache/mod"
+    export GOCACHE="/workspaces/.cache/go-build"
+else
+    export GOMODCACHE="${GO_CACHE_HOME}/go/pkg/mod"
+    export GOCACHE="${GO_CACHE_HOME}/.cache/go-build"
 fi
 export GOPATH="${GO_CACHE_HOME}/go"
-export GOMODCACHE="${GOPATH}/pkg/mod"
-export GOCACHE="${GO_CACHE_HOME}/.cache/go-build"
 
 # ensureDevNull recreates /dev/null when it is no longer the null device.
 # gemini-cli runs the agent's git with GIT_CONFIG_GLOBAL=/dev/null, so an
