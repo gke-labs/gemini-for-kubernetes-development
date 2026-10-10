@@ -20,7 +20,7 @@ spec:
   # at 2000m two fix sandboxes shared one 8-CPU node and both crawled.
   sandboxCPURequest: "4000m"
   sandboxCPULimit: "8000m"
-  sandboxMemoryRequest: "4Gi"
+  sandboxMemoryRequest: "12Gi"
   sandboxMemoryLimit: "16Gi"
   # Snapshot a disk with the repository built and its caches warm once a
   # day; fix sandboxes start from it instead of an empty disk. Needs the
@@ -29,6 +29,9 @@ spec:
     interval: 24h
     keep: 2
     script: |
+      # a cold build at -p 8 peaks near the 16Gi limit (15.7 GB measured);
+      # the cache it fills is the same at any -p
+      export GOFLAGS=-p=4
       go mod download
       dev/tools/controllerbuilder/generate-proto.sh
       # fixes run it (directly and via validate-generated-files); from this
