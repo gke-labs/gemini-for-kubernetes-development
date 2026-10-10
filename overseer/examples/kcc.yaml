@@ -32,7 +32,9 @@ spec:
       go mod download
       dev/tools/controllerbuilder/generate-proto.sh
       go build ./...
-      go test -run '^$' ./pkg/... ./apis/...
+      # compile the tests without running them: -run '^$' still runs each
+      # package's TestMain, and KCC's start envtest, which has no etcd here
+      go test -exec /bin/true ./pkg/... ./apis/...
   secrets:
     - name: projectaccess
       mountPath: "/etc/pakey"
