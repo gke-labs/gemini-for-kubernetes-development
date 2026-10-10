@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -22,6 +23,7 @@ func startPeriodicCleanup(ctx context.Context) {
 
 	tmpInterval := common.GetEnvDuration("CLEANUP_TMP_INTERVAL", 1*time.Hour)
 	goInterval := common.GetEnvDuration("CLEANUP_GO_INTERVAL", 6*time.Hour)
+	diskCheckInterval := common.GetEnvDuration("CLEANUP_DISK_CHECK_INTERVAL", 2*time.Minute)
 
 	// Ticker for tmp directory cleanup
 	tmpTicker := time.NewTicker(tmpInterval)
@@ -35,8 +37,13 @@ func startPeriodicCleanup(ctx context.Context) {
 		goTickerChan = goTicker.C
 	}
 
+	// Ticker for disk usage check
+	diskTicker := time.NewTicker(diskCheckInterval)
+	defer diskTicker.Stop()
+
 	// Initial cleanup - only for TMP, not Go (to avoid wiping cache on every restart)
 	performTmpCleanup(ctx)
+	checkDiskUsageAndCleanup(ctx)
 
 	for {
 		select {
@@ -44,8 +51,59 @@ func startPeriodicCleanup(ctx context.Context) {
 			performTmpCleanup(ctx)
 		case <-goTickerChan:
 			performGoCleanup(ctx)
+		case <-diskTicker.C:
+			checkDiskUsageAndCleanup(ctx)
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+// getDiskUsagePercent returns the disk usage percentage for the filesystem containing path.
+func getDiskUsagePercent(path string) (float64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	if stat.Blocks == 0 {
+		return 0, nil
+	}
+	usedBlocks := stat.Blocks - stat.Bfree
+	return (float64(usedBlocks) / float64(stat.Blocks)) * 100.0, nil
+}
+
+// checkDiskUsageAndCleanup monitors /workspaces disk space and triggers aggressive cache cleanup if threshold is exceeded.
+func checkDiskUsageAndCleanup(ctx context.Context) {
+	workspaceDir := "/workspaces"
+	if _, err := os.Stat(workspaceDir); os.IsNotExist(err) {
+		return
+	}
+
+	usage, err := getDiskUsagePercent(workspaceDir)
+	if err != nil {
+		return
+	}
+
+	threshold := float64(common.GetEnvInt("CLEANUP_DISK_USAGE_THRESHOLD_PERCENT", 85))
+	if usage >= threshold {
+		log := klog.FromContext(ctx)
+		log.Info("Disk usage on /workspaces exceeded threshold, triggering cache cleanup", "usagePercent", fmt.Sprintf("%.1f%%", usage), "thresholdPercent", fmt.Sprintf("%.0f%%", threshold))
+
+		// 1. Clean TMPDIR with zero maxAge (clean all old temp files)
+		if tmpDir := os.Getenv("TMPDIR"); tmpDir != "" {
+			cleanOldFiles(ctx, tmpDir, 0)
+		}
+		if goTmpDir := os.Getenv("GOTMPDIR"); goTmpDir != "" {
+			cleanOldFiles(ctx, goTmpDir, 0)
+		}
+
+		// 2. Clean Go build cache
+		if _, err := exec.LookPath("go"); err == nil {
+			log.Info("Running emergency go clean -cache to free /workspaces disk space")
+			cmd := exec.CommandContext(ctx, "go", "clean", "-cache")
+			if err := cmd.Run(); err != nil {
+				log.Error(err, "failed to run go clean -cache during emergency cleanup")
+			}
 		}
 	}
 }
