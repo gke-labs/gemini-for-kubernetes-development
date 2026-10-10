@@ -12,7 +12,7 @@ This note gives a sandbox a workspace disk restored from a snapshot of a warmed 
 
 - **The disk.** The workspace is a PVC from the Sandbox's `volumeClaimTemplates` (`workspaces-pvc`, `pkg/sandbox/manifests.go`), mounted at `/workspaces`. Its size and class come from `workspaceDiskSize` and `workspaceStorageClass`; KCC uses 40Gi `premium-rwo` (`pd.csi.storage.gke.io`, pd-ssd).
 - **Restoring needs no agent-sandbox change.** The Sandbox CRD's claim template already has `dataSource` and `dataSourceRef`, so a sandbox can ask for its disk from a `VolumeSnapshot`.
-- **The caches live on the disk.** `lib.sh` puts them there: `GOPATH=/workspaces/.home/go` and `GOCACHE=/workspaces/.home/.cache/go-build`. A restored disk brings both.
+- **The caches live on the disk.** The sandbox env puts them there (`GOCACHE=/workspaces/.cache/go-build`, `GOMODCACHE=/workspaces/.cache/mod`, `pkg/sandbox/manifests.go`), and `lib.sh` uses the same paths for classic tasks. A restored disk brings both.
 - **Config reaches factory through env.** The Overseer controller passes its CR's fields to the overseer sandbox as env vars (`overseer/pkg/overseer/overseer.go`). The sandbox's `run.sh` writes them into `/workspaces/.factory.cfg` and then runs `factory watch` for one `POLL_INTERVAL` (5m), in a loop.
 - **Watch passes call into `commands` through hooks.** `factory watch` runs passes as goroutines (`pkg/commands/watch/subcontrollers.go`). A pass that needs a recipe gets a hook from `commands`, as the fan-out controller gets `ProposeFanout`, which calls `runRecipe` (`watch_fanout_propose.go`).
 - **A recipe run is resumable.** `runRecipe` with a run name that already exists waits for that run instead of starting another. A cancelled context stops the waiting, not the task.
