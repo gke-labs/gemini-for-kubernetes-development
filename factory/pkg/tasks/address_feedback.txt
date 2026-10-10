@@ -32,8 +32,9 @@ Use good PR hygene:
 {{ else }}    *   Use the `gh` CLI to post your responses. Do not add a footer or any line saying that an agent or AI wrote them.
     *   Post your response or summary of fixes as an issue comment: `gh issue comment {{ .PullRequest.URL }} --body "YOUR RESPONSE"`
 {{ end }}
-3. **Push**:
-   * Do not forget to push the changes upstream when done.
+3. **Push first, validate after**:
+   * As soon as your fixes are committed and their targeted tests pass, push with plain `git push`. Do not push through a repository script or skill that validates before it pushes (such as `validate-and-push`): it holds the push back for the whole-repository checks.
+   * Then run that full validation yourself, without the push (for example `validate-and-push --validate-only`, or the presubmits it runs). If it fails or changes files, fix, commit and push again in this session. Git hooks are disabled here, so a push never runs them.
 
 4.  **Report**:
     *   At the very end of your execution, you **MUST** print a structured report of the feedback and your responses. This is required even if you used `gh`.
