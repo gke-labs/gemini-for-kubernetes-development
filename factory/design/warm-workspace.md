@@ -1,6 +1,6 @@
 # Warm workspaces: a sandbox's disk from a snapshot
 
-**Status:** steps 2 (restore), 3 (warm) and 4 (overseer) built.
+**Status:** steps 1 (measured, below), 2 (restore), 3 (warm) and 4 (overseer) built; the whole cycle verified on autopush (below). Step 5, the KCC fan-out, is left.
 
 Every sandbox starts on an empty workspace disk. A KCC fix sandbox first clones 4.9 GB, then downloads 2.2 GB of modules, then compiles 4.8 GB of build cache, all before its own change builds once. On 2026-10-08 the KCC fan-out children took 1h45m to 2h each to open their PRs. About 11 minutes of that was the model; the rest was tools, mostly whole-repo builds from those empty caches (`generate-types-and-mappers` 45m, `validate-generated-files` 29m, `make test` 52m).
 
@@ -202,6 +202,30 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
   - Storage: about 12–15 GB of snapshot per repository per namespace, `keep` of them.
   - Compute: one warm sandbox per `interval`.
 
+## Measured (step 1, 2026-10-09)
+
+Measured by hand on staging (`barney-s`) on KCC `7106e14276`, which includes [#13869](https://github.com/GoogleCloudPlatform/k8s-config-connector/pull/13869), so `generate-types-and-mappers` no longer empties the build cache. The pods matched the overseer's KCC sandboxes: the `factory-golang` image, 2 CPUs requested and 8 limited, a 40Gi `premium-rwo` workspace. Autopilot gave the warm pod a 6-CPU node and the two restored pods 8-CPU nodes.
+
+| | Time |
+|---|---|
+| Warm from an empty disk: clone / `go mod download` / `generate-types-and-mappers` | 29s / 35s / 1371s |
+| The warmed disk afterwards | 12G used: 4.9G checkout, 4.6G modules, 2.1G build cache |
+| `generate-types-and-mappers` again, same disk | 720s |
+| Snapshot to `readyToUse` (12G used on 40Gi): `snapshots` / `images` | 155s / 140s |
+| `restoreSize`, both types | 40Gi, the source disk's size, not what it holds |
+| Restored sandbox to `Running`: `snapshots` (image cached on the node) | 48s |
+| Restored sandbox to `Running`: `images` (new node, 95s of it was the 2.4 GB image pull) | 137s |
+| `git status` on the restored checkout: native / `snapshots` / `images` | 0.3s / 1.7s / 1.4s |
+| `go build ./cmd/manager`: first build on the warmed disk / restored `snapshots` / restored `images` | 348s / 78s / 62s |
+| `generate-types-and-mappers` on the restored disk: `snapshots` / `images` | 648s / 661s |
+
+- **A restored disk runs as fast as the disk it was taken from.** It took 648–661s on 8-CPU nodes, against 720s on the 6-CPU source. The empty disk took 1371s. Lazy restore shows only in the first reads: `git status` takes 1.5s instead of 0.3s.
+- **Provisioning costs nothing measurable.** A restored claim binds and attaches in well under a minute. Image pulls and node scale-up dominate pod start, as they already do.
+- **Use `snapshots`.** The two types restore equally fast. Standard snapshots are incremental, so `keep` of them cost little more than one, and they are what the class `warm-workspace` uses. `images` adds nothing here.
+- **The warm sandbox's disk must not be larger than a fix sandbox's.** `restoreSize` is the source disk's size, and restore grows the claim to it. The hook uses the repository's `workspaceDiskSize`, as it does today.
+- **The script should build what fixes build.** `generate-types-and-mappers` does not build `cmd/manager`. Its first build on the warmed disk took 348s, and 62–78s once it was in a restored cache. KCC's script should run the builds and test compiles its fixes run, e.g. `go build ./...` and `go test -run '^$' ./...`, as well as the generator.
+- **Cluster objects.** The classes `warm-workspace` (`snapshots`) and `warm-workspace-images` exist on staging. The second was only for this comparison and can go. Every sandbox, claim and snapshot made for the measurement is deleted.
+
 ## Steps
 
 1. **Measure by hand on staging** (no code):
@@ -262,3 +286,30 @@ Until #13869 merges, KCC's `generate-types-and-mappers` runs `go clean -cache`. 
 - `overseer.go` passes `WARM_WORKSPACE_*`, in a fixed order, so the manifest doesn't change between reconciles.
 - `run.sh` writes an inline script to `/workspaces/warm-workspace.sh`, and writes `scriptURL`/`scriptPath` as JSON strings, which YAML reads unchanged.
 - **RBAC.** The overseer sandbox runs as the ServiceAccount `overseer`, not `overseer-sandbox`, so the rule is in `overseer-rbac.yaml`. That role already had pods get/list, which the snapshot step needs to wait for the warm pod to go.
+
+### Verified on autopush (2026-10-09/10)
+
+The `overseer` Overseer on autopush (`repo-agent-1`; sandboxes in `overseer-overseer`) got `overseer/examples/repo-agent.yaml`'s `warmWorkspace` (24h, keep 2) and the `warm-workspace` VolumeSnapshotClass. With no other change, the whole cycle ran:
+
+| Step | What happened |
+|---|---|
+| Warm pass | Created `warm-gemini-for-kubernetes-development` about a tick after the overseer started, cloning as a coder account. |
+| Warm run | Built and test-compiled the three Go modules, `dev/tools` and the review UI's `npm install`; about 10 minutes on a 2-CPU request. Then the clean-tree and credential checks passed: `::done warm`. |
+| Snapshot | `warm-gemini-for-kubernetes-development-20261010-0024`, readyToUse about a minute after the suspend; 40Gi; `warm-head` 2886c7ad, `warm-go-version` go1.26.3, `warm-expires` +72h, `warm-script` inline. |
+| Finish | The next pass deleted the warm sandbox. The snapshot outlived its source disk. |
+| Restore | Issue #684 was labelled `overseer`. `fix-gemini-for-kubernetes-development-684` was created with `warm-restored-from` set and its claim's `dataSource` the snapshot. |
+| The fix | It found the repository at 2886c7ad, the module cache (1.8G), the build cache (2.3G) and `node_modules` (477M). `setupGitRepos` fetched instead of cloning. `checkoutDefaultBranch` reset to upstream main. The task started at 00:28:23 and gemini was running at 00:28:32. The pod was running about 1.5 minutes after the Sandbox was created. |
+
+**What the test found:**
+
+- **The CRD failed to apply.** The `scriptPath` CEL rule's estimated cost was 2× the budget, because the field had no `maxLength`. Fixed in #1862, which also adds `pkg/api/crd_test.go`. It runs the apiserver's CRD validation, cost included, so the note under step 4 about a live apiserver no longer applies.
+- **The controller could not bind the sandbox's role.** Kubernetes only lets a controller grant permissions it holds itself, so `overseer-controller` needs the volumesnapshots rule too. Fixed in #1864, with a test that the controller holds every rule it grants.
+- **The example script left a dirty tree.** `go mod download` rewrites `go.work.sum`, so the clean-tree check refused the snapshot (#1866).
+- **npm's download cache tripped the credential check.** The check matched token-shaped strings in `~/.npm/_cacache` (registry metadata), so the script now deletes `~/.npm` after `npm install` (#1867). Both script fixes belong in the script: the recipe cannot tell a repository's useful caches from its leftovers, and a strict check that fails with file names is what found both.
+
+**Follow-ups:**
+
+- **`warm-image` is the tag** (`factory-golang:latest`), as step 2 chose. A rebuilt image restores the old snapshot until the next warm. Go's cache keys on the toolchain, so it misses rather than breaks. The pod's resolved image ID would fix that.
+- **A failed warm keeps its backoff** for an `interval` even after the script is fixed. Keying the failure on a hash of the warm config would restart it at once.
+- **Changing `spec.warmWorkspace` does not reach a running overseer.** The controller updates the Sandbox's template, but the pod keeps its env until the sandbox is recreated. The controller also does not recreate a deleted overseer Sandbox until the Overseer changes (`recreate-timestamp`). Both apply to every Overseer field, not just this one.
+- **Not measured here:** the agent's build and test times on the restored disk against a cold one. Step 5 measures that on the KCC fan-out, where the builds are long.
