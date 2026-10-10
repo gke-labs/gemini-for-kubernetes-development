@@ -24,6 +24,9 @@ spec:
       (cd dev/tools && go build tool)   # golangci-lint and the other dev tools
       if command -v npm >/dev/null; then
         (cd repo-agent/review-ui/ui && npm install --no-audit --no-fund)
+        # npm's download cache holds public registry metadata that trips
+        # warm's credential check; fixes use node_modules, not the cache
+        rm -rf "$HOME/.npm"
       fi
       # go mod download rewrites go.work.sum; warm refuses a dirty tree
       git checkout -q -- go.work.sum
