@@ -31,8 +31,13 @@ spec:
     script: |
       go mod download
       dev/tools/controllerbuilder/generate-proto.sh
+      # fixes run it (directly and via validate-generated-files); from this
+      # disk it takes ~13 min instead of ~22, and leaves the tree clean
+      dev/tasks/generate-types-and-mappers
       go build ./...
-      go test -run '^$' ./pkg/... ./apis/...
+      # compile the tests without running them: -run '^$' still runs each
+      # package's TestMain, and KCC's start envtest, which has no etcd here
+      go test -exec /bin/true ./pkg/... ./apis/...
   secrets:
     - name: projectaccess
       mountPath: "/etc/pakey"
