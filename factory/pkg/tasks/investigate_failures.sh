@@ -29,27 +29,45 @@ if [ -n "${GITHUB_BOT_LOGIN}" ]; then
     fi
 fi
 
+# fetchLogs saves the failed jobs' logs in the task's directory, outside
+# the checkout (commitAndPush adds everything in it), and appends what
+# each says about why it failed to the prompt.
 function fetchLogs {
     echo "Fetching logs for failed runs..."
+    local dir repo runID prowRun targetURL rawURL log
+    dir="$(dirname "${PROMPT_FILE}")/ci-logs"
+    mkdir -p "${dir}"
     cd "/workspaces/${REPO_NAME}"
     if [ -n "$FAILED_RUNS" ]; then
-        for runID in $FAILED_RUNS; do
-            echo "Downloading logs for run $runID"
-            gh run view "$runID" --log-failed > "run-${runID}-failed.log" || echo "Failed to download logs for run $runID"
-        done
+        repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+        # shellcheck disable=SC2086 # run IDs, one word each
+        ciFailedJobsOfRuns "${repo}" $FAILED_RUNS | fetchCIJobLogs "${repo}" "${dir}"
     fi
     if [ -n "$FAILED_PROW_RUNS" ]; then
         for prowRun in $FAILED_PROW_RUNS; do
             runID="${prowRun%%|*}"
             targetURL="${prowRun#*|}"
+            log="${dir}/prow-${runID}.log"
             echo "Downloading Prow logs for run $runID from $targetURL"
             rawURL="$(echo "$targetURL" | sed 's|https://prow.k8s.io/view/gcs/|https://storage.googleapis.com/|')/build-log.txt"
-            curl -sSL "$rawURL" > "run-${runID}-failed.log" || echo "Failed to download prow logs for run $runID"
-            if [ ! -s "run-${runID}-failed.log" ] || grep -q "<Error>" "run-${runID}-failed.log"; then
-                echo "Log not found at $rawURL. Please view the failure URL directly: $targetURL" > "run-${runID}-failed.log"
+            curl -sSL "$rawURL" > "${log}" || echo "Failed to download prow logs for run $runID"
+            if [ ! -s "${log}" ] || grep -q "<Error>" "${log}"; then
+                echo "Log not found at $rawURL. Please view the failure URL directly: $targetURL" > "${log}"
             fi
+            printf '### Prow run %s\n\nIts whole log: %s\n\n```\n' "${runID}" "${log}" >> "${dir}/excerpts.md"
+            tail -n 100 "${log}" >> "${dir}/excerpts.md"
+            printf '```\n\n' >> "${dir}/excerpts.md"
         done
     fi
+    {
+        printf '\n## Logs of the failed jobs\n\n'
+        if [ -s "${dir}/excerpts.md" ]; then
+            printf 'Their whole logs are in %s, outside the repository: read them with grep, sed -n or tail. What each says about why it failed:\n\n' "${dir}"
+            cat "${dir}/excerpts.md"
+        else
+            printf 'No log of a failed job could be downloaded: find the failed checks with `gh pr checks %s`.\n' "${PR_NUMBER}"
+        fi
+    } >> "${PROMPT_FILE}"
 }
 
 function commitAndPush {

@@ -1196,18 +1196,20 @@ func TestBuiltinCareRenders(t *testing.T) {
 		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "true",
 	}
 	dir := t.TempDir()
-	for name, v := range map[string]string{"pr": "9", "lease": "h1", "base": "b2", "upstream": "u3"} {
+	for name, v := range map[string]string{"pr": "9", "lease": "h1", "base": "b2", "upstream": "u3", "ci-logs.md": "the excerpts"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	jobs := map[string]string{"rebase": "git rebase u3", "ci": "gh pr checks 9", "comments": "pulls/9/comments"}
+	// The failed jobs' logs come from the ci-logs step, not from
+	// `gh run view --log-failed`, which waits for the whole run.
+	jobs := map[string]string{"rebase": "git rebase u3", "ci": "the excerpts", "comments": "pulls/9/comments"}
 	for name, tc := range map[string]struct {
 		want, not []string
 	}{
-		"care":          {want: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}},
+		"care":          {want: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}, not: []string{"--log-failed"}},
 		"care-comments": {want: []string{jobs["comments"]}, not: []string{jobs["rebase"], jobs["ci"]}},
-		"care-ci":       {want: []string{jobs["ci"], "--log-failed"}, not: []string{jobs["rebase"], jobs["comments"]}},
+		"care-ci":       {want: []string{jobs["ci"], "gh pr checks 9"}, not: []string{jobs["rebase"], jobs["comments"], "--log-failed"}},
 		"care-rebase":   {want: []string{"git rebase b2"}, not: []string{jobs["ci"], jobs["comments"]}},
 		"care-iterate":  {want: []string{"rename foo"}, not: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}},
 	} {
@@ -1230,9 +1232,14 @@ func TestBuiltinCareRenders(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		var got strings.Builder
+		ciLogs := false
 		for i, s := range rec.Start.Steps {
+			ciLogs = ciLogs || s.Uses == "ci-logs"
 			if s.Ask == "" {
 				continue
+			}
+			if strings.Contains(s.Ask, `file "ci-logs.md"`) && !ciLogs {
+				t.Errorf("%s step %s reads ci-logs.md before the ci-logs step", name, s.Label(i))
 			}
 			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
 			if err != nil {

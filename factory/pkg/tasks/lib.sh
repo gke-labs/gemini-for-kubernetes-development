@@ -545,6 +545,119 @@ function pushToFork {
     printf '{"fork":"%s","branch":"%s","base":"%s","head":"%s"}\n' "${fork}" "${branch}" "${base}" "${head}" > "${dir}/push.json"
 }
 
+# The logs of the failed GitHub Actions jobs, for an agent that fixes CI.
+# GitHub serves a job's log as soon as that job finishes, while
+# `gh run view --log-failed` refuses until every job of its run has: the
+# watch starts a task on the first failed check, when the run's other jobs
+# are usually still running, and the agent got no log at all. `gh api`
+# refuses to print a log with terminal escapes in it, so curl fetches
+# them. The logs go to a directory of the task's, outside the checkout:
+# nothing commits them, and the engine's file tools do not skip them as
+# ignored (*.log often is).
+#
+# ciFailedJobsOfRuns REPO RUN... and ciFailedJobsOfCommit REPO SHA print
+# "<job id> <job name>" for each failed job.
+function ciFailedJobsOfRuns {
+    local repo="$1" run
+    shift
+    for run in "$@"; do
+        gh api "repos/${repo}/actions/runs/${run}/jobs?filter=latest&per_page=100" --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id) \(.name)"' ||
+            echo "could not list the jobs of run ${run}" >&2
+    done
+}
+
+# A check run of GitHub Actions is a job: its id is the job's.
+function ciFailedJobsOfCommit {
+    gh api "repos/$1/commits/$2/check-runs?filter=latest&per_page=100" --paginate \
+        --jq '.check_runs[] | select(.app.slug == "github-actions") | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id) \(.name)"'
+}
+
+# ciLogExcerpt LOG prints the part of a job's log that says why it failed:
+# the step that failed, whole if short, else its test failures (or errors)
+# and its last lines.
+function ciLogExcerpt {
+    local log="$1" section
+    section="$(awk '/##\[group\]Run /{buf=""} {buf=buf $0 "\n"} /##\[error\]/{printf "%s", buf; found=1; exit} END{if(!found) printf "%s", buf}' "${log}")"
+    if [ "$(printf '%s\n' "${section}" | wc -l)" -le 150 ]; then
+        printf '%s\n' "${section}"
+        return
+    fi
+    # Go's test output: what a failed test printed comes before its
+    # --- FAIL line. Error-ish words alone match every log line of a
+    # chatty test, so they are only the fallback.
+    if printf '%s\n' "${section}" | grep -q -e '--- FAIL'; then
+        printf '%s\n' "${section}" | grep -B25 -A2 -e '--- FAIL' | head -n 200
+    else
+        printf '%s\n' "${section}" | grep -E -B5 -A40 -e 'ERROR|Error:|FAIL|panic:' | head -n 200
+    fi
+    echo "[…]"
+    printf '%s\n' "${section}" | tail -n 10
+}
+
+# fetchCIJobLogs REPO DIR reads "<job id> <job name>" lines, saves each
+# job's log as DIR/<job id>.log, without colours and timestamps, and
+# appends its excerpt to DIR/excerpts.md.
+function fetchCIJobLogs {
+    local repo="$1" dir="$2" id name log token trace=0
+    mkdir -p "${dir}"
+    : > "${dir}/excerpts.md"
+    while read -r id name; do
+        [ -n "${id}" ] || continue
+        log="${dir}/${id}.log"
+        echo "Downloading the log of job ${id} (${name})"
+        # The token stays off the command line and out of xtrace.
+        case "$-" in *x*) trace=1 ;; esac
+        set +x
+        token="$(gh auth token 2>/dev/null || true)"
+        if printf 'header = "Authorization: Bearer %s"\n' "${token}" |
+            curl -fsSL -K - -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${repo}/actions/jobs/${id}/logs" -o "${log}.raw"; then
+            token=""
+            [ "${trace}" = 1 ] && set -x
+            sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g; s/^[0-9T:.-]+Z //' "${log}.raw" > "${log}"
+            rm -f "${log}.raw"
+            {
+                printf '### %s\n\nJob %s; its whole log: %s\n\n```\n' "${name}" "${id}" "${log}"
+                ciLogExcerpt "${log}"
+                printf '```\n\n'
+            } >> "${dir}/excerpts.md"
+        else
+            token=""
+            [ "${trace}" = 1 ] && set -x
+            rm -f "${log}.raw"
+            printf '### %s\n\nJob %s: its log could not be downloaded.\n\n' "${name}" "${id}" >> "${dir}/excerpts.md"
+        fi
+    done
+}
+
+# fetchPRCILogs (recipe step ci-logs) fetches the logs of the jobs that
+# failed on the PR's head ($TASK_DIR/pr, $TASK_DIR/lease, which an earlier
+# step writes) into $TASK_DIR/ci-logs and their excerpts into
+# $TASK_DIR/ci-logs.md, for the ask: {{ file "ci-logs.md" }}.
+function fetchPRCILogs {
+    echo "Running fetchPRCILogs..."
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo="${REPO_OWNER}/${REPO_NAME}" pr head
+    pr="$(cat "${dir}/pr" 2>/dev/null || true)"
+    head="$(cat "${dir}/lease" 2>/dev/null || true)"
+    if [ -z "${head}" ] && [ -n "${pr}" ]; then
+        head="$(gh api "repos/${repo}/pulls/${pr}" --jq .head.sha)"
+    fi
+    if [ -z "${head}" ]; then
+        echo "neither the PR's head nor its number is recorded in ${dir}" >&2
+        return 1
+    fi
+    ciFailedJobsOfCommit "${repo}" "${head}" | fetchCIJobLogs "${repo}" "${dir}/ci-logs"
+    if [ -s "${dir}/ci-logs/excerpts.md" ]; then
+        {
+            printf 'The logs of the GitHub Actions jobs that failed on %s, whole in %s, outside the repository (read them with grep, sed -n, tail); what each says about why:\n\n' "${head}" "${dir}/ci-logs"
+            cat "${dir}/ci-logs/excerpts.md"
+        } > "${dir}/ci-logs.md"
+    else
+        printf 'No GitHub Actions job failed on %s. If other checks failed (Prow, …), `gh pr checks` links to their logs.\n' "${head}" > "${dir}/ci-logs.md"
+    fi
+}
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating ${USER_HOME}/.gemini directory"
