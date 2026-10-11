@@ -11,8 +11,8 @@ The following workflows have failed:
 - Run ID: {{ .ID }}
 - Run Name: {{ .Name }}
 - Run URL: {{ .URL }}
-  - Logs are in file: run-{{ .ID }}-failed.log
 {{ end }}
+The logs of their failed jobs are at the end of this prompt.
 
 ## Previous Investigations
 Below are the existing comments on the PR since the last commit. Look for "### Investigating" to see what has already been attempted.
@@ -31,7 +31,7 @@ Below are the existing comments on the PR since the last commit. Look for "### I
 
 
 2. **Analyze Failures**:
-   - Read the log files for each failed run. Use `read_file` tool.
+   - Read the logs of the failed jobs: their excerpts at the end of this prompt, and, where an excerpt does not say enough, the whole log in the file it names (with `grep`, `sed -n` or `tail`: they are large).
    - Determine the root cause of the failure.
    - Check if the code changes in the PR are related to the failure.
    - Distinguish between code errors, test failures, linting issues, and infrastructure flakes.

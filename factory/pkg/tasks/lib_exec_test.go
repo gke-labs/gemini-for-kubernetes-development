@@ -790,3 +790,61 @@ echo "RECORD=$(cat "$TASK_DIR/push.json" 2>/dev/null)"`
 		}
 	})
 }
+
+// TestFetchPRCILogs pins the ci-logs step: the logs of the jobs that
+// failed on the PR's head are fetched per job (GitHub serves one as soon
+// as its job ends), with the token on curl's stdin and not in xtrace,
+// cleaned of colours and timestamps, and their excerpts written for the
+// ask.
+func TestFetchPRCILogs(t *testing.T) {
+	setup := `mkdir -p "$HOME/bin" "$HOME/task" && cat > "$HOME/bin/gh" <<'STUB'
+#!/bin/bash
+case "$1 $2" in
+  "auth token") echo SECRET_TOK ;;
+  "api repos/upstream-org/repo/commits/h1/check-runs"*) echo "11 unit tests"; echo "12 docs" ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+STUB
+cat > "$HOME/bin/curl" <<'STUB'
+#!/bin/bash
+echo "CURL_ARGS=$*" >> "$HOME/curl.args"
+cat >> "$HOME/curl.config"
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
+case "$out" in
+  */12.log.raw) exit 22 ;;
+esac
+printf '2026-10-11T16:00:00.0000000Z ##[group]Run make test\n2026-10-11T16:00:01.0000000Z \033[31m--- FAIL: TestX (0.1s)\033[0m\n2026-10-11T16:00:02.0000000Z ##[error]Process completed with exit code 1.\n' > "$out"
+STUB
+chmod +x "$HOME/bin/gh" "$HOME/bin/curl"
+export TASK_DIR="$HOME/task"
+printf 9 > "$TASK_DIR/pr" && printf h1 > "$TASK_DIR/lease"
+set -x
+`
+	report := `
+set +x
+echo "ARGS=$(cat "$HOME/curl.args")"
+echo "CONFIG=$(cat "$HOME/curl.config")"
+echo "LOG=$(cat "$TASK_DIR/ci-logs/11.log")"
+echo "MD=$(cat "$TASK_DIR/ci-logs.md")"`
+	out, _, err := runLib(t, nil, setup, "fetchPRCILogs"+report)
+	if err != nil {
+		t.Fatalf("fetchPRCILogs failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `CONFIG=header = "Authorization: Bearer SECRET_TOK"`) {
+		t.Errorf("curl did not get the token on stdin:\n%s", out)
+	}
+	if strings.Count(out, "SECRET_TOK") != 2 { // one per job, in CONFIG only
+		t.Errorf("the token is somewhere else too (argv, xtrace):\n%s", out)
+	}
+	if !strings.Contains(out, "repos/upstream-org/repo/actions/jobs/11/logs") {
+		t.Errorf("not the job's log endpoint:\n%s", out)
+	}
+	if !strings.Contains(out, "LOG=##[group]Run make test\n--- FAIL: TestX (0.1s)\n") {
+		t.Errorf("log not cleaned of timestamps and colours:\n%s", out)
+	}
+	for _, w := range []string{"failed on h1", "### unit tests", "its whole log: ", "/task/ci-logs/11.log", "--- FAIL: TestX", "### docs", "Job 12: its log could not be downloaded"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("ci-logs.md lacks %q:\n%s", w, out)
+		}
+	}
+}

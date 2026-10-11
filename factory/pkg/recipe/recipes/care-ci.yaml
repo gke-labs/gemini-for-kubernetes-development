@@ -67,6 +67,10 @@ start:
         git fetch origin "refs/heads/${INPUT_PUSHED_BRANCH}"
         git reset --hard "${INPUT_PUSHED_HEAD}"
 
+    # The logs of the GitHub Actions jobs that failed on the PR's head
+    # (pr, lease): $TASK_DIR/ci-logs.md for the ask, whole in
+    # $TASK_DIR/ci-logs. gh run view --log-failed waits for the whole run.
+    - uses: ci-logs
     - ask: |
         You look after this pull request:
         https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}
@@ -83,10 +87,11 @@ start:
         Checks fail on the pull request. Fix them:
 
         - Find the failed checks (`gh pr checks {{ file "pr" }}`) and
-          read their logs (`gh run view <run-id> --log-failed`). If this
-          change caused a failure, fix it and commit. If it did not (a
-          flaky test, an outage, a failure on the default branch too),
-          change nothing and say so.
+          read their logs. {{ file "ci-logs.md" }}
+
+          If this change caused a failure, fix it and commit. If it did
+          not (a flaky test, an outage, a failure on the default branch
+          too), change nothing and say so.
 
         Commit, never push; do NOT comment on GitHub yourself: factory
         posts the replies you write next.

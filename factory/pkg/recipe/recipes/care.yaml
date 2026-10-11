@@ -74,6 +74,10 @@ start:
         git fetch upstream HEAD
         git rev-parse FETCH_HEAD | tr -d '\n' > "$TASK_DIR/upstream"
 
+    # The logs of the GitHub Actions jobs that failed on the PR's head
+    # (pr, lease): $TASK_DIR/ci-logs.md for the ask, whole in
+    # $TASK_DIR/ci-logs. gh run view --log-failed waits for the whole run.
+    - uses: ci-logs
     - ask: |
         You look after this pull request:
         https://github.com/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pull/{{ file "pr" }}
@@ -98,10 +102,11 @@ start:
           touched. If it merges cleanly and is not far behind, leave it.
 
         - Checks. Find the failed ones (`gh pr checks {{ file "pr" }}`) and
-          read their logs (`gh run view <run-id> --log-failed`). If this
-          change caused a failure, fix it and commit. If it did not (a
-          flaky test, an outage, a failure on the default branch too),
-          change nothing and say so.
+          read their logs. {{ file "ci-logs.md" }}
+
+          If this change caused a failure, fix it and commit. If it did
+          not (a flaky test, an outage, a failure on the default branch
+          too), change nothing and say so.
 
         - Review comments. Read the review comments on the code,
           `gh api repos/{{ .Inputs.repo_owner }}/{{ .Inputs.repo_name }}/pulls/{{ file "pr" }}/comments --paginate`,

@@ -299,6 +299,7 @@ var NamedSteps = map[string]string{
 	"checkout-pr-branch":      "checkoutPRBranch",
 	"configure-engine":        "configureGemini",
 	"push":                    "pushToFork",
+	"ci-logs":                 "fetchPRCILogs",
 	CloneStep:                 "cloneRepo",
 }
 
