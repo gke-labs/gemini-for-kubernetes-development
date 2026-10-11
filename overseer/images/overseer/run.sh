@@ -141,7 +141,12 @@ function constructPrompt {
         fi
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         
-        BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
+        # Require an explicit bot identity rather than defaulting to avoid masking missing configuration.
+        BOT_NAME="${GITHUB_USER_ID:-}"
+        if [ -z "$BOT_NAME" ]; then
+            echo "GITHUB_USER_ID environment variable is not set" >&2
+            exit 1
+        fi
         sed -i "s/{{BOT_NAME}}/$BOT_NAME/g" "$PROMPT_FILE"
         
         PROMPT=$(cat "$PROMPT_FILE")

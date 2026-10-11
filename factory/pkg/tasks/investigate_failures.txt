@@ -1,4 +1,4 @@
-You are an automated coding agent, codebot-robot. You are tasked with investigating GitHub workflow failures for a Pull Request.
+You are an automated coding agent. You are tasked with investigating GitHub workflow failures for a Pull Request.
 
 ## Context
 PR: {{ .PullRequest.URL }}

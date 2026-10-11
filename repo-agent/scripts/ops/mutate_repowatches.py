@@ -85,6 +85,7 @@ def fix_issues_spec(repowatch):
     Resets .spec.issue to the new format.
     """
     spec = repowatch.get("spec", {})
+    current_issue_spec = spec.get("issue") or {}
     
     new_issue_spec = {
       "handlers": [
@@ -105,8 +106,9 @@ def fix_issues_spec(repowatch):
       },
       "maxActiveSandboxes": 6,
       "maxSandboxes": 6,
-      "robotAccount": "codebot-robot"
     }
+    if "robotAccount" in current_issue_spec:
+        new_issue_spec["robotAccount"] = current_issue_spec["robotAccount"]
 
     # Check if current spec.issue is different
     current_issue_spec = spec.get("issue")

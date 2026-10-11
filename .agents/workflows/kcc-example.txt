@@ -209,11 +209,11 @@ For existing resources transitioning to a direct controller, a round-trip KRM fu
 ### Step 4: Ensure MockGCP matches real gcp behavior
 We need to ensure that we have a mockgcp that aligns with realgcp.
 
-1. Open a GitHub issue assigned to `factorybot-robot` to implement or improve the MockGCP for the resource.
+1. Open a GitHub issue (unassigned or assigned to the current bot) to implement or improve the MockGCP for the resource.
 
 **GitHub Issue Details:**
 *   **Title:** `Match real gcp behavior in MockGCP for {kind}`
-*   **Assignee:** `factorybot-robot`
+*   **Assignee:** (leave unassigned or assign to the current bot)
 *   **Labels:** `overseer`
 *   **Body:**
     ```
