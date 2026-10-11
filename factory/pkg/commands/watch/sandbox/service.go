@@ -101,7 +101,8 @@ func (s *Service) Namespace() string {
 // back to the conventional per-issue name. PR tasks prefer a sandbox already
 // labeled with the PR, then a sandbox created for one of the issues the PR
 // closes (which is aliased to the PR as a side effect), and finally fall back
-// to the conventional per-PR name.
+// to the conventional per-PR name. A review runs in the review recipe's
+// sandbox.
 func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num int) string {
 	if taskType == api.TypeIssueFix || taskType == api.TypeAgentChore {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
@@ -111,6 +112,12 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 			}
 		}
 		return fmt.Sprintf("fix-%s-%d", s.repo, num)
+	}
+
+	// A review is the review recipe, in a sandbox of its own: it holds no
+	// credentials, so it shares none with the PR's other tasks.
+	if taskType == api.TypePRReview {
+		return factorysandbox.RecipeSandboxName(s.repo, num, "review")
 	}
 
 	// For PR tasks, check if there's an existing sandbox with the PR label

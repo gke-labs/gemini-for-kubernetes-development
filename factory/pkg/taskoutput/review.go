@@ -108,6 +108,18 @@ func prTarget(doc *Document) (owner, repo string, num int, err error) {
 // failing the whole review. A pending review this posted before, for any
 // task, is replaced; one the caller started themselves is not touched.
 func applyPostReview(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	return postReview(ctx, gh, doc, false, dryRun, out)
+}
+
+// applySubmitReview posts a Review as post-review does, but submitted, as
+// a COMMENT review: the review of a watch, which no one reads as a draft
+// first. A pending review factory posted is discarded first (GitHub keeps
+// one pending review per person, and refuses a review beside it).
+func applySubmitReview(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
+	return postReview(ctx, gh, doc, true, dryRun, out)
+}
+
+func postReview(ctx context.Context, gh *githubv39.Client, doc *Document, submit, dryRun bool, out io.Writer) error {
 	r, err := doc.ReviewSpec()
 	if err != nil {
 		return err
@@ -158,7 +170,11 @@ func applyPostReview(ctx context.Context, gh *githubv39.Client, doc *Document, d
 		return err
 	}
 	body, comments, folded := placeComments(r, diff)
-	fmt.Fprintf(out, "%s a pending review by %s on %s at %s: %d comments on the diff", doing(dryRun, "Posting", "post"), login, doc.Target.URL, short(doc.Target.Commit), len(comments))
+	what := "a pending review"
+	if submit {
+		what = "a review"
+	}
+	fmt.Fprintf(out, "%s %s by %s on %s at %s: %d comments on the diff", doing(dryRun, "Posting", "post"), what, login, doc.Target.URL, short(doc.Target.Commit), len(comments))
 	if folded > 0 {
 		fmt.Fprintf(out, ", %d not on it folded into the body", folded)
 	}
@@ -174,13 +190,21 @@ func applyPostReview(ctx context.Context, gh *githubv39.Client, doc *Document, d
 			return fmt.Errorf("discarding the pending review factory posted before: %w", err)
 		}
 	}
-	// No event: the review stays pending, the caller's to submit.
-	if _, _, err := gh.PullRequests.CreateReview(ctx, owner, repo, num, &githubv39.PullRequestReviewRequest{
+	req := &githubv39.PullRequestReviewRequest{
 		CommitID: githubv39.String(doc.Target.Commit),
 		Body:     githubv39.String(body + marker(doc)),
 		Comments: comments,
-	}); err != nil {
-		return fmt.Errorf("posting the pending review: %w", err)
+	}
+	if submit {
+		req.Event = githubv39.String("COMMENT")
+	}
+	// Without an event the review stays pending, the caller's to submit.
+	if _, _, err := gh.PullRequests.CreateReview(ctx, owner, repo, num, req); err != nil {
+		return fmt.Errorf("posting %s: %w", what, err)
+	}
+	if submit {
+		fmt.Fprintf(out, "Posted on %s\n", doc.Target.URL)
+		return nil
 	}
 	fmt.Fprintf(out, "Posted; read, change and submit it on %s/files\n", doc.Target.URL)
 	return nil

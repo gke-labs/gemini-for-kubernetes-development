@@ -67,7 +67,11 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	case api.TypePRIterate:
 		args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
 	case api.TypePRReview:
-		args = []string{"pr", "review", "--pr-url", t.URL, "--publish", "yes"}
+		// The review recipe, submitted as a COMMENT review by the reviewer
+		// picked (--user). The run name is this enqueue's: a restarted
+		// watcher's recovered task follows its run, or applies its result,
+		// and a failed review enqueued again starts a new one.
+		args = []string{"recipe", "review", "--url", t.URL, "--run-name", reviewRunName(t), "--apply", "--action", "submit-review"}
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)
 		}
@@ -149,4 +153,21 @@ func (r *CLIRunner) openLogFile(taskFilename string) (*os.File, error) {
 	logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
 	logPath := filepath.Join(r.cfg.ProcessingLogDir, logFilename)
 	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+}
+
+// reviewRunName names the review run of t: its PR, the commit reviewed and
+// when t was enqueued.
+func reviewRunName(t *api.QueueTask) string {
+	sha := t.CommitSHA
+	if len(sha) > 7 {
+		sha = sha[:7]
+	}
+	if sha == "" {
+		sha = "head"
+	}
+	at := t.EnqueuedAt
+	if at.IsZero() {
+		at = t.CreatedAt
+	}
+	return fmt.Sprintf("review-%d-%s-%d", t.Number, sha, at.Unix())
 }

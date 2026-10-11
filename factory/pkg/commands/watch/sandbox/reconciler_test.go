@@ -782,12 +782,15 @@ func TestPRNumberFromSandbox(t *testing.T) {
 		{name: "factory-pr-truncated-slug-8", labels: map[string]string{labelPR: "9"}, want: 9, wantOK: true},
 		{name: "factory-pr-repo", wantOK: false},
 		{name: "fix-test-repo-42", labels: map[string]string{labelPR: "70"}, wantOK: false},
+		{name: "review-test-repo-42", want: 42, wantOK: true},
+		{name: "review-other-repo-42", wantOK: false},
+		{name: "review-test-repo-x", wantOK: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sb := newSandbox(tc.name, nil)
 			sb.SetLabels(tc.labels)
-			got, ok := prNumberFromSandbox(sb)
+			got, ok := prNumberFromSandbox(sb, "test-repo")
 			if ok != tc.wantOK || got != tc.want {
 				t.Errorf("prNumberFromSandbox(%q) = %d, %v, want %d, %v", tc.name, got, ok, tc.want, tc.wantOK)
 			}
