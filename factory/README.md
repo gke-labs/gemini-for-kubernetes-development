@@ -40,7 +40,6 @@
 - **Fan-out spec.** `factory recipe fanout --url <issue>` writes a fan-out spec (see *One task, many items*) for an issue that lists one task for many items, as a task output. `--apply` adds the fan-out and stop labels and posts it as the spec comment, for maintainers to edit before they remove the stop label.
 - **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` writes the plan, as edited, to the issue's sandbox and runs `factory fix --with-plan`.
 - **PR lifecycle.**
-  - `pr review` reviews the diff using repeatable `--instruction` files or strings. `--publish` takes `no`, `ask`, `yes` or `draft`.
   - `pr investigate` works on CI failures.
   - `pr address-comments` handles review feedback.
   - `pr iterate` rebases and resolves conflicts.
@@ -88,7 +87,7 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 ### Reviews as a recipe (`factory recipe review`)
 - **Review a PR.** `recipe review --url <PR> [--instruction …]` reviews the PR in a sandbox of its own (`review-<repo>-<n>`). The clone fetches the PR's head and base, and the agent reviews with `git diff` and no GitHub credentials (`credentials: clone`). The result is a Review task output pinned to the commit reviewed.
 - **Post it as a draft.** `apply --action post-review` posts it as your pending review on the PR, at that commit, folding comments that are not on a line of the diff into the body. You read, change and submit it on GitHub. Posting again replaces the pending review factory posted, and refuses to touch one you started yourself.
-- `factory pr review` and the watch's reviews are unchanged.
+- **Submit it.** `apply --action submit-review` submits it as a COMMENT review instead, once per task output; it is never offered in the output, and `--apply --action submit-review` is how the watch daemon reviews a PR, as the reviewer identity (`--user`).
 
 ### Fan-out (`factory watch fanout`)
 - **One task, many items.** A parent issue with `## Task` (a Go template for one item: `{{.item.name}}`, `{{.parent.title}}`), `## Items` (a checklist, or `items.from` a JSON file in the repo or at an https URL, with `select`, `where` and `name`), and optionally `## Finally` and `## Fan-out` (settings) gets a child issue per item, or per growing `group` of items. The spec is the newest comment marked `<!-- factory:fanout-spec -->` by you or a maintainer, else the body.
@@ -187,8 +186,8 @@ factory recipe plan --url https://github.com/owner/repo/issues/1 --feedback "mer
 factory fix --url https://github.com/owner/repo/issues/1 --with-plan
 
 # Review a PR against guidelines and post it as a pending review
-factory pr review --pr-url https://github.com/owner/repo/pull/1 \
-  --instruction docs/guidelines.md --instruction "ignore test-only changes" --publish draft
+factory recipe review --url https://github.com/owner/repo/pull/1 \
+  --instruction docs/guidelines.md --instruction "ignore test-only changes" --apply
 
 # Follow up CI failures and review comments on a PR of yours with care, until it merges
 factory pr watch --pr-url https://github.com/owner/repo/pull/1
@@ -225,11 +224,11 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
+| `recipe review` | Review a PR in its own sandbox; `--apply` posts it as a pending review, `--action submit-review` submits it |
 | `recipe fanout` | Write a fan-out spec for an issue; `--apply` posts it and adds the fan-out and stop labels |
 | `recipe research` | Start a research conversation in a sandbox; `recipe revise` continues it |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
-| `pr review` | Review a PR; `--publish no\|ask\|yes\|draft` |
 | `pr investigate` | Investigate and fix CI failures on a PR |
 | `pr address-comments` | Address review feedback on a PR |
 | `pr iterate` | Rebase, resolve conflicts, or apply a `--prompt` |

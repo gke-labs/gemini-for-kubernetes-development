@@ -479,7 +479,8 @@ func sandboxTaskType(taskType api.TaskType) string {
 	case api.TypePRIterate:
 		return "iterate"
 	case api.TypePRReview:
-		return "review"
+		// A review runs the review recipe, which records recipe-<name>.
+		return "recipe-review"
 	default:
 		return string(taskType)
 	}
