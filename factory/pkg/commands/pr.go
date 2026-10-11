@@ -34,7 +34,6 @@ func NewPRCommand(ctx context.Context) *cobra.Command {
 		Use:   "pr",
 		Short: "Manage GitHub pull request workflows",
 	}
-	cmd.AddCommand(NewReviewCommand(ctx))
 	cmd.AddCommand(NewInvestigateCommand(ctx))
 	cmd.AddCommand(NewAddressCommentsCommand(ctx))
 	cmd.AddCommand(NewIterateCommand(ctx))

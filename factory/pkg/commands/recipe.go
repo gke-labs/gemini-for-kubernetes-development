@@ -178,12 +178,12 @@ func inputFlagName(input string, decl recipe.Input) string {
 	return name
 }
 
-// resolveInstructions reads each instruction as `factory pr review
-// --instruction` does and joins them as it does.
+// resolveInstructions reads each instruction (a local file, a file in the
+// repository or the text itself) and joins them.
 func resolveInstructions(ctx context.Context, ghClient *githubv39.Client, owner, repo string, vals []string) (string, error) {
 	var out []string
 	for _, v := range vals {
-		content, isFile, err := resolveInstruction(ctx, ghClient, owner, repo, "", v)
+		content, isFile, err := resolveInstruction(ctx, ghClient, owner, repo, v)
 		if err != nil {
 			return "", err
 		}
