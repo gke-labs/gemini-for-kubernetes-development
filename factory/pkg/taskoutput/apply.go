@@ -30,12 +30,17 @@ func Apply(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool
 	return nil
 }
 
-// ApplyAction does one apply action the document offers.
+// ApplyAction does one apply action the document offers, or one its offer
+// of another allows (submit-review, by post-review).
 func ApplyAction(ctx context.Context, gh *githubv39.Client, doc *Document, verbName string, dryRun bool, out io.Writer) error {
-	if _, err := doc.Offer(verbName, ""); err != nil {
+	v := verbs[verbName]
+	offered := verbName
+	if v.offeredAs != "" {
+		offered = v.offeredAs
+	}
+	if _, err := doc.Offer(offered, ""); err != nil {
 		return err
 	}
-	v := verbs[verbName]
 	if v.class != ClassApply {
 		return fmt.Errorf("%s is a %s action, not one apply writes", verbName, v.class)
 	}

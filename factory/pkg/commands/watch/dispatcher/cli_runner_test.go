@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,14 +85,22 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 			Type:         api.TypePRReview,
 			URL:          "https://github.com/test-owner/test-repo/pull/456",
 			Number:       456,
+			CommitSHA:    "0123456789abcdef",
+			EnqueuedAt:   time.Unix(1760000000, 0),
 			Instructions: []string{"check security", "check unit tests"},
 		}
 		args := r.BuildArgs(task, "reviewer-bot")
 		if len(args) == 0 {
 			t.Fatalf("expected args, got empty slice")
 		}
-		if args[0] != "pr" || args[1] != "review" {
-			t.Errorf("expected command 'pr review', got %v", args[:2])
+		want := []string{"recipe", "review", "--url", task.URL, "--run-name", "review-456-0123456-1760000000", "--apply", "--action", "submit-review"}
+		if !slices.Equal(args[:len(want)], want) {
+			t.Errorf("args = %v, want them to start %v", args, want)
+		}
+		for i, a := range args {
+			if a == "--user" && (i+1 >= len(args) || args[i+1] != "reviewer-bot") {
+				t.Errorf("--user is not the reviewer: %v", args)
+			}
 		}
 
 		// Verify instructions
