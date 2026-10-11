@@ -54,6 +54,8 @@ Without --action, apply does each write the result offers:
   label, comment  that write alone
   push-notes      that write alone
   post-review     that write alone
+  submit-review   post-review submitted, as a COMMENT review (offered with
+                  post-review; factory watch's reviews)
   open-pr         that write alone
   post-replies    that write alone
   run             the follow-up it offers (run:fix names it): the recipe
@@ -125,7 +127,7 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, open-pr, post-replies, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, submit-review, open-pr, post-replies, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd

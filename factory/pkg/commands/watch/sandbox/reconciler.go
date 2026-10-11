@@ -369,7 +369,7 @@ func (r *Reconciler) cleanupClosedPRSandboxes(ctx context.Context, items []unstr
 
 		item := &items[i]
 		name := item.GetName()
-		num, ok := prNumberFromSandbox(item)
+		num, ok := prNumberFromSandbox(item, r.sandboxes.repo)
 		if !ok {
 			continue
 		}
@@ -642,11 +642,16 @@ func (r *Reconciler) servedClosedPR(item *unstructured.Unstructured) bool {
 	return !r.entities.IsOpenPR(pr)
 }
 
-// prNumberFromSandbox returns the pull request a review sandbox
+// prNumberFromSandbox returns the pull request a PR sandbox
 // ("factory-pr-<repo>-N", or "factory-pr-N" before review sandboxes were
-// scoped by repo) belongs to, preferring its PR label over the name.
-func prNumberFromSandbox(item *unstructured.Unstructured) (int, bool) {
+// scoped by repo) belongs to, preferring its PR label over the name, or
+// the one repo's review recipe sandbox ("review-<repo>-N") is for.
+func prNumberFromSandbox(item *unstructured.Unstructured, repo string) (int, bool) {
 	name := item.GetName()
+	if prefix := "review-" + repo + "-"; repo != "" && strings.HasPrefix(name, prefix) {
+		num, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
+		return num, err == nil && num > 0
+	}
 	if !strings.HasPrefix(name, "factory-pr-") {
 		return 0, false
 	}

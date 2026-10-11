@@ -225,3 +225,61 @@ func TestPostReview(t *testing.T) {
 		}
 	})
 }
+
+func TestSubmitReview(t *testing.T) {
+	ctx := context.Background()
+	doc := reviewDoc(t, agentReview, "abc")
+
+	t.Run("submits a COMMENT review, discarding its own pending one", func(t *testing.T) {
+		f := &fakeReviews{head: "abc", reviews: []*githubv39.PullRequestReview{
+			review(7, "me", "PENDING", "old"+"\n\n<!-- factory:task-output kind=Review task=recipe-review-0 -->"),
+		}}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "submit-review", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.deleted) != 1 || f.deleted[0] != 7 || len(f.created) != 1 {
+			t.Fatalf("deleted %v, created %d", f.deleted, len(f.created))
+		}
+		req := f.created[0]
+		if req.GetEvent() != "COMMENT" || req.GetCommitID() != "abc" || len(req.Comments) != 1 || !strings.Contains(req.GetBody(), marker(doc)) {
+			t.Errorf("request = %+v", req)
+		}
+	})
+
+	t.Run("does not submit the same task twice", func(t *testing.T) {
+		f := &fakeReviews{head: "abc", reviews: []*githubv39.PullRequestReview{review(7, "me", "COMMENTED", "sent"+marker(doc))}}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "submit-review", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.created) != 0 || !strings.Contains(out.String(), "already submitted") {
+			t.Errorf("created %d:\n%s", len(f.created), out.String())
+		}
+	})
+
+	t.Run("refuses a pending review it did not post", func(t *testing.T) {
+		f := &fakeReviews{head: "abc", reviews: []*githubv39.PullRequestReview{review(7, "me", "PENDING", "my notes")}}
+		err := ApplyAction(ctx, f.client(t), doc, "submit-review", false, &bytes.Buffer{})
+		if err == nil || len(f.deleted)+len(f.created) != 0 {
+			t.Errorf("err = %v, deleted %v, created %d", err, f.deleted, len(f.created))
+		}
+	})
+
+	t.Run("allowed by post-review, never offered or declared", func(t *testing.T) {
+		for _, a := range doc.Offered() {
+			if a.Verb == "submit-review" {
+				t.Errorf("offered: %v", doc.Offered())
+			}
+		}
+		if err := ValidateActions("Review", []Action{{Verb: "submit-review"}}); err == nil {
+			t.Error("a recipe declared submit-review")
+		}
+		narrowed := reviewDoc(t, agentReview, "abc")
+		narrowed.Actions = []Action{{Verb: "reject"}}
+		err := ApplyAction(ctx, (&fakeReviews{head: "abc"}).client(t), narrowed, "submit-review", false, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "does not offer post-review") {
+			t.Errorf("err = %v", err)
+		}
+	})
+}

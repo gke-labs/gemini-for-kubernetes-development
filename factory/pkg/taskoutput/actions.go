@@ -66,20 +66,27 @@ type verb struct {
 	kinds []string
 	// apply is an apply verb's write.
 	apply applyFunc
+	// offeredAs is, for a verb no document offers itself, the verb whose
+	// offer allows it: a stronger form of that write, for a caller that
+	// asks for it by name (submit-review, a watch's review, is post-review
+	// submitted). A recipe cannot declare it, so no button shows it and
+	// a plain apply never does it.
+	offeredAs string
 }
 
 var verbs = map[string]verb{
-	"comment":      {class: ClassApply, kinds: []string{"Triage", "Plan", "Summary"}, apply: applyComment},
-	"label":        {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
-	"push-notes":   {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
-	"post-review":  {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
-	"open-pr":      {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
-	"post-replies": {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
-	"post-spec":    {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
-	"run":          {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"revise":       {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"edit":         {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
-	"reject":       {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
+	"comment":       {class: ClassApply, kinds: []string{"Triage", "Plan", "Summary"}, apply: applyComment},
+	"label":         {class: ClassApply, kinds: []string{"Triage"}, apply: applyLabels},
+	"push-notes":    {class: ClassApply, kinds: []string{"Notes"}, apply: applyPushNotes},
+	"post-review":   {class: ClassApply, kinds: []string{"Review"}, apply: applyPostReview},
+	"submit-review": {class: ClassApply, kinds: []string{"Review"}, apply: applySubmitReview, offeredAs: "post-review"},
+	"open-pr":       {class: ClassApply, kinds: []string{"Change"}, apply: applyOpenPR},
+	"post-replies":  {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
+	"post-spec":     {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
+	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
+	"revise":        {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
+	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
+	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
 }
 
 // defaultActions are what a kind's result offers when its document
@@ -166,6 +173,9 @@ func ValidateActions(kind string, actions []Action) error {
 		if !slices.Contains(v.kinds, kind) {
 			return fmt.Errorf("action %s does not take a %s", a.Verb, kind)
 		}
+		if v.offeredAs != "" {
+			return fmt.Errorf("action %s cannot be declared; offering %s allows it", a.Verb, v.offeredAs)
+		}
 		key := a.Verb + "/" + a.arg()
 		if seen[key] {
 			return fmt.Errorf("action %s declared twice", a)
@@ -214,7 +224,7 @@ func (d *Document) Offered() []Action {
 	}
 	var out []Action
 	for _, a := range actions {
-		if v, ok := verbs[a.Verb]; ok && slices.Contains(v.kinds, d.Kind) {
+		if v, ok := verbs[a.Verb]; ok && v.offeredAs == "" && slices.Contains(v.kinds, d.Kind) {
 			out = append(out, a)
 		}
 	}

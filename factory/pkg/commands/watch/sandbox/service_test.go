@@ -150,7 +150,8 @@ func TestServiceResolveName(t *testing.T) {
 	}{
 		{"issue task", api.TypeIssueFix, 10, "fix-test-repo-10"},
 		{"chore task falls back to the issue sandbox", api.TypeAgentChore, 10, "fix-test-repo-10"},
-		{"pr task", api.TypePRReview, 55, "factory-pr-55"},
+		{"pr task", api.TypePRComments, 55, "factory-pr-55"},
+		{"review runs in the review recipe's sandbox", api.TypePRReview, 55, "review-test-repo-55"},
 	}
 
 	for _, tc := range tests {

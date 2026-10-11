@@ -63,6 +63,9 @@ type recipeRunFlags struct {
 	inputArgs                 []string
 	apply, dryRun             bool
 	newSession                bool
+	// action is the one write --apply does, instead of each the result
+	// offers.
+	action string
 	// instructions are the values of each instructions-type input's flag,
 	// resolved once the repository is known.
 	instructions map[string]*[]string
@@ -75,6 +78,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.runName, "run-name", "", "Names this run: running again with the same name follows that task, or returns or applies its result, instead of starting another; find it with sandbox task status|output|attach --run-name")
 	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
+	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do this one action of the result (as factory apply --action) instead of each write it offers")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
 }
@@ -87,6 +91,9 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 	}
 	if f.dryRun && !f.apply {
 		return fmt.Errorf("--dry-run goes with --apply")
+	}
+	if f.action != "" && !f.apply {
+		return fmt.Errorf("--action goes with --apply")
 	}
 	if f.apply && rootFlags.Detached {
 		return fmt.Errorf("--apply waits for the task; it cannot be --detached")
@@ -109,7 +116,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{f.apply, f.dryRun}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != ""}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -373,6 +380,13 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", secretName, rootFlags.Namespace, err)
 	}
+	if apply.asUser {
+		token := string(secret.Data[constants.KeyGithubToken])
+		if token == "" {
+			return fmt.Errorf("secret %s has no %s to apply the result with", secretName, constants.KeyGithubToken)
+		}
+		ghClient = github.NewClientWithToken(ctx, token)
+	}
 	var standard map[string]string
 	var htmlURL string
 	var labels []string
@@ -506,15 +520,19 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 			return resumeNamedRun(ctx, sb, ghClient, rec, sandboxName, e, apply)
 		}
 	}
-	if apply.on {
+	// A run name names this run: one not taken yet starts it, rather than
+	// picking up an earlier run's result.
+	if apply.on && runName == "" {
 		e, ok, err := resumableTask(ctx, sb, rec.Name, htmlURL)
 		if err != nil {
 			return err
 		}
 		if ok {
 			fmt.Printf("Picking up task %s, this recipe's last run on %s (run again once it is applied to start a new one).\n", e.ID, htmlURL)
-			return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, e.ID, "", apply.dryRun)
+			return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, e.ID, apply.verb, apply.dryRun)
 		}
+	}
+	if apply.on {
 		// Interrupting stops the waiting; the task runs on, for the
 		// next run to pick up.
 		rootFlags.AbortOnCancel = false
@@ -545,7 +563,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 		return err
 	}
 	if apply.on {
-		return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, task.ID, "", apply.dryRun)
+		return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, task.ID, apply.verb, apply.dryRun)
 	}
 	printResultHint(rec, task, sandboxName)
 	return nil
@@ -930,7 +948,7 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 			fmt.Printf("Task %s's result is applied already.\n", e.ID)
 			return nil
 		}
-		return awaitAndApply(ctx, sb, gh, rec, sandboxName, e.ID, "", apply.dryRun)
+		return awaitAndApply(ctx, sb, gh, rec, sandboxName, e.ID, apply.verb, apply.dryRun)
 	}
 	if e.State != spool.Exited {
 		if rootFlags.Detached {
@@ -970,8 +988,16 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 	return nil
 }
 
-// applyMode is what --apply and --dry-run ask of a recipe run.
-type applyMode struct{ on, dryRun bool }
+// applyMode is what --apply, --dry-run and --action ask of a recipe run.
+type applyMode struct {
+	on, dryRun bool
+	// verb is the one action to apply; empty, each write offered.
+	verb string
+	// asUser applies with the token of the account the task runs as
+	// (--user's secret) rather than the caller's: a watch's review is
+	// posted by the reviewer it picked.
+	asUser bool
+}
 
 // resumableTask is the newest run of recipeName on itemURL in the sandbox
 // when it is one `--apply` picks up: still pending or running, or
