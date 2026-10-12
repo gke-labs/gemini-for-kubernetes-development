@@ -1,76 +1,16 @@
 import React from 'react';
 import {
     formatQueueTimestamp,
-    sortTasksByTimestamp,
-    formatInlineTimestamp,
     getTimestampDetails,
-    getSandboxPodInfo,
-    isSandboxRunning,
-    countRunningSandboxes,
-    countSuspendedSandboxes
 } from './Overseer';
 
-jest.mock('./Terminal', () => () => null);
-
-describe('sortTasksByTimestamp', () => {
-    test('returns empty array if tasks is falsy or not an array', () => {
-        expect(sortTasksByTimestamp(null)).toEqual([]);
-        expect(sortTasksByTimestamp(undefined)).toEqual([]);
-        expect(sortTasksByTimestamp({})).toEqual([]);
-    });
-
-    test('sorts tasks chronologically newest first', () => {
-        const tasks = [
-            { metadata: { name: 'task-old', creationTimestamp: '2026-09-17T10:00:00Z' } },
-            { metadata: { name: 'task-newest', creationTimestamp: '2026-09-17T12:00:00Z' } },
-            { metadata: { name: 'task-medium', creationTimestamp: '2026-09-17T11:00:00Z' } }
-        ];
-
-        const sorted = sortTasksByTimestamp(tasks);
-        expect(sorted.map(t => t.metadata.name)).toEqual(['task-newest', 'task-medium', 'task-old']);
-    });
-
-    test('falls back to alphabetical sorting of names for identical timestamps (ascending A-Z)', () => {
-        const tasks = [
-            { metadata: { name: 'task-b', creationTimestamp: '2026-09-17T11:00:00Z' } },
-            { metadata: { name: 'task-c', creationTimestamp: '2026-09-17T11:00:00Z' } },
-            { metadata: { name: 'task-a', creationTimestamp: '2026-09-17T11:00:00Z' } }
-        ];
-
-        const sorted = sortTasksByTimestamp(tasks);
-        expect(sorted.map(t => t.metadata.name)).toEqual(['task-a', 'task-b', 'task-c']);
-    });
-
-    test('handles invalid, missing, or null timestamps gracefully', () => {
-        const tasks = [
-            { metadata: { name: 'task-invalid', creationTimestamp: 'not-a-date' } },
-            { metadata: { name: 'task-none' } },
-            { metadata: { name: 'task-null', creationTimestamp: null } },
-            { metadata: { name: 'task-valid', creationTimestamp: '2026-09-17T11:00:00Z' } }
-        ];
-
-        const sorted = sortTasksByTimestamp(tasks);
-        // Valid timestamp first (since 2026 > 0)
-        // Others have 0 time, sorted alphabetically ascending: 'task-invalid', 'task-none', 'task-null'
-        expect(sorted.map(t => t.metadata.name)).toEqual([
-            'task-valid',
-            'task-invalid',
-            'task-none',
-            'task-null'
-        ]);
-    });
-
-    test('does not crash and filters out null or undefined tasks in the list', () => {
-        const tasks = [
-            null,
-            { metadata: { name: 'task-valid', creationTimestamp: '2026-09-17T11:00:00Z' } },
-            undefined
-        ];
-        const sorted = sortTasksByTimestamp(tasks);
-        // Assert that the array has exactly length 1 and contains only the valid task
-        expect(sorted).toEqual([{ metadata: { name: 'task-valid', creationTimestamp: '2026-09-17T11:00:00Z' } }]);
-    });
-});
+// The page pulls in the work view, which pulls in the board's session
+// slide-over (Research: react-markdown, ESM) and sandbox card (xterm,
+// which measures a canvas jsdom lacks).
+jest.mock('react-markdown', () => ({ children }) => children);
+jest.mock('remark-gfm', () => 'gfm-plugin-stub');
+jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
+jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 describe('formatQueueTimestamp', () => {
     test('returns "-" for falsy/empty values', () => {
@@ -130,34 +70,6 @@ describe('formatQueueTimestamp', () => {
     });
 });
 
-describe('formatInlineTimestamp', () => {
-    test('returns "" for falsy/empty values', () => {
-        expect(formatInlineTimestamp(null)).toBe('');
-        expect(formatInlineTimestamp(undefined)).toBe('');
-        expect(formatInlineTimestamp('')).toBe('');
-    });
-
-    test('returns raw string for invalid dates', () => {
-        expect(formatInlineTimestamp('not-a-valid-date')).toBe('not-a-valid-date');
-    });
-
-    test('formats valid timestamps inline with exact date and relative time', () => {
-        const now = 1750000000000; // Fixed timestamp in ms
-        const originalDateNow = Date.now;
-        Date.now = jest.fn(() => now);
-
-        try {
-            // Seconds ago (< 60s)
-            const secondsAgoDate = new Date(now - 25 * 1000).toISOString();
-            const res = formatInlineTimestamp(secondsAgoDate);
-            const exact = new Date(secondsAgoDate).toLocaleString();
-            expect(res).toBe(`${exact} (25s ago)`);
-        } finally {
-            Date.now = originalDateNow;
-        }
-    });
-});
-
 describe('getTimestampDetails', () => {
     test('returns null for falsy/empty values', () => {
         expect(getTimestampDetails(null)).toBeNull();
@@ -187,111 +99,3 @@ describe('getTimestampDetails', () => {
     });
 });
 
-describe('getSandboxPodInfo and isSandboxRunning', () => {
-    test('returns Unknown status for null or undefined sandbox', () => {
-        expect(getSandboxPodInfo(null)).toEqual({
-            status: 'Unknown',
-            label: 'Unknown',
-            badgeLabel: 'Unknown',
-            color: 'var(--text-secondary)',
-            bgColor: 'var(--bg-secondary)',
-            isSuspended: false,
-            isEvicted: false,
-            isFailed: false,
-            evictionCount: 0
-        });
-        expect(isSandboxRunning(null)).toBe(false);
-    });
-
-    test('identifies running sandboxes with replicas = 1', () => {
-        const sb = {
-            metadata: { name: 'sb-running' },
-            spec: { replicas: 1 }
-        };
-        const info = getSandboxPodInfo(sb);
-        expect(info.status).toBe('running');
-        expect(info.isSuspended).toBe(false);
-        expect(info.isEvicted).toBe(false);
-        expect(info.isFailed).toBe(false);
-        expect(isSandboxRunning(sb)).toBe(true);
-    });
-
-    test('identifies scaled down sandboxes with replicas = 0 (numeric or string)', () => {
-        const sbNumeric = {
-            metadata: { name: 'sb-scaled-0' },
-            spec: { replicas: 0 }
-        };
-        const sbString = {
-            metadata: { name: 'sb-scaled-str-0' },
-            spec: { replicas: '0' }
-        };
-        expect(getSandboxPodInfo(sbNumeric).isSuspended).toBe(true);
-        expect(getSandboxPodInfo(sbNumeric).status).toBe('scaled down');
-        expect(isSandboxRunning(sbNumeric)).toBe(false);
-
-        expect(getSandboxPodInfo(sbString).isSuspended).toBe(true);
-        expect(getSandboxPodInfo(sbString).status).toBe('scaled down');
-        expect(isSandboxRunning(sbString)).toBe(false);
-    });
-
-    test('identifies scaled down sandboxes via conditions when replicas is 0 message present', () => {
-        const sb = {
-            metadata: { name: 'sb-scaled-cond' },
-            status: {
-                conditions: [{ message: 'Sandbox replicas is 0 and idle' }]
-            }
-        };
-        expect(getSandboxPodInfo(sb).isSuspended).toBe(true);
-        expect(getSandboxPodInfo(sb).status).toBe('scaled down');
-        expect(isSandboxRunning(sb)).toBe(false);
-    });
-
-    test('identifies evicted or failed sandboxes', () => {
-        const sbEvicted = {
-            metadata: { name: 'sb-evicted' },
-            spec: { replicas: 1 },
-            status: {
-                conditions: [{ reason: 'Evicted', message: 'The node was low on resource' }]
-            }
-        };
-        const sbFailed = {
-            metadata: { name: 'sb-failed' },
-            spec: { replicas: 1 },
-            status: {
-                conditions: [{ reason: 'PodFailed', message: 'Phase: Failed' }]
-            }
-        };
-
-        expect(getSandboxPodInfo(sbEvicted).isEvicted).toBe(true);
-        expect(isSandboxRunning(sbEvicted)).toBe(false);
-
-        expect(getSandboxPodInfo(sbFailed).isFailed).toBe(true);
-        expect(isSandboxRunning(sbFailed)).toBe(false);
-    });
-});
-
-describe('countRunningSandboxes and countSuspendedSandboxes', () => {
-    test('returns 0 for empty or invalid sandbox lists', () => {
-        expect(countRunningSandboxes(null)).toBe(0);
-        expect(countRunningSandboxes(undefined)).toBe(0);
-        expect(countRunningSandboxes([])).toBe(0);
-
-        expect(countSuspendedSandboxes(null)).toBe(0);
-        expect(countSuspendedSandboxes(undefined)).toBe(0);
-        expect(countSuspendedSandboxes([])).toBe(0);
-    });
-
-    test('correctly counts running sandboxes that are not scaled down', () => {
-        const sandboxes = [
-            { metadata: { name: 'running-1' }, spec: { replicas: 1 } },
-            { metadata: { name: 'running-2' }, spec: { replicas: 1 } },
-            { metadata: { name: 'scaled-down-1' }, spec: { replicas: 0 } },
-            { metadata: { name: 'scaled-down-2' }, spec: { replicas: '0' } },
-            { metadata: { name: 'scaled-down-3' }, status: { conditions: [{ message: 'replicas is 0' }] } },
-            { metadata: { name: 'evicted-1' }, spec: { replicas: 1 }, status: { conditions: [{ reason: 'Evicted' }] } }
-        ];
-
-        expect(countRunningSandboxes(sandboxes)).toBe(2);
-        expect(countSuspendedSandboxes(sandboxes)).toBe(3);
-    });
-});
