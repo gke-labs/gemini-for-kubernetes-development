@@ -142,51 +142,31 @@ function StateMark({ state }) {
 const muted = { color: 'var(--text-secondary)' };
 const small = { fontSize: 'x-small' };
 
-// SessionListRow is a row: one line across the page, or two in the
-// narrow column.
-function SessionListRow({ row, narrow, selected, onOpen }) {
+// SessionListRow is a row, one continuous line wherever it is shown:
+// state, engine, recipe, item, repository, age. The sandbox, what the
+// agent is doing and the item's title are its hover.
+function SessionListRow({ row, selected, onOpen }) {
   const title = rowTitle(row);
-  const sub = row.recipe !== 'research' && row.title ? row.title : '';
-  const doingStyle = { ...small, color: row.state === 'needs-you' ? STATE['needs-you'].color : 'var(--text-secondary)' };
-  const base = {
-    display: 'flex', alignItems: 'center', gap: '8px', width: '100%', textAlign: 'left',
-    padding: narrow ? '6px 8px' : '6px 10px', border: 'none', cursor: 'pointer', font: 'inherit',
-    borderLeft: selected ? '3px solid var(--link-color, #0969da)' : '3px solid transparent',
-    background: selected ? 'var(--bg-secondary)' : 'none', color: 'var(--text-primary)',
-  };
-  if (narrow) {
-    return (
-      <button type="button" style={{ ...base, alignItems: 'flex-start' }} onClick={() => onOpen(row)} aria-current={selected || undefined}>
-        <StateMark state={row.state} />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'flex', gap: '6px' }}>
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: selected ? 600 : 400 }}>{title}</span>
-            <span style={{ ...muted, ...small }}>{ageOf(row.updatedAt)}</span>
-          </span>
-          <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...small }}>
-            <span style={muted}>{shortRepo(row.repo)}{row.item ? ` ${itemText(row)}` : ''} · </span>
-            <span style={doingStyle}>{rowDoing(row)}</span>
-          </span>
-        </span>
-      </button>
-    );
-  }
+  const hover = [title, row.recipe !== 'research' ? row.title : '', rowDoing(row), row.sandbox].filter(Boolean).join(' · ');
   return (
-    <button type="button" style={base} onClick={() => onOpen(row)} aria-current={selected || undefined}>
+    <button type="button" title={hover} onClick={() => onOpen(row)} aria-current={selected || undefined}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
+        padding: '5px 8px', border: 'none', cursor: 'pointer', font: 'inherit',
+        borderLeft: selected ? '3px solid var(--link-color, #0969da)' : '3px solid transparent',
+        background: selected ? 'var(--bg-secondary)' : 'none', color: 'var(--text-primary)',
+      }}>
       <StateMark state={row.state} />
-      <EngineIcon engine={row.engine} />
-      <span style={{ flex: '2 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {title}{sub && <span style={muted}> — {sub}</span>}
-      </span>
-      <span title={row.repo} style={{ flex: '0 0 220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...small }}>
-        {row.item ? (
-          <a href={row.htmlURL} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{itemText(row)} ↗</a>
-        ) : <span style={muted}>—</span>}{' '}
-        <span style={muted}>{shortRepo(row.repo)}</span>
-      </span>
-      <span style={{ flex: '0 0 170px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...muted, ...small, fontFamily: 'monospace' }}>{row.sandbox}</span>
-      <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...doingStyle }}>{rowDoing(row)}</span>
-      <span style={{ flex: '0 0 32px', textAlign: 'right', ...muted, ...small }}>{ageOf(row.updatedAt)}</span>
+      <EngineIcon engine={row.engine} size={16} />
+      <span style={{ flex: '0 0 auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: selected ? 600 : 400 }}>{title}</span>
+      {row.item && (
+        <a href={row.htmlURL} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={small}>{itemText(row)} ↗</a>
+      )}
+      {row.repo && (
+        <span style={{ ...small, ...muted, padding: '0 6px', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', textOverflow: 'ellipsis', flex: '0 1 auto', minWidth: '40px' }}>
+          {shortRepo(row.repo)}</span>
+      )}
+      <span style={{ ...small, ...muted }}>{ageOf(row.updatedAt)}</span>
     </button>
   );
 }
@@ -455,7 +435,7 @@ export default function Sessions({ namespace }) {
               )}
             </div>
             {!hidden && b.rows.map(r => (
-              <SessionListRow key={rowKey(r)} row={r} narrow={narrow} selected={rowKey(r) === selected} onOpen={x => select(rowKey(x))} />
+              <SessionListRow key={rowKey(r)} row={r} selected={rowKey(r) === selected} onOpen={x => select(rowKey(x))} />
             ))}
           </div>
         );
