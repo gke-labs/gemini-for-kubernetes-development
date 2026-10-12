@@ -658,9 +658,12 @@ export function normaliseView(stored) {
   }
 }
 
-// taskSessionHash is where a task's session opens in its own tab.
-export function taskSessionHash(task) {
-  return `#/task-session/${task.sandbox}/${task.task}`;
+// taskSessionHash is where a task's session opens in its own tab: an
+// overseer's (apiBase /api/overseers/<name>) under its overseer.
+export function taskSessionHash(task, apiBase = '/api') {
+  const m = apiBase.match(/^\/api\/overseers\/([A-Za-z0-9._-]+)$/);
+  const prefix = m ? `#/overseers/${m[1]}` : '#';
+  return `${prefix}/task-session/${task.sandbox}/${task.task}`;
 }
 
 // taskSessionFallback is the terminal for a task whose sandbox keeps no
@@ -741,14 +744,16 @@ export const DRAFT_VERBS = {
   },
 };
 
+// apiBase is where a task's session routes are: /api, the member's, by
+// default; /api/overseers/<name> for an overseer's sandboxes.
 export function ResearchConversation({
-  sessionId, pending, legacy, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task, onDismiss,
+  sessionId, pending, legacy, title, onDeleted, onRenamed, onClose, fill, standalone, renameAt, task, onDismiss, apiBase = '/api',
 }) {
   const api = task
-    ? `/api/task-sessions/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
+    ? `${apiBase}/task-sessions/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
     : '';
   const eventsPath = task
-    ? `/api/task-session-events/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
+    ? `${apiBase}/task-session-events/${encodeURIComponent(task.sandbox)}/${encodeURIComponent(task.task)}`
     : '';
   // phase: what we are waiting on, and therefore what to render.
   //   probing  — asking whether the sandbox can be talked to
@@ -1413,7 +1418,7 @@ export function ResearchConversation({
   const wake = () => {
     setWaking(true);
     setError('');
-    fetch(`/api/sandbox-card/${encodeURIComponent(task.sandbox)}/lifecycle`, {
+    fetch(`${apiBase}/sandbox-card/${encodeURIComponent(task.sandbox)}/lifecycle`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'wake' }),
     })
@@ -1645,7 +1650,7 @@ export function ResearchConversation({
                 {onClose ? 'esc ⤢' : expanded ? '⤢' : '⛶'}
               </button>
               </>)}
-              <a className="btn btn-sm" href={taskSessionHash(task)}
+              <a className="btn btn-sm" href={taskSessionHash(task, apiBase)}
                 target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab"
                 onClick={onDismiss}
                 title="Open this conversation in its own tab">↗</a>

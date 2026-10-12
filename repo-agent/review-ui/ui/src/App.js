@@ -26,9 +26,12 @@ function terminalRoute() {
 // (research, plan, triage) in its own window, watched while the task
 // runs and continued after. The patterns mirror the server's
 // (handlers_task_session.go).
-function taskSessionRoute() {
-  const m = window.location.hash.match(/^#\/task-session\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})$/);
-  return m ? { sandbox: m[1], task: m[2] } : null;
+// #/overseers/<name>/task-session/<sandbox>/<task> is an overseer's
+// sandbox's, on that overseer's routes (apiBase).
+export function taskSessionRoute(hash = window.location.hash) {
+  const m = hash.match(/^#(?:\/overseers\/([A-Za-z0-9._-]+))?\/task-session\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})$/);
+  if (!m) return null;
+  return { sandbox: m[2], task: m[3], apiBase: m[1] ? `/api/overseers/${m[1]}` : '/api' };
 }
 
 // taskSessionTitle names a task's session by what the task is:
@@ -43,8 +46,8 @@ function TaskSessionPage({ route }) {
   useEffect(() => { document.title = title; }, [title]);
   return (
     <div className="App" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <ResearchConversation task={route} title={title} fill standalone
-        onDeleted={() => { window.location.href = '/'; }} />
+      <ResearchConversation task={{ sandbox: route.sandbox, task: route.task }} title={title} fill standalone
+        apiBase={route.apiBase} onDeleted={() => { window.location.href = '/'; }} />
     </div>
   );
 }
