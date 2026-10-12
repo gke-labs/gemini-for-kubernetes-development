@@ -171,6 +171,71 @@ func TestTaskStartedComment(t *testing.T) {
 	}
 }
 
+func TestWatcherTaskCoordinator_NotifyTaskStarted_DeduplicatesComments(t *testing.T) {
+	var (
+		mu           sync.Mutex
+		commentsList []string
+		created      []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		defer mu.Unlock()
+
+		switch {
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/10/comments"):
+			var items []interface{}
+			for _, c := range commentsList {
+				items = append(items, map[string]interface{}{"body": c})
+			}
+			_ = json.NewEncoder(w).Encode(items)
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/test-owner/test-repo/issues/10/comments"):
+			var req map[string]interface{}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			body := req["body"].(string)
+			created = append(created, body)
+			commentsList = append(commentsList, body)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 1, "body": body})
+		default:
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	w := newTestWatcher(t, t.TempDir())
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+	w.repoClient = github.ForRepo(gh, "test-owner", "test-repo")
+	w.ghClient = gh
+
+	coordinator := &watcherTaskCoordinator{w: w}
+
+	task := &api.QueueTask{
+		Type:      api.TypePRIterate,
+		Number:    10,
+		CommitSHA: "test-head-sha",
+	}
+
+	// First time: comment should be posted
+	coordinator.NotifyTaskStarted(context.Background(), task)
+
+	mu.Lock()
+	if len(created) != 1 {
+		t.Fatalf("expected 1 comment created, got %d", len(created))
+	}
+	mu.Unlock()
+
+	// Second time with identical comment already present: should be skipped
+	coordinator.NotifyTaskStarted(context.Background(), task)
+
+	mu.Lock()
+	if len(created) != 1 {
+		t.Errorf("expected still 1 comment created due to deduplication, got %d", len(created))
+	}
+	mu.Unlock()
+}
+
 // TestWatcherTaskCoordinator_NotifyTaskFinished_ResolvesTaskFeedback pins how
 // the task lifecycle wires up the resolver: review-bot feedback is resolved
 // (ReviewerLogins reaches it), and feedback older than the task's trigger is

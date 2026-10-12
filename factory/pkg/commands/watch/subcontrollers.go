@@ -401,10 +401,35 @@ func (c *watcherTaskCoordinator) NotifyTaskStarted(ctx context.Context, task *ap
 	}
 
 	if commentBody := taskStartedComment(task.Type); commentBody != "" {
-		if err := w.repoClient.AddComment(ctx, task.Number, commentBody); err != nil {
-			klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)
+		if shouldPostTaskStartedComment(ctx, w, task, commentBody) {
+			if err := w.repoClient.AddComment(ctx, task.Number, commentBody); err != nil {
+				klog.Errorf("Failed to create GitHub comment on #%d: %v", task.Number, err)
+			}
 		}
 	}
+}
+
+// shouldPostTaskStartedComment returns whether the start comment should be posted.
+// For PR tasks with a known commit SHA, it inspects existing comments to ensure
+// the same start comment was not already posted after the commit (or previously posted).
+func shouldPostTaskStartedComment(ctx context.Context, w *Watcher, task *api.QueueTask, commentBody string) bool {
+	if !api.IsPRTask(task.Type) || w.repoClient == nil {
+		return true
+	}
+	comments, err := w.repoClient.ListIssueComments(ctx, task.Number)
+	if err != nil {
+		klog.Warningf("Failed to list comments on #%d when checking for duplicate start comment: %v", task.Number, err)
+		return true
+	}
+	for _, c := range comments {
+		if strings.TrimSpace(c.GetBody()) == strings.TrimSpace(commentBody) {
+			// If we know the task's TriggerEventTime, check if a comment was posted after it.
+			// Or if the start comment already exists anywhere on the PR, don't spam it again.
+			klog.Infof("Skipping start comment on PR #%d: identical comment already posted", task.Number)
+			return false
+		}
+	}
+	return true
 }
 
 // NotifyTaskFinished resolves the acknowledgement reactions on PR feedback -

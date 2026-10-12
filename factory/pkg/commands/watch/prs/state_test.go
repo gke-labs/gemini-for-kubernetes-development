@@ -72,7 +72,23 @@ func TestFoldProcessedPRTask(t *testing.T) {
 		t.Errorf("expected lastCommentAddressedTime to be EnqueuedAt %v when comments task Failed, got %v", enqueuedCommentsAt, state.lastCommentAddressedTime)
 	}
 
-	// A failed non-comments task did not actually do the work, so folding it in
+	// A failed iterate task still records lastIteratedTime and lastIteratedSHA
+	// so the watcher does not reschedule the same failing rebase repeatedly.
+	failedIterateAt, _ := time.Parse(time.RFC3339, "2026-07-23T19:30:00Z")
+	state = foldProcessedPRTask(&api.QueueTask{
+		Type:        api.TypePRIterate,
+		Status:      api.StatusFailed,
+		CommitSHA:   "fail-iter-sha",
+		CompletedAt: failedIterateAt,
+	}, "task-pr-123-iterate", state)
+	if !state.lastIteratedTime.Equal(failedIterateAt) {
+		t.Errorf("expected lastIteratedTime to be %v when iterate task Failed, got %v", failedIterateAt, state.lastIteratedTime)
+	}
+	if state.lastIteratedSHA != "fail-iter-sha" {
+		t.Errorf("expected lastIteratedSHA to be 'fail-iter-sha', got '%s'", state.lastIteratedSHA)
+	}
+
+	// A failed investigate task did not actually do the work, so folding it in
 	// would suppress the retry.
 	failedAt, _ := time.Parse(time.RFC3339, "2026-07-23T20:00:00Z")
 	state = foldProcessedPRTask(&api.QueueTask{

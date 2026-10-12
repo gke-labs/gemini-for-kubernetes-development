@@ -173,7 +173,9 @@ func processedPRStates(tasks map[string]*api.QueueTask) map[int]prState {
 // task failed so that a restart does not mistake pre-existing comments for new
 // ones while still picking up comments posted while the task was running;
 // retries of a failed address-comments task are driven explicitly by inspecting
-// the processed task status. For other phases, a failed task is folded in as
+// the processed task status. For iterate tasks, the commit SHA and completion
+// time are recorded even on failure to prevent infinite rescheduling for the
+// same broken commit revision. For other phases, a failed task is folded in as
 // nothing at all so that recording it does not suppress a retry.
 func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	// The queue dates every finished task, falling back to the task file's own
@@ -196,6 +198,16 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 		return state
 	}
 
+	if strings.HasSuffix(name, "-iterate") {
+		if tTime.After(state.lastIteratedTime) {
+			state.lastIteratedTime = tTime
+		}
+		if t.CommitSHA != "" {
+			state.lastIteratedSHA = t.CommitSHA
+		}
+		return state
+	}
+
 	if strings.EqualFold(string(t.Status), string(api.StatusFailed)) {
 		return state
 	}
@@ -211,13 +223,6 @@ func foldProcessedPRTask(t *api.QueueTask, name string, state prState) prState {
 	case strings.HasSuffix(name, "-review"):
 		if t.CommitSHA != "" {
 			state.lastReviewedSHA = t.CommitSHA
-		}
-	case strings.HasSuffix(name, "-iterate"):
-		if tTime.After(state.lastIteratedTime) {
-			state.lastIteratedTime = tTime
-		}
-		if t.CommitSHA != "" {
-			state.lastIteratedSHA = t.CommitSHA
 		}
 	}
 	return state
