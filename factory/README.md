@@ -45,7 +45,7 @@
   - `recipe care-rebase` rebases a PR of yours onto the default branch and resolves conflicts (the overseer runs it with `--apply --action post-replies`).
   - `pr watch` follows up with care for one PR until it merges or closes.
 - **Session continuity.** A sandbox is aliased to its PR with the `factory.gemini.google.com/pr` label. Follow-up PR tasks therefore reuse the sandbox that wrote the code, and `--continue-session` keeps the agent's chat history.
-- **Adoption.** `pr adopt open|close` takes over a PR the bot can't push to. `--strategy reuse` copies the commits; `--strategy reimplement` re-implements the change on the latest base. PR tasks on PRs the bot doesn't own fail until the PR is adopted.
+- **Adoption.** `pr adopt open|close` takes over a PR the bot can't push to, through the `adopt` and `adopt-reimplement` recipes: `--strategy reuse` copies the commits to a branch on your fork; `--strategy reimplement` has the agent re-implement the change on the latest base. `open-pr` then opens the adopted PR and comments on the original (and closes it, with `close`). PR tasks on PRs the bot doesn't own fail until the PR is adopted.
 - **Custom agents.** `factory agent create` runs an agent definition from the repository's `.agents/`, or a local file with `--local`. A definition is YAML front-matter plus a prompt, and the same definitions drive scheduled chores. `--dry-run` simulates the run without invoking the agent.
 - **Workflows.** A definition with `mode: workflow` runs as a long-lived, multi-step process in a `wf-issue-<n>` sandbox, advancing one step per cycle. It is triggered when an issue body references the definition, or with `agent create --session-id`.
 

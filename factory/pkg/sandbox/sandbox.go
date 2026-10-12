@@ -453,61 +453,6 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	return name, nil
 }
 
-func EnsureAdoptSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := fmt.Sprintf("adopt-%s-%d", repoName, prNum)
-
-	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil && terminating(sb) {
-		// See awaitSandboxGone: a deleted sandbox still answers Get
-		// until its finalizers clear, and handing it back would hang.
-		if werr := awaitSandboxGone(ctx, kubeClient, namespace, name); werr != nil {
-			return "", werr
-		}
-	} else if err == nil {
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
-		return name, nil
-	} else if !strings.Contains(err.Error(), "not found") {
-		return "", fmt.Errorf("checking sandbox existence: %w", err)
-	}
-
-	if diskSize == "" {
-		diskSize = "10Gi"
-	}
-
-	opt := AgentSandboxOptions{
-		DevSandboxOptions: DevSandboxOptions{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "adopt",
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/user":    user,
-			},
-			Annotations: map[string]string{
-				"repo":     repoName,
-				"cloneURL": cloneURL,
-				"htmlURL":  htmlURL,
-			},
-			Image:                 image,
-			Replicas:              1,
-			WorkspaceDiskSize:     diskSize,
-			WorkspaceStorageClass: storageClass,
-			EphemeralStorage:      ephemeralStorage,
-			Secrets:               secrets,
-			Env:                   envs,
-		},
-	}
-
-	fillEnvResources(&opt.DevSandboxOptions)
-	sbObj, svc := NewAgentSandbox(opt)
-
-	if err := createSandbox(ctx, kubeClient, namespace, sbObj, svc); err != nil {
-		return "", err
-	}
-
-	return name, nil
-}
-
 // PRFromAgentOutput returns the pull request a task's agent-output.txt names:
 // the first line holding a /pull/<N> URL. It returns 0 when there is none.
 func PRFromAgentOutput(output string) (string, int) {

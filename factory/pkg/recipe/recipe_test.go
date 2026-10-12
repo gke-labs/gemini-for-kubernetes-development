@@ -1447,3 +1447,128 @@ start:
 		t.Errorf("a session that reports no usage left %s: %v", UsageFile, err)
 	}
 }
+
+// The adopt recipes: adopt takes the PR's commits (no agent), adopt-
+// reimplement has one ask; both end with the push, and their Change, which
+// a run step writes and no agent does, adopts the PR, closing it when
+// asked.
+func TestBuiltinAdoptRecipes(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 required")
+	}
+	for _, tc := range []struct {
+		name string
+		asks int
+	}{{"adopt", 0}, {"adopt-reimplement", 1}} {
+		_, rec, err := Builtin(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Any PR; `factory pr adopt` refuses one the adopter authored.
+		if !rec.RunsOn(OnPR) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+			t.Fatalf("%s: on %v, task-output %+v", tc.name, rec.On, rec.TaskOutput)
+		}
+		steps := rec.Start.Steps
+		asks := 0
+		var changeStep string
+		for _, s := range steps {
+			if s.Ask != "" {
+				asks++
+			}
+			if strings.Contains(s.Run, "closeAdopted") {
+				changeStep = s.Run
+			}
+		}
+		if asks != tc.asks || steps[len(steps)-1].Uses != "push" || changeStep == "" {
+			t.Fatalf("%s: %d asks, last step %+v, change step found %v", tc.name, asks, steps[len(steps)-1], changeStep != "")
+		}
+
+		taskDir := t.TempDir()
+		e := &SandboxExecutor{TaskDir: taskDir, RepoDir: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH")}}
+		var out strings.Builder
+		code, err := e.Run(context.Background(), changeStep, map[string]string{
+			"pr_url": "https://github.com/o/r/pull/5", "pr_title": "Fix the thing", "pr_body": "It's \"broken\".", "close": "true",
+		}, &out)
+		if err != nil || code != 0 {
+			t.Fatalf("%s: change step exited %d, %v\n%s", tc.name, code, err, out.String())
+		}
+		data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r/pull/5"}, taskoutput.Source{})
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", tc.name, err, data)
+		}
+		c, err := doc.ChangeSpec()
+		if err != nil || c.Title != "adopt: Fix the thing" || c.Adopts != "https://github.com/o/r/pull/5" || !c.CloseAdopted ||
+			!strings.Contains(c.Body, "adopted from original PR https://github.com/o/r/pull/5") || !strings.Contains(c.Body, `It's "broken".`) {
+			t.Errorf("%s: Change %+v, %v", tc.name, c, err)
+		}
+	}
+}
+
+// adopt's branch step: the PR's head, from the repository's
+// pull/<n>/head, becomes adopt-pr-<n>, its base where it branched off.
+func TestAdoptBranchStep(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git required")
+	}
+	_, rec, err := Builtin("adopt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var step string
+	for _, s := range rec.Start.Steps {
+		if strings.Contains(s.Run, "pull/${INPUT_PR_NUMBER}/head") {
+			step = s.Run
+		}
+	}
+	if step == "" {
+		t.Fatal("no branch step")
+	}
+	root := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=x@x", "-c", "user.name=x", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	// The repository: main, and a PR's head under refs/pull/5/head.
+	up := filepath.Join(root, "up")
+	git(root, "init", "-q", up)
+	git(up, "commit", "-q", "--allow-empty", "-m", "base")
+	base := git(up, "rev-parse", "HEAD")
+	git(up, "checkout", "-q", "-b", "contributor")
+	git(up, "commit", "-q", "--allow-empty", "-m", "the change")
+	head := git(up, "rev-parse", "HEAD")
+	git(up, "update-ref", "refs/pull/5/head", head)
+	git(up, "checkout", "-q", "main")
+	git(up, "commit", "-q", "--allow-empty", "-m", "main moved on")
+	// The checkout, its upstream the repository.
+	co := filepath.Join(root, "co")
+	git(root, "clone", "-q", up, co)
+	git(co, "remote", "add", "upstream", up)
+
+	taskDir := t.TempDir()
+	e := &SandboxExecutor{TaskDir: taskDir, RepoDir: co, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + root}}
+	var out strings.Builder
+	code, err := e.Run(context.Background(), step, map[string]string{"pr_number": "5", "pr_base": "main"}, &out)
+	if err != nil || code != 0 {
+		t.Fatalf("exited %d, %v\n%s", code, err, out.String())
+	}
+	read := func(name string) string {
+		data, _ := os.ReadFile(filepath.Join(taskDir, name))
+		return strings.TrimSpace(string(data))
+	}
+	if got := git(co, "rev-parse", "HEAD"); got != head || git(co, "symbolic-ref", "--short", "HEAD") != "adopt-pr-5" {
+		t.Errorf("HEAD %s on %s, want the PR's head %s on adopt-pr-5", got, git(co, "symbolic-ref", "--short", "HEAD"), head)
+	}
+	if read("branch") != "adopt-pr-5" || read("base") != base {
+		t.Errorf("branch %q, base %q; want adopt-pr-5, %s", read("branch"), read("base"), base)
+	}
+}

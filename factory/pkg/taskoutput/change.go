@@ -31,6 +31,12 @@ type Change struct {
 	// Draft is whether open-pr opens the PR as a draft; unset, it does.
 	// The task's draft input sets it (fillChange).
 	Draft *bool `yaml:"draft,omitempty"`
+	// Adopts is the PR the Change adopts (the adopt recipes): once open-pr
+	// has opened the Change's PR, it comments on that one with a link,
+	// and closes it when CloseAdopted is set. The recipe writes both, not
+	// an agent.
+	Adopts       string `yaml:"adopts,omitempty"`
+	CloseAdopted bool   `yaml:"closeAdopted,omitempty"`
 	// Replies answer review and issue comments (address-comments).
 	Replies []Reply `yaml:"replies,omitempty"`
 	// Report is a PR comment (fix-ci).
@@ -251,6 +257,7 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		// Applied again after its labels failed: they go on now.
 		if !dryRun {
 			addPRLabels(ctx, gh, owner, repo, open[0], c.Labels, out)
+			return markAdopted(ctx, gh, c, open[0].GetHTMLURL(), out)
 		}
 		return nil
 	}
@@ -285,6 +292,52 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	fmt.Fprintf(out, "Opened %s\n", pr.GetHTMLURL())
 	doc.Target.URL = pr.GetHTMLURL()
 	addPRLabels(ctx, gh, owner, repo, pr, c.Labels, out)
+	return markAdopted(ctx, gh, c, pr.GetHTMLURL(), out)
+}
+
+// adoptedMarker ends the comment markAdopted leaves on an adopted PR, so
+// that applying again leaves no second.
+func adoptedMarker(prURL string) string {
+	return fmt.Sprintf("<!-- factory:adopted-by %s -->", prURL)
+}
+
+// markAdopted comments on the PR a Change adopts with a link to prURL,
+// the PR that adopts it, once, and closes it when the Change says so.
+func markAdopted(ctx context.Context, gh *githubv39.Client, c *Change, prURL string, out io.Writer) error {
+	if c.Adopts == "" {
+		return nil
+	}
+	owner, repo, num, isPR, err := parseItemURL(c.Adopts)
+	if err != nil || !isPR {
+		return fmt.Errorf("adopts %q is not a PR", c.Adopts)
+	}
+	comments, _, err := gh.Issues.ListComments(ctx, owner, repo, num, &githubv39.IssueListCommentsOptions{ListOptions: githubv39.ListOptions{PerPage: 100}})
+	if err != nil {
+		return fmt.Errorf("reading the comments on %s: %w", c.Adopts, err)
+	}
+	commented := false
+	for _, cm := range comments {
+		if strings.Contains(cm.GetBody(), adoptedMarker(prURL)) {
+			commented = true
+			break
+		}
+	}
+	if !commented {
+		body := "This PR has been adopted here: " + prURL
+		if c.CloseAdopted {
+			body = "This PR has been adopted here: " + prURL + ", and closed."
+		}
+		if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: githubv39.String(body + "\n\n" + adoptedMarker(prURL))}); err != nil {
+			return fmt.Errorf("commenting on %s: %w", c.Adopts, err)
+		}
+		fmt.Fprintf(out, "Commented on %s\n", c.Adopts)
+	}
+	if c.CloseAdopted {
+		if _, _, err := gh.PullRequests.Edit(ctx, owner, repo, num, &githubv39.PullRequest{State: githubv39.String("closed")}); err != nil {
+			return fmt.Errorf("closing %s: %w", c.Adopts, err)
+		}
+		fmt.Fprintf(out, "Closed %s\n", c.Adopts)
+	}
 	return nil
 }
 
