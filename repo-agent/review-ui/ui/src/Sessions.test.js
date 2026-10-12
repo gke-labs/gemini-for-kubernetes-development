@@ -79,9 +79,16 @@ const fetched = () => global.fetch.mock.calls.map(c => c[0]);
 const button = (text) => Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes(text));
 
 describe('Sessions', () => {
-    test('the box and one flat list across the page, ordered by the dots\' colour', async () => {
+    test('opens split on + New: the list on the left, the start box focused on the right', async () => {
         await render();
-        expect(container.querySelector('textarea[aria-label="Start a session"]')).not.toBeNull();
+        const box = container.querySelector('textarea[aria-label="Start a session"]');
+        expect(box).not.toBeNull();
+        expect(document.activeElement).toBe(box);
+        expect(container.querySelector('[role="separator"]')).not.toBeNull();
+        // + New is the list's first row, under the search, and is the one open.
+        const newRow = button('New session');
+        expect(newRow.getAttribute('aria-current')).toBe('true');
+        expect(container.querySelector('input[aria-label="Search sessions"]').compareDocumentPosition(newRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         const text = container.textContent;
         // No section headers: red, then blue, then green, then grey, the
         // newest first in each; the 2020 fix is not listed.
@@ -93,7 +100,7 @@ describe('Sessions', () => {
         expect(container.querySelector('[aria-label="Group by"]')).toBeNull();
         expect(container.querySelector('[aria-label="State filter"]')).toBeNull();
         expect(container.querySelector('[aria-label="Repository filter"]')).toBeNull();
-        expect(container.querySelector('[aria-label="Legend"]').textContent).toBe('● needs you● working● idle● paused · done');
+        expect(container.querySelector('[aria-label="Legend"]').textContent).toBe('● needs you● working● idle● paused · done1 need you');
         // One line a row: state, engine, recipe, item, repo, age; what the
         // agent is doing and the sandbox are its hover.
         const rebase = Array.from(container.querySelectorAll('button')).find(b => b.textContent.startsWith('●Rebase'));
@@ -102,7 +109,7 @@ describe('Sessions', () => {
         const asking = Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes('reconciler deletes'));
         expect(asking.title).toBe('reconciler deletes · ⚠ asking permission · rsch-kcc-3f2a');
         expect(text).not.toContain('fix-g4k-1774');
-        expect(container.querySelector('[role="separator"]')).toBeNull();
+        expect(text).toContain('1 need you');
     });
 
     test('a row opens the session on the right, with its runs and the sandbox\'s other session', async () => {
@@ -114,18 +121,29 @@ describe('Sessions', () => {
         expect(container.querySelector('[role="separator"]')).not.toBeNull();
         expect(container.textContent).toContain('runs: Fix CI');
         expect(container.textContent).toContain('also here: Fix');
-        // Escape closes it and the list is the page again.
+        expect(container.querySelector('textarea[aria-label="Start a session"]')).toBeNull();
+        // Escape goes back to + New.
         act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
-        expect(container.querySelector('[role="separator"]')).toBeNull();
+        expect(container.querySelector('textarea[aria-label="Start a session"]')).not.toBeNull();
         expect(window.location.hash).toBe('#/sessions');
     });
 
-    test('the list collapses to a strip of marks', async () => {
+    test('↑ from the first row is + New', async () => {
+        await render();
+        act(() => { document.body.focus(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' })); });
+        expect(window.location.hash).toBe('#/sessions/research/abc');
+        act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' })); });
+        expect(window.location.hash).toBe('#/sessions');
+    });
+
+    test('the list collapses to a strip of dots, + on top', async () => {
         await render();
         await act(async () => { button('Rebase').click(); });
         await act(async () => { container.querySelector('[aria-label="Collapse the list"]').click(); });
         expect(container.querySelector('[aria-label="Show the list"]')).not.toBeNull();
         expect(container.textContent).not.toContain('Triage');
+        await act(async () => { container.querySelector('[aria-label="New session"]').click(); });
+        expect(container.querySelector('textarea[aria-label="Start a session"]')).not.toBeNull();
     });
 
     test('starting a session opens it pending', async () => {
