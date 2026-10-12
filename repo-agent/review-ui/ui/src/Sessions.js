@@ -10,20 +10,30 @@ import { EngineIcon, ageOf } from './WorkBits';
 //
 // A split page: the list is the whole width until a session opens, then
 // narrows to a column and the session fills the rest. The column can be
-// dragged wider or collapsed to a strip of state marks.
+// dragged wider or collapsed to a strip of state dots.
+//
+// One flat list, no sections: a row's dot says its state by colour, and
+// the rows come in the order the colours do.
 
-// STATE is how a row's state reads: its mark, colour and section.
+// STATE is a row's dot: its colour, its hover, and where the row sorts.
+// Red needs you (a failure does too), blue working, green idle with its
+// engine up, grey paused or done.
+const RED = '#d73a49';
+const BLUE = '#0969da';
+const GREEN = '#22863a';
+const GREY = '#8b949e';
 export const STATE = {
-  'needs-you': { mark: '●', color: '#d73a49', label: 'Needs you' },
-  working: { mark: '◐', color: '#0969da', label: 'Working' },
-  idle: { mark: '○', color: '#6a737d', label: 'Idle · live' },
-  paused: { mark: '◌', color: '#6a737d', label: 'Paused' },
-  done: { mark: '✓', color: '#22863a', label: 'Done' },
-  failed: { mark: '✕', color: 'var(--danger, #d33)', label: 'Failed' },
+  'needs-you': { color: RED, label: 'Needs you', order: 0 },
+  failed: { color: RED, label: 'Failed', order: 0 },
+  working: { color: BLUE, label: 'Working', order: 1 },
+  idle: { color: GREEN, label: 'Idle · live', order: 2 },
+  paused: { color: GREY, label: 'Paused', order: 3 },
+  done: { color: GREY, label: 'Done', order: 3 },
 };
+// LEGEND is the filter bar's key to the colours.
+const LEGEND = [[RED, 'needs you'], [BLUE, 'working'], [GREEN, 'idle'], [GREY, 'paused · done']];
 
-// The open sections in order; the rest are Recent, collapsed.
-const OPEN_SECTIONS = ['needs-you', 'working', 'idle'];
+// Rows at rest (paused, done, failed) older than this are not listed.
 const RECENT_DAYS = 30;
 const POLL_MS = 10000;
 const LIST_MIN = 240;
@@ -80,47 +90,31 @@ function shortRepo(repo) {
   return (repo || '').split('/').pop();
 }
 
-// visibleRows are the rows the filters leave.
-export function visibleRows(rows, { repo, state, query }) {
+// visibleRows are the rows the search leaves: it matches the title, the
+// repository, the sandbox, the recipe and the item.
+export function visibleRows(rows, { query }) {
   const q = (query || '').trim().toLowerCase();
   return rows.filter(r => {
-    if (repo && r.repo !== repo) return false;
-    if (state === 'live' && !(r.live || r.busy || r.requested)) return false;
-    if (state === 'needs-you' && r.state !== 'needs-you') return false;
     if (!q) return true;
     return [rowTitle(r), r.repo, r.sandbox, r.recipe, itemText(r), r.title].some(s => (s || '').toLowerCase().includes(q));
   });
 }
 
-// sectionsOf groups rows by state: the open sections, then Recent (paused,
-// done, failed in the last RECENT_DAYS).
-export function sectionsOf(rows, now = Date.now()) {
-  const out = OPEN_SECTIONS.map(state => ({ id: state, label: STATE[state].label, rows: rows.filter(r => r.state === state) }));
-  const cutoff = now - RECENT_DAYS * 24 * 3600 * 1000;
-  out.push({
-    id: 'recent', label: `Recent — paused / done / failed (${RECENT_DAYS}d)`, collapsible: true,
-    rows: rows.filter(r => !OPEN_SECTIONS.includes(r.state) && (!r.updatedAt || new Date(r.updatedAt).getTime() >= cutoff)),
-  });
-  return out.filter(s => s.rows.length);
+// stateOrder sorts rows by their dot's colour, then newest change first.
+function stateOrder(a, b) {
+  const oa = (STATE[a.state] || STATE.done).order;
+  const ob = (STATE[b.state] || STATE.done).order;
+  return (oa - ob) || (b.updatedAt || '').localeCompare(a.updatedAt || '');
 }
 
-// groupsOf groups rows by repo or sandbox, each group in state order.
-export function groupsOf(rows, by) {
-  const order = ['needs-you', 'working', 'idle', 'failed', 'paused', 'done'];
-  const groups = new Map();
-  for (const r of rows) {
-    const id = by === 'sandbox' ? r.sandbox : (r.repo || '—');
-    if (!groups.has(id)) groups.set(id, []);
-    groups.get(id).push(r);
-  }
-  return [...groups.entries()].map(([id, rs]) => {
-    rs.sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state));
-    const first = rs[0];
-    const label = by === 'sandbox'
-      ? `${id} · ${first.pod}${first.repo ? ` · ${shortRepo(first.repo)}${first.item ? ' ' + itemText(first) : ''}` : ''}`
-      : id;
-    return { id, label, rows: rs };
-  });
+// orderedRows are the rows to list, in order: all but the ones at rest
+// for longer than RECENT_DAYS.
+export function orderedRows(rows, now = Date.now()) {
+  const cutoff = now - RECENT_DAYS * 24 * 3600 * 1000;
+  const atRest = (r) => ['paused', 'done', 'failed'].includes(r.state);
+  return rows
+    .filter(r => !atRest(r) || !r.updatedAt || new Date(r.updatedAt).getTime() >= cutoff)
+    .sort(stateOrder);
 }
 
 function useStored(key, initial) {
@@ -136,7 +130,7 @@ function useStored(key, initial) {
 
 function StateMark({ state }) {
   const s = STATE[state] || STATE.done;
-  return <span title={s.label} style={{ color: s.color, width: '14px', display: 'inline-block', textAlign: 'center', flex: '0 0 auto' }}>{s.mark}</span>;
+  return <span title={s.label} style={{ color: s.color, width: '14px', display: 'inline-block', textAlign: 'center', flex: '0 0 auto', fontSize: '14px', lineHeight: 1 }}>●</span>;
 }
 
 const muted = { color: 'var(--text-secondary)' };
@@ -319,11 +313,7 @@ export default function Sessions({ namespace }) {
   const [selected, setSelected] = useState(() => (sessionsRoute() || { key: '' }).key);
   // pending is the row a Start just asked for, until the feed lists it.
   const [pending, setPending] = useState(null);
-  const [repoFilter, setRepoFilter] = useState('');
-  const [stateFilter, setStateFilter] = useState('all');
-  const [group, setGroup] = useStored('sessions.group', 'status');
   const [query, setQuery] = useState('');
-  const [showRecent, setShowRecent] = useState(false);
   const [listWidth, setListWidth] = useStored('sessions.listWidth', LIST_DEFAULT);
   const [collapsed, setCollapsed] = useStored('sessions.collapsed', false);
   const [starting, setStarting] = useState(false); // the start box in the right pane
@@ -348,11 +338,9 @@ export default function Sessions({ namespace }) {
   const open = all.find(r => rowKey(r) === selected) || null;
   const isOpen = !!(open || starting);
 
-  const shown = visibleRows(all, { repo: repoFilter, state: stateFilter, query });
-  const blocks = group === 'status' ? sectionsOf(shown) : groupsOf(shown, group);
-  const flat = blocks.flatMap(b => (b.collapsible && !showRecent && !b.rows.some(r => rowKey(r) === selected) ? [] : b.rows));
+  const shown = visibleRows(all, { query });
+  const flat = orderedRows(shown);
   const needs = all.filter(r => r.state === 'needs-you').length;
-  const repos = [...new Set(all.map(r => r.repo).filter(Boolean))].sort();
 
   // ↑/↓ walk the list; Escape closes the session. Not while typing.
   useEffect(() => {
@@ -390,22 +378,9 @@ export default function Sessions({ namespace }) {
   const narrow = isOpen;
   const filters = (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', ...small, margin: '8px 0' }}>
-      <select aria-label="Repository filter" value={repoFilter} onChange={e => setRepoFilter(e.target.value)}>
-        <option value="">all repos</option>
-        {repos.map(r => <option key={r} value={r}>{shortRepo(r)}</option>)}
-      </select>
-      <span className="segmented" role="group" aria-label="State filter">
-        {[['all', 'All'], ['live', 'Live'], ['needs-you', 'Needs you']].map(([id, label]) => (
-          <button key={id} type="button" className={`btn btn-sm ${stateFilter === id ? 'active' : ''}`}
-            style={stateFilter === id ? { fontWeight: 600 } : {}} onClick={() => setStateFilter(id)}>{label}</button>
-        ))}
-      </span>
       {!narrow && (
-        <span role="group" aria-label="Group by">
-          <span style={muted}>Group: </span>
-          {[['status', 'Status'], ['repo', 'Repo'], ['sandbox', 'Sandbox']].map(([id, label]) => (
-            <button key={id} type="button" className="btn btn-sm" style={group === id ? { fontWeight: 600 } : {}} onClick={() => setGroup(id)}>{label}</button>
-          ))}
+        <span aria-label="Legend" style={{ display: 'flex', gap: '8px' }}>
+          {LEGEND.map(([color, label]) => <span key={label}><span style={{ color }}>●</span> <span style={muted}>{label}</span></span>)}
         </span>
       )}
       <input type="search" aria-label="Search sessions" placeholder="🔍 search" value={query} onChange={e => setQuery(e.target.value)}
@@ -418,28 +393,13 @@ export default function Sessions({ namespace }) {
       {error && <div className="warning-banner" style={{ marginBottom: '8px' }}>{error}</div>}
       {rows === null ? (
         <div style={{ ...muted, fontStyle: 'italic', padding: '6px 2px' }}>loading…</div>
-      ) : !blocks.length ? (
+      ) : !flat.length ? (
         <div style={{ ...muted, fontStyle: 'italic', padding: '6px 2px' }}>
           {all.length ? 'No session matches.' : 'No sessions yet. Start one above, or from a Work row.'}
         </div>
-      ) : blocks.map(b => {
-        const hidden = b.collapsible && !showRecent && !b.rows.some(r => rowKey(r) === selected);
-        return (
-          <div key={b.id} style={{ marginBottom: '6px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 8px', fontWeight: 600, ...small, letterSpacing: '0.04em', textTransform: group === 'status' ? 'uppercase' : 'none', background: 'var(--bg-secondary)', borderRadius: '4px', color: STATE[b.id] ? STATE[b.id].color : 'var(--text-primary)' }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.label} ({b.rows.length})</span>
-              {b.collapsible && (
-                <button type="button" onClick={() => setShowRecent(v => !v)}
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--link-color, #0969da)', ...small }}>
-                  {hidden ? '▸ show' : '▾ hide'}</button>
-              )}
-            </div>
-            {!hidden && b.rows.map(r => (
-              <SessionListRow key={rowKey(r)} row={r} selected={rowKey(r) === selected} onOpen={x => select(rowKey(x))} />
-            ))}
-          </div>
-        );
-      })}
+      ) : flat.map(r => (
+        <SessionListRow key={rowKey(r)} row={r} selected={rowKey(r) === selected} onOpen={x => select(rowKey(x))} />
+      ))}
     </div>
   );
 

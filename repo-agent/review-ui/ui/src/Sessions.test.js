@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const Sessions = require('./Sessions').default;
-const { sectionsOf, groupsOf, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
+const { orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -79,24 +79,29 @@ const fetched = () => global.fetch.mock.calls.map(c => c[0]);
 const button = (text) => Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes(text));
 
 describe('Sessions', () => {
-    test('the box and the list across the page, sections by state, Recent collapsed', async () => {
+    test('the box and one flat list across the page, ordered by the dots\' colour', async () => {
         await render();
         expect(container.querySelector('textarea[aria-label="Start a session"]')).not.toBeNull();
         const text = container.textContent;
-        expect(text).toContain('Needs you (1)');
-        expect(text).toContain('Working (2)');
-        expect(text).toContain('Idle · live (1)');
-        expect(text).toContain('reconciler deletes');
+        // No section headers: red, then blue, then green, then grey, the
+        // newest first in each; the 2020 fix is not listed.
+        expect(text).not.toContain('Needs you (');
+        const rows = Array.from(container.querySelectorAll('button[title]')).filter(b => b.title.includes(' · '));
+        expect(rows.map(b => b.title.split(' · ')[0])).toEqual(['reconciler deletes', 'Rebase', 'what changed', 'Triage', 'Fix']);
+        const dot = (b) => b.querySelector('span').style.color;
+        expect(rows.map(dot)).toEqual(['rgb(215, 58, 73)', 'rgb(9, 105, 218)', 'rgb(9, 105, 218)', 'rgb(34, 134, 58)', 'rgb(139, 148, 158)']);
+        expect(container.querySelector('[aria-label="Group by"]')).toBeNull();
+        expect(container.querySelector('[aria-label="State filter"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Repository filter"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Legend"]').textContent).toBe('● needs you● working● idle● paused · done');
         // One line a row: state, engine, recipe, item, repo, age; what the
         // agent is doing and the sandbox are its hover.
-        const rebase = Array.from(container.querySelectorAll('button')).find(b => b.textContent.startsWith('◐Rebase'));
-        expect(rebase.textContent).toBe('◐RebasePR #1774 ↗g4k0m');
+        const rebase = Array.from(container.querySelectorAll('button')).find(b => b.textContent.startsWith('●Rebase'));
+        expect(rebase.textContent).toBe('●RebasePR #1774 ↗g4k0m');
         expect(rebase.title).toBe('Rebase · working · fix-g4k-1774');
         const asking = Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes('reconciler deletes'));
         expect(asking.title).toBe('reconciler deletes · ⚠ asking permission · rsch-kcc-3f2a');
         expect(text).not.toContain('fix-g4k-1774');
-        // The Fix done today is under Recent, collapsed; the 2020 one is gone.
-        expect(text).toContain('(1)▸ show');
         expect(container.querySelector('[role="separator"]')).toBeNull();
     });
 
@@ -120,7 +125,7 @@ describe('Sessions', () => {
         await act(async () => { button('Rebase').click(); });
         await act(async () => { container.querySelector('[aria-label="Collapse the list"]').click(); });
         expect(container.querySelector('[aria-label="Show the list"]')).not.toBeNull();
-        expect(container.textContent).not.toContain('Needs you (1)');
+        expect(container.textContent).not.toContain('Triage');
     });
 
     test('starting a session opens it pending', async () => {
@@ -144,19 +149,14 @@ describe('Sessions', () => {
 });
 
 describe('helpers', () => {
-    test('sections and groups', () => {
-        const sections = sectionsOf(FEED.sessions);
-        expect(sections.map(s => `${s.id}:${s.rows.length}`)).toEqual(['needs-you:1', 'working:2', 'idle:1', 'recent:1']);
-        const bySandbox = groupsOf(FEED.sessions, 'sandbox');
-        expect(bySandbox[0].id).toBe('fix-g4k-1774');
-        expect(bySandbox[0].rows.map(r => r.task)).toEqual(['recipe-care-rebase-3', 'recipe-fix-1']);
-        expect(groupsOf(FEED.sessions, 'repo').map(g => g.id)).toEqual(['gke-labs/g4k', 'G/kcc']);
+    test('order', () => {
+        const ordered = orderedRows([...FEED.sessions]);
+        expect(ordered.map(r => r.state)).toEqual(['needs-you', 'working', 'working', 'idle', 'done']);
+        expect(ordered[1].task).toBe('recipe-care-rebase-3');
     });
     test('filters', () => {
-        expect(visibleRows(FEED.sessions, { state: 'needs-you' }).length).toBe(1);
-        expect(visibleRows(FEED.sessions, { state: 'live' }).length).toBe(4);
         expect(visibleRows(FEED.sessions, { query: '#1681' })[0].task).toBe('recipe-triage-1');
-        expect(visibleRows(FEED.sessions, { repo: 'G/kcc' }).length).toBe(3);
+        expect(visibleRows(FEED.sessions, { query: 'kcc' }).length).toBe(3);
     });
     test('what a row is doing', () => {
         expect(rowDoing({ runs: [{ status: 'ready' }] })).toBe('📝 draft ready');
