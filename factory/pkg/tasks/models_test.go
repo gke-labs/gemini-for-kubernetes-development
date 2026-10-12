@@ -16,10 +16,10 @@ func TestDefaultModels(t *testing.T) {
 }
 
 func TestGetScriptWithDefaults(t *testing.T) {
-	// Let's test that GetFixIssueScript successfully replaced the __DEFAULT_MODELS__ placeholder
-	scriptBytes, err := GetFixIssueScript()
+	// getScriptWithDefaults replaces the __DEFAULT_MODELS__ placeholder.
+	scriptBytes, err := GetRunAgentScript()
 	if err != nil {
-		t.Fatalf("Failed to get fix_issue script: %v", err)
+		t.Fatalf("Failed to get run_agent script: %v", err)
 	}
 
 	scriptContent := string(scriptBytes)

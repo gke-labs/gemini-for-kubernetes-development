@@ -21,7 +21,7 @@ Work is never declared in the board spec — it is discovered live from GitHub
 ## Fixes and reviews
 
 - **Fix**: claims the issue by assigning it to you on GitHub (the audit
-  trail lives on the GitHub side) and launches a `factory fix` sandbox under
+  trail lives on the GitHub side) and launches a `factory recipe fix` run under
   your identity. The resulting PR, comments and commits are authored by you,
   not a bot.
 - **Review**: requests a self-review on the PR and launches `factory pr

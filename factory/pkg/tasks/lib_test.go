@@ -13,7 +13,7 @@ import (
 // enforce was never applied to it. A new task script belongs in this
 // list on the commit that adds it.
 var taskScripts = []string{
-	"adopt.sh", "fix_issue.sh",
+	"adopt.sh",
 	"run.sh", "run_agent.sh",
 }
 
@@ -26,13 +26,13 @@ var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "re
 // engine loop anymore (run_agent's runAgent is the documented exception
 // until the agent flow's engine follow-up).
 var engineCalls = map[string]string{
-	"fix_issue.sh": "\nrunEngine\n",
+	"run.sh": "\n    runEngine\n",
 }
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).
 var shadowsSetupGitRepos = map[string]bool{
-	"fix_issue.sh": true, "run_agent.sh": true,
+	"run_agent.sh": true,
 }
 
 func defCount(script, fn string) int {

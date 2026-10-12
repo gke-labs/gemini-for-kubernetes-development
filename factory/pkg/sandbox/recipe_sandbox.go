@@ -24,8 +24,8 @@ func EnsureRecipeSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 // PR, one of its own named after it (review-<repo>-<number>): setup-git
 // leaves the token in gh's hosts.yml on the workspace, so a sandbox a
 // recipe holding the token ever ran in can no longer promise an agent
-// without one. It is not labeled with the PR either, so that `factory pr`
-// (EnsureReviewSandbox) never adopts it.
+// without one. It is not labeled with the PR either, so that no lookup of
+// the PR's sandbox (PRFixSandbox) finds it.
 func RecipeSandboxName(repoName string, number int, recipe string) string {
 	return fmt.Sprintf("%s-%s-%d", recipe, repoName, number)
 }

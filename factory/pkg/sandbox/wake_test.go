@@ -16,7 +16,7 @@ func TestReusedSandboxIsWoken(t *testing.T) {
 	ns := "u"
 	sb := prSandbox("review-open-rl-7", ns, "", "", false)
 	_ = unstructured.SetNestedField(sb.Object, int64(0), "spec", "replicas")
-	kc := reviewClients(t, ns, sb)
+	kc := prClients(t, ns, sb)
 
 	name, err := sandbox.EnsureRecipeSandbox(context.Background(), kc, ns, "open-rl", 7, "review", "", "", "", "", "", "", nil, nil, "")
 	if err != nil {

@@ -105,8 +105,8 @@ start:
         manual verification worth doing.
       capture: plan-output.md
 
-    # Where a fix (factory fix --with-plan), the board and a continued chat
-    # read the plan, without a fence around all of it.
+    # Where the board and a continued chat read the plan, without a
+    # fence around all of it.
     - run: &save |
         test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty" >&2; exit 1; }
         sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"

@@ -34,11 +34,11 @@
 ## Features
 
 ### Agents on issues and pull requests
-- **Fix an issue.** `factory fix` clones the repository into a sandbox and checks out an issue branch. It runs the agent, then pushes to the bot's fork and opens a PR. It also accepts a bare repository with `--name` and `--instruction` / `--instruction-file`, and `--no-pr` pushes without opening one. `--watch` hands the new PR straight to `pr watch`.
-- **Plan first.** `factory recipe plan --url <issue>` drafts an implementation plan in the issue's sandbox, as a task output, without posting anything. Run again, it revises the plan it finds there, against `--feedback` if given. `factory fix --with-plan` folds the approved plan into the fix, and `--apply` (or `factory apply -f`) comments it on the issue.
+- **Fix an issue.** `factory recipe fix --url <issue>` works on the issue in its sandbox, on a branch from the latest default branch. The agent commits; factory pushes the branch to your fork. The result is a Change task output; `--apply --action open-pr` (or `factory apply -f`) opens the PR, a draft unless `--draft false`, and `--labels` / `--pr-labels` label it. `pr watch` then follows the PR.
+- **Plan first.** `factory recipe plan --url <issue>` drafts an implementation plan in the issue's sandbox, as a task output, without posting anything. Run again, it revises the plan it finds there, against `--feedback` if given. `--apply` (or `factory apply -f`) comments it on the issue, and its `run: fix` action starts the fix recipe with the plan, as edited.
 - **Triage.** `factory recipe triage --url <issue>` suggests labels, priority, duplicates and an assessment, as a task output. `--apply` waits for it and applies the labels and posts the comment, and so does `factory apply -f` on the output.
 - **Fan-out spec.** `factory recipe fanout --url <issue>` writes a fan-out spec (see *One task, many items*) for an issue that lists one task for many items, as a task output. `--apply` adds the fan-out and stop labels and posts it as the spec comment, for maintainers to edit before they remove the stop label.
-- **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` writes the plan, as edited, to the issue's sandbox and runs `factory fix --with-plan`.
+- **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` starts `recipe fix` with the plan, as edited, as its `plan` input.
 - **PR lifecycle.**
   - `recipe care-ci` works on CI failures of a PR of yours (the overseer runs it with `--apply --action post-replies`).
   - `recipe care-comments` answers review feedback, trusted authors' only (the overseer runs it with `--apply --action post-replies`).
@@ -173,17 +173,14 @@ Limits, default resources, trigger labels, injected secrets/env and bot role poo
 ## Common usage
 
 ```bash
-# Fix an issue, then keep watching the PR it opens
-factory fix --url https://github.com/owner/repo/issues/1 --watch --watch-timeout 1h --cleanup
-
-# Repository task without an issue, using Claude Code
-factory fix --engine claude --url https://github.com/owner/repo --name refactor-auth \
-  --instruction-file ./prompt.txt
+# Fix an issue with Claude Code and open its PR as a draft, then follow it up
+factory recipe fix --engine claude --url https://github.com/owner/repo/issues/1 --apply --action open-pr
+factory pr watch --pr-url https://github.com/owner/repo/pull/2
 
 # Plan, revise, then implement the approved plan
 factory recipe plan --url https://github.com/owner/repo/issues/1
 factory recipe plan --url https://github.com/owner/repo/issues/1 --feedback "merge steps 2 and 3"
-factory fix --url https://github.com/owner/repo/issues/1 --with-plan
+# then apply its task output (factory sandbox task output): factory apply -f <output> --action run:fix
 
 # Review a PR against guidelines and post it as a pending review
 factory recipe review --url https://github.com/owner/repo/pull/1 \
@@ -221,7 +218,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `up` | Create/reuse a kind cluster (or `--current-context`), install agent-sandbox, onboard via `gh` |
 | `status` | Pre-flight checks for cluster, identity, keys and the key pool |
 | `user onboard` | Create a namespace and `factory-user` secret |
-| `fix` | Fix an issue (or run an instruction on a repo) and open a PR |
+| `recipe fix` | Fix an issue; `--apply --action open-pr` opens the PR (`--draft false`, `--labels`, `--pr-labels`) |
 | `recipe plan` | Draft or revise an implementation plan for an issue; `--apply` comments it |
 | `recipe triage` | Suggest labels, priority, duplicates; `--apply` applies them |
 | `recipe review` | Review a PR in its own sandbox; `--apply` posts it as a pending review, `--action submit-review` submits it |

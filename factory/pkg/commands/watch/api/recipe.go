@@ -30,7 +30,7 @@ var recipeTasks = map[TaskType]RecipeTask{
 	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
 	TypePRComments:    {Recipe: "care-comments", Action: "post-replies", RunPrefix: "comments"},
 	TypePRIterate:     {Recipe: "care-rebase", Action: "post-replies", RunPrefix: "iterate"},
-	// The PR opens ready for review, labelled as factory fix labelled it:
+	// The PR opens ready for review, labelled as the classic factory fix labelled it:
 	// the watch scans only labelled PRs.
 	TypeIssueFix: {Recipe: "fix", Action: "open-pr", RunPrefix: "fix", Args: []string{"--pr-labels", "--input", "draft=false"}, Recorded: "fix"},
 }

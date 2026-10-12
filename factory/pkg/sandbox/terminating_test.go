@@ -26,7 +26,7 @@ func prSandbox(name, ns, htmlURL string, prNum string, dying bool) *unstructured
 			"factory.gemini.google.com/pr":      prNum,
 			"factory.gemini.google.com/managed": "true",
 		},
-		// sandboxBelongsToRepo reads these two plain keys.
+		// isPRFixSandbox reads these two plain keys.
 		"annotations": map[string]interface{}{
 			"repo":    "open-rl",
 			"htmlURL": htmlURL,
@@ -47,7 +47,7 @@ func prSandbox(name, ns, htmlURL string, prNum string, dying bool) *unstructured
 // Objects are seeded with Create rather than handed to the constructor:
 // an empty scheme does not register unstructured types, and the
 // resulting client lists nothing.
-func reviewClients(t *testing.T, ns string, objs ...*unstructured.Unstructured) *clients.KubernetesClient {
+func prClients(t *testing.T, ns string, objs ...*unstructured.Unstructured) *clients.KubernetesClient {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
@@ -61,13 +61,12 @@ func reviewClients(t *testing.T, ns string, objs ...*unstructured.Unstructured) 
 	return &clients.KubernetesClient{DynamicClient: dyn, Clientset: k8sfake.NewSimpleClientset()}
 }
 
-func ensureReview(t *testing.T, kc *clients.KubernetesClient, ns string) (string, error) {
+// ensurePR is the sandbox a PR's recipes run in (EnsurePRSandbox).
+func ensurePR(t *testing.T, kc *clients.KubernetesClient, ns string) (string, error) {
 	t.Helper()
-	return sandbox.EnsureReviewSandbox(context.Background(), kc, ns, 270,
-		"chore(deps): batch open dependabot PRs",
-		"https://github.com/gke-labs/open-rl/pull/270",
-		"https://github.com/gke-labs/open-rl/pull/270.diff",
+	return sandbox.EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 270,
 		"https://github.com/gke-labs/open-rl.git",
+		"https://github.com/gke-labs/open-rl/pull/270",
 		"img:latest", "10Gi", "", "10Gi", nil, nil, "barney-s")
 }
 
@@ -78,16 +77,16 @@ func ensureReview(t *testing.T, kc *clients.KubernetesClient, ns string) (string
 func TestTerminatingAliasIsNotReused(t *testing.T) {
 	ns := "barney-s"
 	dying := prSandbox("fix-open-rl-269", ns, "https://github.com/gke-labs/open-rl/pull/270", "270", true)
-	kc := reviewClients(t, ns, dying)
+	kc := prClients(t, ns, dying)
 
-	name, err := ensureReview(t, kc, ns)
+	name, err := ensurePR(t, kc, ns)
 	if err != nil {
-		t.Fatalf("EnsureReviewSandbox: %v", err)
+		t.Fatalf("EnsurePRSandbox: %v", err)
 	}
 	if name == "fix-open-rl-269" {
 		t.Fatalf("reused the terminating sandbox %q; the caller would wait forever for its pod", name)
 	}
-	if want := sandbox.ReviewSandboxName("open-rl", 270); name != want {
+	if want := "fix-open-rl-270"; name != want {
 		t.Errorf("name = %q, want the canonical %q", name, want)
 	}
 	// And it must actually have been created, not merely named.
@@ -102,11 +101,11 @@ func TestTerminatingAliasIsNotReused(t *testing.T) {
 func TestLiveAliasIsStillReused(t *testing.T) {
 	ns := "barney-s"
 	live := prSandbox("fix-open-rl-269", ns, "https://github.com/gke-labs/open-rl/pull/270", "270", false)
-	kc := reviewClients(t, ns, live)
+	kc := prClients(t, ns, live)
 
-	name, err := ensureReview(t, kc, ns)
+	name, err := ensurePR(t, kc, ns)
 	if err != nil {
-		t.Fatalf("EnsureReviewSandbox: %v", err)
+		t.Fatalf("EnsurePRSandbox: %v", err)
 	}
 	if name != "fix-open-rl-269" {
 		t.Errorf("name = %q, want the aliased sandbox to be reused", name)

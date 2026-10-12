@@ -85,7 +85,7 @@ graph TD
 - **Command Architecture**:
   - `factory watch`: The deterministic supervisor loop that scans open PRs, issues, and workflow definitions, executing pending jobs sequentially or concurrently via worker pools.
   - `factory pr` / `factory review`: Specialized subcommands to generate automated code reviews, post feedback comments, or adopt pull requests.
-  - `factory fix`: Executes automated bug remediation and code repair in response to issue descriptions or failing tests.
+  - `factory recipe fix`: Executes automated bug remediation and code repair in response to issue descriptions; `--apply --action open-pr` opens the PR.
   - `factory up`: Provisions dynamic development sandboxes for human or agent experimentation.
   - `factory token-daemon`: A dedicated telemetry service deployed as a StatefulSet (`token-usage.overseer-system:8080`) that durably tracks per-task token consumption on a PVC and serves aggregated usage rollups over HTTP.
 

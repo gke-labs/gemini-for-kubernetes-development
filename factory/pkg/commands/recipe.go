@@ -82,7 +82,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
 	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do this one action of the result (as factory apply --action) instead of each write it offers")
-	cmd.Flags().BoolVar(&f.prLabels, "pr-labels", false, "For an issue's Change: label the PR open-pr opens as factory fix did, with the trigger label, the factory config's additional labels and the issue's labels (the overseer's)")
+	cmd.Flags().BoolVar(&f.prLabels, "pr-labels", false, "For an issue's Change: label the PR open-pr opens as the overseer does, with the trigger label, the factory config's additional labels and the issue's labels (the overseer's)")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
 }
@@ -649,6 +649,52 @@ func prPushInputs(ctx context.Context, gh *githubv39.Client, it githubItem, pr *
 	inputs["pushed_title"], inputs["pushed_body"] = pr.GetTitle(), pr.GetBody()
 	inputs["pr_url"] = pr.GetHTMLURL()
 	return nil
+}
+
+// resolvePRLabels returns the comma-separated label set a PR a fix opens
+// should carry (--pr-labels): the trigger label, whatever the repository
+// adds to every factory change, and - for a task fixing an issue - the
+// labels of the issue itself, so the PR inherits how the repository has
+// already classified the work.
+//
+// The set is deduplicated case-insensitively. The parent issue almost always
+// carries the trigger label too, and the raw concatenation produced strings
+// like "overseer,overseer,overseer/review" that ended up quoted verbatim in
+// agent-written PR descriptions.
+func resolvePRLabels(cfg *config.FactoryConfig, issue *githubv39.Issue, isIssue bool) string {
+	triggerLabel := resolveTriggerLabel(cfg)
+
+	var allLabels []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		if name == "" || seen[strings.ToLower(name)] {
+			return
+		}
+		seen[strings.ToLower(name)] = true
+		allLabels = append(allLabels, name)
+	}
+
+	add(triggerLabel)
+	if cfg != nil {
+		for _, label := range cfg.AdditionalLabels {
+			add(label)
+		}
+	}
+	if isIssue && issue != nil {
+		for _, label := range issue.Labels {
+			add(label.GetName())
+		}
+	}
+	return strings.Join(allLabels, ",")
+}
+
+// resolveTriggerLabel returns the configured trigger label, defaulting to
+// "factory". It doubles as the agent's name in PR attribution.
+func resolveTriggerLabel(cfg *config.FactoryConfig) string {
+	if cfg != nil && cfg.TriggerLabel != "" {
+		return cfg.TriggerLabel
+	}
+	return "factory"
 }
 
 // mergeLabels joins comma-separated label lists, each label once
