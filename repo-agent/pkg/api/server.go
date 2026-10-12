@@ -110,6 +110,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			overseer.GET("/:name", s.getOverseer)
 			overseer.GET("/:name/chores", s.getOverseerChores)
 			overseer.GET("/:name/sandboxes", s.getOverseerSandboxes)
+			overseer.GET("/:name/work", s.getOverseerWork)
 			overseer.GET("/:name/sandboxes/:sandboxName/tasks", s.getOverseerSandboxTasks)
 			overseer.GET("/:name/sandboxes/:sandboxName/tasks/:taskID/logs", s.getOverseerSandboxTaskLogs)
 			overseer.GET("/:name/sandboxes/:sandboxName/tasks/:taskID/telemetry", s.getOverseerSandboxTaskTelemetry)

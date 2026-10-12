@@ -98,6 +98,7 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 		c.Next()
 	})
 	overseer := r.Group("/api/overseers", server.Auth.AdminMiddleware())
+	overseer.GET("/:name/work", server.getOverseerWork)
 	scoped := overseer.Group("/:name", server.overseerScope())
 	scoped.GET("/task-sessions/:sandbox/:task", server.getTaskSession)
 	scoped.POST("/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
@@ -190,6 +191,7 @@ func TestOverseerSessionRoutesAreRegistered(t *testing.T) {
 		have[rt.Method+" "+rt.Path] = true
 	}
 	for _, want := range []string{
+		"GET /api/overseers/:name/work",
 		"GET /api/overseers/:name/task-sessions/:sandbox/:task",
 		"POST /api/overseers/:name/task-sessions/:sandbox/:task/prompt",
 		"GET /api/overseers/:name/task-session-events/:sandbox/:task",
