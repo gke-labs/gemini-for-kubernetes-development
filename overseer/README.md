@@ -134,7 +134,7 @@ Example resources: [KCC](examples/kcc.yaml), [Gateway API reference](examples/gw
 - `pkg/api/v1alpha1`, `k8s/crds`: the `Overseer` API and its CRD.
 - `images/overseer`: the Overseer pod image (bundles the `factory` binary): `bootstrap.sh`, `run.sh` (the watch loop), `summarize.sh` (log summaries), and `prompt/` (orchestrator prompt templates).
 - `images/overseer-controller`: the controller image.
-- `k8s/`: the controller deployment, RBAC for the Overseer and sandboxes, and the [token-usage collector](k8s/token-usage.yaml).
+- `k8s/`: the controller deployment, RBAC for the Overseer pods, and the [token-usage collector](k8s/token-usage.yaml).
 - `deps/github-portal.yaml`: the GitHub API proxy used by Overseer pods.
 - `scripts/`: helpers for installing bot users, rotating bot secrets and upgrading.
 - `examples/`: ready-to-apply `Overseer` resources.

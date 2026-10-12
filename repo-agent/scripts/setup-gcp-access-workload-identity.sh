@@ -2,7 +2,7 @@
 
 # This script sets up Workload Identity for a Kubernetes Service Account to impersonate a GCP Service Account.
 # example:
-# K8S_SA=overseer-sandbox K8S_NAMESPACE=overseer-system ./repo-agent/scripts/setup-gcp-access-workload-identity.sh
+# K8S_SA=factory-deployer K8S_NAMESPACE=overseer-myrepo ./repo-agent/scripts/setup-gcp-access-workload-identity.sh
 
 set -x
 # 1. Set up variables based on your current environment

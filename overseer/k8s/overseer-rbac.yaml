@@ -24,7 +24,7 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 - apiGroups: [""]
-  resources: ["secrets", "pods", "events", "namespaces"]
+  resources: ["secrets", "pods", "events"]
   verbs: ["get", "list"]
 - apiGroups: [""]
   resources: ["pods/portforward"]
@@ -34,6 +34,20 @@ rules:
 - apiGroups: ["snapshot.storage.k8s.io"]
   resources: ["volumesnapshots"]
   verbs: ["get", "list", "create", "delete"]
+---
+# The cluster-scoped reads an overseer pod needs. The controller binds each
+# Overseer's ServiceAccount to this role with its own ClusterRoleBinding
+# (overseer-cluster-reader:overseer-<name>). The ClusterRole overseer above is
+# bound only per namespace: the overseer pod runs an LLM agent over untrusted
+# input and must not hold it cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: overseer-cluster-reader
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -18,11 +18,14 @@ package controllers
 
 import (
 	"context"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -201,4 +204,201 @@ func TestOverseerReconciler_ObservedGeneration(t *testing.T) {
 			t.Fatalf("expected empty result, got: %v", res)
 		}
 	})
+}
+
+func TestEnsureOverseerRBAC_NoClusterWideGrant(t *testing.T) {
+	scheme := setupTestScheme()
+	ctx := context.Background()
+	const ns = "overseer-my-overseer"
+
+	o := &overseerv1alpha1.Overseer{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-overseer", UID: "uid-1"},
+	}
+	staticSubject := rbacv1.Subject{Kind: "ServiceAccount", Name: "overseer", Namespace: "overseer-system"}
+	staticSandboxSubject := rbacv1.Subject{Kind: "ServiceAccount", Name: "overseer-sandbox", Namespace: "overseer-system"}
+	userSubject := rbacv1.Subject{Kind: "User", Name: "overseer-admin"}
+
+	// State left behind by earlier controller versions.
+	overseerBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "overseer-binding"},
+		Subjects: []rbacv1.Subject{
+			staticSubject,
+			{Kind: "ServiceAccount", Name: "overseer", Namespace: ns},
+			{Kind: "ServiceAccount", Name: "overseer", Namespace: "overseer-deleted-one"},
+			userSubject,
+		},
+		RoleRef: rbacv1.RoleRef{Kind: "ClusterRole", Name: "overseer", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	sandboxBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "overseer-sandbox"},
+		Subjects: []rbacv1.Subject{
+			staticSandboxSubject,
+			{Kind: "ServiceAccount", Name: "overseer-sandbox", Namespace: ns},
+		},
+		RoleRef: rbacv1.RoleRef{Kind: "ClusterRole", Name: "overseer-sandbox", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	legacySA := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "overseer-sandbox", Namespace: ns}}
+	legacyRB := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "overseer-sandbox-binding", Namespace: ns},
+		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: "overseer-sandbox", APIGroup: "rbac.authorization.k8s.io"},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(o, overseerBinding, sandboxBinding, legacySA, legacyRB).
+		Build()
+	r := &OverseerReconciler{Client: k8sClient, Scheme: scheme}
+
+	// Run twice: the second pass must be a no-op.
+	for i := 0; i < 2; i++ {
+		if err := r.ensureOverseerRBAC(ctx, o, ns); err != nil {
+			t.Fatalf("ensureOverseerRBAC (pass %d): %v", i, err)
+		}
+	}
+
+	// No per-Overseer subject is left in a shared ClusterRoleBinding; static
+	// and non-ServiceAccount subjects are kept.
+	var crbs rbacv1.ClusterRoleBindingList
+	if err := k8sClient.List(ctx, &crbs); err != nil {
+		t.Fatal(err)
+	}
+	for _, crb := range crbs.Items {
+		if crb.Name == clusterReaderBindingName(ns) {
+			continue
+		}
+		for _, s := range crb.Subjects {
+			if isLegacyOverseerSubject(s) {
+				t.Errorf("ClusterRoleBinding %s still grants %s/%s", crb.Name, s.Namespace, s.Name)
+			}
+		}
+	}
+	var got rbacv1.ClusterRoleBinding
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "overseer-binding"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := []rbacv1.Subject{staticSubject, userSubject}; !reflect.DeepEqual(got.Subjects, want) {
+		t.Errorf("overseer-binding subjects = %v, want %v", got.Subjects, want)
+	}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "overseer-sandbox"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := []rbacv1.Subject{staticSandboxSubject}; !reflect.DeepEqual(got.Subjects, want) {
+		t.Errorf("overseer-sandbox subjects = %v, want %v", got.Subjects, want)
+	}
+
+	// The per-Overseer binding grants only overseer-cluster-reader, only to
+	// this Overseer's ServiceAccount, and is owned by the Overseer.
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: clusterReaderBindingName(ns)}, &got); err != nil {
+		t.Fatalf("per-Overseer ClusterRoleBinding: %v", err)
+	}
+	if got.RoleRef.Kind != "ClusterRole" || got.RoleRef.Name != "overseer-cluster-reader" {
+		t.Errorf("roleRef = %+v, want ClusterRole overseer-cluster-reader", got.RoleRef)
+	}
+	if want := []rbacv1.Subject{{Kind: "ServiceAccount", Name: "overseer", Namespace: ns}}; !reflect.DeepEqual(got.Subjects, want) {
+		t.Errorf("subjects = %v, want %v", got.Subjects, want)
+	}
+	if len(got.OwnerReferences) != 1 || got.OwnerReferences[0].UID != o.UID {
+		t.Errorf("ownerReferences = %v, want the Overseer", got.OwnerReferences)
+	}
+
+	// The namespaced RoleBinding to ClusterRole overseer is still there.
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "overseer-binding", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("namespaced RoleBinding overseer-binding: %v", err)
+	}
+
+	// The unused overseer-sandbox ServiceAccount and RoleBinding are gone.
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "overseer-sandbox", Namespace: ns}, &corev1.ServiceAccount{}); !apierrors.IsNotFound(err) {
+		t.Errorf("overseer-sandbox ServiceAccount: got err %v, want NotFound", err)
+	}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "overseer-sandbox-binding", Namespace: ns}, &rbacv1.RoleBinding{}); !apierrors.IsNotFound(err) {
+		t.Errorf("overseer-sandbox-binding RoleBinding: got err %v, want NotFound", err)
+	}
+}
+
+func TestEnsureClusterReaderBinding_ResetsDrift(t *testing.T) {
+	scheme := setupTestScheme()
+	ctx := context.Background()
+	const ns = "overseer-my-overseer"
+
+	o := &overseerv1alpha1.Overseer{ObjectMeta: metav1.ObjectMeta{Name: "my-overseer", UID: "uid-1"}}
+	drifted := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterReaderBindingName(ns)},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: "overseer", Namespace: ns},
+			{Kind: "ServiceAccount", Name: "intruder", Namespace: "default"},
+		},
+		RoleRef: rbacv1.RoleRef{Kind: "ClusterRole", Name: "cluster-admin", APIGroup: "rbac.authorization.k8s.io"},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(o, drifted).Build()
+	r := &OverseerReconciler{Client: k8sClient, Scheme: scheme}
+
+	if err := r.ensureClusterReaderBinding(ctx, o, ns); err != nil {
+		t.Fatal(err)
+	}
+	var got rbacv1.ClusterRoleBinding
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: clusterReaderBindingName(ns)}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RoleRef.Name != "overseer-cluster-reader" {
+		t.Errorf("roleRef = %+v, want overseer-cluster-reader", got.RoleRef)
+	}
+	if want := []rbacv1.Subject{{Kind: "ServiceAccount", Name: "overseer", Namespace: ns}}; !reflect.DeepEqual(got.Subjects, want) {
+		t.Errorf("subjects = %v, want %v", got.Subjects, want)
+	}
+}
+
+func TestOverseersForLegacyBinding(t *testing.T) {
+	scheme := setupTestScheme()
+	ctx := context.Background()
+
+	a := &overseerv1alpha1.Overseer{ObjectMeta: metav1.ObjectMeta{Name: "a"}}
+	b := &overseerv1alpha1.Overseer{ObjectMeta: metav1.ObjectMeta{Name: "b"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a, b).Build()
+	r := &OverseerReconciler{Client: k8sClient, Scheme: scheme}
+
+	static := rbacv1.Subject{Kind: "ServiceAccount", Name: "overseer", Namespace: "overseer-system"}
+	leaked := rbacv1.Subject{Kind: "ServiceAccount", Name: "overseer", Namespace: "overseer-a"}
+
+	tests := []struct {
+		name     string
+		crb      *rbacv1.ClusterRoleBinding
+		watched  bool
+		wantReqs []string
+	}{
+		{
+			name:     "legacy binding with per-Overseer subject enqueues every Overseer",
+			crb:      &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "overseer-binding"}, Subjects: []rbacv1.Subject{static, leaked}},
+			watched:  true,
+			wantReqs: []string{"a", "b"},
+		},
+		{
+			name:    "legacy binding with only static subjects enqueues nothing",
+			crb:     &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "overseer-sandbox"}, Subjects: []rbacv1.Subject{static}},
+			watched: true,
+		},
+		{
+			name:    "unrelated binding is filtered out",
+			crb:     &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "cluster-admin"}, Subjects: []rbacv1.Subject{leaked}},
+			watched: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLegacyClusterRoleBinding(tc.crb); got != tc.watched {
+				t.Fatalf("isLegacyClusterRoleBinding = %v, want %v", got, tc.watched)
+			}
+			if !tc.watched {
+				return
+			}
+			var got []string
+			for _, req := range r.overseersForLegacyBinding(ctx, tc.crb) {
+				got = append(got, req.Name)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.wantReqs) {
+				t.Errorf("requests = %v, want %v", got, tc.wantReqs)
+			}
+		})
+	}
 }
