@@ -95,14 +95,18 @@ func (s *Service) Namespace() string {
 }
 
 // ResolveName returns the name of the sandbox a task of the given type and
-// issue/PR number executes in.
+// issue/PR number executes in: the one its factory command picks, so that
+// the busy checks and locks are about the sandbox the task really uses.
 //
 // Issue and chore tasks prefer an existing workflow sandbox and otherwise fall
-// back to the conventional per-issue name. PR tasks prefer a sandbox already
-// labeled with the PR, then a sandbox created for one of the issues the PR
-// closes (which is aliased to the PR as a side effect), and finally fall back
-// to the conventional per-PR name. A review runs in the review recipe's
-// sandbox.
+// back to the conventional per-issue name. A recipe that runs in a sandbox
+// of its own (review) gets that one. Other PR tasks prefer the PR's fix
+// sandbox, then any sandbox labeled with the PR (classic tasks only, as
+// `factory pr` picks), then a sandbox created for one of the issues the PR
+// closes (which is aliased to the PR as a side effect), and finally fall
+// back to the name their command creates: fix-<repo>-<pr> for a recipe
+// (EnsurePRSandbox), factory-pr-<repo>-<pr> for a classic task
+// (EnsureReviewSandbox).
 func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num int) string {
 	if taskType == api.TypeIssueFix || taskType == api.TypeAgentChore {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
@@ -114,20 +118,21 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 		return fmt.Sprintf("fix-%s-%d", s.repo, num)
 	}
 
-	// A review is the review recipe, in a sandbox of its own: it holds no
-	// credentials, so it shares none with the PR's other tasks.
-	if taskType == api.TypePRReview {
-		return factorysandbox.RecipeSandboxName(s.repo, num, "review")
+	rt, recipe := api.RecipeTaskOf(taskType)
+	// A credentials: clone recipe (review) holds no credentials, so it
+	// shares no sandbox with the PR's other tasks.
+	if recipe && rt.OwnSandbox {
+		return factorysandbox.RecipeSandboxName(s.repo, num, rt.Recipe)
 	}
 
-	// For PR tasks, check if there's an existing sandbox with the PR label
+	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.owner, s.repo, num)
 	if s.kube != nil {
-		listOpts := metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", num),
-		}
-		sbs, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).List(ctx, listOpts)
-		if err == nil && len(sbs.Items) > 0 {
-			return sbs.Items[0].GetName()
+		if recipe {
+			if name, err := factorysandbox.PRFixSandbox(ctx, s.kube, s.namespace, s.repo, num, prURL); err == nil && name != "" {
+				return name
+			}
+		} else if sb, err := factorysandbox.PRTaskSandbox(ctx, s.kube, s.namespace, s.repo, num, prURL); err == nil && sb != nil {
+			return sb.GetName()
 		}
 	}
 
@@ -152,7 +157,20 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 		}
 	}
 
-	return fmt.Sprintf("factory-pr-%d", num)
+	if recipe {
+		return fmt.Sprintf("fix-%s-%d", s.repo, num)
+	}
+	// EnsureReviewSandbox still reuses a sandbox of the repo-less name
+	// from before review sandboxes were scoped by repo.
+	name := factorysandbox.ReviewSandboxName(s.repo, num)
+	if ok, _ := s.Exists(ctx, name); !ok {
+		if legacy := fmt.Sprintf("factory-pr-%d", num); s.kube != nil {
+			if ok, _ := s.Exists(ctx, legacy); ok {
+				return legacy
+			}
+		}
+	}
+	return name
 }
 
 // List returns every sandbox in the namespace.
@@ -467,6 +485,10 @@ func lastTaskType(annotations map[string]string) string {
 
 // sandboxTaskType maps a queue task type onto the task type recorded in sandbox annotations.
 func sandboxTaskType(taskType api.TaskType) string {
+	// A recipe records recipe-<name>.
+	if rt, ok := api.RecipeTaskOf(taskType); ok {
+		return "recipe-" + rt.Recipe
+	}
 	switch taskType {
 	case api.TypeIssueFix:
 		return "fix-issue"
@@ -478,9 +500,6 @@ func sandboxTaskType(taskType api.TaskType) string {
 		return "investigate"
 	case api.TypePRIterate:
 		return "iterate"
-	case api.TypePRReview:
-		// A review runs the review recipe, which records recipe-<name>.
-		return "recipe-review"
 	default:
 		return string(taskType)
 	}

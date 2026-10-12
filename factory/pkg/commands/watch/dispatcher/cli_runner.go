@@ -57,6 +57,17 @@ func NewCLIRunner(cfg CLIRunnerConfig) *CLIRunner {
 // BuildArgs returns the factory CLI arguments for a task, or nil if the task type is unknown.
 func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	var args []string
+	if rt, ok := api.RecipeTaskOf(t.Type); ok {
+		// The recipe, its result applied by the CLI as the user picked
+		// (--user). The run name is this enqueue's: a restarted watcher's
+		// recovered task follows its run, or applies its result, and a
+		// task enqueued again after a failure starts a new one.
+		args = []string{"recipe", rt.Recipe, "--url", t.URL, "--run-name", rt.RunName(t), "--apply", "--action", rt.Action}
+		for _, inst := range t.Instructions {
+			args = append(args, "--instruction", inst)
+		}
+		return r.withCommonArgs(args, selectedUser)
+	}
 	switch t.Type {
 	case api.TypeIssueFix:
 		args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
@@ -66,15 +77,6 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		args = []string{"pr", "address-comments", "--pr-url", t.URL}
 	case api.TypePRIterate:
 		args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
-	case api.TypePRReview:
-		// The review recipe, submitted as a COMMENT review by the reviewer
-		// picked (--user). The run name is this enqueue's: a restarted
-		// watcher's recovered task follows its run, or applies its result,
-		// and a failed review enqueued again starts a new one.
-		args = []string{"recipe", "review", "--url", t.URL, "--run-name", reviewRunName(t), "--apply", "--action", "submit-review"}
-		for _, inst := range t.Instructions {
-			args = append(args, "--instruction", inst)
-		}
 	case api.TypeAgentChore:
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 		if t.SessionID != "" {
@@ -83,7 +85,12 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	default:
 		return nil
 	}
+	return r.withCommonArgs(args, selectedUser)
+}
 
+// withCommonArgs appends the flags every task's command takes: the
+// namespace, the user, and the sandbox's image and resources.
+func (r *CLIRunner) withCommonArgs(args []string, selectedUser string) []string {
 	if r.cfg.Namespace != "" {
 		args = append(args, "--namespace", r.cfg.Namespace)
 	}
@@ -153,21 +160,4 @@ func (r *CLIRunner) openLogFile(taskFilename string) (*os.File, error) {
 	logFilename := strings.TrimSuffix(taskFilename, ".yaml") + ".log"
 	logPath := filepath.Join(r.cfg.ProcessingLogDir, logFilename)
 	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-}
-
-// reviewRunName names the review run of t: its PR, the commit reviewed and
-// when t was enqueued.
-func reviewRunName(t *api.QueueTask) string {
-	sha := t.CommitSHA
-	if len(sha) > 7 {
-		sha = sha[:7]
-	}
-	if sha == "" {
-		sha = "head"
-	}
-	at := t.EnqueuedAt
-	if at.IsZero() {
-		at = t.CreatedAt
-	}
-	return fmt.Sprintf("review-%d-%s-%d", t.Number, sha, at.Unix())
 }

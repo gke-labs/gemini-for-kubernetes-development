@@ -748,6 +748,56 @@ func TestCollectGarbageCollectsRepoScopedPRSandboxAndNudges(t *testing.T) {
 	}
 }
 
+// The sandbox a PR's recipes made (EnsurePRSandbox) is collected with
+// the PR, as the PR's: the merge nudges the issues it closed. The issue
+// sweep, for which its name looks like an issue's, leaves it alone.
+func TestCollectGarbageCollectsPRFixSandboxWithItsPR(t *testing.T) {
+	sb := newSandbox("fix-test-repo-75", map[string]interface{}{annotationLastTaskState: "Completed"})
+	sb.SetLabels(map[string]string{labelPR: "75"})
+	linked := &recordingLinkedWork{}
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, sb),
+			GitHub: newMergedPRGitHub(t),
+		}),
+		Locks:      concurrency.NewSandboxLockRegistry(),
+		Entities:   warmCache(),
+		LinkedWork: linked,
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if sandboxExists(t, r, "fix-test-repo-75") {
+		t.Errorf("expected the fix sandbox of merged PR #75 to be deleted")
+	}
+	if len(linked.closed) != 1 || linked.closed[0] != 71 {
+		t.Errorf("reported closed issues %v, want [71]", linked.closed)
+	}
+}
+
+func TestCollectGarbageKeepsPRFixSandboxWhilePRIsOpen(t *testing.T) {
+	sb := newSandbox("fix-test-repo-75", map[string]interface{}{annotationLastTaskState: "Completed"})
+	sb.SetLabels(map[string]string{labelPR: "75"})
+	var requests atomic.Int32
+	r := New(Config{}, Deps{
+		Sandboxes: NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+			Kube:   newFakeKubeClient(t, sb),
+			GitHub: newEntityGitHub(t, func() { requests.Add(1) }),
+		}),
+		Locks:    concurrency.NewSandboxLockRegistry(),
+		Entities: &stubEntityState{prsPopulated: true, issuesPopulated: true, openPRs: map[int]bool{75: true}},
+	})
+
+	r.CollectGarbage(context.Background())
+
+	if !sandboxExists(t, r, "fix-test-repo-75") {
+		t.Errorf("expected the fix sandbox of open PR #75 to be kept")
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("made %d GitHub requests, want none for a PR the cache vouches for", n)
+	}
+}
+
 func TestCollectGarbageDoesNotNudgeForUnmergedPR(t *testing.T) {
 	linked := &recordingLinkedWork{}
 	r := New(Config{}, Deps{
@@ -782,6 +832,9 @@ func TestPRNumberFromSandbox(t *testing.T) {
 		{name: "factory-pr-truncated-slug-8", labels: map[string]string{labelPR: "9"}, want: 9, wantOK: true},
 		{name: "factory-pr-repo", wantOK: false},
 		{name: "fix-test-repo-42", labels: map[string]string{labelPR: "70"}, wantOK: false},
+		{name: "fix-test-repo-70", labels: map[string]string{labelPR: "70"}, want: 70, wantOK: true},
+		{name: "fix-other-repo-70", labels: map[string]string{labelPR: "70"}, wantOK: false},
+		{name: "fix-test-repo-70", wantOK: false},
 		{name: "review-test-repo-42", want: 42, wantOK: true},
 		{name: "review-other-repo-42", wantOK: false},
 		{name: "review-test-repo-x", wantOK: false},
