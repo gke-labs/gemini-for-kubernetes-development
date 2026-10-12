@@ -144,10 +144,12 @@ def inject_issue_model_list(repowatch):
     spec = repowatch.get("spec", {})
     if "issue" in spec and isinstance(spec["issue"], dict):
         target_models = [
+            "gemini-3.8-flash",
             "gemini-3.7-flash",
             "gemini-3.6-flash",
             "gemini-3.5-flash",
             "gemini-3-flash-preview",
+            "gemini-4-argon",
             "gemini-3.1-pro-preview",
             "gemini-2.5-pro",
             "gemini-2.5-flash"
