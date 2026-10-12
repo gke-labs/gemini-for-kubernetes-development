@@ -365,8 +365,17 @@ func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, qu
 }
 
 func (s *ServerSandbox) Log(ctx context.Context, id string, w io.Writer) error {
+	return s.log(ctx, id, w, false)
+}
+
+// FollowLog is Log, going on until the task ends.
+func (s *ServerSandbox) FollowLog(ctx context.Context, id string, w io.Writer) error {
+	return s.log(ctx, id, w, true)
+}
+
+func (s *ServerSandbox) log(ctx context.Context, id string, w io.Writer, follow bool) error {
 	return s.call(ctx, func(c *Client) error {
-		body, err := c.Log(ctx, id, 0, false)
+		body, err := c.Log(ctx, id, 0, follow)
 		if err != nil {
 			return err
 		}
