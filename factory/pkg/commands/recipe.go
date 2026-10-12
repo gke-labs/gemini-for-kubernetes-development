@@ -370,6 +370,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
+	// The process's own client: an overseer's, which labels its fixes'
+	// PRs where the bot that opens them may not (--pr-labels).
+	ownClient := ghClient
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
@@ -465,6 +468,9 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 			return fmt.Errorf("--pr-labels is for a recipe whose Change opens a PR for an issue")
 		}
 		inputs["labels"] = mergeLabels(inputs["labels"], resolvePRLabels(cfg, issue, true))
+		if apply.asUser {
+			ctx = taskoutput.WithLabeler(ctx, ownClient)
+		}
 	}
 	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" && pr != nil {
 		// A Change on a PR continues it: the PR's head stands in for the

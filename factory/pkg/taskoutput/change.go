@@ -248,6 +248,10 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	if len(open) > 0 {
 		fmt.Fprintf(out, "%s already has an open PR: %s; not opening another\n", head, open[0].GetHTMLURL())
 		doc.Target.URL = open[0].GetHTMLURL()
+		// Applied again after its labels failed: they go on now.
+		if !dryRun {
+			addPRLabels(ctx, gh, owner, repo, open[0], c.Labels, out)
+		}
 		return nil
 	}
 	r, _, err := gh.Repositories.Get(ctx, owner, repo)
@@ -280,14 +284,34 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	}
 	fmt.Fprintf(out, "Opened %s\n", pr.GetHTMLURL())
 	doc.Target.URL = pr.GetHTMLURL()
-	if len(c.Labels) > 0 {
-		// The PR is open either way; a label missing from the repository is
-		// its configuration, not a reason to fail.
-		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), c.Labels); err != nil {
-			fmt.Fprintf(out, "Warning: could not label %s: %v\n", pr.GetHTMLURL(), err)
-		}
-	}
+	addPRLabels(ctx, gh, owner, repo, pr, c.Labels, out)
 	return nil
+}
+
+// labelerKey carries the client open-pr labels with (WithLabeler).
+type labelerKey struct{}
+
+// WithLabeler is ctx for applies whose open-pr labels the PR with gh
+// rather than with the client it opens it with: an overseer opens its
+// fix's PR as the bot that wrote it, which may not label the repository's
+// issues, and labels it as itself, as factory fix did.
+func WithLabeler(ctx context.Context, gh *githubv39.Client) context.Context {
+	return context.WithValue(ctx, labelerKey{}, gh)
+}
+
+// addPRLabels adds labels to pr, with the client WithLabeler set, else
+// gh. The PR is open either way; a label missing from the repository, or
+// a client that may not label, is a warning, not a failure.
+func addPRLabels(ctx context.Context, gh *githubv39.Client, owner, repo string, pr *githubv39.PullRequest, labels []string, out io.Writer) {
+	if len(labels) == 0 {
+		return
+	}
+	if l, ok := ctx.Value(labelerKey{}).(*githubv39.Client); ok && l != nil {
+		gh = l
+	}
+	if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, pr.GetNumber(), labels); err != nil {
+		fmt.Fprintf(out, "Warning: could not label %s: %v\n", pr.GetHTMLURL(), err)
+	}
 }
 
 // applyPostReplies posts a Change's replies and report on its PR, with
