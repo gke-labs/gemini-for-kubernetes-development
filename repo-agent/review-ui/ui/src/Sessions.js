@@ -90,11 +90,11 @@ function shortRepo(repo) {
   return (repo || '').split('/').pop();
 }
 
-// visibleRows are the rows the filters leave.
-export function visibleRows(rows, { repo, query }) {
+// visibleRows are the rows the search leaves: it matches the title, the
+// repository, the sandbox, the recipe and the item.
+export function visibleRows(rows, { query }) {
   const q = (query || '').trim().toLowerCase();
   return rows.filter(r => {
-    if (repo && r.repo !== repo) return false;
     if (!q) return true;
     return [rowTitle(r), r.repo, r.sandbox, r.recipe, itemText(r), r.title].some(s => (s || '').toLowerCase().includes(q));
   });
@@ -313,7 +313,6 @@ export default function Sessions({ namespace }) {
   const [selected, setSelected] = useState(() => (sessionsRoute() || { key: '' }).key);
   // pending is the row a Start just asked for, until the feed lists it.
   const [pending, setPending] = useState(null);
-  const [repoFilter, setRepoFilter] = useState('');
   const [query, setQuery] = useState('');
   const [listWidth, setListWidth] = useStored('sessions.listWidth', LIST_DEFAULT);
   const [collapsed, setCollapsed] = useStored('sessions.collapsed', false);
@@ -339,10 +338,9 @@ export default function Sessions({ namespace }) {
   const open = all.find(r => rowKey(r) === selected) || null;
   const isOpen = !!(open || starting);
 
-  const shown = visibleRows(all, { repo: repoFilter, query });
+  const shown = visibleRows(all, { query });
   const flat = orderedRows(shown);
   const needs = all.filter(r => r.state === 'needs-you').length;
-  const repos = [...new Set(all.map(r => r.repo).filter(Boolean))].sort();
 
   // ↑/↓ walk the list; Escape closes the session. Not while typing.
   useEffect(() => {
@@ -380,11 +378,6 @@ export default function Sessions({ namespace }) {
   const narrow = isOpen;
   const filters = (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', ...small, margin: '8px 0' }}>
-      <select aria-label="Repository filter" value={repoFilter} onChange={e => setRepoFilter(e.target.value)}
-        style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', maxWidth: '220px' }}>
-        <option value="">all repos</option>
-        {repos.map(r => <option key={r} value={r}>{shortRepo(r)}</option>)}
-      </select>
       {!narrow && (
         <span aria-label="Legend" style={{ display: 'flex', gap: '8px' }}>
           {LEGEND.map(([color, label]) => <span key={label}><span style={{ color }}>●</span> <span style={muted}>{label}</span></span>)}

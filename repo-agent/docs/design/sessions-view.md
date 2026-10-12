@@ -27,8 +27,8 @@ box to start a repository-level session. It replaces the Research tabs.
 - **Every session in the namespace is listed**, wherever it was started:
   a Work row's button, this page's box, the factory CLI. The list is built
   from sandboxes, not from launches. Continuity with the board is the point.
-- **Namespace-wide**, across boards. A repository dropdown narrows it to
-  one; there is no grouping.
+- **Namespace-wide**, across boards. The search narrows it (a repository
+  name too); there is no grouping and no filter.
 - **Sorted by the agent, not by GitHub.** Work's "needs you" is GitHub
   waiting on the member; here it is an agent waiting on them: a permission
   request, a ready draft.
@@ -49,7 +49,7 @@ box to start a repository-level session. It replaces the Research tabs.
 │ │ 'compare with …'                                                         │ │
 │ │ [▣ kcc ▾]  [◆ gemini ▾]   overview · recent changes             [Start ↵]│ │
 │ └──────────────────────────────────────────────────────────────────────────┘ │
-│ [all repos ▾]      ● needs you  ● working  ● idle  ● paused · done       🔍 │
+│ ● needs you  ● working  ● idle  ● paused · done                    🔍 search │
 │                                                                              │
 │ 🔴 ◆ Rebase  PR #1774 ↗  (g4k)  3m                                           │
 │ 🔴 ✦ Plan  #13865 ↗  (kcc)  12m                                              │
@@ -82,10 +82,9 @@ colour, and the rows come in that order, newest change first within each:
 
 A legend in the filter bar says so.
 
-No grouping and no state filter: the list is sorted by state, and the
-repository dropdown at the start of the filter bar narrows it to one
-repository (a search box beside it matches text). An open session's
-strip names the sandbox's other sessions.
+No grouping and no filters: the list is sorted by state, and a search box
+narrows it by title, repository, sandbox, recipe or item. An open
+session's strip names the sandbox's other sessions.
 
 ## A session open: a split page
 
@@ -175,7 +174,7 @@ it.
    pre-recipe sandbox, an unreachable pod.
 2. **The page:** the ☰ entry, the box (on the research route), rows,
    sections, filters, grouping, the split with its strip. (Since: one
-   list sorted by state with coloured dots, filtered by repository only.)
+   list sorted by state with coloured dots, and a search box.)
 3. **Remove the Research tabs** once the page has been used: the board's
    Research tab, All → Research (`AllResearchPanel`), `ResearchPanel`'s
    list.

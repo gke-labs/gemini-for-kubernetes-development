@@ -92,6 +92,7 @@ describe('Sessions', () => {
         expect(rows.map(dot)).toEqual(['rgb(215, 58, 73)', 'rgb(9, 105, 218)', 'rgb(9, 105, 218)', 'rgb(34, 134, 58)', 'rgb(139, 148, 158)']);
         expect(container.querySelector('[aria-label="Group by"]')).toBeNull();
         expect(container.querySelector('[aria-label="State filter"]')).toBeNull();
+        expect(container.querySelector('[aria-label="Repository filter"]')).toBeNull();
         expect(container.querySelector('[aria-label="Legend"]').textContent).toBe('● needs you● working● idle● paused · done');
         // One line a row: state, engine, recipe, item, repo, age; what the
         // agent is doing and the sandbox are its hover.
@@ -155,7 +156,7 @@ describe('helpers', () => {
     });
     test('filters', () => {
         expect(visibleRows(FEED.sessions, { query: '#1681' })[0].task).toBe('recipe-triage-1');
-        expect(visibleRows(FEED.sessions, { repo: 'G/kcc' }).length).toBe(3);
+        expect(visibleRows(FEED.sessions, { query: 'kcc' }).length).toBe(3);
     });
     test('what a row is doing', () => {
         expect(rowDoing({ runs: [{ status: 'ready' }] })).toBe('📝 draft ready');
