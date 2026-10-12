@@ -14,7 +14,6 @@ import (
 // list on the commit that adds it.
 var taskScripts = []string{
 	"adopt.sh", "fix_issue.sh",
-	"iterate.sh",
 	"run.sh", "run_agent.sh",
 }
 
@@ -28,13 +27,12 @@ var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "re
 // until the agent flow's engine follow-up).
 var engineCalls = map[string]string{
 	"fix_issue.sh": "\nrunEngine\n",
-	"iterate.sh":   "SKIP_EMPTY_PROMPT=true runEngine",
 }
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).
 var shadowsSetupGitRepos = map[string]bool{
-	"fix_issue.sh": true, "iterate.sh": true, "run_agent.sh": true,
+	"fix_issue.sh": true, "run_agent.sh": true,
 }
 
 func defCount(script, fn string) int {
