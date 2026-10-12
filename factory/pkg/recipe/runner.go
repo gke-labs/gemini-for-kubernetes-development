@@ -13,8 +13,9 @@ import (
 // Executor runs the steps that are not prompts. The sandbox implements it
 // with bash (see SandboxExecutor); tests with a fake.
 type Executor interface {
-	// Uses runs a named step. with arrives as WITH_<KEY> variables.
-	Uses(ctx context.Context, name string, with map[string]string, log io.Writer) error
+	// Uses runs a named step. inputs arrive as INPUT_<NAME> variables, as
+	// a run step's do, and with as WITH_<KEY>.
+	Uses(ctx context.Context, name string, with, inputs map[string]string, log io.Writer) error
 	// Run runs inline shell, without the GitHub token, and reports its
 	// exit status; err is for a step that could not be started at all.
 	Run(ctx context.Context, script string, inputs map[string]string, log io.Writer) (exitCode int, err error)
@@ -102,7 +103,7 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			out := io.MultiWriter(r.Log, f)
 			res.Log = logPath
 			if step.Kind() == "uses" {
-				err = r.Exec.Uses(ctx, step.Uses, step.With, out)
+				err = r.Exec.Uses(ctx, step.Uses, step.With, r.Inputs, out)
 				if err != nil {
 					res.ExitCode = 1
 				}

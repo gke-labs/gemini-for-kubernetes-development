@@ -753,6 +753,7 @@ func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap
 	envMap = map[string]string{
 		"HOME":                       "/workspaces/.home",
 		"GEMINI_CLI_TRUST_WORKSPACE": "true",
+		"REPO_OWNER":                 it.Owner,
 		"REPO_NAME":                  it.Repo,
 		"CLONE_URL":                  fmt.Sprintf("https://github.com/%s/%s.git", it.Owner, it.Repo),
 		"GITHUB_USER_ID":             githubLogin,

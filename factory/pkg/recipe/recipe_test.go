@@ -133,7 +133,7 @@ type fakeExec struct {
 	ran []string
 }
 
-func (f *fakeExec) Uses(_ context.Context, name string, with map[string]string, log io.Writer) error {
+func (f *fakeExec) Uses(_ context.Context, name string, with, _ map[string]string, log io.Writer) error {
 	f.ran = append(f.ran, "uses:"+name)
 	fmt.Fprintf(log, "ran %s\n", name)
 	if name == "setup-repo" && with["fail"] == "yes" {
@@ -272,24 +272,26 @@ func TestSandboxRunStripsTokensAndPassesInputsAsEnv(t *testing.T) {
 	}
 }
 
-func TestSandboxUsesCallsTheNamedFunctionWithTheToken(t *testing.T) {
+func TestSandboxUsesCallsTheNamedFunctionWithTheTokenAndInputs(t *testing.T) {
 	root := t.TempDir()
 	taskDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(taskDir, "steps"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	e := &SandboxExecutor{
-		StepScript: []byte(`setupGit() { echo "setupGit token=$GITHUB_TOKEN branch=$WITH_BRANCH_NAME"; }
+		StepScript: []byte(`setupGit() { echo "setupGit token=$GITHUB_TOKEN branch=$WITH_BRANCH_NAME pr=$INPUT_PR_NUMBER"; }
 "$RECIPE_STEP_FUNCTION"`),
 		TaskDir: taskDir,
 		RepoDir: filepath.Join(root, "repo"),
 		Env:     []string{"PATH=" + os.Getenv("PATH"), "GITHUB_TOKEN=tok"},
 	}
 	var out strings.Builder
-	if err := e.Uses(context.Background(), "setup-git", map[string]string{"branch-name": "main"}, &out); err != nil {
+	// The inputs too, as a run step gets them: pr-comments reads
+	// INPUT_TRUSTED_LOGINS, issue-comments INPUT_ISSUE_NUMBER.
+	if err := e.Uses(context.Background(), "setup-git", map[string]string{"branch-name": "main"}, map[string]string{"pr_number": "7"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(out.String()); got != "setupGit token=tok branch=main" {
+	if got := strings.TrimSpace(out.String()); got != "setupGit token=tok branch=main pr=7" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -821,7 +823,7 @@ func TestSandboxUsesGivesTheSecretsToTheCloneAlone(t *testing.T) {
 	}
 	var out strings.Builder
 	for _, step := range []string{"configure-engine", "clone", "clone"} {
-		if err := e.Uses(context.Background(), step, nil, &out); err != nil {
+		if err := e.Uses(context.Background(), step, nil, nil, &out); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1088,7 +1090,7 @@ func TestSandboxUsesGetsTheTaskDir(t *testing.T) {
 		Env:        []string{"PATH=" + os.Getenv("PATH")},
 	}
 	var out strings.Builder
-	if err := e.Uses(context.Background(), "push", nil, &out); err != nil {
+	if err := e.Uses(context.Background(), "push", nil, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if want := "pushToFork " + taskDir + "\n"; out.String() != want {
