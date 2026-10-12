@@ -575,7 +575,7 @@ export function grownHeight(scrollHeight, lineHeight, minRows, maxRows) {
 // caller that has to reach it — filling the ask box with a canned prompt
 // and then putting the caret at the end of it — rather than a forwarded
 // ref, because this component's own ref is what measures the box.
-function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, inputRef, ...rest }) {
+export function GrowingTextarea({ value, minRows = 1, maxRows = 10, style, inputRef, ...rest }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
     const el = ref.current;
