@@ -22,9 +22,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -439,6 +441,12 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if err != nil {
 		return err
 	}
+	if pr != nil {
+		// Whose comments the pr-comments step lets through, besides the
+		// repository's owners, members and collaborators and GitHub Apps.
+		// Set here, after the overrides: --input cannot widen it.
+		inputs["trusted_logins"] = strings.Join(prTrustedLogins(pr, string(secret.Data[constants.KeyGithubLogin])), ",")
+	}
 	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" && pr != nil {
 		// A Change on a PR continues it: the PR's head stands in for the
 		// push a start would otherwise make.
@@ -622,6 +630,17 @@ func prPushInputs(ctx context.Context, gh *githubv39.Client, it githubItem, pr *
 	inputs["pushed_title"], inputs["pushed_body"] = pr.GetTitle(), pr.GetBody()
 	inputs["pr_url"] = pr.GetHTMLURL()
 	return nil
+}
+
+// prTrustedLogins are the logins whose comments on pr reach a recipe's
+// agent though GitHub may not say they can write to the repository: the
+// factory config's trusted logins, the PR's author and login, the task's.
+func prTrustedLogins(pr *githubv39.PullRequest, login string) []string {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+	return trustedLogins(cfg, pr.GetUser().GetLogin(), login)
 }
 
 // recipeTarget is which of recipe.On it is: a PR is my-pr when login

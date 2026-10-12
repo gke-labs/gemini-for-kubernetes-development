@@ -300,6 +300,7 @@ var NamedSteps = map[string]string{
 	"configure-engine":        "configureGemini",
 	"push":                    "pushToFork",
 	"ci-logs":                 "fetchPRCILogs",
+	"pr-comments":             "fetchPRComments",
 	CloneStep:                 "cloneRepo",
 }
 

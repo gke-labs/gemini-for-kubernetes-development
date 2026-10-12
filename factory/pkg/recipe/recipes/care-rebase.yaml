@@ -116,8 +116,9 @@ start:
             you changed.
 
         Rules:
-        - inReplyTo is the numeric `id` of a comment you answer, from the
-          `gh api` output: a review comment's or a conversation comment's.
+        - inReplyTo is the number of a review comment or a comment you
+          answer, from its heading in the comments you were given (not a
+          review's).
           One reply per comment you answer; none if you answered none.
         - Leave out report if there is nothing to report, and write
           `change: {}` if there is nothing at all.

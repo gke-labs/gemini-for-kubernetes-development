@@ -13,7 +13,7 @@ import (
 // enforce was never applied to it. A new task script belongs in this
 // list on the commit that adds it.
 var taskScripts = []string{
-	"address_feedback.sh", "adopt.sh", "fix_issue.sh",
+	"adopt.sh", "fix_issue.sh",
 	"iterate.sh",
 	"run.sh", "run_agent.sh",
 }
@@ -27,9 +27,8 @@ var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "re
 // engine loop anymore (run_agent's runAgent is the documented exception
 // until the agent flow's engine follow-up).
 var engineCalls = map[string]string{
-	"fix_issue.sh":        "\nrunEngine\n",
-	"iterate.sh":          "SKIP_EMPTY_PROMPT=true runEngine",
-	"address_feedback.sh": "\nrunEngine\n",
+	"fix_issue.sh": "\nrunEngine\n",
+	"iterate.sh":   "SKIP_EMPTY_PROMPT=true runEngine",
 }
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default

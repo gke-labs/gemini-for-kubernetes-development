@@ -63,7 +63,7 @@ Once the watcher has consolidated the active issues and PRs, it performs check-s
 | :--- | :--- | :--- | :--- | :--- |
 | **Issue** | Open issue assigned/labeled | `issue-fix` | `factory fix` | Mapped pool bot / Load-balanced coder |
 | **PR** | CI check runs failed (Phase 3) | `pr-investigate` | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
-| **PR** | New comment or review (Phase 2) | `pr-comments` | `factory pr address-comments` | Match PR author (must be in `coder` pool) |
+| **PR** | New comment or review (Phase 2) | `pr-comments` | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
 | **PR** | Merge conflicts / out-of-date (Phase 1) | `pr-iterate` | `factory pr iterate` | Match PR author (must be in `coder` pool) |
 | **PR** | Opened by third-party bot on allowlist | `pr-review` | `factory recipe review --apply --action submit-review` | Random user from `reviewer` pool |
 | **PR** | Markdown workflow checklist file reference | `agent-chore` | `factory agent create` | Default fallback or mapped role |

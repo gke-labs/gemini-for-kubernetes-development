@@ -72,8 +72,9 @@ func TestServiceIsTaskCompleted(t *testing.T) {
 		state             string
 		expectedCompleted bool
 	}{
-		{api.TypePRComments, "address-comments", "Completed", true},
-		{api.TypePRComments, "address-comments", "Running", false},
+		{api.TypePRComments, "recipe-care-comments", "Completed", true},
+		{api.TypePRComments, "recipe-care-comments", "Running", false},
+		{api.TypePRComments, "address-comments", "Completed", false},
 		{api.TypePRInvestigate, "recipe-care-ci", "Completed", true},
 		{api.TypePRInvestigate, "investigate", "Completed", false},
 		{api.TypePRIterate, "iterate", "Completed", true},
@@ -153,7 +154,8 @@ func TestServiceResolveName(t *testing.T) {
 	}{
 		{"issue task", api.TypeIssueFix, 10, "fix-test-repo-10"},
 		{"chore task falls back to the issue sandbox", api.TypeAgentChore, 10, "fix-test-repo-10"},
-		{"pr task gets the name factory pr creates", api.TypePRComments, 55, "factory-pr-test-repo-55"},
+		{"pr task gets the name factory pr creates", api.TypePRIterate, 55, "factory-pr-test-repo-55"},
+		{"pr recipe runs in the PR's fix sandbox", api.TypePRComments, 55, "fix-test-repo-55"},
 		{"review runs in the review recipe's sandbox", api.TypePRReview, 55, "review-test-repo-55"},
 	}
 
@@ -199,7 +201,7 @@ func TestServiceResolveNamePRTaskFollowsFactoryPR(t *testing.T) {
 			svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
 				Kube: newFakeKubeClient(t, tc.sandboxes...),
 			})
-			if got := svc.ResolveName(context.Background(), api.TypePRComments, 55); got != tc.want {
+			if got := svc.ResolveName(context.Background(), api.TypePRIterate, 55); got != tc.want {
 				t.Errorf("ResolveName = %q, want %q", got, tc.want)
 			}
 		})

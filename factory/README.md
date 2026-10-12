@@ -41,7 +41,7 @@
 - **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` writes the plan, as edited, to the issue's sandbox and runs `factory fix --with-plan`.
 - **PR lifecycle.**
   - `recipe care-ci` works on CI failures of a PR of yours (the overseer runs it with `--apply --action post-replies`).
-  - `pr address-comments` handles review feedback.
+  - `recipe care-comments` answers review feedback, trusted authors' only (the overseer runs it with `--apply --action post-replies`).
   - `pr iterate` rebases and resolves conflicts.
   - `pr watch` follows up with care for one PR until it merges or closes.
 - **Session continuity.** A sandbox is aliased to its PR with the `factory.gemini.google.com/pr` label. Follow-up PR tasks therefore reuse the sandbox that wrote the code, and `--continue-session` keeps the agent's chat history.
@@ -52,10 +52,10 @@
 ### Autonomous watch loop (`factory watch`)
 - **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label.
 - **PR reactions.** For each bot PR it dispatches, in priority order:
-  1. unaddressed feedback → `address-comments`
+  1. unaddressed feedback → `recipe care-comments`
   2. merge conflict → `iterate`
-  3. failing CI → `investigate`
-  4. green and labelled for review → `review`
+  3. failing CI → `recipe care-ci`
+  4. green and labelled for review → `recipe review`
 
   A PR that passes review is labelled `<trigger>/ready-for-human` and handed to the human assignees. `--pr-inactivity-timeout` pauses PRs that no human has touched for that long.
 - **Chores.** Agent definitions under `.agents/` that have a cron `schedule` run as `agent-chore` tasks (`--chores-mode`).
@@ -230,7 +230,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
-| `pr address-comments` | Address review feedback on a PR |
+| `recipe care-comments` | Answer the review feedback on a PR of yours (trusted authors' only); `--apply --action post-replies` posts the replies |
 | `pr iterate` | Rebase, resolve conflicts, or apply a `--prompt` |
 | `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
