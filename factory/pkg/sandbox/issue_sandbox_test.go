@@ -189,12 +189,12 @@ func TestPRSandboxIsTheFixSandbox(t *testing.T) {
 		"spec": map[string]interface{}{"replicas": int64(1)},
 	}}
 	kc := fakeKube(t, ns, fix)
-	name, err := EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 12, "https://github.com/o/open-rl.git", prURL, "", "", "", "", nil, nil, "")
+	name, err := EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 12, "https://github.com/o/open-rl.git", prURL, "", "", "", "", "", nil, nil, "")
 	if err != nil || name != "fix-open-rl-7" {
 		t.Fatalf("EnsurePRSandbox(12) = %q, %v; want the fix's sandbox", name, err)
 	}
 
-	name, err = EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 13, "https://github.com/o/open-rl.git", "https://github.com/o/open-rl/pull/13", "", "", "", "", nil, nil, "")
+	name, err = EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 13, "https://github.com/o/open-rl.git", "https://github.com/o/open-rl/pull/13", "", "", "", "", "", nil, nil, "")
 	if err != nil || name != "fix-open-rl-13" {
 		t.Fatalf("EnsurePRSandbox(13) = %q, %v", name, err)
 	}
@@ -210,5 +210,52 @@ func TestPRSandboxIsTheFixSandbox(t *testing.T) {
 	}
 	if again, err := PRFixSandbox(context.Background(), kc, ns, "open-rl", 13, "https://github.com/o/open-rl/pull/13"); err != nil || again != name {
 		t.Errorf("PRFixSandbox(13) = %q, %v", again, err)
+	}
+}
+
+// A fix sandbox carries its issue's title, made with it and kept as the
+// issue's is; a PR's recipes on it leave it, and a PR's own sandbox takes
+// the PR's.
+func TestFixSandboxTitle(t *testing.T) {
+	ns := "u"
+	ctx := context.Background()
+	kc := fakeKube(t, ns)
+	title := func(name string) string {
+		t.Helper()
+		got, err := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.GetAnnotations()[AnnotationTitle]
+	}
+	if _, err := EnsureFixSandbox(ctx, kc, ns, "open-rl", "7", "", "https://github.com/o/open-rl/issues/7", "Fix the parser", "", "", "", "", nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := title("fix-open-rl-7"); got != "Fix the parser" {
+		t.Errorf("made: title %q", got)
+	}
+	// The issue renamed: the reused sandbox follows.
+	if _, err := EnsureFixSandbox(ctx, kc, ns, "open-rl", "7", "", "https://github.com/o/open-rl/issues/7", "Fix the parser's backoff", "", "", "", "", nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := title("fix-open-rl-7"); got != "Fix the parser's backoff" {
+		t.Errorf("issue renamed: title %q", got)
+	}
+	// Its PR's care runs there: the issue's title stays.
+	if err := AliasSandboxToPR(ctx, kc, ns, "fix-open-rl-7", 12, "https://github.com/o/open-rl/pull/12"); err != nil {
+		t.Fatal(err)
+	}
+	if name, err := EnsurePRSandbox(ctx, kc, ns, "open-rl", 12, "", "https://github.com/o/open-rl/pull/12", "parser: back off", "", "", "", "", nil, nil, ""); err != nil || name != "fix-open-rl-7" {
+		t.Fatalf("EnsurePRSandbox(12) = %q, %v", name, err)
+	}
+	if got := title("fix-open-rl-7"); got != "Fix the parser's backoff" {
+		t.Errorf("the PR's run replaced the issue's title: %q", got)
+	}
+	// A PR no fix opened: its own sandbox, the PR's title.
+	if _, err := EnsurePRSandbox(ctx, kc, ns, "open-rl", 13, "", "https://github.com/o/open-rl/pull/13", "docs: typo", "", "", "", "", nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := title("fix-open-rl-13"); got != "docs: typo" {
+		t.Errorf("a PR's own sandbox: title %q", got)
 	}
 }

@@ -245,9 +245,22 @@ func labelValue(s string) string {
 
 // EnsureFixSandbox creates (or reuses) the sandbox for repoName's issue (or
 // named task) taskID, fix-<repo>-<taskID>. Plan and triage run in it too.
+// It carries the issue's title (AnnotationTitle), kept as the issue's is.
 func EnsureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name := fmt.Sprintf("fix-%s-%s", repoName, taskID)
-	return ensureFixSandbox(ctx, kubeClient, namespace, name, IssueLabels(repoName, taskID), nil, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+	return ensureFixSandbox(ctx, kubeClient, namespace, name, IssueLabels(repoName, taskID), nil, sandboxTitle{taskTitle, true}, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+}
+
+// AnnotationTitle is the title of the issue or PR a fix sandbox works on:
+// what the Overseer page names its row by.
+const AnnotationTitle = "title"
+
+// sandboxTitle is the title a fix sandbox is given (AnnotationTitle), and
+// whether a reused one's is replaced by it (an issue's, renamed) or only
+// filled in where it has none (a PR's, on the issue's sandbox it shares).
+type sandboxTitle struct {
+	title   string
+	replace bool
 }
 
 // LabelPR is the PR a sandbox works on: a fix's once it opens its PR
@@ -259,7 +272,10 @@ const LabelPR = "factory.gemini.google.com/pr"
 // checkout, or with none, one made for the PR, fix-<repo>-<pr>, as a fix
 // sandbox aliased to it is. Issues and PRs share their numbers' space, so
 // that name is never an issue's.
-func EnsurePRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, prURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+//
+// prTitle names the sandbox (AnnotationTitle) only where it has no title:
+// the fix's sandbox keeps its issue's.
+func EnsurePRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName string, prNum int, cloneURL, prURL, prTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 	name, err := PRFixSandbox(ctx, kubeClient, namespace, repoName, prNum, prURL)
 	if err != nil {
 		return "", err
@@ -268,7 +284,7 @@ func EnsurePRSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		name = fmt.Sprintf("fix-%s-%d", repoName, prNum)
 	}
 	labels := map[string]string{LabelRepo: labelValue(repoName), LabelPR: strconv.Itoa(prNum)}
-	return ensureFixSandbox(ctx, kubeClient, namespace, name, labels, map[string]string{"pr": strconv.Itoa(prNum)}, repoName, cloneURL, prURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
+	return ensureFixSandbox(ctx, kubeClient, namespace, name, labels, map[string]string{"pr": strconv.Itoa(prNum)}, sandboxTitle{prTitle, false}, repoName, cloneURL, prURL, image, diskSize, storageClass, ephemeralStorage, secrets, envs, user)
 }
 
 // PRFixSandbox is the fix sandbox in namespace aliased to PR prNum of
@@ -304,8 +320,8 @@ func sameItemURL(a, b string) bool {
 }
 
 // ensureFixSandbox creates (or reuses) fix sandbox name, labelled with
-// labels: on reuse, it gains them.
-func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string, issueLabels, annotations map[string]string, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+// labels: on reuse, it gains them, and title as title says.
+func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, name string, issueLabels, annotations map[string]string, title sandboxTitle, repoName, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil && terminating(sb) {
@@ -323,7 +339,11 @@ func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		if Launcher != "" && Launcher != "factory" {
 			reuseLabels[LabelLauncher] = Launcher
 		}
-		prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, reuseLabels)
+		var reuseAnnotations map[string]string
+		if current := sb.GetAnnotations()[AnnotationTitle]; title.title != "" && (current == "" || title.replace) {
+			reuseAnnotations = map[string]string{AnnotationTitle: title.title}
+		}
+		prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, reuseLabels, reuseAnnotations)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -331,6 +351,9 @@ func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 
 	if diskSize == "" {
 		diskSize = "10Gi"
+	}
+	if title.title != "" {
+		annotations = withLabels(map[string]string{AnnotationTitle: title.title}, annotations)
 	}
 
 	opt := AgentSandboxOptions{
@@ -538,13 +561,26 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 // from the last task hours ago, scaled it straight back to zero and the
 // connect timed out waiting for the pod.
 func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
-	prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, nil)
+	prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, nil, nil)
 }
 
 // prepareReusedSandboxLabels is prepareReusedSandbox, also adding labels
-// a sandbox made before they were stamped lacks.
-func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string, extra map[string]string) {
+// a sandbox made before they were stamped lacks, and setting annotations.
+func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string, extra, extraAnnotations map[string]string) {
 	changed := false
+	if len(extraAnnotations) > 0 {
+		annotations := sb.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		for k, v := range extraAnnotations {
+			if annotations[k] != v {
+				annotations[k] = v
+				changed = true
+			}
+		}
+		sb.SetAnnotations(annotations)
+	}
 	labels := sb.GetLabels()
 	if labels == nil {
 		labels = make(map[string]string)

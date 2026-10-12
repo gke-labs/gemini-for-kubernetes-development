@@ -66,7 +66,7 @@ func ensurePR(t *testing.T, kc *clients.KubernetesClient, ns string) (string, er
 	t.Helper()
 	return sandbox.EnsurePRSandbox(context.Background(), kc, ns, "open-rl", 270,
 		"https://github.com/gke-labs/open-rl.git",
-		"https://github.com/gke-labs/open-rl/pull/270",
+		"https://github.com/gke-labs/open-rl/pull/270", "chore(deps): batch open dependabot PRs",
 		"img:latest", "10Gi", "", "10Gi", nil, nil, "barney-s")
 }
 

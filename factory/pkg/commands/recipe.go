@@ -509,7 +509,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 			// No recipe holding the token has run there.
 			sandboxName, err = factorysandbox.EnsureRecipeSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, rec.Name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 		} else {
-			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
+			sandboxName, err = factorysandbox.EnsurePRSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, it.Number, cloneURL, htmlURL, standard["pr_title"], rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 		}
 	default:
 		fmt.Printf("Ensuring the sandbox for #%d...\n", it.Number)
