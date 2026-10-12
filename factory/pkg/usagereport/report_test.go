@@ -21,8 +21,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 )
 
 func TestPublishAndMarkSummarized(t *testing.T) {
@@ -123,5 +126,74 @@ func TestFormatWorkflowSummary(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("summary missing %q in:\n%s", want, body)
 		}
+	}
+}
+
+// fakeTasks is a sandbox's task server: its task dirs and their files.
+type fakeTasks struct {
+	entries []spool.Entry
+	files   map[string]string // "<id>/<name>"
+	closed  bool
+}
+
+func (f *fakeTasks) List(context.Context) ([]spool.Entry, error) { return f.entries, nil }
+func (f *fakeTasks) ReadFile(_ context.Context, id, name string) ([]byte, error) {
+	data, ok := f.files[id+"/"+name]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return []byte(data), nil
+}
+func (f *fakeTasks) Close() { f.closed = true }
+
+// The sweep before a delete harvests every task dir through the sandbox's
+// task server, a classic command's and a recipe's alike, keyed as before
+// (<sandbox>:/workspaces/tasks/<id>).
+func TestHarvestSandboxThroughTheTaskServer(t *testing.T) {
+	var keys []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/usage" {
+			var rec UsageRecord
+			_ = json.NewDecoder(r.Body).Decode(&rec)
+			keys = append(keys, rec.Key+" "+rec.TaskType)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	t.Setenv("COLLECTOR_URL", ts.URL)
+
+	usage := `{"models":{"gemini-3-pro":{"api":{"totalRequests":1},"tokens":{"input":10,"output":2,"total":12}}}}`
+	fake := &fakeTasks{
+		entries: []spool.Entry{
+			{Task: spool.Task{ID: "recipe-care-ci-20261012-100000-ab12"}},
+			{Task: spool.Task{ID: "agent-deps-20261012-090000"}},
+			{Task: spool.Task{ID: "fix-20261011-080000"}}, // wrote no usage
+		},
+		files: map[string]string{
+			"recipe-care-ci-20261012-100000-ab12/token-usage.json": usage,
+			"agent-deps-20261012-090000/token-usage.json":          usage,
+		},
+	}
+	prev := connectTasks
+	connectTasks = func(_ context.Context, ns, name string) (taskLister, error) {
+		if ns != "overseer-kcc" || name != "fix-kcc-1" {
+			t.Errorf("connected to %s/%s", ns, name)
+		}
+		return fake, nil
+	}
+	t.Cleanup(func() { connectTasks = prev })
+
+	HarvestSandbox(context.Background(), "overseer-kcc", "fix-kcc-1", Meta{Repo: "o/r"})
+	got := strings.Join(keys, "\n")
+	for _, want := range []string{
+		"fix-kcc-1:/workspaces/tasks/recipe-care-ci-20261012-100000-ab12 ",
+		"fix-kcc-1:/workspaces/tasks/agent-deps-20261012-090000 ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("posted %q, want a record %q", got, want)
+		}
+	}
+	if len(keys) != 2 || !fake.closed {
+		t.Errorf("posted %d records, closed %v", len(keys), fake.closed)
 	}
 }

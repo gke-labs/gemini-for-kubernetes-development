@@ -34,6 +34,8 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
 )
 
@@ -280,33 +282,49 @@ func HarvestTaskFiles(ctx context.Context, taskDir string, read TaskFileReader, 
 	klog.V(2).Infof("usagereport: published usage for %s", rec.Key)
 }
 
-// HarvestSandbox connects to a sandbox and harvests every task dir in it.
-// Used as the sweep path right before a sandbox is deleted. Best-effort.
+// HarvestSandbox harvests every task dir in a sandbox, through its task
+// server: the sweep right before a sandbox is deleted. Best-effort.
 func HarvestSandbox(ctx context.Context, namespace, sandboxName string, meta Meta) {
 	if !Enabled() {
 		return
 	}
 	meta.Sandbox = sandboxName
-	client, err := envd.Connect(ctx, namespace, sandboxName)
+	sb, err := connectTasks(ctx, namespace, sandboxName)
 	if err != nil {
-		klog.Warningf("usagereport: connecting to sandbox %s for usage sweep: %v", sandboxName, err)
+		klog.Warningf("usagereport: connecting to sandbox %s's task server for usage sweep: %v", sandboxName, err)
 		return
 	}
-	defer client.Close()
+	defer sb.Close()
+	harvestTasks(ctx, sb, meta)
+}
 
-	var stdout, stderr bytes.Buffer
-	if err := client.Exec(ctx, "ls -d /workspaces/tasks/*/ 2>/dev/null || true", "/workspaces", nil, nil, &stdout, &stderr); err != nil {
-		klog.Warningf("usagereport: listing task dirs in sandbox %s: %v", sandboxName, err)
+// taskLister is what HarvestSandbox reads a sandbox's tasks through: its
+// task server (taskapi.ServerSandbox), which lists every task directory,
+// a classic command's or a recipe's, and serves their files.
+type taskLister interface {
+	List(ctx context.Context) ([]spool.Entry, error)
+	ReadFile(ctx context.Context, id, name string) ([]byte, error)
+	Close()
+}
+
+// connectTasks reaches a sandbox's task server; a var for the tests.
+var connectTasks = func(ctx context.Context, namespace, name string) (taskLister, error) {
+	return taskapi.ConnectServer(ctx, namespace, name)
+}
+
+// harvestTasks harvests each of the sandbox's task dirs, its task type
+// inferred from its name.
+func harvestTasks(ctx context.Context, sb taskLister, meta Meta) {
+	entries, err := sb.List(ctx)
+	if err != nil {
+		klog.Warningf("usagereport: listing the tasks in sandbox %s: %v", meta.Sandbox, err)
 		return
 	}
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		taskDir := strings.TrimSuffix(strings.TrimSpace(line), "/")
-		if taskDir == "" {
-			continue
-		}
+	for _, e := range entries {
 		m := meta
 		m.TaskType = "" // infer per dir
-		HarvestTask(ctx, client, taskDir, m)
+		id := e.ID
+		HarvestTaskFiles(ctx, spool.TaskDir(id), func(name string) ([]byte, error) { return sb.ReadFile(ctx, id, name) }, m)
 	}
 }
 
