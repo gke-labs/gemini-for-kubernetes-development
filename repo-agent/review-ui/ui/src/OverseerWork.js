@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import agentSandboxIcon from './agent-sandbox-icon.svg';
 import Chip from './Chip';
 import SessionSlideOver from './SessionSlideOver';
 import SandboxCard from './SandboxCard';
+import { SessionMark, RUN_STYLE, ageOf } from './WorkBits';
 
 // OverseerWork: the Overseer page's work view
 // (docs/design/overseer-work-view.md). One row per issue (with the PR its
 // fix opened), per PR, or per agent without either, from
-// GET /api/overseers/<name>/work; a chip per run, which opens the board's
-// session slide-over, and the row's sandboxes, which open the board's
-// sandbox card, both on the overseer's routes (apiBase).
+// GET /api/overseers/<name>/work, drawn as the board's Work rows are: the
+// same table and columns (# · Age · Title · Agent · rail), the same chips
+// (one per session group, coloured by status, the engine's mark) and the
+// same sandbox icon. A chip opens the board's session slide-over, a
+// sandbox its sandbox card, both on the overseer's routes (apiBase). The
+// rail is empty: the page is read-only beyond the conversation.
 
 // SECTIONS are the feed's sections, in the page's order.
 export const SECTIONS = [
@@ -19,31 +24,54 @@ export const SECTIONS = [
   { key: 'agents', label: 'Agents' },
 ];
 
-// STATUS is how a chip shows a run's status.
-const STATUS = {
-  running: { glyph: '●', color: '#b08800' },
-  ready: { glyph: '◐', color: '#0366d6' },
-  done: { glyph: '✓', color: '#22863a' },
-  failed: { glyph: '✗', color: '#d73a49' },
-  incoming: { glyph: '⧗', color: '#6a737d' },
-  processing: { glyph: '⧗', color: '#b08800' },
+// GROUPS are the board's session groups and labels for the recipes an
+// overseer runs: the care recipes share the care session, one chip.
+const GROUPS = {
+  care: ['care', 'Care'], 'care-ci': ['care', 'Care'], 'care-comments': ['care', 'Care'],
+  'care-rebase': ['care', 'Care'], 'care-iterate': ['care', 'Care'],
+  fix: ['fix', 'Fix'], review: ['review', 'Review'], plan: ['plan', 'Plan'], triage: ['triage', 'Triage'],
+  fanout: ['fanout', 'Fan out'], workflow: ['workflow', 'Workflow'], agent: ['agent', 'Agent'],
 };
 
-const POD = {
-  running: '#22863a', starting: '#b08800', paused: '#6a737d', evicted: '#d73a49', failed: '#d73a49',
-};
+// groupOf is a recipe's session group and its chip's label.
+export function groupOf(recipe) {
+  const g = GROUPS[recipe];
+  if (g) return { group: g[0], label: g[1] };
+  const name = recipe || 'task';
+  return { group: name, label: name.charAt(0).toUpperCase() + name.slice(1) };
+}
 
-const tint = (color) => `color-mix(in srgb, ${color} 12%, transparent)`;
+// rowChips are a row's chips, as the board's: each group's newest run
+// (sessions come newest first), then the queued work of a group with no
+// run in flight. A queued task is queued, a processing one starting.
+export function rowChips(item) {
+  const chips = [];
+  const byGroup = {};
+  for (const s of item.sessions || []) {
+    const { group, label } = groupOf(s.recipe);
+    if (byGroup[group]) continue;
+    byGroup[group] = { group, label, status: s.status || 'done', run: s, recipe: s.recipe };
+    chips.push(byGroup[group]);
+  }
+  for (const q of item.queued || []) {
+    const { group, label } = groupOf(q.recipe || q.type);
+    const known = byGroup[group];
+    if (known && ['running', 'starting', 'queued'].includes(known.status)) continue;
+    const chip = { group, label, status: q.state === 'processing' ? 'starting' : 'queued', queued: q, recipe: q.recipe };
+    // A queued run of a resting group is its chip now, as a click
+    // starting is on the board.
+    if (known) Object.assign(known, chip, { run: undefined }); else { byGroup[group] = chip; chips.push(chip); }
+  }
+  return chips;
+}
 
-export function ageOf(ts, now = Date.now()) {
-  if (!ts) return '';
-  const t = new Date(ts).getTime();
-  if (Number.isNaN(t)) return '';
-  const s = Math.max(0, Math.round((now - t) / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
-  if (s < 86400) return `${Math.round(s / 3600)}h`;
-  return `${Math.round(s / 86400)}d`;
+// chipTitle is a chip's hover: its label and status, what ran, where.
+function chipTitle(c, reason) {
+  const lines = [`${c.label}: ${c.status}${c.recipe && c.recipe !== c.group ? ` — ${c.recipe}` : ''}`];
+  if (c.status === 'failed' && reason) lines.push(reason);
+  if (c.queued) lines.push(`${c.queued.type}${c.queued.rank ? `, rank ${c.queued.rank}` : ''}${c.queued.priority ? `, ${c.queued.priority}` : ''}`);
+  if (c.run && c.run.sandbox) lines.push(c.run.task ? `${c.run.sandbox} — open the session` : `${c.run.sandbox} — a classic task, no session: open the sandbox`);
+  return lines.join('\n');
 }
 
 // matchesWork is whether a row passes the filters: issues, PRs or both;
@@ -66,76 +94,84 @@ export function matchesWork(item, { type = 'both', state = 'all', q = '' } = {})
   return hay.includes(needle);
 }
 
-function RowTitle({ item }) {
-  if (item.kind === 'agent') {
-    const sb = (item.sandboxes || [])[0];
-    return <span style={{ fontWeight: 600 }}>⚙ {item.title || (sb && sb.name) || item.key}</span>;
-  }
-  const link = (href, text) => (href
-    ? <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: 600 }}>{text}</a>
-    : <span style={{ fontWeight: 600 }}>{text}</span>);
-  return (
-    <span>
-      {item.kind === 'pr' ? link(item.htmlUrl, `PR #${item.number}`) : link(item.htmlUrl, `#${item.number}`)}
-      {item.pr ? <> <span style={{ color: 'var(--text-secondary)' }}>→</span> {link(item.prUrl, `PR #${item.pr}`)}</> : null}
-      {item.workflow && <span style={{ marginLeft: '6px' }}><Chip text="workflow" color="#6f42c1" bg={tint('#6f42c1')} /></span>}
-      {item.title && <span style={{ marginLeft: '8px' }}>{item.title}</span>}
-    </span>
-  );
-}
+const userChip = (u) => (
+  <span key={u} style={{ marginRight: '6px' }}>
+    <Chip text={`⦿ ${u}`} color="var(--group-review)" bg="color-mix(in srgb, var(--group-review) 14%, transparent)" title="The bot the overseer ran this as" />
+  </span>
+);
 
-function RunChips({ item, onOpenSession, onOpenSandbox }) {
-  return (
-    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '4px' }}>
-      {(item.sessions || []).map(s => {
-        const st = STATUS[s.status] || STATUS.done;
-        const title = `${s.recipe}: ${s.status}${s.state ? ` (${s.state})` : ''}${s.engine ? ` · ${s.engine}` : ''} · ${s.sandbox}`
-          + (s.task ? ' — open the session' : ' — no session to open (a classic task): open the sandbox');
-        return (
-          <button key={`${s.sandbox}/${s.run || s.recipe}`} type="button" title={title}
-            onClick={() => (s.task ? onOpenSession({ sandbox: s.sandbox, task: s.task }) : onOpenSandbox(s.sandbox))}
-            style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer' }}>
-            <Chip text={`${s.recipe} ${st.glyph}`} color={st.color} bg={tint(st.color)} />
-          </button>
-        );
-      })}
-      {(item.queued || []).map(q => {
-        const st = STATUS[q.state] || STATUS.incoming;
-        return (
-          <Chip key={q.fileName} text={`${q.recipe || q.type} ${st.glyph}${q.rank ? ` #${q.rank}` : ''}`}
-            color={st.color} bg={tint(st.color)}
-            title={`${q.type}: ${q.state}${q.priority ? ` · ${q.priority}` : ''}${q.assignee ? ` · ${q.assignee}` : ''}`} />
-        );
-      })}
-    </span>
-  );
-}
-
-export function WorkRow({ item, onOpenSession, onOpenSandbox, now }) {
+export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
+  const chips = rowChips(item);
   const users = [...new Set((item.sandboxes || []).map(s => s.user).filter(Boolean))];
+  const podTrouble = (item.sandboxes || []).find(s => s.pod === 'evicted' || s.pod === 'failed');
+  const failedChip = chips.some(c => c.status === 'failed');
+  const isAgent = item.kind === 'agent';
+  const titleText = item.title || (isAgent ? ((item.sandboxes || [])[0] || {}).name : '') || (item.kind === 'pr' ? `PR #${item.number}` : `Issue #${item.number}`);
   return (
-    <div data-testid={`row-${item.key}`} style={{ padding: '8px 4px', borderTop: '1px solid var(--border-color)', textAlign: 'left' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-        <RowTitle item={item} />
-        <span style={{ marginLeft: 'auto' }}>
-          <RunChips item={item} onOpenSession={onOpenSession} onOpenSandbox={onOpenSandbox} />
-        </span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', fontSize: 'small', color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
-        {users.map(u => <span key={u}>@{u}</span>)}
-        {item.reason && <span style={{ color: '#d73a49' }}>{item.reason}</span>}
-        {item.updatedAt && <span title={item.updatedAt}>{ageOf(item.updatedAt, now)}</span>}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: '6px', flexWrap: 'wrap' }}>
-          {(item.sandboxes || []).map(s => (
-            <button key={s.name} type="button" className="btn btn-sm" onClick={() => onOpenSandbox(s.name)}
-              title={`${s.name}: ${s.pod}${s.taskType ? ` · last ${s.taskType} ${s.taskState || ''}` : ''} — open the sandbox`}
-              style={{ fontSize: 'x-small', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ color: POD[s.pod] || 'var(--text-secondary)' }}>▣</span>{s.name}
-            </button>
-          ))}
-        </span>
-      </div>
-    </div>
+    <tr data-testid={`row-${item.key}`}>
+      <td className="work-num" style={{ padding: '6px 4px 6px 8px', width: '1%' }}
+        title={isAgent ? 'An agent with no issue' : item.kind === 'issue' ? 'Issue' : 'Pull request'}>
+        {isAgent ? '⚙' : `${item.kind === 'issue' ? '◉' : '⇄'} #${item.number}`}
+      </td>
+      <td style={{ padding: '6px 6px 6px 4px', fontSize: 'small', color: 'var(--text-secondary)', whiteSpace: 'nowrap', width: '1%' }}
+        title={item.updatedAt}>{ageOf(item.updatedAt)}</td>
+      <td style={{ padding: '6px 8px', maxWidth: '480px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {users.map(userChip)}
+        {item.htmlUrl
+          ? <a href={item.htmlUrl} target="_blank" rel="noopener noreferrer" title={titleText}>{titleText}</a>
+          : <span title={titleText}>{titleText}</span>}
+        {item.pr ? (
+          <a href={item.prUrl} target="_blank" rel="noopener noreferrer"
+            style={{ marginLeft: '6px', fontSize: 'small', color: 'var(--text-secondary)' }}
+            title="The PR this issue's fix opened">↳ PR #{item.pr}</a>
+        ) : null}
+        {item.workflow && (
+          <span style={{ marginLeft: '6px' }}><Chip text="workflow" color="var(--text-secondary)" bg="var(--bg-secondary)" title="A workflow works on this issue" /></span>
+        )}
+      </td>
+      <td style={{ padding: '6px 8px' }}>
+        {(item.sandboxes || []).map(sb => (
+          <span key={sb.name} onClick={() => onOpenSandbox(sb.name)} style={{ cursor: 'pointer' }}>
+            <img src={agentSandboxIcon} alt="sandbox"
+              title={`${sb.name} (${sb.engine || 'gemini'}, ${sb.pod}) — tasks & logs`}
+              style={{ height: '20px', verticalAlign: 'middle', marginRight: '6px', opacity: sb.pod === 'paused' ? 0.55 : 1 }} />
+          </span>
+        ))}
+        {chips.map(c => {
+          const style = RUN_STYLE[c.status] || RUN_STYLE.done;
+          const text = c.status === 'failed' ? `${c.label} !` : c.label;
+          const title = chipTitle(c, item.reason);
+          if (c.run && c.run.task) {
+            return (
+              <button key={c.group} type="button" title={title}
+                onClick={() => onOpenSession({ sandbox: c.run.sandbox, task: c.run.task })}
+                style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', marginLeft: '4px', whiteSpace: 'nowrap' }}>
+                <Chip text={text} color={style.color} bg={style.bg}><SessionMark engine={c.run.engine} /></Chip>
+              </button>
+            );
+          }
+          if (c.run) {
+            return (
+              <button key={c.group} type="button" title={title} onClick={() => onOpenSandbox(c.run.sandbox)}
+                style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', marginLeft: '4px', whiteSpace: 'nowrap' }}>
+                <Chip text={text} color={style.color} bg={style.bg} />
+              </button>
+            );
+          }
+          return (
+            <span key={c.group} style={{ marginLeft: '4px', whiteSpace: 'nowrap' }} title={title}>
+              <Chip text={c.queued && c.queued.rank ? `${text} #${c.queued.rank}` : text} color={style.color} bg={style.bg} />
+            </span>
+          );
+        })}
+        {podTrouble && !failedChip && (
+          <span style={{ marginLeft: '4px' }} title={item.reason}>
+            <Chip text={`${podTrouble.pod} !`} color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
+          </span>
+        )}
+      </td>
+      <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }} />
+    </tr>
   );
 }
 
@@ -164,7 +200,6 @@ const OverseerWork = ({ overseer }) => {
   }, [load]);
 
   const items = useMemo(() => ((work && work.items) || []).filter(it => matchesWork(it, { type, state, q })), [work, type, state, q]);
-  const now = Date.now();
   const toggle = (key, def) => setOpen(o => ({ ...o, [key]: !(key in o ? o[key] : def) }));
 
   return (
@@ -185,24 +220,44 @@ const OverseerWork = ({ overseer }) => {
       {work && work.queueError && (
         <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginBottom: '8px' }}>Queue not shown: {work.queueError}</div>
       )}
-      {!work && !error && <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Loading…</div>}
-      {work && SECTIONS.map(sec => {
-        const rows = items.filter(it => it.section === sec.key);
-        if (!rows.length) return null;
-        const isOpen = sec.key in open ? open[sec.key] : !sec.collapsed;
-        return (
-          <section key={sec.key} style={{ marginBottom: '14px' }} aria-label={sec.label}>
-            <button type="button" onClick={() => toggle(sec.key, !sec.collapsed)}
-              style={{ border: 'none', background: 'var(--bg-secondary)', width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-primary)' }}>
-              {isOpen ? '▾' : '▸'} {sec.label.toUpperCase()} ({rows.length})
-            </button>
-            {isOpen && rows.map(it => (
-              <WorkRow key={it.key} item={it} now={now} onOpenSession={setSession} onOpenSandbox={setCardSandbox} />
-            ))}
-          </section>
-        );
-      })}
-      {work && !items.length && <div style={{ color: 'var(--text-secondary)' }}>No work matches.</div>}
+      <div className="work-card">
+        <table className="work-table">
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--border-color)', fontSize: 'small', color: 'var(--text-secondary)' }}>
+              <th style={{ padding: '6px 4px 6px 8px', width: '1%' }}>#</th>
+              <th style={{ padding: '6px 6px 6px 4px', width: '1%' }}>Age</th>
+              <th style={{ padding: '6px 8px' }}>Title</th>
+              <th style={{ padding: '6px 8px' }}>Agent</th>
+              <th style={{ padding: '6px 8px' }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {!work && !error && (
+              <tr><td colSpan="5" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Loading {overseer}…</td></tr>
+            )}
+            {work && SECTIONS.map(sec => {
+              const rows = items.filter(it => it.section === sec.key);
+              if (!rows.length) return null;
+              const isOpen = sec.key in open ? open[sec.key] : !sec.collapsed;
+              return (
+                <React.Fragment key={sec.key}>
+                  <tr className="work-section" aria-label={sec.label} onClick={() => toggle(sec.key, !sec.collapsed)} style={{ cursor: 'pointer' }}>
+                    <td colSpan="5" style={{ padding: '6px 8px', fontSize: 'x-small', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-primary)', backgroundColor: 'var(--bg-secondary)', textTransform: 'uppercase' }}>
+                      {isOpen ? '▾' : '▸'} {sec.label} ({rows.length})
+                    </td>
+                  </tr>
+                  {isOpen && rows.map(it => (
+                    <WorkRow key={it.key} item={it} onOpenSession={setSession} onOpenSandbox={setCardSandbox} />
+                  ))}
+                </React.Fragment>
+              );
+            })}
+            {work && !items.length && (
+              <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--text-secondary)' }}>No work matches.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       {session && <SessionSlideOver session={session} onClose={() => setSession(null)} apiBase={apiBase} />}
       {cardSandbox && (
         <SandboxCard name={cardSandbox} namespace={`overseer-${overseer}`} onClose={() => setCardSandbox(null)} apiBase={apiBase} />

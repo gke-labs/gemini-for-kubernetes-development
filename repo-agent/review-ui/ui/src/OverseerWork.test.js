@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const OverseerWork = require('./OverseerWork').default;
-const { matchesWork } = require('./OverseerWork');
+const { matchesWork, rowChips, groupOf } = require('./OverseerWork');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -73,34 +73,42 @@ const render = async () => {
     await act(async () => { root.render(<OverseerWork overseer="kcc" />); });
     await flush();
 };
-const sectionLabels = () => Array.from(container.querySelectorAll('section > button')).map(b => b.textContent.trim());
+const sectionLabels = () => Array.from(container.querySelectorAll('tr.work-section')).map(r => r.textContent.trim());
 const fetched = () => global.fetch.mock.calls.map(c => c[0]);
 const button = (text) => Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes(text));
 
 describe('OverseerWork', () => {
     test('sections in order, idle collapsed, an issue with the PR its fix opened', async () => {
         await render();
-        expect(sectionLabels()).toEqual(['▾ NEEDS ATTENTION (1)', '▾ WORKING (1)', '▸ IDLE (1)', '▾ AGENTS (1)']);
+        expect(sectionLabels()).toEqual(['▾ Needs attention (1)', '▾ Working (1)', '▸ Idle (1)', '▾ Agents (1)']);
+        // The board's row: number, age, title cell, agent cell, rail.
         const row = container.querySelector('[data-testid="row-issue-13870"]');
-        expect(row.textContent).toContain('#13870');
-        expect(row.textContent).toContain('PR #13873');
-        expect(row.textContent).toContain('care-ci failed');
-        expect(row.textContent).toContain('care-rebase ⧗ #2');
+        expect(row.querySelectorAll('td').length).toBe(5);
+        expect(row.querySelector('td.work-num').textContent).toBe('◉ #13870');
+        expect(row.textContent).toContain('↳ PR #13873');
+        expect(row.textContent).toContain('⦿ coder-bot');
+        // One Care chip for the care session: its queued rebase, rank 2;
+        // the fix's chip; the sandbox icon.
+        expect(row.textContent).toContain('Care #2');
+        expect(row.textContent).toContain('Fix');
+        expect(row.querySelectorAll('img[alt="sandbox"]').length).toBe(1);
         expect(container.querySelector('[data-testid="row-issue-10588"]')).toBeNull();
-        await act(async () => { button('IDLE').click(); });
+        await act(async () => { Array.from(container.querySelectorAll('tr.work-section')).find(r => r.textContent.includes('Idle')).click(); });
         expect(container.querySelector('[data-testid="row-issue-10588"]').textContent).toContain('workflow');
     });
 
     test('a run opens the shared slide-over on the overseer; a classic one, the card', async () => {
         await render();
-        await act(async () => { button('care-ci ✗').click(); });
+        const issue = container.querySelector('[data-testid="row-issue-13870"]');
+        await act(async () => { Array.from(issue.querySelectorAll('button')).find(b => b.textContent.includes('Fix')).click(); });
         await flush();
-        expect(fetched()).toContain('/api/overseers/kcc/task-sessions/fix-kcc-13870/recipe-care-ci-2');
+        expect(fetched()).toContain('/api/overseers/kcc/task-sessions/fix-kcc-13870/recipe-fix-1');
         expect(container.querySelector('[role="dialog"]')).not.toBeNull();
 
         act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
         global.fetch.mockClear();
-        await act(async () => { button('care-comments ●').click(); });
+        const pr = container.querySelector('[data-testid="row-pr-13900"]');
+        await act(async () => { Array.from(pr.querySelectorAll('button')).find(b => b.textContent.includes('Care')).click(); });
         await flush();
         expect(fetched()).toContain('/api/overseers/kcc/sandbox-card/fix-kcc-13900');
     });
@@ -108,7 +116,7 @@ describe('OverseerWork', () => {
     test('a sandbox opens its card', async () => {
         await render();
         global.fetch.mockClear();
-        await act(async () => { button('fix-kcc-13870').click(); });
+        await act(async () => { container.querySelector('[data-testid="row-issue-13870"] img[alt="sandbox"]').click(); });
         await flush();
         expect(fetched()).toContain('/api/overseers/kcc/sandbox-card/fix-kcc-13870');
     });
@@ -161,5 +169,25 @@ describe('the Overseer page', () => {
         expect(tabs).toContain('🔑 Keys');
         expect(container.querySelector('[data-testid="row-issue-13870"]')).not.toBeNull();
         expect(container.textContent).not.toContain('Back to Sandboxes Table');
+    });
+});
+
+describe('rowChips', () => {
+    test('one chip per session group, its newest run; a queued run of a resting group', () => {
+        const chips = rowChips({
+            sessions: [
+                { recipe: 'care-ci', status: 'failed', sandbox: 's', task: 't2' },
+                { recipe: 'care-comments', status: 'done', sandbox: 's', task: 't1' },
+                { recipe: 'fix', status: 'done', sandbox: 's', task: 't0' },
+            ],
+            queued: [{ fileName: 'f', type: 'pr-review', recipe: 'review', state: 'incoming', rank: 1 }],
+        });
+        expect(chips.map(c => `${c.label}:${c.status}`)).toEqual(['Care:failed', 'Fix:done', 'Review:queued']);
+        expect(chips[0].run.task).toBe('t2');
+    });
+    test('groupOf', () => {
+        expect(groupOf('care-rebase')).toEqual({ group: 'care', label: 'Care' });
+        expect(groupOf('fanout')).toEqual({ group: 'fanout', label: 'Fan out' });
+        expect(groupOf('summarize')).toEqual({ group: 'summarize', label: 'Summarize' });
     });
 });
