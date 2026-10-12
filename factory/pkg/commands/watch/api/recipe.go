@@ -16,6 +16,11 @@ type RecipeTask struct {
 	// sandbox of its own (<recipe>-<repo>-<N>); the others run in the
 	// PR's fix sandbox.
 	OwnSandbox bool
+	// Args are more of the command's arguments, after the recipe's.
+	Args []string
+	// Recorded is the task type the recipe records on its sandbox, when
+	// its task-type: names one; else it records recipe-<Recipe>.
+	Recorded string
 }
 
 // recipeTasks are the task types that run as recipes. The others run
@@ -25,6 +30,17 @@ var recipeTasks = map[TaskType]RecipeTask{
 	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
 	TypePRComments:    {Recipe: "care-comments", Action: "post-replies", RunPrefix: "comments"},
 	TypePRIterate:     {Recipe: "care-rebase", Action: "post-replies", RunPrefix: "iterate"},
+	// The PR opens ready for review, labelled as factory fix labelled it:
+	// the watch scans only labelled PRs.
+	TypeIssueFix: {Recipe: "fix", Action: "open-pr", RunPrefix: "fix", Args: []string{"--pr-labels", "--input", "draft=false"}, Recorded: "fix"},
+}
+
+// RecordedType is the task type a run of rt records on its sandbox.
+func (rt RecipeTask) RecordedType() string {
+	if rt.Recorded != "" {
+		return rt.Recorded
+	}
+	return "recipe-" + rt.Recipe
 }
 
 // RecipeTaskOf is how tasks of type t run as a recipe, if they do.

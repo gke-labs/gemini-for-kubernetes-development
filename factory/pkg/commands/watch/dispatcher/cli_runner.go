@@ -63,14 +63,13 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 		// recovered task follows its run, or applies its result, and a
 		// task enqueued again after a failure starts a new one.
 		args = []string{"recipe", rt.Recipe, "--url", t.URL, "--run-name", rt.RunName(t), "--apply", "--action", rt.Action}
+		args = append(args, rt.Args...)
 		for _, inst := range t.Instructions {
 			args = append(args, "--instruction", inst)
 		}
 		return r.withCommonArgs(args, selectedUser)
 	}
 	switch t.Type {
-	case api.TypeIssueFix:
-		args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
 	case api.TypeAgentChore:
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 		if t.SessionID != "" {

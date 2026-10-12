@@ -223,10 +223,13 @@ func testDispatcher(t *testing.T, queueDir string, mutate func(cfg *Config, deps
 	return New(cfg, deps), queue, sandboxes, coordinator, runner
 }
 
+// enqueueTestTask queues a classic task: a chore, as every other type is
+// a recipe, whose recovery requeues it rather than adopting the run.
 func enqueueTestTask(t *testing.T, queue *concurrency.TaskQueueManager, filename string, number int) *api.QueueTask {
 	t.Helper()
 	task := &api.QueueTask{
-		Type:       api.TypeIssueFix,
+		Type:       api.TypeAgentChore,
+		AgentFile:  ".agents/chore.md",
 		Number:     number,
 		URL:        "https://github.com/test-owner/test-repo/issues/1",
 		EnqueuedAt: time.Now(),
@@ -826,7 +829,9 @@ func TestDispatchOnce_DoesNotSuspendSandboxForNonChoreTask(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
 
-	enqueueTestTask(t, queue, "task-issue-1.yaml", 1)
+	if err := queue.Enqueue("task-issue-1.yaml", &api.QueueTask{Type: api.TypeIssueFix, Number: 1, URL: "https://github.com/test-owner/test-repo/issues/1", EnqueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 
 	d.DispatchOnce(context.Background())
 	d.Wait()

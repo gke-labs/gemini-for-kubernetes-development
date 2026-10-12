@@ -508,3 +508,14 @@ func TestContinuedSession(t *testing.T) {
 		t.Errorf("session care records at %s, not where care's runs did", factorysandbox.RunAnnotation("recipe-care"))
 	}
 }
+
+// mergeLabels: --pr-labels adds factory fix's labels to the labels input,
+// each once, whatever its case.
+func TestMergeLabels(t *testing.T) {
+	if got := mergeLabels(" x, overseer ,", "overseer,Overseer/fanout,x,bug", ""); got != "x,overseer,Overseer/fanout,bug" {
+		t.Errorf("mergeLabels = %q", got)
+	}
+	if got := mergeLabels("", ""); got != "" {
+		t.Errorf("mergeLabels of nothing = %q", got)
+	}
+}

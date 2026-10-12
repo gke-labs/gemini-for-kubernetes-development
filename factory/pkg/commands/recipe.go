@@ -65,6 +65,7 @@ type recipeRunFlags struct {
 	inputArgs                 []string
 	apply, dryRun             bool
 	newSession                bool
+	prLabels                  bool
 	// action is the one write --apply does, instead of each the result
 	// offers.
 	action string
@@ -81,6 +82,7 @@ func (f *recipeRunFlags) add(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.newSession, "new-session", false, "For a recipe in a session (session:): open a new conversation instead of continuing the one its group's last run recorded")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "With --apply: print what would be written to GitHub, write nothing, and leave the result to apply")
 	cmd.Flags().StringVar(&f.action, "action", "", "With --apply: do this one action of the result (as factory apply --action) instead of each write it offers")
+	cmd.Flags().BoolVar(&f.prLabels, "pr-labels", false, "For an issue's Change: label the PR open-pr opens as factory fix did, with the trigger label, the factory config's additional labels and the issue's labels (the overseer's)")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "Wait for the task's result and apply it to GitHub, as factory apply does. Interrupting stops the waiting, not the task; running the same command again waits for that task, or applies its result if it has finished.")
 	_ = cmd.MarkFlagRequired("url")
 }
@@ -118,7 +120,7 @@ func (f *recipeRunFlags) run(ctx context.Context, c *cobra.Command, recipeArg st
 			instructions[in] = *vals
 		}
 	}
-	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != ""}, overrides, instructions)
+	return runRecipe(ctx, recipeArg, f.itemURL, f.runName, f.session, "", f.newSession, applyMode{on: f.apply, dryRun: f.dryRun, verb: f.action, asUser: rootFlags.User != "", prLabels: f.prLabels}, overrides, instructions)
 }
 
 // newBuiltinRecipeCommand makes a built-in recipe a command of its own,
@@ -393,6 +395,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	var htmlURL string
 	var labels []string
 	var pr *githubv39.PullRequest
+	var issue *githubv39.Issue
 	switch {
 	case it.IsRepo():
 		repo, _, err := ghClient.Repositories.Get(ctx, it.Owner, it.Repo)
@@ -408,7 +411,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 		standard, htmlURL = prInputs(it, pr), pr.GetHTMLURL()
 		labels = labelNames(pr.Labels)
 	default:
-		issue, _, err := ghClient.Issues.Get(ctx, it.Owner, it.Repo, it.Number)
+		issue, _, err = ghClient.Issues.Get(ctx, it.Owner, it.Repo, it.Number)
 		if err != nil {
 			return fmt.Errorf("fetching issue #%d: %w", it.Number, err)
 		}
@@ -441,11 +444,27 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if err != nil {
 		return err
 	}
-	if pr != nil {
-		// Whose comments the pr-comments step lets through, besides the
-		// repository's owners, members and collaborators and GitHub Apps.
-		// Set here, after the overrides: --input cannot widen it.
-		inputs["trusted_logins"] = strings.Join(prTrustedLogins(pr, string(secret.Data[constants.KeyGithubLogin])), ",")
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		klog.Warningf("Failed to load factory config: %v", err)
+	}
+	// Whose comments the pr-comments and issue-comments steps let
+	// through, besides the repository's owners, members and collaborators
+	// and GitHub Apps: the factory config's trusted logins and the task's
+	// login, and a PR's author. Set here, after the overrides: --input
+	// cannot widen it.
+	login := string(secret.Data[constants.KeyGithubLogin])
+	switch {
+	case pr != nil:
+		inputs["trusted_logins"] = strings.Join(trustedLogins(cfg, pr.GetUser().GetLogin(), login), ",")
+	case issue != nil:
+		inputs["trusted_logins"] = strings.Join(trustedLogins(cfg, login), ",")
+	}
+	if apply.prLabels {
+		if issue == nil || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+			return fmt.Errorf("--pr-labels is for a recipe whose Change opens a PR for an issue")
+		}
+		inputs["labels"] = mergeLabels(inputs["labels"], resolvePRLabels(cfg, issue, true))
 	}
 	if rec.TaskOutput != nil && rec.TaskOutput.Kind == "Change" && pr != nil {
 		// A Change on a PR continues it: the PR's head stands in for the
@@ -632,15 +651,20 @@ func prPushInputs(ctx context.Context, gh *githubv39.Client, it githubItem, pr *
 	return nil
 }
 
-// prTrustedLogins are the logins whose comments on pr reach a recipe's
-// agent though GitHub may not say they can write to the repository: the
-// factory config's trusted logins, the PR's author and login, the task's.
-func prTrustedLogins(pr *githubv39.PullRequest, login string) []string {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		klog.Warningf("Failed to load factory config: %v", err)
+// mergeLabels joins comma-separated label lists, each label once
+// (case-insensitively), in the order first given.
+func mergeLabels(lists ...string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, list := range lists {
+		for _, l := range strings.Split(list, ",") {
+			if l = strings.TrimSpace(l); l != "" && !seen[strings.ToLower(l)] {
+				seen[strings.ToLower(l)] = true
+				out = append(out, l)
+			}
+		}
 	}
-	return trustedLogins(cfg, pr.GetUser().GetLogin(), login)
+	return strings.Join(out, ",")
 }
 
 // recipeTarget is which of recipe.On it is: a PR is my-pr when login
@@ -1017,6 +1041,11 @@ type applyMode struct {
 	// (--user's secret) rather than the caller's: a watch's review is
 	// posted by the reviewer it picked.
 	asUser bool
+	// prLabels gives the PR a Change's open-pr opens the labels factory
+	// fix gave its PRs (resolvePRLabels): the trigger label, the factory
+	// config's additional labels and the issue's. The watch scans only
+	// labelled PRs.
+	prLabels bool
 }
 
 // resumableTask is the newest run of recipeName on itemURL in the sandbox
@@ -1335,7 +1364,8 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 
 // fillChange puts on a Change what the push step recorded (where the
 // commits went, and which they are) rather than what the agent said, and
-// the labels the task was given. A Change on a PR — a revise's, or a
+// the labels the task was given, and whether its PR is a draft (the draft
+// input; unset, it is). A Change on a PR — a revise's, or a
 // start's on a PR such as care's — is about the PR (pr_url), and keeps
 // the title and body it had (pushed_title, pushed_body) where the agent
 // wrote none.
@@ -1363,7 +1393,17 @@ func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, input
 			labels = append(labels, l)
 		}
 	}
-	return doc.AddLabels(labels)
+	if err := doc.AddLabels(labels); err != nil {
+		return err
+	}
+	if v, ok := inputs["draft"]; ok && v != "" {
+		draft, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("the draft input %q is not true or false", v)
+		}
+		return doc.SetDraft(draft)
+	}
+	return nil
 }
 
 // taskTarget is the issue, PR or repository a task's result is about.

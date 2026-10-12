@@ -137,6 +137,20 @@ func TestFillChange(t *testing.T) {
 	if c.Fork != "me/r" || c.Branch != "issue-7-1" || c.Base != "b0" || d.Target.Commit != "h1" || fmt.Sprint(c.Labels) != "[x factory]" {
 		t.Errorf("filled %+v, commit %s", c, d.Target.Commit)
 	}
+	if c.Draft != nil {
+		t.Errorf("no draft input, but draft = %v", *c.Draft)
+	}
+	// The draft input says whether open-pr opens a draft (the overseer's:
+	// false); anything else than true or false is refused.
+	if err := fillChange(d, spool.Task{}, dir, map[string]string{"draft": "false"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = d.ChangeSpec(); err != nil || c.Draft == nil || *c.Draft {
+		t.Errorf("draft false: %+v, %v", c, err)
+	}
+	if err := fillChange(d, spool.Task{}, dir, map[string]string{"draft": "maybe"}); err == nil {
+		t.Error("draft maybe was taken")
+	}
 
 	// A Change on a PR — a revise's, or a start's on one, such as care's —
 	// is about the PR, and keeps its title and body where the agent wrote

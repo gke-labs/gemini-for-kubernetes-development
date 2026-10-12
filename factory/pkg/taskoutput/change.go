@@ -28,6 +28,9 @@ type Change struct {
 	Title  string   `yaml:"title"`
 	Body   string   `yaml:"body"`
 	Labels []string `yaml:"labels,omitempty"`
+	// Draft is whether open-pr opens the PR as a draft; unset, it does.
+	// The task's draft input sets it (fillChange).
+	Draft *bool `yaml:"draft,omitempty"`
 	// Replies answer review and issue comments (address-comments).
 	Replies []Reply `yaml:"replies,omitempty"`
 	// Report is a PR comment (fix-ci).
@@ -123,6 +126,16 @@ func (d *Document) SetPushed(p Pushed) error {
 	return d.setSpec(c)
 }
 
+// SetDraft says whether open-pr opens a Change's PR as a draft.
+func (d *Document) SetDraft(draft bool) error {
+	c, err := d.changeSpec()
+	if err != nil {
+		return err
+	}
+	c.Draft = &draft
+	return d.setSpec(c)
+}
+
 // AddLabels adds labels to a Change's, each once.
 func (d *Document) AddLabels(labels []string) error {
 	if len(labels) == 0 {
@@ -199,8 +212,8 @@ func parseChange(raw string) (any, error) {
 // forkRE is a fork as Change names it: owner/name.
 var forkRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 
-// applyOpenPR opens a Change's branch as a draft PR on its repository's
-// default branch, with the caller's token, and points the document's
+// applyOpenPR opens a Change's branch as a PR on its repository's default
+// branch, a draft unless the Change says otherwise (draft: false), with the caller's token, and points the document's
 // target at it, for the caller to alias the sandbox to. A branch that
 // already has an open PR gets that one, and nothing is opened: a retried
 // apply never opens two.
@@ -242,7 +255,12 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		return fmt.Errorf("fetching %s/%s: %w", owner, repo, err)
 	}
 	base := r.GetDefaultBranch()
-	fmt.Fprintf(out, "%s a draft PR on %s/%s from %s into %s: %q\n", doing(dryRun, "Opening", "open"), owner, repo, head, base, c.Title)
+	draft := c.Draft == nil || *c.Draft
+	kind := "a PR"
+	if draft {
+		kind = "a draft PR"
+	}
+	fmt.Fprintf(out, "%s %s on %s/%s from %s into %s: %q\n", doing(dryRun, "Opening", "open"), kind, owner, repo, head, base, c.Title)
 	if len(c.Labels) > 0 {
 		fmt.Fprintf(out, "%s labels %s\n", doing(dryRun, "Adding", "add"), strings.Join(c.Labels, ", "))
 	}
@@ -254,7 +272,7 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		Head:                githubv39.String(head),
 		Base:                githubv39.String(base),
 		Body:                githubv39.String(c.Body + marker(doc)),
-		Draft:               githubv39.Bool(true),
+		Draft:               githubv39.Bool(draft),
 		MaintainerCanModify: githubv39.Bool(true),
 	})
 	if err != nil {

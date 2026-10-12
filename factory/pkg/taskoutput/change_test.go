@@ -165,6 +165,21 @@ func TestOpenPR(t *testing.T) {
 		}
 	})
 
+	t.Run("draft: false opens it ready for review", func(t *testing.T) {
+		doc := changeDoc(t)
+		if err := doc.SetDraft(false); err != nil {
+			t.Fatal(err)
+		}
+		f := &fakePRs{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.created) != 1 || f.created[0].GetDraft() || !strings.Contains(out.String(), "Opening a PR on") {
+			t.Errorf("opened %d, request %+v:\n%s", len(f.created), f.created, out.String())
+		}
+	})
+
 	t.Run("an open PR is the one", func(t *testing.T) {
 		doc := changeDoc(t)
 		f := &fakePRs{open: map[string]string{"me:issue-7-1": "https://github.com/o/r/pull/9"}}

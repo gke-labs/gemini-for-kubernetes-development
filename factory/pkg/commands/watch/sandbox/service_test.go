@@ -80,7 +80,8 @@ func TestServiceIsTaskCompleted(t *testing.T) {
 		{api.TypePRIterate, "iterate", "Completed", false},
 		{api.TypePRReview, "recipe-review", "Completed", true},
 		{api.TypePRReview, "review", "Completed", false},
-		{api.TypeIssueFix, "fix-issue", "Completed", true},
+		{api.TypeIssueFix, "fix", "Completed", true},
+		{api.TypeIssueFix, "fix-issue", "Completed", false},
 		{api.TypeAgentChore, "agent", "Completed", true},
 		{api.TypePRComments, "wrong-type", "Completed", false},
 	}
