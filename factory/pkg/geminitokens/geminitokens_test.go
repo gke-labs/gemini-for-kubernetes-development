@@ -44,6 +44,11 @@ func TestIsFatalQuotaError(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "fatal 429 quota exhaustion on attempt 3 with backoff",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
+			expected: true,
+		},
+		{
 			name:     "normal output",
 			input:    `Generated code successfully`,
 			expected: false,
@@ -84,6 +89,11 @@ func TestIsTransientRateLimit(t *testing.T) {
 		{
 			name:     "fatal RPD daily quota during retry attempt",
 			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"Quota exceeded for quota metric 'Generate requests per day'","code":429,"status":"Too Many Requests"}}`,
+			expected: false,
+		},
+		{
+			name:     "fatal 429 quota exhaustion on attempt 3 with backoff",
+			input:    `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}`,
 			expected: false,
 		},
 	}
@@ -443,6 +453,16 @@ func TestQuotaStreamTracker(t *testing.T) {
 		fatal, _ = tracker.ObservePoll([]byte("Process exiting...\n"))
 		if !fatal {
 			t.Fatalf("Poll 3: expected fatal=true for unretried 429 despite earlier retry in window, got false")
+		}
+	})
+
+	t.Run("persistent 429 retry on attempt 3 triggers fatal ObservePoll immediately without model tracking", func(t *testing.T) {
+		tracker := NewQuotaStreamTracker()
+
+		prodLog := `Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","code":429,"status":"Too Many Requests"}}` + "\n"
+		fatal, _ := tracker.ObservePoll([]byte(prodLog))
+		if !fatal {
+			t.Fatalf("expected fatal=true immediately on Attempt 3 failed with status 429, got false")
 		}
 	})
 

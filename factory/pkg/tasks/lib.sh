@@ -1251,6 +1251,40 @@ function record_engine_usage {
     esac
 }
 
+# monitorEngineStderr checks an engine process's stderr stream line by line,
+# forwarding each line to stderr and aborting the engine process immediately
+# if non-transient / terminal quota errors are encountered (e.g. repeated 429
+# retries on attempt >= 3, daily requests quota exhaustion, or max retries).
+function monitorEngineStderr {
+    local model="$1"
+    local pid_file="$2"
+    local line
+    local recent_attempt=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        echo "$line" >&2
+        if [[ "$line" =~ Attempt\ ([0-9]+)\ failed.*(429|RESOURCE_EXHAUSTED) ]]; then
+            recent_attempt="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$line" =~ Attempt\ ([3-9]|[1-9][0-9]+)\ failed\ with.*429 ]] || \
+           [[ "$line" =~ Attempt\ ([3-9]|[1-9][0-9]+)\ failed.*429\ error ]] || \
+           [[ "$line" =~ (requests\ per\ day|Generate\ requests\ per\ day) ]] || \
+           [[ "$line" =~ (Max\ retries\ exceeded|Terminal\ error|CONSUMER_SUSPENDED) ]] || \
+           { [ "$recent_attempt" -ge 2 ] && [[ "$line" =~ (RESOURCE_EXHAUSTED|exceeded\ your\ current\ quota) ]]; }; then
+            echo "Quota limit reached for model $model; aborting model attempt to fail fast..." >&2
+            if [ -f "$pid_file" ]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null || true)
+                if [ -n "$pid" ]; then
+                    pkill -P "$pid" 2>/dev/null || true
+                    kill -TERM "$pid" 2>/dev/null || true
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+            fi
+            return 1
+        fi
+    done
+}
+
 # runEngine: the model-fallback loop for the selected agent engine — the
 # one place engine invocation lives (design/multi-engine.md).
 #   $1 (optional): output basename (e.g. plan-output.txt); when set, the
@@ -1293,9 +1327,11 @@ function runEngine {
             # Claude Code refuses --dangerously-skip-permissions as root
             # unless IS_SANDBOX=1 declares the disposable-container
             # context — which this pod is (same trust model as --yolo).
-            if (cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && engineGitGlobal && dropGitHubTokens && claude "${CLAUDE_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            local engine_pid_file="${task_dir}/engine-process.pid"
+            if (echo "$BASHPID" > "$engine_pid_file" && cd "/workspaces/${REPO_NAME}" && export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" && export IS_SANDBOX=1 && engineGitGlobal && dropGitHubTokens && exec claude "${CLAUDE_ARGS[@]}" < "${PROMPT_FILE}" > "$out_json") 2>&1 | monitorEngineStderr "$MODEL" "$engine_pid_file"; then
                 SUCCESS=true
             fi
+            rm -f "$engine_pid_file"
             ;;
           antigravity)
             out_json="${task_dir}/antigravity-output.json"
@@ -1319,9 +1355,11 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 AGY_ARGS+=("--continue")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && engineGitGlobal && dropGitHubTokens && agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") && antigravitySucceeded "$out_json"; then
+            local engine_pid_file="${task_dir}/engine-process.pid"
+            if (echo "$BASHPID" > "$engine_pid_file" && cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && export AGY_CLI_DISABLE_AUTO_UPDATE=true && engineGitGlobal && dropGitHubTokens && exec agy "${AGY_ARGS[@]}" < /dev/null > "$out_json") 2>&1 | monitorEngineStderr "$MODEL" "$engine_pid_file" && antigravitySucceeded "$out_json"; then
                 SUCCESS=true
             fi
+            rm -f "$engine_pid_file"
             ;;
           *)
             out_json="${task_dir}/gemini-output.json"
@@ -1330,9 +1368,11 @@ function runEngine {
             if [ "$resume" = "true" ]; then
                 GEMINI_ARGS+=("--resume" "latest")
             fi
-            if (cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && engineGitConfig && dropGitHubTokens && gemini "${GEMINI_ARGS[@]}" < ${PROMPT_FILE} > "$out_json"); then
+            local engine_pid_file="${task_dir}/engine-process.pid"
+            if (echo "$BASHPID" > "$engine_pid_file" && cd "/workspaces/${REPO_NAME}" && export GEMINI_API_KEY="${GEMINI_API_KEY}" && engineGitConfig && dropGitHubTokens && exec gemini "${GEMINI_ARGS[@]}" < "${PROMPT_FILE}" > "$out_json") 2>&1 | monitorEngineStderr "$MODEL" "$engine_pid_file"; then
                 SUCCESS=true
             fi
+            rm -f "$engine_pid_file"
             ;;
         esac
         if [ "$SUCCESS" = true ]; then
