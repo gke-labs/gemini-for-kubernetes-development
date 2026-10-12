@@ -231,3 +231,21 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 		t.Error("expected an error when the factory executable cannot be resolved")
 	}
 }
+
+// Recovery requeues a task whose command applies a named run's result
+// rather than adopting it (appliesInCLI): that has to be exactly the tasks
+// BuildArgs runs as `recipe … --run-name … --apply`.
+func TestAppliesInCLIMatchesBuildArgs(t *testing.T) {
+	r := testCLIRunner(t.TempDir())
+	for _, typ := range []api.TaskType{api.TypeIssueFix, api.TypePRInvestigate, api.TypePRComments, api.TypePRIterate, api.TypePRReview, api.TypeAgentChore} {
+		args := r.BuildArgs(&api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1}, "coder-bot")
+		named, applies := false, false
+		for _, a := range args {
+			named = named || a == "--run-name"
+			applies = applies || a == "--apply"
+		}
+		if want := len(args) > 0 && args[0] == "recipe" && named && applies; appliesInCLI(typ) != want {
+			t.Errorf("%s: appliesInCLI = %v, but BuildArgs %v", typ, appliesInCLI(typ), args)
+		}
+	}
+}
