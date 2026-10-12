@@ -604,11 +604,15 @@ func (r *Recipe) OutputDecl() *taskoutput.Decl {
 	return &decl
 }
 
-// StartOutputs reports whether start leaves the task output: a recipe
-// whose result only a revise writes (research's notes) has none until
-// then.
+// StartOutputs reports whether start leaves the task output: one of its
+// asks captures it, or, in a recipe with no revise, a run step writes it
+// (adopt's Change). A recipe whose result only a revise writes
+// (research's notes) has none until then.
 func (r *Recipe) StartOutputs() bool {
-	return r.TaskOutput != nil && slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Capture == r.TaskOutput.From })
+	if r.TaskOutput == nil {
+		return false
+	}
+	return len(r.Revise) == 0 || slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Capture == r.TaskOutput.From })
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an
