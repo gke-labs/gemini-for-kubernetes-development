@@ -205,6 +205,12 @@ func TestOverseerSessionRoutesAreRegistered(t *testing.T) {
 	}
 	for _, gone := range []string{
 		"GET /api/terminal/:namespace/:name",
+		// The sandbox table's and the chores', which the page no longer has.
+		"GET /api/overseers/:name/sandboxes",
+		"GET /api/overseers/:name/sandboxes/:sandboxName/tasks",
+		"DELETE /api/overseers/:name/sandboxes/:sandboxName",
+		"POST /api/overseers/:name/sandboxes/:sandboxName/pause",
+		"GET /api/overseers/:name/chores",
 		"POST /api/overseers/:name/task-sessions/:sandbox/:task/revise",
 		"POST /api/overseers/:name/task-sessions/:sandbox/:task/draft/:verb",
 	} {

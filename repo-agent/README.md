@@ -133,10 +133,12 @@ with the team.
 
 ### Operations
 
-- **Overseer** page (admins only): shows overseer instances, their chores
-  (pause/resume, logs), sandboxes and tasks (logs, telemetry,
-  pause/unpause, delete), and the incoming task queue (with per-task
-  priority changes). It also has a **Factory / API Token Status** panel.
+- **Overseer** page (admins only): an overseer's work, one row per issue
+  (with the PR its fix opened), PR or agent, with a chip per run that
+  opens its session, and its sandboxes' cards (see
+  [docs/design/overseer-work-view.md](docs/design/overseer-work-view.md)).
+  Its Queue tab is the incoming task queue (with per-task priority
+  changes), Logs the daemon's, and Keys the factory / API token status.
 - **Usage** page: token usage from the factory token-usage collector.
 - **Sandbox card**: a sandbox's tasks, logs and lifecycle, plus a browser
   terminal attached to the sandbox (see
