@@ -250,7 +250,10 @@ const InstructionsType = "instructions"
 // Step is one step; exactly one of Uses, Run and Ask is set.
 type Step struct {
 	// ID names the step for later ones: {{ .Steps.<id>.ExitCode }}.
-	ID   string            `yaml:"id,omitempty"`
+	ID string `yaml:"id,omitempty"`
+	// If, when set, is a template rendered as an ask is (inputs and the
+	// steps before), to true or false: false skips the step.
+	If   string            `yaml:"if,omitempty"`
 	Uses string            `yaml:"uses,omitempty"`
 	With map[string]string `yaml:"with,omitempty"`
 	Run  string            `yaml:"run,omitempty"`
@@ -543,6 +546,11 @@ func validateSteps(steps []Step) error {
 		}
 		if s.ContinueOnError && s.Run == "" {
 			return fmt.Errorf("step %d: continue-on-error is only for run steps", i+1)
+		}
+		if s.If != "" {
+			if _, err := template.New("if").Option("missingkey=error").Funcs(template.FuncMap{"file": func(string) string { return "" }}).Parse(s.If); err != nil {
+				return fmt.Errorf("step %d: if: %w", i+1, err)
+			}
 		}
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
@@ -43,6 +44,8 @@ type FreshSession interface {
 
 // StepResult is what a step left for later ones to read.
 type StepResult struct {
+	// Skipped is whether the step's if: was false and it did not run.
+	Skipped  bool
 	ExitCode int
 	// Log is the step's output file in the task directory (uses, run).
 	Log string
@@ -98,6 +101,20 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 
 	for i, step := range steps {
 		label := step.Label(i)
+		if step.If != "" {
+			run, cerr := condition(label, step.If, data, r.TaskDir)
+			if cerr != nil {
+				fmt.Fprintf(r.Log, "::failed %s: %v\n", label, cerr)
+				return fmt.Errorf("step %s: %w", label, cerr)
+			}
+			if !run {
+				fmt.Fprintf(r.Log, "::skip %s (%s)\n", label, step.Kind())
+				if step.ID != "" {
+					data.Steps[step.ID] = &StepResult{Skipped: true}
+				}
+				continue
+			}
+		}
 		fmt.Fprintf(r.Log, "::step %s (%s)\n", label, step.Kind())
 		res := &StepResult{}
 
@@ -186,6 +203,11 @@ func (r *Recipe) CheckRender(inputs map[string]string) error {
 			}
 		}
 		for i, s := range steps {
+			if s.If != "" {
+				if _, err := condition(s.Label(i), s.If, data, ""); err != nil {
+					return fmt.Errorf("%s: step %s: %w", part, s.Label(i), err)
+				}
+			}
 			if s.Kind() != "ask" {
 				continue
 			}
@@ -195,6 +217,22 @@ func (r *Recipe) CheckRender(inputs map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// condition renders a step's if:, which must come out true or false, so a
+// mistyped condition fails the run rather than skipping the step.
+func condition(label, text string, data templateData, taskDir string) (bool, error) {
+	out, err := render(label+":if", text, data, taskDir)
+	if err != nil {
+		return false, fmt.Errorf("if: %w", err)
+	}
+	switch strings.TrimSpace(out) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("if: %q is neither true nor false", strings.TrimSpace(out))
 }
 
 // render fills one ask. `file "name"` reads a file a step left in the task
