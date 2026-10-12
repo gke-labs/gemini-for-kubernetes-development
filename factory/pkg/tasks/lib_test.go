@@ -13,7 +13,6 @@ import (
 // enforce was never applied to it. A new task script belongs in this
 // list on the commit that adds it.
 var taskScripts = []string{
-	"adopt.sh",
 	"run.sh", "run_agent.sh",
 }
 

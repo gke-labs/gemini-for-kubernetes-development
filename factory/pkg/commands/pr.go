@@ -1,25 +1,17 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -363,7 +355,20 @@ func NewAdoptCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("invalid strategy '%s'. Must be one of [reuse, reimplement]", flags.Strategy)
 			}
 
-			return runAdopt(ctx, flags.PRURL, adoptAction, flags.Strategy, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			// The adopt recipes (recipe/recipes/adopt*.yaml): reuse takes the
+			// PR's commits, reimplement has the agent redo them; open-pr
+			// opens the adopted PR and comments on (and with close,
+			// closes) the original.
+			if err := refuseOwnPR(ctx, flags.PRURL); err != nil {
+				return err
+			}
+			recipeName := "adopt"
+			if flags.Strategy == "reimplement" {
+				recipeName = "adopt-reimplement"
+			}
+			return runRecipe(ctx, recipeName, flags.PRURL, "", "", "", false,
+				applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""},
+				map[string]string{"close": strconv.FormatBool(adoptAction == "close")}, nil)
 		},
 	}
 
@@ -373,197 +378,31 @@ func NewAdoptCommand(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runAdopt(ctx context.Context, prURL, adoptAction, strategy string, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
-	u, err := url.Parse(prURL)
-	if err != nil {
-		return fmt.Errorf("invalid PR URL: %w", err)
+// refuseOwnPR refuses to adopt a PR the adopting account (the secret the
+// recipe runs with) already authored: there is nothing to adopt.
+func refuseOwnPR(ctx context.Context, prURL string) error {
+	it, err := parseGitHubItemURL(prURL)
+	if err != nil || !it.IsPR {
+		return fmt.Errorf("expected a PR URL (https://github.com/owner/repo/pull/123), got %s", prURL)
 	}
-	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(parts) < 4 || parts[2] != "pull" {
-		return fmt.Errorf("expected URL format https://github.com/owner/repo/pull/123, got %s", prURL)
-	}
-	owner, repo := parts[0], parts[1]
-	prNum, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return fmt.Errorf("invalid PR number in URL: %s", parts[3])
-	}
-
 	ghClient, err := github.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("creating github client: %w", err)
 	}
-
-	pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
+	pr, _, err := ghClient.PullRequests.Get(ctx, it.Owner, it.Repo, it.Number)
 	if err != nil {
-		return fmt.Errorf("fetching github PR #%d: %w", prNum, err)
+		return fmt.Errorf("fetching PR #%d: %w", it.Number, err)
 	}
-
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
-
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[constants.KeyGithubLogin])
-	githubEmail := string(secret.Data[constants.KeyGithubEmail])
-
-	prAuthor := pr.GetUser().GetLogin()
-	if strings.EqualFold(prAuthor, githubLogin) {
-		return fmt.Errorf("PR is already owned by the factory user (%s)", githubLogin)
+	if login := string(secret.Data[constants.KeyGithubLogin]); strings.EqualFold(pr.GetUser().GetLogin(), login) {
+		return fmt.Errorf("PR is already owned by the factory user (%s)", login)
 	}
-
-	sandboxName := fmt.Sprintf("adopt-%s-%d", repo, prNum)
-	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-
-	fmt.Printf("Ensuring adopt sandbox '%s'...\n", sandboxName)
-	sandboxName, err = factorysandbox.EnsureAdoptSandbox(ctx, kubeClient, rootFlags.Namespace, repo, prNum, cloneURL, prURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	if err != nil {
-		return fmt.Errorf("ensuring adopt sandbox: %w", err)
-	}
-
-	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
-	if err != nil {
-		return fmt.Errorf("connecting to sandbox: %w", err)
-	}
-	defer client.Close()
-
-	taskDir := fmt.Sprintf("/workspaces/tasks/adopt-%s-%s", strategy, time.Now().Format("20060102-150405"))
-	promptPath := fmt.Sprintf("%s/adopt-prompt.txt", taskDir)
-	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
-
-	var promptBytes []byte
-	var prDiff string
-
-	if strategy == "reimplement" {
-		fmt.Println("Downloading PR diff to construct prompt...")
-		diffURL := pr.GetDiffURL()
-		req, err := http.NewRequestWithContext(ctx, "GET", diffURL, nil)
-		if err != nil {
-			return fmt.Errorf("creating request for PR diff: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+string(secret.Data[constants.KeyGithubToken]))
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("fetching PR diff: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("failed to fetch PR diff: status code %d", resp.StatusCode)
-		}
-		var diffBuf bytes.Buffer
-		if _, err := io.Copy(&diffBuf, resp.Body); err != nil {
-			return fmt.Errorf("reading PR diff response: %w", err)
-		}
-		prDiff = diffBuf.String()
-	}
-
-	params := tasks.AdoptParams{
-		RepoOwner: owner,
-		RepoName:  repo,
-		CloneURL:  cloneURL,
-		PRNumber:  prNum,
-		PRURL:     prURL,
-		AdoptFlag: adoptAction,
-		Strategy:  strategy,
-		Title:     pr.GetTitle(),
-		Body:      pr.GetBody(),
-		Diff:      prDiff,
-		Models:    tasks.DefaultModels,
-	}
-
-	promptBytes, err = tasks.RenderAdoptPrompt(params)
-	if err != nil {
-		return fmt.Errorf("rendering adopt prompt: %w", err)
-	}
-
-	scriptBytes, err := tasks.GetAdoptScript()
-	if err != nil {
-		return fmt.Errorf("getting adopt script: %w", err)
-	}
-
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
-	}
-
-	envMap := map[string]string{
-		"HOME":                       "/workspaces/.home",
-		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_OWNER":                 owner,
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"PR_URL":                     prURL,
-		"ADOPT_FLAG":                 adoptAction,
-		"STRATEGY":                   strategy,
-	}
-	if err := applyEngineEnv(envMap, secret); err != nil {
-		return err
-	}
-
-	fmt.Println("Running adopt task via envd...")
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", rootFlags.Engine)
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", "Failed")
-		return fmt.Errorf("running task: %w", err)
-	}
-	if rootFlags.Detached {
-		return nil
-	}
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "adopt", "Completed")
-
-	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
-		Repo:     owner + "/" + repo,
-		TaskType: "adopt",
-		Sandbox:  sandboxName,
-		PR:       prNum,
-	})
-	usagereport.ReportPRSubject(ctx, owner+"/"+repo, pr)
-
-	fmt.Println("\nAdopt execution completed.")
-
-	var buf bytes.Buffer
-	var createdPRURL string
-	if err := client.Exec(ctx, fmt.Sprintf("cat %s/agent-output.txt", taskDir), "/workspaces", nil, nil, &buf, os.Stderr); err != nil {
-		klog.Warningf("Could not read agent-output.txt: %v", err)
-	} else {
-		for _, line := range strings.Split(buf.String(), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.Contains(line, "/pull/") {
-				createdPRURL = line
-				break
-			}
-		}
-	}
-
-	if createdPRURL != "" {
-		fmt.Printf("\nSuccessfully adopted PR! New PR URL: %s\n", createdPRURL)
-		parts := strings.Split(createdPRURL, "/")
-		if len(parts) > 0 {
-			if createdPRNum, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
-				fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, createdPRNum)
-				if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, createdPRNum, createdPRURL); err != nil {
-					klog.Warningf("Failed to alias sandbox to PR #%d: %v", createdPRNum, err)
-				}
-			}
-		}
-	} else {
-		fmt.Printf("\nAdopted PR output:\n%s\n", buf.String())
-	}
-
 	return nil
 }

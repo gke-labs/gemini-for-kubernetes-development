@@ -103,6 +103,10 @@ type fakePRs struct {
 	// denyLabels answers a label write 403, as GitHub does a bot that
 	// may not label the repository's issues.
 	denyLabels bool
+	// comments are o/r#5's, the PR an adopting Change adopts; closed is
+	// whether it was closed.
+	comments []string
+	closed   bool
 }
 
 func (f *fakePRs) client(t *testing.T) *githubv39.Client {
@@ -139,6 +143,26 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&f.labels)
 		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/repos/o/r/issues/5/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var c githubv39.IssueComment
+			_ = json.NewDecoder(r.Body).Decode(&c)
+			f.comments = append(f.comments, c.GetBody())
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		var out []githubv39.IssueComment
+		for _, b := range f.comments {
+			out = append(out, githubv39.IssueComment{Body: githubv39.String(b)})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	mux.HandleFunc("/repos/o/r/pulls/5", func(w http.ResponseWriter, r *http.Request) {
+		var pr githubv39.PullRequest
+		_ = json.NewDecoder(r.Body).Decode(&pr)
+		f.closed = pr.GetState() == "closed"
+		fmt.Fprint(w, `{}`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -219,6 +243,30 @@ func TestOpenPR(t *testing.T) {
 		}
 		if len(f.created) != 0 || strings.Join(f.labels, ",") != "bug" {
 			t.Errorf("opened %d, labels %v", len(f.created), f.labels)
+		}
+	})
+
+	// An adopting Change (the adopt recipes): once its PR is open, the PR
+	// it adopts gets a link to it, once, and is closed when asked.
+	t.Run("adopts: links the original once, closes it when asked", func(t *testing.T) {
+		doc := changeDoc(t)
+		c, _ := doc.ChangeSpec()
+		c.Adopts, c.CloseAdopted = "https://github.com/o/r/pull/5", true
+		if err := doc.setSpec(c); err != nil {
+			t.Fatal(err)
+		}
+		f := &fakePRs{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.comments) != 1 || !strings.Contains(f.comments[0], "adopted here: https://github.com/o/r/pull/12, and closed.") || !f.closed {
+			t.Errorf("comments %q, closed %v:\n%s", f.comments, f.closed, out.String())
+		}
+		// Applied again, at the open PR: no second comment.
+		f.open = map[string]string{"me:issue-7-1": "https://github.com/o/r/pull/12"}
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil || len(f.comments) != 1 {
+			t.Errorf("again: %v, comments %q", err, f.comments)
 		}
 	})
 

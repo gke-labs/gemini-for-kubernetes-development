@@ -1,0 +1,63 @@
+# factory recipe adopt --url <PR> [--close true]: adopts someone else's
+# pull request as yours, as it is: its head goes to a branch on your fork
+# (adopt-pr-<n>), and the result's open-pr opens it as your PR, which
+# comments on the original with a link (and closes it, with --close true).
+# No agent runs; adopt-reimplement redoes the change instead.
+#
+# It runs in the PR's fix sandbox; open-pr aliases that to the new PR, so
+# the adopted PR's care runs there, on its branch. `factory pr adopt
+# open|close` runs it, or adopt-reimplement, and applies open-pr.
+name: adopt
+label: Adopt
+on: [pr]
+
+inputs:
+  close:
+    description: Close the original PR once adopted, true or false
+    default: "false"
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    # The PR's head as a branch of yours, from the repository's
+    # pull/<n>/head (the head, wherever it lives); the base is where it
+    # branched off the default branch.
+    - run: |
+        branch="adopt-pr-${INPUT_PR_NUMBER}"
+        git fetch upstream "+pull/${INPUT_PR_NUMBER}/head:refs/remotes/upstream/adopt-${INPUT_PR_NUMBER}" "${INPUT_PR_BASE}"
+        git checkout -B "${branch}" "refs/remotes/upstream/adopt-${INPUT_PR_NUMBER}"
+        printf '%s\n' "${branch}" > "$TASK_DIR/branch"
+        git merge-base HEAD "upstream/${INPUT_PR_BASE}" > "$TASK_DIR/base"
+    - run: |
+        # The Change is factory's, never an agent's: what is adopted, and
+        # whether the original closes.
+        python3 - <<'PY'
+        import json, os
+        body = "This Pull Request was adopted from original PR %s\n\n---\n### Original Description:\n%s" % (os.environ["INPUT_PR_URL"], os.environ.get("INPUT_PR_BODY", ""))
+        change = {"change": {
+            "title": "adopt: " + os.environ["INPUT_PR_TITLE"],
+            "body": body,
+            "adopts": os.environ["INPUT_PR_URL"],
+            "closeAdopted": os.environ.get("INPUT_CLOSE", "false") == "true",
+        }}
+        with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w") as f:
+            json.dump(change, f)  # JSON is YAML
+        PY
+    - uses: push
+
+outputs:
+  - change.yaml
+
+task-output:
+  kind: Change
+  from: change.yaml
+  preview: spec.title
+  actions:
+    - verb: edit
+      field: spec
+      format: yaml
+    - verb: open-pr
+      label: Open adopted PR
+    - verb: reject
