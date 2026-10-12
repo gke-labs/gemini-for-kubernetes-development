@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,6 +100,9 @@ type fakePRs struct {
 	open    map[string]string // head → PR URL
 	created []githubv39.NewPullRequest
 	labels  []string
+	// denyLabels answers a label write 403, as GitHub does a bot that
+	// may not label the repository's issues.
+	denyLabels bool
 }
 
 func (f *fakePRs) client(t *testing.T) *githubv39.Client {
@@ -122,11 +126,17 @@ func (f *fakePRs) client(t *testing.T) *githubv39.Client {
 		}
 		var prs []*githubv39.PullRequest
 		if u, ok := f.open[r.URL.Query().Get("head")]; ok {
-			prs = append(prs, &githubv39.PullRequest{HTMLURL: githubv39.String(u)})
+			n, _ := strconv.Atoi(u[strings.LastIndex(u, "/")+1:])
+			prs = append(prs, &githubv39.PullRequest{HTMLURL: githubv39.String(u), Number: githubv39.Int(n)})
 		}
 		_ = json.NewEncoder(w).Encode(prs)
 	})
 	mux.HandleFunc("/repos/o/r/issues/12/labels", func(w http.ResponseWriter, r *http.Request) {
+		if f.denyLabels {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"Must have admin rights to Repository."}`)
+			return
+		}
 		_ = json.NewDecoder(r.Body).Decode(&f.labels)
 		fmt.Fprint(w, `[]`)
 	})
@@ -177,6 +187,38 @@ func TestOpenPR(t *testing.T) {
 		}
 		if len(f.created) != 1 || f.created[0].GetDraft() || !strings.Contains(out.String(), "Opening a PR on") {
 			t.Errorf("opened %d, request %+v:\n%s", len(f.created), f.created, out.String())
+		}
+	})
+
+	// An overseer opens its fix's PR as the bot that wrote it, which may
+	// not label, and labels it as itself (WithLabeler).
+	t.Run("the labeler labels what the opener may not", func(t *testing.T) {
+		doc := changeDoc(t)
+		opener, labeler := &fakePRs{denyLabels: true}, &fakePRs{}
+		var out bytes.Buffer
+		if err := ApplyAction(WithLabeler(ctx, labeler.client(t)), opener.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(opener.created) != 1 || len(opener.labels) != 0 || strings.Join(labeler.labels, ",") != "bug" || strings.Contains(out.String(), "Warning") {
+			t.Errorf("opened %d, opener labels %v, labeler labels %v:\n%s", len(opener.created), opener.labels, labeler.labels, out.String())
+		}
+		// Without a labeler, the opener's 403 is a warning, not a failure.
+		opener = &fakePRs{denyLabels: true}
+		out.Reset()
+		if err := ApplyAction(ctx, opener.client(t), changeDoc(t), "open-pr", false, &out); err != nil || !strings.Contains(out.String(), "Warning: could not label") {
+			t.Errorf("no labeler: %v\n%s", err, out.String())
+		}
+	})
+
+	t.Run("applied again, an open PR gets its labels", func(t *testing.T) {
+		doc := changeDoc(t)
+		f := &fakePRs{open: map[string]string{"me:issue-7-1": "https://github.com/o/r/pull/12"}}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "open-pr", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.created) != 0 || strings.Join(f.labels, ",") != "bug" {
+			t.Errorf("opened %d, labels %v", len(f.created), f.labels)
 		}
 	})
 
