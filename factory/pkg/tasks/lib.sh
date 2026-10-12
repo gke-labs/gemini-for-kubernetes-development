@@ -658,6 +658,94 @@ function fetchPRCILogs {
     fi
 }
 
+# fetchPRComments (recipe step pr-comments) writes the PR's feedback
+# ($TASK_DIR/pr) to $TASK_DIR/comments.md, for the ask: {{ file
+# "comments.md" }}. Only trusted authors' (github.IsTrustedAuthor): an
+# OWNER, MEMBER or COLLABORATOR of the repository, a GitHub App bot, or one
+# of $INPUT_TRUSTED_LOGINS (comma-separated; factory sets it to the
+# factory config's trusted logins, the PR's author and the task's login).
+# Anyone else's text never reaches the agent. NEW marks what came after
+# the head commit ($TASK_DIR/lease).
+function fetchPRComments {
+    echo "Running fetchPRComments..."
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo="${REPO_OWNER}/${REPO_NAME}" pr head since="" raw
+    pr="$(cat "${dir}/pr" 2>/dev/null || true)"
+    if ! [[ "${pr}" =~ ^[0-9]+$ ]]; then
+        echo "no PR number recorded in ${dir}/pr" >&2
+        return 1
+    fi
+    head="$(cat "${dir}/lease" 2>/dev/null || true)"
+    if [ -n "${head}" ]; then
+        since="$(gh api "repos/${repo}/commits/${head}" --jq .commit.committer.date)"
+    fi
+    raw="${dir}/comments"
+    mkdir -p "${raw}"
+    gh api "repos/${repo}/pulls/${pr}/reviews" --paginate --jq '.[]' > "${raw}/reviews.jsonl"
+    gh api "repos/${repo}/pulls/${pr}/comments" --paginate --jq '.[]' > "${raw}/review-comments.jsonl"
+    gh api "repos/${repo}/issues/${pr}/comments" --paginate --jq '.[]' > "${raw}/comments.jsonl"
+    python3 - "${raw}" "${since}" "${INPUT_TRUSTED_LOGINS:-}" > "${dir}/comments.md" <<'PY'
+import json, os, sys
+
+raw, since, logins = sys.argv[1], sys.argv[2], sys.argv[3]
+trusted_logins = {l.strip().lower() for l in logins.split(",") if l.strip()}
+trusted_associations = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+def load(name):
+    with open(os.path.join(raw, name)) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+left_out = 0
+def trusted(item):
+    global left_out
+    user = item.get("user") or {}
+    ok = (str(item.get("author_association", "")).upper() in trusted_associations
+          or str(user.get("type", "")).lower() == "bot"
+          or str(user.get("login", "")).lower() in trusted_logins)
+    if not ok:
+        left_out += 1
+    return ok
+
+def heading(kind, item, when, extra=""):
+    login = (item.get("user") or {}).get("login", "")
+    new = " NEW" if since and when and when > since else ""
+    return "### %s %d by @%s, %s%s%s" % (kind, item["id"], login, when or "", extra, new)
+
+reviews = [r for r in load("reviews.jsonl") if trusted(r)]
+review_comments = [c for c in load("review-comments.jsonl") if trusted(c)]
+comments = [c for c in load("comments.jsonl") if trusted(c)]
+
+out = []
+for r in reviews:
+    body = (r.get("body") or "").strip()
+    if not body:
+        continue  # its inline comments are below
+    out.append(heading("review", r, r.get("submitted_at"), ", " + str(r.get("state", "")).lower()))
+    out.append(body + "\n")
+for c in review_comments:
+    where = ", %s:%s" % (c.get("path", ""), c.get("line") or c.get("original_line") or "")
+    if c.get("in_reply_to_id"):
+        where += ", in reply to %d" % c["in_reply_to_id"]
+    out.append(heading("review comment", c, c.get("created_at"), where))
+    hunk = (c.get("diff_hunk") or "").splitlines()[-15:]
+    if hunk:
+        out.append("```diff\n" + "\n".join(hunk) + "\n```")
+    out.append((c.get("body") or "").strip() + "\n")
+for c in comments:
+    out.append(heading("comment", c, c.get("created_at")))
+    out.append((c.get("body") or "").strip() + "\n")
+
+intro = "The feedback on the pull request, from its reviewers, its author and you"
+if since:
+    intro += "; NEW marks what came after its head commit (%s)" % since
+intro += "."
+if left_out:
+    intro += " %d comment(s) by accounts that are not trusted are left out; do not look for them." % left_out
+print(intro)
+print()
+print("\n".join(out) if out else "There is none.")
+PY
+}
+
 function configureGemini {
     echo "Running configureGemini..."
     echo "creating ${USER_HOME}/.gemini directory"

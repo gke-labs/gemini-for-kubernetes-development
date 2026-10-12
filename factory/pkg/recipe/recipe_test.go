@@ -1196,19 +1196,21 @@ func TestBuiltinCareRenders(t *testing.T) {
 		"pr_number": "9", "pr_title": "t", "pr_body": "b", "pr_head": "feature", "pr_base": "main", "disclose": "true",
 	}
 	dir := t.TempDir()
-	for name, v := range map[string]string{"pr": "9", "lease": "h1", "base": "b2", "upstream": "u3", "ci-logs.md": "the excerpts"} {
+	for name, v := range map[string]string{"pr": "9", "lease": "h1", "base": "b2", "upstream": "u3", "ci-logs.md": "the excerpts", "comments.md": "the trusted feedback"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// The failed jobs' logs come from the ci-logs step, not from
-	// `gh run view --log-failed`, which waits for the whole run.
-	jobs := map[string]string{"rebase": "git rebase u3", "ci": "the excerpts", "comments": "pulls/9/comments"}
+	// `gh run view --log-failed`, which waits for the whole run; the
+	// comments from the pr-comments step, trusted authors' only, never
+	// from gh, which shows everyone's.
+	jobs := map[string]string{"rebase": "git rebase u3", "ci": "the excerpts", "comments": "the trusted feedback"}
 	for name, tc := range map[string]struct {
 		want, not []string
 	}{
-		"care":          {want: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}, not: []string{"--log-failed"}},
-		"care-comments": {want: []string{jobs["comments"]}, not: []string{jobs["rebase"], jobs["ci"]}},
+		"care":          {want: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}, not: []string{"--log-failed", "comments --paginate", "9 --comments"}},
+		"care-comments": {want: []string{jobs["comments"]}, not: []string{jobs["rebase"], jobs["ci"], "comments --paginate", "9 --comments"}},
 		"care-ci":       {want: []string{jobs["ci"], "gh pr checks 9"}, not: []string{jobs["rebase"], jobs["comments"], "--log-failed"}},
 		"care-rebase":   {want: []string{"git rebase b2"}, not: []string{jobs["ci"], jobs["comments"]}},
 		"care-iterate":  {want: []string{"rename foo"}, not: []string{jobs["rebase"], jobs["ci"], jobs["comments"]}},
@@ -1232,14 +1234,18 @@ func TestBuiltinCareRenders(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		var got strings.Builder
-		ciLogs := false
+		ciLogs, prComments := false, false
 		for i, s := range rec.Start.Steps {
 			ciLogs = ciLogs || s.Uses == "ci-logs"
+			prComments = prComments || s.Uses == "pr-comments"
 			if s.Ask == "" {
 				continue
 			}
 			if strings.Contains(s.Ask, `file "ci-logs.md"`) && !ciLogs {
 				t.Errorf("%s step %s reads ci-logs.md before the ci-logs step", name, s.Label(i))
+			}
+			if strings.Contains(s.Ask, `file "comments.md"`) && !prComments {
+				t.Errorf("%s step %s reads comments.md before the pr-comments step", name, s.Label(i))
 			}
 			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
 			if err != nil {

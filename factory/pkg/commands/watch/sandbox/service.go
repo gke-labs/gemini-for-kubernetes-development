@@ -494,8 +494,6 @@ func sandboxTaskType(taskType api.TaskType) string {
 		return "fix-issue"
 	case api.TypeAgentChore:
 		return "agent"
-	case api.TypePRComments:
-		return "address-comments"
 	case api.TypePRIterate:
 		return "iterate"
 	default:

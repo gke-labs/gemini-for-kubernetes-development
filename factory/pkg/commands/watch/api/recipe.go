@@ -23,6 +23,7 @@ type RecipeTask struct {
 var recipeTasks = map[TaskType]RecipeTask{
 	TypePRReview:      {Recipe: "review", Action: "submit-review", RunPrefix: "review", OwnSandbox: true},
 	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
+	TypePRComments:    {Recipe: "care-comments", Action: "post-replies", RunPrefix: "comments"},
 }
 
 // RecipeTaskOf is how tasks of type t run as a recipe, if they do.

@@ -13,9 +13,6 @@ func TestDiscloseGatesAttribution(t *testing.T) {
 		"fix": func(d bool) ([]byte, error) {
 			return RenderFixIssuePrompt(FixIssueParams{PRLabel: "factory", TriggerLabel: "factory", Disclose: d})
 		},
-		"address-comments": func(d bool) ([]byte, error) {
-			return RenderAddressFeedbackPrompt(AddressFeedbackParams{TriggerLabel: "factory", Disclose: d})
-		},
 	}
 	for name, fn := range render {
 		on, err := fn(true)
