@@ -465,13 +465,10 @@ func lastTaskType(annotations map[string]string) string {
 
 // sandboxTaskType maps a queue task type onto the task type recorded in sandbox annotations.
 func sandboxTaskType(taskType api.TaskType) string {
-	// A recipe records recipe-<name>.
 	if rt, ok := api.RecipeTaskOf(taskType); ok {
-		return "recipe-" + rt.Recipe
+		return rt.RecordedType()
 	}
 	switch taskType {
-	case api.TypeIssueFix:
-		return "fix-issue"
 	case api.TypeAgentChore:
 		return "agent"
 	default:

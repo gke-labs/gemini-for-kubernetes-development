@@ -14,11 +14,12 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
 
-// writeProcessingTask writes a task YAML directly into the processing directory,
+// writeProcessingTask writes a classic task (a chore: the other types are
+// recipes, which recovery requeues) directly into the processing directory,
 // simulating a task left behind by a previous run.
 func writeProcessingTask(t *testing.T, queueDir, filename string, number int) {
 	t.Helper()
-	body := fmt.Sprintf("type: issue-fix\nnumber: %d\nstatus: Running\nurl: https://github.com/test-owner/test-repo/issues/%d\n", number, number)
+	body := fmt.Sprintf("type: agent-chore\nnumber: %d\nstatus: Running\nurl: https://github.com/test-owner/test-repo/issues/%d\nagentFile: .agents/chore.md\n", number, number)
 	if err := os.WriteFile(filepath.Join(queueDir, "processing", filename), []byte(body), 0644); err != nil {
 		t.Fatalf("failed to write processing task file: %v", err)
 	}

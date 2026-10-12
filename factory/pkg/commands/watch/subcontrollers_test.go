@@ -321,19 +321,22 @@ func writeStuckTask(t *testing.T, queueDir, filename, body string) {
 	}
 }
 
+// A classic task (a chore: every other type is a recipe, which recovery
+// requeues) still running in its sandbox is adopted.
 func TestRecover_AdoptsRunningTaskAndReleasesOnCompletion(t *testing.T) {
 	tempDir := t.TempDir()
 	ns := "test-ns"
 	sbName := "fix-test-repo-100"
 
-	kubeClient, fakeDynamic := newTestKubeClientWithSandbox(sbName, ns, "Running", "fix-issue")
+	kubeClient, fakeDynamic := newTestKubeClientWithSandbox(sbName, ns, "Running", "agent")
 	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
 	fn := "task-issue-100.yaml"
-	writeStuckTask(t, tempDir, fn, `type: issue-fix
+	writeStuckTask(t, tempDir, fn, `type: agent-chore
 number: 100
 status: Running
 url: https://github.com/test-owner/test-repo/issues/100
+agentFile: .agents/chore.md
 `)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -361,7 +364,7 @@ url: https://github.com/test-owner/test-repo/issues/100
 				"namespace": ns,
 				"annotations": map[string]interface{}{
 					"sandbox.gemini.google.com/last-task-state": "Completed",
-					"sandbox.gemini.google.com/last-task-type":  "fix-issue",
+					"sandbox.gemini.google.com/last-task-type":  "agent",
 				},
 			},
 		},
@@ -403,14 +406,15 @@ func TestRecover_AlreadyCompletedReleasesLease(t *testing.T) {
 	ns := "test-ns"
 	sbName := "fix-test-repo-101"
 
-	kubeClient, _ := newTestKubeClientWithSandbox(sbName, ns, "Completed", "fix-issue")
+	kubeClient, _ := newTestKubeClientWithSandbox(sbName, ns, "Completed", "agent")
 	w := newAdoptionTestWatcher(t, tempDir, ns, kubeClient)
 
 	fn := "task-issue-101.yaml"
-	writeStuckTask(t, tempDir, fn, `type: issue-fix
+	writeStuckTask(t, tempDir, fn, `type: agent-chore
 number: 101
 status: Running
 url: https://github.com/test-owner/test-repo/issues/101
+agentFile: .agents/chore.md
 `)
 
 	w.dispatcher.Recover(context.Background())

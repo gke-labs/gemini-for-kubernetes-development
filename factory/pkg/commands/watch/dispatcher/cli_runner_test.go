@@ -32,23 +32,21 @@ func testCLIRunner(logDir string) *CLIRunner {
 func TestCLIRunner_BuildArgs(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
 
-	t.Run("issue-fix task", func(t *testing.T) {
+	t.Run("issue-fix task runs the fix recipe", func(t *testing.T) {
 		task := &api.QueueTask{
-			Type:   api.TypeIssueFix,
-			URL:    "https://github.com/test-owner/test-repo/issues/123",
-			Number: 123,
+			Type:       api.TypeIssueFix,
+			URL:        "https://github.com/test-owner/test-repo/issues/123",
+			Number:     123,
+			EnqueuedAt: time.Unix(1760000000, 0),
 		}
 		args := r.BuildArgs(task, "coder-bot")
-		if len(args) == 0 {
-			t.Fatalf("expected args, got empty slice")
-		}
-		if args[0] != "fix" {
-			t.Errorf("expected command 'fix', got %q", args[0])
+		// Its PR opens ready for review, labelled for the watch.
+		want := []string{"recipe", "fix", "--url", task.URL, "--run-name", "fix-123-head-1760000000", "--apply", "--action", "open-pr", "--pr-labels", "--input", "draft=false"}
+		if len(args) < len(want) || !slices.Equal(args[:len(want)], want) {
+			t.Fatalf("args = %v, want them to start %v", args, want)
 		}
 
 		expectedFlags := map[string]string{
-			"--url":                     task.URL,
-			"--instruction":             "Fix this issue",
 			"--namespace":               "test-namespace",
 			"--user":                    "coder-bot",
 			"--image":                   "custom-image:v1",
@@ -224,8 +222,8 @@ func TestCLIRunner_Run_ExecutesChildProcessAndWritesLog(t *testing.T) {
 	if gotName != "/usr/bin/factory" {
 		t.Errorf("expected the factory executable to be invoked, got %q", gotName)
 	}
-	if len(gotArgs) == 0 || gotArgs[0] != "fix" {
-		t.Errorf("expected 'fix' args, got %v", gotArgs)
+	if len(gotArgs) < 2 || gotArgs[0] != "recipe" || gotArgs[1] != "fix" {
+		t.Errorf("expected 'recipe fix' args, got %v", gotArgs)
 	}
 
 	logContents, err := os.ReadFile(filepath.Join(logDir, "task-10.log"))

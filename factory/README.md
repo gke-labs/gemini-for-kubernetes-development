@@ -50,7 +50,7 @@
 - **Workflows.** A definition with `mode: workflow` runs as a long-lived, multi-step process in a `wf-issue-<n>` sandbox, advancing one step per cycle. It is triggered when an issue body references the definition, or with `agent create --session-id`.
 
 ### Autonomous watch loop (`factory watch`)
-- **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label.
+- **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label. It fixes one with `recipe fix --apply --action open-pr --pr-labels --input draft=false`: the PR opens ready for review, labelled with the trigger label, the config's `additionalLabels` and the issue's labels; an issue that references a workflow runs that instead.
 - **PR reactions.** For each bot PR it dispatches, in priority order:
   1. unaddressed feedback → `recipe care-comments`
   2. merge conflict → `recipe care-rebase`

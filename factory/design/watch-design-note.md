@@ -61,7 +61,7 @@ Once the watcher has consolidated the active issues and PRs, it performs check-s
 
 | Item Type | Condition | Task Type | Spawned Command | Identity Selection |
 | :--- | :--- | :--- | :--- | :--- |
-| **Issue** | Open issue assigned/labeled | `issue-fix` | `factory fix` | Mapped pool bot / Load-balanced coder |
+| **Issue** | Open issue assigned/labeled | `issue-fix` | `factory recipe fix --apply --action open-pr --pr-labels --input draft=false` | Mapped pool bot / Load-balanced coder |
 | **PR** | CI check runs failed (Phase 3) | `pr-investigate` | `factory recipe care-ci --apply --action post-replies` | Match PR author (must be in `coder` pool) |
 | **PR** | New comment or review (Phase 2) | `pr-comments` | `factory recipe care-comments --apply --action post-replies` | Match PR author (must be in `coder` pool) |
 | **PR** | Merge conflicts / out-of-date (Phase 1) | `pr-iterate` | `factory recipe care-rebase --apply --action post-replies` | Match PR author (must be in `coder` pool) |

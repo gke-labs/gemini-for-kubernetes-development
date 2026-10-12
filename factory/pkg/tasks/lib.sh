@@ -712,12 +712,8 @@ function fetchPRCILogs {
 
 # fetchPRComments (recipe step pr-comments) writes the PR's feedback
 # ($TASK_DIR/pr) to $TASK_DIR/comments.md, for the ask: {{ file
-# "comments.md" }}. Only trusted authors' (github.IsTrustedAuthor): an
-# OWNER, MEMBER or COLLABORATOR of the repository, a GitHub App bot, or one
-# of $INPUT_TRUSTED_LOGINS (comma-separated; factory sets it to the
-# factory config's trusted logins, the PR's author and the task's login).
-# Anyone else's text never reaches the agent. NEW marks what came after
-# the head commit ($TASK_DIR/lease).
+# "comments.md" }}, trusted authors' only (renderTrustedComments). NEW
+# marks what came after the head commit ($TASK_DIR/lease).
 function fetchPRComments {
     echo "Running fetchPRComments..."
     local dir="${TASK_DIR:?TASK_DIR is not set}" repo pr head since="" raw
@@ -738,15 +734,49 @@ function fetchPRComments {
     gh api "repos/${repo}/pulls/${pr}/reviews" --paginate --jq '.[]' > "${raw}/reviews.jsonl" || return 1
     gh api "repos/${repo}/pulls/${pr}/comments" --paginate --jq '.[]' > "${raw}/review-comments.jsonl" || return 1
     gh api "repos/${repo}/issues/${pr}/comments" --paginate --jq '.[]' > "${raw}/comments.jsonl" || return 1
-    python3 - "${raw}" "${since}" "${INPUT_TRUSTED_LOGINS:-}" > "${dir}/comments.md" <<'PY'
+    renderTrustedComments "${raw}" "${since}" "The feedback on the pull request, from its reviewers, its author and you" > "${dir}/comments.md"
+}
+
+# fetchIssueComments (recipe step issue-comments) writes the comments on
+# the issue ($INPUT_ISSUE_NUMBER) to $TASK_DIR/comments.md, for the ask:
+# {{ file "comments.md" }}, trusted authors' only (renderTrustedComments),
+# as factory fix put them in its prompt.
+function fetchIssueComments {
+    echo "Running fetchIssueComments..."
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo issue="${INPUT_ISSUE_NUMBER:-}" raw
+    repo="$(stepRepo)" || return 1
+    if ! [[ "${issue}" =~ ^[0-9]+$ ]]; then
+        echo "no issue number (INPUT_ISSUE_NUMBER)" >&2
+        return 1
+    fi
+    raw="${dir}/comments"
+    mkdir -p "${raw}"
+    gh api "repos/${repo}/issues/${issue}/comments" --paginate --jq '.[]' > "${raw}/comments.jsonl" || return 1
+    renderTrustedComments "${raw}" "" "The comments on the issue, from the repository's maintainers and you" > "${dir}/comments.md"
+}
+
+# renderTrustedComments prints, as markdown, the reviews, review comments
+# and comments in $1 (reviews.jsonl, review-comments.jsonl, comments.jsonl:
+# GitHub's objects, one per line; a missing file is none) by trusted
+# authors (github.IsTrustedAuthor): an OWNER, MEMBER or COLLABORATOR of
+# the repository, a GitHub App bot, or one of $INPUT_TRUSTED_LOGINS
+# (comma-separated; factory sets it to the factory config's trusted
+# logins and the task's login, and a PR's author). Anyone else's are only
+# counted: their text never reaches the agent. $2, a time, marks what came
+# after it NEW; $3 starts the introduction.
+function renderTrustedComments {
+    python3 - "$1" "$2" "${INPUT_TRUSTED_LOGINS:-}" "$3" <<'PY'
 import json, os, sys
 
-raw, since, logins = sys.argv[1], sys.argv[2], sys.argv[3]
+raw, since, logins, intro = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 trusted_logins = {l.strip().lower() for l in logins.split(",") if l.strip()}
 trusted_associations = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 def load(name):
-    with open(os.path.join(raw, name)) as f:
+    path = os.path.join(raw, name)
+    if not os.path.exists(path):
+        return []  # an issue has no reviews
+    with open(path) as f:
         return [json.loads(line) for line in f if line.strip()]
 
 left_out = 0
@@ -789,7 +819,6 @@ for c in comments:
     out.append(heading("comment", c, c.get("created_at")))
     out.append((c.get("body") or "").strip() + "\n")
 
-intro = "The feedback on the pull request, from its reviewers, its author and you"
 if since:
     intro += "; NEW marks what came after its head commit (%s)" % since
 intro += "."
