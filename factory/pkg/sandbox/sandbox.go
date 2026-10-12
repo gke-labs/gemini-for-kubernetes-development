@@ -280,13 +280,45 @@ func PRFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, nam
 	if err != nil {
 		return "", fmt.Errorf("listing the sandboxes of PR #%d: %w", prNum, err)
 	}
-	for _, sb := range list.Items {
-		a := sb.GetAnnotations()
-		if strings.HasPrefix(sb.GetName(), "fix-") && a["repo"] == repoName && sameItemURL(a["htmlURL"], prURL) && !terminating(&sb) {
+	for i := range list.Items {
+		if sb := &list.Items[i]; isPRFixSandbox(sb, repoName, prURL) {
 			return sb.GetName(), nil
 		}
 	}
 	return "", nil
+}
+
+// isPRFixSandbox reports whether sb, labelled with a PR, is the fix
+// sandbox serving prURL of repoName (PRFixSandbox).
+func isPRFixSandbox(sb *unstructured.Unstructured, repoName, prURL string) bool {
+	a := sb.GetAnnotations()
+	return strings.HasPrefix(sb.GetName(), "fix-") && a["repo"] == repoName && sameItemURL(a["htmlURL"], prURL) && !terminating(sb)
+}
+
+// PRTaskSandbox is the sandbox in namespace labelled with PR prNum of
+// repo that `factory pr` runs the PR's tasks in, or nil: the PR's fix
+// sandbox (PRFixSandbox) before any other, so that its tasks and its
+// recipes share one, else the first of the repo's. A terminating one is
+// skipped: the PR label outlives the sandbox it is on, and waiting for a
+// dying sandbox's pod would never end.
+func PRTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo string, prNum int, prURL string) (*unstructured.Unstructured, error) {
+	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("%s=%d", LabelPR, prNum),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing the sandboxes of PR #%d: %w", prNum, err)
+	}
+	var first *unstructured.Unstructured
+	for i := range list.Items {
+		sb := &list.Items[i]
+		if isPRFixSandbox(sb, repo, prURL) {
+			return sb, nil
+		}
+		if first == nil && !terminating(sb) && sandboxBelongsToRepo(sb, repo, prURL) {
+			first = sb
+		}
+	}
+	return first, nil
 }
 
 func sameItemURL(a, b string) bool {
@@ -624,29 +656,9 @@ func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClie
 	parts := strings.Split(strings.TrimSuffix(prCloneURL, ".git"), "/")
 	repo := parts[len(parts)-1]
 
-	listOpts := metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("factory.gemini.google.com/pr=%d", prNum),
-	}
-	sbs, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, listOpts)
-	if err == nil && len(sbs.Items) > 0 {
-		for i := range sbs.Items {
-			sb := &sbs.Items[i]
-			if !sandboxBelongsToRepo(sb, repo, prHTMLURL) {
-				continue
-			}
-			// The PR label outlives the sandbox it is on. Deleting a
-			// PR's fix sandbox and immediately re-running a follow-up
-			// verb used to resolve the alias to the dying sandbox and
-			// wait forever for its pod. Skipping it costs only the
-			// warm workspace: the canonical name below is free, so a
-			// fresh sandbox is created instead of colliding.
-			if terminating(sb) {
-				klog.Infof("sandbox %s carries the PR label but is terminating; not reusing it", sb.GetName())
-				continue
-			}
-			prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
-			return sb.GetName(), nil
-		}
+	if sb, err := PRTaskSandbox(ctx, kubeClient, namespace, repo, prNum, prHTMLURL); err == nil && sb != nil {
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		return sb.GetName(), nil
 	}
 
 	name := ReviewSandboxName(repo, prNum)

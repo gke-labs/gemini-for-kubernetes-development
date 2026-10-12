@@ -507,7 +507,7 @@ func TestRecover_RequeuesReviewSoItsResultIsApplied(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tempDir, "processing", "task-pr-55-review.yaml"), []byte(body), 0644); err != nil {
 				t.Fatal(err)
 			}
-			before := reviewRunName(&api.QueueTask{Number: 55, CommitSHA: "abcdef0123", EnqueuedAt: time.Date(2026, 10, 11, 7, 0, 1, 0, time.UTC)})
+			before := reviewRun.RunName(&api.QueueTask{Number: 55, CommitSHA: "abcdef0123", EnqueuedAt: time.Date(2026, 10, 11, 7, 0, 1, 0, time.UTC)})
 
 			d.Recover(context.Background())
 			d.Wait()
@@ -527,9 +527,11 @@ func TestRecover_RequeuesReviewSoItsResultIsApplied(t *testing.T) {
 			if err := yaml.Unmarshal(b, &task); err != nil {
 				t.Fatal(err)
 			}
-			if got := reviewRunName(&task); got != before {
+			if got := reviewRun.RunName(&task); got != before {
 				t.Errorf("requeued under run name %s, not %s: it would start a second review", got, before)
 			}
 		})
 	}
 }
+
+var reviewRun, _ = api.RecipeTaskOf(api.TypePRReview)

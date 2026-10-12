@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
@@ -151,7 +152,7 @@ func TestServiceResolveName(t *testing.T) {
 	}{
 		{"issue task", api.TypeIssueFix, 10, "fix-test-repo-10"},
 		{"chore task falls back to the issue sandbox", api.TypeAgentChore, 10, "fix-test-repo-10"},
-		{"pr task", api.TypePRComments, 55, "factory-pr-55"},
+		{"pr task gets the name factory pr creates", api.TypePRComments, 55, "factory-pr-test-repo-55"},
 		{"review runs in the review recipe's sandbox", api.TypePRReview, 55, "review-test-repo-55"},
 	}
 
@@ -159,6 +160,46 @@ func TestServiceResolveName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := svc.ResolveName(ctx, tc.taskType, tc.num); got != tc.want {
 				t.Errorf("ResolveName(%s, %d) = %q, want %q", tc.taskType, tc.num, got, tc.want)
+			}
+		})
+	}
+}
+
+// A classic PR task resolves to the sandbox `factory pr`
+// (EnsureReviewSandbox) runs it in, so the watch's busy checks and locks
+// are about that one.
+func TestServiceResolveNamePRTaskFollowsFactoryPR(t *testing.T) {
+	const prURL = "https://github.com/test-owner/test-repo/pull/55"
+	labelled := func(name string, annotations map[string]interface{}) *unstructured.Unstructured {
+		sb := newSandbox(name, annotations)
+		sb.SetLabels(map[string]string{labelPR: "55"})
+		return sb
+	}
+	fixSandbox := labelled("fix-test-repo-50", map[string]interface{}{"repo": "test-repo", "htmlURL": prURL})
+	dying := labelled("fix-test-repo-51", map[string]interface{}{"repo": "test-repo", "htmlURL": prURL})
+	dying.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
+	dying.SetFinalizers([]string{"test"})
+
+	tests := []struct {
+		name      string
+		sandboxes []*unstructured.Unstructured
+		want      string
+	}{
+		{"none: the repo-scoped name", nil, "factory-pr-test-repo-55"},
+		{"the legacy repo-less one", []*unstructured.Unstructured{newSandbox("factory-pr-55", nil)}, "factory-pr-55"},
+		{"the repo-scoped one over the legacy", []*unstructured.Unstructured{newSandbox("factory-pr-55", nil), newSandbox("factory-pr-test-repo-55", nil)}, "factory-pr-test-repo-55"},
+		{"one labelled with the PR", []*unstructured.Unstructured{labelled("factory-pr-test-repo-55", map[string]interface{}{"repo": "test-repo"})}, "factory-pr-test-repo-55"},
+		{"not another repo's", []*unstructured.Unstructured{labelled("factory-pr-other-55", map[string]interface{}{"repo": "other"})}, "factory-pr-test-repo-55"},
+		{"the PR's fix sandbox first", []*unstructured.Unstructured{labelled("factory-pr-test-repo-55", map[string]interface{}{"repo": "test-repo"}), fixSandbox}, "fix-test-repo-50"},
+		{"not a terminating one", []*unstructured.Unstructured{dying}, "factory-pr-test-repo-55"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+				Kube: newFakeKubeClient(t, tc.sandboxes...),
+			})
+			if got := svc.ResolveName(context.Background(), api.TypePRInvestigate, 55); got != tc.want {
+				t.Errorf("ResolveName = %q, want %q", got, tc.want)
 			}
 		})
 	}

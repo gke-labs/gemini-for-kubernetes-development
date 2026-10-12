@@ -468,6 +468,10 @@ func (r *Reconciler) cleanupClosedIssueSandboxes(ctx context.Context, items []un
 		if !ok {
 			continue
 		}
+		// A PR's fix sandbox goes with the PR.
+		if _, isPR := prNumberFromSandbox(item, r.sandboxes.repo); isPR {
+			continue
+		}
 
 		// Fast-path: skip issues that the latest sweep reported as open, unless
 		// the sandbox also served a pull request that has since left the open
@@ -645,11 +649,17 @@ func (r *Reconciler) servedClosedPR(item *unstructured.Unstructured) bool {
 // prNumberFromSandbox returns the pull request a PR sandbox
 // ("factory-pr-<repo>-N", or "factory-pr-N" before review sandboxes were
 // scoped by repo) belongs to, preferring its PR label over the name, or
-// the one repo's review recipe sandbox ("review-<repo>-N") is for.
+// the one repo's review recipe sandbox ("review-<repo>-N") is for, or
+// the one a PR's recipes made (EnsurePRSandbox: "fix-<repo>-N" labelled
+// with PR N; issues and PRs share their numbers, so it is no issue's).
 func prNumberFromSandbox(item *unstructured.Unstructured, repo string) (int, bool) {
 	name := item.GetName()
 	if prefix := "review-" + repo + "-"; repo != "" && strings.HasPrefix(name, prefix) {
 		num, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
+		return num, err == nil && num > 0
+	}
+	if pr := item.GetLabels()[labelPR]; repo != "" && pr != "" && name == "fix-"+repo+"-"+pr {
+		num, err := strconv.Atoi(pr)
 		return num, err == nil && num > 0
 	}
 	if !strings.HasPrefix(name, "factory-pr-") {

@@ -309,5 +309,6 @@ func opensPR(t api.TaskType) bool {
 // run, applies it, or finds it applied already, and never starts a second
 // one.
 func appliesInCLI(t api.TaskType) bool {
-	return t == api.TypePRReview
+	_, ok := api.RecipeTaskOf(t)
+	return ok
 }
