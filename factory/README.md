@@ -42,7 +42,7 @@
 - **PR lifecycle.**
   - `recipe care-ci` works on CI failures of a PR of yours (the overseer runs it with `--apply --action post-replies`).
   - `recipe care-comments` answers review feedback, trusted authors' only (the overseer runs it with `--apply --action post-replies`).
-  - `pr iterate` rebases and resolves conflicts.
+  - `recipe care-rebase` rebases a PR of yours onto the default branch and resolves conflicts (the overseer runs it with `--apply --action post-replies`).
   - `pr watch` follows up with care for one PR until it merges or closes.
 - **Session continuity.** A sandbox is aliased to its PR with the `factory.gemini.google.com/pr` label. Follow-up PR tasks therefore reuse the sandbox that wrote the code, and `--continue-session` keeps the agent's chat history.
 - **Adoption.** `pr adopt open|close` takes over a PR the bot can't push to. `--strategy reuse` copies the commits; `--strategy reimplement` re-implements the change on the latest base. PR tasks on PRs the bot doesn't own fail until the PR is adopted.
@@ -53,7 +53,7 @@
 - **Issue intake.** It picks up issues carrying the trigger label (`triggerLabel`, default `factory`; the Overseer image sets `overseer`) and issues assigned to a bot identity, adding the label to the latter. It skips an issue that already has a linked open PR or carries the stop label.
 - **PR reactions.** For each bot PR it dispatches, in priority order:
   1. unaddressed feedback → `recipe care-comments`
-  2. merge conflict → `iterate`
+  2. merge conflict → `recipe care-rebase`
   3. failing CI → `recipe care-ci`
   4. green and labelled for review → `recipe review`
 
@@ -231,7 +231,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
 | `recipe care-comments` | Answer the review feedback on a PR of yours (trusted authors' only); `--apply --action post-replies` posts the replies |
-| `pr iterate` | Rebase, resolve conflicts, or apply a `--prompt` |
+| `recipe care-rebase` | Rebase a PR of yours onto the default branch, resolving conflicts; `--apply --action post-replies` posts the report |
 | `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |

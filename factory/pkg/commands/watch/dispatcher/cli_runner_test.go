@@ -145,6 +145,21 @@ func TestCLIRunner_BuildArgs(t *testing.T) {
 		}
 	})
 
+	t.Run("pr-iterate task runs care-rebase", func(t *testing.T) {
+		task := &api.QueueTask{
+			Type:       api.TypePRIterate,
+			URL:        "https://github.com/test-owner/test-repo/pull/456",
+			Number:     456,
+			CommitSHA:  "0123456789abcdef",
+			EnqueuedAt: time.Unix(1760000000, 0),
+		}
+		args := r.BuildArgs(task, "coder-bot")
+		want := []string{"recipe", "care-rebase", "--url", task.URL, "--run-name", "iterate-456-0123456-1760000000", "--apply", "--action", "post-replies"}
+		if len(args) < len(want) || !slices.Equal(args[:len(want)], want) {
+			t.Errorf("args = %v, want them to start %v", args, want)
+		}
+	})
+
 	t.Run("agent-chore task with session-id", func(t *testing.T) {
 		task := &api.QueueTask{
 			Type:      api.TypeAgentChore,

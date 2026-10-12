@@ -1172,16 +1172,11 @@ function record_engine_usage {
 #   $1 (optional): output basename (e.g. plan-output.txt); when set, the
 #      engine's final response is extracted next to the prompt file.
 # Env: ENGINE (gemini|claude|antigravity, default gemini); GEMINI_CONTINUE_SESSION
-#   ("true" resumes the engine's latest session); SKIP_EMPTY_PROMPT
-#   ("true": no-op when the prompt file is empty — iterate's contract).
+#   ("true" resumes the engine's latest session).
 function runEngine {
     local extract_to="${1:-}"
     local task_dir
     task_dir="$(dirname "${PROMPT_FILE}")"
-    if [ "${SKIP_EMPTY_PROMPT:-false}" = "true" ] && [ ! -s "${PROMPT_FILE}" ]; then
-        echo "No prompt provided, skipping engine execution."
-        return 0
-    fi
     echo "Running runEngine (${ENGINE:-gemini})..."
 
     if [ -n "$GITHUB_BOT_NAME" ]; then

@@ -100,13 +100,11 @@ func (s *Service) Namespace() string {
 //
 // Issue and chore tasks prefer an existing workflow sandbox and otherwise fall
 // back to the conventional per-issue name. A recipe that runs in a sandbox
-// of its own (review) gets that one. Other PR tasks prefer the PR's fix
-// sandbox, then any sandbox labeled with the PR (classic tasks only, as
-// `factory pr` picks), then a sandbox created for one of the issues the PR
-// closes (which is aliased to the PR as a side effect), and finally fall
-// back to the name their command creates: fix-<repo>-<pr> for a recipe
-// (EnsurePRSandbox), factory-pr-<repo>-<pr> for a classic task
-// (EnsureReviewSandbox).
+// of its own (review) gets that one. Other PR tasks, all recipes, prefer
+// the PR's fix sandbox, then a sandbox created for one of the issues the
+// PR closes (which is aliased to the PR as a side effect), and finally
+// fall back to the name `factory recipe` creates: fix-<repo>-<pr>
+// (EnsurePRSandbox).
 func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num int) string {
 	if taskType == api.TypeIssueFix || taskType == api.TypeAgentChore {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
@@ -118,21 +116,16 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 		return fmt.Sprintf("fix-%s-%d", s.repo, num)
 	}
 
-	rt, recipe := api.RecipeTaskOf(taskType)
 	// A credentials: clone recipe (review) holds no credentials, so it
 	// shares no sandbox with the PR's other tasks.
-	if recipe && rt.OwnSandbox {
+	if rt, ok := api.RecipeTaskOf(taskType); ok && rt.OwnSandbox {
 		return factorysandbox.RecipeSandboxName(s.repo, num, rt.Recipe)
 	}
 
 	prURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d", s.owner, s.repo, num)
 	if s.kube != nil {
-		if recipe {
-			if name, err := factorysandbox.PRFixSandbox(ctx, s.kube, s.namespace, s.repo, num, prURL); err == nil && name != "" {
-				return name
-			}
-		} else if sb, err := factorysandbox.PRTaskSandbox(ctx, s.kube, s.namespace, s.repo, num, prURL); err == nil && sb != nil {
-			return sb.GetName()
+		if name, err := factorysandbox.PRFixSandbox(ctx, s.kube, s.namespace, s.repo, num, prURL); err == nil && name != "" {
+			return name
 		}
 	}
 
@@ -157,20 +150,7 @@ func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num in
 		}
 	}
 
-	if recipe {
-		return fmt.Sprintf("fix-%s-%d", s.repo, num)
-	}
-	// EnsureReviewSandbox still reuses a sandbox of the repo-less name
-	// from before review sandboxes were scoped by repo.
-	name := factorysandbox.ReviewSandboxName(s.repo, num)
-	if ok, _ := s.Exists(ctx, name); !ok {
-		if legacy := fmt.Sprintf("factory-pr-%d", num); s.kube != nil {
-			if ok, _ := s.Exists(ctx, legacy); ok {
-				return legacy
-			}
-		}
-	}
-	return name
+	return fmt.Sprintf("fix-%s-%d", s.repo, num)
 }
 
 // List returns every sandbox in the namespace.
@@ -494,8 +474,6 @@ func sandboxTaskType(taskType api.TaskType) string {
 		return "fix-issue"
 	case api.TypeAgentChore:
 		return "agent"
-	case api.TypePRIterate:
-		return "iterate"
 	default:
 		return string(taskType)
 	}

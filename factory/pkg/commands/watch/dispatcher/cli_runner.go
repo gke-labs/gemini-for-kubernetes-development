@@ -71,8 +71,6 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	switch t.Type {
 	case api.TypeIssueFix:
 		args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
-	case api.TypePRIterate:
-		args = []string{"pr", "iterate", "--pr-url", t.URL, "--prompt", "Please resolve merge conflicts in this PR by rebasing onto the latest master/main branch and resolving any conflicts that arise."}
 	case api.TypeAgentChore:
 		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
 		if t.SessionID != "" {
