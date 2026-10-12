@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -323,7 +324,10 @@ for line in sys.stdin:
         update({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "turn %d: %s " % (turn, text)}})
         update({"sessionUpdate": "agent_message_chunk", "content": {"type": "text",
                 "text": "argv=%s gh=%s" % (" ".join(sys.argv[1:]), os.environ.get("GITHUB_TOKEN", "none"))}})
-        send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn" if text != "refuse" else "refusal"}})
+        # gemini's account of the turn's tokens: _meta.quota.
+        send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn" if text != "refuse" else "refusal",
+              "_meta": {"quota": {"token_count": {"input_tokens": 100 * turn, "output_tokens": 10 * turn},
+                                  "model_usage": [{"model": "m-1", "token_count": {"input_tokens": 100 * turn, "output_tokens": 10 * turn}}]}}}})
     elif mid is not None:
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": method}})
 `
@@ -357,6 +361,11 @@ func TestACPSessionAsksTurnByTurn(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("ask %d = %q\nwant      %q", i+1, got, want)
+		}
+		// The turn's tokens, as the engine's reply put them.
+		n := int64(i + 1)
+		if u := s.TurnUsage(); len(u) != 1 || u[0] != (acpd.ModelUsage{Model: "m-1", Input: 100 * n, Output: 10 * n, Total: 110 * n}) {
+			t.Errorf("ask %d used %+v", i+1, u)
 		}
 	}
 	if _, err := s.Ask(context.Background(), "refuse"); err == nil || !strings.Contains(err.Error(), "refusal") {
@@ -1385,5 +1394,56 @@ func TestSessions(t *testing.T) {
 	}
 	if r := (&Recipe{Name: "x"}); r.SessionName() != "x" {
 		t.Errorf("an untagged recipe's session = %q, want its name", r.SessionName())
+	}
+}
+
+// usageSession is a fakeSession whose engine reports each turn's tokens.
+type usageSession struct {
+	fakeSession
+	used []acpd.ModelUsage
+}
+
+func (s *usageSession) TurnUsage() []acpd.ModelUsage { return s.used }
+
+// Each ask's tokens go to the task's token-usage.json, where usagereport
+// harvests them: a request per turn, per model, added up.
+func TestRunnerRecordsEachAsksUsage(t *testing.T) {
+	r, _, _, _ := newTestRunner(t)
+	sess := &usageSession{used: []acpd.ModelUsage{{Model: "gemini-3-pro", Input: 1000, Output: 50, Cached: 200, Total: 1050}}}
+	r.StartSession = func(context.Context) (Session, error) { return sess, nil }
+	rec, err := Parse([]byte(`
+name: demo
+start:
+  steps:
+    - ask: "first"
+    - ask: "second"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(r.TaskDir, UsageFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got usageFile
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	m := got.Models["gemini-3-pro"]
+	if m == nil || m.API.TotalRequests != 2 || m.Tokens.Input != 2000 || m.Tokens.Output != 100 || m.Tokens.Cached != 400 || m.Tokens.Total != 2100 {
+		t.Errorf("token-usage.json = %s", data)
+	}
+
+	// An engine that reports nothing (antigravity) writes nothing.
+	r2, _, _, _ := newTestRunner(t)
+	r2.StartSession = func(context.Context) (Session, error) { return &usageSession{}, nil }
+	if err := r2.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(r2.TaskDir, UsageFile)); !os.IsNotExist(err) {
+		t.Errorf("a session that reports no usage left %s: %v", UsageFile, err)
 	}
 }

@@ -41,7 +41,8 @@ const (
 	// KindPermissionResolved records the answer, including the timeouts
 	// and cancellations nobody clicked.
 	KindPermissionResolved = "permission_resolved"
-	// KindTurnEnd carries the stopReason from session/prompt returning.
+	// KindTurnEnd carries the stopReason from session/prompt returning,
+	// and the turn's usage where the engine reported it (TurnEnd).
 	KindTurnEnd = "turn_end"
 	// KindError is a failure worth showing the user: the engine died, a
 	// prompt call returned an RPC error.
@@ -288,4 +289,11 @@ func (t *Transcript) Close() error {
 	t.closed = true
 	close(t.changed)
 	return t.f.Close()
+}
+
+// TurnEnd is a KindTurnEnd event's data: why the turn stopped, and what
+// it used per model, where the engine said (turnUsage).
+type TurnEnd struct {
+	StopReason string       `json:"stopReason"`
+	Usage      []ModelUsage `json:"usage,omitempty"`
 }
