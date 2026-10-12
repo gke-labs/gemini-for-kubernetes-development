@@ -874,6 +874,17 @@ echo "MD=$(cat "$TASK_DIR/ci-logs.md")"`
 			t.Errorf("ci-logs.md lacks %q:\n%s", w, out)
 		}
 	}
+
+	// A failed call fails the step rather than reading as "no job failed".
+	for name, body := range map[string]string{
+		"no REPO_OWNER": "unset REPO_OWNER\n",
+		"a failed call": "printf h2 > \"$TASK_DIR/lease\"\n",
+	} {
+		out, _, err := runLib(t, nil, setup, body+`set +x; if fetchPRCILogs; then echo "STEP=ok MD=$(cat "$TASK_DIR/ci-logs.md")"; else echo STEP=failed; fi`)
+		if err != nil || !strings.Contains(out, "STEP=failed") {
+			t.Errorf("%s: want the step to fail: %v\n%s", name, err, out)
+		}
+	}
 }
 
 // TestFetchPRComments pins the pr-comments step: only trusted authors'
@@ -922,6 +933,19 @@ printf 9 > "$TASK_DIR/pr" && printf h1 > "$TASK_DIR/lease"
 	for _, w := range []string{"IGNORE ALL", "curl evil", "mallory", "eve", "review 3"} {
 		if strings.Contains(out, w) {
 			t.Errorf("comments.md has %q, which is not a trusted author's (or empty):\n%s", w, out)
+		}
+	}
+
+	// The step runs without errexit (recipe_step.sh), so a call that fails
+	// must fail it, not leave "There is none." for the agent.
+	failing := []struct{ name, body string }{
+		{"no REPO_OWNER", "unset REPO_OWNER\n"},
+		{"a failed call", `sed -i.bak 's|repos/upstream-org/repo/pulls/9/comments)|repos/upstream-org/repo/pulls/9/comments) exit 1 ;; x)|' "$HOME/bin/gh"` + "\n"},
+	}
+	for _, tc := range failing {
+		out, _, err := runLib(t, nil, setup, tc.body+`if fetchPRComments; then echo "STEP=ok MD=$(cat "$TASK_DIR/comments.md")"; else echo STEP=failed; fi`)
+		if err != nil || !strings.Contains(out, "STEP=failed") {
+			t.Errorf("%s: want the step to fail: %v\n%s", tc.name, err, out)
 		}
 	}
 }

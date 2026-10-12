@@ -668,23 +668,38 @@ function fetchCIJobLogs {
     done
 }
 
+# stepRepo prints owner/name of the task's repository (REPO_OWNER,
+# REPO_NAME, which factory sets), or fails: a step that called GitHub
+# about "/name" got nothing back and carried on as if there were nothing.
+function stepRepo {
+    if [ -z "${REPO_OWNER:-}" ] || [ -z "${REPO_NAME:-}" ]; then
+        echo "REPO_OWNER and REPO_NAME are not both set; no repository to ask GitHub about" >&2
+        return 1
+    fi
+    printf '%s/%s\n' "${REPO_OWNER}" "${REPO_NAME}"
+}
+
 # fetchPRCILogs (recipe step ci-logs) fetches the logs of the jobs that
 # failed on the PR's head ($TASK_DIR/pr, $TASK_DIR/lease, which an earlier
 # step writes) into $TASK_DIR/ci-logs and their excerpts into
 # $TASK_DIR/ci-logs.md, for the ask: {{ file "ci-logs.md" }}.
 function fetchPRCILogs {
     echo "Running fetchPRCILogs..."
-    local dir="${TASK_DIR:?TASK_DIR is not set}" repo="${REPO_OWNER}/${REPO_NAME}" pr head
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo pr head jobs
+    repo="$(stepRepo)" || return 1
     pr="$(cat "${dir}/pr" 2>/dev/null || true)"
     head="$(cat "${dir}/lease" 2>/dev/null || true)"
     if [ -z "${head}" ] && [ -n "${pr}" ]; then
-        head="$(gh api "repos/${repo}/pulls/${pr}" --jq .head.sha)"
+        head="$(gh api "repos/${repo}/pulls/${pr}" --jq .head.sha)" || return 1
     fi
     if [ -z "${head}" ]; then
         echo "neither the PR's head nor its number is recorded in ${dir}" >&2
         return 1
     fi
-    ciFailedJobsOfCommit "${repo}" "${head}" | fetchCIJobLogs "${repo}" "${dir}/ci-logs"
+    # Not piped straight in: a failed call must fail the step, not read as
+    # "no job failed".
+    jobs="$(ciFailedJobsOfCommit "${repo}" "${head}")" || return 1
+    printf '%s\n' "${jobs}" | fetchCIJobLogs "${repo}" "${dir}/ci-logs"
     if [ -s "${dir}/ci-logs/excerpts.md" ]; then
         {
             printf 'The logs of the GitHub Actions jobs that failed on %s, whole in %s, outside the repository (read them with grep, sed -n, tail); what each says about why:\n\n' "${head}" "${dir}/ci-logs"
@@ -705,7 +720,8 @@ function fetchPRCILogs {
 # the head commit ($TASK_DIR/lease).
 function fetchPRComments {
     echo "Running fetchPRComments..."
-    local dir="${TASK_DIR:?TASK_DIR is not set}" repo="${REPO_OWNER}/${REPO_NAME}" pr head since="" raw
+    local dir="${TASK_DIR:?TASK_DIR is not set}" repo pr head since="" raw
+    repo="$(stepRepo)" || return 1
     pr="$(cat "${dir}/pr" 2>/dev/null || true)"
     if ! [[ "${pr}" =~ ^[0-9]+$ ]]; then
         echo "no PR number recorded in ${dir}/pr" >&2
@@ -713,13 +729,15 @@ function fetchPRComments {
     fi
     head="$(cat "${dir}/lease" 2>/dev/null || true)"
     if [ -n "${head}" ]; then
-        since="$(gh api "repos/${repo}/commits/${head}" --jq .commit.committer.date)"
+        since="$(gh api "repos/${repo}/commits/${head}" --jq .commit.committer.date)" || return 1
     fi
     raw="${dir}/comments"
     mkdir -p "${raw}"
-    gh api "repos/${repo}/pulls/${pr}/reviews" --paginate --jq '.[]' > "${raw}/reviews.jsonl"
-    gh api "repos/${repo}/pulls/${pr}/comments" --paginate --jq '.[]' > "${raw}/review-comments.jsonl"
-    gh api "repos/${repo}/issues/${pr}/comments" --paginate --jq '.[]' > "${raw}/comments.jsonl"
+    # Each call must succeed: a failed one read as no comments, and the
+    # agent answered nothing.
+    gh api "repos/${repo}/pulls/${pr}/reviews" --paginate --jq '.[]' > "${raw}/reviews.jsonl" || return 1
+    gh api "repos/${repo}/pulls/${pr}/comments" --paginate --jq '.[]' > "${raw}/review-comments.jsonl" || return 1
+    gh api "repos/${repo}/issues/${pr}/comments" --paginate --jq '.[]' > "${raw}/comments.jsonl" || return 1
     python3 - "${raw}" "${since}" "${INPUT_TRUSTED_LOGINS:-}" > "${dir}/comments.md" <<'PY'
 import json, os, sys
 

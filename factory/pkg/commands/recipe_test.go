@@ -242,7 +242,9 @@ func TestRecipeEnvKeepsACloneTokenOutOfTheEnvironment(t *testing.T) {
 			t.Errorf("env has %s", k)
 		}
 	}
-	if secrets["GITHUB_TOKEN"] != "tok" || env["ISSUE_NUMBER"] != "" || env["PR_NUMBER"] != "" || env["REPO_NAME"] != "r" {
+	// REPO_OWNER and REPO_NAME are the repository the steps (pr-comments,
+	// ci-logs) call GitHub about.
+	if secrets["GITHUB_TOKEN"] != "tok" || env["ISSUE_NUMBER"] != "" || env["PR_NUMBER"] != "" || env["REPO_OWNER"] != "o" || env["REPO_NAME"] != "r" {
 		t.Errorf("env %v, secrets %v", env, secrets)
 	}
 	env, secrets, err = recipeEnv(secret, githubItem{Owner: "o", Repo: "r", Number: 3}, "")
