@@ -457,31 +457,45 @@ func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSa
 		// and merging — is a second pass for nothing.
 		go func(view *researchSandboxView) {
 			defer wg.Done()
-			client, ok := s.researchClient(ctx, view.Pod)
-			if !ok {
-				view.Unreachable = "the sandbox's image keeps no agent sessions for its tasks"
-				return
-			}
-			session, err := client.GetSession(ctx, view.acpSession())
-			switch {
-			case err == nil:
-				view.Live = true
-				view.Busy = session.Busy
-				view.Waiting = session.Waiting
-				view.Retrying = session.Retrying
-				view.Held = session.Held
-			case errors.Is(err, acpd.ErrNotFound):
-				// A running pod with no session loaded: the resting state of
-				// every conversation nobody has opened since its start
-				// ended, and of every one whose daemon has restarted. Not
-				// an error, and not unreachable either — the daemon
-				// answered.
-			default:
-				view.Unreachable = err.Error()
-			}
+			live := s.probeTaskSession(ctx, view.Pod, view.acpSession())
+			view.Live, view.Busy, view.Waiting = live.Live, live.Busy, live.Waiting
+			view.Retrying, view.Held, view.Unreachable = live.Retrying, live.Held, live.Unreachable
 		}(&views[i])
 	}
 	wg.Wait()
+}
+
+// sessionLive is what a task session's engine is doing, as its pod's
+// daemon answers (researchSandboxView's fields of the same names).
+type sessionLive struct {
+	Live        bool
+	Busy        bool
+	Waiting     bool
+	Retrying    *acpd.EngineRetry
+	Held        bool
+	Unreachable string
+}
+
+// probeTaskSession asks pod's daemon about task's session.
+func (s *Server) probeTaskSession(ctx context.Context, pod *corev1.Pod, task string) sessionLive {
+	client, ok := s.researchClient(ctx, pod)
+	if !ok {
+		return sessionLive{Unreachable: "the sandbox's image keeps no agent sessions for its tasks"}
+	}
+	session, err := client.GetSession(ctx, task)
+	switch {
+	case err == nil:
+		return sessionLive{Live: true, Busy: session.Busy, Waiting: session.Waiting, Retrying: session.Retrying, Held: session.Held}
+	case errors.Is(err, acpd.ErrNotFound):
+		// A running pod with no session loaded: the resting state of
+		// every conversation nobody has opened since its start
+		// ended, and of every one whose daemon has restarted. Not
+		// an error, and not unreachable either — the daemon
+		// answered.
+		return sessionLive{}
+	default:
+		return sessionLive{Unreachable: err.Error()}
+	}
 }
 
 // researchPod returns the sandbox's running pod, or nil when there is

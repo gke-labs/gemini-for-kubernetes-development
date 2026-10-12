@@ -798,36 +798,7 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 		}
 	}
 	for _, sb := range sandboxes {
-		var sessions []models.RunSession
-		annotations := sb.GetAnnotations()
-		for _, run := range factorycli.Runs(annotations) {
-			session := models.RunSession{
-				Recipe:    run.Recipe,
-				Label:     recipeLabel(catalog, run.Recipe),
-				Session:   recipeSessionTag(catalog, run.Recipe),
-				Sandbox:   sb.GetName(),
-				Engine:    sandboxEngine(annotations, "gemini"),
-				Task:      run.SessionOf(),
-				Run:       run.Key,
-				Kind:      run.Kind,
-				State:     run.State,
-				StartedAt: run.StartedAt.UTC().Format(time.RFC3339),
-				Output:    annotations[factorycli.OutputAnnotation(run.Key)] != "",
-				Applied:   factorycli.Applied(annotations, factorycli.AppliedAnnotation(run.Key)),
-			}
-			if run.EndedAt != nil {
-				session.EndedAt = run.EndedAt.UTC().Format(time.RFC3339)
-			}
-			session.Status = runStatus(session)
-			if doc := annotations[factorycli.OutputAnnotation(run.Key)]; doc != "" {
-				session.Actions = runActions(run.Kind, doc)
-				session.Preview = factorycli.Preview(run.Kind, doc)
-			}
-			for _, rv := range run.Revises {
-				session.Revises = append(session.Revises, rv.ID)
-			}
-			sessions = append(sessions, session)
-		}
+		sessions := recordedRunSessions(sb, catalog)
 		seen := map[*models.WorkItem]bool{}
 		for _, key := range sandboxItems(sb, repo) {
 			item := items[key]
@@ -845,6 +816,42 @@ func addRunSessions(items map[string]*models.WorkItem, sandboxes []*unstructured
 			return strings.Compare(b.StartedAt, a.StartedAt)
 		})
 	}
+}
+
+// recordedRunSessions are the runs recorded on sb, newest first, each
+// labelled from catalog.
+func recordedRunSessions(sb *unstructured.Unstructured, catalog []boardv1alpha1.BoardRecipe) []models.RunSession {
+	var sessions []models.RunSession
+	annotations := sb.GetAnnotations()
+	for _, run := range factorycli.Runs(annotations) {
+		session := models.RunSession{
+			Recipe:    run.Recipe,
+			Label:     recipeLabel(catalog, run.Recipe),
+			Session:   recipeSessionTag(catalog, run.Recipe),
+			Sandbox:   sb.GetName(),
+			Engine:    sandboxEngine(annotations, "gemini"),
+			Task:      run.SessionOf(),
+			Run:       run.Key,
+			Kind:      run.Kind,
+			State:     run.State,
+			StartedAt: run.StartedAt.UTC().Format(time.RFC3339),
+			Output:    annotations[factorycli.OutputAnnotation(run.Key)] != "",
+			Applied:   factorycli.Applied(annotations, factorycli.AppliedAnnotation(run.Key)),
+		}
+		if run.EndedAt != nil {
+			session.EndedAt = run.EndedAt.UTC().Format(time.RFC3339)
+		}
+		session.Status = runStatus(session)
+		if doc := annotations[factorycli.OutputAnnotation(run.Key)]; doc != "" {
+			session.Actions = runActions(run.Kind, doc)
+			session.Preview = factorycli.Preview(run.Kind, doc)
+		}
+		for _, rv := range run.Revises {
+			session.Revises = append(session.Revises, rv.ID)
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
 }
 
 // runActions are the actions a run's output offers but the draft verbs

@@ -4,12 +4,15 @@ import Settings from './Settings';
 import Overseer from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
+import Sessions, { sessionsRoute } from './Sessions';
 import SandboxTerminal from './Terminal';
 import { ResearchConversation } from './Research';
 
 // Repo Agent shell: the Work board is home (docs/design/repoboard.md §8).
 // The legacy RepoWatch dashboard (Review/Issues/Dev tabs) retired with
 // design Phase 5; Overseer, Usage, and Settings remain as header views.
+// Sessions (#/sessions) is the agents' side of the same work
+// (docs/design/sessions-view.md).
 
 // Hash route #/terminal/<ns>/<name>: a full-window terminal page for real
 // window management (pop out of the sandbox card, multi-monitor, share the
@@ -73,7 +76,13 @@ function App() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [view, setView] = useState('work'); // 'work', 'overseer', 'usage', 'settings'
+  const [view, setViewState] = useState(sessionsRoute() ? 'sessions' : 'work'); // 'work', 'sessions', 'overseer', 'usage', 'settings'
+  // Only Sessions keeps its place in the URL; leaving it drops the hash.
+  const setView = useCallback((v) => {
+    setViewState(v);
+    const hash = v === 'sessions' ? '#/sessions' : '';
+    if (v !== 'sessions' || !sessionsRoute()) window.history.replaceState(null, '', hash || window.location.pathname);
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
   const [taskRoute] = useState(taskSessionRoute());
@@ -150,7 +159,7 @@ function App() {
         })
         .catch(err => console.error("Failed to fetch settings:", err));
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setView]);
 
   const handleLogin = (scope) => {
     window.location.href = `/api/auth/login?scope=${scope}`;
@@ -317,6 +326,7 @@ function App() {
                 )}
                 {[
                   { label: 'Work', run: () => setView('work') },
+                  { label: 'Sessions', run: () => setView('sessions') },
                   ...(isAdmin ? [{ label: 'Overseer', run: () => setView('overseer') }] : []),
                   { label: 'Usage', run: () => setView('usage') },
                   { label: 'Feedback', run: handleFeedbackClick },
@@ -357,6 +367,7 @@ function App() {
       )}
 
       {view === 'work' && <Work namespace={user || 'default'} />}
+      {view === 'sessions' && <Sessions namespace={user || 'default'} />}
       {view === 'overseer' && <Overseer onBack={() => setView('work')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
       {view === 'usage' && <TokenUsage onBack={() => setView('work')} />}
       {view === 'settings' && <Settings onBack={() => setView('work')} />}
