@@ -138,8 +138,9 @@ const muted = { color: 'var(--text-secondary)' };
 const small = { fontSize: 'x-small' };
 
 // SessionListRow is a row, one continuous line wherever it is shown:
-// state, engine, recipe, item, repository, age. The sandbox, what the
-// agent is doing and the item's title are its hover.
+// state, engine, recipe, number, repository, age, all in one small size.
+// The sandbox, what the agent is doing and the item's title are its
+// hover; the item's link is in the open session's strip.
 function SessionListRow({ row, selected, onOpen }) {
   const title = rowTitle(row);
   const hover = [title, row.recipe !== 'research' ? row.title : '', rowDoing(row), row.sandbox].filter(Boolean).join(' · ');
@@ -147,21 +148,19 @@ function SessionListRow({ row, selected, onOpen }) {
     <button type="button" title={hover} onClick={() => onOpen(row)} aria-current={selected || undefined}
       style={{
         display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
-        padding: '5px 8px', border: 'none', cursor: 'pointer', font: 'inherit',
+        padding: '5px 8px', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 'x-small',
         borderLeft: selected ? '3px solid var(--link-color, #0969da)' : '3px solid transparent',
         background: selected ? 'var(--bg-secondary)' : 'none', color: 'var(--text-primary)',
       }}>
       <StateMark state={row.state} />
       <EngineIcon engine={row.engine} size={16} />
       <span style={{ flex: '0 0 auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: selected ? 600 : 400 }}>{title}</span>
-      {row.item && (
-        <a href={row.htmlURL} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={small}>{itemText(row)} ↗</a>
-      )}
+      {row.item && <span>#{row.number}</span>}
       {row.repo && (
-        <span style={{ ...small, ...muted, padding: '0 6px', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', textOverflow: 'ellipsis', flex: '0 1 auto', minWidth: '40px' }}>
+        <span style={{ ...muted, padding: '0 6px', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', textOverflow: 'ellipsis', flex: '0 1 auto', minWidth: '40px' }}>
           {shortRepo(row.repo)}</span>
       )}
-      <span style={{ ...small, ...muted }}>{ageOf(row.updatedAt)}</span>
+      <span style={muted}>{ageOf(row.updatedAt)}</span>
     </button>
   );
 }
@@ -385,7 +384,7 @@ export default function Sessions({ namespace }) {
   });
   const list = (
     <div>
-      <button type="button" style={{ ...rowStyle(!open), fontWeight: !open ? 600 : 400 }} onClick={() => select('')} aria-current={!open || undefined}>
+      <button type="button" style={{ ...rowStyle(!open), fontSize: 'x-small', fontWeight: 600 }} onClick={() => select('')} aria-current={!open || undefined}>
         <span style={{ width: '14px', textAlign: 'center' }}>+</span> New session</button>
       {error && <div className="warning-banner" style={{ margin: '6px 0' }}>{error}</div>}
       {rows === null ? (
