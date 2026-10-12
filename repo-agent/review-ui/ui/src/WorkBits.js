@@ -10,12 +10,14 @@ import geminiIcon from './gemini-icon.svg';
 // The engine that launched into the row's sandbox (stamped by the
 // controller) — brand icons so an A/B board pair reads at a glance.
 export const ENGINE_ICON = { antigravity: antigravityIcon, claude: claudeIcon, gemini: geminiIcon };
-export function EngineIcon({ engine, title }) {
+// size is the icon's in px; a smaller one (an inline row's) brings no
+// margin of its own.
+export function EngineIcon({ engine, title, size = 20 }) {
   const src = ENGINE_ICON[engine];
   if (!src) return null;
   return (
     <img src={src} alt={engine} title={title || `engine: ${engine}`}
-      style={{ width: '20px', height: '20px', verticalAlign: 'middle', marginRight: '6px' }} />
+      style={{ width: `${size}px`, height: `${size}px`, verticalAlign: 'middle', marginRight: size === 20 ? '6px' : 0 }} />
   );
 }
 

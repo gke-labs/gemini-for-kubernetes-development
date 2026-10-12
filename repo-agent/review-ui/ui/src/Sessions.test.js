@@ -87,8 +87,14 @@ describe('Sessions', () => {
         expect(text).toContain('Working (2)');
         expect(text).toContain('Idle · live (1)');
         expect(text).toContain('reconciler deletes');
-        expect(text).toContain('⚠ asking permission');
-        expect(text).toContain('starting sandbox…');
+        // One line a row: state, engine, recipe, item, repo, age; what the
+        // agent is doing and the sandbox are its hover.
+        const rebase = Array.from(container.querySelectorAll('button')).find(b => b.textContent.startsWith('◐Rebase'));
+        expect(rebase.textContent).toBe('◐RebasePR #1774 ↗g4k0m');
+        expect(rebase.title).toBe('Rebase · working · fix-g4k-1774');
+        const asking = Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes('reconciler deletes'));
+        expect(asking.title).toBe('reconciler deletes · ⚠ asking permission · rsch-kcc-3f2a');
+        expect(text).not.toContain('fix-g4k-1774');
         // The Fix done today is under Recent, collapsed; the 2020 one is gone.
         expect(text).toContain('(1)▸ show');
         expect(container.querySelector('[role="separator"]')).toBeNull();

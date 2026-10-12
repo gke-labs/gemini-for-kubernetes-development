@@ -51,24 +51,25 @@ box to start a repository-level session. It replaces the Research tabs.
 │ Repo: all ▾   State: All|Live|Needs you   Group: Status|Repo|Sandbox    🔍   │
 │                                                                              │
 │ NEEDS YOU (2)                                                                │
-│ ● ◆ Care · rebase        g4k  PR #1774 ↗  fix-g4k-1774   ⚠ git push      3m  │
-│ ● ✦ Plan                 kcc  #13865 ↗    fix-kcc-13865  📝 draft ready  12m │
+│ ● ◆ Rebase  PR #1774 ↗  (g4k)  3m                                            │
+│ ● ✦ Plan  #13865 ↗  (kcc)  12m                                               │
 │ WORKING (3)                                                                  │
-│ ◐ ◆ Fix                  kcc  #13889 ↗    fix-kcc-13889  turn 4          1m  │
-│ ◐ ✦ Review               g4k  PR #1488 ↗  review-g4k-1488 ⟳ retrying 429  0m  │
-│ ◐ ◆ "reconciler deletes" kcc  —           rsch-recon-3f2a turn 2         2m  │
-│ IDLE · LIVE (1)                              engine up, nobody talking to it │
-│ ○ ◆ Triage               g4k  #1681 ↗     fix-g4k-1681   labels applied  1h  │
+│ ◐ ◆ Fix  #13889 ↗  (kcc)  1m                                                 │
+│ ◐ ✦ Review  PR #1488 ↗  (g4k)  0m                                            │
+│ ◐ ◆ reconciler deletes  (kcc)  2m                                            │
+│ IDLE · LIVE (1)                                                              │
+│ ○ ◆ Triage  #1681 ↗  (g4k)  1h                                               │
 │ RECENT — PAUSED / DONE / FAILED (30d)                                ▸ show  │
 └──────────────────────────────────────────────────────────────────────────────┘
  ● needs you  ◐ working  ○ idle, live  ◌ paused  ✓ done  ✕ failed
- ◆✦ engine (as on Work's chips)   ↗ the item on GitHub   — no item
+ ◆✦ engine (as on Work's chips)   ↗ the item on GitHub   (repo) a chip
 ```
 
-Columns: state, engine, title (the recipe's label, or a research
-session's title), item (↗ to it on GitHub; Work has no per-row link yet) and repository, sandbox, what
-it is doing now (the turn, the permission asked, the draft, the retry, the
-failure), and how long ago it last changed.
+A row is one continuous line, no columns: state, engine, title (the
+recipe's label, or a research session's title), item (↗ to it on GitHub;
+Work has no per-row link yet), a repository chip, and how long ago it last
+changed. Its hover adds the item's title, what the agent is doing now (the
+permission asked, the draft, the retry, the failure) and the sandbox.
 
 **Sections:**
 
@@ -94,10 +95,9 @@ state, for working out the several-sessions-per-sandbox patterns:
 ## A session open: a split page
 
 Nothing open, the box and the list take the whole width (above). A row
-opens its session on the right and the list narrows to a column of
-two-line rows: the title and age, then repository, item and what the agent
-is doing. The session is `ResearchConversation`, the component Work's
-slide-over and the full-window route already use, under a strip with the
+opens its session on the right and the list narrows to a column of the
+same rows, the repository chip giving way before the title. The session
+is `ResearchConversation`, the component Work's slide-over and the full-window route already use, under a strip with the
 session's runs and its sandbox.
 
 ```
