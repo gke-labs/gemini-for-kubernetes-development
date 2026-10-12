@@ -27,7 +27,8 @@ box to start a repository-level session. It replaces the Research tabs.
 - **Every session in the namespace is listed**, wherever it was started:
   a Work row's button, this page's box, the factory CLI. The list is built
   from sandboxes, not from launches. Continuity with the board is the point.
-- **Namespace-wide**, across boards. A Repo filter narrows it to one.
+- **Namespace-wide**, across boards. A repository dropdown narrows it to
+  one; there is no grouping.
 - **Sorted by the agent, not by GitHub.** Work's "needs you" is GitHub
   waiting on the member; here it is an agent waiting on them: a permission
   request, a ready draft.
@@ -48,20 +49,17 @@ box to start a repository-level session. It replaces the Research tabs.
 │ │ 'compare with …'                                                         │ │
 │ │ [▣ kcc ▾]  [◆ gemini ▾]   overview · recent changes             [Start ↵]│ │
 │ └──────────────────────────────────────────────────────────────────────────┘ │
-│ Repo: all ▾   State: All|Live|Needs you   Group: Status|Repo|Sandbox    🔍   │
+│ [all repos ▾]      ● needs you  ● working  ● idle  ● paused · done       🔍 │
 │                                                                              │
-│ NEEDS YOU (2)                                                                │
-│ ● ◆ Rebase  PR #1774 ↗  (g4k)  3m                                            │
-│ ● ✦ Plan  #13865 ↗  (kcc)  12m                                               │
-│ WORKING (3)                                                                  │
-│ ◐ ◆ Fix  #13889 ↗  (kcc)  1m                                                 │
-│ ◐ ✦ Review  PR #1488 ↗  (g4k)  0m                                            │
-│ ◐ ◆ reconciler deletes  (kcc)  2m                                            │
-│ IDLE · LIVE (1)                                                              │
-│ ○ ◆ Triage  #1681 ↗  (g4k)  1h                                               │
-│ RECENT — PAUSED / DONE / FAILED (30d)                                ▸ show  │
+│ 🔴 ◆ Rebase  PR #1774 ↗  (g4k)  3m                                           │
+│ 🔴 ✦ Plan  #13865 ↗  (kcc)  12m                                              │
+│ 🔵 ◆ Fix  #13889 ↗  (kcc)  1m                                                │
+│ 🔵 ✦ Review  PR #1488 ↗  (g4k)  0m                                           │
+│ 🔵 ◆ reconciler deletes  (kcc)  2m                                           │
+│ 🟢 ◆ Triage  #1681 ↗  (g4k)  1h                                              │
+│ ⚪ ◆ Fix  PR #1774 ↗  (g4k)  2d                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- ● needs you  ◐ working  ○ idle, live  ◌ paused  ✓ done  ✕ failed
+ 🔴 needs you / failed   🔵 working   🟢 idle, live   ⚪ paused / done
  ◆✦ engine (as on Work's chips)   ↗ the item on GitHub   (repo) a chip
 ```
 
@@ -71,26 +69,23 @@ Work has no per-row link yet), a repository chip, and how long ago it last
 changed. Its hover adds the item's title, what the agent is doing now (the
 permission asked, the draft, the retry, the failure) and the sandbox.
 
-**Sections:**
+**Dots, not sections.** One flat list; a row's dot says its state by
+colour, and the rows come in that order, newest change first within each:
 
-- **Needs you:** a turn stopped on a permission request, or a run ended
-  `ready` (a draft nothing but edit was applied to).
-- **Working:** a turn in flight, or a run's task still running.
-- **Idle · live:** the engine is up and nobody is talking to it. Listed,
-  not folded: it holds CPU and counts toward `maxActive`.
-- **Recent:** paused, done or failed in the last 30 days. Collapsed.
+- **Red:** needs you (a turn stopped on a permission request, or a run
+  ended `ready`: a draft nothing but edit was applied to), or failed.
+- **Blue:** working: a turn in flight, or a run's task still running.
+- **Green:** idle: the engine is up and nobody is talking to it. Listed:
+  it holds CPU and counts toward `maxActive`.
+- **Grey:** paused or done. Those at rest for more than 30 days (failed
+  ones too) are not listed.
 
-**Group by** Sandbox shows a sandbox's sessions under it, with its pod
-state, for working out the several-sessions-per-sandbox patterns:
+A legend in the filter bar says so.
 
-```
-▾ fix-g4k-1774   running · ◆    g4k PR #1774
-    ◐ Care · rebase      turn 3              session care
-    ✓ Fix                done · PR opened    session fix
-▾ rsch-recon-3f2a  running · ◆  kcc
-    ◐ "reconciler deletes"
-▸ fix-kcc-13781  paused         kcc #13781   (1 session)
-```
+No grouping and no state filter: the list is sorted by state, and the
+repository dropdown at the start of the filter bar narrows it to one
+repository (a search box beside it matches text). An open session's
+strip names the sandbox's other sessions.
 
 ## A session open: a split page
 
@@ -179,7 +174,8 @@ it.
    fix with care runs in one sandbox (two sessions), a review, research, a
    pre-recipe sandbox, an unreachable pod.
 2. **The page:** the ☰ entry, the box (on the research route), rows,
-   sections, filters, grouping, the split with its strip.
+   sections, filters, grouping, the split with its strip. (Since: one
+   list sorted by state with coloured dots, filtered by repository only.)
 3. **Remove the Research tabs** once the page has been used: the board's
    Research tab, All → Research (`AllResearchPanel`), `ResearchPanel`'s
    list.
