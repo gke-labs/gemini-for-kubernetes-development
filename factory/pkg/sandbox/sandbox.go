@@ -295,32 +295,6 @@ func isPRFixSandbox(sb *unstructured.Unstructured, repoName, prURL string) bool 
 	return strings.HasPrefix(sb.GetName(), "fix-") && a["repo"] == repoName && sameItemURL(a["htmlURL"], prURL) && !terminating(sb)
 }
 
-// PRTaskSandbox is the sandbox in namespace labelled with PR prNum of
-// repo that `factory pr` runs the PR's tasks in, or nil: the PR's fix
-// sandbox (PRFixSandbox) before any other, so that its tasks and its
-// recipes share one, else the first of the repo's. A terminating one is
-// skipped: the PR label outlives the sandbox it is on, and waiting for a
-// dying sandbox's pod would never end.
-func PRTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repo string, prNum int, prURL string) (*unstructured.Unstructured, error) {
-	list, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("%s=%d", LabelPR, prNum),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing the sandboxes of PR #%d: %w", prNum, err)
-	}
-	var first *unstructured.Unstructured
-	for i := range list.Items {
-		sb := &list.Items[i]
-		if isPRFixSandbox(sb, repo, prURL) {
-			return sb, nil
-		}
-		if first == nil && !terminating(sb) && sandboxBelongsToRepo(sb, repo, prURL) {
-			first = sb
-		}
-	}
-	return first, nil
-}
-
 func sameItemURL(a, b string) bool {
 	norm := func(u string) string {
 		u, _, _ = strings.Cut(u, "#")
@@ -557,42 +531,6 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return nil
 }
 
-// ReviewSandboxName is the review sandbox for a PR. PR numbers are only
-// unique within a repo, so the repo is part of the name — two repos in the
-// same namespace can each carry a PR with the same number.
-func ReviewSandboxName(repo string, prNum int) string {
-	slug := strings.ToLower(repo)
-	var b strings.Builder
-	for _, r := range slug {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	slug = strings.Trim(b.String(), "-")
-	suffix := fmt.Sprintf("-%d", prNum)
-	// The companion "<name>-lb" Service must fit the 63-char DNS label cap.
-	if budget := 60 - len("factory-pr-") - len(suffix); len(slug) > budget {
-		slug = strings.Trim(slug[:budget], "-")
-	}
-	return "factory-pr-" + slug + suffix
-}
-
-// sandboxBelongsToRepo guards adoption of an existing sandbox found by PR
-// number: pre-repo-scoping sandboxes (plain factory-pr-<n> names, pr-number
-// label lookups) may belong to a different repo's PR with the same number.
-func sandboxBelongsToRepo(sb *unstructured.Unstructured, repo, prHTMLURL string) bool {
-	annotations := sb.GetAnnotations()
-	if r := annotations["repo"]; r != "" {
-		return r == repo
-	}
-	if u := annotations["htmlURL"]; u != "" {
-		return u == prHTMLURL
-	}
-	return false
-}
-
 // prepareReusedSandbox readies an existing sandbox an Ensure* function is
 // handing back: it records the user, and wakes the sandbox if the idle
 // suspender scaled it to zero, stamping unpaused-at. envd.Connect also
@@ -650,83 +588,6 @@ func withLabels(labels, extra map[string]string) map[string]string {
 		labels[k] = v
 	}
 	return labels
-}
-
-func EnsureReviewSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, prNum int, prTitle, prHTMLURL, prDiffURL, prCloneURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	parts := strings.Split(strings.TrimSuffix(prCloneURL, ".git"), "/")
-	repo := parts[len(parts)-1]
-
-	if sb, err := PRTaskSandbox(ctx, kubeClient, namespace, repo, prNum, prHTMLURL); err == nil && sb != nil {
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
-		return sb.GetName(), nil
-	}
-
-	name := ReviewSandboxName(repo, prNum)
-
-	// The legacy repo-less name is checked too so existing sandboxes keep
-	// being reused across the naming change.
-	for _, candidate := range []string{name, fmt.Sprintf("factory-pr-%d", prNum)} {
-		sbGet, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, candidate, metav1.GetOptions{})
-		if err != nil {
-			if !strings.Contains(err.Error(), "not found") {
-				return "", fmt.Errorf("checking sandbox existence: %w", err)
-			}
-			continue
-		}
-		if candidate != name && !sandboxBelongsToRepo(sbGet, repo, prHTMLURL) {
-			continue
-		}
-		if terminating(sbGet) {
-			// Only the canonical name blocks creation below; a dying
-			// legacy-named sandbox can simply be ignored.
-			if candidate == name {
-				if werr := awaitSandboxGone(ctx, kubeClient, namespace, candidate); werr != nil {
-					return "", werr
-				}
-			}
-			continue
-		}
-		prepareReusedSandbox(ctx, kubeClient, namespace, sbGet, user)
-		return candidate, nil
-	}
-
-	if diskSize == "" {
-		diskSize = "10Gi"
-	}
-
-	opt := ReviewSandboxOptions{
-		DevSandboxOptions: DevSandboxOptions{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "review",
-				"factory.gemini.google.com/managed": "true",
-				"factory.gemini.google.com/user":    user,
-			},
-			Image:                 image,
-			Replicas:              1,
-			WorkspaceDiskSize:     diskSize,
-			WorkspaceStorageClass: storageClass,
-			EphemeralStorage:      ephemeralStorage,
-			Secrets:               secrets,
-			Env:                   envs,
-		},
-		PRNumber:   prNum,
-		PRTitle:    prTitle,
-		PRHTMLURL:  prHTMLURL,
-		PRDiffURL:  prDiffURL,
-		PRCloneURL: prCloneURL,
-		RepoName:   repo,
-	}
-
-	fillEnvResources(&opt.DevSandboxOptions)
-	sb, svc := NewReviewSandbox(opt)
-
-	if err := createSandbox(ctx, kubeClient, namespace, sb, svc); err != nil {
-		return "", err
-	}
-
-	return name, nil
 }
 
 // AnnotationTaskEngine is the agent engine (gemini, claude, antigravity)

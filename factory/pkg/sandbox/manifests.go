@@ -1,8 +1,6 @@
 package sandbox
 
 import (
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,18 +55,6 @@ type DevSandboxOptions struct {
 // AgentSandboxOptions holds options for creating an AgentSandbox.
 type AgentSandboxOptions struct {
 	DevSandboxOptions
-}
-
-// ReviewSandboxOptions holds options for creating a ReviewSandbox.
-type ReviewSandboxOptions struct {
-	DevSandboxOptions
-
-	PRNumber   int
-	PRTitle    string
-	PRHTMLURL  string
-	PRDiffURL  string
-	PRCloneURL string
-	RepoName   string
 }
 
 func stringPtr(s string) *string {
@@ -272,167 +258,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	serviceName := sandboxName + "-lb"
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName,
-			Namespace: opt.Namespace,
-			Labels:    opt.Labels,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"sandbox": sandboxName,
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:        "code-server",
-					Protocol:    corev1.ProtocolTCP,
-					Port:        13338,
-					TargetPort:  intstr.FromInt(13337),
-					AppProtocol: stringPtr("kubernetes.io/ws"),
-				},
-				{
-					Name:       "envd",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       49983,
-					TargetPort: intstr.FromInt(49983),
-				},
-			},
-		},
-	}
-
-	return sandbox, service
-}
-
-// NewReviewSandbox creates a new ReviewSandbox and Service object.
-func NewReviewSandbox(opt ReviewSandboxOptions) (*unstructured.Unstructured, *corev1.Service) {
-	sandboxName := opt.Name
-	labels := make(map[string]interface{})
-	if Launcher != "" {
-		labels[LabelLauncher] = Launcher
-	}
-	for k, v := range opt.Labels {
-		labels[k] = v
-	}
-	labels["sandbox"] = sandboxName
-	labels["sandbox-type"] = "review"
-	labels["factory.gemini.google.com/pr"] = fmt.Sprintf("%d", opt.PRNumber)
-
-	annotations := make(map[string]interface{})
-	for k, v := range opt.Annotations {
-		annotations[k] = v
-	}
-	annotations["pr"] = fmt.Sprintf("%d", opt.PRNumber)
-	annotations["title"] = opt.PRTitle
-	annotations["repo"] = opt.RepoName
-	annotations["htmlURL"] = opt.PRHTMLURL
-	annotations["diffURL"] = opt.PRDiffURL
-	annotations["cloneURL"] = opt.PRCloneURL
-
-	diskSize := opt.WorkspaceDiskSize
-	if diskSize == "" {
-		diskSize = "10Gi"
-	}
-
-	env := []interface{}{
-		map[string]interface{}{"name": "HOME", "value": "/workspaces/.home"},
-		map[string]interface{}{"name": "GOCACHE", "value": GoCachePath},
-		map[string]interface{}{"name": "GOMODCACHE", "value": GoModCachePath},
-		map[string]interface{}{"name": "TMPDIR", "value": TmpDirPath},
-		map[string]interface{}{"name": "GOTMPDIR", "value": TmpDirPath},
-	}
-	for _, e := range opt.Env {
-		env = append(env, map[string]interface{}{
-			"name":  e.Name,
-			"value": e.Value,
-		})
-	}
-
-	volumeMounts := []interface{}{
-		map[string]interface{}{"name": "workspaces-pvc", "mountPath": "/workspaces"},
-	}
-	for _, secret := range opt.Secrets {
-		volumeMounts = append(volumeMounts, map[string]interface{}{
-			"name":      "secret-vol-" + secret.Name,
-			"mountPath": secret.MountPath,
-		})
-	}
-
-	var volumesList []interface{}
-	for _, secret := range opt.Secrets {
-		volumesList = append(volumesList, map[string]interface{}{
-			"name": "secret-vol-" + secret.Name,
-			"secret": map[string]interface{}{
-				"secretName": secret.Name,
-			},
-		})
-	}
-
-	podSpecMap := map[string]interface{}{
-		"containers": []interface{}{
-			map[string]interface{}{
-				"name":         "sandbox",
-				"image":        opt.Image,
-				"command":      []interface{}{"factory", "daemon"},
-				"resources":    buildPodResources(opt.DevSandboxOptions),
-				"env":          env,
-				"volumeMounts": volumeMounts,
-				"ports": []interface{}{
-					map[string]interface{}{"containerPort": int64(13337)},
-					map[string]interface{}{"containerPort": int64(49983)},
-				},
-			},
-		},
-	}
-	if len(volumesList) > 0 {
-		podSpecMap["volumes"] = volumesList
-	}
-	if opt.ServiceAccountName != "" {
-		podSpecMap["serviceAccountName"] = opt.ServiceAccountName
-	}
-
-	pvcSpec := map[string]interface{}{
-		"accessModes": []interface{}{"ReadWriteOnce"},
-		"resources": map[string]interface{}{
-			"requests": map[string]interface{}{
-				"storage": diskSize,
-			},
-		},
-	}
-	if opt.WorkspaceStorageClass != "" {
-		pvcSpec["storageClassName"] = opt.WorkspaceStorageClass
-	}
-
-	sandbox := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "agents.x-k8s.io/v1alpha1",
-			"kind":       "Sandbox",
-			"metadata": map[string]interface{}{
-				"name":        sandboxName,
-				"namespace":   opt.Namespace,
-				"labels":      labels,
-				"annotations": annotations,
-			},
-			"spec": map[string]interface{}{
-				"replicas": int64(1),
-				"podTemplate": map[string]interface{}{
-					"metadata": map[string]interface{}{
-						"labels": map[string]interface{}{
-							"sandbox": sandboxName,
-						},
-					},
-					"spec": podSpecMap,
-				},
-				"volumeClaimTemplates": []interface{}{
-					map[string]interface{}{
-						"metadata": map[string]interface{}{"name": "workspaces-pvc"},
-						"spec":     pvcSpec,
-					},
-				},
-			},
-		},
-	}
-
-	serviceName := fmt.Sprintf("%s-lb", sandboxName)
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      serviceName,

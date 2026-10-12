@@ -508,7 +508,7 @@ echo 99 > "$HOME/fails"`, "ensureForkRemote\necho REACHED")
 
 	t.Run("no token in the trace", func(t *testing.T) {
 		// git remote get-url applies the token-bearing github.com rewrite,
-		// and fix_issue.sh runs under set -x.
+		// and task scripts run under set -x.
 		out, _, err := runLib(t, []string{"GITHUB_BOT_LOGIN=coder-bot"}, ghStub+`
 git remote set-url origin https://github.com/coder-bot/repo.git
 GITHUB_USER_TOKEN=CODER_TOKEN setGitHubURLRewrite coder-bot`, "set -x\nensureForkRemote\nset +x")

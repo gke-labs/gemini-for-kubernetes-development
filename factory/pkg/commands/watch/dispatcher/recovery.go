@@ -297,10 +297,11 @@ func (d *Dispatcher) sandboxProbeRetryDelay() time.Duration {
 	return DefaultSandboxProbeRetryDelay
 }
 
-// opensPR reports whether a task of this type can open a pull request from its
-// sandbox. PR tasks run in a sandbox already labelled with their PR.
+// opensPR reports whether an adopted task of this type can have opened a pull
+// request from its sandbox: a chore's workflow can. The recipe tasks are
+// never adopted (appliesInCLI), and open-pr aliases a fix's sandbox itself.
 func opensPR(t api.TaskType) bool {
-	return t == api.TypeIssueFix || t == api.TypeAgentChore
+	return t == api.TypeAgentChore
 }
 
 // appliesInCLI reports whether the factory command of a task of this type

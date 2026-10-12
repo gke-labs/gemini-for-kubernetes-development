@@ -437,8 +437,8 @@ function cloneRepo {
     fi
 }
 
-# setupForkRepo is setup-repo for a fix recipe (pkg/recipe/recipes/fix.yaml),
-# as fix_issue.sh's setupGitRepos: the checkout, with "origin" the task
+# setupForkRepo is setup-repo for a fix recipe (pkg/recipe/recipes/fix.yaml):
+# the checkout, with "origin" the task
 # identity's fork and "upstream" the repository. It stops if origin cannot
 # be made the fork (ensureForkRemote): a fix never pushes to the
 # repository.
@@ -740,7 +740,7 @@ function fetchPRComments {
 # fetchIssueComments (recipe step issue-comments) writes the comments on
 # the issue ($INPUT_ISSUE_NUMBER) to $TASK_DIR/comments.md, for the ask:
 # {{ file "comments.md" }}, trusted authors' only (renderTrustedComments),
-# as factory fix put them in its prompt.
+# as the classic factory fix put them in its prompt.
 function fetchIssueComments {
     echo "Running fetchIssueComments..."
     local dir="${TASK_DIR:?TASK_DIR is not set}" repo issue="${INPUT_ISSUE_NUMBER:-}" raw
@@ -1271,7 +1271,7 @@ function runEngine {
         export GIT_COMMITTER_EMAIL="$GITHUB_BOT_EMAIL"
     fi
 
-    # API keys must not leak into a trace (fix_issue.sh runs under set -x).
+    # API keys must not leak into a trace (task scripts run under set -x).
     local trace=0
     case "$-" in *x*) trace=1 ;; esac
     set +x
