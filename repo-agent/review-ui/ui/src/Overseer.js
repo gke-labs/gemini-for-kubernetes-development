@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
-import SandboxTerminal from './Terminal';
+import OverseerWork from './OverseerWork';
 
 export const getTimestampDetails = (ts) => {
     if (!ts) return null;
@@ -50,40 +50,6 @@ export const formatQueueTimestamp = (ts) => {
     );
 };
 
-export const formatInlineTimestamp = (ts) => {
-    if (!ts) return '';
-    const details = getTimestampDetails(ts);
-    if (!details) return ts;
-    const { exact, rel } = details;
-    return rel ? `${exact} (${rel})` : exact;
-};
-
-export const sortTasksByTimestamp = (tasks) => {
-    if (!tasks || !Array.isArray(tasks)) return [];
-    return tasks
-        .filter(Boolean)
-        .map((task) => {
-            const ts = task?.metadata?.creationTimestamp;
-            let time = 0;
-            if (ts) {
-                const date = new Date(ts);
-                if (!isNaN(date.getTime())) {
-                    time = date.getTime();
-                }
-            }
-            return { task, time };
-        })
-        .sort((a, b) => {
-            if (b.time !== a.time) {
-                return b.time - a.time;
-            }
-            const nameA = a.task?.metadata?.name || '';
-            const nameB = b.task?.metadata?.name || '';
-            return nameA.localeCompare(nameB);
-        })
-        .map((item) => item.task);
-};
-
 export const formatTriggerReason = (reason) => {
     switch (reason) {
         case 'IssueCreated': return 'Issue Created';
@@ -97,92 +63,13 @@ export const formatTriggerReason = (reason) => {
     }
 };
 
-export const getSandboxPodInfo = (sb) => {
-    if (!sb) return { status: 'Unknown', label: 'Unknown', badgeLabel: 'Unknown', color: 'var(--text-secondary)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount: 0 };
-    const replicas = sb.spec?.replicas;
-    const conditions = sb.status?.conditions || [];
-    const evictionCountStr = sb.metadata?.annotations?.['sandbox.gemini.google.com/eviction-count'] || '0';
-    const evictionCount = parseInt(evictionCountStr, 10) || 0;
-    const evictionSuffix = evictionCount > 0 ? ` (Evictions: ${evictionCount})` : '';
-
-    let isSuspended = (replicas === 0 || replicas === '0');
-    if (!isSuspended) {
-        for (const c of conditions) {
-            if (c.message && c.message.toLowerCase().includes('replicas is 0')) {
-                isSuspended = true;
-                break;
-            }
-        }
-    }
-    if (isSuspended) {
-        return { status: 'scaled down', label: `Scaled Down (0)${evictionSuffix}`, badgeLabel: 'Scaled Down', color: '#856404', bgColor: '#fff3cd', isSuspended: true, isEvicted: false, isFailed: false, evictionCount };
-    }
-
-    let isEvicted = false;
-    let isFailed = false;
-    let failReason = 'Failed';
-    for (const c of conditions) {
-        const msg = (c.message || '').toLowerCase();
-        const reason = (c.reason || '').toLowerCase();
-        if (msg.includes('evicted') || reason === 'evicted') {
-            isEvicted = true;
-            failReason = 'Evicted';
-            break;
-        }
-        if (msg.includes('phase: failed') || reason === 'podfailed') {
-            isFailed = true;
-        }
-    }
-    if (isEvicted || isFailed) {
-        return {
-            status: isEvicted ? 'evicted' : 'failed',
-            label: `${isEvicted ? 'Evicted (1)' : 'Failed (1)'}${evictionSuffix}`,
-            badgeLabel: failReason,
-            color: '#d93025',
-            bgColor: '#fce8e6',
-            isSuspended: false,
-            isEvicted: true,
-            isFailed: true,
-            evictionCount
-        };
-    }
-
-    return { status: 'running', label: `Running (1)${evictionSuffix}`, badgeLabel: 'Active', color: 'var(--status-green)', bgColor: 'var(--bg-secondary)', isSuspended: false, isEvicted: false, isFailed: false, evictionCount };
-};
-
-export const isSandboxRunning = (sb) => {
-    if (!sb) return false;
-    const info = getSandboxPodInfo(sb);
-    return !info.isSuspended && !info.isEvicted && !info.isFailed && info.status === 'running';
-};
-
-export const countRunningSandboxes = (sandboxes) => {
-    if (!sandboxes || !Array.isArray(sandboxes)) return 0;
-    return sandboxes.filter(isSandboxRunning).length;
-};
-
-export const countSuspendedSandboxes = (sandboxes) => {
-    if (!sandboxes || !Array.isArray(sandboxes)) return 0;
-    return sandboxes.filter(sb => sb && getSandboxPodInfo(sb).isSuspended).length;
-};
-
 const Overseer = ({ onBack, namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
-    const [sandboxes, setSandboxes] = useState([]);
-    const [activeSandbox, setActiveSandbox] = useState(null);
-    const runningSandboxesCount = useMemo(() => countRunningSandboxes(sandboxes), [sandboxes]);
-    const suspendedSandboxesCount = useMemo(() => countSuspendedSandboxes(sandboxes), [sandboxes]);
-    const [tasks, setTasks] = useState([]);
-    const sortedTasks = useMemo(() => sortTasksByTimestamp(tasks), [tasks]);
-    const [searchFilter, setSearchFilter] = useState('');
-    
+
     const [logs, setLogs] = useState('');
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
-    const [showTerminal, setShowTerminal] = useState(false);
-    const [showPodLogs, setShowPodLogs] = useState(false);
-    const [taskLogs, setTaskLogs] = useState({});
 
     const [showTaskQueue, setShowTaskQueue] = useState(false);
     const [queueData, setQueueData] = useState(null);
@@ -194,7 +81,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
 
     const logIntervalRef = useRef(null);
     const activeOverseerName = activeOverseer?.metadata?.name;
-    const activeSandboxName = activeSandbox?.metadata?.name;
     const statusDataRef = useRef(statusData);
     const prevOverseerNameRef = useRef(activeOverseerName);
 
@@ -266,7 +152,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         if (activeOverseerName && prevOverseerNameRef.current && prevOverseerNameRef.current !== activeOverseerName) {
             setStatusData(null);
             setQueueData(null);
-            setActiveSandbox(null);
         }
         prevOverseerNameRef.current = activeOverseerName;
     }, [activeOverseerName]);
@@ -331,90 +216,19 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return () => clearInterval(interval);
     }, [fetchOverseers]);
 
-    const fetchSandboxes = useCallback(() => {
-        if (!activeOverseerName) return;
-        fetch(`/api/overseers/${activeOverseerName}/sandboxes`)
-            .then(res => {
-                if (!res.ok) throw new Error("Failed to fetch sandboxes");
-                return res.json();
-            })
-            .then(data => {
-                const next = data || [];
-                setSandboxes(prev => {
-                    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
-                    return next;
-                });
-                setActiveSandbox(prev => {
-                    if (!prev) return null;
-                    const updated = next.find(s => s.metadata?.name === prev.metadata?.name);
-                    if (!updated) return null;
-                    if (JSON.stringify(prev) === JSON.stringify(updated)) return prev;
-                    return updated;
-                });
-            })
-            .catch(err => {
-                console.error("Failed to fetch sandboxes:", err);
-                setSandboxes([]);
-            });
-    }, [activeOverseerName]);
-
-    useEffect(() => {
-        fetchSandboxes();
-        const interval = setInterval(fetchSandboxes, 5000);
-        return () => clearInterval(interval);
-    }, [fetchSandboxes]);
-
-    const fetchSandboxTasks = useCallback(() => {
-        if (!activeOverseerName || !activeSandboxName) return;
-        fetch(`/api/overseers/${activeOverseerName}/sandboxes/${activeSandboxName}/tasks`)
-            .then(res => {
-                if (!res.ok) throw new Error("Failed to fetch sandbox tasks");
-                return res.json();
-            })
-            .then(data => {
-                const next = data || [];
-                setTasks(prev => {
-                    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
-                    return next;
-                });
-            })
-            .catch(err => {
-                console.error("Failed to fetch sandbox tasks:", err);
-                setTasks([]);
-            });
-    }, [activeOverseerName, activeSandboxName]);
-
-    useEffect(() => {
-        if (activeSandboxName) {
-            fetchSandboxTasks();
-            const interval = setInterval(fetchSandboxTasks, 5000);
-            return () => clearInterval(interval);
-        } else {
-            setTasks([]);
-        }
-    }, [activeSandboxName, fetchSandboxTasks]);
-
     const fetchLogs = useCallback(() => {
         if (!activeOverseerName) return;
-        let url = '';
-        if (showOverseerLogs) {
-            url = `/api/overseers/${activeOverseerName}/logs`;
-        } else if (activeSandboxName && showPodLogs) {
-            url = `/api/overseers/${activeOverseerName}/sandboxes/${activeSandboxName}/logs`;
-        } else {
-            return;
-        }
-
-        fetch(url)
+        if (!showOverseerLogs) return;
+        fetch(`/api/overseers/${activeOverseerName}/logs`)
             .then(res => res.text())
             .then(data => setLogs(data))
             .catch(err => console.error("Failed to fetch logs:", err));
-    }, [activeOverseerName, activeSandboxName, showOverseerLogs, showPodLogs]);
+    }, [activeOverseerName, showOverseerLogs]);
 
     useEffect(() => {
         if (logIntervalRef.current) clearInterval(logIntervalRef.current);
         
-        if (showOverseerLogs || (activeSandboxName && showPodLogs)) {
+        if (showOverseerLogs) {
             fetchLogs();
             logIntervalRef.current = setInterval(fetchLogs, 5000);
         } else {
@@ -424,155 +238,20 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         return () => {
             if (logIntervalRef.current) clearInterval(logIntervalRef.current);
         };
-    }, [showOverseerLogs, showPodLogs, activeSandboxName, fetchLogs]);
+    }, [showOverseerLogs, fetchLogs]);
 
     const handleOverseerClick = (ov) => {
         if (activeOverseer?.metadata.name === ov.metadata.name) {
             setActiveOverseer(null);
-            setActiveSandbox(null);
             setShowOverseerLogs(false);
-            setShowTerminal(false);
-            setShowPodLogs(false);
             setShowStatus(false);
             setShowTaskQueue(false);
         } else {
             setActiveOverseer(ov);
-            setActiveSandbox(null);
             setShowOverseerLogs(false);
-            setShowTerminal(false);
-            setShowPodLogs(false);
             setShowStatus(false);
             setShowTaskQueue(false);
         }
-    };
-
-    const handleSandboxClick = (sb) => {
-        const isController = sb.metadata?.name === `overseer-${activeOverseer?.metadata.name}`;
-        setActiveSandbox(sb);
-        setShowOverseerLogs(false);
-        setShowTerminal(false);
-        setShowPodLogs(isController);
-        setShowStatus(false);
-        setShowTaskQueue(false);
-    };
-
-    const handleOverseerDaemonClick = () => {
-        if (!activeOverseer) return;
-        const ovName = `overseer-${activeOverseer.metadata.name}`;
-        const ovSandbox = sandboxes.find(sb => sb.metadata?.name === ovName) || {
-            metadata: {
-                name: ovName,
-                creationTimestamp: activeOverseer.metadata?.creationTimestamp || new Date().toISOString(),
-                labels: {
-                    'sandbox.gemini.google.com/type': 'Controller / Daemon',
-                    'sandbox-type': 'Controller / Daemon'
-                }
-            },
-            spec: { replicas: 1 }
-        };
-        handleSandboxClick(ovSandbox);
-    };
-
-    const handleDeleteSandbox = (sbName) => {
-        if (!activeOverseer) return;
-        if (!window.confirm(`Are you sure you want to delete/evict sandbox '${sbName}'?`)) return;
-
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${sbName}`, { method: 'DELETE' })
-            .then(res => {
-                if (res.ok) {
-                    if (activeSandbox?.metadata?.name === sbName) {
-                        setActiveSandbox(null);
-                    }
-                    fetchSandboxes();
-                } else {
-                    alert("Failed to delete sandbox");
-                }
-            })
-            .catch(err => console.error("Failed to delete sandbox:", err));
-    };
-
-    const handleUnpauseSandbox = (sbName) => {
-        if (!activeOverseer) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${sbName}/unpause`, { method: 'POST' })
-            .then(res => {
-                if (res.ok) {
-                    fetchSandboxes();
-                } else {
-                    alert("Failed to unpause sandbox");
-                }
-            })
-            .catch(err => console.error("Failed to unpause sandbox:", err));
-    };
-
-    const handlePauseSandbox = (sbName) => {
-        if (!activeOverseer) return;
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${sbName}/pause`, { method: 'POST' })
-            .then(res => {
-                if (res.ok) {
-                    fetchSandboxes();
-                } else {
-                    alert("Failed to pause sandbox");
-                }
-            })
-            .catch(err => console.error("Failed to pause sandbox:", err));
-    };
-
-    const toggleTaskLogs = (taskName) => {
-        if (!activeOverseer || !activeSandbox) return;
-        const current = taskLogs[taskName];
-        if (current && current.show) {
-            setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], show: false } }));
-            return;
-        }
-
-        setTaskLogs(prev => ({ ...prev, [taskName]: { loading: true, show: true, content: 'Loading task execution logs...', telemetry: null } }));
-
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/tasks/${encodeURIComponent(taskName)}/logs`)
-            .then(res => res.text())
-            .then(data => {
-                setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], loading: false, show: true, content: data || 'No output log found.' } }));
-            })
-            .catch(err => {
-                setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], loading: false, show: true, content: `Error loading log: ${err.message}` } }));
-            });
-
-        fetch(`/api/overseers/${activeOverseer.metadata.name}/sandboxes/${activeSandbox.metadata.name}/tasks/${encodeURIComponent(taskName)}/telemetry`)
-            .then(res => res.json())
-            .then(telemetry => {
-                if (telemetry && telemetry.total_tool_calls > 0) {
-                    setTaskLogs(prev => ({ ...prev, [taskName]: { ...prev[taskName], telemetry } }));
-                }
-            })
-            .catch(() => {});
-    };
-
-    const getSandboxTypeIcon = (sb) => {
-        const t = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || 'dev';
-        if (t === 'fix') return '🐞';
-        if (t === 'review') return '🔄';
-        if (t === 'adopt') return '🚀';
-        if (t === 'agent') return '⚡';
-        if (t.includes('pr')) return '🔨';
-        return '📦';
-    };
-
-    const getSandboxBadgeLabel = (sb) => {
-        const t = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
-        const name = sb.metadata?.name || '';
-        if (t === 'pr' || name.startsWith('factory-pr-') || name.startsWith('pr-')) return 'PR';
-        if (t === 'fix' || name.startsWith('factory-fix-') || name.startsWith('fix-')) return 'Fix (Issue->PR)';
-        if (t === 'review') return 'Review';
-        if (t === 'adopt') return 'Adopt';
-        return t || 'Factory';
-    };
-
-    const getStatusBadgeColor = (status) => {
-        if (!status) return 'var(--status-grey)';
-        const s = status.toLowerCase();
-        if (s === 'completed' || s === 'ready' || s === 'success' || s === '0') return 'var(--status-green)';
-        if (s === 'running' || s === 'provisioning') return 'var(--status-yellow)';
-        if (s === 'failed' || s === 'crashed' || s === 'error') return 'var(--text-danger)';
-        return 'var(--status-grey)';
     };
 
     const isOverseerInUpgradeMode = (overseer) => {
@@ -587,34 +266,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
         if (!overseer) return null;
         const annotations = overseer.metadata?.annotations || {};
         return annotations['overseer.gemini.google.com/upgrade-timestamp'] || overseer.upgradeTimestamp || null;
-    };
-
-    const filterSandbox = (sb) => {
-        if (!searchFilter || !searchFilter.trim()) return true;
-        const q = searchFilter.trim().toLowerCase();
-        const name = sb.metadata?.name || '';
-        const typeBadge = getSandboxBadgeLabel(sb);
-        const rawType = sb.metadata?.labels?.['sandbox.gemini.google.com/type'] || sb.metadata?.labels?.['sandbox-type'] || '';
-        const podInfo = getSandboxPodInfo(sb);
-        const status = podInfo.status;
-        const issue = sb.metadata?.labels?.['factory.gemini.google.com/issue'] || sb.metadata?.labels?.issue || '';
-        const pr = sb.metadata?.labels?.['factory.gemini.google.com/pr'] || sb.metadata?.annotations?.pr || '';
-        const user = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '';
-        const desc = sb.metadata?.annotations?.['sandbox.gemini.google.com/description'] || '';
-        const tType = sb.metadata?.annotations?.['sandbox.gemini.google.com/last-task-type'] || '';
-        const tState = sb.metadata?.annotations?.['sandbox.gemini.google.com/last-task-state'] || '';
-        const url = sb.metadata?.annotations?.['sandbox.gemini.google.com/html-url'] || sb.metadata?.annotations?.htmlURL || '';
-        return name.toLowerCase().includes(q) ||
-               typeBadge.toLowerCase().includes(q) ||
-               rawType.toLowerCase().includes(q) ||
-               status.toLowerCase().includes(q) ||
-               String(issue).toLowerCase().includes(q) ||
-               String(pr).toLowerCase().includes(q) ||
-               user.toLowerCase().includes(q) ||
-               desc.toLowerCase().includes(q) ||
-               tType.toLowerCase().includes(q) ||
-               tState.toLowerCase().includes(q) ||
-               url.toLowerCase().includes(q);
     };
 
     return (
@@ -739,23 +390,18 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                 {/* Sub-Tab Navigation Bar */}
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
                     <button 
-                        className={`btn ${!showTaskQueue && !showOverseerLogs && !showStatus && !activeSandbox ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setShowStatus(false); setActiveSandbox(null); }}
+                        className={`btn ${!showTaskQueue && !showOverseerLogs && !showStatus ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => { setShowTaskQueue(false); setShowOverseerLogs(false); setShowStatus(false); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
-                        📦 Active Sandboxes ({runningSandboxesCount})
-                        {suspendedSandboxesCount > 0 && (
-                            <span style={{ backgroundColor: '#856404', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', marginLeft: '4px' }}>
-                                {suspendedSandboxesCount} Scaled Down
-                            </span>
-                        )}
+                        🧭 Work
                     </button>
                     <button 
                         className={`btn ${showTaskQueue ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowTaskQueue(true); setShowOverseerLogs(false); setShowStatus(false); setActiveSandbox(null); }}
+                        onClick={() => { setShowTaskQueue(true); setShowOverseerLogs(false); setShowStatus(false); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
-                        📥 Incoming Task Queue ({queueData?.summary?.totalPending || 0})
+                        📥 Queue ({queueData?.summary?.totalPending || 0})
                         {queueData?.summary?.byPriority?.critical > 0 && (
                             <span style={{ backgroundColor: '#d93025', color: '#fff', padding: '1px 7px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', marginLeft: '4px' }}>
                                 {queueData.summary.byPriority.critical} Critical
@@ -764,17 +410,17 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                     </button>
                     <button 
                         className={`btn ${showOverseerLogs ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowOverseerLogs(true); setShowTaskQueue(false); setShowStatus(false); setActiveSandbox(null); }}
+                        onClick={() => { setShowOverseerLogs(true); setShowTaskQueue(false); setShowStatus(false); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
-                        📜 Daemon Logs
+                        📜 Logs
                     </button>
                     <button 
                         className={`btn ${showStatus ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => { setShowStatus(true); setShowTaskQueue(false); setShowOverseerLogs(false); setActiveSandbox(null); }}
+                        onClick={() => { setShowStatus(true); setShowTaskQueue(false); setShowOverseerLogs(false); }}
                         style={{ fontWeight: '600', padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
-                        📊 Status
+                        🔑 Keys
                     </button>
                 </div>
 
@@ -1188,585 +834,9 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                             </pre>
                         </div>
                     </div>
-                ) : activeSandbox ? (
-                    <div>
-                        <div style={{ marginBottom: '15px' }}>
-                            <button 
-                                className="btn btn-sm" 
-                                style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}
-                                onClick={() => setActiveSandbox(null)}
-                            >
-                                ⬅ Back to Sandboxes Table
-                            </button>
-                        </div>
-
-                        {/* Sandbox Header Box */}
-                        <div style={{ backgroundColor: 'var(--bg-card)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border-color)', marginBottom: '25px', boxShadow: 'var(--shadow-card)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
-                                <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>{activeSandbox.metadata.name}</span>
-                                        <span style={{ 
-                                            padding: '3px 10px', 
-                                            borderRadius: '12px', 
-                                            fontSize: '0.75rem', 
-                                            fontWeight: 'bold', 
-                                            backgroundColor: 'var(--bg-secondary)', 
-                                            color: 'var(--text-primary)',
-                                            textTransform: 'uppercase'
-                                        }}>
-                                            {getSandboxBadgeLabel(activeSandbox)}
-                                        </span>
-                                        {(() => {
-                                            const podInfo = getSandboxPodInfo(activeSandbox);
-                                            const badges = [];
-                                            if (podInfo.evictionCount > 0) {
-                                                badges.push(
-                                                    <span key="eviction-badge" style={{ 
-                                                        padding: '3px 10px', 
-                                                        borderRadius: '12px', 
-                                                        fontSize: '0.75rem', 
-                                                        fontWeight: 'bold', 
-                                                        backgroundColor: '#fff3cd', 
-                                                        color: '#856404', 
-                                                        border: '1px solid #ffeeba'
-                                                    }} title="Total number of times this sandbox's pod has been evicted and automatically cleaned up/recreated.">
-                                                        🔄 Evictions: {podInfo.evictionCount}
-                                                    </span>
-                                                );
-                                            }
-                                            if (podInfo.isSuspended) {
-                                                badges.push(
-                                                    <span key="status-badge" style={{ 
-                                                        padding: '3px 10px', 
-                                                        borderRadius: '12px', 
-                                                        fontSize: '0.75rem', 
-                                                        fontWeight: 'bold', 
-                                                        backgroundColor: podInfo.bgColor, 
-                                                        color: podInfo.color, 
-                                                        border: '1px solid #ffeeba'
-                                                    }}>
-                                                        ⏸️ Scaled Down (Replicas: 0)
-                                                    </span>
-                                                );
-                                            } else if (podInfo.isEvicted || podInfo.isFailed) {
-                                                badges.push(
-                                                    <span key="status-badge" style={{ 
-                                                        padding: '3px 10px', 
-                                                        borderRadius: '12px', 
-                                                        fontSize: '0.75rem', 
-                                                        fontWeight: 'bold', 
-                                                        backgroundColor: podInfo.bgColor, 
-                                                        color: podInfo.color, 
-                                                        border: '1px solid #f8d7da'
-                                                    }}>
-                                                        ⚠️ {podInfo.label}
-                                                    </span>
-                                                );
-                                            }
-                                            return badges;
-                                        })()}
-                                    </div>
-
-                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '15px' }}>
-                                        <span><strong>Created:</strong> {new Date(activeSandbox.metadata.creationTimestamp).toLocaleString()}</span>
-                                        {activeSandbox.metadata?.labels?.['factory.gemini.google.com/user'] && (
-                                            <span><strong>User:</strong> {activeSandbox.metadata.labels['factory.gemini.google.com/user']}</span>
-                                        )}
-                                        {activeSandbox.metadata?.annotations?.pr && (
-                                            <span><strong>PR:</strong> #{activeSandbox.metadata.annotations.pr}</span>
-                                        )}
-                                        {activeSandbox.metadata?.annotations?.htmlURL && (
-                                            <span>
-                                                <a href={activeSandbox.metadata.annotations.htmlURL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: '600' }}>
-                                                    View PR/Issue on GitHub ↗
-                                                </a>
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                    {(() => {
-                                        const podInfo = getSandboxPodInfo(activeSandbox);
-                                        const isOverseerDaemon = activeSandbox.metadata.name === `overseer-${activeOverseer?.metadata.name}`;
-                                        if (isOverseerDaemon) return null;
-                                        if (podInfo.isSuspended) {
-                                            return (
-                                                <button 
-                                                    className="btn" 
-                                                    style={{ backgroundColor: '#d4edda', color: '#155724', border: '1px solid #c3e6cb', fontWeight: '600' }}
-                                                    onClick={() => handleUnpauseSandbox(activeSandbox.metadata.name)}
-                                                    title="Unpause sandbox and keep it running for at least the idle timeout duration"
-                                                >
-                                                    ▶️ Unpause Sandbox
-                                                </button>
-                                            );
-                                        } else if (!podInfo.isEvicted && !podInfo.isFailed) {
-                                            return (
-                                                <button 
-                                                    className="btn" 
-                                                    style={{ backgroundColor: '#fff3cd', color: '#856404', border: '1px solid #ffeeba', fontWeight: '600' }}
-                                                    onClick={() => handlePauseSandbox(activeSandbox.metadata.name)}
-                                                    title="Pause sandbox by scaling replicas down to 0"
-                                                >
-                                                    ⏸️ Pause Sandbox
-                                                </button>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-                                    <button 
-                                        className="btn" 
-                                        style={{ 
-                                            backgroundColor: showTerminal ? 'var(--bg-active)' : 'var(--bg-secondary)', 
-                                            color: showTerminal ? 'white' : 'var(--text-primary)',
-                                            border: '1px solid var(--border-color)',
-                                            fontWeight: '600'
-                                        }}
-                                        onClick={() => { setShowTerminal(!showTerminal); setShowPodLogs(false); }}
-                                    >
-                                        &gt;_ Live Terminal
-                                    </button>
-
-                                    <button 
-                                        className="btn" 
-                                        style={{ 
-                                            backgroundColor: showPodLogs ? 'var(--bg-active)' : 'var(--bg-secondary)', 
-                                            color: showPodLogs ? 'white' : 'var(--text-primary)',
-                                            border: '1px solid var(--border-color)',
-                                            fontWeight: '600'
-                                        }}
-                                        onClick={() => { setShowPodLogs(!showPodLogs); setShowTerminal(false); }}
-                                    >
-                                        📑 Pod Logs
-                                    </button>
-
-                                    {activeSandbox.metadata.name !== `overseer-${activeOverseer?.metadata.name}` && (
-                                        <button 
-                                            className="btn" 
-                                            style={{ backgroundColor: 'var(--bg-danger-light)', color: 'var(--text-danger)', border: '1px solid var(--border-danger)', fontWeight: '600' }}
-                                            onClick={() => handleDeleteSandbox(activeSandbox.metadata.name)}
-                                        >
-                                            🗑️ Evict / Delete
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Interactive SSH Terminal View */}
-                        {showTerminal && (
-                            <div className="terminal-container" style={{ marginBottom: '25px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
-                                <div style={{ backgroundColor: '#21262d', color: '#c9d1d9', padding: '10px 15px', fontSize: '0.85rem', fontWeight: 'bold', borderBottom: '1px solid #30363d' }}>
-                                    Interactive SSH Terminal (`/workspaces`)
-                                </div>
-                                <SandboxTerminal 
-                                    namespace={`overseer-${activeOverseer?.metadata?.name}`} 
-                                    sandboxName={activeSandbox.metadata.name} 
-                                />
-                            </div>
-                        )}
-
-                        {/* Pod Logs View */}
-                        {showPodLogs && (
-                            <div className="logs-container" style={{ textAlign: 'left', marginBottom: '25px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                                    <h4 style={{ margin: 0 }}>Full Sandbox Pod Logs</h4>
-                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Live refreshing...</span>
-                                </div>
-                                <div className="logs-display" style={{ backgroundColor: '#1e1e1e', color: '#d4d4d4', padding: '15px', borderRadius: '6px', height: '450px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '13px' }}>
-                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                                        {logs || 'Loading pod logs...'}
-                                    </pre>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Tasks Section */}
-                        <div style={{ backgroundColor: 'var(--bg-card)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                                <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>
-                                    Executed Tasks (`/workspaces/tasks/*`)
-                                </h3>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                    {tasks.length} task(s) detected inside sandbox
-                                </span>
-                            </div>
-
-                            {tasks.length === 0 ? (
-                                <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', backgroundColor: 'var(--bg-review-section)', borderRadius: '6px', border: '1px dashed var(--border-color)' }}>
-                                    <p style={{ margin: 0, fontSize: '0.95rem' }}>No tasks found in <code>/workspaces/tasks/</code> for this sandbox yet.</p>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    {sortedTasks
-                                        .map((task) => {
-                                            const taskName = task.metadata?.name || 'unknown-task';
-                                            const taskType = task.spec?.taskType || task.spec?.type || taskName;
-                                            const state = task.status?.state || task.status?.taskState || 'Pending';
-                                            const exitCode = task.status?.exitCode;
-                                            const badgeColor = getStatusBadgeColor(state);
-                                            const logInfo = taskLogs[taskName];
-                                            const tsDetails = task.metadata?.creationTimestamp ? getTimestampDetails(task.metadata.creationTimestamp) : null;
-
-                                            return (
-                                                <div key={taskName} style={{ border: '1px solid var(--border-color)', borderRadius: '6px', backgroundColor: 'var(--bg-review-section)', overflow: 'hidden' }}>
-                                                    <div style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                                                        <div>
-                                                            <span style={{ fontWeight: 'bold', fontSize: '1rem', color: 'var(--text-primary)' }}>{taskType}</span>
-                                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: '12px', fontFamily: 'monospace' }}>
-                                                                {taskName}
-                                                            </span>
-                                                            {tsDetails && (
-                                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '12px' }} title={tsDetails.exact}>
-                                                                    • {tsDetails.rel ? `${tsDetails.exact} (${tsDetails.rel})` : tsDetails.exact}
-                                                                </span>
-                                                            )}
-                                                        </div>
-
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                        {exitCode !== undefined && exitCode !== null && (
-                                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
-                                                                Exit Code: <strong>{exitCode}</strong>
-                                                            </span>
-                                                        )}
-
-                                                        <span style={{ 
-                                                            backgroundColor: badgeColor, 
-                                                            color: state.toLowerCase() === 'running' || state.toLowerCase() === 'provisioning' ? 'black' : 'white', 
-                                                            padding: '4px 10px', 
-                                                            borderRadius: '12px', 
-                                                            fontSize: '0.75rem', 
-                                                            fontWeight: 'bold',
-                                                            textTransform: 'uppercase'
-                                                        }}>
-                                                            {state}
-                                                        </span>
-
-                                                        <button 
-                                                            className="btn btn-sm" 
-                                                            style={{ 
-                                                                backgroundColor: logInfo?.show ? 'var(--bg-active)' : 'var(--bg-card)', 
-                                                                color: logInfo?.show ? 'white' : 'var(--text-primary)',
-                                                                border: '1px solid var(--border-color)',
-                                                                fontSize: '0.8rem',
-                                                                padding: '5px 12px'
-                                                            }}
-                                                            onClick={() => toggleTaskLogs(taskName)}
-                                                        >
-                                                            {logInfo?.show ? 'Hide Logs' : 'View Execution Log'}
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                {logInfo?.show && (
-                                                    <div style={{ borderTop: '1px solid var(--border-color)', padding: '15px', backgroundColor: '#161b22', color: '#c9d1d9', textAlign: 'left' }}>
-                                                        {logInfo.telemetry && logInfo.telemetry.total_tool_calls > 0 && (
-                                                            <div style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#0d1117', border: '1px solid #30363d', borderRadius: '6px' }}>
-                                                                <div style={{ fontWeight: 'bold', color: '#58a6ff', marginBottom: '8px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                    <span>⚡ Tool Execution Telemetry</span>
-                                                                    <span style={{ fontWeight: 'normal', color: '#8b949e', fontSize: '12px' }}>({logInfo.telemetry.total_tool_calls} calls, {logInfo.telemetry.total_tool_duration_sec}s total)</span>
-                                                                </div>
-                                                                <div style={{ overflowX: 'auto' }}>
-                                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-                                                                        <thead>
-                                                                            <tr style={{ borderBottom: '1px solid #21262d', color: '#8b949e' }}>
-                                                                                <th style={{ padding: '6px 8px' }}>Tool</th>
-                                                                                <th style={{ padding: '6px 8px' }}>Calls</th>
-                                                                                <th style={{ padding: '6px 8px' }}>Total (s)</th>
-                                                                                <th style={{ padding: '6px 8px' }}>Max (s)</th>
-                                                                                <th style={{ padding: '6px 8px' }}>Slowest Command / Arg</th>
-                                                                            </tr>
-                                                                        </thead>
-                                                                        <tbody>
-                                                                            {Object.entries(logInfo.telemetry.tools || {}).map(([tname, tstat]) => (
-                                                                                <tr key={tname} style={{ borderBottom: '1px solid #21262d' }}>
-                                                                                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: '#7ee787' }}>{tname}</td>
-                                                                                    <td style={{ padding: '6px 8px' }}>{tstat.count}</td>
-                                                                                    <td style={{ padding: '6px 8px' }}>{tstat.total_sec}</td>
-                                                                                    <td style={{ padding: '6px 8px', color: tstat.max_sec > 60 ? '#ff7b72' : 'inherit', fontWeight: tstat.max_sec > 60 ? 'bold' : 'normal' }}>{tstat.max_sec}</td>
-                                                                                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: '11px', color: '#8b949e', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tstat.slowest_cmd}>{tstat.slowest_cmd || '-'}</td>
-                                                                                </tr>
-                                                                            ))}
-                                                                        </tbody>
-                                                                    </table>
-                                                                </div>
-                                                                {logInfo.telemetry.shell_calls && logInfo.telemetry.shell_calls.length > 0 && (
-                                                                    <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #21262d' }}>
-                                                                        <div style={{ fontWeight: 'bold', color: '#d2a8ff', marginBottom: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                            <span>🐚 Top {Math.min(10, logInfo.telemetry.shell_calls.length)} Slowest Shell Commands</span>
-                                                                        </div>
-                                                                        <div style={{ overflowX: 'auto' }}>
-                                                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
-                                                                                <thead>
-                                                                                    <tr style={{ borderBottom: '1px solid #21262d', color: '#8b949e' }}>
-                                                                                        <th style={{ padding: '4px 6px', width: '25px' }}>#</th>
-                                                                                        <th style={{ padding: '4px 6px', width: '70px' }}>Duration</th>
-                                                                                        <th style={{ padding: '4px 6px' }}>Command</th>
-                                                                                    </tr>
-                                                                                </thead>
-                                                                                <tbody>
-                                                                                    {logInfo.telemetry.shell_calls.slice(0, 10).map((call, idx) => (
-                                                                                        <tr key={idx} style={{ borderBottom: '1px solid #161b22' }}>
-                                                                                            <td style={{ padding: '4px 6px', color: '#8b949e' }}>{idx + 1}</td>
-                                                                                            <td style={{ padding: '4px 6px', color: call.duration_sec > 60 ? '#ff7b72' : call.duration_sec > 15 ? '#ffa657' : '#7ee787', fontWeight: 'bold' }}>{call.duration_sec}s</td>
-                                                                                            <td style={{ padding: '4px 6px', fontFamily: 'monospace', color: '#c9d1d9', wordBreak: 'break-all' }}>{call.cmd}</td>
-                                                                                        </tr>
-                                                                                    ))}
-                                                                                </tbody>
-                                                                            </table>
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.8rem', color: '#8b949e', textAlign: 'left' }}>
-                                                            <span>Output (`/workspaces/tasks/{taskName}/execution.log`)</span>
-                                                        </div>
-                                                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '12px', maxHeight: '400px', overflowY: 'auto', lineHeight: '1.5', textAlign: 'left' }}>
-                                                            {logInfo.loading ? 'Loading log...' : logInfo.content}
-                                                        </pre>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                ) : activeOverseer ? (() => {
-                    const filtered = sandboxes.filter(filterSandbox);
-                    const runningSandboxes = filtered.filter(sb => {
-                        const info = getSandboxPodInfo(sb);
-                        return !info.isSuspended && !info.isEvicted && !info.isFailed;
-                    });
-                    const evictedSandboxes = filtered.filter(sb => {
-                        const info = getSandboxPodInfo(sb);
-                        return !info.isSuspended && (info.isEvicted || info.isFailed);
-                    });
-                    const suspendedSandboxes = filtered.filter(sb => {
-                        const info = getSandboxPodInfo(sb);
-                        return info.isSuspended;
-                    });
-
-                    const renderTableRow = (sb) => {
-                        const podInfo = getSandboxPodInfo(sb);
-                        const isSuspended = podInfo.isSuspended;
-                        const isEvicted = podInfo.isEvicted || podInfo.isFailed;
-                        const name = sb.metadata?.name || '';
-                        const typeBadge = getSandboxBadgeLabel(sb);
-                        const icon = getSandboxTypeIcon(sb);
-                        const assignedBot = sb.metadata?.labels?.['factory.gemini.google.com/user'] || '-';
-                        
-                        let lastTaskStr = '-';
-                        if (sb.metadata?.annotations) {
-                            const tType = sb.metadata.annotations['sandbox.gemini.google.com/last-task-type'];
-                            const tState = sb.metadata.annotations['sandbox.gemini.google.com/last-task-state'];
-                            if (tType && tState) lastTaskStr = `${tType} (${tState})`;
-                            else if (tType) lastTaskStr = tType;
-                        }
-
-                        let htmlURL = '-';
-                        if (sb.metadata?.annotations) {
-                            const u = sb.metadata.annotations['sandbox.gemini.google.com/html-url'] || sb.metadata.annotations.htmlURL;
-                            if (u) {
-                                htmlURL = (
-                                    <a href={u} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: 'var(--text-link)', fontWeight: '600', textDecoration: 'underline' }}>
-                                        View ↗
-                                    </a>
-                                );
-                            }
-                        }
-
-                        const diffMs = Date.now() - new Date(sb.metadata.creationTimestamp).getTime();
-                        const hours = Math.floor(diffMs / 3600000);
-                        const days = Math.floor(hours / 24);
-                        const ageStr = days > 0 ? `${days}d ${hours % 24}h` : `${hours}h`;
-
-                        return (
-                            <tr 
-                                key={name}
-                                onClick={() => handleSandboxClick(sb)}
-                                style={{ 
-                                    cursor: 'pointer', 
-                                    borderBottom: '1px solid var(--border-color)',
-                                    backgroundColor: isEvicted ? 'rgba(217, 48, 37, 0.04)' : (isSuspended ? 'rgba(255, 243, 205, 0.04)' : 'transparent'),
-                                    opacity: isSuspended ? 0.75 : 1
-                                }}
-                                className="table-row-hover"
-                            >
-                                <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span>{isEvicted ? '⚠️' : (isSuspended ? '⏸️' : icon)}</span>
-                                    <span style={{ textDecoration: isSuspended ? 'line-through' : 'none' }}>{name}</span>
-                                </td>
-                                <td style={{ padding: '12px 16px' }}>
-                                    <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: podInfo.bgColor, color: podInfo.color, fontWeight: (isSuspended || isEvicted) ? 'bold' : 'normal', whiteSpace: 'nowrap' }}>
-                                        {isSuspended ? `Scaled Down • ${typeBadge}` : (isEvicted ? `${podInfo.badgeLabel} • ${typeBadge}` : typeBadge)}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
-                                    <span style={{ color: podInfo.color, fontWeight: '600' }}>
-                                        {podInfo.label}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
-                                    {assignedBot}
-                                </td>
-                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                    {lastTaskStr}
-                                </td>
-                                <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
-                                    {htmlURL}
-                                </td>
-                                <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                    {ageStr}
-                                </td>
-                            </tr>
-                        );
-                    };
-
-                    return (
-                        <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
-                            <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-                                <div>
-                                    <h3 style={{ margin: 0, fontSize: '1.3rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <span>📂 Sandboxes Table: <strong>{activeOverseer.metadata.name}</strong></span>
-                                        <span style={{ fontSize: '0.9rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
-                                            ({runningSandboxes.length} running{suspendedSandboxes.length > 0 ? `, ${suspendedSandboxes.length} scaled down` : ''})
-                                        </span>
-                                    </h3>
-                                    <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                        Click any row to drill down into the sandbox detail view, live terminal, and task logs.
-                                    </p>
-                                </div>
-                                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                                    <input 
-                                        type="text"
-                                        placeholder="🔍 Filter Name, Type, Status, Bot, Task..."
-                                        title="Searches across all columns: Name, Type, Status, Assigned Bot, Last Task, and PR/Issue URL/Number"
-                                        value={searchFilter}
-                                        onChange={(e) => setSearchFilter(e.target.value)}
-                                        style={{
-                                            padding: '8px 12px',
-                                            borderRadius: '6px',
-                                            border: '1px solid var(--border-color)',
-                                            backgroundColor: 'var(--bg-secondary)',
-                                            color: 'var(--text-primary)',
-                                            fontSize: '0.85rem',
-                                            width: '310px'
-                                        }}
-                                    />
-                                    <button 
-                                        className="btn btn-sm"
-                                        style={{ backgroundColor: 'var(--bg-active)', color: 'white', fontWeight: '600' }}
-                                        onClick={handleOverseerDaemonClick}
-                                    >
-                                        🤖 Overseer Daemon Log
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div style={{ overflowX: 'auto' }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                                    <thead>
-                                        <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                                            <th style={{ padding: '12px 16px' }}>NAME</th>
-                                            <th style={{ padding: '12px 16px' }}>TYPE</th>
-                                            <th style={{ padding: '12px 16px' }}>STATUS</th>
-                                            <th style={{ padding: '12px 16px' }}>ASSIGNED BOT</th>
-                                            <th style={{ padding: '12px 16px' }}>LAST TASK</th>
-                                            <th style={{ padding: '12px 16px' }}>PR/ISSUE URL</th>
-                                            <th style={{ padding: '12px 16px' }}>AGE</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {/* Special Overseer Daemon Row right on top */}
-                                        <tr 
-                                            onClick={handleOverseerDaemonClick}
-                                            style={{ cursor: 'pointer', borderBottom: '2px solid var(--border-color)', backgroundColor: 'rgba(56, 139, 253, 0.08)' }}
-                                            className="table-row-hover"
-                                        >
-                                            <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--text-active)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <span>🤖</span>
-                                                <span>overseer-{activeOverseer.metadata.name} (Controller)</span>
-                                            </td>
-                                            <td style={{ padding: '12px 16px' }}>
-                                                <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', backgroundColor: 'var(--bg-active)', color: 'white', fontWeight: 'bold' }}>
-                                                    Controller / Daemon
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
-                                                <span style={{ color: 'var(--status-green)', fontWeight: '600' }}>Running</span>
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
-                                                overseer-controller
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                                Daemon Loop
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem' }}>
-                                                -
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                                Active
-                                            </td>
-                                        </tr>
-
-                                        {runningSandboxes.length > 0 && (
-                                            <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
-                                                <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--status-green)', textTransform: 'uppercase' }}>
-                                                    🟢 Running Sandboxes ({runningSandboxes.length})
-                                                </td>
-                                            </tr>
-                                        )}
-
-                                        {runningSandboxes.length === 0 && (suspendedSandboxes.length > 0 || evictedSandboxes.length > 0) && (
-                                            <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
-                                                <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                                                    🟢 Running Sandboxes (0)
-                                                </td>
-                                            </tr>
-                                        )}
-
-                                        {runningSandboxes.map(sb => renderTableRow(sb))}
-
-                                        {evictedSandboxes.length > 0 && (
-                                            <>
-                                                <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
-                                                    <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: '#d93025', textTransform: 'uppercase' }}>
-                                                        ⚠️ Evicted / Failed Sandboxes ({evictedSandboxes.length})
-                                                    </td>
-                                                </tr>
-                                                {evictedSandboxes.map(sb => renderTableRow(sb))}
-                                            </>
-                                        )}
-
-                                        {suspendedSandboxes.length > 0 && (
-                                            <>
-                                                <tr style={{ backgroundColor: 'var(--bg-sidebar)', borderTop: '2px solid var(--border-color)' }}>
-                                                    <td colSpan={7} style={{ padding: '10px 16px', fontSize: '0.75rem', fontWeight: 'bold', color: '#856404', textTransform: 'uppercase' }}>
-                                                        ⏸️ Scaled Down Sandboxes ({suspendedSandboxes.length})
-                                                    </td>
-                                                </tr>
-                                                {suspendedSandboxes.map(sb => renderTableRow(sb))}
-                                            </>
-                                        )}
-
-                                        {runningSandboxes.length === 0 && evictedSandboxes.length === 0 && suspendedSandboxes.length === 0 && (
-                                            <tr>
-                                                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                                    No sandboxes match your current filter or repo.
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    );
-                })() : (
+                ) : activeOverseer ? (
+                    <OverseerWork overseer={activeOverseer.metadata.name} />
+                ) : (
                     <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-card)', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
                         <h3 style={{ margin: '0 0 10px 0', fontSize: '1.3rem', color: 'var(--text-secondary)' }}>Welcome to the Overseer Factory Control Center</h3>
                         <p style={{ margin: 0, fontSize: '0.95rem', maxWidth: '600px', display: 'inline-block', lineHeight: '1.6' }}>
