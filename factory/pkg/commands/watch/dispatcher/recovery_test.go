@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 )
 
@@ -483,5 +485,51 @@ func TestRecover_AdoptsTaskInterruptedByShutdown(t *testing.T) {
 	outcomes := coordinator.outcomes()
 	if len(outcomes) != 1 || outcomes[0] != nil {
 		t.Errorf("expected a single success notification from adoption, got %v", outcomes)
+	}
+}
+
+// A review applies its result from the factory process that started it,
+// once the run ends. That process died with the previous watcher, so
+// recovery requeues the task, running or finished, rather than adopting
+// it or moving it to processed: under the same run name the requeued one
+// follows the run and submits the review, or finds it submitted.
+func TestRecover_RequeuesReviewSoItsResultIsApplied(t *testing.T) {
+	for name, state := range map[string]string{"running": "running", "finished": "completed"} {
+		t.Run(name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			d, queue, sandboxes, coordinator, _ := testDispatcher(t, tempDir, nil)
+			if state == "running" {
+				sandboxes.running["sandbox"] = true
+			} else {
+				sandboxes.completed["sandbox"] = true
+			}
+			body := "type: pr-review\nnumber: 55\nstatus: Running\nurl: https://github.com/test-owner/test-repo/pull/55\ncommitSHA: abcdef0123\ncreatedAt: 2026-10-11T07:00:00Z\nenqueuedAt: 2026-10-11T07:00:01Z\n"
+			if err := os.WriteFile(filepath.Join(tempDir, "processing", "task-pr-55-review.yaml"), []byte(body), 0644); err != nil {
+				t.Fatal(err)
+			}
+			before := reviewRunName(&api.QueueTask{Number: 55, CommitSHA: "abcdef0123", EnqueuedAt: time.Date(2026, 10, 11, 7, 0, 1, 0, time.UTC)})
+
+			d.Recover(context.Background())
+			d.Wait()
+
+			waitForCounts(t, queue, 1, 0, 0)
+			if d.sandboxLocks.IsBusy("sandbox") {
+				t.Error("the review was adopted: nothing would apply its result")
+			}
+			if outcomes := coordinator.outcomes(); len(outcomes) != 0 {
+				t.Errorf("the review was reported finished before its result was applied: %v", outcomes)
+			}
+			b, err := os.ReadFile(filepath.Join(tempDir, "incoming", "task-pr-55-review.yaml"))
+			if err != nil {
+				t.Fatalf("the review is not back in incoming: %v", err)
+			}
+			var task api.QueueTask
+			if err := yaml.Unmarshal(b, &task); err != nil {
+				t.Fatal(err)
+			}
+			if got := reviewRunName(&task); got != before {
+				t.Errorf("requeued under run name %s, not %s: it would start a second review", got, before)
+			}
+		})
 	}
 }

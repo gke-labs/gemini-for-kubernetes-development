@@ -46,6 +46,9 @@ const (
 //     supervises the task until it finishes.
 //  2. Already finished: the task is moved straight to processed.
 //  3. Gone (failed, evicted or missing): the task is requeued for a fresh attempt.
+//     So is a recipe task whose result its factory process applies
+//     (appliesInCLI), running or finished: its run name makes the requeued
+//     one resume that run rather than start another.
 //  4. Unknown: the sandbox could not be probed, so the task is left in processing
 //     for the next run to triage.
 //
@@ -75,7 +78,16 @@ func (d *Dispatcher) Recover(ctx context.Context) {
 func (d *Dispatcher) recoverTask(ctx context.Context, filename string, task *api.QueueTask) {
 	sandboxName := d.sandboxes.ResolveName(ctx, task.Type, task.Number)
 
-	switch d.triageSandbox(ctx, sandboxName, task.Type) {
+	state := d.triageSandbox(ctx, sandboxName, task.Type)
+	if appliesInCLI(task.Type) && (state == sandboxStateRunning || state == sandboxStateCompleted) {
+		// Its result is applied by the factory process that died with the
+		// previous watcher, after the run ends: adopting the run, or moving
+		// a finished one to processed, would never apply it. Requeued under
+		// the same run name, it follows the run (once the sandbox is free)
+		// and applies it, or finds it applied already.
+		state = sandboxStateGone
+	}
+	switch state {
 	case sandboxStateRunning:
 		d.adoptTask(ctx, filename, task, sandboxName)
 
@@ -289,4 +301,13 @@ func (d *Dispatcher) sandboxProbeRetryDelay() time.Duration {
 // sandbox. PR tasks run in a sandbox already labelled with their PR.
 func opensPR(t api.TaskType) bool {
 	return t == api.TypeIssueFix || t == api.TypeAgentChore
+}
+
+// appliesInCLI reports whether the factory command of a task of this type
+// applies the result of a named recipe run itself (BuildArgs: recipe
+// --run-name --apply). Run again under the same run name, it waits for the
+// run, applies it, or finds it applied already, and never starts a second
+// one.
+func appliesInCLI(t api.TaskType) bool {
+	return t == api.TypePRReview
 }
