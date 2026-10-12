@@ -47,19 +47,17 @@ func allows(rules []rbacv1.PolicyRule, group, resource, verb string) bool {
 }
 
 // TestControllerHoldsWhatItGrants: the controller binds each overseer's
-// service accounts to the ClusterRoles overseer and overseer-sandbox, and
-// Kubernetes refuses a binding that grants what the binder does not hold.
-// A rule added to those roles alone stops every Overseer reconciling.
+// service account to the ClusterRoles overseer (per namespace) and
+// overseer-cluster-reader, and Kubernetes refuses a binding that grants what
+// the binder does not hold. A rule added to those roles alone stops every
+// Overseer reconciling.
 func TestControllerHoldsWhatItGrants(t *testing.T) {
 	controller, ok := clusterRoles(t, "../../k8s/overseer-controller.yaml")["overseer-controller"]
 	if !ok {
 		t.Fatal("no ClusterRole overseer-controller")
 	}
 	granted := clusterRoles(t, "../../k8s/overseer-rbac.yaml")
-	for name, r := range clusterRoles(t, "../../k8s/sandbox-rbac.yaml") {
-		granted[name] = r
-	}
-	for _, name := range []string{"overseer", "overseer-sandbox"} {
+	for _, name := range []string{"overseer", "overseer-cluster-reader"} {
 		role, ok := granted[name]
 		if !ok {
 			t.Fatalf("no ClusterRole %s", name)

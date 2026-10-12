@@ -35,7 +35,7 @@ fi
 # Get resource status
 CURRENT_NS="${NAMESPACE:-overseer-kcc}"
 RESOURCE_STATUS="Pods in $CURRENT_NS:"$'\n'"$(kubectl get pods -n "$CURRENT_NS" --no-headers || true)"$'\n\n'"Sandboxes:"$'\n'
-RESOURCE_STATUS="$RESOURCE_STATUS""$(kubectl get sandboxes.agents.x-k8s.io -A --no-headers || true)"
+RESOURCE_STATUS="$RESOURCE_STATUS""$(kubectl get sandboxes.agents.x-k8s.io -n "$CURRENT_NS" --no-headers || true)"
 
 PROMPT="You are the Overseer Summarizer. Your job is to generate a clear, concise summary report based on the provided logs and resource status.
 

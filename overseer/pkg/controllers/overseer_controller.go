@@ -19,17 +19,25 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	overseerv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/api/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/overseer/pkg/overseer"
@@ -173,104 +181,148 @@ func (r *OverseerReconciler) ensureOverseerRBAC(ctx context.Context, o *overseer
 		}
 	}
 
-	// Add to ClusterRoleBinding "overseer-binding"
-	crb := &rbacv1.ClusterRoleBinding{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-binding"}, crb); err == nil {
-		found := false
+	// The overseer pod runs an LLM agent over untrusted repository content, so
+	// its ServiceAccount must never hold cluster-wide permissions: the
+	// namespaced RoleBinding above is all it gets, plus a read of its own
+	// Namespace object (which is cluster-scoped).
+	if err := r.ensureClusterReaderBinding(ctx, o, namespace); err != nil {
+		return err
+	}
+
+	return r.removeLegacyRBAC(ctx, namespace)
+}
+
+// clusterReaderBindingName names the per-Overseer ClusterRoleBinding to the
+// ClusterRole overseerClusterReaderRole. The ':' cannot appear in an Overseer
+// name, so it cannot collide with a static binding such as overseer-binding.
+func clusterReaderBindingName(namespace string) string {
+	return overseerClusterReaderRole + ":" + namespace
+}
+
+// overseerClusterReaderRole is the ClusterRole (k8s/overseer-rbac.yaml) that
+// holds the few cluster-scoped reads the overseer pod needs.
+const overseerClusterReaderRole = "overseer-cluster-reader"
+
+// ensureClusterReaderBinding binds the overseer pod's ServiceAccount, and only
+// it, to the ClusterRole overseer-cluster-reader. The binding is owned by the
+// Overseer so it is garbage-collected with it.
+func (r *OverseerReconciler) ensureClusterReaderBinding(ctx context.Context, o *overseerv1alpha1.Overseer, namespace string) error {
+	log := log.FromContext(ctx)
+
+	name := clusterReaderBindingName(namespace)
+	subjects := []rbacv1.Subject{{
+		Kind:      "ServiceAccount",
+		Name:      "overseer",
+		Namespace: namespace,
+	}}
+	roleRef := rbacv1.RoleRef{
+		Kind:     "ClusterRole",
+		Name:     overseerClusterReaderRole,
+		APIGroup: "rbac.authorization.k8s.io",
+	}
+
+	desired := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Subjects:   subjects,
+		RoleRef:    roleRef,
+	}
+	if err := controllerutil.SetControllerReference(o, desired, r.Scheme); err != nil {
+		return err
+	}
+
+	existing := &rbacv1.ClusterRoleBinding{}
+	err := r.Get(ctx, types.NamespacedName{Name: name}, existing)
+	if errors.IsNotFound(err) {
+		log.Info("Creating ClusterRoleBinding for overseer pod", "name", name)
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	// roleRef is immutable: recreate the binding if it points elsewhere. If
+	// the delete has not completed yet, Create fails and the reconcile retries.
+	if existing.RoleRef != roleRef {
+		log.Info("Recreating ClusterRoleBinding with unexpected roleRef", "name", name)
+		if err := r.Delete(ctx, existing); err != nil && !errors.IsNotFound(err) {
+			return err
+		}
+		return r.Create(ctx, desired)
+	}
+	if !equality.Semantic.DeepEqual(existing.Subjects, subjects) {
+		log.Info("Resetting ClusterRoleBinding subjects", "name", name)
+		existing.Subjects = subjects
+		return r.Update(ctx, existing)
+	}
+	return nil
+}
+
+// legacyClusterRoleBindings are the shared ClusterRoleBindings that earlier
+// versions of this controller appended every Overseer's ServiceAccounts to,
+// granting them cluster-wide access.
+var legacyClusterRoleBindings = []string{"overseer-binding", "overseer-sandbox"}
+
+// isLegacyOverseerSubject reports whether s is a per-Overseer ServiceAccount
+// that an earlier version of this controller added to a shared
+// ClusterRoleBinding. Static subjects in overseer-system are kept.
+func isLegacyOverseerSubject(s rbacv1.Subject) bool {
+	return s.Kind == "ServiceAccount" &&
+		(s.Name == "overseer" || s.Name == "overseer-sandbox") &&
+		strings.HasPrefix(s.Namespace, "overseer-") &&
+		s.Namespace != "overseer-system"
+}
+
+// removeLegacyRBAC revokes grants made by earlier versions of this controller:
+// per-Overseer subjects in the shared ClusterRoleBindings, and the unused
+// overseer-sandbox ServiceAccount and RoleBinding in the Overseer namespace.
+//
+// TODO: remove removeLegacyRBAC, legacyClusterRoleBindings and the legacy
+// ClusterRoleBinding watch in SetupWithManager once every deployment has run a
+// release containing this migration.
+func (r *OverseerReconciler) removeLegacyRBAC(ctx context.Context, namespace string) error {
+	log := log.FromContext(ctx)
+
+	for _, name := range legacyClusterRoleBindings {
+		crb := &rbacv1.ClusterRoleBinding{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name}, crb); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return err
+		}
+		kept := make([]rbacv1.Subject, 0, len(crb.Subjects))
 		for _, s := range crb.Subjects {
-			if s.Kind == "ServiceAccount" && s.Name == "overseer" && s.Namespace == namespace {
-				found = true
-				break
+			if !isLegacyOverseerSubject(s) {
+				kept = append(kept, s)
 			}
 		}
-		if !found {
-			log.Info("Adding ServiceAccount to overseer-binding ClusterRoleBinding", "namespace", namespace)
-			crb.Subjects = append(crb.Subjects, rbacv1.Subject{
-				Kind:      "ServiceAccount",
-				Name:      "overseer",
-				Namespace: namespace,
-			})
+		if len(kept) != len(crb.Subjects) {
+			log.Info("Removing per-Overseer subjects from ClusterRoleBinding", "name", name, "removed", len(crb.Subjects)-len(kept))
+			crb.Subjects = kept
 			if err := r.Update(ctx, crb); err != nil {
 				return err
 			}
 		}
-	} else if !errors.IsNotFound(err) {
-		return err
 	}
 
-	// --- Overseer Sandbox ---
-	saSandbox := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "overseer-sandbox",
-			Namespace: namespace,
-		},
-	}
-	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox", Namespace: namespace}, saSandbox); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("Creating ServiceAccount for overseer sandbox", "namespace", namespace)
-			if err := r.Create(ctx, saSandbox); err != nil {
-				return err
+	for _, legacy := range []struct {
+		obj  client.Object
+		name string
+	}{
+		{&rbacv1.RoleBinding{}, "overseer-sandbox-binding"},
+		{&corev1.ServiceAccount{}, "overseer-sandbox"},
+	} {
+		if err := r.Get(ctx, types.NamespacedName{Name: legacy.name, Namespace: namespace}, legacy.obj); err != nil {
+			if errors.IsNotFound(err) {
+				continue
 			}
-		} else {
 			return err
 		}
-	}
-
-	// RoleBinding to the cluster role "overseer-sandbox"
-	rbSandbox := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "overseer-sandbox-binding",
-			Namespace: namespace,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      "overseer-sandbox",
-				Namespace: namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     "overseer-sandbox",
-			APIGroup: "rbac.authorization.k8s.io",
-		},
-	}
-	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox-binding", Namespace: namespace}, rbSandbox); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("Creating RoleBinding for overseer sandbox", "namespace", namespace)
-			if err := r.Create(ctx, rbSandbox); err != nil {
-				return err
-			}
-		} else {
+		if err := r.Delete(ctx, legacy.obj); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
+		log.Info("Deleted unused overseer-sandbox RBAC object", "kind", fmt.Sprintf("%T", legacy.obj), "name", legacy.name, "namespace", namespace)
 	}
-
-	// Add to ClusterRoleBinding "overseer-sandbox"
-	crbSandbox := &rbacv1.ClusterRoleBinding{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "overseer-sandbox"}, crbSandbox); err == nil {
-		found := false
-		for _, s := range crbSandbox.Subjects {
-			if s.Kind == "ServiceAccount" && s.Name == "overseer-sandbox" && s.Namespace == namespace {
-				found = true
-				break
-			}
-		}
-		if !found {
-			log.Info("Adding ServiceAccount to overseer-sandbox ClusterRoleBinding", "namespace", namespace)
-			crbSandbox.Subjects = append(crbSandbox.Subjects, rbacv1.Subject{
-				Kind:      "ServiceAccount",
-				Name:      "overseer-sandbox",
-				Namespace: namespace,
-			})
-			if err := r.Update(ctx, crbSandbox); err != nil {
-				return err
-			}
-		}
-	} else if !errors.IsNotFound(err) {
-		return err
-	}
-
 	return nil
 }
 
@@ -503,5 +555,41 @@ func (r *OverseerReconciler) copySecret(ctx context.Context, name string, fromNa
 func (r *OverseerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&overseerv1alpha1.Overseer{}).
+		// Revert drift on each Overseer's overseer-cluster-reader binding.
+		Owns(&rbacv1.ClusterRoleBinding{}).
+		// An older controller (e.g. still running during a rolling upgrade)
+		// re-adds per-Overseer subjects to the shared bindings; reconcile so
+		// removeLegacyRBAC takes them out again.
+		Watches(
+			&rbacv1.ClusterRoleBinding{},
+			handler.EnqueueRequestsFromMapFunc(r.overseersForLegacyBinding),
+			builder.WithPredicates(predicate.NewPredicateFuncs(isLegacyClusterRoleBinding)),
+		).
 		Complete(r)
+}
+
+// isLegacyClusterRoleBinding reports whether obj is one of
+// legacyClusterRoleBindings.
+func isLegacyClusterRoleBinding(obj client.Object) bool {
+	return slices.Contains(legacyClusterRoleBindings, obj.GetName())
+}
+
+// overseersForLegacyBinding enqueues every Overseer when a legacy shared
+// ClusterRoleBinding gains a per-Overseer subject. Any one reconcile removes
+// them all, but every Overseer is enqueued so none is missed.
+func (r *OverseerReconciler) overseersForLegacyBinding(ctx context.Context, obj client.Object) []reconcile.Request {
+	crb, ok := obj.(*rbacv1.ClusterRoleBinding)
+	if !ok || !slices.ContainsFunc(crb.Subjects, isLegacyOverseerSubject) {
+		return nil
+	}
+	var overseers overseerv1alpha1.OverseerList
+	if err := r.List(ctx, &overseers); err != nil {
+		log.FromContext(ctx).Error(err, "Listing Overseers for legacy ClusterRoleBinding", "name", crb.Name)
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(overseers.Items))
+	for _, o := range overseers.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: o.Name}})
+	}
+	return reqs
 }
