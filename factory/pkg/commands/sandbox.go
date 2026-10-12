@@ -13,6 +13,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -97,7 +98,7 @@ func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
 	var flags SandboxLogsFlags
 	cmd := &cobra.Command{
 		Use:   "logs [sandbox-name]",
-		Short: "Stream task execution logs or envd daemon logs",
+		Short: "Stream the latest task's log, or the sandbox daemon's",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			sandboxName := args[0]
@@ -117,17 +118,25 @@ func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
 				return cmd.Run()
 			}
 
-			client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
+			// The newest task's log, through the sandbox's task server,
+			// followed until the task ends.
+			sb, err := taskapi.ConnectServer(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
-				return fmt.Errorf("connecting to sandbox: %w", err)
+				return fmt.Errorf("connecting to sandbox %s's task server: %w", sandboxName, err)
 			}
-			defer client.Close()
-
-			fmt.Println("Streaming latest execution log...")
-			return client.RunTask(ctx, "tail -f $(ls -td /workspaces/tasks/* 2>/dev/null | head -1)/execution.log", nil)
+			defer sb.Close()
+			entries, err := sb.List(ctx)
+			if err != nil {
+				return err
+			}
+			if len(entries) == 0 {
+				return fmt.Errorf("sandbox %s has run no task", sandboxName)
+			}
+			fmt.Fprintf(os.Stderr, "Streaming task %s's log...\n", entries[0].ID)
+			return sb.FollowLog(ctx, entries[0].ID, os.Stdout)
 		},
 	}
-	cmd.Flags().BoolVar(&flags.Daemon, "daemon", false, "Stream envd daemon logs instead of task execution logs")
+	cmd.Flags().BoolVar(&flags.Daemon, "daemon", false, "Stream the sandbox daemon's logs (the pod's) instead of the latest task's")
 	return cmd
 }
 
@@ -353,23 +362,15 @@ Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [
 			if err := validateSandboxName(sandboxName); err != nil {
 				return err
 			}
-			execArgs := strings.Join(args[1:], " ")
-
-			client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
-				return fmt.Errorf("connecting to sandbox: %w", err)
+				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
-			defer client.Close()
-
-			envMap := make(map[string]string)
-			for _, e := range flags.Envs {
-				parts := strings.SplitN(e, "=", 2)
-				if len(parts) == 2 {
-					envMap[parts[0]] = parts[1]
-				}
-			}
-
-			return client.Exec(ctx, execArgs, flags.Cwd, envMap, os.Stdin, os.Stdout, os.Stderr)
+			cmd := exec.CommandContext(ctx, "kubectl", sandboxExecArgs(rootFlags.Namespace, podName, flags.Cwd, flags.Envs, strings.Join(args[1:], " "))...)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			return cmd.Run()
 		},
 	}
 	cmd.Flags().StringArrayVarP(&flags.Envs, "env", "e", nil, "Environment variables to set (e.g. -e KEY=VALUE)")
@@ -628,4 +629,18 @@ func NewSandboxResumeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Resume all sandboxes in the namespace")
 	return cmd
+}
+
+// sandboxExecArgs are kubectl's arguments to run command in the sandbox's
+// pod, in cwd, with envs (KEY=VALUE; others are dropped), stdin attached.
+// cwd and command reach the shell as arguments, never as source, so
+// neither needs quoting.
+func sandboxExecArgs(namespace, pod, cwd string, envs []string, command string) []string {
+	args := []string{"exec", "-i", "-n", namespace, pod, "-c", "sandbox", "--", "env"}
+	for _, e := range envs {
+		if k, _, ok := strings.Cut(e, "="); ok && k != "" {
+			args = append(args, e)
+		}
+	}
+	return append(args, "sh", "-c", `cd "$0" && exec sh -c "$1"`, cwd, command)
 }
