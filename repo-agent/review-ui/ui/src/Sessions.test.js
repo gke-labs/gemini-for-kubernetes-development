@@ -104,7 +104,10 @@ describe('Sessions', () => {
         // One line a row: state, engine, recipe, item, repo, age; what the
         // agent is doing and the sandbox are its hover.
         const rebase = Array.from(container.querySelectorAll('button')).find(b => b.textContent.startsWith('●Rebase'));
-        expect(rebase.textContent).toBe('●RebasePR #1774 ↗g4k0m');
+        expect(rebase.textContent).toBe('●Rebase#1774g4k0m');
+        // One size for all of it, no link: the item's link is in the strip.
+        expect(rebase.style.fontSize).toBe('x-small');
+        expect(rebase.querySelector('a')).toBeNull();
         expect(rebase.title).toBe('Rebase · working · fix-g4k-1774');
         const asking = Array.from(container.querySelectorAll('button')).find(b => b.textContent.includes('reconciler deletes'));
         expect(asking.title).toBe('reconciler deletes · ⚠ asking permission · rsch-kcc-3f2a');
