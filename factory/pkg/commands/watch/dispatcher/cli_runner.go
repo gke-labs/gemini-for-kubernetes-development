@@ -71,8 +71,6 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	switch t.Type {
 	case api.TypeIssueFix:
 		args = []string{"fix", "--url", t.URL, "--instruction", "Fix this issue"}
-	case api.TypePRInvestigate:
-		args = []string{"pr", "investigate", "--pr-url", t.URL}
 	case api.TypePRComments:
 		args = []string{"pr", "address-comments", "--pr-url", t.URL}
 	case api.TypePRIterate:

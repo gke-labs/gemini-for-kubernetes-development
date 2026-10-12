@@ -74,7 +74,8 @@ func TestServiceIsTaskCompleted(t *testing.T) {
 	}{
 		{api.TypePRComments, "address-comments", "Completed", true},
 		{api.TypePRComments, "address-comments", "Running", false},
-		{api.TypePRInvestigate, "investigate", "Completed", true},
+		{api.TypePRInvestigate, "recipe-care-ci", "Completed", true},
+		{api.TypePRInvestigate, "investigate", "Completed", false},
 		{api.TypePRIterate, "iterate", "Completed", true},
 		{api.TypePRReview, "recipe-review", "Completed", true},
 		{api.TypePRReview, "review", "Completed", false},
@@ -192,6 +193,34 @@ func TestServiceResolveNamePRTaskFollowsFactoryPR(t *testing.T) {
 		{"not another repo's", []*unstructured.Unstructured{labelled("factory-pr-other-55", map[string]interface{}{"repo": "other"})}, "factory-pr-test-repo-55"},
 		{"the PR's fix sandbox first", []*unstructured.Unstructured{labelled("factory-pr-test-repo-55", map[string]interface{}{"repo": "test-repo"}), fixSandbox}, "fix-test-repo-50"},
 		{"not a terminating one", []*unstructured.Unstructured{dying}, "factory-pr-test-repo-55"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{
+				Kube: newFakeKubeClient(t, tc.sandboxes...),
+			})
+			if got := svc.ResolveName(context.Background(), api.TypePRComments, 55); got != tc.want {
+				t.Errorf("ResolveName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A recipe on a PR (care-ci) runs in the PR's fix sandbox, the one
+// `factory recipe` (EnsurePRSandbox) picks: never a factory-pr-* one.
+func TestServiceResolveNamePRRecipeFollowsFixSandbox(t *testing.T) {
+	const prURL = "https://github.com/test-owner/test-repo/pull/55"
+	fixSandbox := newSandbox("fix-test-repo-50", map[string]interface{}{"repo": "test-repo", "htmlURL": prURL})
+	fixSandbox.SetLabels(map[string]string{labelPR: "55"})
+
+	tests := []struct {
+		name      string
+		sandboxes []*unstructured.Unstructured
+		want      string
+	}{
+		{"none: the PR's own fix name", nil, "fix-test-repo-55"},
+		{"not a factory-pr one", []*unstructured.Unstructured{newSandbox("factory-pr-test-repo-55", nil)}, "fix-test-repo-55"},
+		{"the PR's fix sandbox", []*unstructured.Unstructured{fixSandbox}, "fix-test-repo-50"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

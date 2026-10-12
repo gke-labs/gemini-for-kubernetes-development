@@ -1,5 +1,6 @@
 # factory recipe care-ci --url <PR>: fixes the checks a pull request of
-# yours broke. factory pr watch runs it on failed checks.
+# yours broke. factory pr watch runs it on failed checks, and so does
+# factory watch (the overseer), applying post-replies.
 #
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
@@ -13,7 +14,7 @@
 # and never pushes; the push step pushes to the PR's branch on your fork,
 # leased against the head the PR had, so a commit someone else pushed
 # meanwhile is never overwritten. Its Change carries the replies and
-# report post-replies posts on the PR.
+# report post-replies posts on the PR, and the checks it reruns.
 name: care-ci
 label: Fix CI
 on: [my-pr]
@@ -91,7 +92,13 @@ start:
 
           If this change caused a failure, fix it and commit. If it did
           not (a flaky test, an outage, a failure on the default branch
-          too), change nothing and say so.
+          too), change nothing and say so; a flaky check or an outage you
+          then ask to run again, next, rather than rerunning it yourself.
+
+        Keep the history clean: a small fix to an earlier commit of the
+        pull request goes into it (`git commit --fixup` and an autosquash
+        rebase, or `--amend` for the last one) rather than in a commit of
+        its own. To bring in upstream changes, rebase; never merge.
 
         Commit, never push; do NOT comment on GitHub yourself: factory
         posts the replies you write next.
@@ -116,11 +123,22 @@ start:
             For the PR's reviewers: what you did, such as what conflicted
             and how you resolved it, or which checks failed, why, and what
             you changed.
+          rerun:
+            - run: 123456789
+            - retest: /test pull-job-name
 
         Rules:
         - inReplyTo is the numeric `id` of a comment you answer, from the
           `gh api` output: a review comment's or a conversation comment's.
           One reply per comment you answer; none if you answered none.
+        - rerun lists the failed checks to run again because they failed
+          through no fault of this change (a flaky test, an outage), and
+          only if you committed nothing for them: `run:` is a GitHub
+          Actions run's numeric id, from its check's link
+          (`gh pr checks {{ file "pr" }} --json name,link`:
+          …/actions/runs/<id>/job/…), whose failed jobs rerun; `retest:`
+          is a Prow command, `/test <job>` with the check's name, or
+          `/retest` for all of them. Leave rerun out otherwise.
         - Leave out report if there is nothing to report, and write
           `change: {}` if there is nothing at all.
         - Add `title:` and `body:` (the whole new description, keeping its

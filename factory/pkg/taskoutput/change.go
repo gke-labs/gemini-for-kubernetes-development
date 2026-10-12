@@ -32,7 +32,23 @@ type Change struct {
 	Replies []Reply `yaml:"replies,omitempty"`
 	// Report is a PR comment (fix-ci).
 	Report string `yaml:"report,omitempty"`
+	// Rerun asks for checks that failed through no fault of the change (a
+	// flake, an outage) to run again, as post-replies applies them: the
+	// agent never reruns anything itself.
+	Rerun []Rerun `yaml:"rerun,omitempty"`
 }
+
+// Rerun is one check to run again: a GitHub Actions run, whose failed
+// jobs are rerun, or a Prow command commented on the PR.
+type Rerun struct {
+	// Run is a GitHub Actions run of the PR's head.
+	Run int64 `yaml:"run,omitempty"`
+	// Retest is "/retest" or "/test <job>".
+	Retest string `yaml:"retest,omitempty"`
+}
+
+// retestRE is the Prow commands a Rerun may comment, and nothing more.
+var retestRE = regexp.MustCompile(`^/(retest|test [A-Za-z0-9._-]+)$`)
 
 // Reply is an answer to one comment on the PR.
 type Reply struct {
@@ -168,6 +184,13 @@ func parseChange(raw string) (any, error) {
 		}
 	}
 	c.Replies = replies
+	var reruns []Rerun
+	for _, r := range c.Rerun {
+		if r.Retest = strings.TrimSpace(r.Retest); r.Run > 0 || r.Retest != "" {
+			reruns = append(reruns, r)
+		}
+	}
+	c.Rerun = reruns
 	// A revise's may have no title: it keeps the PR's (KeepTitle), and
 	// ChangeSpec refuses a Change that still has none.
 	return c, nil
@@ -254,15 +277,16 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 // thread, a reply to a conversation comment as a new comment quoting and
 // linking it (GitHub has no threads there), and the report as a PR
 // comment. Each carries a marker of the task and the comment it answers,
-// so a retried apply posts nothing twice. A Change with neither — a
-// start's — posts nothing.
+// so a retried apply posts nothing twice. It then reruns the checks the
+// Change asks to (applyReruns). A Change with none of these — a start's —
+// posts nothing.
 func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, dryRun bool, out io.Writer) error {
 	c, err := doc.ChangeSpec()
 	if err != nil {
 		return err
 	}
-	if len(c.Replies) == 0 && c.Report == "" {
-		fmt.Fprintln(out, "The Change has no replies or report; nothing to post")
+	if len(c.Replies) == 0 && c.Report == "" && len(c.Rerun) == 0 {
+		fmt.Fprintln(out, "The Change has no replies, report or reruns; nothing to post")
 		return nil
 	}
 	owner, repo, num, err := prTarget(doc)
@@ -274,7 +298,14 @@ func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, 
 			return fmt.Errorf("replying to comment %d: %w", r.InReplyTo, err)
 		}
 	}
-	if c.Report == "" {
+	if err := postReport(ctx, gh, doc, owner, repo, num, c.Report, dryRun, out); err != nil {
+		return err
+	}
+	return applyReruns(ctx, gh, doc, owner, repo, num, c.Rerun, dryRun, out)
+}
+
+func postReport(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, report string, dryRun bool, out io.Writer) error {
+	if report == "" {
 		return nil
 	}
 	if doc.Source.Task != "" {
@@ -287,15 +318,96 @@ func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, 
 			return nil
 		}
 	}
-	fmt.Fprintf(out, "%s the report on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(c.Report))
+	fmt.Fprintf(out, "%s the report on %s:\n%s\n", doing(dryRun, "Commenting", "comment"), doc.Target.URL, indent(report))
 	if dryRun {
 		return nil
 	}
-	body := c.Report + marker(doc)
+	body := report + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("commenting the report on #%d: %w", num, err)
 	}
 	return nil
+}
+
+// applyReruns runs again the checks a Change asks to, on PR num:
+//   - a GitHub Actions run's failed jobs, if the run is of the PR's head
+//     now and failed; one queued or running again, or that passed, is left
+//     alone, so a retried apply does not rerun it twice;
+//   - a Prow command ("/retest", "/test <job>"; anything else is only
+//     warned about), as a comment carrying a marker of the task, posted
+//     once.
+func applyReruns(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, reruns []Rerun, dryRun bool, out io.Writer) error {
+	if len(reruns) == 0 {
+		return nil
+	}
+	pr, _, err := gh.PullRequests.Get(ctx, owner, repo, num)
+	if err != nil {
+		return fmt.Errorf("fetching #%d: %w", num, err)
+	}
+	head := pr.GetHead().GetSHA()
+	for i, r := range reruns {
+		switch {
+		case r.Run > 0:
+			if err := rerunFailedJobs(ctx, gh, owner, repo, r.Run, head, dryRun, out); err != nil {
+				return fmt.Errorf("rerunning run %d: %w", r.Run, err)
+			}
+		case retestRE.MatchString(r.Retest):
+			mark := ""
+			if doc.Source.Task != "" {
+				mark = fmt.Sprintf("\n\n<!-- factory:task-output kind=%s task=%s rerun=%d -->", doc.Kind, doc.Source.Task, i)
+				posted, err := hasComment(ctx, gh, owner, repo, num, mark)
+				if err != nil {
+					return err
+				}
+				if posted {
+					fmt.Fprintf(out, "Task %s's %s is already on %s; not commenting it again\n", doc.Source.Task, r.Retest, doc.Target.URL)
+					continue
+				}
+			}
+			fmt.Fprintf(out, "%s %s on %s\n", doing(dryRun, "Commenting", "comment"), r.Retest, doc.Target.URL)
+			if dryRun {
+				continue
+			}
+			body := r.Retest + mark
+			if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
+				return fmt.Errorf("commenting %s on #%d: %w", r.Retest, num, err)
+			}
+		default:
+			fmt.Fprintf(out, "Warning: rerun %q is neither a run nor /retest or /test <job>; not commenting it\n", r.Retest)
+		}
+	}
+	return nil
+}
+
+// rerunFailedJobs reruns the failed jobs of GitHub Actions run id, if it
+// is of head and failed.
+func rerunFailedJobs(ctx context.Context, gh *githubv39.Client, owner, repo string, id int64, head string, dryRun bool, out io.Writer) error {
+	run, _, err := gh.Actions.GetWorkflowRunByID(ctx, owner, repo, id)
+	if err != nil {
+		return err
+	}
+	switch {
+	case run.GetHeadSHA() != head:
+		fmt.Fprintf(out, "Run %d (%s) is of %.7s, not of the PR's head %.7s; not rerunning it\n", id, run.GetName(), run.GetHeadSHA(), head)
+		return nil
+	case run.GetStatus() != "completed":
+		fmt.Fprintf(out, "Run %d (%s) is %s already; not rerunning it\n", id, run.GetName(), run.GetStatus())
+		return nil
+	case run.GetConclusion() == "success":
+		fmt.Fprintf(out, "Run %d (%s) passed; not rerunning it\n", id, run.GetName())
+		return nil
+	}
+	fmt.Fprintf(out, "%s the failed jobs of run %d (%s): %s\n", doing(dryRun, "Rerunning", "rerun"), id, run.GetName(), run.GetHTMLURL())
+	if dryRun {
+		return nil
+	}
+	// go-github v39 has no call for it.
+	req, err := gh.NewRequest(http.MethodPost, fmt.Sprintf("repos/%s/%s/actions/runs/%d/rerun-failed-jobs", owner, repo, id), nil)
+	if err != nil {
+		return err
+	}
+	_, err = gh.Do(ctx, req, nil)
+	return err
 }
 
 // replyMarker marks a reply by its task and the comment it answers.
