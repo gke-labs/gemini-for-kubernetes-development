@@ -40,10 +40,10 @@
 - **Fan-out spec.** `factory recipe fanout --url <issue>` writes a fan-out spec (see *One task, many items*) for an issue that lists one task for many items, as a task output. `--apply` adds the fan-out and stop labels and posts it as the spec comment, for maintainers to edit before they remove the stop label.
 - **Actions.** A task output lists what can be done with it (`actions:`, declared by the recipe): a triage offers edit, label, comment and reject; a plan offers edit, comment, `run: fix` and reject. `factory apply -f <output> --action <verb>` does one of them; `--action run:fix` writes the plan, as edited, to the issue's sandbox and runs `factory fix --with-plan`.
 - **PR lifecycle.**
-  - `pr investigate` works on CI failures.
+  - `recipe care-ci` works on CI failures of a PR of yours (the overseer runs it with `--apply --action post-replies`).
   - `pr address-comments` handles review feedback.
   - `pr iterate` rebases and resolves conflicts.
-  - `pr watch` loops over all of the above for one PR until it merges or closes.
+  - `pr watch` follows up with care for one PR until it merges or closes.
 - **Session continuity.** A sandbox is aliased to its PR with the `factory.gemini.google.com/pr` label. Follow-up PR tasks therefore reuse the sandbox that wrote the code, and `--continue-session` keeps the agent's chat history.
 - **Adoption.** `pr adopt open|close` takes over a PR the bot can't push to. `--strategy reuse` copies the commits; `--strategy reimplement` re-implements the change on the latest base. PR tasks on PRs the bot doesn't own fail until the PR is adopted.
 - **Custom agents.** `factory agent create` runs an agent definition from the repository's `.agents/`, or a local file with `--local`. A definition is YAML front-matter plus a prompt, and the same definitions drive scheduled chores. `--dry-run` simulates the run without invoking the agent.
@@ -229,10 +229,10 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe research` | Start a research conversation in a sandbox; `recipe revise` continues it |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
-| `pr investigate` | Investigate and fix CI failures on a PR |
+| `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
 | `pr address-comments` | Address review feedback on a PR |
 | `pr iterate` | Rebase, resolve conflicts, or apply a `--prompt` |
-| `pr watch` | Loop over investigate / address-comments for one PR |
+| `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |
 | `run plan\|deploy\|teardown` | Runbook-driven deployments (`--runbook`, `--target`) |

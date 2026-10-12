@@ -13,9 +13,6 @@ func TestDiscloseGatesAttribution(t *testing.T) {
 		"fix": func(d bool) ([]byte, error) {
 			return RenderFixIssuePrompt(FixIssueParams{PRLabel: "factory", TriggerLabel: "factory", Disclose: d})
 		},
-		"investigate": func(d bool) ([]byte, error) {
-			return RenderInvestigatePrompt(InvestigateParams{TriggerLabel: "factory", Disclose: d})
-		},
 		"address-comments": func(d bool) ([]byte, error) {
 			return RenderAddressFeedbackPrompt(AddressFeedbackParams{TriggerLabel: "factory", Disclose: d})
 		},

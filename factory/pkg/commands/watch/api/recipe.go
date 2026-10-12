@@ -21,7 +21,8 @@ type RecipeTask struct {
 // recipeTasks are the task types that run as recipes. The others run
 // the classic factory commands.
 var recipeTasks = map[TaskType]RecipeTask{
-	TypePRReview: {Recipe: "review", Action: "submit-review", RunPrefix: "review", OwnSandbox: true},
+	TypePRReview:      {Recipe: "review", Action: "submit-review", RunPrefix: "review", OwnSandbox: true},
+	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
 }
 
 // RecipeTaskOf is how tasks of type t run as a recipe, if they do.

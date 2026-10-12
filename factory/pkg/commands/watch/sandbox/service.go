@@ -496,8 +496,6 @@ func sandboxTaskType(taskType api.TaskType) string {
 		return "agent"
 	case api.TypePRComments:
 		return "address-comments"
-	case api.TypePRInvestigate:
-		return "investigate"
 	case api.TypePRIterate:
 		return "iterate"
 	default:

@@ -223,6 +223,18 @@ type fakeThreads struct {
 }
 
 func (f *fakeThreads) client(t *testing.T) *githubv39.Client {
+	return serve(t, f.mux())
+}
+
+func serve(t *testing.T, mux *http.ServeMux) *githubv39.Client {
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+	return gh
+}
+
+func (f *fakeThreads) mux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/o/r/pulls/comments/100", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"id":100,"pull_request_url":"https://api.github.com/repos/o/r/pulls/12","html_url":"https://github.com/o/r/pull/12#discussion_r100"}`)
@@ -256,11 +268,7 @@ func (f *fakeThreads) client(t *testing.T) *githubv39.Client {
 		}
 		_ = json.NewEncoder(w).Encode(f.issue)
 	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	gh := githubv39.NewClient(nil)
-	gh.BaseURL, _ = url.Parse(srv.URL + "/")
-	return gh
+	return mux
 }
 
 func reviseChange(t *testing.T, raw string) *Document {
@@ -372,4 +380,83 @@ func TestWrapChangeUnquotedTitle(t *testing.T) {
 			t.Errorf("quotePlainTitle(%q) = %q", in, got)
 		}
 	}
+}
+
+// fakeChecks is GitHub for reruns on o/r#12, whose head is h2: run 1 of
+// h2 failed, run 2 of h2 is running again, run 3 of h1 failed, run 4 of
+// h2 passed.
+type fakeChecks struct {
+	fakeThreads
+	reran []string
+}
+
+func (f *fakeChecks) client(t *testing.T) *githubv39.Client {
+	mux := f.fakeThreads.mux()
+	mux.HandleFunc("/repos/o/r/pulls/12", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number":12,"head":{"sha":"h2"}}`)
+	})
+	runs := map[string]string{
+		"1": `{"id":1,"name":"ci","head_sha":"h2","status":"completed","conclusion":"failure"}`,
+		"2": `{"id":2,"name":"ci","head_sha":"h2","status":"in_progress"}`,
+		"3": `{"id":3,"name":"ci","head_sha":"h1","status":"completed","conclusion":"failure"}`,
+		"4": `{"id":4,"name":"ci","head_sha":"h2","status":"completed","conclusion":"success"}`,
+	}
+	mux.HandleFunc("/repos/o/r/actions/runs/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/repos/o/r/actions/runs/")
+		if id, ok := strings.CutSuffix(rest, "/rerun-failed-jobs"); ok && r.Method == http.MethodPost {
+			f.reran = append(f.reran, id)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		fmt.Fprint(w, runs[rest])
+	})
+	return serve(t, mux)
+}
+
+func TestPostRepliesReruns(t *testing.T) {
+	ctx := context.Background()
+	const reruns = "change:\n  report: A flake.\n  rerun:\n    - run: 1\n    - run: 2\n    - run: 3\n    - run: 4\n    - retest: /test pull-unit\n    - retest: /retest\n    - retest: /lgtm\n    - retest: \"/test a; rm\"\n"
+
+	t.Run("failed runs of the head, Prow commands once", func(t *testing.T) {
+		doc := reviseChange(t, reruns)
+		f := &fakeChecks{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if strings.Join(f.reran, ",") != "1" {
+			t.Errorf("reran %v, want [1]:\n%s", f.reran, out.String())
+		}
+		var bodies []string
+		for _, c := range f.issue {
+			body, _, _ := strings.Cut(c["body"].(string), "\n")
+			bodies = append(bodies, body)
+		}
+		if strings.Join(bodies, "|") != "A flake.|/test pull-unit|/retest" {
+			t.Errorf("commented %q:\n%s", bodies, out.String())
+		}
+		if !strings.Contains(out.String(), `"/lgtm" is neither`) {
+			t.Errorf("no warning for /lgtm:\n%s", out.String())
+		}
+		// Applied again: the comments are there; run 1 would be running
+		// again on GitHub.
+		f.reran = nil
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.issue) != 3 {
+			t.Errorf("commented again: %d comments", len(f.issue))
+		}
+	})
+
+	t.Run("dry run reruns nothing", func(t *testing.T) {
+		f := &fakeChecks{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), reviseChange(t, reruns), "post-replies", true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.reran)+len(f.issue) != 0 || !strings.Contains(out.String(), "Would rerun the failed jobs of run 1") {
+			t.Errorf("reran %v, commented %d:\n%s", f.reran, len(f.issue), out.String())
+		}
+	})
 }
