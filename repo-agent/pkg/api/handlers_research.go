@@ -505,17 +505,14 @@ func (s *Server) researchPod(ctx context.Context, namespace, sandboxName string)
 	return nil, nil
 }
 
-// engineAPIKey reads the member's engine credential.
+// engineAPIKeyFrom reads the engine credential in namespace's secret
+// secretName: the member's factory-user, or an overseer bot's
+// user-<login> (sessionKeySecret).
 //
 // Read fresh on every session create rather than cached: acpd holds the
 // key only until the engine child is spawned and drops it, so this is
 // the only place it lives, and it must be re-supplied after an acpd
 // restart. Caching it here would be a second copy for no gain.
-func (s *Server) engineAPIKey(ctx context.Context, namespace string) (string, error) {
-	return s.engineAPIKeyFrom(ctx, namespace, "factory-user")
-}
-
-// engineAPIKeyFrom is the engine key in namespace's secret secretName.
 func (s *Server) engineAPIKeyFrom(ctx context.Context, namespace, secretName string) (string, error) {
 	secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 	if err != nil {
