@@ -783,6 +783,33 @@ echo "RECORD=$(cat "$TASK_DIR/push.json" 2>/dev/null)"`
 		}
 	})
 
+	t.Run("refuses a rebase left in progress", func(t *testing.T) {
+		conflict := `
+echo a > f && git add f && c f-a && first=$(git rev-parse HEAD)
+git checkout -q -b other HEAD~1 && echo b > f && git add f && c f-b
+git -c user.email=x@x -c user.name=x rebase -q "$first" >/dev/null 2>&1 || true`
+		out, _, err := runLib(t, nil, setup+conflict, "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "a rebase is still in progress") || !strings.Contains(out, "paths are still unmerged") || strings.Contains(out, "PUSHED=f") {
+			t.Fatalf("want the push refused:\n%s", out)
+		}
+	})
+
+	t.Run("refuses commits that add conflict markers", func(t *testing.T) {
+		markers := `
+printf '<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> other\n' > f && git add f && c markers`
+		out, _, err := runLib(t, nil, setup+markers, "pushToFork"+report)
+		if err == nil || !strings.Contains(out, "the commits add conflict markers") || !strings.Contains(out, "f: <<<<<<< HEAD") || strings.Contains(out, "PUSHED=markers") {
+			t.Fatalf("want the push refused:\n%s", out)
+		}
+	})
+
+	t.Run("a heading's underline is not a conflict marker", func(t *testing.T) {
+		out, _, err := runLib(t, nil, setup+`printf 'Heading\n=======\n' > README && git add README && c doc`, "pushToFork"+report)
+		if err != nil || !strings.Contains(out, "PUSHED=doc") {
+			t.Fatalf("want the push to go through: %v\n%s", err, out)
+		}
+	})
+
 	t.Run("a lease on the last pushed head", func(t *testing.T) {
 		out, _, err := runLib(t, nil, setup+`c first && git push -q "$HOME/fork.git" HEAD:refs/heads/issue-7-1 --no-verify && git rev-parse HEAD > "$TASK_DIR/lease" && c second`, "pushToFork"+report)
 		if err != nil || !strings.Contains(out, "PUSHED=second") {
