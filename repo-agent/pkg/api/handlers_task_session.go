@@ -257,7 +257,11 @@ func (s *Server) getTaskSession(c *gin.Context) {
 			body["revises"] = revises
 		}
 	}
-	if draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task); draft != nil {
+	draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task)
+	if draft == nil && inOverseerScope(c) {
+		draft = overseerRunDraft(ctx, conn)
+	}
+	if draft != nil {
 		body["draft"] = draft
 	}
 	if url := pendingReviewURL(conn.sandbox); url != "" {

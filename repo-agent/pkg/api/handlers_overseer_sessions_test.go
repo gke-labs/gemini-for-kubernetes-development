@@ -67,13 +67,22 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox: "SandboxList", repoBoardGVR: "RepoBoardList", requestGVR: "RequestList",
 	})
-	for _, sb := range []*unstructured.Unstructured{overseerSandbox("fix-repo-42", false), overseerSandbox("fix-repo-43", true)} {
+	// fix-repo-44: a care-ci run recorded, with no output stored by a board.
+	care := overseerSandbox("fix-repo-44", false)
+	careRun, _ := json.Marshal(factorycli.RecordedRun{Name: "investigate-44-a-1", Task: "recipe-care-ci-9", Recipe: "care-ci", StartedAt: time.Unix(1_000_100, 0), Kind: "Change", State: "Completed"})
+	if err := unstructured.SetNestedField(care.Object, string(careRun), "metadata", "annotations", "sandbox.gemini.google.com/recipe-care-run"); err != nil {
+		t.Fatal(err)
+	}
+	unstructured.RemoveNestedField(care.Object, "metadata", "annotations", factorycli.AnnotationFixRun)
+	unstructured.RemoveNestedField(care.Object, "metadata", "annotations", factorycli.OutputAnnotation(factorycli.AnnotationFixRun))
+	for _, sb := range []*unstructured.Unstructured{overseerSandbox("fix-repo-42", false), overseerSandbox("fix-repo-43", true), care} {
 		if _, err := dyn.Resource(gvrSandbox).Namespace("overseer-kcc").Create(context.Background(), sb, v1.CreateOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	clientset := kubernetesfake.NewClientset(
 		researchPod("overseer-kcc", "fix-repo-42", "10.1.2.3", corev1.PodRunning),
+		researchPod("overseer-kcc", "fix-repo-44", "10.1.2.4", corev1.PodRunning),
 		// The namespace's factory-user is a tombstone; the bot's key is
 		// the one its runs used.
 		&corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: "factory-user", Namespace: "overseer-kcc"}, Data: map[string][]byte{"GEMINI_API_KEY": []byte("dead-key")}},
@@ -217,5 +226,48 @@ func TestOverseerSessionRoutesAreRegistered(t *testing.T) {
 		if have[gone] {
 			t.Errorf("route %s is registered", gone)
 		}
+	}
+}
+
+// overseerRun is a run in overseer-kcc whose result the board's
+// controller never stored: the session reads it from the run's task
+// directory, with when the overseer's CLI applied it.
+func TestAnOverseerSessionReadsItsRunsResult(t *testing.T) {
+	daemon := &fakeSessions{files: map[string]string{
+		"recipe-care-ci-9/task-output.yaml": "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\n" +
+			"source:\n  task: recipe-care-ci-9\nspec:\n  title: keep settings.tier\n  report: unit-tests failed because the mapper dropped settings.tier\n",
+		"recipe-care-ci-9/task-output.applied": "2026-10-12T12:30:00Z\n",
+	}}
+	r := overseerSessionServer(t, daemon)
+	// The care-ci run, recorded with no stored output.
+	runAt := "/api/overseers/kcc/task-sessions/fix-repo-44/recipe-care-ci-9"
+	w := doAs(t, r, "root", http.MethodGet, runAt, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Draft *struct {
+			Kind      string            `json:"kind"`
+			Spec      string            `json:"spec"`
+			AppliedAt string            `json:"appliedAt"`
+			Actions   []json.RawMessage `json:"actions"`
+		} `json:"draft"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Draft == nil || got.Draft.Kind != "Change" || !strings.Contains(got.Draft.Spec, "mapper dropped settings.tier") ||
+		got.Draft.AppliedAt != "2026-10-12T12:30:00Z" || got.Draft.Actions == nil || len(got.Draft.Actions) != 0 {
+		t.Errorf("session = %s", w.Body.String())
+	}
+	if !daemon.sawCall("GET /tasks/recipe-care-ci-9/files/task-output.yaml") {
+		t.Errorf("the result was not read from the task: %v", daemon.calls)
+	}
+
+	// A run that left none: no draft.
+	daemon.files = nil
+	w = doAs(t, r, "root", http.MethodGet, runAt, "")
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"draft"`) {
+		t.Errorf("no result: %d %s", w.Code, w.Body.String())
 	}
 }

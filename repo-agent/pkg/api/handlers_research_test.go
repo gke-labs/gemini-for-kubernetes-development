@@ -96,6 +96,8 @@ type fakeSessions struct {
 	session *acpd.Session
 	// transcript is what the event stream serves.
 	transcript string
+	// files are the task files the task server serves: "<task>/<name>".
+	files map[string]string
 }
 
 func (f *fakeSessions) record(method, path string) {
@@ -117,6 +119,18 @@ func (f *fakeSessions) sawCall(want string) bool {
 
 func (f *fakeSessions) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /tasks/{id}/files/{name}", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r.Method, "/tasks/"+r.PathValue("id")+"/files/"+r.PathValue("name"))
+		f.mu.Lock()
+		data, ok := f.files[r.PathValue("id")+"/"+r.PathValue("name")]
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"no file"}`))
+			return
+		}
+		_, _ = w.Write([]byte(data))
+	})
 	mux.HandleFunc("GET /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r.Method, "/sessions/"+r.PathValue("id"))
 		f.mu.Lock()
