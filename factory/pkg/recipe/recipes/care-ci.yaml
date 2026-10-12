@@ -95,6 +95,11 @@ start:
           too), change nothing and say so; a flaky check or an outage you
           then ask to run again, next, rather than rerunning it yourself.
 
+        Keep the history clean: a small fix to an earlier commit of the
+        pull request goes into it (`git commit --fixup` and an autosquash
+        rebase, or `--amend` for the last one) rather than in a commit of
+        its own. To bring in upstream changes, rebase; never merge.
+
         Commit, never push; do NOT comment on GitHub yourself: factory
         posts the replies you write next.
         {{- if eq .Inputs.disclose "true" }}
