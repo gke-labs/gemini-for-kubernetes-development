@@ -1,10 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 )
 
 // The Overseer page's sessions and sandbox cards
@@ -76,3 +82,47 @@ func sessionKeySecret(c *gin.Context, sb *unstructured.Unstructured) string {
 }
 
 const labelFactoryUser = "factory.gemini.google.com/user"
+
+// Files a run leaves in its task directory (factory's taskoutput.File and
+// taskoutput.AppliedFile).
+const (
+	taskOutputFile  = "task-output.yaml"
+	taskAppliedFile = "task-output.applied"
+)
+
+// overseerRunDraft is an overseer's run's result, to read: the board's
+// controller stores no draft of an overseer's runs, so it is read from
+// the run's task directory, through the sandbox's task server, with when
+// the overseer's CLI applied it. nil when the run left none, or the task
+// server cannot say.
+func overseerRunDraft(ctx context.Context, conn *taskSessionConn) *taskSessionDraft {
+	run, ok := factorycli.SessionRun(conn.sandbox.GetAnnotations(), conn.task)
+	if !ok || run.Task == "" {
+		return nil
+	}
+	data, err := conn.client.ReadTaskFile(ctx, run.Task, taskOutputFile)
+	if err != nil {
+		return nil
+	}
+	doc := string(data)
+	kind := factorycli.TaskOutputKind(doc)
+	text := factorycli.Draft(kind, doc)
+	if kind == "" || text == "" {
+		return nil
+	}
+	draft := &taskSessionDraft{Kind: kind, Actions: []models.WorkAction{}}
+	if factorycli.DraftIsMarkdown(kind, doc) {
+		draft.Markdown = text
+	} else {
+		draft.Spec = text
+	}
+	if run.EndedAt != nil {
+		draft.DraftedAt = run.EndedAt.UTC().Format(time.RFC3339)
+	}
+	if mark, err := conn.client.ReadTaskFile(ctx, run.Task, taskAppliedFile); err == nil {
+		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(string(mark))); err == nil {
+			draft.AppliedAt = t.UTC().Format(time.RFC3339)
+		}
+	}
+	return draft
+}

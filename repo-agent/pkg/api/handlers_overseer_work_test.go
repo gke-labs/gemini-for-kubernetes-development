@@ -184,7 +184,7 @@ func TestOverseerWorkWithoutTheQueue(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.QueueError == "" || len(got.Items) != 1 || got.Items[0].Key != "issue-42" || len(got.Items[0].Sandboxes) != 2 {
+	if got.QueueError == "" || len(got.Items) != 1 || got.Items[0].Key != "issue-42" || len(got.Items[0].Sandboxes) != 3 {
 		t.Errorf("work = %s", w.Body.String())
 	}
 }

@@ -1773,7 +1773,8 @@ export function ResearchConversation({
               <strong>{sessionDraft.kind} draft</strong>
               {sessionDraft.note && <code>{sessionDraft.note}.md</code>}
               <span style={{ color: 'var(--text-secondary)' }}>
-                {sessionDraft.savedAt ? `saved ${new Date(sessionDraft.savedAt).toLocaleString()}`
+                {sessionDraft.appliedAt ? `applied ${new Date(sessionDraft.appliedAt).toLocaleString()}`
+                  : sessionDraft.savedAt ? `saved ${new Date(sessionDraft.savedAt).toLocaleString()}`
                   : sessionDraft.draftedAt ? `drafted ${new Date(sessionDraft.draftedAt).toLocaleString()}` : ''}
               </span>
               <span style={{ flex: 1 }} />

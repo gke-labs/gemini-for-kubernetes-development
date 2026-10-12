@@ -77,3 +77,25 @@ describe('shared with the Overseer page', () => {
         expect(taskSessionHash({ sandbox: 's', task: 't' }, '/api/overseers/kcc')).toBe('#/overseers/kcc/task-session/s/t');
     });
 });
+
+// An overseer's run's result: read-only (no actions), with when the
+// overseer applied it.
+test('an overseer run\'s result shows when it was applied', async () => {
+    global.fetch = jest.fn((url) => {
+        if (url === '/api/overseers/kcc/task-sessions/fix-r-5/recipe-care-ci-9') {
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+                sessionId: 'recipe-care-ci-9', task: 'recipe-care-ci-9', sandbox: 'fix-r-5', namespace: 'overseer-kcc', live: false,
+                draft: { kind: 'Change', markdown: '', spec: 'report: unit-tests failed', appliedAt: '2026-10-12T12:30:00Z', actions: [] },
+            }) });
+        }
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+    });
+    await act(async () => {
+        root.render(<SessionSlideOver session={{ sandbox: 'fix-r-5', task: 'recipe-care-ci-9' }} onClose={() => {}} apiBase="/api/overseers/kcc" />);
+    });
+    await flush();
+    await flush();
+    expect(container.textContent).toContain('Change draft');
+    expect(container.textContent).toContain('applied ');
+    expect(Array.from(container.querySelectorAll('button')).map(b => b.textContent)).not.toContain('Post replies');
+});

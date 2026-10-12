@@ -55,9 +55,12 @@ type taskSessionDraft struct {
 	DraftedAt string `json:"draftedAt,omitempty"`
 	// SavedAt is when a Notes draft was last pushed to research/notes, and
 	// Note the file it went to.
-	SavedAt string              `json:"savedAt,omitempty"`
-	Note    string              `json:"note,omitempty"`
-	Actions []models.WorkAction `json:"actions"`
+	SavedAt string `json:"savedAt,omitempty"`
+	Note    string `json:"note,omitempty"`
+	// AppliedAt is when an overseer's CLI applied the run's result, from
+	// the mark it leaves beside it (overseerRunDraft).
+	AppliedAt string              `json:"appliedAt,omitempty"`
+	Actions   []models.WorkAction `json:"actions"`
 
 	// runKey is the run the draft is the output of, for a kind the board
 	// keeps no draft of its own for (anyDraft); board and number are

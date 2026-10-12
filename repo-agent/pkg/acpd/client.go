@@ -208,6 +208,37 @@ func (c *Client) Cancel(ctx context.Context, id string) error {
 }
 
 // do issues one short request. A nil out discards the body.
+// maxTaskFile bounds ReadTaskFile: a task's result is a YAML document of
+// a few kilobytes, and an unbounded read would let a runaway file consume
+// the caller's memory.
+const maxTaskFile = 1 << 20
+
+// ReadTaskFile is the file name in task id's directory, as the daemon's
+// task server serves it: its result (task-output.yaml), or the mark that
+// it was applied (task-output.applied). A missing file is ErrNotFound.
+func (c *Client) ReadTaskFile(ctx context.Context, id, name string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/tasks/"+url.PathEscape(id)+"/files/"+url.PathEscape(name), nil)
+	if err != nil {
+		return nil, fmt.Errorf("acpd: building request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("acpd: reading %s of task %s: %w", name, id, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, statusError(resp)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTaskFile+1))
+	if err != nil {
+		return nil, fmt.Errorf("acpd: reading %s of task %s: %w", name, id, err)
+	}
+	if len(data) > maxTaskFile {
+		return nil, fmt.Errorf("acpd: %s of task %s is over %d bytes", name, id, maxTaskFile)
+	}
+	return data, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any, apiKey string) error {
 	var body io.Reader
 	if in != nil {
