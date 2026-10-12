@@ -1513,6 +1513,10 @@ func TestBuiltinAdoptRecipe(t *testing.T) {
 	if !rec.RunsOn(OnPR) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
 		t.Fatalf("on %v, task-output %+v", rec.On, rec.TaskOutput)
 	}
+	// A run step writes the Change, which a task of it still declares.
+	if !rec.StartOutputs() {
+		t.Fatal("adopt's start leaves no task output")
+	}
 	std := map[string]string{"pr_url": "https://github.com/o/r/pull/5", "pr_title": "t", "pr_body": "b", "pr_number": "5", "pr_base": "main", "repo_owner": "o", "repo_name": "r", "disclose": "true"}
 	inputs, err := rec.ResolveInputs(std, nil)
 	if err != nil || inputs["strategy"] != "reuse" {
