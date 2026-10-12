@@ -10,17 +10,19 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	githubv39 "github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -232,7 +234,7 @@ func (s *Service) IsTaskRunning(ctx context.Context, name string) (bool, error) 
 		return false, nil
 	}
 
-	return s.probeTaskViaEnvd(ctx, name, annotations)
+	return s.probeTask(ctx, name, annotations)
 }
 
 // RefreshTaskState re-probes the named sandbox and corrects its recorded task
@@ -306,11 +308,26 @@ func (s *Service) reconcileTerminatedPod(ctx context.Context, name string, annot
 	return true, nil
 }
 
-// probeTaskViaEnvd asks envd inside the sandbox whether the latest task is
+// taskServer is what the watch reads a sandbox's tasks through: its task
+// server (taskapi.ServerSandbox), which lists every task directory newest
+// first, a classic command's or a recipe's, marking a task whose process
+// is gone with 137, and serves their files.
+type taskServer interface {
+	List(ctx context.Context) ([]spool.Entry, error)
+	ReadFile(ctx context.Context, id, name string) ([]byte, error)
+	Close()
+}
+
+// connectTasks reaches a sandbox's task server; a var for the tests.
+var connectTasks = func(ctx context.Context, namespace, name string) (taskServer, error) {
+	return taskapi.ConnectServer(ctx, namespace, name)
+}
+
+// probeTask asks the sandbox's task server whether its latest task is
 // still running, updating the sandbox annotation when it has finished.
 // Sandboxes that cannot be probed are assumed to be running.
-func (s *Service) probeTaskViaEnvd(ctx context.Context, name string, annotations map[string]string) (bool, error) {
-	client, err := envd.Connect(ctx, s.namespace, name)
+func (s *Service) probeTask(ctx context.Context, name string, annotations map[string]string) (bool, error) {
+	sb, err := connectTasks(ctx, s.namespace, name)
 	if err != nil {
 		if strings.Contains(err.Error(), "cannot connect to terminated pod") || strings.Contains(err.Error(), "is in Failed state") {
 			klog.Warningf("Sandbox %s pod cannot be connected (%v). Updating sandbox annotation to Failed.", name, err)
@@ -319,33 +336,28 @@ func (s *Service) probeTaskViaEnvd(ctx context.Context, name string, annotations
 		}
 		return true, nil
 	}
-	defer client.Close()
+	defer sb.Close()
 
-	// Check exit_code of the latest task, and fallback to checking process viability via PID
-	var buf bytes.Buffer
-	checkCmd := envd.BuildCheckLatestTaskStatusCmd(envd.DefaultTasksDir)
-	if err := client.Exec(ctx, checkCmd, "/workspaces", nil, nil, &buf, nil); err != nil {
+	entries, err := sb.List(ctx)
+	if err != nil {
 		return true, nil
 	}
-
-	switch exitStr := strings.TrimSpace(buf.String()); exitStr {
-	case "":
-		return true, nil
-	case "NOTASKS":
-		return false, nil
-	case "RUNNING":
-		return true, nil
-	default:
-		// Task has finished!
-		taskState := taskStateCompleted
-		if exitStr != "0" {
-			taskState = taskStateFailed
-		}
-		taskType := lastTaskType(annotations)
-		klog.Infof("Detected completed task %s inside sandbox %s with exit code %s. Updating sandbox annotation to %s.", taskType, name, exitStr, taskState)
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, s.kube, s.namespace, name, taskType, taskState)
+	if len(entries) == 0 {
 		return false, nil
 	}
+	latest := entries[0]
+	if latest.State != spool.Exited {
+		return true, nil
+	}
+	// Task has finished!
+	taskState := taskStateCompleted
+	if latest.ExitCode != "0" {
+		taskState = taskStateFailed
+	}
+	taskType := lastTaskType(annotations)
+	klog.Infof("Detected completed task %s inside sandbox %s with exit code %s. Updating sandbox annotation to %s.", taskType, name, latest.ExitCode, taskState)
+	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, s.kube, s.namespace, name, taskType, taskState)
+	return false, nil
 }
 
 // AliasToTaskPR labels the sandbox with the pull request its latest task
@@ -359,17 +371,27 @@ func (s *Service) AliasToTaskPR(ctx context.Context, name string) error {
 	if s.kube == nil {
 		return nil
 	}
-	client, err := envd.Connect(ctx, s.namespace, name)
+	sb, err := connectTasks(ctx, s.namespace, name)
 	if err != nil {
-		return fmt.Errorf("connecting to sandbox %s: %w", name, err)
+		return fmt.Errorf("connecting to sandbox %s's task server: %w", name, err)
 	}
-	defer client.Close()
+	defer sb.Close()
 
-	var buf bytes.Buffer
-	if err := client.Exec(ctx, envd.BuildReadLatestTaskOutputCmd(envd.DefaultTasksDir), "/workspaces", nil, nil, &buf, nil); err != nil {
+	entries, err := sb.List(ctx)
+	if err != nil {
+		return fmt.Errorf("listing the tasks in sandbox %s: %w", name, err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	out, err := sb.ReadFile(ctx, entries[0].ID, "agent-output.txt")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("reading the latest task output in sandbox %s: %w", name, err)
 	}
-	prURL, prNum := factorysandbox.PRFromAgentOutput(buf.String())
+	prURL, prNum := factorysandbox.PRFromAgentOutput(string(out))
 	if prNum == 0 {
 		return nil
 	}
