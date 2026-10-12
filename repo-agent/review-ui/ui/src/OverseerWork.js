@@ -169,7 +169,7 @@ const OverseerWork = ({ overseer }) => {
 
   return (
     <div style={{ textAlign: 'left' }}>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', marginBottom: '10px' }}>
         {[['both', 'Both'], ['issue', 'Issues'], ['pr', 'PRs']].map(([k, label]) => (
           <button key={k} type="button" className={`btn btn-sm ${type === k ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setType(k)}>{label}</button>
         ))}
@@ -178,7 +178,7 @@ const OverseerWork = ({ overseer }) => {
           <button key={k} type="button" className={`btn btn-sm ${state === k ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setState(k)}>{label}</button>
         ))}
         <input type="search" placeholder="Search number, title, sandbox, recipe…" value={q} onChange={e => setQ(e.target.value)}
-          aria-label="Search work" style={{ marginLeft: 'auto', minWidth: '260px', padding: '4px 8px' }} />
+          aria-label="Search work" style={{ marginLeft: '10px', minWidth: '260px', padding: '4px 8px' }} />
         <button type="button" className="btn btn-sm" onClick={load} title="Refresh">↻</button>
       </div>
       {error && <div style={{ color: 'var(--danger, #d33)', fontSize: 'small', marginBottom: '8px' }}>Work feed: {error}</div>}
