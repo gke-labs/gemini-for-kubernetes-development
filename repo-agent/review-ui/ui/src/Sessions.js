@@ -8,9 +8,10 @@ import { EngineIcon, ageOf } from './WorkBits';
 // (docs/design/sessions-view.md). Work starts from GitHub; this starts
 // from the agents, sorted by what each is doing.
 //
-// A split page: the list is the whole width until a session opens, then
-// narrows to a column and the session fills the rest. The column can be
-// dragged wider or collapsed to a strip of state dots.
+// A split page: the list is a column on the left, its first row + New,
+// and the right is what is open — a session, or the box to start one,
+// which is where the page opens. The column can be dragged wider or
+// collapsed to a strip of state dots.
 //
 // One flat list, no sections: a row's dot says its state by colour, and
 // the rows come in the order the colours do.
@@ -188,7 +189,9 @@ export function StartBox({ boards, onStarted, autoFocus }) {
     return () => { live = false; };
   }, [board]);
 
-  useEffect(() => { if (autoFocus && boxRef.current) boxRef.current.focus(); }, [autoFocus]);
+  // Focused once there is a box to focus: the boards arrive after the mount.
+  const hasBoards = boards.length > 0;
+  useEffect(() => { if (autoFocus && hasBoards && boxRef.current) boxRef.current.focus(); }, [autoFocus, hasBoards]);
 
   const fill = (kind) => {
     if (!prompts[kind]) return;
@@ -316,7 +319,6 @@ export default function Sessions({ namespace }) {
   const [query, setQuery] = useState('');
   const [listWidth, setListWidth] = useStored('sessions.listWidth', LIST_DEFAULT);
   const [collapsed, setCollapsed] = useStored('sessions.collapsed', false);
-  const [starting, setStarting] = useState(false); // the start box in the right pane
   const [card, setCard] = useState(null);
   const splitRef = useRef(null);
 
@@ -330,34 +332,34 @@ export default function Sessions({ namespace }) {
     return list;
   }, [rows, pending]);
 
+  // select opens a row by its key; '' is + New, the start box.
   const select = useCallback((key) => {
     setSelected(key);
-    setStarting(false);
     window.history.replaceState(null, '', hashOf(key));
   }, []);
   const open = all.find(r => rowKey(r) === selected) || null;
-  const isOpen = !!(open || starting);
 
   const shown = visibleRows(all, { query });
   const flat = orderedRows(shown);
   const needs = all.filter(r => r.state === 'needs-you').length;
 
-  // ↑/↓ walk the list; Escape closes the session. Not while typing.
+  // ↑/↓ walk the list, + New above its first row; Escape goes back to
+  // + New. Not while typing.
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target && e.target.tagName) || '';
       if (e.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable)) return;
-      if (e.key === 'Escape' && isOpen) { select(''); return; }
+      if (e.key === 'Escape' && open) { select(''); return; }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       if (!flat.length) return;
       e.preventDefault();
       const i = flat.findIndex(r => rowKey(r) === selected);
-      const next = e.key === 'ArrowDown' ? Math.min(flat.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1);
-      select(rowKey(flat[next]));
+      const next = e.key === 'ArrowDown' ? Math.min(flat.length - 1, i + 1) : i - 1;
+      select(next < 0 ? '' : rowKey(flat[next]));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [flat, selected, isOpen, select]);
+  }, [flat, selected, open, select]);
 
   const onDrag = (e) => {
     e.preventDefault();
@@ -375,27 +377,22 @@ export default function Sessions({ namespace }) {
     setTimeout(load, 3000);
   };
 
-  const narrow = isOpen;
-  const filters = (
-    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', ...small, margin: '8px 0' }}>
-      {!narrow && (
-        <span aria-label="Legend" style={{ display: 'flex', gap: '8px' }}>
-          {LEGEND.map(([color, label]) => <span key={label}><span style={{ color }}>●</span> <span style={muted}>{label}</span></span>)}
-        </span>
-      )}
-      <input type="search" aria-label="Search sessions" placeholder="🔍 search" value={query} onChange={e => setQuery(e.target.value)}
-        style={{ flex: narrow ? '1 1 100px' : '0 1 200px', marginLeft: narrow ? 0 : 'auto', fontSize: 'x-small' }} />
-    </div>
-  );
-
+  const rowStyle = (on) => ({
+    display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
+    padding: '5px 8px', border: 'none', cursor: 'pointer', font: 'inherit',
+    borderLeft: on ? '3px solid var(--link-color, #0969da)' : '3px solid transparent',
+    background: on ? 'var(--bg-secondary)' : 'none', color: 'var(--text-primary)',
+  });
   const list = (
     <div>
-      {error && <div className="warning-banner" style={{ marginBottom: '8px' }}>{error}</div>}
+      <button type="button" style={{ ...rowStyle(!open), fontWeight: !open ? 600 : 400 }} onClick={() => select('')} aria-current={!open || undefined}>
+        <span style={{ width: '14px', textAlign: 'center' }}>+</span> New session</button>
+      {error && <div className="warning-banner" style={{ margin: '6px 0' }}>{error}</div>}
       {rows === null ? (
-        <div style={{ ...muted, fontStyle: 'italic', padding: '6px 2px' }}>loading…</div>
+        <div style={{ ...muted, fontStyle: 'italic', padding: '6px 8px' }}>loading…</div>
       ) : !flat.length ? (
-        <div style={{ ...muted, fontStyle: 'italic', padding: '6px 2px' }}>
-          {all.length ? 'No session matches.' : 'No sessions yet. Start one above, or from a Work row.'}
+        <div style={{ ...muted, fontStyle: 'italic', padding: '6px 8px' }}>
+          {all.length ? 'No session matches.' : 'No sessions yet. Start one, or from a Work row.'}
         </div>
       ) : flat.map(r => (
         <SessionListRow key={rowKey(r)} row={r} selected={rowKey(r) === selected} onOpen={x => select(rowKey(x))} />
@@ -403,22 +400,12 @@ export default function Sessions({ namespace }) {
     </div>
   );
 
-  // Nothing open: the box and the list, all the way across.
-  if (!isOpen) {
-    return (
-      <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-        <StartBox boards={boards} onStarted={onStarted} />
-        {filters}
-        {list}
-        {card && <SandboxCard name={card} namespace={namespace} onClose={() => setCard(null)} />}
-      </div>
-    );
-  }
-
   const strip = (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '8px 0', width: '28px', borderRight: '1px solid var(--border-color)', overflowY: 'auto' }}>
       <button type="button" title="Show the list" aria-label="Show the list" onClick={() => setCollapsed(false)}
         style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>»</button>
+      <button type="button" title="New session" aria-label="New session" onClick={() => select('')}
+        style={{ border: 'none', background: !open ? 'var(--bg-secondary)' : 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: '4px', color: 'var(--text-primary)' }}>+</button>
       {flat.map(r => (
         <button key={rowKey(r)} type="button" title={`${rowTitle(r)} · ${shortRepo(r.repo)} · ${rowDoing(r)}`} onClick={() => select(rowKey(r))}
           style={{ border: 'none', background: rowKey(r) === selected ? 'var(--bg-secondary)' : 'none', cursor: 'pointer', padding: '2px', borderRadius: '4px' }}>
@@ -433,26 +420,25 @@ export default function Sessions({ namespace }) {
       {collapsed ? strip : (
         <>
           <div style={{ width: `${listWidth}px`, flex: '0 0 auto', overflowY: 'auto', padding: '8px 6px' }}>
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <button type="button" className="btn btn-sm" onClick={() => { setStarting(true); setSelected(''); window.history.replaceState(null, '', hashOf('')); }}>+ New</button>
-              <span style={{ flex: 1, ...muted, ...small }}>{needs ? `${needs} need you` : ''}</span>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}>
+              <input type="search" aria-label="Search sessions" placeholder="🔍 search" value={query} onChange={e => setQuery(e.target.value)}
+                style={{ flex: 1, minWidth: 0, fontSize: 'x-small' }} />
               <button type="button" title="Collapse the list" aria-label="Collapse the list" onClick={() => setCollapsed(true)}
                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>«</button>
             </div>
-            {filters}
             {list}
+            <div aria-label="Legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '10px 8px 0', ...small }}>
+              {LEGEND.map(([color, label]) => <span key={label}><span style={{ color }}>●</span> <span style={muted}>{label}</span></span>)}
+              {needs > 0 && <span style={{ marginLeft: 'auto', color: RED }}>{needs} need you</span>}
+            </div>
           </div>
           <div role="separator" aria-orientation="vertical" aria-label="Resize the list" onMouseDown={onDrag}
             style={{ width: '5px', cursor: 'col-resize', flex: '0 0 auto', borderLeft: '1px solid var(--border-color)' }} />
         </>
       )}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {starting ? (
+        {!open ? (
           <div style={{ padding: '14px' }}>
-            <div style={{ display: 'flex', marginBottom: '8px' }}>
-              <strong style={{ flex: 1 }}>New session</strong>
-              <button className="btn btn-sm" onClick={() => select('')} aria-label="Close" title="Close (Esc)">✕</button>
-            </div>
             <StartBox boards={boards} onStarted={onStarted} autoFocus />
           </div>
         ) : (

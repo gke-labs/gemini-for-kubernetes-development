@@ -41,24 +41,25 @@ box to start a repository-level session. It replaces the Research tabs.
 
 ## The page
 
+Always split: the list is a column on the left, under a search box, its
+first row **+ New session**; the right is what is open. The page opens on
++ New: the start box on the right, the cursor in it.
+
 ```
             Repo Agent                                                    ☰
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ ┌──────────────────────────────────────────────────────────────────────────┐ │
-│ │ Ask anything about k8s-config-connector — a question, a subsystem, or    │ │
-│ │ 'compare with …'                                                         │ │
-│ │ [▣ kcc ▾]  [◆ gemini ▾]   overview · recent changes             [Start ↵]│ │
-│ └──────────────────────────────────────────────────────────────────────────┘ │
-│ ● needs you  ● working  ● idle  ● paused · done                    🔍 search │
-│                                                                              │
-│ 🔴 ◆ Rebase  PR #1774 ↗  (g4k)  3m                                           │
-│ 🔴 ✦ Plan  #13865 ↗  (kcc)  12m                                              │
-│ 🔵 ◆ Fix  #13889 ↗  (kcc)  1m                                                │
-│ 🔵 ✦ Review  PR #1488 ↗  (g4k)  0m                                           │
-│ 🔵 ◆ reconciler deletes  (kcc)  2m                                           │
-│ 🟢 ◆ Triage  #1681 ↗  (g4k)  1h                                              │
-│ ⚪ ◆ Fix  PR #1774 ↗  (g4k)  2d                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────┬───────────────────────────────────────────────┐
+│ [🔍 search             ]  «  ║ ┌───────────────────────────────────────────┐ │
+│▌+ New session                ║ │ Ask anything about k8s-config-connector … │ │
+│ 🔴 ◆ Rebase PR #1774 ↗ (g4k) ║ │                                           │ │
+│ 🔴 ✦ Plan #13865 ↗ (kcc) 12m ║ │ [▣ kcc ▾] overview · recent      [Start] │ │
+│ 🔵 ◆ Fix #13889 ↗ (kcc) 1m   ║ └───────────────────────────────────────────┘ │
+│ 🔵 ✦ Review PR #1488 ↗ (g4k) ║                                               │
+│ 🔵 ◆ reconciler deletes (kcc)║                                               │
+│ 🟢 ◆ Triage #1681 ↗ (g4k) 1h ║                                               │
+│ ⚪ ◆ Fix PR #1774 ↗ (g4k) 2d ║                                               │
+│ ● needs you ● working ● idle ║                                               │
+│ ● paused · done   2 need you ║                                               │
+└──────────────────────────────╨───────────────────────────────────────────────┘
  🔴 needs you / failed   🔵 working   🟢 idle, live   ⚪ paused / done
  ◆✦ engine (as on Work's chips)   ↗ the item on GitHub   (repo) a chip
 ```
@@ -80,33 +81,30 @@ colour, and the rows come in that order, newest change first within each:
 - **Grey:** paused or done. Those at rest for more than 30 days (failed
   ones too) are not listed.
 
-A legend in the filter bar says so.
+A legend under the list says so, with how many need you.
 
 No grouping and no filters: the list is sorted by state, and a search box
 narrows it by title, repository, sandbox, recipe or item. An open
 session's strip names the sandbox's other sessions.
 
-## A session open: a split page
+## A session open
 
-Nothing open, the box and the list take the whole width (above). A row
-opens its session on the right and the list narrows to a column of the
-same rows, the repository chip giving way before the title. The session
-is `ResearchConversation`, the component Work's slide-over and the full-window route already use, under a strip with the
-session's runs and its sandbox.
+A row opens its session on the right, in place of the start box. The
+session is `ResearchConversation`, the component Work's slide-over and the
+full-window route already use, under a strip with the session's runs and
+its sandbox.
 
 ```
-┌ Sessions ─────────────┬─ runs: care-ci ✓ → care-comments ✓ → rebase ◐ ──────┐
-│ [+ New]  2 need you  «║ [▣ fix-g4k-1774] running ◆ g4k  PR #1774 ↗          │
-│ all repos ▾  All|Live ║   also here: Fix (done)                               │
-│ NEEDS YOU (2)         ║┌ Rebase · fix-g4k-1774 ─────────────────────── ↗ ✕ ┐│
-│▌● Rebase           3m ║│ agent › Rebased onto main; 2 conflicts in …       ││
-│   g4k PR #1774 ⚠ ask… ║│ ⚠ Permission: git push --force-with-lease         ││
-│ ● Plan            12m ║│   [Allow] [Allow always] [Deny]                   ││
-│   kcc #13865 📝 draft ║│                                                   ││
-│ WORKING (3)           ║│ ❯ message the agent…                       [send] ││
-│ ◐ Fix              1m ║└───────────────────────────────────────────────────┘│
-└───────────────────────╨──────────────────────────────────────────────────────┘
-  ║ drag to resize    « collapse the list to a strip of state marks
+┌───────────────────────────┬─ runs: care-ci ● → care-comments ● → rebase ● ──┐
+│ [🔍 search            ] « ║ [▣ fix-g4k-1774] running ◆ g4k  PR #1774 ↗       │
+│ + New session             ║   also here: Fix (done)                          │
+│▌🔴 ◆ Rebase PR #1774 ↗ 3m  ║┌ Rebase · fix-g4k-1774 ──────────────────── ↗ ✕ ┐│
+│ 🔴 ✦ Plan #13865 ↗ 12m     ║│ agent › Rebased onto main; 2 conflicts in …    ││
+│ 🔵 ◆ Fix #13889 ↗ 1m       ║│ ⚠ Permission: git push --force-with-lease      ││
+│ …                         ║│   [Allow] [Allow always] [Deny]                ││
+│                           ║│ ❯ message the agent…                    [send] ││
+└───────────────────────────╨└────────────────────────────────────────────────┘┘
+  ║ drag to resize    « collapse the list to a strip of dots, + on top
 ```
 
 - **The strip.** The runs recorded into the conversation, oldest first;
@@ -114,13 +112,14 @@ session's runs and its sandbox.
   pod, engine, repository and item. "Also here" lists the sandbox's other
   sessions, so Pause and delete say what they touch, and opens them.
 - **The column** is dragged wider or narrower, or collapsed (`«`) to a
-  strip of state marks, one per row, each opening its session: the
+  strip of dots under a +, one per row, each opening its session: the
   conversation gets almost the whole window, which is what #1647 took the
   old 260px research rail away for, and switching stays one click.
   Width and collapse are remembered (localStorage).
-- **`+ New`** opens the start box in the right pane.
-- **Keys:** ↑/↓ walk the list, Escape closes the session and the list is
-  the page again.
+- **+ New session** is the list's first row and opens the start box on the
+  right, focused. The page opens there.
+- **Keys:** ↑/↓ walk the list, ↑ from the first row being + New; Escape
+  goes back to + New.
 - **The URL** keeps the open session: `#/sessions/<sandbox>/<task>`, or
   `#/sessions/research/<id>` for a research conversation, so a requested
   one and the sandbox that serves it are one selection.
@@ -130,7 +129,8 @@ session's runs and its sandbox.
 
 ## Starting a session
 
-The box is research's landing box moved here: no heading, no name field
+The box is research's landing box moved here, on the right when + New is
+open: no heading, no name field
 (the server names the session from the first line), Overview and Recent
 changes filling the box with a canned prompt. It gains:
 
@@ -144,7 +144,7 @@ changes filling the box with a canned prompt. It gains:
   `research` does, so there is none. A recipe with required inputs beyond
   the topic gets one-line fields under the box when picked.
 
-Start opens the session at once on the right, pending ("starting
+Start opens the session at once on the right, in place of the box, pending ("starting
 sandbox…"), and the row appears under Working. It posts to the board's
 research route, `POST /api/board/:board/research`, until step 4 replaces
 it.
