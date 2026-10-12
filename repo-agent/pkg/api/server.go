@@ -126,14 +126,22 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 			overseer.GET("/:name/queue", s.getOverseerQueue)
 			overseer.GET("/:name/status", s.getOverseerStatus)
 			overseer.POST("/:name/queue/:filename/priority", s.updateOverseerQueueTaskPriority)
-		}
-	}
 
-	// Protected terminal routes (WebSocket)
-	terminal := router.Group("/api/terminal")
-	terminal.Use(s.Auth.Middleware())
-	{
-		terminal.GET("/:namespace/:name", s.overseerTerminal)
+			// The board's session slide-over and sandbox card on the
+			// overseer's sandboxes (docs/design/overseer-work-view.md):
+			// the same handlers, in overseer-<name>, with no revises and
+			// no writes.
+			scoped := overseer.Group("/:name", s.overseerScope())
+			scoped.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
+			scoped.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)
+			scoped.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
+			scoped.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
+			scoped.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
+			scoped.GET("/sandbox-card/:sandbox", s.getSandboxCard)
+			scoped.GET("/sandbox-card/:sandbox/log", s.getSandboxTaskLog)
+			scoped.POST("/sandbox-card/:sandbox/lifecycle", s.sandboxLifecycle)
+			scoped.GET("/sandbox-card/:sandbox/terminal", s.sandboxTerminal)
+		}
 	}
 
 	// The task session event stream, attached directly to the router for the
@@ -144,6 +152,11 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 	taskSessions.Use(s.Auth.Middleware())
 	{
 		taskSessions.GET("/:sandbox/:task", s.streamTaskSessionEvents)
+	}
+	overseerSessions := router.Group("/api/overseers/:name/task-session-events")
+	overseerSessions.Use(s.Auth.Middleware(), s.Auth.AdminMiddleware(), s.overseerScope())
+	{
+		overseerSessions.GET("/:sandbox/:task", s.streamTaskSessionEvents)
 	}
 
 	// Protected sandbox proxy routes

@@ -70,8 +70,8 @@ done`
 
 func (s *Server) getSandboxCard(c *gin.Context) {
 	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	name := c.Param("name")
+	namespace := s.sessionNamespace(c)
+	name := cardSandbox(c)
 	if !safeTaskName.MatchString(name) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sandbox name"})
 		return
@@ -181,8 +181,8 @@ func taskTimestamp(name string) string {
 
 func (s *Server) getSandboxTaskLog(c *gin.Context) {
 	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	name := c.Param("name")
+	namespace := s.sessionNamespace(c)
+	name := cardSandbox(c)
 	task := c.Query("task")
 	if !safeTaskName.MatchString(name) || !safeTaskName.MatchString(task) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid name"})
@@ -213,8 +213,8 @@ func (s *Server) getSandboxTaskLog(c *gin.Context) {
 
 func (s *Server) sandboxLifecycle(c *gin.Context) {
 	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-	name := c.Param("name")
+	namespace := s.sessionNamespace(c)
+	name := cardSandbox(c)
 	if !safeTaskName.MatchString(name) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sandbox name"})
 		return

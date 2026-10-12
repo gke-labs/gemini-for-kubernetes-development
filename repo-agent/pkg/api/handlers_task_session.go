@@ -69,6 +69,9 @@ type taskSessionConn struct {
 	sandbox   *unstructured.Unstructured
 	task      string
 	client    *acpd.Client
+	// keySecret holds the engine key a new conversation opens with
+	// (sessionKeySecret).
+	keySecret string
 }
 
 // repo is the repository the task ran on, as factory records it.
@@ -96,7 +99,7 @@ func (t *taskSessionConn) engine() string {
 }
 
 // taskSessionSandbox is the sandbox in the URL, looked up in the member's
-// namespace, with the task. 404: no such sandbox. A paused one is fine:
+// namespace (or the overseer's: sessionNamespace), with the task. 404: no such sandbox. A paused one is fine:
 // what reads only its annotations needs no pod.
 func (s *Server) taskSessionSandbox(c *gin.Context) (*unstructured.Unstructured, string, bool) {
 	name, task := c.Param("sandbox"), c.Param("task")
@@ -104,7 +107,7 @@ func (s *Server) taskSessionSandbox(c *gin.Context) (*unstructured.Unstructured,
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sandbox or task"})
 		return nil, "", false
 	}
-	sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(s.Auth.GetNamespaceFromContext(c)).Get(c.Request.Context(), name, v1.GetOptions{})
+	sb, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(s.sessionNamespace(c)).Get(c.Request.Context(), name, v1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "sandbox not found"})
@@ -113,7 +116,9 @@ func (s *Server) taskSessionSandbox(c *gin.Context) (*unstructured.Unstructured,
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up the sandbox", "details": err.Error()})
 		return nil, "", false
 	}
-	s.fillSessionBoard(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), sb)
+	if !inOverseerScope(c) {
+		s.fillSessionBoard(c.Request.Context(), s.Auth.GetNamespaceFromContext(c), sb)
+	}
 	return sb, task, true
 }
 
@@ -166,7 +171,7 @@ func itemRepo(htmlURL string) (string, string, bool) {
 // `legacy`, an image whose daemon hosts no sessions (not worth it).
 func (s *Server) resolveTaskSession(c *gin.Context) (*taskSessionConn, bool) {
 	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
+	namespace := s.sessionNamespace(c)
 	sb, task, ok := s.taskSessionSandbox(c)
 	if !ok {
 		return nil, false
@@ -193,7 +198,7 @@ func (s *Server) resolveTaskSession(c *gin.Context) (*taskSessionConn, bool) {
 		})
 		return nil, false
 	}
-	return &taskSessionConn{namespace: namespace, sandbox: sb, task: task, client: client}, true
+	return &taskSessionConn{namespace: namespace, sandbox: sb, task: task, client: client, keySecret: sessionKeySecret(c, sb)}, true
 }
 
 // ensureTaskSession returns the task's live session, creating it when the
@@ -208,7 +213,7 @@ func (s *Server) ensureTaskSession(ctx context.Context, conn *taskSessionConn) (
 	if !errors.Is(err, acpd.ErrNotFound) {
 		return nil, err
 	}
-	apiKey, err := s.engineAPIKey(ctx, conn.namespace)
+	apiKey, err := s.engineAPIKeyFrom(ctx, conn.namespace, conn.keySecret)
 	if err != nil {
 		return nil, err
 	}
@@ -245,9 +250,12 @@ func (s *Server) getTaskSession(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	// What the session offers, whichever recipe it is: the recipe's
-	// revises, and the draft its output is.
-	if revises := s.sessionRevises(ctx, c, conn.sandbox, conn.task); len(revises) > 0 {
-		body["revises"] = revises
+	// revises, and the draft its output is. An overseer's sandbox is on
+	// no board, which files revises and writes: none, and a draft to read.
+	if !inOverseerScope(c) {
+		if revises := s.sessionRevises(ctx, c, conn.sandbox, conn.task); len(revises) > 0 {
+			body["revises"] = revises
+		}
 	}
 	if draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task); draft != nil {
 		body["draft"] = draft

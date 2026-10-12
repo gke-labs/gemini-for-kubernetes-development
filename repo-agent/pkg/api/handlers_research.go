@@ -512,13 +512,18 @@ func (s *Server) researchPod(ctx context.Context, namespace, sandboxName string)
 // the only place it lives, and it must be re-supplied after an acpd
 // restart. Caching it here would be a second copy for no gain.
 func (s *Server) engineAPIKey(ctx context.Context, namespace string) (string, error) {
-	secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, "factory-user", v1.GetOptions{})
+	return s.engineAPIKeyFrom(ctx, namespace, "factory-user")
+}
+
+// engineAPIKeyFrom is the engine key in namespace's secret secretName.
+func (s *Server) engineAPIKeyFrom(ctx context.Context, namespace, secretName string) (string, error) {
+	secret, err := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("reading the factory-user secret: %w", err)
+		return "", fmt.Errorf("reading the %s secret: %w", secretName, err)
 	}
 	key := string(secret.Data[engineAPIKeySecretKey])
 	if key == "" {
-		return "", fmt.Errorf("no %s in this namespace's factory-user secret", engineAPIKeySecretKey)
+		return "", fmt.Errorf("no %s in this namespace's %s secret", engineAPIKeySecretKey, secretName)
 	}
 	return key, nil
 }
