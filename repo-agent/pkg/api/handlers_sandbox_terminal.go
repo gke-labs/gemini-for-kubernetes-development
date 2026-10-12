@@ -215,16 +215,10 @@ type terminalFrame struct {
 	Rows uint16 `json:"rows,omitempty"`
 }
 
-// sandboxTerminal serves the sandbox card (session namespace only).
+// sandboxTerminal serves the sandbox card: the member's namespace, or an
+// overseer's (sessionNamespace).
 func (s *Server) sandboxTerminal(c *gin.Context) {
-	s.streamSandboxTerminal(c, s.Auth.GetNamespaceFromContext(c), c.Param("name"))
-}
-
-// overseerTerminal serves the Overseer tab's existing route, which names
-// the namespace explicitly (admin view across sandbox namespaces) — same
-// authz as the route always had, new transport underneath.
-func (s *Server) overseerTerminal(c *gin.Context) {
-	s.streamSandboxTerminal(c, c.Param("namespace"), c.Param("name"))
+	s.streamSandboxTerminal(c, s.sessionNamespace(c), cardSandbox(c))
 }
 
 func (s *Server) streamSandboxTerminal(c *gin.Context, namespace, name string) {

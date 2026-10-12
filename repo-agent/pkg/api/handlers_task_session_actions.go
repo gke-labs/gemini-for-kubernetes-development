@@ -304,7 +304,7 @@ func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructu
 	}
 	kind := run.Kind
 	view, ok := sessionResearch(sb)
-	if !ok {
+	if !ok || inOverseerScope(c) {
 		return s.anyDraft(ctx, c, sb, run)
 	}
 	if kind != "Notes" || view.Notes.Markdown == "" {
@@ -362,6 +362,12 @@ func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.
 	}
 	if !ok {
 		number, boardName, ok = sessionPR(sb)
+	}
+	if inOverseerScope(c) {
+		// To read: an overseer's runs are applied by its own CLI, and its
+		// sandboxes are on no board to file an edit or a write on.
+		draft.Actions = []models.WorkAction{}
+		return draft
 	}
 	if ok {
 		draft.board, _, _ = s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)

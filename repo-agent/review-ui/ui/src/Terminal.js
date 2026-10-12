@@ -10,6 +10,17 @@ import 'xterm/css/xterm.css';
 // chat: a factory task type ("plan", …) — instead of a shell, the server
 // drops the terminal into `gemini --resume latest` under that task's HOME,
 // continuing the conversation the task left behind in the sandbox.
+// terminalPath is the socket a sandbox's terminal is on: an overseer's
+// sandbox (namespace overseer-<name>) under that overseer's admin routes,
+// any other the sandbox card's, in the member's own namespace.
+export function terminalPath(namespace, sandboxName) {
+    const sb = encodeURIComponent(sandboxName);
+    if (namespace && namespace.startsWith('overseer-')) {
+        return `/api/overseers/${encodeURIComponent(namespace.slice('overseer-'.length))}/sandbox-card/${sb}/terminal`;
+    }
+    return `/api/sandbox-card/${sb}/terminal`;
+}
+
 const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
     const terminalRef = useRef(null);
     const [status, setStatus] = useState('');
@@ -38,7 +49,7 @@ const SandboxTerminal = ({ namespace, sandboxName, fill, chat }) => {
             setStatus(state.retry ? `reconnecting (try ${state.retry})…` : 'connecting…');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const chatQuery = chat ? `?chat=${encodeURIComponent(chat)}` : '';
-            const socket = new WebSocket(`${protocol}//${window.location.host}/api/terminal/${namespace}/${sandboxName}${chatQuery}`);
+            const socket = new WebSocket(`${protocol}//${window.location.host}${terminalPath(namespace, sandboxName)}${chatQuery}`);
             socket.binaryType = 'arraybuffer';
             state.ws = socket;
 
