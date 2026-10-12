@@ -214,3 +214,19 @@ func TestWriteTaskOutputPinsThePRHead(t *testing.T) {
 		t.Error("a directory without the ref has a PR head")
 	}
 }
+
+// An optional result may be missing (an agent chore that changed
+// nothing); a required one may not.
+func TestWriteTaskOutputOptional(t *testing.T) {
+	for _, optional := range []bool{true, false} {
+		dir := t.TempDir()
+		writeTaskFiles(t, dir, spool.Task{ID: "x", Output: &taskoutput.Decl{Kind: "Change", From: "change.yaml", Optional: optional}}, map[string]string{})
+		err := writeTaskOutput(dir, dir, nil, "gemini")
+		if optional != (err == nil) {
+			t.Errorf("optional %v: %v", optional, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
+			t.Errorf("optional %v: a task output was written with no result", optional)
+		}
+	}
+}

@@ -1,28 +1,21 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -30,8 +23,8 @@ type AgentFlags struct {
 	URL       string
 	Agent     string
 	Local     bool
-	DryRun    bool
 	SessionID string
+	RunName   string
 }
 
 func NewAgentCommand(ctx context.Context) *cobra.Command {
@@ -49,6 +42,11 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Run a custom agent definition in a sandbox",
+		Long: `Run a custom agent definition (.agents/<name>.md) in the agent's own
+sandbox, as the agent recipe (recipe/recipes/agent.yaml). A chore's
+commits are pushed to the member's fork and opened as a PR (open-pr); on
+a PR they are pushed to it; a skipPR agent commits nothing; a workflow's
+journal is pushed to its factory-<issue> branch.`,
 		Example: `  # Run an agent defined in .agents/my-agent.yaml on a repository
   factory agent create --url https://github.com/owner/repo --agent my-agent.yaml
 
@@ -95,20 +93,20 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, rootFlags.Timeout)
 			defer cancel()
-			return RunAgent(ctx, flags, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets)
+			return RunAgent(ctx, flags)
 		},
 	}
 
 	cmd.Flags().StringVar(&flags.URL, "url", "", "GitHub repository or PR URL (e.g. https://github.com/owner/repo or https://github.com/owner/repo/pull/123)")
 	cmd.Flags().StringVar(&flags.Agent, "agent", "", "Agent file name (relative to .agents/ if remote) or local file path")
 	cmd.Flags().BoolVar(&flags.Local, "local", false, "Load the agent definition from a local path")
-	cmd.Flags().BoolVar(&flags.DryRun, "dry-run", false, "Simulate agent execution without running the Gemini CLI inside the sandbox")
 	cmd.Flags().StringVar(&flags.SessionID, "session-id", "", "Unique session ID for workflow isolation")
+	cmd.Flags().StringVar(&flags.RunName, "run-name", "", "Name of this run: running again under it follows that run, or applies its result, instead of starting another")
 
 	return cmd
 }
 
-func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, secrets []factorysandbox.SecretMount) error {
+func RunAgent(ctx context.Context, flags AgentFlags) error {
 	fmt.Printf("Resolving target URL: %s...\n", flags.URL)
 
 	u, err := url.Parse(flags.URL)
@@ -126,7 +124,6 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 	isPR := false
 	isIssue := false
 	targetNum := 0
-	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 
 	if len(parts) >= 4 {
 		if parts[2] == "pull" {
@@ -204,43 +201,11 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		return fmt.Errorf("parsing agent definition: %w", err)
 	}
 
-	kubeClient, err := clients.NewKubernetesClient()
-	if err != nil {
-		return fmt.Errorf("creating k8s client: %w", err)
+	cfg, cfgErr := config.LoadConfig()
+	if cfgErr != nil {
+		klog.Warningf("Failed to load factory config: %v", cfgErr)
 	}
-
-	taskID := common.Slugify(agentDef.Name)
-	if flags.SessionID != "" {
-		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
-	} else if isPR {
-		taskID = fmt.Sprintf("pr-%d-%s", targetNum, taskID)
-	} else if isIssue {
-		taskID = fmt.Sprintf("issue-%d-%s", targetNum, taskID)
-	}
-	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
-
-	fmt.Printf("Ensuring sandbox for task %s...\n", taskID)
-	sandboxName, err := factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, ephemeralStorage, secrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	if err != nil {
-		return fmt.Errorf("ensuring agent sandbox: %w", err)
-	}
-
-	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
-	}
-	githubLogin := string(secret.Data[constants.KeyGithubLogin])
-	githubEmail := string(secret.Data[constants.KeyGithubEmail])
-
-	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
-	if err != nil {
-		return fmt.Errorf("connecting to sandbox: %w", err)
-	}
-	defer client.Close()
-
-	var relatedIssues []int
-	var prompt string
+	prompt := agentDef.Prompt
 	if isPR || isIssue {
 		fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
 		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, targetNum)
@@ -255,184 +220,60 @@ func RunAgent(ctx context.Context, flags AgentFlags, ephemeralStorage string, se
 		}
 		// Only trusted authors' comments reach the prompt. On
 		// a PR its author is trusted too: their description is already here.
-		cfg, cfgErr := config.LoadConfig()
-		if cfgErr != nil {
-			klog.Warningf("Failed to load factory config: %v", cfgErr)
-		}
 		var prAuthor string
 		if isPR {
 			prAuthor = issue.GetUser().GetLogin()
 		}
 		var commentMsgs []string
-		var commentBodies []string
 		for _, c := range trustedIssueComments(comments, trustedLogins(cfg, prAuthor)) {
 			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
-			commentBodies = append(commentBodies, c.GetBody())
 		}
-
-		relatedIssues = common.ExtractRelatedIssuesAndPRs(issue.GetBody(), commentBodies, targetNum)
-
 		prompt = fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
 			agentDef.Prompt,
 			issue.GetTitle(),
 			issue.GetBody(),
 			strings.Join(commentMsgs, "\n\n"),
 		)
-	} else {
-		prompt = agentDef.Prompt
 	}
 
-	taskDir := fmt.Sprintf("/workspaces/tasks/agent-%s-%s", common.Slugify(agentDef.Name), time.Now().Format("20060102-150405"))
-	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
-	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
-
-	params := tasks.AgentParams{
-		AgentPrompt: prompt,
-		AgentName:   agentDef.Name,
-		AgentFile:   agentPath,
-		RepoName:    repo,
-		CloneURL:    cloneURL,
-		RepoOwner:   owner,
-		PromptFile:  promptPath,
-		SkipPR:      agentDef.SkipPR,
-		PRNumber:    prNum,
-		Models:      tasks.DefaultModels,
+	taskID := common.Slugify(agentDef.Name)
+	if flags.SessionID != "" {
+		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
+	} else if isPR {
+		taskID = fmt.Sprintf("pr-%d-%s", targetNum, taskID)
+	} else if isIssue {
+		taskID = fmt.Sprintf("issue-%d-%s", targetNum, taskID)
+	}
+	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
+	ensure := func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error) {
+		fmt.Printf("Ensuring sandbox for task %s...\n", taskID)
+		return factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
 
-	promptBytes, err := tasks.RenderRunAgentPrompt(params)
-	if err != nil {
-		return fmt.Errorf("rendering agent prompt: %w", err)
+	inputs := map[string]string{
+		"prompt":       prompt,
+		"agent_name":   agentDef.Name,
+		"agent_file":   agentPath,
+		"mode":         agentMode(agentDef, isPR),
+		"session_id":   flags.SessionID,
+		"precondition": agentDef.PreconditionScript,
+		"labels":       resolvePRLabels(cfg, nil, false),
 	}
+	return runRecipeIn(ctx, ensure, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
+		applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
+}
 
-	scriptBytes, err := tasks.GetRunAgentScript()
-	if err != nil {
-		return fmt.Errorf("getting run agent script: %w", err)
+// agentMode is the agent recipe's mode for a definition run on a PR or
+// not: a skipPR agent's changes are not kept, a PR's are pushed to it, a
+// workflow's journal to its branch, and a chore's opened as a PR.
+func agentMode(def *common.AgentDefinition, isPR bool) string {
+	switch {
+	case def.SkipPR:
+		return "none"
+	case isPR:
+		return "pr"
+	case def.Mode == "workflow":
+		return "workflow"
 	}
-
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
-	}
-
-	precondPath := ""
-	if agentDef.PreconditionScript != "" {
-		precondPath = fmt.Sprintf("%s/precondition-script", taskDir)
-		fmt.Println("Writing precondition script into sandbox...")
-		if err := client.WriteFile(ctx, precondPath, []byte(agentDef.PreconditionScript)); err != nil {
-			return fmt.Errorf("writing precondition script: %w", err)
-		}
-	}
-
-	geminiKey := getGeminiAPIKey(secret)
-	envMap := map[string]string{
-		"HOME":                       "/workspaces/.home",
-		"FACTORY_CONFIG":             "/workspaces/.factory.cfg",
-		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_API_KEY":             geminiKey,
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_OWNER":                 owner,
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"AGENT_NAME":                 agentDef.Name,
-		"AGENT_FILE":                 agentPath,
-		"AGENT_MODE":                 agentDef.Mode,
-		"SESSION_ID":                 flags.SessionID,
-		"SKIP_PR":                    strconv.FormatBool(agentDef.SkipPR),
-		"PR_NUMBER":                  strconv.Itoa(prNum),
-		"MODELS":                     tasks.GetAvailableModelsForKey(geminiKey),
-		"DRY_RUN":                    strconv.FormatBool(flags.DryRun),
-	}
-	if targetNum != 0 {
-		envMap["ISSUE_NUMBER"] = strconv.Itoa(targetNum)
-	}
-	if len(relatedIssues) > 0 {
-		var strIssues []string
-		for _, num := range relatedIssues {
-			strIssues = append(strIssues, strconv.Itoa(num))
-		}
-		envMap["RELATED_ISSUES"] = strings.Join(strIssues, ",")
-	}
-	if precondPath != "" {
-		envMap["PRECONDITION_FILE"] = precondPath
-	}
-
-	fmt.Println("Running agent task via envd...")
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", rootFlags.Engine)
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Failed")
-		return fmt.Errorf("running task: %w", err)
-	}
-	if rootFlags.Detached {
-		return nil
-	}
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "agent", "Completed")
-
-	fmt.Println("\nAgent execution completed.")
-
-	var buf bytes.Buffer
-	if err := client.Exec(ctx, fmt.Sprintf("cat %s/agent-output.txt", taskDir), "/workspaces", nil, nil, &buf, os.Stderr); err != nil {
-		klog.Warningf("Could not read agent-output.txt: %v", err)
-	} else {
-		fmt.Printf("\nAgent Output:\n%s\n", buf.String())
-	}
-
-	prURL, createdPRNum := factorysandbox.PRFromAgentOutput(buf.String())
-
-	if createdPRNum > 0 {
-		fmt.Printf("Aliasing sandbox %s to PR #%d...\n", sandboxName, createdPRNum)
-		if err := factorysandbox.AliasSandboxToPR(ctx, kubeClient, rootFlags.Namespace, sandboxName, createdPRNum, prURL); err != nil {
-			klog.Warningf("Failed to alias sandbox to PR #%d: %v", createdPRNum, err)
-		}
-		fmt.Printf("PR created/updated: %s\n", prURL)
-	}
-
-	usageMeta := usagereport.Meta{
-		Repo:         owner + "/" + repo,
-		TaskType:     "agent",
-		Sandbox:      sandboxName,
-		PR:           createdPRNum,
-		Workflow:     flags.SessionID,
-		WorkflowName: agentDef.Name,
-	}
-	if isIssue {
-		usageMeta.Issue = targetNum
-	} else if isPR && usageMeta.PR == 0 {
-		usageMeta.PR = targetNum
-	}
-	if numStr, ok := strings.CutPrefix(flags.SessionID, "issue-"); ok && usageMeta.Issue == 0 {
-		if n, err := strconv.Atoi(numStr); err == nil {
-			usageMeta.Issue = n
-		}
-	}
-	usagereport.HarvestTask(ctx, client, taskDir, usageMeta)
-	if usagereport.Enabled() {
-		if usageMeta.Issue != 0 {
-			if issue, _, err := ghClient.Issues.Get(ctx, owner, repo, usageMeta.Issue); err == nil {
-				usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
-			}
-		}
-		if usageMeta.PR != 0 {
-			if subjectPR, _, err := ghClient.PullRequests.Get(ctx, owner, repo, usageMeta.PR); err == nil {
-				usagereport.ReportPRSubject(ctx, owner+"/"+repo, subjectPR)
-			}
-		}
-	}
-
-	if rootFlags.Cleanup {
-		fmt.Printf("Cleaning up sandbox '%s'...\n", sandboxName)
-		manager := k8s.NewManager(kubeClient)
-		if err := manager.DeleteSandbox(ctx, rootFlags.Namespace, sandboxName); err != nil {
-			klog.Errorf("Failed to cleanup sandbox '%s': %v", sandboxName, err)
-		}
-	}
-
-	return nil
+	return "chore"
 }

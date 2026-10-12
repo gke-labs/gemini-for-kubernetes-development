@@ -1589,6 +1589,167 @@ func TestBuiltinAdoptRecipe(t *testing.T) {
 	}
 }
 
+// The agent recipe: the steps each mode runs, nothing past the
+// precondition when it fails, and a push and a Change only when there is
+// something to push.
+func TestBuiltinAgentRecipe(t *testing.T) {
+	_, rec, err := Builtin(AgentRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.RunsOn(OnRepo) || !rec.RunsOn(OnIssue) || !rec.RunsOn(OnPR) || rec.TaskType != "agent" ||
+		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || !rec.TaskOutput.Optional || !rec.StartOutputs() {
+		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
+	}
+	std := map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": "true"}
+	if _, err := rec.ResolveInputs(std, nil); err == nil {
+		t.Error("the agent recipe ran with no prompt")
+	}
+	for _, mode := range []string{"chore", "pr", "none", "workflow"} {
+		inputs, err := rec.ResolveInputs(std, map[string]string{"prompt": "do it", "agent_name": "Docs Bot", "mode": mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rec.CheckRender(inputs); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+	}
+
+	// What runs, given the precondition's and the changed step's exit
+	// codes: "ask", "push", the Change step ("change"), the workflow's
+	// journal push ("journal"), checkout-default-branch ("default").
+	ran := func(mode string, precondition, changed int) string {
+		td := templateData{Inputs: map[string]string{"mode": mode, "precondition": "exit 1"}, Steps: map[string]*StepResult{}}
+		var got []string
+		for i, s := range rec.Start.Steps {
+			if s.If != "" {
+				run, err := condition(fmt.Sprint(i), s.If, td, "")
+				if err != nil {
+					t.Fatalf("%s: step %d: %v", mode, i, err)
+				}
+				if !run {
+					if s.ID != "" {
+						td.Steps[s.ID] = &StepResult{Skipped: true}
+					}
+					continue
+				}
+			}
+			switch {
+			case s.ID == "precondition":
+				td.Steps[s.ID] = &StepResult{ExitCode: precondition}
+			case s.ID == "changed":
+				td.Steps[s.ID] = &StepResult{ExitCode: changed}
+			case s.Ask != "":
+				got = append(got, "ask")
+			case s.Uses == "push":
+				got = append(got, "push")
+			case s.Uses == "checkout-default-branch":
+				got = append(got, "default")
+			case strings.Contains(s.Run, "closeAdopted") || strings.Contains(s.Run, "change.yaml"):
+				got = append(got, "change")
+			case strings.Contains(s.Run, "chore(workflow)"):
+				got = append(got, "journal")
+			}
+		}
+		return strings.Join(got, ",")
+	}
+	for _, tc := range []struct {
+		mode                  string
+		precondition, changed int
+		want                  string
+	}{
+		{"chore", 0, 0, "default,ask,change,push"},
+		{"chore", 0, 1, "default,ask"},
+		{"chore", 1, 0, ""},
+		{"pr", 0, 0, "ask,change,push"},
+		{"pr", 0, 1, "ask"},
+		{"none", 0, 0, "default,ask"},
+		{"workflow", 0, 0, "ask,journal"},
+		{"workflow", 1, 0, ""},
+	} {
+		if got := ran(tc.mode, tc.precondition, tc.changed); got != tc.want {
+			t.Errorf("%s (precondition %d, changed %d) ran %q, want %q", tc.mode, tc.precondition, tc.changed, got, tc.want)
+		}
+	}
+}
+
+// The agent recipe's Change step: a chore's PR is titled after the
+// agent, lists the commits and carries the labels; on a PR, the Change is
+// empty (the PR keeps its title and body).
+func TestAgentChangeStep(t *testing.T) {
+	for _, tool := range []string{"git", "python3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " required")
+		}
+	}
+	_, rec, err := Builtin(AgentRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var step string
+	for _, s := range rec.Start.Steps {
+		if strings.Contains(s.Run, "change.yaml") {
+			step = s.Run
+		}
+	}
+	if step == "" {
+		t.Fatal("no Change step")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=x@x", "-c", "user.name=x"}, args...)...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "chore: tidy the docs")
+
+	for _, mode := range []string{"chore", "pr"} {
+		taskDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(taskDir, "base"), []byte(base+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e := &SandboxExecutor{TaskDir: taskDir, RepoDir: repo, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}}
+		var out strings.Builder
+		code, err := e.Run(context.Background(), step, map[string]string{
+			"mode": mode, "agent_name": "Docs Bot", "agent_file": ".agents/docs.md", "repo_owner": "o", "repo_name": "r", "labels": "factory,docs",
+		}, &out)
+		if err != nil || code != 0 {
+			t.Fatalf("%s: exited %d, %v\n%s", mode, code, err, out.String())
+		}
+		data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode == "pr" {
+			// The runner fills in the PR's title and body (KeepTitle).
+			if strings.TrimSpace(string(data)) != `{"change": {}}` {
+				t.Errorf("pr: change.yaml %s, want an empty Change", data)
+			}
+			continue
+		}
+		doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r"}, taskoutput.Source{})
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", mode, err, data)
+		}
+		c, err := doc.ChangeSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Title != "chore: Docs Bot" || !strings.Contains(c.Body, "- chore: tidy the docs") || strings.Contains(c.Body, "- base") ||
+			!strings.Contains(c.Body, "https://github.com/o/r/blob/HEAD/.agents/docs.md") || fmt.Sprint(c.Labels) != "[factory docs]" || c.Draft == nil || *c.Draft {
+			t.Errorf("chore: Change %+v", c)
+		}
+	}
+}
+
 // adopt's branch step: the PR's head, from the repository's
 // pull/<n>/head, becomes adopt-pr-<n>, its base where it branched off.
 func TestAdoptBranchStep(t *testing.T) {

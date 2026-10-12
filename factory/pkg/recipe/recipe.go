@@ -39,6 +39,11 @@ import (
 // repository's warm sandbox rather than a research one.
 const WarmRecipe = "warm"
 
+// AgentRecipe is the built-in recipe a custom agent (.agents/) runs as.
+// `factory agent create` runs it in the agent's own sandbox, a
+// repository's included, rather than a research one.
+const AgentRecipe = "agent"
+
 // Recipe is one task.
 type Recipe struct {
 	Name string `yaml:"name"`

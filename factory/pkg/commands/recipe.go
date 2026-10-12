@@ -348,6 +348,17 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // the task's result, picking up where an interrupted run left off. user is
 // the account the task runs as; empty, the command's own (--user).
 func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+	return runRecipeIn(ctx, nil, recipeArg, itemURL, runName, session, user, newSession, apply, overrides, instructions)
+}
+
+// ensureSandbox makes the sandbox a run goes to, given its target's
+// clone and web URLs and the account it runs as.
+type ensureSandbox func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error)
+
+// runRecipeIn is runRecipe, in the sandbox ensure makes when it is set
+// rather than the one the target's kind gets: `factory agent create`'s
+// runs go to the agent's own.
+func runRecipeIn(ctx context.Context, ensure ensureSandbox, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -491,6 +502,8 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
+	case ensure != nil:
+		sandboxName, err = ensure(ctx, kubeClient, cloneURL, htmlURL, user)
 	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
 		// Its disk becomes every new sandbox's (design/warm-workspace.md):
 		// a sandbox of its own, never restored, with no secret mounted.
@@ -918,7 +931,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe {
+	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe && rec.Name != recipe.AgentRecipe {
 		// The sandbox is the conversation's from here: the receipt that
 		// keeps EnsureResearchSandbox from taking it for an interrupted
 		// launch's and replacing it.
@@ -1175,6 +1188,14 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 		return err
 	}
 	if data == nil {
+		if e.Output != nil && e.Output.Optional {
+			fmt.Printf("Task %s left no result: there is nothing to apply.\n", e.ID)
+			// Settled, as an applied one is: the next run starts anew.
+			if !dryRun {
+				_ = sb.WriteFile(ctx, e.ID, taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
+			}
+			return nil
+		}
 		return fmt.Errorf("task %s left no task output to apply", e.ID)
 	}
 	docs, err := taskoutput.Parse(data)
@@ -1379,6 +1400,10 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		return nil
 	}
 	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
+	if errors.Is(err, os.ErrNotExist) && task.Output.Optional {
+		fmt.Printf("::task-output none: the task left no %s\n", task.Output.From)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
 	}
