@@ -59,19 +59,37 @@ func FanOutComment(f *FanOut) string {
 	return fanout.SpecMarker + "\n" + strings.TrimSpace(f.Markdown)
 }
 
+// triggerLabelKey carries the trigger label an apply labels with
+// (WithTriggerLabel).
+type triggerLabelKey struct{}
+
+// WithTriggerLabel is ctx for applies that label with triggerLabel, the
+// factory config's: post-spec's fan-out and stop labels are
+// <triggerLabel>/fanout and <triggerLabel>/stop. Without one they are
+// overseer/…, which every watch daemon honours whatever its trigger label.
+func WithTriggerLabel(ctx context.Context, triggerLabel string) context.Context {
+	return context.WithValue(ctx, triggerLabelKey{}, triggerLabel)
+}
+
+func triggerLabel(ctx context.Context) string {
+	if l, _ := ctx.Value(triggerLabelKey{}).(string); l != "" {
+		return l
+	}
+	return "overseer"
+}
+
 // fanOutLabels are the labels posting a spec adds to an issue: its fan-out
 // label, so the watch daemon carries the fan-out, unless it has one; and the
 // stop label, so it does not start before maintainers have read the spec.
-// The prefix is the issue's <prefix>/fanout label's, else overseer, which
-// the watch daemon honours whatever its trigger label.
-func fanOutLabels(labels []*githubv39.Label) []string {
+// The prefix is the issue's <prefix>/fanout label's, else prefix.
+func fanOutLabels(labels []*githubv39.Label, prefix string) []string {
 	for _, l := range labels {
 		name := l.GetName()
 		if i := strings.LastIndex(name, "/"); i > 0 && strings.EqualFold(name[i+1:], "fanout") {
 			return []string{name[:i] + "/stop"}
 		}
 	}
-	return []string{"overseer/fanout", "overseer/stop"}
+	return []string{prefix + "/fanout", prefix + "/stop"}
 }
 
 // applyPostSpec posts a FanOut as the spec comment on its issue, or edits
@@ -122,7 +140,7 @@ func applyPostSpec(ctx context.Context, gh *githubv39.Client, doc *Document, dry
 		opts.Page = resp.NextPage
 	}
 
-	labels := fanOutLabels(issue.Labels)
+	labels := fanOutLabels(issue.Labels, triggerLabel(ctx))
 	fmt.Fprintf(out, "%s %s to %s\n", doing(dryRun, "Adding", "add"), strings.Join(labels, ", "), doc.Target.URL)
 	if !dryRun {
 		if _, _, err := gh.Issues.AddLabelsToIssue(ctx, owner, repo, num, labels); err != nil {
