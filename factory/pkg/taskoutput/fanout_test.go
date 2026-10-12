@@ -152,6 +152,15 @@ func TestApplyPostSpec(t *testing.T) {
 	if strings.Join(f.labels, ",") != "bug,overseer/fanout,overseer/stop" || len(f.comments) != 1 {
 		t.Errorf("a new fan-out: labels %v, comments %d", f.labels, len(f.comments))
 	}
+
+	// With a trigger label configured, its labels.
+	f = &fanOutGitHub{labels: []string{"bug"}}
+	if err := Apply(WithTriggerLabel(ctx, "factory"), f.client(t), fanOutDoc(t, "recipe-fanout-4", fanOutSpec), false, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(f.labels, ",") != "bug,factory/fanout,factory/stop" {
+		t.Errorf("a new fan-out under trigger label factory: labels %v", f.labels)
+	}
 }
 
 func TestFanOutLabels(t *testing.T) {
@@ -162,12 +171,24 @@ func TestFanOutLabels(t *testing.T) {
 		}
 		return out
 	}
-	for want, labels := range map[string][]*githubv39.Label{
-		"overseer/fanout,overseer/stop": label("bug"),
-		"kcc-bot/stop":                  label("bug", "kcc-bot/fanout"),
+	for _, tc := range []struct {
+		labels       []*githubv39.Label
+		prefix, want string
+	}{
+		{label("bug"), "overseer", "overseer/fanout,overseer/stop"},
+		// The configured trigger label's (WithTriggerLabel).
+		{label("bug"), "factory", "factory/fanout,factory/stop"},
+		// An issue's own fan-out label wins.
+		{label("bug", "kcc-bot/fanout"), "factory", "kcc-bot/stop"},
 	} {
-		if got := strings.Join(fanOutLabels(labels), ","); got != want {
-			t.Errorf("fanOutLabels(%v) = %q, want %q", labels, got, want)
+		if got := strings.Join(fanOutLabels(tc.labels, tc.prefix), ","); got != tc.want {
+			t.Errorf("fanOutLabels(%v, %s) = %q, want %q", tc.labels, tc.prefix, got, tc.want)
 		}
+	}
+	if got := triggerLabel(context.Background()); got != "overseer" {
+		t.Errorf("no trigger label configured: prefix %q, want overseer", got)
+	}
+	if got := triggerLabel(WithTriggerLabel(context.Background(), "factory")); got != "factory" {
+		t.Errorf("trigger label factory: prefix %q", got)
 	}
 }

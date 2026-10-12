@@ -102,6 +102,16 @@ label is removed.`,
 
 // watchTriggerLabel is the trigger label factory watch uses: the factory
 // config's, else "factory".
+// configuredTriggerLabel is the factory config's trigger label, or "" when
+// it sets none: where nothing is configured (the board, a terminal), labels
+// keep the overseer/ prefix every watch daemon honours.
+func configuredTriggerLabel() string {
+	if cfg, err := config.LoadConfig(); err == nil && cfg != nil {
+		return cfg.TriggerLabel
+	}
+	return ""
+}
+
 func watchTriggerLabel() string {
 	if cfg, err := config.LoadConfig(); err == nil && cfg != nil && cfg.TriggerLabel != "" {
 		return cfg.TriggerLabel

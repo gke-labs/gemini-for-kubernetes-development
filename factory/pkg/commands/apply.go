@@ -141,6 +141,9 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 // write to was opened before, and several sandboxes may work on it.
 func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Document, verb, sandboxName string, dryRun bool) error {
 	before := d.Target.URL
+	// What an apply labels with (post-spec): the configured trigger
+	// label, or, with none configured, overseer/.
+	ctx = taskoutput.WithTriggerLabel(ctx, configuredTriggerLabel())
 	var err error
 	if verb == "" {
 		err = taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout)
