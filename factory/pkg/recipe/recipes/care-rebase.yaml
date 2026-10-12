@@ -1,6 +1,8 @@
 # factory recipe care-rebase --url <PR>: rebases a pull request of yours
 # onto the default branch as it is now; the push step force-pushes the
-# rewritten branch, still leased.
+# rewritten branch, still leased. A run whose HEAD is not on the default
+# branch afterwards, or that leaves the rebase half done, pushes nothing
+# and fails.
 #
 # The PR must be yours: authored by you, its head a branch on your fork
 # (on: [my-pr]); factory pr adopt takes over one that is not. It runs in
@@ -131,6 +133,10 @@ start:
         - Do not say anywhere that an agent or AI wrote this.
         {{- end }}
       capture: change.yaml
+    # The rebase happened: the default branch the ask named is under
+    # HEAD. push refuses one left half done.
+    - run: |
+        git merge-base --is-ancestor "$(cat "$TASK_DIR/base")" HEAD || { echo "HEAD is not on $(cat "$TASK_DIR/base"), the default branch: the rebase did not happen" >&2; exit 1; }
     - uses: push
 
 outputs:

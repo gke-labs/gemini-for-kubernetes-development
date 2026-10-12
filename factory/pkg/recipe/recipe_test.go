@@ -1190,6 +1190,21 @@ func (freshSession) Fresh() bool { return true }
 
 // Each of care's recipes asks its own job, then the replies, and pushes,
 // leased against the PR's head.
+// care-rebase checks, before it pushes, that the rebase happened: the
+// default branch the ask named ($TASK_DIR/base) is under HEAD. Without it
+// an agent that gave up pushed the PR unchanged as if rebased.
+func TestBuiltinCareRebaseChecksTheRebase(t *testing.T) {
+	_, rec, err := Builtin("care-rebase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := rec.Start.Steps
+	n := len(steps)
+	if n < 2 || steps[n-1].Uses != "push" || !strings.Contains(steps[n-2].Run, `git merge-base --is-ancestor "$(cat "$TASK_DIR/base")" HEAD`) {
+		t.Fatalf("want the rebase checked right before push, got the last steps %+v", steps[max(0, n-2):])
+	}
+}
+
 func TestBuiltinCareRenders(t *testing.T) {
 	std := map[string]string{
 		"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r/pull/9", "pr_url": "https://github.com/o/r/pull/9",

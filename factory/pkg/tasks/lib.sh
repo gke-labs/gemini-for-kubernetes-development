@@ -490,6 +490,39 @@ function setupForkRepo {
 #
 # What it pushed goes to $TASK_DIR/push.json, which the runner puts on the
 # task's Change (pkg/taskoutput).
+# checkNothingHalfDone fails, saying why, if what pushToFork would push is
+# half done: a rebase, merge, cherry-pick or revert the agent left in
+# progress (HEAD is then partway through it), paths still unmerged, or
+# lines the commits since $1 (the PR's head, or the base a start branched
+# from) add that are conflict markers. ======= is left alone: on its own
+# it is also a heading's underline.
+function checkNothingHalfDone {
+    local from="$1" op what markers failed=0
+    for op in rebase-merge:rebase rebase-apply:rebase MERGE_HEAD:merge CHERRY_PICK_HEAD:cherry-pick REVERT_HEAD:revert; do
+        what="${op#*:}"
+        if [ -e "$(git rev-parse --git-path "${op%%:*}")" ]; then
+            echo "a ${what} is still in progress: git ${what} --continue or --abort" >&2
+            failed=1
+        fi
+    done
+    if [ -n "$(git ls-files -u)" ]; then
+        echo "paths are still unmerged:" >&2
+        git ls-files -u | awk '{print $4}' | sort -u >&2
+        failed=1
+    fi
+    if [ -n "${from}" ] && git rev-parse -q --verify "${from}^{commit}" >/dev/null; then
+        markers="$(git diff -U0 --no-color --no-ext-diff "${from}" HEAD | awk '
+            /^\+\+\+ / { file = substr($0, 7); next }
+            /^\+(<<<<<<<|>>>>>>>)( |$)/ { print file ": " substr($0, 2) }')"
+        if [ -n "${markers}" ]; then
+            echo "the commits add conflict markers:" >&2
+            printf '%s\n' "${markers}" >&2
+            failed=1
+        fi
+    fi
+    return "${failed}"
+}
+
 function pushToFork {
     echo "Running pushToFork..."
     local dir="${TASK_DIR:?TASK_DIR is not set}"
@@ -516,6 +549,10 @@ function pushToFork {
     fi
     if [ -n "$(git status --porcelain)" ]; then
         echo "Warning: uncommitted changes in the checkout are not pushed" >&2
+    fi
+    if ! checkNothingHalfDone "${lease:-${base}}"; then
+        echo "not pushing ${head}" >&2
+        return 1
     fi
 
     login="$(GH_TOKEN="${GITHUB_USER_TOKEN}" gh api user --jq .login)"
