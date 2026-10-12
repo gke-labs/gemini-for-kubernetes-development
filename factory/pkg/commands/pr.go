@@ -355,20 +355,16 @@ func NewAdoptCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("invalid strategy '%s'. Must be one of [reuse, reimplement]", flags.Strategy)
 			}
 
-			// The adopt recipes (recipe/recipes/adopt*.yaml): reuse takes the
+			// The adopt recipe (recipe/recipes/adopt.yaml): reuse takes the
 			// PR's commits, reimplement has the agent redo them; open-pr
 			// opens the adopted PR and comments on (and with close,
 			// closes) the original.
 			if err := refuseOwnPR(ctx, flags.PRURL); err != nil {
 				return err
 			}
-			recipeName := "adopt"
-			if flags.Strategy == "reimplement" {
-				recipeName = "adopt-reimplement"
-			}
-			return runRecipe(ctx, recipeName, flags.PRURL, "", "", "", false,
+			return runRecipe(ctx, "adopt", flags.PRURL, "", "", "", false,
 				applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""},
-				map[string]string{"close": strconv.FormatBool(adoptAction == "close")}, nil)
+				map[string]string{"strategy": flags.Strategy, "close": strconv.FormatBool(adoptAction == "close")}, nil)
 		},
 	}
 

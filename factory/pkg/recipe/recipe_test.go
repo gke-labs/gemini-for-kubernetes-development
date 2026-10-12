@@ -249,6 +249,55 @@ func TestRunnerStopsAtTheFirstFailure(t *testing.T) {
 	}
 }
 
+// A step's if: is rendered like an ask; false skips the step (recorded as
+// skipped, so a later if: can read it), true runs it, anything else
+// fails the recipe, and a skipped ask starts no engine.
+func TestRunnerIf(t *testing.T) {
+	r, ex, sess, starts := newTestRunner(t)
+	rec, err := Parse([]byte(`
+name: demo
+start:
+  steps:
+    - id: a
+      if: '{{ eq .Inputs.issue "#8" }}'
+      run: exit 0
+    - if: '{{ .Steps.a.Skipped }}'
+      run: echo skipped-a
+    - if: '{{ eq .Inputs.issue "#8" }}'
+      ask: never
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ex.ran, ","); got != "run:echo skipped-a" {
+		t.Errorf("ran %s", got)
+	}
+	if len(sess.prompts) != 0 || *starts != 0 {
+		t.Errorf("asked %q (%d starts), want no engine", sess.prompts, *starts)
+	}
+
+	r, ex, _, _ = newTestRunner(t)
+	rec, err = Parse([]byte("name: a\nstart: {steps: [{if: \"{{ .Inputs.issue }}\", run: x}, {run: never}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background(), rec); err == nil || !strings.Contains(err.Error(), "neither true nor false") {
+		t.Errorf("non-boolean if: Run = %v", err)
+	}
+	if len(ex.ran) != 0 {
+		t.Errorf("ran %v after a bad if:", ex.ran)
+	}
+	if err := rec.CheckRender(map[string]string{"issue": "#7"}); err == nil {
+		t.Error("CheckRender passed a non-boolean if:")
+	}
+	if _, err := Parse([]byte("name: a\nstart: {steps: [{if: \"{{ .Inputs.issue \", run: x}]}")); err == nil {
+		t.Error("Parse accepted an if: that is not a template")
+	}
+}
+
 func TestSandboxRunStripsTokensAndPassesInputsAsEnv(t *testing.T) {
 	repo := t.TempDir()
 	e := &SandboxExecutor{TaskDir: t.TempDir(), RepoDir: repo, Env: []string{
@@ -1448,39 +1497,67 @@ start:
 	}
 }
 
-// The adopt recipes: adopt takes the PR's commits (no agent), adopt-
+// The adopt recipe: strategy reuse takes the PR's commits (no agent),
 // reimplement has one ask; both end with the push, and their Change, which
 // a run step writes and no agent does, adopts the PR, closing it when
 // asked.
-func TestBuiltinAdoptRecipes(t *testing.T) {
+func TestBuiltinAdoptRecipe(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 required")
 	}
+	_, rec, err := Builtin("adopt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Any PR; `factory pr adopt` refuses one the adopter authored.
+	if !rec.RunsOn(OnPR) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
+		t.Fatalf("on %v, task-output %+v", rec.On, rec.TaskOutput)
+	}
+	std := map[string]string{"pr_url": "https://github.com/o/r/pull/5", "pr_title": "t", "pr_body": "b", "pr_number": "5", "pr_base": "main", "repo_owner": "o", "repo_name": "r", "disclose": "true"}
+	inputs, err := rec.ResolveInputs(std, nil)
+	if err != nil || inputs["strategy"] != "reuse" {
+		t.Fatalf("inputs %v, %v", inputs, err)
+	}
+	if err := rec.CheckRender(inputs); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
-		name string
-		asks int
-	}{{"adopt", 0}, {"adopt-reimplement", 1}} {
-		_, rec, err := Builtin(tc.name)
-		if err != nil {
-			t.Fatal(err)
+		strategy string
+		asks     int
+		branch   string
+	}{{"reuse", 0, "pull/${INPUT_PR_NUMBER}/head"}, {"reimplement", 1, "adopt-reimplement-pr-"}} {
+		td := templateData{Inputs: map[string]string{"strategy": tc.strategy}, Steps: map[string]*StepResult{}}
+		var steps []Step
+		for i, s := range rec.Start.Steps {
+			if s.If != "" {
+				run, err := condition(fmt.Sprint(i), s.If, td, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !run {
+					continue
+				}
+			}
+			steps = append(steps, s)
 		}
-		// Any PR; `factory pr adopt` refuses one the adopter authored.
-		if !rec.RunsOn(OnPR) || rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" {
-			t.Fatalf("%s: on %v, task-output %+v", tc.name, rec.On, rec.TaskOutput)
-		}
-		steps := rec.Start.Steps
-		asks := 0
+		asks, branch := 0, false
 		var changeStep string
 		for _, s := range steps {
 			if s.Ask != "" {
 				asks++
 			}
+			if strings.Contains(s.Run, tc.branch) {
+				branch = true
+			}
 			if strings.Contains(s.Run, "closeAdopted") {
 				changeStep = s.Run
 			}
 		}
-		if asks != tc.asks || steps[len(steps)-1].Uses != "push" || changeStep == "" {
-			t.Fatalf("%s: %d asks, last step %+v, change step found %v", tc.name, asks, steps[len(steps)-1], changeStep != "")
+		if asks != tc.asks || !branch || steps[len(steps)-1].Uses != "push" || changeStep == "" {
+			t.Fatalf("%s: %d asks, branch step %v, last step %+v, change step found %v", tc.strategy, asks, branch, steps[len(steps)-1], changeStep != "")
+		}
+		if tc.strategy == "reimplement" {
+			continue // one Change step, run once below
 		}
 
 		taskDir := t.TempDir()
@@ -1490,7 +1567,7 @@ func TestBuiltinAdoptRecipes(t *testing.T) {
 			"pr_url": "https://github.com/o/r/pull/5", "pr_title": "Fix the thing", "pr_body": "It's \"broken\".", "close": "true",
 		}, &out)
 		if err != nil || code != 0 {
-			t.Fatalf("%s: change step exited %d, %v\n%s", tc.name, code, err, out.String())
+			t.Fatalf("%s: change step exited %d, %v\n%s", tc.strategy, code, err, out.String())
 		}
 		data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
 		if err != nil {
@@ -1498,12 +1575,12 @@ func TestBuiltinAdoptRecipes(t *testing.T) {
 		}
 		doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r/pull/5"}, taskoutput.Source{})
 		if err != nil {
-			t.Fatalf("%s: %v\n%s", tc.name, err, data)
+			t.Fatalf("%s: %v\n%s", tc.strategy, err, data)
 		}
 		c, err := doc.ChangeSpec()
 		if err != nil || c.Title != "adopt: Fix the thing" || c.Adopts != "https://github.com/o/r/pull/5" || !c.CloseAdopted ||
 			!strings.Contains(c.Body, "adopted from original PR https://github.com/o/r/pull/5") || !strings.Contains(c.Body, `It's "broken".`) {
-			t.Errorf("%s: Change %+v, %v", tc.name, c, err)
+			t.Errorf("%s: Change %+v, %v", tc.strategy, c, err)
 		}
 	}
 }
