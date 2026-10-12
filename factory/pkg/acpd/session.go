@@ -190,6 +190,9 @@ type Session struct {
 	CWD       string
 	Engine    string
 	CreatedAt time.Time
+	// model is the model the engine was started on, if one was asked for:
+	// what a turn's usage is put down to where the engine names none.
+	model string
 	// Task is the task the session belongs to, if any; set by the server.
 	Task string
 
@@ -278,6 +281,7 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 		CWD:               cfg.CWD,
 		Engine:            cfg.Engine,
 		CreatedAt:         time.Now().UTC(),
+		model:             cfg.Model,
 		autoApprove:       cfg.AutoApprove,
 		transcript:        transcript,
 		permissionTimeout: timeout,
@@ -842,8 +846,13 @@ func (s *Session) Prompt(text string) error {
 			})
 			return
 		}
-		_ = s.transcript.AppendValue(KindTurnEnd, map[string]string{
-			"stopReason": resp.StopReason,
+		model := s.model
+		if model == "" {
+			model = s.Engine
+		}
+		_ = s.transcript.AppendValue(KindTurnEnd, TurnEnd{
+			StopReason: resp.StopReason,
+			Usage:      turnUsage(resp, model),
 		})
 	}()
 	return nil

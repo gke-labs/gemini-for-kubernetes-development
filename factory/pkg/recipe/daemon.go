@@ -33,6 +33,8 @@ type DaemonSession struct {
 	// conversation to load, as for the first revise where the recipe
 	// has no start, or a start that asked nothing.
 	fresh bool
+	// usage is the last turn's (TurnUsage).
+	usage []acpd.ModelUsage
 }
 
 // Fresh reports whether the agent starts from nothing, so a revise sends
@@ -154,10 +156,14 @@ func (d *DaemonSession) Ask(ctx context.Context, prompt string) (string, error) 
 			return "", fmt.Errorf("the session ended mid-turn")
 		}
 		if reply, done, err := turn.event(line); done {
+			d.usage = turn.usage
 			return reply, err
 		}
 	}
 }
+
+// TurnUsage is what the last turn used, per model, where the engine said.
+func (d *DaemonSession) TurnUsage() []acpd.ModelUsage { return d.usage }
 
 // cancelled stops the turn the task gave up on, and returns err.
 func (d *DaemonSession) cancelled(ctx context.Context, err error) error {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 )
 
 // Executor runs the steps that are not prompts. The sandbox implements it
@@ -26,6 +28,12 @@ type Session interface {
 	// Ask sends one turn and returns the agent's reply once the turn ends.
 	Ask(ctx context.Context, prompt string) (reply string, err error)
 	Close() error
+}
+
+// UsageSession is a Session that can say what its last turn used, per
+// model, where the engine reports it.
+type UsageSession interface {
+	TurnUsage() []acpd.ModelUsage
 }
 
 // FreshSession is a Session that can say it remembers nothing.
@@ -136,6 +144,14 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			}
 			contextSent = true
 			res.Reply, err = session.Ask(ctx, prompt)
+			if u, ok := session.(UsageSession); ok {
+				// What the turn used goes beside the task's other usage,
+				// for the harvest (usagereport): a turn that failed used
+				// tokens too.
+				if uerr := AddUsage(r.TaskDir, u.TurnUsage()); uerr != nil {
+					fmt.Fprintf(r.Log, "::warning recording %s's token usage: %v\n", label, uerr)
+				}
+			}
 			if err == nil && step.Capture != "" {
 				err = os.WriteFile(filepath.Join(r.TaskDir, step.Capture), []byte(res.Reply), 0o644)
 			}

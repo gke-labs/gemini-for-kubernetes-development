@@ -136,6 +136,8 @@ func envName(k string) string {
 // its API key and nothing else — so no GitHub token reaches it.
 type ACPSession struct {
 	s *acpd.Session
+	// usage is the last turn's (TurnUsage).
+	usage []acpd.ModelUsage
 }
 
 // StartACPSession starts the engine in the checkout. The transcript goes to
@@ -193,15 +195,21 @@ func (a *ACPSession) Ask(ctx context.Context, prompt string) (string, error) {
 			line := partial[:nl]
 			partial = partial[nl+1:]
 			if reply, done, err := turn.event(line); done {
+				a.usage = turn.usage
 				return reply, err
 			}
 		}
 	}
 }
 
+// TurnUsage is what the last turn used, per model, where the engine said.
+func (a *ACPSession) TurnUsage() []acpd.ModelUsage { return a.usage }
+
 // turn collects one turn's reply from its transcript events.
 type turn struct {
 	reply strings.Builder
+	// usage is the turn's, from its turn_end event.
+	usage []acpd.ModelUsage
 }
 
 // event takes the next transcript line; done once the turn has ended,
@@ -230,8 +238,9 @@ func (t *turn) event(line []byte) (reply string, done bool, err error) {
 		_ = json.Unmarshal(ev.Data, &e)
 		return "", true, fmt.Errorf("agent: %s", e.Message)
 	case acpd.KindTurnEnd:
-		var e struct{ StopReason string }
+		var e acpd.TurnEnd
 		_ = json.Unmarshal(ev.Data, &e)
+		t.usage = e.Usage
 		if e.StopReason != "end_turn" {
 			return t.reply.String(), true, fmt.Errorf("turn stopped: %s", e.StopReason)
 		}

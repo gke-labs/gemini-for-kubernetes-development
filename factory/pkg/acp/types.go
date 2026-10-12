@@ -176,6 +176,23 @@ type PromptRequest struct {
 // turn has completed.
 type PromptResponse struct {
 	StopReason string `json:"stopReason"`
+	// Usage is the turn's tokens, from an engine that reports them in
+	// ACP's usage field.
+	Usage *Usage `json:"usage,omitempty"`
+	// Meta is the reply's _meta. gemini reports its turn's tokens there,
+	// as quota.token_count and per model as quota.model_usage, and leaves
+	// Usage unset.
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// Usage is ACP's account of a turn's tokens.
+type Usage struct {
+	InputTokens       int64  `json:"inputTokens"`
+	OutputTokens      int64  `json:"outputTokens"`
+	TotalTokens       int64  `json:"totalTokens"`
+	CachedReadTokens  *int64 `json:"cachedReadTokens,omitempty"`
+	CachedWriteTokens *int64 `json:"cachedWriteTokens,omitempty"`
+	ThoughtTokens     *int64 `json:"thoughtTokens,omitempty"`
 }
 
 // Session update kinds carried in SessionUpdate.Kind.
