@@ -5,6 +5,7 @@ import Chip from './Chip';
 import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } from './WorkBits';
 import SessionSlideOver from './SessionSlideOver';
 import SandboxCard from './SandboxCard';
+import BoardPicker from './BoardPicker';
 
 // Work: the RepoBoard work queue (docs/design/repoboard.md §8).
 // One high-density table per board: rows are issues/PRs merged with agent
@@ -1225,7 +1226,9 @@ function Work({ onBack, namespace }) {
         // Identity-stable: replacing boards with an equal array re-arms
         // the poll effect and double-fetches every tick.
         setBoards(prev => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
-        setActiveBoard(prev => prev || (data.length ? ALL_BOARDS : ''));
+        // Several boards open on All; one board opens on itself, since the
+        // picker offers no All for one.
+        setActiveBoard(prev => prev || (data.length > 1 ? ALL_BOARDS : (data[0] ? data[0].name : '')));
       })
       .catch(err => console.error('Failed to fetch boards', err));
   }, []);
@@ -1446,41 +1449,53 @@ function Work({ onBack, namespace }) {
 
   return (
     <div style={{ padding: '10px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+      {/* One line: the board picker, the board's own links and controls
+          beside it, and adding a board apart on the right. No tab per
+          board: the picker's badges say which board needs you. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px', fontSize: 'small' }}>
         {onBack && <button className="btn" onClick={onBack}>← Back</button>}
-        <h2 style={{ margin: 0 }}>Work</h2>
-        <nav className="repo-tabs" style={{ margin: 0 }}>
-          {boards.length > 1 && (
+        {boards.length > 0 && (
+          <BoardPicker boards={boards} active={activeBoard} allKey={ALL_BOARDS}
+            onPick={(name) => { setActiveBoard(name); setWork([]); setActiveGroup(''); }} />
+        )}
+        {board && (
+          <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}>
+            {/* Compact repo links instead of the raw URL: the repo itself,
+                its architecture diagram, and the code wiki. */}
+            <a href={board.repoURL} target="_blank" rel="noopener noreferrer" title={board.repoURL}>GitHub</a>
+            <span style={{ margin: '0 6px' }}>·</span>
+            <a href={`https://gitdiagram.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
+              target="_blank" rel="noopener noreferrer" title="Architecture diagram (gitdiagram.com)">GitDiagram</a>
+            <span style={{ margin: '0 6px' }}>·</span>
+            <a href={`https://codewiki.google/github.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
+              target="_blank" rel="noopener noreferrer" title="Code wiki (codewiki.google)">CodeWiki</a>
+            {board.role && (
+              <span style={{ marginLeft: '8px' }}>
+                <Chip
+                  text={board.role}
+                  color={board.role === 'maintainer' ? 'var(--group-fix)' : 'var(--group-mine-issue)'}
+                  bg={board.role === 'maintainer' ? 'color-mix(in srgb, var(--group-fix) 12%, transparent)' : 'var(--bg-secondary)'}
+                  title={board.role === 'maintainer'
+                    ? 'Your token has push access — fixes, promote and merge are available.'
+                    : 'Your token has no push access — reviews and triage work; fixes, promote and merge are disabled.'}
+                />
+              </span>
+            )}
             <button
-              className={`tab-btn ${activeBoard === ALL_BOARDS ? 'active' : ''}`}
-              title="Everything that needs you, across every board"
-              onClick={() => { setActiveBoard(ALL_BOARDS); setWork([]); setActiveGroup(''); }}
-            >
-              All
-              {boards.reduce((n, b) => n + (b.needsHuman || 0), 0) > 0 && (
-                <span style={{
-                  marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
-                  borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
-                }}>{boards.reduce((n, b) => n + (b.needsHuman || 0), 0)}</span>
-              )}
-            </button>
-          )}
-          {boards.map(b => (
+              className="btn btn-sm"
+              onClick={openSpec}
+              title="Board settings (trigger label, intake, limits, policy)"
+              style={{ marginLeft: '8px' }}
+            >⚙</button>
             <button
-              key={b.name}
-              className={`tab-btn ${activeBoard === b.name ? 'active' : ''}`}
-              onClick={() => { setActiveBoard(b.name); setWork([]); setActiveGroup(''); }}
-            >
-              {b.name}
-              {b.needsHuman > 0 && (
-                <span style={{
-                  marginLeft: '6px', backgroundColor: '#d73a49', color: 'white',
-                  borderRadius: '9px', padding: '0 6px', fontSize: 'x-small',
-                }}>{b.needsHuman}</span>
-              )}
-            </button>
-          ))}
-        </nav>
+              className="btn btn-delete btn-sm"
+              onClick={handleDeleteBoard}
+              title="Remove this board (running sandboxes are not touched)"
+              style={{ marginLeft: '6px' }}
+            >Delete</button>
+          </div>
+        )}
+        <span style={{ flex: 1 }} />
         <input
           type="text"
           list="repo-suggestions"
@@ -1510,45 +1525,6 @@ function Work({ onBack, namespace }) {
       {error && (
         <div className="warning-banner" style={{ cursor: 'pointer' }} onClick={() => setError('')} title="Dismiss">
           {error}
-        </div>
-      )}
-
-      {board && (
-        <div style={{ display: 'flex', alignItems: 'center', fontSize: 'small', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-          {/* Compact repo links instead of the raw URL: the repo itself,
-              its architecture diagram, and the code wiki. */}
-          <a href={board.repoURL} target="_blank" rel="noopener noreferrer" title={board.repoURL}>GitHub</a>
-          <span style={{ margin: '0 6px' }}>·</span>
-          <a href={`https://gitdiagram.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
-            target="_blank" rel="noopener noreferrer" title="Architecture diagram (gitdiagram.com)">GitDiagram</a>
-          <span style={{ margin: '0 6px' }}>·</span>
-          <a href={`https://codewiki.google/github.com/${(board.repoURL || '').replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '')}`}
-            target="_blank" rel="noopener noreferrer" title="Code wiki (codewiki.google)">CodeWiki</a>
-          {board.role && (
-            <span style={{ marginLeft: '8px' }}>
-              <Chip
-                text={board.role}
-                color={board.role === 'maintainer' ? 'var(--group-fix)' : 'var(--group-mine-issue)'}
-                bg={board.role === 'maintainer' ? 'color-mix(in srgb, var(--group-fix) 12%, transparent)' : 'var(--bg-secondary)'}
-                title={board.role === 'maintainer'
-                  ? 'Your token has push access — fixes, promote and merge are available.'
-                  : 'Your token has no push access — reviews and triage work; fixes, promote and merge are disabled.'}
-              />
-            </span>
-          )}
-          <span style={{ margin: '0 6px' }}>—</span>{board.active} active, {board.needsHuman} need you
-          <button
-            className="btn btn-sm"
-            onClick={openSpec}
-            title="Board settings (trigger label, intake, limits, policy)"
-            style={{ marginLeft: 'auto' }}
-          >⚙</button>
-          <button
-            className="btn btn-delete btn-sm"
-            onClick={handleDeleteBoard}
-            title="Remove this board (running sandboxes are not touched)"
-            style={{ marginLeft: '6px' }}
-          >Delete</button>
         </div>
       )}
 
