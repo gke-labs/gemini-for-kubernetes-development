@@ -163,9 +163,49 @@ describe('Sessions', () => {
         });
         await act(async () => { button('Start').click(); });
         await flush();
-        expect(JSON.parse(global.fetch.mock.calls.find(c => c[0] === '/api/board/g4k/research')[1].body)).toEqual({ kind: 'topic', topic: 'Overview of g4k' });
+        // A board with no engine set runs its sessions on gemini.
+        expect(JSON.parse(global.fetch.mock.calls.find(c => c[0] === '/api/board/g4k/research')[1].body)).toEqual({ kind: 'topic', topic: 'Overview of g4k', engine: 'gemini' });
         expect(window.location.hash).toBe('#/sessions/research/fresh');
         expect(container.querySelector('[role="separator"]')).not.toBeNull();
+    });
+});
+
+describe('the engine chip', () => {
+    const boardsWith = (engine) => [{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k', engine }];
+    const startWith = async (engine, pick) => {
+        global.fetch = jest.fn((url, opts) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) });
+            if (url === '/api/boards') return Promise.resolve({ ok: true, json: () => Promise.resolve(boardsWith(engine)) });
+            if (url === '/api/board/g4k/research' && opts && opts.method === 'POST') {
+                return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessionId: 'x', title: 'q' }) });
+            }
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        const chip = container.querySelector('select[aria-label="Engine"]');
+        const setValue = (el, v) => {
+            const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
+            set.call(el, v);
+            el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+        };
+        const shown = chip.value;
+        if (pick) await act(async () => { setValue(chip, pick); });
+        await act(async () => { setValue(container.querySelector('textarea[aria-label="Start a session"]'), 'q'); });
+        await act(async () => { button('Start').click(); });
+        await flush();
+        const call = global.fetch.mock.calls.find(c => c[0] === '/api/board/g4k/research');
+        return { shown, options: Array.from(chip.options).map(o => o.value), sent: JSON.parse(call[1].body).engine };
+    };
+
+    test('defaults to the board\'s engine and offers only what sessions run on', async () => {
+        expect(await startWith('antigravity')).toEqual({ shown: 'antigravity', options: ['gemini', 'antigravity'], sent: 'antigravity' });
+    });
+    test('a claude board\'s sessions default to gemini', async () => {
+        expect((await startWith('claude')).sent).toBe('gemini');
+    });
+    test('the pick is what is sent', async () => {
+        expect((await startWith('gemini', 'antigravity')).sent).toBe('antigravity');
     });
 });
 

@@ -1042,6 +1042,30 @@ func TestGetBoardsRole(t *testing.T) {
 	}
 }
 
+// getBoards reports each board's engine, the Sessions box's default: the
+// one set, else gemini.
+func TestGetBoardsEngine(t *testing.T) {
+	agy := boardCR()
+	agy.SetName("agyboard")
+	_ = unstructured.SetNestedField(agy.Object, "antigravity", "spec", "sandbox", "engine")
+	_, r, _ := boardTestServer(t, map[string]string{}, boardCR(), agy)
+
+	req, _ := http.NewRequest("GET", "/boards", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	var boards []models.Board
+	if err := json.Unmarshal(w.Body.Bytes(), &boards); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	engines := map[string]string{}
+	for _, b := range boards {
+		engines[b.Name] = b.Engine
+	}
+	if engines["myboard"] != "gemini" || engines["agyboard"] != "antigravity" {
+		t.Errorf("engines = %v", engines)
+	}
+}
+
 // The trigger label is automation-only: a labeled PR with no involvement
 // signal (not authored, no review request, no sandbox, no issue link) does
 // not appear in the view at all.

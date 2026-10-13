@@ -65,6 +65,9 @@ type Board struct {
 	// or "read-only". Fix flows are pointless without push — the UI
 	// disables them on read-only boards.
 	Role string `json:"role,omitempty"`
+	// Engine is the board's agent engine (gemini, claude, antigravity):
+	// what a session started on it runs on unless one is picked.
+	Engine string `json:"engine,omitempty"`
 }
 
 // WorkSandbox is the sandbox chip on a work-item row.

@@ -206,6 +206,13 @@ type ResearchRequest struct {
 	// Title is what the session is called. Empty means derive it.
 	// +kubebuilder:validation:Optional
 	Title string `json:"title,omitempty"`
+
+	// Engine is the agent the member picked for the conversation. Empty
+	// means the board's (a claude board's research runs on gemini: the
+	// session daemon has no claude engine).
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=gemini;antigravity
+	Engine string `json:"engine,omitempty"`
 }
 
 // RequestSpec is the click: who made it, on what, and with what

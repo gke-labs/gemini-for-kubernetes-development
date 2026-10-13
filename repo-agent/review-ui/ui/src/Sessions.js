@@ -165,8 +165,18 @@ function SessionListRow({ row, selected, onOpen }) {
   );
 }
 
+// SESSION_ENGINES are the engines a session can run on: the session
+// daemon has no claude engine yet.
+export const SESSION_ENGINES = ['gemini', 'antigravity'];
+
+// sessionEngine is the engine a session on a board with engine runs on by
+// default: a claude board's runs on gemini, as research always has.
+export function sessionEngine(engine) {
+  return SESSION_ENGINES.includes(engine) ? engine : 'gemini';
+}
+
 // StartBox starts a session on one of the member's boards' repositories:
-// research's box, with the repository picked here.
+// research's box, with the repository and the engine picked here.
 export function StartBox({ boards, onStarted, autoFocus }) {
   const [boardName, setBoardName] = useStored('sessions.lastBoard', '');
   const [topic, setTopic] = useState('');
@@ -175,6 +185,10 @@ export function StartBox({ boards, onStarted, autoFocus }) {
   const [error, setError] = useState('');
   const boxRef = useRef(null);
   const board = boards.find(b => b.name === boardName) || boards[0];
+  // The engine the session runs on: the board's until one is picked, and
+  // the board's again when the repository changes.
+  const [pickedEngine, setPickedEngine] = useState('');
+  const engine = pickedEngine || sessionEngine(board && board.engine);
   const repo = board ? repoFromURL(board.repoURL) : '';
 
   useEffect(() => {
@@ -205,7 +219,7 @@ export function StartBox({ boards, onStarted, autoFocus }) {
     fetch(`/api/board/${board.name}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'topic', topic: topic.trim() }),
+      body: JSON.stringify({ kind: 'topic', topic: topic.trim(), engine }),
     })
       .then(async res => {
         const body = await res.json().catch(() => ({}));
@@ -230,11 +244,19 @@ export function StartBox({ boards, onStarted, autoFocus }) {
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); start(); } }}
         style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
-        <select aria-label="Repository" value={board ? board.name : ''} onChange={e => setBoardName(e.target.value)}
+        <select aria-label="Repository" value={board ? board.name : ''} onChange={e => { setBoardName(e.target.value); setPickedEngine(''); }}
           title={board ? board.repoURL : ''}
           style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
           {boards.map(b => <option key={b.name} value={b.name}>▣ {repoFromURL(b.repoURL) || b.name}</option>)}
         </select>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+          <EngineIcon engine={engine} size={14} />
+          <select aria-label="Engine" value={engine} onChange={e => setPickedEngine(e.target.value)}
+            title={board && board.engine === 'claude' ? 'Sessions run on gemini or antigravity: claude is not available for them yet' : 'The agent the session runs on'}
+            style={{ fontSize: 'x-small', borderRadius: '12px', padding: '2px 6px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+            {SESSION_ENGINES.map(e => <option key={e} value={e}>{e}</option>)}
+          </select>
+        </span>
         <button type="button" style={{ ...link, opacity: prompts.onboard ? 1 : 0.5 }} disabled={!prompts.onboard || busy} onClick={() => fill('onboard')}
           title="Puts the overview prompt in the box — read it, edit it, send it">overview</button>
         <button type="button" style={{ ...link, opacity: prompts.activity ? 1 : 0.5 }} disabled={!prompts.activity || busy} onClick={() => fill('activity')}

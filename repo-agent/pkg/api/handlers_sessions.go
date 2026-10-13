@@ -256,7 +256,7 @@ func sessionState(row SessionRow) string {
 }
 
 // sandboxPods are the namespace's sandbox pods by sandbox (podState's),
-// and the running ones that can be dialed (runningSandboxPods').
+// and the running ones that can be dialed.
 func (s *Server) sandboxPods(ctx context.Context, namespace string) (map[string]*corev1.Pod, map[string]*corev1.Pod) {
 	all, running := map[string]*corev1.Pod{}, map[string]*corev1.Pod{}
 	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox"})
@@ -280,8 +280,8 @@ func (s *Server) sandboxPods(ctx context.Context, namespace string) (map[string]
 }
 
 // attachSessionLiveState asks each running pod's daemon what its rows'
-// sessions are doing, in parallel and bounded as a whole, as
-// attachResearchLiveState does for research.
+// sessions are doing, in parallel and bounded as a whole: a list costs
+// the slowest pod, not the sum, and a wedged one cannot stall the rest.
 func (s *Server) attachSessionLiveState(ctx context.Context, rows []SessionRow, running map[string]*corev1.Pod) {
 	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
 	defer cancel()

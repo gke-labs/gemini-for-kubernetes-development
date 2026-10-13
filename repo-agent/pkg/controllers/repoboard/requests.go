@@ -226,6 +226,7 @@ func researchClaimFrom(req *boardv1alpha1.Request) (researchClaim, bool) {
 			Since: spec.Since,
 			Title: spec.Title,
 		},
+		engine: spec.Engine,
 	}, true
 }
 

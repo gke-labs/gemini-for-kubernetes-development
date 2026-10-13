@@ -77,7 +77,6 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		// filed, and nothing after that click goes through it.
 		// Every agent conversation in the namespace (docs/design/sessions-view.md).
 		api.GET("/sessions", s.getSessions)
-		api.GET("/research", s.getResearchSessions)
 		api.PATCH("/research/:session", s.renameResearchSession)
 		api.DELETE("/research/:session", s.deleteResearchSession)
 		// A factory task's agent session (plan, triage, research): watched

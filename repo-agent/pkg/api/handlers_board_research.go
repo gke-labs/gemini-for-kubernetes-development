@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -111,9 +112,18 @@ func (s *Server) startResearchSession(c *gin.Context) {
 
 	// A conversation starts with a question: `factory recipe research`
 	// asks it as the task, and there is no task without one.
-	var kickoff research.Kickoff
-	if err := c.ShouldBindJSON(&kickoff); err != nil {
+	// Engine is the agent the member picked; empty is the board's.
+	var body struct {
+		research.Kickoff
+		Engine string `json:"engine"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+	kickoff := body.Kickoff
+	if body.Engine != "" && body.Engine != acpd.EngineGemini && body.Engine != acpd.EngineAntigravity {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a research conversation runs on gemini or antigravity"})
 		return
 	}
 	if kickoff.Kind == "" {
@@ -149,6 +159,7 @@ func (s *Server) startResearchSession(c *gin.Context) {
 			Topic:     kickoff.Topic,
 			Since:     kickoff.Since,
 			Title:     kickoff.Title,
+			Engine:    body.Engine,
 		},
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record research request", "details": err.Error()})

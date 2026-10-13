@@ -81,6 +81,11 @@ spec:
                 type: string
               research:
                 properties:
+                  engine:
+                    enum:
+                    - gemini
+                    - antigravity
+                    type: string
                   kind:
                     type: string
                   sessionId:

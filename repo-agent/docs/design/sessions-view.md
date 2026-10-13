@@ -138,8 +138,9 @@ changes filling the box with a canned prompt. It gains:
   one used. The placeholder and the canned prompts follow it. A repository
   with no board is added on Work first, so revises and Save notes always
   have a board to be filed on (pasting a URL here to create one: later).
-- **Engine chip:** later. Research follows the board's engine, and the
-  start route takes no engine yet.
+- **Engine chip:** gemini or antigravity (the session daemon has no
+  claude engine yet), defaulting to the board's; a claude board's
+  defaults to gemini. Changing the repository goes back to its board's.
 - **Recipe chip:** only once a second recipe runs `on: repo`. Today only
   `research` does, so there is none. A recipe with required inputs beyond
   the topic gets one-line fields under the box when picked.
@@ -157,15 +158,18 @@ it.
   (live, busy, waiting, retrying) from each running pod's daemon:
   `attachResearchLiveState`, widened from research pods to every pod with
   a session, still in parallel and bounded as a whole. Polled every 10s.
-- Step 4: `POST /api/board/:board/recipes/:recipe` with `{inputs, engine}`:
-  a recipe on the board's repository, beside the item launches
-  (`…/issues/:id/recipes/:recipe`, `…/prs/:id/recipes/:recipe`). It
-  replaces `POST /api/board/:board/research`; the prompts move to
-  `GET /api/board/:board/recipes/research/prompts`.
+- `POST /api/board/:board/research` takes `engine` (gemini or
+  antigravity; empty for the board's), stored on the Request as
+  `spec.research.engine`. `GET /api/boards` reports each board's
+  `engine`, the chip's default.
+- Later: `POST /api/board/:board/recipes/:recipe` with `{inputs,
+  engine}` for repository recipes beside the item launches, once there
+  is a second one.
 - Rename keeps research's title annotation, as a session route. End is the
   sandbox card's delete.
-- **Removed in step 4:** `GET /api/research`, `PATCH|DELETE /api/research/:session`,
-  `POST /api/board/:board/research`.
+- **Removed in step 4:** `GET /api/research` (the list). Kept until the
+  generic route: `PATCH|DELETE /api/research/:session`,
+  `POST /api/board/:board/research` and its prompts.
 
 ## Steps
 
@@ -180,9 +184,17 @@ it.
    and its list. `ResearchConversation` stays: it is how every session
    is shown. `GET /api/research` (the list) is then unused by the UI and
    goes in step 4 with the other research routes.
-4. **One launch route for repo recipes**, `POST
-   /api/board/:board/recipes/:recipe`, replacing the research routes
-   (`/api/research*`, `POST /api/board/:board/research`); the engine chip.
+4. **The engine chip, and the research list gone.** The start box picks
+   the engine (gemini or antigravity: the session daemon has no claude
+   engine yet), defaulting to the board's (a claude board's to gemini).
+   The click carries it (`spec.research.engine` on the Request) and the
+   controller launches with it, else the board's. `GET /api/research`
+   (the list) is deleted; its tests read the Sessions feed. The generic
+   `POST /api/board/:board/recipes/:recipe` for repository recipes is
+   deferred: research is still the only one, and it has machinery of its
+   own (session ids minted up front, pending rows, titles, a
+   research-ready settle) a generic route would have to take over.
+   Rename, delete, start and prompts stay on the research routes.
 5. **Issue or PR references in the box.** Typing `#N`, `kcc#N`,
    `owner/repo#N` or an issue/PR URL turns the box into a launcher:
 

@@ -361,7 +361,7 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 		c.Set(auth.UserKey, "alice")
 		c.Next()
 	})
-	r.GET("/api/research", server.getResearchSessions)
+	r.GET("/api/sessions", server.getSessions)
 	r.PATCH("/api/research/:session", server.renameResearchSession)
 	r.DELETE("/api/research/:session", server.deleteResearchSession)
 	r.GET("/api/task-sessions/:sandbox/:task", server.getTaskSession)
@@ -399,18 +399,9 @@ func TestResearchSessionListDoesNotNeedAReachablePod(t *testing.T) {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{sb})
 
-	w := doJSON(t, r, http.MethodGet, "/api/research", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
-	}
-	var got struct {
-		Sessions []researchSandboxView `json:"sessions"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := struct{ Sessions []researchSandboxView }{listResearch(t, r)}
 	if len(got.Sessions) != 1 {
-		t.Fatalf("got %d sessions, want 1: %s", len(got.Sessions), w.Body.String())
+		t.Fatalf("got %d sessions, want 1: %+v", len(got.Sessions), got.Sessions)
 	}
 	if got.Sessions[0].SessionID != researchSession {
 		t.Errorf("sessionId = %q", got.Sessions[0].SessionID)
@@ -435,27 +426,21 @@ func TestResearchSessionListSaysStartingUntilThePodRuns(t *testing.T) {
 		// Pending, so it does not count: an IP-less pod cannot be dialed.
 		researchPod("alice", booting.GetName(), "", corev1.PodPending))
 
-	w := doJSON(t, r, http.MethodGet, "/api/research", "")
-	var got struct {
-		Sessions []researchSandboxView `json:"sessions"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := struct{ Sessions []researchSandboxView }{listResearch(t, r)}
 	starting := map[string]bool{}
 	for _, s := range got.Sessions {
 		starting[s.SessionID] = s.Starting
 	}
 	if !starting[researchSession] {
-		t.Errorf("a sandbox with no running pod should be starting: %s", w.Body.String())
+		t.Errorf("a sandbox with no running pod should be starting: %+v", got.Sessions)
 	}
 	if starting[other] {
-		t.Errorf("a sandbox with a running pod should not be starting: %s", w.Body.String())
+		t.Errorf("a sandbox with a running pod should not be starting: %+v", got.Sessions)
 	}
 	// Paused is its own state and its own answer — resuming is a click,
 	// not a wait, and calling it starting would promise it is coming back.
 	if starting["3c2f9a71-0000-4000-8000-000000000003"] {
-		t.Errorf("a paused sandbox should not be starting: %s", w.Body.String())
+		t.Errorf("a paused sandbox should not be starting: %+v", got.Sessions)
 	}
 }
 
@@ -598,26 +583,6 @@ func TestResearchListAsksNothingOfSessionsWithNoPod(t *testing.T) {
 	}
 }
 
-// A sandbox the old research path made stays on the list, so it can be
-// deleted, marked legacy and never dialled.
-func TestResearchListShowsALegacySandboxWithoutAskingIt(t *testing.T) {
-	sb := legacyResearchSandboxCR("alice", researchSession, researchRepo, false)
-	daemon := &fakeSessions{live: map[string]acpd.Session{}}
-	r, _ := researchTestServer(t, daemon, []*unstructured.Unstructured{sb},
-		researchPod("alice", sb.GetName(), "10.0.0.1", corev1.PodRunning))
-
-	got := listResearch(t, r)
-	if len(got) != 1 || !got[0].Legacy {
-		t.Fatalf("got %+v, want the one legacy row", got)
-	}
-	if got[0].Live || got[0].Unreachable != "" {
-		t.Errorf("a legacy row reported live state: live=%t unreachable=%q", got[0].Live, got[0].Unreachable)
-	}
-	if len(daemon.calls) != 0 {
-		t.Errorf("the list dialled a legacy sandbox: %v", daemon.calls)
-	}
-}
-
 // A legacy sandbox records no task, so it has no conversation to open;
 // it is still deletable.
 func TestResearchLegacySandboxIsStillDeletable(t *testing.T) {
@@ -634,29 +599,6 @@ func TestResearchLegacySandboxIsStillDeletable(t *testing.T) {
 	}
 }
 
-// Every route here starts from a session id, so a research sandbox
-// without one cannot be opened, prompted or followed. Listing it would
-// put a row in the UI that does nothing when clicked.
-func TestResearchSessionListSkipsSandboxesWithNoSessionID(t *testing.T) {
-	good := researchSandboxCR("alice", researchSession, researchRepo, false)
-	orphan := researchSandboxCR("alice", "3c2f9a71-0000-4000-8000-000000000001", "other-repo", false)
-	annotations := orphan.GetAnnotations()
-	delete(annotations, researchSessionIDAnnotation)
-	orphan.SetAnnotations(annotations)
-
-	r, _ := researchTestServer(t, nil, []*unstructured.Unstructured{good, orphan})
-	w := doJSON(t, r, http.MethodGet, "/api/research", "")
-	var got struct {
-		Sessions []researchSandboxView `json:"sessions"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != researchSession {
-		t.Errorf("got %+v, want only the addressable session", got.Sessions)
-	}
-}
-
 // Only the member's own namespace. The routes carry no namespace, so
 // this scoping is the whole of the access control on a conversation.
 func TestResearchSessionInAnotherNamespaceIsInvisible(t *testing.T) {
@@ -664,8 +606,8 @@ func TestResearchSessionInAnotherNamespaceIsInvisible(t *testing.T) {
 	r, _ := researchTestServer(t, &fakeSessions{}, []*unstructured.Unstructured{sb},
 		researchPod("bob", sb.GetName(), "10.1.2.3", corev1.PodRunning))
 
-	if w := doJSON(t, r, http.MethodGet, "/api/research", ""); !strings.Contains(w.Body.String(), `"sessions":[]`) {
-		t.Errorf("bob's session appeared in alice's list: %s", w.Body.String())
+	if got := listResearch(t, r); len(got) != 0 {
+		t.Errorf("bob's session appeared in alice's list: %+v", got)
 	}
 	if w := doJSON(t, r, http.MethodGet, researchConversation(researchSession), ""); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for another namespace's session", w.Code)
@@ -1053,19 +995,33 @@ func seedResearchClick(t *testing.T, dyn *fake.FakeDynamicClient, member, sessio
 	}
 }
 
+// listResearch is the research conversations on the Sessions feed, in
+// the shape these tests read: the feed is where the list of them went.
 func listResearch(t *testing.T, r *gin.Engine) []researchSandboxView {
 	t.Helper()
-	w := doJSON(t, r, http.MethodGet, "/api/research", "")
+	w := doJSON(t, r, http.MethodGet, "/api/sessions", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	var got struct {
-		Sessions []researchSandboxView `json:"sessions"`
+		Sessions []SessionRow `json:"sessions"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	return got.Sessions
+	views := []researchSandboxView{}
+	for _, row := range got.Sessions {
+		if row.Research == "" {
+			continue
+		}
+		views = append(views, researchSandboxView{
+			SessionID: row.Research, Task: row.Task, Sandbox: row.Sandbox,
+			Repo: row.Repo[strings.LastIndex(row.Repo, "/")+1:], Title: row.Title, Requested: row.Requested,
+			Paused: row.Pod == "paused", Starting: !row.Requested && row.Pod == "starting",
+			Live: row.Live, Busy: row.Busy, Waiting: row.Waiting, Retrying: row.Retrying, Held: row.Held, Unreachable: row.Unreachable,
+		})
+	}
+	return views
 }
 
 // The title is what the list is read by. It comes off the sandbox, so

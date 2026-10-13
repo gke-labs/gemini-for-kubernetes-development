@@ -247,6 +247,33 @@ func TestResearchClaimLaunchesForTheBoardEngine(t *testing.T) {
 	}
 }
 
+// The engine the member picked in the Sessions box beats the board's, so a
+// gemini board can start an antigravity conversation and back.
+func TestResearchClaimLaunchesForThePickedEngine(t *testing.T) {
+	for _, tc := range []struct{ board, picked, want string }{
+		{board: "gemini", picked: acpd.EngineAntigravity, want: acpd.EngineAntigravity},
+		{board: "antigravity", picked: acpd.EngineGemini, want: acpd.EngineGemini},
+		{board: "claude", picked: acpd.EngineAntigravity, want: acpd.EngineAntigravity},
+	} {
+		t.Run(tc.board+"-"+tc.picked, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			req := researchRequest(testSession, time.Now().Add(-time.Minute), aQuestion)
+			req.Spec.Research.Engine = tc.picked
+			board := testBoard(nil)
+			board.Spec.Sandbox.Engine = tc.board
+			fake := newFakeLauncher()
+			r := newTestReconciler(fake, testGithubClient(`[]`), board, githubSecret(), req)
+
+			_, err := r.Reconcile(context.Background(), boardRequest())
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+
+			launches := researchLaunches(fake)
+			g.Expect(launches).To(gomega.HaveLen(1))
+			g.Expect(launches[0].ResearchOpts.Engine).To(gomega.Equal(tc.want))
+		})
+	}
+}
+
 // A board that overrides its sandbox image gets it for research too.
 func TestResearchClaimLaunchesOnTheBoardImage(t *testing.T) {
 	g := gomega.NewWithT(t)
