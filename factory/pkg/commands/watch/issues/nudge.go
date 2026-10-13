@@ -170,14 +170,23 @@ func (n *Nudger) nudge(ctx context.Context, num int, closed *githubv39.Issue) {
 		klog.Infof("Not nudging the workflow of issue #%d because it has the stop label.", num)
 		return
 	}
-	workflowPath, workflowName := resolveWorkflow(ctx, n.gh, issue)
-	if workflowName == "" {
+	wf := identifyWorkflow(ctx, n.gh, issue)
+	if wf.Name == "" {
 		return
 	}
+	workflowPath, workflowName := wf.Path, wf.Name
 
 	filename := issueTaskFilename(num, workflowName)
 	if n.queue.TaskExists(filename) {
 		klog.Infof("Workflow %s of issue #%d is already queued or running; not nudging it for closed issue #%d.", workflowName, num, closed.GetNumber())
+		return
+	}
+
+	// A workflow whose definition is missing or could not be fetched is not
+	// nudged. Reporting a missing definition on the issue is the scanner's
+	// job, and it stops the issue when it does.
+	if wf = wf.check(ctx, n.gh); wf.Status != common.WorkflowFound {
+		klog.Warningf("Not nudging the workflow %s of issue #%d: %v", wf.Path, num, wf.Err)
 		return
 	}
 
