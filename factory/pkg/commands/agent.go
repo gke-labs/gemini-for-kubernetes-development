@@ -42,11 +42,12 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 		Use:   "create",
 		Short: "Run a custom agent definition in a sandbox",
 		Long: `Run a custom agent definition (.agents/<name>.md) in the agent's own
-sandbox, as the agent recipe (recipe/recipes/agent.yaml), on a repository
-or an issue. A chore's commits are pushed to the member's fork and opened
-as a PR (open-pr); a skipPR agent commits nothing; a workflow's journal is
-pushed to its factory-<issue> branch. To change a PR, use
-factory recipe care-iterate.`,
+sandbox. A chore runs on the repository as the agent recipe
+(recipe/recipes/agent.yaml): its commits are pushed to the member's fork
+and opened as a PR (open-pr), and a skipPR chore commits nothing. A
+workflow (mode: workflow) takes its next step on its issue as the workflow
+recipe (recipe/recipes/workflow.yaml), whose journal is pushed to the
+branch factory-<issue>. To change a PR, use factory recipe care-iterate.`,
 		Example: `  # Run an agent defined in .agents/my-agent.yaml on a repository
   factory agent create --url https://github.com/owner/repo --agent my-agent.yaml
 
@@ -185,37 +186,20 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 	if cfgErr != nil {
 		klog.Warningf("Failed to load factory config: %v", cfgErr)
 	}
-	prompt := agentDef.Prompt
-	if isIssue {
-		fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
-		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, targetNum)
-		if err != nil {
-			return fmt.Errorf("fetching issue details: %w", err)
-		}
-
-		fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
-		comments, err := repoClient.ListIssueComments(ctx, targetNum)
-		if err != nil {
-			return fmt.Errorf("fetching comments: %w", err)
-		}
-		// Only trusted authors' comments reach the prompt.
-		var commentMsgs []string
-		for _, c := range trustedIssueComments(comments, trustedLogins(cfg)) {
-			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
-		}
-		prompt = fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
-			agentDef.Prompt,
-			issue.GetTitle(),
-			issue.GetBody(),
-			strings.Join(commentMsgs, "\n\n"),
-		)
+	workflow := isWorkflow(agentDef)
+	switch {
+	case workflow && !isIssue:
+		return fmt.Errorf("%s is a workflow, which runs on an issue: --url https://github.com/%s/%s/issues/<n>", agentDef.Name, owner, repo)
+	case !workflow && isIssue:
+		return fmt.Errorf("%s is a chore, which runs on the repository: --url https://github.com/%s/%s", agentDef.Name, owner, repo)
+	}
+	if workflow && flags.SessionID == "" {
+		flags.SessionID = fmt.Sprintf("issue-%d", targetNum)
 	}
 
 	taskID := common.Slugify(agentDef.Name)
 	if flags.SessionID != "" {
 		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
-	} else if isIssue {
-		taskID = fmt.Sprintf("issue-%d-%s", targetNum, taskID)
 	}
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 	ensure := func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error) {
@@ -223,28 +207,58 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		return factorysandbox.EnsureAgentSandbox(ctx, kubeClient, rootFlags.Namespace, repo, taskID, cloneURL, flags.URL, taskTitle, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
 
-	inputs := map[string]string{
-		"prompt":       prompt,
-		"agent_name":   agentDef.Name,
-		"agent_file":   agentPath,
-		"mode":         agentMode(agentDef),
-		"session_id":   flags.SessionID,
-		"precondition": agentDef.PreconditionScript,
-		"labels":       resolvePRLabels(cfg, nil, false),
+	if !workflow {
+		inputs := map[string]string{
+			"prompt":       agentDef.Prompt,
+			"agent_name":   agentDef.Name,
+			"agent_file":   agentPath,
+			"skip_pr":      strconv.FormatBool(agentDef.SkipPR),
+			"precondition": agentDef.PreconditionScript,
+			"labels":       resolvePRLabels(cfg, nil, false),
+		}
+		return runRecipeIn(ctx, ensure, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
+			applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
 	}
-	return runRecipeIn(ctx, ensure, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
-		applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
+
+	// A workflow's prompt carries its issue: the title, the description
+	// and the trusted authors' comments, whose references are the related
+	// issues its precondition checks.
+	fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
+	issue, _, err := ghClient.Issues.Get(ctx, owner, repo, targetNum)
+	if err != nil {
+		return fmt.Errorf("fetching issue details: %w", err)
+	}
+	fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
+	comments, err := repoClient.ListIssueComments(ctx, targetNum)
+	if err != nil {
+		return fmt.Errorf("fetching comments: %w", err)
+	}
+	var commentMsgs, commentBodies []string
+	for _, c := range trustedIssueComments(comments, trustedLogins(cfg)) {
+		commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
+		commentBodies = append(commentBodies, c.GetBody())
+	}
+	var related []string
+	for _, n := range common.ExtractRelatedIssuesAndPRs(issue.GetBody(), commentBodies, targetNum) {
+		related = append(related, strconv.Itoa(n))
+	}
+	inputs := map[string]string{
+		"prompt": fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
+			agentDef.Prompt, issue.GetTitle(), issue.GetBody(), strings.Join(commentMsgs, "\n\n")),
+		"agent_name":     agentDef.Name,
+		"agent_file":     agentPath,
+		"session_id":     flags.SessionID,
+		"related_issues": strings.Join(related, ","),
+		"precondition":   agentDef.PreconditionScript,
+	}
+	// A workflow's result is the issues it opens and its journal: no task
+	// output to apply.
+	return runRecipeIn(ctx, ensure, recipe.WorkflowRecipe, flags.URL, flags.RunName, "", "", false, applyMode{}, inputs, nil)
 }
 
-// agentMode is the agent recipe's mode for a definition: a skipPR
-// agent's changes are not kept, a workflow's journal goes to its branch,
-// and a chore's changes are opened as a PR.
-func agentMode(def *common.AgentDefinition) string {
-	switch {
-	case def.SkipPR:
-		return "none"
-	case def.Mode == "workflow":
-		return "workflow"
-	}
-	return "chore"
+// isWorkflow reports whether a definition is a workflow (mode: workflow),
+// which takes the next step of a multi-step process on an issue, rather
+// than a chore, which runs on the repository.
+func isWorkflow(def *common.AgentDefinition) bool {
+	return def.Mode == "workflow"
 }

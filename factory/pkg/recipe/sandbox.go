@@ -143,7 +143,7 @@ type ACPSession struct {
 // StartACPSession starts the engine in the checkout. The transcript goes to
 // <taskDir>/session/stream.ndjson, the same format a research session
 // writes, so it can be followed while the task runs.
-func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDir string) (*ACPSession, error) {
+func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDir string, env map[string]string) (*ACPSession, error) {
 	s, err := acpd.StartSession(ctx, acpd.SessionConfig{
 		ID:     filepath.Base(taskDir),
 		Engine: engine,
@@ -154,6 +154,7 @@ func StartACPSession(ctx context.Context, engine, model, apiKey, repoDir, taskDi
 		// Nobody is at the sandbox to answer: the same trust as --yolo.
 		Mode:        acpd.GeminiModeYolo,
 		AutoApprove: true,
+		Env:         env,
 	})
 	if err != nil {
 		return nil, err

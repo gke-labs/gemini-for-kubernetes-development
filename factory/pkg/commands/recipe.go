@@ -1324,6 +1324,10 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		},
 		StartSession: func(ctx context.Context) (recipe.Session, error) {
 			apiKey := os.Getenv("GEMINI_API_KEY")
+			env, err := rec.RenderAgentEnv(inputs)
+			if err != nil {
+				return nil, err
+			}
 			// Started by a daemon that hosts sessions: the session is the
 			// daemon's, so it can be watched and continued after the task.
 			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
@@ -1331,14 +1335,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 				// A revise continues the conversation of the task it
 				// revises; a run in a session, its session's.
 				if task.Session != "" {
-					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir)
+					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir, env)
 				}
-				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir)
+				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir, env)
 			}
 			if task.Session != "" {
 				return nil, fmt.Errorf("continuing a conversation needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
 			}
-			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir)
+			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,

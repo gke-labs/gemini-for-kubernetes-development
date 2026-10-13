@@ -186,11 +186,32 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 	return nil
 }
 
+// RenderAgentEnv is AgentEnv for a run with inputs: each value
+// rendered against them, as an ask is.
+func (r *Recipe) RenderAgentEnv(inputs map[string]string) (map[string]string, error) {
+	if len(r.AgentEnv) == 0 {
+		return nil, nil
+	}
+	data := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
+	out := make(map[string]string, len(r.AgentEnv))
+	for k, v := range r.AgentEnv {
+		val, err := render("agent-env "+k, v, data, "")
+		if err != nil {
+			return nil, err
+		}
+		out[k] = val
+	}
+	return out, nil
+}
+
 // CheckRender renders every ask of every part with inputs, as far as can
 // be done before anything has run (step results and files empty), so an
 // ask reading an input its target does not set — an issue's, on a
 // repository — fails before a sandbox is made rather than in it.
 func (r *Recipe) CheckRender(inputs map[string]string) error {
+	if _, err := r.RenderAgentEnv(inputs); err != nil {
+		return err
+	}
 	parts := map[string][]Step{"start": r.Start.Steps}
 	for _, rv := range r.Revise {
 		parts["revise "+rv.ID] = rv.Steps

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,6 +155,10 @@ type SessionConfig struct {
 	Mode string
 	// Dir is where the transcript and engine log are written.
 	Dir string
+	// Env is more of the engine's environment, which the agent's shell
+	// commands inherit: facts a recipe gives it (a workflow's
+	// SESSION_ID), never credentials. CheckEnv says what is allowed.
+	Env map[string]string
 	// AutoApprove answers permission requests as they arrive instead of
 	// waiting for a user.
 	//
@@ -261,6 +268,9 @@ func StartSession(ctx context.Context, cfg SessionConfig) (*Session, error) {
 	if cfg.CWD == "" {
 		return nil, fmt.Errorf("cwd is required")
 	}
+	if err := CheckEnv(cfg.Env); err != nil {
+		return nil, err
+	}
 
 	transcript, err := OpenTranscript(cfg.Dir)
 	if err != nil {
@@ -327,6 +337,9 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 		engine.APIKeyEnv + "=" + cfg.APIKey,
 	}
 	cmd.Env = append(cmd.Env, engine.Env...)
+	for _, k := range slices.Sorted(maps.Keys(cfg.Env)) {
+		cmd.Env = append(cmd.Env, k+"="+cfg.Env[k])
+	}
 	// Engine stderr is diagnostics, not conversation. It goes to a file
 	// beside the transcript so a broken engine is debuggable without
 	// flooding what the user reads. Only its retried model calls reach
@@ -918,4 +931,34 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// CheckEnv refuses a session environment (SessionConfig.Env) that is not
+// plain facts: a name that is not one, one acpd sets itself (HOME, PATH,
+// TERM, an engine's API key or settings), one that changes how programs
+// load or start (LD_*, BASH_ENV, ENV), or one that looks like a
+// credential, which never goes to the engine this way.
+func CheckEnv(env map[string]string) error {
+	reserved := map[string]bool{"HOME": true, "PATH": true, "TERM": true, "BASH_ENV": true, "ENV": true}
+	for _, e := range Engines {
+		reserved[e.APIKeyEnv] = true
+		for _, kv := range e.Env {
+			k, _, _ := strings.Cut(kv, "=")
+			reserved[k] = true
+		}
+	}
+	for k := range env {
+		upper := strings.ToUpper(k)
+		switch {
+		case !envNameRE.MatchString(k):
+			return fmt.Errorf("session env %q is not a variable name", k)
+		case reserved[upper] || strings.HasPrefix(upper, "LD_"):
+			return fmt.Errorf("session env %s is acpd's or the system's to set", k)
+		case strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "KEY"):
+			return fmt.Errorf("session env %s looks like a credential, which never goes to the engine this way", k)
+		}
+	}
+	return nil
 }
