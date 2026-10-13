@@ -34,8 +34,8 @@ box to start a repository-level session. It replaces the Research tabs.
   request, a ready draft.
 - **Sessions start here at repository level.** Item recipes keep starting
   from Work rows, where their context and rules are.
-- **The Research tabs go**, after the page has been used (step 3). A
-  research conversation is a row here with no item.
+- **The Research tabs go** (step 3). A research conversation is a row
+  here with no item.
 - **No LLM** reads what the member types. Recognising an issue or PR in the
   box (step 5) is a regex and the board's own data.
 
@@ -175,9 +175,11 @@ it.
 2. **The page:** the ☰ entry, the box (on the research route), rows,
    sections, filters, grouping, the split with its strip. (Since: one
    list sorted by state with coloured dots, and a search box.)
-3. **Remove the Research tabs** once the page has been used: the board's
-   Research tab, All → Research (`AllResearchPanel`), `ResearchPanel`'s
-   list.
+3. **Remove the Research tabs**: the board's Research tab, All → Research
+   (`AllResearchPanel`, gone with the All boards view), `ResearchPanel`
+   and its list. `ResearchConversation` stays: it is how every session
+   is shown. `GET /api/research` (the list) is then unused by the UI and
+   goes in step 4 with the other research routes.
 4. **One launch route for repo recipes**, `POST
    /api/board/:board/recipes/:recipe`, replacing the research routes
    (`/api/research*`, `POST /api/board/:board/research`); the engine chip.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel, DRAFT_VERBS } from './Research';
+import { DRAFT_VERBS } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
 import Chip from './Chip';
 import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } from './WorkBits';
@@ -1386,7 +1386,7 @@ function Work({ onBack, namespace }) {
         const needs = visible.filter(i => i.attention === 'needs-you').length;
         // Always land on Work: consistent muscle memory, and its empty
         // first section ("nothing needs you") is the good news, not a dead end.
-        const shown = activeGroup || WORK;
+        const shown = activeGroup === 'try' ? 'try' : WORK;
         const groupLabel = item => (groupOf(item) === 'issues' ? 'ISSUE' : item.mine ? 'MY PR' : 'PR');
         const section = (label, n) => (
           <tr className="work-section">
@@ -1436,11 +1436,6 @@ function Work({ onBack, namespace }) {
                   }}>{needs}</span>
                 )}
               </button>
-              <button
-                className={`group-tab ${shown === 'research' ? 'active' : ''}`}
-                title="Understand this repo — an overview read, a digest of recent activity, or any question you ask; each one a conversation with an agent that has the repo checked out"
-                onClick={() => setActiveGroup('research')}
-              >Research</button>
               <button
                 className={`group-tab ${shown === 'try' ? 'active' : ''}`}
                 title="Plan, deploy, verify and tear down — each run carries its own procedure"
@@ -1497,9 +1492,7 @@ function Work({ onBack, namespace }) {
               </span>
             </nav>
 
-            {shown === 'research' ? (
-              <ResearchPanel boardName={activeBoard} repoURL={board && board.repoURL} />
-            ) : shown === 'try' ? (
+            {shown === 'try' ? (
               <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
             ) : (
             <div className="work-card">
