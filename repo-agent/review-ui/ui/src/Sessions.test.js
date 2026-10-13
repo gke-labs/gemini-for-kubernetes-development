@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const Sessions = require('./Sessions').default;
-const { orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
+const { parseItemRef, refBoard, itemSuggestions, pickSuggestion, orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -206,6 +206,132 @@ describe('the engine chip', () => {
     });
     test('the pick is what is sent', async () => {
         expect((await startWith('gemini', 'antigravity')).sent).toBe('antigravity');
+    });
+});
+
+describe('the item launcher', () => {
+    const boards = [
+        { name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k' },
+        { name: 'kcc', repoURL: 'https://github.com/GoogleCloudPlatform/k8s-config-connector' },
+    ];
+    const KCC_FEED = [
+        {
+            type: 'pr', number: 1488, title: 'fix drift', author: 'carol', recipes: [
+                { name: 'review', label: 'Review' },
+                { name: 'care-ci', label: 'Fix CI', session: 'care' },
+                { name: 'care-iterate', label: 'Iterate', session: 'care', inputs: ['instruction'] },
+            ],
+        },
+        {
+            type: 'issue', number: 7, title: 'plan me', recipes: [{ name: 'plan', label: 'Plan' }, { name: 'fix', label: 'Fix' }],
+            sessions: [{ recipe: 'plan', label: 'Plan', status: 'ready', sandbox: 'fix-kcc-7', task: 'recipe-plan-1' }],
+        },
+    ];
+    let posted;
+    const serve = () => {
+        posted = [];
+        global.fetch = jest.fn((url, opts) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) });
+            if (url === '/api/boards') return Promise.resolve({ ok: true, json: () => Promise.resolve(boards) });
+            if (url === '/api/board/kcc/work') return Promise.resolve({ ok: true, json: () => Promise.resolve(KCC_FEED) });
+            if (opts && opts.method === 'POST') { posted.push({ url, body: opts.body }); return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessionId: 's', title: 't' }) }); }
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+    };
+    const type = async (text) => {
+        const box = container.querySelector('textarea[aria-label="Start a session"]');
+        await act(async () => {
+            const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            set.call(box, text);
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => { jest.advanceTimersByTime(300); });
+        await flush();
+        return box;
+    };
+    const options = () => Array.from(container.querySelectorAll('[aria-label="Item launcher"] [role="option"]'));
+    const press = async (box, key) => { await act(async () => { box.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); }); await flush(); };
+
+    test('kcc#1488 offers the PR\'s recipes, the typed word highlighted; Enter starts it on the row', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        const box = await type('review kcc#1488');
+        expect(container.querySelector('[aria-label="Item launcher"]').textContent).toContain('PR #1488 · fix drift · carol');
+        // The repository chip follows the reference.
+        expect(container.querySelector('select[aria-label="Repository"]').value).toBe('kcc');
+        // Iterate needs typed input: it stays on Work.
+        expect(options().map(o => o.textContent.replace('⏎', ''))).toEqual(['▸Review', 'Fix CI', 'Ask “review kcc#1488” as a question']);
+        await press(box, 'Enter');
+        expect(posted).toEqual([{ url: '/api/board/kcc/prs/1488/recipes/review', body: undefined }]);
+        expect(container.textContent).toContain('Review is starting on #1488');
+    });
+
+    test('a group with a draft offers its session, and ↓ moves to the next', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        const box = await type('kcc#7');
+        expect(options().map(o => o.textContent.replace('⏎', '').replace('▸', ''))).toEqual(['Open Plan session ↗', 'Fix', 'Ask “kcc#7” as a question']);
+        await press(box, 'ArrowDown');
+        expect(options().map(o => o.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false']);
+        await press(box, 'ArrowUp');
+        await press(box, 'Enter');
+        expect(window.location.hash).toBe('#/sessions/fix-kcc-7/recipe-plan-1');
+    });
+
+    test('an item not on the board says so; Enter still asks it as a question', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        const box = await type('what is kcc#99 about');
+        expect(container.textContent).toContain("#99 is not on kcc's board");
+        await press(box, 'Enter');
+        expect(posted.map(p => p.url)).toEqual(['/api/board/kcc/research']);
+        expect(JSON.parse(posted[0].body).topic).toBe('what is kcc#99 about');
+    });
+
+    test('no reference, no launcher', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        await type('how does the reconciler delete?');
+        expect(container.querySelector('[aria-label="Item launcher"]')).toBeNull();
+        expect(global.fetch).not.toHaveBeenCalledWith('/api/board/kcc/work');
+    });
+});
+
+describe('launcher helpers', () => {
+    test('parseItemRef', () => {
+        expect(parseItemRef('see https://github.com/o/r/pull/12 pls')).toMatchObject({ owner: 'o', repo: 'r', number: 12 });
+        expect(parseItemRef('review gke-labs/g4k#5')).toMatchObject({ owner: 'gke-labs', repo: 'g4k', number: 5 });
+        expect(parseItemRef('review kcc#13873')).toMatchObject({ alias: 'kcc', number: 13873 });
+        expect(parseItemRef('fix #42 now')).toEqual({ number: 42, text: '#42' });
+        expect(parseItemRef('no numbers here, C# is a language')).toBeNull();
+    });
+    test('refBoard', () => {
+        const boards = [{ name: 'g4k', repoURL: 'https://github.com/gke-labs/gemini-for-kubernetes-development' }, { name: 'kcc', repoURL: 'https://github.com/G/k8s-config-connector.git' }];
+        expect(refBoard({ alias: 'KCC', number: 1 }, boards, null).name).toBe('kcc');
+        expect(refBoard({ alias: 'k8s-config-connector', number: 1 }, boards, null).name).toBe('kcc');
+        expect(refBoard({ owner: 'gke-labs', repo: 'gemini-for-kubernetes-development', number: 1 }, boards, null).name).toBe('g4k');
+        expect(refBoard({ number: 1 }, boards, boards[1]).name).toBe('kcc');
+        expect(refBoard({ alias: 'nope', number: 1 }, boards, boards[0])).toBeNull();
+    });
+    test('itemSuggestions follows the row rules', () => {
+        const mine = { type: 'pr', mine: true, recipes: [{ name: 'review', label: 'Review' }, { name: 'care', label: 'Care', session: 'care' }] };
+        expect(itemSuggestions(mine).map(s => s.label)).toEqual(['Care']);
+        expect(itemSuggestions(mine, { selfReview: true }).map(s => s.label)).toEqual(['Review', 'Care']);
+        const running = { type: 'issue', recipes: [{ name: 'fix', label: 'Fix' }], launching: { fix: 'queued' } };
+        expect(itemSuggestions(running)).toEqual([{ kind: 'busy', label: 'Fix queued…', group: 'fix' }]);
+        const done = { type: 'issue', recipes: [{ name: 'triage', label: 'Triage' }], sessions: [{ recipe: 'triage', status: 'done', sandbox: 's', task: 't' }] };
+        expect(itemSuggestions(done).map(s => s.label)).toEqual(['Triage again']);
+        const pending = { type: 'pr', reviewPending: true, recipes: [{ name: 'review', label: 'Review' }] };
+        expect(itemSuggestions(pending)).toEqual([]);
+    });
+    test('pickSuggestion', () => {
+        const sg = [{ kind: 'busy', label: 'Fix queued…' }, { kind: 'launch', label: 'Plan', recipe: 'plan' }, { kind: 'launch', label: 'Triage', recipe: 'triage' }];
+        expect(pickSuggestion(sg, 'triage #3')).toBe(2);
+        expect(pickSuggestion(sg, '#3')).toBe(1);
     });
 });
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResearchConversation, GrowingTextarea, repoFromURL } from './Research';
 import SandboxCard from './SandboxCard';
 import { EngineIcon, ageOf } from './WorkBits';
+import { fetchWorkFeed } from './Work';
 
 // Sessions: every agent conversation in the member's namespace, whatever
 // started it — a Work row's button, the box on this page, the factory CLI
@@ -165,6 +166,84 @@ function SessionListRow({ row, selected, onOpen }) {
   );
 }
 
+// parseItemRef finds an issue or PR named in what was typed: a GitHub
+// URL, owner/repo#N, alias#N (a board's or repository's name) or #N (the
+// repository picked). No LLM: what is not one of these is a question.
+export function parseItemRef(text) {
+  const t = text || '';
+  let m = t.match(/https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(?:issues|pull)\/(\d+)/);
+  if (m) return { owner: m[1], repo: m[2], number: Number(m[3]), text: m[0] };
+  m = t.match(/(?:^|[\s(])([\w.-]+)\/([\w.-]+)#(\d+)\b/);
+  if (m) return { owner: m[1], repo: m[2], number: Number(m[3]), text: `${m[1]}/${m[2]}#${m[3]}` };
+  m = t.match(/(?:^|[\s(])([\w.-]+)#(\d+)\b/);
+  if (m) return { alias: m[1], number: Number(m[2]), text: `${m[1]}#${m[2]}` };
+  m = t.match(/(?:^|[\s(])#(\d+)\b/);
+  if (m) return { number: Number(m[1]), text: `#${m[1]}` };
+  return null;
+}
+
+// refBoard is the board a reference is on: the one whose repository it
+// names, the one named like its alias (board or repository name), or,
+// for a bare #N, current. null when none is.
+export function refBoard(ref, boards, current) {
+  const repoOf = (b) => (b.repoURL || '').replace(/\.git$/, '').replace(/^https?:\/\/github\.com\//, '').toLowerCase();
+  if (ref.owner) return boards.find(b => repoOf(b) === `${ref.owner}/${ref.repo}`.toLowerCase()) || null;
+  if (ref.alias) {
+    const a = ref.alias.toLowerCase();
+    return boards.find(b => b.name.toLowerCase() === a) || boards.find(b => repoOf(b).split('/')[1] === a) || null;
+  }
+  return current || null;
+}
+
+// itemSuggestions are what an issue or PR row offers to start, by Work's
+// row rules: one entry per recipe group; a group running, starting or
+// with a draft to judge offers its session instead of another run;
+// Review on the viewer's own PR only with self-review on, and not over
+// a pending review. Recipes that need typed input stay on Work.
+export function itemSuggestions(item, { selfReview = false } = {}) {
+  const groupOf = (x) => x.session || x.recipe || x.name;
+  const runs = [];
+  for (const run of item.sessions || []) if (!runs.some(r => groupOf(r) === groupOf(run))) runs.push(run);
+  const groups = [];
+  for (const rec of item.recipes || []) {
+    if (rec.name === 'review' && item.mine && item.type !== 'issue' && !selfReview) continue;
+    const g = groupOf(rec);
+    const known = groups.find(x => x.group === g);
+    if (known) known.recipes.push(rec); else groups.push({ group: g, recipes: [rec] });
+  }
+  const out = [];
+  for (const { group: g, recipes } of groups) {
+    const launching = Object.entries(item.launching || {}).find(([name]) => recipes.some(r => r.name === name));
+    const run = runs.find(r => groupOf(r) === g);
+    const status = (launching && launching[1]) || (run && run.status) || '';
+    const lead = recipes.find(r => r.name === g) || recipes[0];
+    if (status === 'starting' || status === 'queued') {
+      out.push({ kind: 'busy', label: `${lead.label} ${status}…`, group: g });
+      continue;
+    }
+    if ((status === 'running' || status === 'ready') && run && run.task) {
+      out.push({ kind: 'open', label: `Open ${run.label || lead.label} session`, group: g, sandbox: run.sandbox, task: run.task, status });
+      continue;
+    }
+    const again = status === 'done' || status === 'failed';
+    for (const rec of recipes) {
+      if ((rec.inputs || []).length) continue;
+      if (rec.name === 'review' && item.reviewPending) continue;
+      out.push({ kind: 'launch', label: `${rec.label}${again && rec === lead ? ' again' : ''}`, recipe: rec.name, group: g });
+    }
+  }
+  return out;
+}
+
+// pickSuggestion is the entry a word typed beside the reference points
+// at ("review kcc#1" → Review), else the first one that can be acted on.
+export function pickSuggestion(suggestions, text) {
+  const words = (text || '').toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2);
+  const i = suggestions.findIndex(sg => sg.kind !== 'busy' && words.some(w => sg.label.toLowerCase().includes(w) || (sg.recipe || '').includes(w)));
+  if (i >= 0) return i;
+  return Math.max(0, suggestions.findIndex(sg => sg.kind !== 'busy'));
+}
+
 // SESSION_ENGINES are the engines a session can run on: the session
 // daemon has no claude engine yet.
 export const SESSION_ENGINES = ['gemini', 'antigravity'];
@@ -175,9 +254,16 @@ export function sessionEngine(engine) {
   return SESSION_ENGINES.includes(engine) ? engine : 'gemini';
 }
 
+// FEED_FRESH is how long a board's work feed read for a reference is
+// reused: the launcher reads it per keystroke pause, not per keystroke.
+const FEED_FRESH = 60000;
+
 // StartBox starts a session on one of the member's boards' repositories:
-// research's box, with the repository and the engine picked here.
-export function StartBox({ boards, onStarted, autoFocus }) {
+// research's box, with the repository and the engine picked here. An
+// issue or PR named in it (#N, kcc#N, owner/repo#N, a URL) turns it into
+// a launcher: that row's recipes from the board's feed, Enter starting
+// the highlighted one through the row's own route, as a click on Work.
+export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
   const [boardName, setBoardName] = useStored('sessions.lastBoard', '');
   const [topic, setTopic] = useState('');
   const [prompts, setPrompts] = useState({});
@@ -190,6 +276,72 @@ export function StartBox({ boards, onStarted, autoFocus }) {
   const [pickedEngine, setPickedEngine] = useState('');
   const engine = pickedEngine || sessionEngine(board && board.engine);
   const repo = board ? repoFromURL(board.repoURL) : '';
+
+  // The issue or PR named in the box, the board it is on, and its row.
+  const ref = useMemo(() => parseItemRef(topic), [topic]);
+  const target = ref ? refBoard(ref, boards, board) : null;
+  const [lookup, setLookup] = useState(null); // { key, status: loading|ok|none|error, item, error }
+  const feeds = useRef(new Map());
+  const [highlight, setHighlight] = useState(0);
+  const refKey = ref && target ? `${target.name}#${ref.number}` : '';
+  // The repository chip follows the reference.
+  useEffect(() => {
+    if (target && board && target.name !== board.name) { setBoardName(target.name); setPickedEngine(''); }
+  }, [target, board, setBoardName]);
+  useEffect(() => {
+    if (!refKey) { setLookup(null); return undefined; }
+    const [boardOf, n] = [target.name, ref.number];
+    const find = (rows) => (rows || []).find(i => i.number === n) || null;
+    const cached = feeds.current.get(boardOf);
+    if (cached && Date.now() - cached.at < FEED_FRESH) {
+      const item = find(cached.rows);
+      setLookup({ key: refKey, status: item ? 'ok' : 'none', item });
+      return undefined;
+    }
+    setLookup({ key: refKey, status: 'loading' });
+    let live = true;
+    const t = setTimeout(() => {
+      fetchWorkFeed(boardOf)
+        .then(rows => {
+          feeds.current.set(boardOf, { at: Date.now(), rows });
+          const item = find(rows);
+          if (live) setLookup({ key: refKey, status: item ? 'ok' : 'none', item });
+        })
+        .catch(err => { if (live) setLookup({ key: refKey, status: 'error', error: err.message }); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refKey]);
+  const selfReview = (() => { try { return localStorage.getItem('repoboard.selfReview') === 'true'; } catch (e) { return false; } })();
+  const item = lookup && lookup.key === refKey && lookup.status === 'ok' ? lookup.item : null;
+  const options = ref ? [...(item ? itemSuggestions(item, { selfReview }) : []), { kind: 'ask', label: `Ask “${topic.trim()}” as a question` }] : [];
+  const optionsKey = options.map(o => o.label).join('|');
+  useEffect(() => {
+    if (!options.length) return;
+    const i = pickSuggestion(options.slice(0, -1), topic);
+    setHighlight(options[i] && options[i].kind !== 'busy' && options[i].kind !== 'ask' && item ? i : options.length - 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionsKey]);
+
+  // act does what the highlighted entry says: open the session, start the
+  // recipe on the row, or ask the text as a question.
+  const act = (opt) => {
+    if (!opt || opt.kind === 'busy' || busy) return;
+    if (opt.kind === 'ask') { start(); return; }
+    if (opt.kind === 'open') { setTopic(''); onOpen(rowKey({ sandbox: opt.sandbox, task: opt.task })); return; }
+    setBusy(true);
+    setError('');
+    fetch(`/api/board/${target.name}/${item.type === 'issue' ? 'issues' : 'prs'}/${item.number}/recipes/${opt.recipe}`, { method: 'POST' })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(body.error || `could not start ${opt.label}: HTTP ${res.status}`); return; }
+        setTopic('');
+        feeds.current.delete(target.name);
+        onLaunched({ repoURL: target.repoURL, number: item.number, group: opt.group, recipe: opt.recipe, label: opt.label });
+      })
+      .catch(err => setError(`could not start ${opt.label}: ${err}`))
+      .finally(() => setBusy(false));
+  };
 
   useEffect(() => {
     if (!board) return undefined;
@@ -241,7 +393,14 @@ export function StartBox({ boards, onStarted, autoFocus }) {
       <GrowingTextarea value={topic} onChange={e => setTopic(e.target.value)} minRows={2} inputRef={boxRef}
         aria-label="Start a session"
         placeholder={`Ask anything about ${repo || 'this repository'} — a question, a subsystem, or 'compare with …'`}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); start(); } }}
+        onKeyDown={e => {
+          if (options.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+            e.preventDefault();
+            setHighlight(h => Math.max(0, Math.min(options.length - 1, h + (e.key === 'ArrowDown' ? 1 : -1))));
+            return;
+          }
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (options.length) act(options[highlight]); else start(); }
+        }}
         style={{ width: '100%', border: 'none', outline: 'none', resize: 'none', background: 'transparent', color: 'var(--text-primary)', font: 'inherit', boxSizing: 'border-box' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
         <select aria-label="Repository" value={board ? board.name : ''} onChange={e => { setBoardName(e.target.value); setPickedEngine(''); }}
@@ -265,6 +424,31 @@ export function StartBox({ boards, onStarted, autoFocus }) {
         <span style={{ ...muted, ...small }}>⏎ start · ⇧⏎ newline</span>
         <button className="btn btn-sm" disabled={!topic.trim() || busy} onClick={start}>{busy ? 'Requesting…' : 'Start'}</button>
       </div>
+      {ref && (
+        <div role="listbox" aria-label="Item launcher" style={{ marginTop: '8px', borderTop: '1px solid var(--border-color)', paddingTop: '6px', fontSize: 'x-small' }}>
+          <div style={{ ...muted, padding: '2px 4px' }}>
+            {!target ? `No board for “${ref.alias || `${ref.owner}/${ref.repo}`}”: add it on Work.`
+              : !lookup || lookup.key !== refKey || lookup.status === 'loading' ? `Looking up #${ref.number} on ${target.name}…`
+                : lookup.status === 'error' ? `Could not read ${target.name}: ${lookup.error}`
+                  : lookup.status === 'none' ? `#${ref.number} is not on ${target.name}'s board (open issues and PRs it follows).`
+                    : <span><strong style={{ color: 'var(--text-primary)' }}>{item.type === 'issue' ? 'Issue' : 'PR'} #{item.number}</strong> · {item.title}{item.author ? ` · ${item.author}` : ''}</span>}
+          </div>
+          {options.map((o, i) => (
+            <button key={o.label} type="button" role="option" aria-selected={i === highlight} disabled={o.kind === 'busy'}
+              onMouseEnter={() => setHighlight(i)} onClick={() => act(o)}
+              style={{
+                display: 'flex', width: '100%', textAlign: 'left', gap: '6px', padding: '4px 6px', border: 'none', borderRadius: '6px',
+                font: 'inherit', cursor: o.kind === 'busy' ? 'default' : 'pointer', color: o.kind === 'busy' ? 'var(--text-secondary)' : 'var(--text-primary)',
+                background: i === highlight ? 'var(--bg-card)' : 'none', fontWeight: o.kind === 'ask' ? 400 : 600,
+                borderTop: o.kind === 'ask' && i > 0 ? '1px solid var(--border-color)' : 'none', marginTop: o.kind === 'ask' && i > 0 ? '4px' : 0,
+              }}>
+              <span style={{ width: '10px' }}>{i === highlight ? '▸' : ''}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}{o.kind === 'open' ? ' ↗' : ''}</span>
+              {i === highlight && o.kind !== 'busy' && <span style={muted}>⏎</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -398,6 +582,24 @@ export default function Sessions({ namespace }) {
     setTimeout(load, 3000);
   };
 
+  // launched is a recipe the box just started on an issue or PR. Its run
+  // has no session to open until factory records it, so the box says it
+  // is starting, and the row opens itself when the feed brings it.
+  const [launched, setLaunched] = useState(null);
+  const onLaunched = (l) => {
+    setLaunched({ ...l, since: Date.now() });
+    setTimeout(load, 3000);
+  };
+  useEffect(() => {
+    // Only while + New is still open: a session opened meanwhile stays.
+    if (!launched || !rows || open) return;
+    const repo = (launched.repoURL || '').replace(/\.git$/, '').replace(/^https?:\/\/github\.com\//, '').toLowerCase();
+    const row = rows.find(r => (r.repo || '').toLowerCase() === repo && r.number === launched.number && r.task &&
+      (r.recipe === launched.recipe || (r.session || r.recipe) === launched.group) &&
+      (r.runs || []).some(run => run.startedAt && new Date(run.startedAt).getTime() >= launched.since - 60000));
+    if (row) { setLaunched(null); select(rowKey(row)); }
+  }, [rows, launched, open, select]);
+
   const rowStyle = (on) => ({
     display: 'flex', alignItems: 'center', gap: '6px', width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
     padding: '5px 8px', border: 'none', cursor: 'pointer', font: 'inherit',
@@ -460,7 +662,12 @@ export default function Sessions({ namespace }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         {!open ? (
           <div style={{ padding: '14px' }}>
-            <StartBox boards={boards} onStarted={onStarted} autoFocus />
+            {launched && (
+              <div role="status" style={{ ...small, ...muted, marginBottom: '8px' }}>
+                {launched.label} is starting on #{launched.number}: it opens here when its session is recorded.
+              </div>
+            )}
+            <StartBox boards={boards} onStarted={onStarted} onOpen={select} onLaunched={onLaunched} autoFocus />
           </div>
         ) : (
           <>

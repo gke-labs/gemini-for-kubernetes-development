@@ -223,6 +223,14 @@ it.
    as a question. An item not in the board's feed (closed, out of scope)
    says so; a single-item lookup is the only backend this could need.
 
+   As built: the suggestions follow Work's row rules (one per recipe
+   group; a group running or with a draft offers **Open … session**, one
+   starting or queued shows it, greyed; Review on one's own PR only with
+   "Review my PRs" on, and not over a pending review). Recipes that need
+   typed input (Iterate) stay on Work. A launched recipe's row opens
+   itself when the feed brings it, unless another session was opened
+   meanwhile. The feed read for a reference is reused for a minute.
+
 ## Later
 
 - **Overseer sessions**, behind a `Scope: Mine | overseer-<name>` picker.
