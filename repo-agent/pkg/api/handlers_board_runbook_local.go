@@ -32,18 +32,12 @@ import (
 // workspacesRoot is where a sandbox keeps its clone, /workspaces/<repo>.
 const workspacesRoot = "/workspaces"
 
-// localRunTree is the shell that picks where a run's files are in the
-// sandbox's clone: $t, the revision, and $p, the path prefix in it. The
-// run's own branch, runs/<run>, at its root, else its directory on
-// research/runs, where runs were before; neither, it exits.
+// localRunTree is the shell that finds a run in the sandbox's clone: $t,
+// its branch, runs/<run>, whose root holds its files ($p, the path
+// prefix in it, is empty); no branch, it exits.
 const localRunTree = `g() { git -c safe.directory='*' "$@"; }
-if g rev-parse -q --verify "refs/heads/` + runBranchPrefix + `$3" >/dev/null; then
-  t="` + runBranchPrefix + `$3"; p=""
-elif g rev-parse -q --verify "refs/heads/` + runsBranch + `" >/dev/null; then
-  t="` + runsBranch + `"; p="` + runsPath + `/$3/"
-else
-  exit 0
-fi
+g rev-parse -q --verify "refs/heads/` + runBranchPrefix + `$3" >/dev/null || exit 0
+t="` + runBranchPrefix + `$3"; p=""
 `
 
 // localRunScript lists one run's files in the sandbox's clone (see

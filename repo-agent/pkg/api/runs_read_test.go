@@ -65,52 +65,22 @@ func TestVerdictWordIgnoresTrailingProse(t *testing.T) {
 	}
 }
 
-// Every layout a run may still be sitting in is read, until the last
-// one is adopted or torn down; teardown has to stay reachable.
-func TestEveryRunLayoutIsRead(t *testing.T) {
-	if runsPath != "docs-exploration/agent-runs" {
-		t.Errorf("runsPath = %q", runsPath)
-	}
-	// "runs/" is a bare .gitignore entry in a great many repos and a
-	// bare pattern matches at any depth, so this path was ignored
-	// wherever it appeared — silently.
-	if runsPath == "docs-exploration/runs" {
-		t.Error("runsPath is back under runs/, which repositories commonly gitignore")
-	}
-	want := map[string]bool{
-		"docs-exploration/runbook-deployments": true,
-		"docs-exploration/runs":                true,
-	}
-	for _, p := range legacyRunPaths {
-		if !want[p] {
-			t.Errorf("unexpected legacy path %q", p)
-		}
-		delete(want, p)
-	}
-	for p := range want {
-		t.Errorf("legacy path %q is no longer read; runs there become invisible", p)
-	}
-}
-
-// The branch runs live on is a string agreed with factory's run.sh and
+// The branches runs live on are a string agreed with factory's lib.sh and
 // linked by nothing. Reading a name the write path does not use finds
 // no runs at all and empties the Runs tab, with every run intact on a
 // branch the page never asks about.
 //
 // Notes are deliberately somewhere else. Runs carry teardown scripts
-// for live infrastructure and are pruned by the remove path; notes are
+// for live infrastructure and are deleted by the remove path; notes are
 // prose, archival, and written by a session that may be approving its
 // own tool calls. One branch would point the pruning at the archive and
 // put an auto-approving writer next to deployment state.
 func TestRunsAndNotesAreSeparateBranches(t *testing.T) {
-	if runsBranch != "research/runs" {
-		t.Errorf("runsBranch = %q; factory's run.sh writes runs to research/runs", runsBranch)
+	if runBranchPrefix != "runs/" || runRootBranch != "runs/root" {
+		t.Errorf("run branches = %q, root %q; factory's lib.sh writes runs/<run> from runs/root", runBranchPrefix, runRootBranch)
 	}
-	if notesBranch != "research/notes" {
-		t.Errorf("notesBranch = %q", notesBranch)
-	}
-	if runsBranch == notesBranch {
-		t.Error("runs and notes share a branch; the run remove path would be pointed at the notes archive")
+	if strings.HasPrefix(notesBranch, runBranchPrefix) {
+		t.Errorf("notes branch %q is among the run branches, which removing a run deletes", notesBranch)
 	}
 }
 
