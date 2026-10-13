@@ -445,6 +445,40 @@ func TestTheEngineTablesEnvironmentReachesTheProcess(t *testing.T) {
 	}
 }
 
+// A session's env (a recipe's agent-env) reaches the engine, and so the
+// agent's shell; one that would set acpd's own variables, change how
+// programs start, or carry a credential is refused before any engine
+// starts.
+func TestSessionEnvReachesTheProcess(t *testing.T) {
+	registerFakeEngine(t)
+	_, ts := newTestServer(t)
+	post := func(id, env string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/sessions", strings.NewReader(fmt.Sprintf(`{"id":%q,"engine":"fake","env":%s}`, id, env)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(APIKeyHeader, "k")
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	if resp := post("s1", `{"FAKE_EXTRA":"issue-7"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create returned %d", resp.StatusCode)
+	}
+	if echo := promptAndReadEcho(t, ts, "s1", "hello"); !strings.Contains(echo, "extra:issue-7") {
+		t.Errorf("the session's env did not reach the engine: %s", echo)
+	}
+	for i, env := range []string{`{"PATH":"/tmp"}`, `{"FAKE_KEY":"x"}`, `{"LD_PRELOAD":"x"}`, `{"BASH_ENV":"x"}`, `{"GITHUB_TOKEN":"x"}`, `{"MY_SECRET":"x"}`, `{"A-B":"x"}`} {
+		if resp := post(fmt.Sprintf("bad%d", i), env); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("env %s: create returned %d, want 400", env, resp.StatusCode)
+		}
+	}
+}
+
 func TestCreateSessionRequiresAPIKeyHeader(t *testing.T) {
 	registerFakeEngine(t)
 	_, ts := newTestServer(t)

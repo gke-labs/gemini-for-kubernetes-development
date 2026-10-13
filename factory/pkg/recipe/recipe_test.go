@@ -394,7 +394,7 @@ func TestACPSessionAsksTurnByTurn(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "must-not-reach-the-engine")
 
 	taskDir := t.TempDir()
-	s, err := StartACPSession(context.Background(), "recipe-fake", "m-1", "k", t.TempDir(), taskDir)
+	s, err := StartACPSession(context.Background(), "recipe-fake", "m-1", "k", t.TempDir(), taskDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1589,6 +1589,210 @@ func TestBuiltinAdoptRecipe(t *testing.T) {
 	}
 }
 
+// What runs of a recipe's start, given the exit codes of its steps with
+// an id (absent, 0): "ask", "push", "default" (checkout-default-branch),
+// "change" (writes change.yaml), "journal" (the workflow's commit).
+func stepsRun(t *testing.T, rec *Recipe, inputs map[string]string, exits map[string]int) string {
+	t.Helper()
+	td := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
+	var got []string
+	for i, s := range rec.Start.Steps {
+		if s.If != "" {
+			run, err := condition(fmt.Sprint(i), s.If, td, "")
+			if err != nil {
+				t.Fatalf("step %d: %v", i, err)
+			}
+			if !run {
+				if s.ID != "" {
+					td.Steps[s.ID] = &StepResult{Skipped: true}
+				}
+				continue
+			}
+		}
+		switch {
+		case s.ID != "":
+			td.Steps[s.ID] = &StepResult{ExitCode: exits[s.ID]}
+		case s.Ask != "":
+			got = append(got, "ask")
+		case s.Uses == "push":
+			got = append(got, "push")
+		case s.Uses == "checkout-default-branch":
+			got = append(got, "default")
+		case strings.Contains(s.Run, "change.yaml"):
+			got = append(got, "change")
+		case strings.Contains(s.Run, "chore(workflow)"):
+			got = append(got, "journal")
+		}
+	}
+	return strings.Join(got, ",")
+}
+
+// The agent recipe, a chore on the repository: a push and a Change only
+// when there is something to push, nothing kept with skip_pr, and no
+// precondition (a workflow's alone).
+func TestBuiltinAgentRecipe(t *testing.T) {
+	_, rec, err := Builtin(AgentRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "agent" ||
+		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || !rec.TaskOutput.Optional || !rec.StartOutputs() {
+		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
+	}
+	std := map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": "true"}
+	if _, err := rec.ResolveInputs(std, nil); err == nil {
+		t.Error("the agent recipe ran with no prompt")
+	}
+	if _, ok := rec.Inputs["precondition"]; ok {
+		t.Error("a chore takes a precondition")
+	}
+	for _, skip := range []string{"false", "true"} {
+		inputs, err := rec.ResolveInputs(std, map[string]string{"prompt": "do it", "agent_name": "Docs Bot", "skip_pr": skip})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := rec.CheckRender(inputs); err != nil {
+			t.Fatalf("skip_pr %s: %v", skip, err)
+		}
+	}
+	for _, tc := range []struct {
+		skip    string
+		changed int
+		want    string
+	}{
+		{"false", 0, "default,ask,change,push"},
+		{"false", 1, "default,ask"},
+		{"true", 0, "default,ask"},
+	} {
+		got := stepsRun(t, rec, map[string]string{"skip_pr": tc.skip}, map[string]int{"changed": tc.changed})
+		if got != tc.want {
+			t.Errorf("skip_pr %s (changed %d) ran %q, want %q", tc.skip, tc.changed, got, tc.want)
+		}
+	}
+}
+
+// The workflow recipe, a step of a workflow on its issue: no task output,
+// the agent's shell gets SESSION_ID and RELATED_ISSUES, and its
+// precondition, which sees them too, gates the step.
+func TestBuiltinWorkflowRecipe(t *testing.T) {
+	_, rec, err := Builtin(WorkflowRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.RunsOn(OnIssue) || rec.RunsOn(OnRepo) || rec.RunsOn(OnPR) || rec.TaskType != "workflow" || rec.TaskOutput != nil {
+		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
+	}
+	std := map[string]string{"repo_owner": "o", "repo_name": "r", "issue_number": "7", "disclose": "false"}
+	inputs, err := rec.ResolveInputs(std, map[string]string{"prompt": "next step", "agent_name": "checklist", "session_id": "issue-7", "related_issues": "8,9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.CheckRender(inputs); err != nil {
+		t.Fatal(err)
+	}
+	env, err := rec.RenderAgentEnv(inputs)
+	if err != nil || env["SESSION_ID"] != "issue-7" || env["RELATED_ISSUES"] != "8,9" {
+		t.Errorf("agent env %v, %v", env, err)
+	}
+	for precondition, want := range map[int]string{0: "ask,journal", 1: ""} {
+		if got := stepsRun(t, rec, map[string]string{"precondition": "exit 1"}, map[string]int{"precondition": precondition}); got != want {
+			t.Errorf("precondition %d ran %q, want %q", precondition, got, want)
+		}
+	}
+	if got := stepsRun(t, rec, map[string]string{"precondition": ""}, nil); got != "ask,journal" {
+		t.Errorf("no precondition ran %q", got)
+	}
+
+	var step string
+	for _, s := range rec.Start.Steps {
+		if s.ID == "precondition" {
+			step = s.Run
+		}
+	}
+	for related, wantCode := range map[string]int{"8,9": 0, "": 3} {
+		taskDir := t.TempDir()
+		e := &SandboxExecutor{TaskDir: taskDir, RepoDir: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH")}}
+		var out strings.Builder
+		code, err := e.Run(context.Background(), step, map[string]string{
+			"precondition":   "#!/bin/bash\n[ \"$SESSION_ID\" = issue-7 ] && [ -n \"$RELATED_ISSUES\" ] || exit 3",
+			"related_issues": related, "session_id": "issue-7",
+		}, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (code == 0) != (wantCode == 0) {
+			t.Errorf("related %q: precondition step exited %d\n%s", related, code, out.String())
+		}
+	}
+}
+
+// The agent recipe's Change step: a chore's PR is titled after the
+// agent, lists the commits and carries the labels.
+func TestAgentChangeStep(t *testing.T) {
+	for _, tool := range []string{"git", "python3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " required")
+		}
+	}
+	_, rec, err := Builtin(AgentRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var step string
+	for _, s := range rec.Start.Steps {
+		if strings.Contains(s.Run, "change.yaml") {
+			step = s.Run
+		}
+	}
+	if step == "" {
+		t.Fatal("no Change step")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.email=x@x", "-c", "user.name=x"}, args...)...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "chore: tidy the docs")
+
+	taskDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(taskDir, "base"), []byte(base+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &SandboxExecutor{TaskDir: taskDir, RepoDir: repo, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}}
+	var out strings.Builder
+	code, err := e.Run(context.Background(), step, map[string]string{
+		"agent_name": "Docs Bot", "agent_file": ".agents/docs.md", "repo_owner": "o", "repo_name": "r", "labels": "factory,docs",
+	}, &out)
+	if err != nil || code != 0 {
+		t.Fatalf("exited %d, %v\n%s", code, err, out.String())
+	}
+	data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r"}, taskoutput.Source{})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, data)
+	}
+	c, err := doc.ChangeSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "chore: Docs Bot" || !strings.Contains(c.Body, "- chore: tidy the docs") || strings.Contains(c.Body, "- base") ||
+		!strings.Contains(c.Body, "https://github.com/o/r/blob/HEAD/.agents/docs.md") || fmt.Sprint(c.Labels) != "[factory docs]" || c.Draft == nil || *c.Draft {
+		t.Errorf("Change %+v", c)
+	}
+}
+
 // adopt's branch step: the PR's head, from the repository's
 // pull/<n>/head, becomes adopt-pr-<n>, its base where it branched off.
 func TestAdoptBranchStep(t *testing.T) {
@@ -1651,5 +1855,26 @@ func TestAdoptBranchStep(t *testing.T) {
 	}
 	if read("branch") != "adopt-pr-5" || read("base") != base {
 		t.Errorf("branch %q, base %q; want adopt-pr-5, %s", read("branch"), read("base"), base)
+	}
+}
+
+// agent-env: each value rendered against the inputs; a name acpd would
+// refuse, or a value that is not a template, fails the recipe up front.
+func TestAgentEnv(t *testing.T) {
+	rec, err := Parse([]byte("name: a\nagent-env: {SESSION_ID: \"{{ .Inputs.session_id }}\"}\nstart: {steps: [{run: x}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := rec.RenderAgentEnv(map[string]string{"session_id": "issue-7"})
+	if err != nil || env["SESSION_ID"] != "issue-7" {
+		t.Errorf("env %v, %v", env, err)
+	}
+	if err := rec.CheckRender(map[string]string{}); err == nil {
+		t.Error("CheckRender passed an agent-env reading an input the run does not set")
+	}
+	for _, bad := range []string{`{GITHUB_TOKEN: x}`, `{PATH: x}`, `{A: "{{ .Inputs.x "}`} {
+		if _, err := Parse([]byte("name: a\nagent-env: " + bad + "\nstart: {steps: [{run: x}]}")); err == nil {
+			t.Errorf("agent-env %s parsed", bad)
+		}
 	}
 }

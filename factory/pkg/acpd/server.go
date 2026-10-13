@@ -137,6 +137,8 @@ type createSessionRequest struct {
 	// create or drive it. Created again once the task has ended, by
 	// anybody, it continues the task's conversation.
 	Task string `json:"task,omitempty"`
+	// Env is more of the engine's environment (SessionConfig.Env).
+	Env map[string]string `json:"env,omitempty"`
 }
 
 type sessionResponse struct {
@@ -199,6 +201,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Engine == "" {
 		req.Engine = "gemini"
 	}
+	if err := CheckEnv(req.Env); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	cwd := req.CWD
 	if cwd == "" {
 		cwd = s.cwd
@@ -246,6 +252,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Mode:         req.Mode,
 		AutoApprove:  req.AutoApprove,
 		Dir:          dir,
+		Env:          req.Env,
 	})
 	if err != nil {
 		s.mu.Lock()

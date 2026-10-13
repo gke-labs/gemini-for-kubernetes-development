@@ -1,0 +1,142 @@
+# factory agent create --url <issue> --agent <definition> --session-id
+# issue-<n>: a workflow (a definition with mode: workflow) takes its next
+# step on the issue that names it, as this recipe, in the issue's workflow
+# sandbox (wf-issue-<n>). The watch runs it again every cycle while the
+# issue is open, and when one of its linked issues closes.
+#
+# Its state is a journal the agent keeps in the repository, on the branch
+# factory-<n> of the member's fork (factory, without a session): the
+# branch is checked out, rebased on the default branch, the agent takes
+# one step, and factory commits what it leaves and force-pushes the
+# branch. Once the issue is closed the branch is deleted instead. There is
+# no PR and no task output: what a workflow makes is the issues it opens,
+# which the overseer then fixes.
+#
+# A precondition script, when the definition has one, runs first in the
+# checkout, with RELATED_ISSUES (the issues and PRs the issue and its
+# trusted comments reference) and SESSION_ID; when it fails nothing else
+# runs. The agent's shell has both too (agent-env): definitions write
+# `gh issue view ${SESSION_ID#issue-}`.
+#
+# The agent keeps the token gh holds (credentials: full): a workflow opens,
+# labels and comments on issues itself.
+name: workflow
+label: Workflow
+on: [issue]
+task-type: workflow
+
+inputs:
+  prompt:
+    description: What the agent is asked, the definition's prompt and the issue's title, description and trusted comments
+    required: true
+  agent_name:
+    description: The workflow's name, from its definition
+    required: true
+  agent_file:
+    description: The definition's path in the repository
+  session_id:
+    description: The workflow's session, issue-<n>, which names its branch
+  related_issues:
+    description: The issues and PRs the issue and its trusted comments reference, comma-separated
+  precondition:
+    description: A script that must pass for the step to run
+
+agent-env:
+  SESSION_ID: "{{ .Inputs.session_id }}"
+  RELATED_ISSUES: "{{ .Inputs.related_issues }}"
+
+context: |
+  You are an automated agent driving a multi-step workflow on a GitHub
+  repository. The repository is checked out in the current directory, on
+  the workflow's branch, where its journal is kept. Do not commit and do
+  not run `git push`: factory commits what you leave in the checkout and
+  pushes it. Do not run `git config --global`: in this environment it
+  overwrites /dev/null and breaks git for the rest of the run.
+
+  Rules you must always follow:
+  1. Respect stop labels: NEVER remove, delete or modify `overseer/stop` (or
+     any `*/stop`) labels on any pull request or issue. A stop label means
+     automated processing was paused; leave stopped items untouched.
+  2. NEVER add, remove or change assignees on pull requests or issues.
+
+start:
+  steps:
+    - uses: setup-git
+    - uses: setup-fork
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: configure-engine
+
+    - id: precondition
+      if: '{{ ne .Inputs.precondition "" }}'
+      continue-on-error: true
+      run: |
+        export RELATED_ISSUES="${INPUT_RELATED_ISSUES}" SESSION_ID="${INPUT_SESSION_ID}"
+        printf '%s\n' "${INPUT_PRECONDITION}" > "$TASK_DIR/precondition"
+        chmod +x "$TASK_DIR/precondition"
+        if ! "$TASK_DIR/precondition"; then
+          echo "The precondition failed; the workflow waits."
+          exit 1
+        fi
+
+    # The workflow's branch: the fork's, else the checkout's, else new from
+    # the default branch; rebased on it.
+    - if: '{{ eq .Steps.precondition.ExitCode 0 }}'
+      run: |
+        branch="factory"
+        case "${INPUT_SESSION_ID}" in issue-*) branch="factory-${INPUT_SESSION_ID#issue-}" ;; esac
+        printf '%s\n' "${branch}" > "$TASK_DIR/branch"
+        src=upstream
+        git remote get-url upstream >/dev/null 2>&1 || src=origin
+        default="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
+        git rebase --abort 2>/dev/null || true
+        git reset --hard HEAD && git clean -fd
+        git fetch "${src}" "${default}"
+        if git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null; then
+          git checkout -B "${branch}" "refs/remotes/origin/${branch}"
+        elif git show-ref --verify --quiet "refs/heads/${branch}"; then
+          git checkout "${branch}"
+        else
+          git checkout -B "${branch}" "${src}/${default}"
+        fi
+        if ! git rebase "${src}/${default}"; then
+          echo "Warning: rebasing ${branch} onto ${src}/${default} failed; continuing from where it was." >&2
+          git rebase --abort || true
+        fi
+
+    - if: '{{ eq .Steps.precondition.ExitCode 0 }}'
+      ask: |
+        {{ .Inputs.prompt }}
+
+        ---
+        {{- with .Inputs.session_id }}
+        This workflow's session is {{ . }} (SESSION_ID in your shell).
+        {{- end }}
+        Do not commit: factory commits what you leave in the checkout (the
+        workflow's state and journal) and pushes it.
+        {{- if eq .Inputs.disclose "true" }}
+        What you write may say that an agent wrote it.
+        {{- else }}
+        Do not say anywhere — comments, issues or files — that an agent or
+        AI wrote this, and do not add Co-authored-by or similar trailers.
+        {{- end }}
+        When you are done, say briefly what you did.
+
+    # The journal goes to origin as it is, or, once the workflow's issue is
+    # closed, its branch goes away.
+    - if: '{{ eq .Steps.precondition.ExitCode 0 }}'
+      run: |
+        branch="$(cat "$TASK_DIR/branch")"
+        case "${INPUT_SESSION_ID}" in issue-*)
+          if [ "$(gh issue view "${INPUT_SESSION_ID#issue-}" --json state --jq .state 2>/dev/null || echo OPEN)" = "CLOSED" ]; then
+            echo "Issue #${INPUT_SESSION_ID#issue-} is closed; deleting ${branch}."
+            git push origin --delete "${branch}" || true
+            exit 0
+          fi ;;
+        esac
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No workflow changes to commit."
+          exit 0
+        fi
+        git add -A
+        git commit -m "chore(workflow): update workflow state/journal [skip ci]"
+        git -c core.hooksPath=/dev/null push --force origin "${branch}"

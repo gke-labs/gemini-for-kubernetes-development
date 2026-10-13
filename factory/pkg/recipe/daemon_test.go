@@ -51,10 +51,10 @@ func TestDaemonSessionAsksTurnByTurnAsTheTask(t *testing.T) {
 	base := ts.URL + "/v1"
 	ctx := context.Background()
 
-	if _, err := StartDaemonSession(ctx, base, "wrong", "recipe-fake", "m-1", "k", root, taskDir); err == nil {
+	if _, err := StartDaemonSession(ctx, base, "wrong", "recipe-fake", "m-1", "k", root, taskDir, nil); err == nil {
 		t.Fatal("a wrong token started the task's session")
 	}
-	s, err := StartDaemonSession(ctx, base, "tok", "recipe-fake", "m-1", "k", root, taskDir)
+	s, err := StartDaemonSession(ctx, base, "tok", "recipe-fake", "m-1", "k", root, taskDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 
 	// Nobody has it open: the revise starts it, and ends it. Nothing asked
 	// in it before (the first revise), so there is no conversation to load: it is fresh.
-	s, err := OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root)
+	s, err := OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,12 +146,12 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 	}
 
 	// A member has it open: the revise uses it and leaves it open.
-	member, err := StartDaemonSession(ctx, base, "revise-tok", "recipe-fake", "", "k", root, taskDir)
+	member, err := StartDaemonSession(ctx, base, "revise-tok", "recipe-fake", "", "k", root, taskDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = member.Close() })
-	s, err = OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root)
+	s, err = OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestARevisePromptsNothingIntoABusySession(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	t.Cleanup(ts.Close)
-	_, err := OpenDaemonSession(context.Background(), ts.URL+"/v1", "tok", "plan-1", "gemini", "", "k", "/r")
+	_, err := OpenDaemonSession(context.Background(), ts.URL+"/v1", "tok", "plan-1", "gemini", "", "k", "/r", nil)
 	if err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Errorf("err = %v, want busy", err)
 	}

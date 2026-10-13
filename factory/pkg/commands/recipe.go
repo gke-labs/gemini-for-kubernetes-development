@@ -348,6 +348,25 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // the task's result, picking up where an interrupted run left off. user is
 // the account the task runs as; empty, the command's own (--user).
 func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+	return runRecipeIn(ctx, recipeRunOpts{}, recipeArg, itemURL, runName, session, user, newSession, apply, overrides, instructions)
+}
+
+// ensureSandbox makes the sandbox a run goes to, given its target's
+// clone and web URLs and the account it runs as.
+type ensureSandbox func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error)
+
+// recipeRunOpts are what `factory agent create` sets on a recipe's run.
+type recipeRunOpts struct {
+	// ensure makes the sandbox the run goes to, rather than the one its
+	// target's kind gets: the agent's own.
+	ensure ensureSandbox
+	// usage adds to the usage record of the run's task what only the
+	// caller knows: a workflow's session and name.
+	usage func(*usagereport.Meta)
+}
+
+// runRecipeIn is runRecipe with opts.
+func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -491,6 +510,8 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
+	case opts.ensure != nil:
+		sandboxName, err = opts.ensure(ctx, kubeClient, cloneURL, htmlURL, user)
 	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
 		// Its disk becomes every new sandbox's (design/warm-workspace.md):
 		// a sandbox of its own, never restored, with no secret mounted.
@@ -592,7 +613,7 @@ func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user s
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage); err != nil || !done {
 		return err
 	}
 	if apply.on {
@@ -906,7 +927,7 @@ func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e sp
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta)) (bool, error) {
 	sandboxName := sb.Name()
 	taskType, side := recipeTaskType(rec, it)
 	update := factorysandbox.UpdateSandboxTaskAnnotation
@@ -918,7 +939,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe {
+	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe && rec.Name != recipe.AgentRecipe {
 		// The sandbox is the conversation's from here: the receipt that
 		// keeps EnsureResearchSandbox from taking it for an interrupted
 		// launch's and replacing it.
@@ -938,6 +959,9 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		meta.PR = it.Number
 	default:
 		meta.Issue = it.Number
+	}
+	if usage != nil {
+		usage(&meta)
 	}
 	taskDir := spool.TaskDir(task.ID)
 	usagereport.HarvestTaskFiles(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, task.ID, name) }, meta)
@@ -1175,6 +1199,14 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 		return err
 	}
 	if data == nil {
+		if e.Output != nil && e.Output.Optional {
+			fmt.Printf("Task %s left no result: there is nothing to apply.\n", e.ID)
+			// Settled, as an applied one is: the next run starts anew.
+			if !dryRun {
+				_ = sb.WriteFile(ctx, e.ID, taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
+			}
+			return nil
+		}
 		return fmt.Errorf("task %s left no task output to apply", e.ID)
 	}
 	docs, err := taskoutput.Parse(data)
@@ -1303,6 +1335,10 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		},
 		StartSession: func(ctx context.Context) (recipe.Session, error) {
 			apiKey := os.Getenv("GEMINI_API_KEY")
+			env, err := rec.RenderAgentEnv(inputs)
+			if err != nil {
+				return nil, err
+			}
 			// Started by a daemon that hosts sessions: the session is the
 			// daemon's, so it can be watched and continued after the task.
 			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
@@ -1310,14 +1346,14 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 				// A revise continues the conversation of the task it
 				// revises; a run in a session, its session's.
 				if task.Session != "" {
-					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir)
+					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir, env)
 				}
-				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir)
+				return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir, env)
 			}
 			if task.Session != "" {
 				return nil, fmt.Errorf("continuing a conversation needs the sandbox's daemon to host sessions; recreate the sandbox on a newer image")
 			}
-			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir)
+			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,
@@ -1379,6 +1415,10 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 		return nil
 	}
 	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
+	if errors.Is(err, os.ErrNotExist) && task.Output.Optional {
+		fmt.Printf("::task-output none: the task left no %s\n", task.Output.From)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
 	}

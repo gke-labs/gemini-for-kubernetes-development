@@ -44,9 +44,9 @@ func (d *DaemonSession) Fresh() bool { return d.fresh }
 // StartDaemonSession creates the task's session on the task server at
 // base (http://127.0.0.1:<port>/v1), named after the task, as the task:
 // token is the one the daemon gave it.
-func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey, repoDir, taskDir string) (*DaemonSession, error) {
+func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey, repoDir, taskDir string, env map[string]string) (*DaemonSession, error) {
 	d := newDaemonSession(base, filepath.Base(taskDir), token)
-	if err := d.create(ctx, engine, model, apiKey, repoDir); err != nil {
+	if err := d.create(ctx, engine, model, apiKey, repoDir, env); err != nil {
 		return nil, err
 	}
 	d.created = true
@@ -58,7 +58,7 @@ func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey,
 // token. Open already — a member is talking in it — it is used as it is,
 // unless a turn is in flight, which refuses the revise before it sends
 // anything. Otherwise it is created, which loads the conversation.
-func OpenDaemonSession(ctx context.Context, base, token, session, engine, model, apiKey, repoDir string) (*DaemonSession, error) {
+func OpenDaemonSession(ctx context.Context, base, token, session, engine, model, apiKey, repoDir string, env map[string]string) (*DaemonSession, error) {
 	d := newDaemonSession(base, session, token)
 	var state struct {
 		Busy bool `json:"busy"`
@@ -74,7 +74,7 @@ func OpenDaemonSession(ctx context.Context, base, token, session, engine, model,
 	default:
 		return nil, err
 	}
-	if err := d.create(ctx, engine, model, apiKey, repoDir); err != nil {
+	if err := d.create(ctx, engine, model, apiKey, repoDir, env); err != nil {
 		return nil, err
 	}
 	d.created = true
@@ -85,8 +85,9 @@ func newDaemonSession(base, id, token string) *DaemonSession {
 	return &DaemonSession{base: strings.TrimSuffix(base, "/"), id: id, token: token, hc: &http.Client{}}
 }
 
-// create starts the session's engine, named after its task.
-func (d *DaemonSession) create(ctx context.Context, engine, model, apiKey, repoDir string) error {
+// create starts the session's engine, named after its task, with env
+// added to its environment.
+func (d *DaemonSession) create(ctx context.Context, engine, model, apiKey, repoDir string, env map[string]string) error {
 	body, err := json.Marshal(map[string]any{
 		"id":     d.id,
 		"task":   d.id,
@@ -96,6 +97,7 @@ func (d *DaemonSession) create(ctx context.Context, engine, model, apiKey, repoD
 		// Nobody is at the sandbox to answer: the same trust as --yolo.
 		"mode":        acpd.GeminiModeYolo,
 		"autoApprove": true,
+		"env":         env,
 	})
 	if err != nil {
 		return err

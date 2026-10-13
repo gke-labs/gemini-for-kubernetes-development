@@ -32,12 +32,15 @@ const (
 
 // Decl declares a task's result: which kind it is, the task-directory
 // file the agent wrote it to, what can be done with it (none: its kind's
-// defaults), and the spec field a glance at it shows (Preview).
+// defaults), and the spec field a glance at it shows (Preview). An
+// Optional result a task may leave or not: an agent chore that changed
+// nothing has nothing to open.
 type Decl struct {
-	Kind    string   `yaml:"kind" json:"kind"`
-	From    string   `yaml:"from" json:"from"`
-	Actions []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
-	Preview string   `yaml:"preview,omitempty" json:"preview,omitempty"`
+	Kind     string   `yaml:"kind" json:"kind"`
+	From     string   `yaml:"from" json:"from"`
+	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Actions  []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
+	Preview  string   `yaml:"preview,omitempty" json:"preview,omitempty"`
 }
 
 // PreviewRE is what a preview names: a text field of the spec, such as

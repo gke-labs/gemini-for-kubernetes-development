@@ -31,6 +31,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
@@ -38,6 +39,15 @@ import (
 // snapshots (design/warm-workspace.md). factory runs it in the
 // repository's warm sandbox rather than a research one.
 const WarmRecipe = "warm"
+
+// AgentRecipe is the built-in recipe a chore (an .agents/ definition
+// that is not a workflow) runs as. `factory agent create` runs it on the
+// repository in the agent's own sandbox, rather than a research one.
+const AgentRecipe = "agent"
+
+// WorkflowRecipe is the built-in recipe a workflow (an .agents/
+// definition with mode: workflow) takes its next step as, on its issue.
+const WorkflowRecipe = "workflow"
 
 // Recipe is one task.
 type Recipe struct {
@@ -53,6 +63,11 @@ type Recipe struct {
 	// It is sent once, ahead of the first ask, rather than repeated in
 	// every turn.
 	Context string `yaml:"context,omitempty"`
+	// AgentEnv is more of the agent's environment, which its shell
+	// commands read: each value a template of the inputs (a workflow's
+	// SESSION_ID: "{{ .Inputs.session_id }}"). Facts, never credentials:
+	// acpd refuses those, and its own variables (acpd.CheckEnv).
+	AgentEnv map[string]string `yaml:"agent-env,omitempty"`
 	// Inputs declares what the recipe takes beyond what its caller always
 	// sets, so a missing or misspelt one fails before a sandbox is made.
 	Inputs map[string]Input `yaml:"inputs,omitempty"`
@@ -338,6 +353,14 @@ func (r *Recipe) Validate() error {
 	}
 	if len(r.Start.Steps) == 0 {
 		return fmt.Errorf("recipe %s has no start steps", r.Name)
+	}
+	if err := acpd.CheckEnv(r.AgentEnv); err != nil {
+		return fmt.Errorf("agent-env: %w", err)
+	}
+	for k, v := range r.AgentEnv {
+		if _, err := template.New(k).Option("missingkey=error").Parse(v); err != nil {
+			return fmt.Errorf("agent-env %s: %w", k, err)
+		}
 	}
 	for name, in := range r.Inputs {
 		if !inputRE.MatchString(name) {

@@ -13,7 +13,7 @@ import (
 // enforce was never applied to it. A new task script belongs in this
 // list on the commit that adds it.
 var taskScripts = []string{
-	"run.sh", "run_agent.sh",
+	"run.sh",
 }
 
 // Functions that live only in lib.sh — every rendered script must define
@@ -22,17 +22,14 @@ var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "re
 
 // The engine seam: every task that drives the model does it through
 // runEngine with its task-specific knobs; no script carries a private
-// engine loop anymore (run_agent's runAgent is the documented exception
-// until the agent flow's engine follow-up).
+// engine loop anymore.
 var engineCalls = map[string]string{
 	"run.sh": "\n    runEngine\n",
 }
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).
-var shadowsSetupGitRepos = map[string]bool{
-	"run_agent.sh": true,
-}
+var shadowsSetupGitRepos = map[string]bool{}
 
 func defCount(script, fn string) int {
 	return len(regexp.MustCompile(`(?m)^function `+fn+` \{`).FindAllString(script, -1))

@@ -344,6 +344,9 @@ func readTaskOutput(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]b
 		return nil, fmt.Errorf("reading task %s's %s: %w", e.ID, decl.From, err)
 	}
 	if len(raw) == 0 {
+		if decl.Optional {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("task %s left no %s, its %s result", e.ID, decl.From, decl.Kind)
 	}
 	target := e.URL

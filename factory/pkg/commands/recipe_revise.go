@@ -203,7 +203,7 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 	task.Output = rec.OutputDecl()
 	task.TaskType = rec.TaskType
 	fmt.Printf("Revising %s in the session of task %s (task %s)...\n", reviseID, session, task.ID)
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, nil); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, nil, nil); err != nil || !done {
 		return task.ID, err
 	}
 	if rec.TaskOutput != nil {
