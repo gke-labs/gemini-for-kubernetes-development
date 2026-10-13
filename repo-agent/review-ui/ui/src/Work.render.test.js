@@ -308,84 +308,32 @@ describe('TryPanel runbook picker', () => {
     });
 });
 
-// The All tab is the cross-board view: Up Next, Research, Runs. Research
-// is there because a conversation lives on a board and is remembered
-// without one — "the one about the retry loop", not "the one on
-// repo-agent".
-describe('Work, all boards', () => {
+// The board picker: one board at a time, chosen from a dropdown whose
+// entries carry each board's need-you count. There is no All boards view;
+// Sessions lists every board's agents in one place.
+describe('Work, the board picker', () => {
     const boards = [
-        { name: 'repo-agent', repoURL: 'https://github.com/gke-labs/repo-agent', needsHuman: 0, active: 0 },
-        { name: 'kubectl', repoURL: 'https://github.com/kubernetes/kubectl', needsHuman: 0, active: 0 },
+        { name: 'repo-agent', repoURL: 'https://github.com/gke-labs/repo-agent', needsHuman: 2, active: 0 },
+        { name: 'kubectl', repoURL: 'https://github.com/kubernetes/kubectl', needsHuman: 1, active: 0 },
     ];
-
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 
-    const serve = () => jest.fn((url) => {
-        if (url === '/api/boards') return json(boards);
-        if (url === '/api/research') {
-            return json({
-                sessions: [
-                    { sessionId: 'aaaaaaaa-1111', title: 'the retry loop', repo: 'repo-agent', createdAt: '2026-09-26T10:00:00Z' },
-                    { sessionId: 'bbbbbbbb-2222', title: 'rollout flags', repo: 'kubectl', createdAt: '2026-09-26T09:00:00Z' },
-                ],
-            });
-        }
-        return json([]);
-    });
-
-    test('Research collects the conversations from every board', async () => {
-        global.fetch = serve();
-
-        await act(async () => { root.render(<Work namespace="alice" />); });
-        // Two rounds: the boards land, and the fan-out over their feeds
-        // settles on the round after.
-        await flush();
-        await flush();
-
-        // Opens on the first board; All boards is picked from the list,
-        // and lands on Up Next.
-        await act(async () => { container.querySelector('button[aria-label="Board"]').click(); });
-        await act(async () => { Array.from(container.querySelectorAll('[role="option"]')).find(o => o.textContent.startsWith('All boards')).click(); });
-        await flush();
-        await flush();
-        expect(container.textContent).toContain('Nothing needs you anywhere');
-
-        const tab = findButton('Research');
-        expect(tab).toBeTruthy();
-        await act(async () => { tab.click(); });
-        await flush();
-        await flush();
-
-        // Both boards' conversations, in one list, with no board filter
-        // between them.
-        expect(container.textContent).toContain('the retry loop');
-        expect(container.textContent).toContain('rollout flags');
-        // And it is the cross-board list that was asked for, not a
-        // board's own tab reached sideways.
-        expect(global.fetch).toHaveBeenCalledWith('/api/research');
-    });
-
-    test('a board picker in place of the tabs: All first, need-you badges, the board\'s controls beside it', async () => {
-        const counted = [{ ...boards[0], needsHuman: 2 }, { ...boards[1], needsHuman: 1 }];
-        global.fetch = jest.fn((url) => (url === '/api/boards' ? json(counted) : json([])));
+    test('opens on the first board, its controls beside it; no All boards', async () => {
+        global.fetch = jest.fn((url) => (url === '/api/boards' ? json(boards) : json([])));
         await act(async () => { root.render(<Work namespace="alice" />); });
         await flush();
         await flush();
         expect(container.querySelector('.repo-tabs')).toBeNull();
         expect(container.textContent).not.toContain('need you —');
-        // Opens on the first board, its controls beside it.
         const picker = container.querySelector('button[aria-label="Board"]');
         expect(picker.textContent).toBe('▣ repo-agent2 ▾');
         expect(findButton('⚙')).toBeTruthy();
+        expect(container.textContent).not.toContain('Up Next');
+        // Only the board shown is read: no fan-out over every board's feed.
+        expect(global.fetch).toHaveBeenCalledWith('/api/board/repo-agent/work');
+        expect(global.fetch).not.toHaveBeenCalledWith('/api/board/kubectl/work');
         await act(async () => { picker.click(); });
-        const options = Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent);
-        expect(options).toEqual(['All boards3', '✓repo-agent2', 'kubectl1']);
-        // All boards has no links, settings or delete: they are a board's.
-        await act(async () => { Array.from(container.querySelectorAll('[role="option"]'))[0].click(); });
-        await flush();
-        expect(container.querySelector('button[aria-label="Board"]').textContent).toBe('▣ All boards3 ▾');
-        expect(findButton('⚙')).toBeUndefined();
-        await act(async () => { container.querySelector('button[aria-label="Board"]').click(); });
+        expect(Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent)).toEqual(['✓repo-agent2', 'kubectl1']);
         // Type to filter, Enter to pick.
         const filterBox = container.querySelector('input[aria-label="Filter boards"]');
         await act(async () => {
@@ -401,17 +349,7 @@ describe('Work, all boards', () => {
         expect(container.querySelector('a[title="https://github.com/kubernetes/kubectl"]').textContent).toBe('GitHub');
         expect(findButton('⚙')).toBeTruthy();
         expect(findButton('Delete')).toBeTruthy();
-    });
-
-    test('one board opens on itself, with no All', async () => {
-        global.fetch = jest.fn((url) => (url === '/api/boards' ? json([boards[0]]) : json([])));
-        await act(async () => { root.render(<Work namespace="alice" />); });
-        await flush();
-        await flush();
-        const picker = container.querySelector('button[aria-label="Board"]');
-        expect(picker.textContent).toBe('▣ repo-agent ▾');
-        await act(async () => { picker.click(); });
-        expect(Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent)).toEqual(['✓repo-agent']);
+        expect(global.fetch).not.toHaveBeenCalledWith('/api/research');
     });
 });
 

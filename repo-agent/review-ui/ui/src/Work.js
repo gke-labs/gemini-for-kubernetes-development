@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ResearchPanel, AllResearchPanel, DRAFT_VERBS } from './Research';
+import { ResearchPanel, DRAFT_VERBS } from './Research';
 import agentSandboxIcon from './agent-sandbox-icon.svg';
 import Chip from './Chip';
 import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } from './WorkBits';
@@ -88,18 +88,6 @@ function latestRuns(item) {
   const seen = new Set();
   return (item.sessions || []).filter(s => !seen.has(runGroup(s)) && seen.add(runGroup(s)));
 }
-
-// bareReviewRequest is a row that needs the member only because their
-// review was requested: nothing is prepared for them yet, so it waits
-// behind finished agent work in Up Next.
-function bareReviewRequest(item) {
-  return item.type !== 'issue' && !!item.reviewRequested && !item.reviewPending && !item.error &&
-    !latestRuns(item).some(r => r.status === 'ready' || r.status === 'failed');
-}
-
-// The cross-board inbox: a synthetic board whose only view is Up Next —
-// "what do I owe right now" is a question about you, not a repo.
-const ALL_BOARDS = '__all__';
 
 // fetchWorkFeed reads a board's feed, failing with the API's reason (a
 // rejected GitHub token says to update it in Settings) rather than a bare
@@ -744,154 +732,6 @@ function runningChipFor(sb, pend) {
     bg={tearing ? 'var(--bg-secondary)' : 'rgba(176,136,0,0.12)'} />;
 }
 
-// AllRunsPanel: the fleet dashboard — every deployment across every
-// board in one table. Read + act (each row posts to its own board);
-// creation stays on the per-board Runs tab. Polls at 30s: the runbook
-// GET fans out to GitHub, and deployments change on minute scales.
-function AllRunsPanel({ boards, onOpenSandbox, onGoBoard }) {
-  const [data, setData] = useState({});
-  const [busy, setBusy] = useState('');
-
-  const names = boards.map(b => b.name);
-  const key = names.join(',');
-  const load = useCallback(() => {
-    Promise.all(names.map(n =>
-      fetch(`/api/board/${n}/runbook`).then(r => (r.ok ? r.json() : null)).then(d => [n, d]).catch(() => [n, null])
-    )).then(entries => setData(Object.fromEntries(entries.filter(e => e[1]))));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  const kickoff = (board, mode, name) => {
-    setBusy(`${board}:${name}`);
-    fetch(`/api/board/${board}/runbook`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, name, intent: '' }),
-    }).then(() => { setTimeout(load, 2000); setTimeout(() => setBusy(''), 2000); }).catch(() => setBusy(''));
-  };
-
-  const rows = [];
-  for (const [board, d] of Object.entries(data)) {
-    const instances = d.instances || [];
-    const pending = d.pending || [];
-    const sandboxes = d.sandboxes || [];
-    const merged = [...instances];
-    for (const p of pending) {
-      if (p.mode === 'teardown') continue;
-      const name = p.instance || p.scenario;
-      if (!merged.some(i => i.name === name)) merged.push({ name, provisional: true });
-    }
-    for (const inst of merged) {
-      const sb = sandboxes.find(s => (s.instance || s.scenario) === inst.name);
-      const pend = pendingFor(pending, inst.name);
-      rows.push({ board, inst, sb, pend });
-    }
-  }
-  const rank = r => {
-    const v = ((r.inst.latestReceipt || {}).verdict || '').toUpperCase();
-    if (r.sb && r.sb.taskState === 'Running') return 0;
-    if (r.pend) return 0;
-    if (v.startsWith('PLANNED')) return 1;
-    if (v.startsWith('BLOCKED') || v.startsWith('FAILED')) return 2;
-    if (v.startsWith('VERIFIED')) return 3;
-    return 4;
-  };
-  rows.sort((a, b) => rank(a) - rank(b) || a.board.localeCompare(b.board) || a.inst.name.localeCompare(b.inst.name));
-  const cell = { padding: '5px 8px', verticalAlign: 'middle' };
-
-  return (
-    <div className="work-card" style={{ padding: '14px', textAlign: 'left', fontSize: 'small' }}>
-      {rows.length === 0 ? (
-        <div style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No deployments anywhere — plan one from a board's Runs tab.
-        </div>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', color: 'var(--text-secondary)', fontSize: 'x-small' }}>
-              <th style={cell}>board</th>
-              <th style={cell}>deployment</th>
-              <th style={cell}>agent</th>
-              <th style={cell}>procedure</th>
-              <th style={cell}>last run</th>
-              <th style={{ ...cell, textAlign: 'right' }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ board, inst, sb, pend }) => {
-              // The annotation can be stale (a dead watcher never stamped
-              // the final state); the probe is the truth when it speaks.
-              const running = sb && sb.taskState === 'Running' && sb.taskAlive !== false;
-              // A dead click must not hold the buttons down: clicking
-              // again is the only retry there is.
-              const inFlight = !!pend && !clickFailed(pend);
-              const receipt = inst.latestReceipt;
-              const v = ((receipt || {}).verdict || '').toUpperCase();
-              return (
-                <tr key={`${board}/${inst.name}`} style={{ borderTop: '1px solid var(--border-color)' }}>
-                  <td style={cell}>
-                    <a href="#board" onClick={e => { e.preventDefault(); onGoBoard(board); }}
-                      title="Open this board's Runs tab">{board}</a>
-                  </td>
-                  <td style={cell}>
-                    {inst.provisional ? <span style={{ fontWeight: 500 }}>⛭ {inst.name}</span> : (
-                      <>
-                        <a href={inst.htmlURL} target="_blank" rel="noopener noreferrer"
-                          style={{ fontWeight: 500, textDecoration: 'none', color: 'var(--text-primary)' }}>⛭ {inst.name} ↗</a>
-                        {localOnlyChip(inst)}
-                      </>
-                    )}
-                  </td>
-                  <td style={cell}>
-                    {sb ? (
-                      <span onClick={() => onOpenSandbox && onOpenSandbox(sb.name, board)} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-                        title={`${sb.name} — tasks & logs`}>
-                        {ENGINE_ICON[sb.engine] ? <EngineIcon engine={sb.engine} /> : <span style={{ marginRight: '6px' }}>⚙</span>}
-                        {running && runningChipFor(sb, pend)}
-                        {pend && !running && pendingChipFor(pend)}
-                      </span>
-                    ) : (pend ? pendingChipFor(pend, inst.provisional ? 'preparing…' : '') : <span style={{ color: 'var(--text-secondary)' }}>—</span>)}
-                  </td>
-                  <td style={cell}>
-                    {inst.runbook
-                      ? <a href={inst.runbook.htmlURL} target="_blank" rel="noopener noreferrer"
-                          title="This run's procedure">runbook.md ↗</a>
-                      : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
-                  </td>
-                  <td style={cell}>
-                    {verdictBadge(receipt)}{' '}
-                    {receipt && <a href={receipt.htmlURL} target="_blank" rel="noopener noreferrer">receipt ↗</a>}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    {v.startsWith('PLANNED') ? (
-                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`}
-                        title="Execute the reviewed plan"
-                        onClick={() => kickoff(board, 'deploy', inst.name)}>▶ Deploy</button>
-                    ) : (
-                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`}
-                        title="Plan this run again"
-                        onClick={() => kickoff(board, 'plan', inst.name)}>▶ Re-plan</button>
-                    )}
-                    {inst.deployed === true && (
-                      <button className="btn btn-sm" disabled={running || inFlight || busy === `${board}:${inst.name}`} style={{ marginLeft: '6px' }}
-                        title="Remove what this run created"
-                        onClick={() => kickoff(board, 'teardown', inst.name)}>Tear down</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
 // TryPanel is the Runs tab: every run for this repo, and the composer
 // that starts a new one.
 //
@@ -1241,22 +1081,6 @@ function Work({ onBack, namespace }) {
       if (Array.isArray(rows)) setWork(rows);
       setLoadingWork(false);
     };
-    if (board === ALL_BOARDS) {
-      // Aggregate every board's (server-cached) feed; rows are tagged
-      // with their board so actions post to the right endpoints.
-      const failed = [];
-      Promise.all(boards.map(b =>
-        fetchWorkFeed(b.name)
-          .then(rows => (Array.isArray(rows) ? rows.map(i => ({ ...i, board: b.name })) : []))
-          .catch(err => { failed.push(`${b.name}: ${err.message}`); return []; })
-      ))
-        .then(all => {
-          if (board === activeBoardRef.current) setWorkError(failed.join('\n'));
-          done(all.flat());
-        })
-        .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
-      return;
-    }
     fetchWorkFeed(board)
       .then(rows => {
         if (board === activeBoardRef.current) setWorkError('');
@@ -1269,18 +1093,18 @@ function Work({ onBack, namespace }) {
         setLoadingWork(false);
       })
       .finally(() => { if (board === activeBoardRef.current) setSyncing(false); });
-  }, [activeBoard, boards]);
+  }, [activeBoard]);
 
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
 
   // The board's Runs state, for Deploy ▾ and the run chips on pull
-  // request rows. Reading it costs a GitHub call per run, so it is one
-  // board's, never ALL's, and refreshed on a slow clock or after a
-  // deploy rather than with every tick of the feed.
+  // request rows. Reading it costs a GitHub call per run, so it is
+  // refreshed on a slow clock or after a deploy rather than with every
+  // tick of the feed.
   const [runState, setRunState] = useState(null);
   const fetchRunState = useCallback(() => {
     const board = activeBoard;
-    if (!board || board === ALL_BOARDS) return;
+    if (!board) return;
     fetch(`/api/board/${board}/runbook`)
       .then(res => (res.ok ? res.json() : null))
       .then(data => {
@@ -1314,7 +1138,6 @@ function Work({ onBack, namespace }) {
     setWork([]);
     setWorkError('');
     setLoadingWork(true);
-    if (activeBoard === ALL_BOARDS) return; // no per-board view state
     try {
       const saved = JSON.parse(localStorage.getItem(`repoboard.view.${activeBoard}`));
       setView(saved ? { ...defaultView, ...saved } : defaultView);
@@ -1329,12 +1152,7 @@ function Work({ onBack, namespace }) {
   };
   useEffect(() => {
     fetchWork();
-    // One tick of the aggregate view is one request per board — every
-    // repo you watch, refetched, for a list nobody reads at
-    // twenty-second resolution. The board you are actually looking at
-    // keeps the fast cadence; ALL settles for a minute, which is what
-    // the server holds a feed fresh for anyway.
-    const pollEvery = activeBoard === ALL_BOARDS ? 60000 : 20000;
+    const pollEvery = 20000;
     const poll = () => { if (!document.hidden) { fetchWork(); fetchBoards(); } };
     const interval = setInterval(() => {
       if (document.hidden) return;
@@ -1454,7 +1272,7 @@ function Work({ onBack, namespace }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px', fontSize: 'small' }}>
         {onBack && <button className="btn" onClick={onBack}>← Back</button>}
         {boards.length > 0 && (
-          <BoardPicker boards={boards} active={activeBoard} allKey={ALL_BOARDS}
+          <BoardPicker boards={boards} active={activeBoard}
             onPick={(name) => { setActiveBoard(name); setWork([]); setActiveGroup(''); }} />
         )}
         {board && (
@@ -1529,71 +1347,7 @@ function Work({ onBack, namespace }) {
 
       {!boards.length ? (
         <p>No boards yet. Paste a repository URL above to create one.</p>
-      ) : activeBoard === ALL_BOARDS ? (() => {
-        // The cross-board inbox: needs-you rows from every board, oldest
-        // demands first, actions inline (each row posts to its own
-        // board). Just Up Next — a cross-repo triage queue would mix
-        // hats, but an inbox of things waiting on YOU is one hat.
-        const upNextAll = work
-          .filter(i => i.attention === 'needs-you')
-          .sort((x, y) => (bareReviewRequest(x) - bareReviewRequest(y)) || (x.updatedAt < y.updatedAt ? -1 : 1));
-        const allTab = ['all-research', 'all-runs'].includes(activeGroup) ? activeGroup : 'up-next';
-        return (
-          <div>
-            <nav className="group-tabs" style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-              <button className={`group-tab ${allTab === 'up-next' ? 'active' : ''}`}
-                onClick={() => setActiveGroup('')}
-                style={allTab === 'up-next' ? { color: '#d73a49' } : {}}
-              >Up Next</button>
-              {/* Research and Runs in the same order as a board's own
-                  tabs, so the two rows of tabs read the same way. */}
-              <button className={`group-tab ${allTab === 'all-research' ? 'active' : ''}`}
-                title="Every research conversation, whichever board it was started from — including ones whose board is gone"
-                onClick={() => setActiveGroup('all-research')}
-              >Research</button>
-              <button className={`group-tab ${allTab === 'all-runs' ? 'active' : ''}`}
-                title="Every deployment across every board — the fleet dashboard"
-                onClick={() => setActiveGroup('all-runs')}
-              >Runs</button>
-              <span style={{ marginLeft: 'auto', fontSize: 'x-small', color: 'var(--text-secondary)', alignSelf: 'center' }}>
-                across {boards.length} boards
-              </span>
-            </nav>
-            {allTab === 'all-research' ? (
-              <AllResearchPanel />
-            ) : allTab === 'all-runs' ? (
-              <AllRunsPanel boards={boards}
-                onOpenSandbox={(name) => setCardSandbox(name)}
-                onGoBoard={(b) => { setActiveBoard(b); setWork([]); setActiveGroup('try'); }} />
-            ) : (
-            <div className="work-card">
-              <table className="work-table">
-                <tbody>
-                  {loadingWork && (
-                    <tr><td colSpan="5" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                      Gathering your boards…
-                    </td></tr>
-                  )}
-                  {!loadingWork && workError && <WorkErrorRow error={workError} />}
-                  {!loadingWork && upNextAll.map(item => (
-                    <WorkRow key={`${item.board}-${item.type}-${item.number}`} item={withoutSelfReview(item, selfReview)} boardName={item.board}
-                      onAction={(p, l, b) => handleAction(p, l, item.board, b)} onRefresh={fetchWork}
-                      namespace={namespace} groupTag={item.board}
-                      onGroupTagClick={() => { setActiveBoard(item.board); setWork([]); setActiveGroup(''); }}
-                      onOpenSandbox={setCardSandbox} onOpenSession={setOpenSession} />
-                  ))}
-                  {!loadingWork && !upNextAll.length && !workError && (
-                    <tr><td colSpan="5" style={{ padding: '16px 8px', color: 'var(--status-green)' }}>
-                      ✓ Nothing needs you anywhere.
-                    </td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            )}
-          </div>
-        );
-      })() : (() => {
+      ) : (() => {
         // The feed is the full universe; the view narrows it here, client
         // side. In-flight items (sandbox, agent motion) always surface —
         // tightening the scope or labels must never hide running work.
