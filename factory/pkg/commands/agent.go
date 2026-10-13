@@ -198,10 +198,7 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		flags.SessionID = fmt.Sprintf("issue-%d", targetNum)
 	}
 
-	taskID := common.Slugify(agentDef.Name)
-	if flags.SessionID != "" {
-		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
-	}
+	taskID := common.AgentTaskID(agentDef.Name, flags.SessionID)
 	taskTitle := fmt.Sprintf("Agent: %s", agentDef.Name)
 	ensure := func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error) {
 		fmt.Printf("Ensuring sandbox for task %s...\n", taskID)

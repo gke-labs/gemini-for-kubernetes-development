@@ -42,6 +42,16 @@ func ParseAgent(content []byte) (*AgentDefinition, error) {
 	return &def, nil
 }
 
+// AgentTaskID is the task id an agent's run is known by, which names its
+// sandbox (sandbox.AgentSandboxName): its definition's name, slugified,
+// and its session, if it is a workflow's (issue-<n>).
+func AgentTaskID(name, sessionID string) string {
+	if sessionID != "" {
+		return Slugify(name) + "-" + sessionID
+	}
+	return Slugify(name)
+}
+
 func Slugify(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")

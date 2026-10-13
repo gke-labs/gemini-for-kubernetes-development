@@ -27,13 +27,6 @@ const (
 	DefaultShutdownGracePeriod = 5 * time.Minute
 )
 
-var (
-	// errAdoptedTaskFailed reports that a task adopted on startup ended unsuccessfully.
-	errAdoptedTaskFailed = errors.New("adopted task failed or terminated in sandbox")
-	// errAdoptedTaskTimedOut reports that a task adopted on startup exhausted its timeout budget.
-	errAdoptedTaskTimedOut = errors.New("adopted task timed out")
-)
-
 // TaskRunner executes a single claimed task to completion.
 //
 // Implementations are responsible only for running the task workload itself;
@@ -48,21 +41,16 @@ type TaskRunner interface {
 // SandboxService abstracts the cluster interactions the dispatcher needs to
 // decide whether a task may be scheduled, and to clean up after a timeout.
 type SandboxService interface {
-	// ResolveName returns the name of the sandbox that a task would execute in.
-	ResolveName(ctx context.Context, taskType api.TaskType, number int) string
+	// ResolveTaskName returns the name of the sandbox that a task would execute in.
+	ResolveTaskName(ctx context.Context, task *api.QueueTask) string
 	// IsTaskRunning reports whether the sandbox is currently executing a task.
 	IsTaskRunning(ctx context.Context, sandboxName string) (bool, error)
-	// IsTaskCompleted reports whether the sandbox has already completed a task of the given type.
-	IsTaskCompleted(ctx context.Context, sandboxName string, taskType api.TaskType) (bool, error)
 	// CountRunningTasks returns the number of sandboxes currently executing a task.
 	CountRunningTasks(ctx context.Context) (int, error)
 	// Delete force deletes a sandbox, e.g. after a task times out.
 	Delete(ctx context.Context, sandboxName string) error
 	// Suspend scales a sandbox down to zero replicas.
 	Suspend(ctx context.Context, sandboxName string) error
-	// AliasToTaskPR labels a sandbox with the pull request its latest task
-	// opened, if any.
-	AliasToTaskPR(ctx context.Context, sandboxName string) error
 }
 
 // TaskCoordinator abstracts the GitHub-side interactions that surround the
@@ -85,12 +73,6 @@ type TaskCoordinator interface {
 type Config struct {
 	// Interval is the delay between dispatch cycles.
 	Interval time.Duration
-	// AdoptionPollInterval is how often an adopted task's sandbox is polled during
-	// startup recovery. Defaults to DefaultAdoptionPollInterval.
-	AdoptionPollInterval time.Duration
-	// SandboxProbeRetryDelay is how long recovery waits before retrying a sandbox
-	// probe that failed. Defaults to DefaultSandboxProbeRetryDelay.
-	SandboxProbeRetryDelay time.Duration
 	// MaxActions caps the number of tasks dispatched within a single cycle.
 	MaxActions int
 	// MaxPending caps the number of concurrently active sandbox tasks.
@@ -322,7 +304,7 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 			return
 		}
 
-		sandboxName := d.sandboxes.ResolveName(ctx, task.Type, task.Number)
+		sandboxName := d.sandboxes.ResolveTaskName(ctx, task)
 		dispatched, requeue := d.dispatchTask(ctx, filename, task, sandboxName, activeSandboxesInCycle)
 		if requeue {
 			releasedTasks = append(releasedTasks, filename)

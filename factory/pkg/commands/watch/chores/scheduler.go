@@ -248,6 +248,7 @@ func (s *Scheduler) newTask(def Definition, lastRun, now time.Time) *api.QueueTa
 			def.Name, def.Schedule, dueTime.Format(time.RFC3339), lastRunStr),
 		Status:    api.StatusPending,
 		AgentFile: def.Path,
+		AgentName: def.Name,
 	}
 }
 

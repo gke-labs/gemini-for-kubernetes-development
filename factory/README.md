@@ -63,7 +63,7 @@
   - Work is queued as task files that move `incoming/ → processing/ → processed/` under `--queue-dir`. A `journal.jsonl` sits alongside.
   - `--mode scan` only discovers and queues work; `--mode run` only processes the queue. Several processes can therefore cooperate through atomic file moves.
   - `--max-actions` and `--max-pending` bound each cycle; `--scan-limit` bounds each scan.
-- **Restart-safe.** After a restart it re-adopts tasks whose sandboxes are still running. Tasks that can't be recovered are marked failed. `--task-timeout` fails a stuck task and deletes its sandbox.
+- **Restart-safe.** Every task's command names its run (`--run-name`), so after a restart the watch requeues what was in flight. Run again under the same name, a task follows its run if it's still going, applies the result of one that finished, or finds it already applied. `--task-timeout` fails a stuck task and deletes its sandbox.
 - **Garbage collection.** It deletes sandboxes whose issue or PR has closed, and evicts old ones (`--sandbox-eviction-age`). It suspends idle ones by scaling them to zero (`--sandbox-idle-timeout`) and never touches a sandbox with a task in flight.
 - **Workflow nudging.** When an issue or PR a workflow is waiting on closes, the workflow's issue is nudged so it advances without a human.
 - **Status API on `:13338`.**

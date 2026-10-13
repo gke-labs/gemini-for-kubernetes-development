@@ -18,33 +18,29 @@ import (
 type fakeSandboxService struct {
 	mu sync.Mutex
 
-	resolve func(taskType api.TaskType, number int) string
+	resolve func(task *api.QueueTask) string
 	// runningFn, when set, answers IsTaskRunning instead of the running map, so a
 	// test can vary the answer per call (e.g. a probe that fails then succeeds).
 	// It is called while f.mu is held, so it must not touch the fake itself.
 	runningFn    func(sandboxName string) (bool, error)
 	running      map[string]bool
-	completed    map[string]bool
 	runningCount int
 	countCalls   int
 	runningErr   error
-	completedErr error
 	countErr     error
 	deleted      []string
 	suspended    []string
-	aliased      []string
 }
 
 func newFakeSandboxService() *fakeSandboxService {
 	return &fakeSandboxService{
-		running:   map[string]bool{},
-		completed: map[string]bool{},
+		running: map[string]bool{},
 	}
 }
 
-func (f *fakeSandboxService) ResolveName(_ context.Context, taskType api.TaskType, number int) string {
+func (f *fakeSandboxService) ResolveTaskName(_ context.Context, task *api.QueueTask) string {
 	if f.resolve != nil {
-		return f.resolve(taskType, number)
+		return f.resolve(task)
 	}
 	return "sandbox"
 }
@@ -56,12 +52,6 @@ func (f *fakeSandboxService) IsTaskRunning(_ context.Context, sandboxName string
 		return f.runningFn(sandboxName)
 	}
 	return f.running[sandboxName], f.runningErr
-}
-
-func (f *fakeSandboxService) IsTaskCompleted(_ context.Context, sandboxName string, _ api.TaskType) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.completed[sandboxName], f.completedErr
 }
 
 func (f *fakeSandboxService) CountRunningTasks(context.Context) (int, error) {
@@ -89,19 +79,6 @@ func (f *fakeSandboxService) Suspend(_ context.Context, sandboxName string) erro
 	defer f.mu.Unlock()
 	f.suspended = append(f.suspended, sandboxName)
 	return nil
-}
-
-func (f *fakeSandboxService) AliasToTaskPR(_ context.Context, sandboxName string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.aliased = append(f.aliased, sandboxName)
-	return nil
-}
-
-func (f *fakeSandboxService) aliasedSandboxes() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.aliased...)
 }
 
 func (f *fakeSandboxService) suspendedSandboxes() []string {
@@ -326,7 +303,7 @@ func TestDispatchOnce_DrainModeDoesNotClaim(t *testing.T) {
 func TestDispatchOnce_SkipsTaskWhileSandboxIsLeased(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
-	sandboxes.resolve = func(_ api.TaskType, number int) string {
+	sandboxes.resolve = func(*api.QueueTask) string {
 		return "fix-test-repo-42"
 	}
 
@@ -394,8 +371,7 @@ func TestDispatchOnce_RemovesCancelledTask(t *testing.T) {
 // a stuck task belongs to Recover, which runs before the dispatch loop.
 func TestDispatchOnce_RunsRecoveredTaskDespiteCompletedSandboxAnnotation(t *testing.T) {
 	tempDir := t.TempDir()
-	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
-	sandboxes.completed["sandbox"] = true
+	d, queue, _, _, runner := testDispatcher(t, tempDir, nil)
 
 	task := &api.QueueTask{
 		Type:       api.TypeIssueFix,
@@ -421,7 +397,8 @@ func TestDispatchOnce_RespectsMaxActions(t *testing.T) {
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, func(cfg *Config, _ *Deps) {
 		cfg.MaxActions = 1
 	})
-	sandboxes.resolve = func(_ api.TaskType, number int) string {
+	sandboxes.resolve = func(task *api.QueueTask) string {
+		number := task.Number
 		return "sandbox-" + string(rune('a'+number))
 	}
 
@@ -461,7 +438,8 @@ func TestDispatchOnce_CountsRunningTasksOnceAndIncrementsWithinCycle(t *testing.
 		cfg.MaxPending = 2
 	})
 	sandboxes.runningCount = 1
-	sandboxes.resolve = func(_ api.TaskType, number int) string {
+	sandboxes.resolve = func(task *api.QueueTask) string {
+		number := task.Number
 		return fmt.Sprintf("fix-repo-%d", number)
 	}
 
@@ -768,7 +746,8 @@ func TestRun_DrainCancelsTasksThatOutlastGracePeriod(t *testing.T) {
 func TestDispatchOnce_SuspendsSandboxForAgentChoreOnCompletion(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, _ := testDispatcher(t, tempDir, nil)
-	sandboxes.resolve = func(_ api.TaskType, n int) string {
+	sandboxes.resolve = func(task *api.QueueTask) string {
+		n := task.Number
 		return fmt.Sprintf("wf-issue-%d", n)
 	}
 
@@ -796,7 +775,8 @@ func TestDispatchOnce_SuspendsSandboxForAgentChoreOnCompletion(t *testing.T) {
 func TestDispatchOnce_SuspendsSandboxForAgentChoreOnFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
-	sandboxes.resolve = func(_ api.TaskType, n int) string {
+	sandboxes.resolve = func(task *api.QueueTask) string {
+		n := task.Number
 		return fmt.Sprintf("wf-issue-%d", n)
 	}
 
