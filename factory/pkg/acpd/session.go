@@ -956,19 +956,37 @@ func CheckEnv(env map[string]string) error {
 // InheritedEnv is what of a process's environment (os.Environ) an engine
 // inherits: everything but what CheckEnv would refuse — acpd's and the
 // system's own variables, and anything that looks like a credential (the
-// task's GitHub token, the task server's token). The sandbox pod's
-// environment is the point: the project an overseer configured
-// (GOOGLE_CLOUD_PROJECT), the Go caches the warm workspace restores
-// (GOCACHE, GOMODCACHE), TMPDIR.
+// task's GitHub token, the task server's token) — and Kubernetes' service
+// links. The sandbox pod's environment is the point: the project an
+// overseer configured (GOOGLE_CLOUD_PROJECT), the Go caches the warm
+// workspace restores (GOCACHE, GOMODCACHE), TMPDIR, and the image's own
+// (KUBEBUILDER_ASSETS, GOPATH).
+//
+// It is not a boundary — the engine runs as the daemon's user, in its pod
+// — but what it never needs, it is not handed.
 func InheritedEnv(environ []string) []string {
 	var out []string
 	for _, kv := range environ {
-		k, _, ok := strings.Cut(kv, "=")
-		if ok && envRefusal(k) == "" {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && envRefusal(k) == "" && !serviceLink(k, v) {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// serviceLinkRE matches the names Kubernetes gives a pod for every Service
+// in its namespace (unless enableServiceLinks is off): <SVC>_SERVICE_HOST,
+// <SVC>_SERVICE_PORT[_<port name>] and <SVC>_PORT_<n>_<proto>[_PROTO|_PORT|_ADDR].
+var serviceLinkRE = regexp.MustCompile(`^[A-Z0-9_]+_(SERVICE_HOST|SERVICE_PORT(_[A-Z0-9_]+)?|PORT_[0-9]+_(TCP|UDP|SCTP)(_PROTO|_PORT|_ADDR)?)$`)
+
+// serviceLink reports whether name=value is one of a Service's links:
+// those names, and <SVC>_PORT, whose value is the Service's address.
+func serviceLink(name, value string) bool {
+	if serviceLinkRE.MatchString(name) {
+		return true
+	}
+	return strings.HasSuffix(name, "_PORT") && (strings.HasPrefix(value, "tcp://") || strings.HasPrefix(value, "udp://") || strings.HasPrefix(value, "sctp://"))
 }
 
 // envRefusal says why name may not be set in an engine's environment

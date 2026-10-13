@@ -504,8 +504,14 @@ func TestInheritedEnv(t *testing.T) {
 		"GOOGLE_APPLICATION_CREDENTIALS=/etc/pakey/keys.json",
 		"GITHUB_TOKEN=ghp", "GEMINI_API_KEY=k", "FACTORY_TASK_TOKEN=t", "MY_SECRET=s", "DB_PASSWORD=p",
 		"LD_PRELOAD=x", "BASH_ENV=x", "HOME=/root", "PATH=/bin", "TERM=xterm", "GEMINI_CLI_TRUST_WORKSPACE=true", "malformed",
+		// Kubernetes' service links, for another sandbox's -lb Service.
+		"WF_ISSUE_1_LB_SERVICE_HOST=10.0.0.9", "WF_ISSUE_1_LB_SERVICE_PORT=13338", "WF_ISSUE_1_LB_SERVICE_PORT_CODE_SERVER=13338",
+		"WF_ISSUE_1_LB_PORT=tcp://10.0.0.9:13338", "WF_ISSUE_1_LB_PORT_13338_TCP=tcp://10.0.0.9:13338",
+		"WF_ISSUE_1_LB_PORT_13338_TCP_ADDR=10.0.0.9", "WF_ISSUE_1_LB_PORT_13338_TCP_PROTO=tcp",
+		// Not a service link: a port the image or the owner set.
+		"KUBEBUILDER_ASSETS=/usr/local/kubebuilder/bin", "APP_PORT=8080",
 	})
-	want := "GOOGLE_CLOUD_PROJECT=cnrm-barni-4 GOCACHE=/workspaces/.cache/go-build TMPDIR=/workspaces/.tmp GOOGLE_APPLICATION_CREDENTIALS=/etc/pakey/keys.json"
+	want := "GOOGLE_CLOUD_PROJECT=cnrm-barni-4 GOCACHE=/workspaces/.cache/go-build TMPDIR=/workspaces/.tmp GOOGLE_APPLICATION_CREDENTIALS=/etc/pakey/keys.json KUBEBUILDER_ASSETS=/usr/local/kubebuilder/bin APP_PORT=8080"
 	if strings.Join(got, " ") != want {
 		t.Errorf("InheritedEnv = %v\nwant %s", got, want)
 	}

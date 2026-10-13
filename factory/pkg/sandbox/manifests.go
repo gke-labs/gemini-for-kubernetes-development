@@ -193,6 +193,12 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 	}
 
 	podSpecMap := map[string]interface{}{
+		// No *_SERVICE_HOST / *_PORT_* variables for every Service in the
+		// namespace — one set per sandbox's -lb Service, some 1,500 in a
+		// busy one: nothing in a sandbox uses them (DNS names Services),
+		// and an agent inheriting them would be handed every other
+		// sandbox's address.
+		"enableServiceLinks": false,
 		"containers": []interface{}{
 			map[string]interface{}{
 				"name":         "sandbox",
