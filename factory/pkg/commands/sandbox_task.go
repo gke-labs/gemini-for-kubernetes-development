@@ -25,9 +25,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
-// newSandboxTaskCommand groups the commands that look at the tasks in a sandbox,
-// whether the sandbox's daemon took them from the spool or envd started
-// them: they all run in /workspaces/tasks/<id> with the same files.
+// newSandboxTaskCommand groups the commands that look at the tasks in a
+// sandbox, through its task server: they all run in /workspaces/tasks/<id>
+// with the same files.
 func newSandboxTaskCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 )
 
 // localRemote runs the client side's scripts with this machine's shell,
@@ -39,14 +39,48 @@ func (l localRemote) Exec(_ context.Context, script, _ string, _ map[string]stri
 }
 
 func (l localRemote) incoming() string { return l.path(IncomingDir) }
-func (l localRemote) tasks() string    { return l.path(envd.DefaultTasksDir) }
+func (l localRemote) tasks() string    { return l.path(taskfiles.DefaultTasksDir) }
+
+// spoolTask leaves a task in incoming as a client does (the task server
+// in production): written under a dot-name, the env file private, and
+// renamed into place.
+func spoolTask(t *testing.T, r localRemote, task Task, recipeYAML []byte, inputs, env map[string]string) {
+	t.Helper()
+	staging := filepath.Join(r.incoming(), "."+task.ID)
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, v := range map[string]any{InputsFile: inputs, EnvFile: env, TaskFile: task} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(staging, name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(staging, RecipeFile), recipeYAML, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staging, filepath.Join(r.incoming(), task.ID)); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func submit(t *testing.T, r localRemote, id, runName string, at time.Time) {
 	t.Helper()
 	task := Task{ID: id, RunName: runName, Recipe: "triage", SubmittedAt: at}
-	if err := Submit(context.Background(), r, task, []byte("name: triage\n"), map[string]string{"issue_number": "7"}, map[string]string{"GITHUB_TOKEN": "secret"}); err != nil {
-		t.Fatalf("Submit: %v", err)
+	spoolTask(t, r, task, []byte("name: triage\n"), map[string]string{"issue_number": "7"}, map[string]string{"GITHUB_TOKEN": "secret"})
+}
+
+// listTasks is what the task server lists: ListScript, run here.
+func listTasks(t *testing.T, r localRemote) []Entry {
+	t.Helper()
+	var out strings.Builder
+	if err := r.Exec(context.Background(), ListScript(IncomingDir, taskfiles.DefaultTasksDir), "/workspaces", nil, nil, &out, nil); err != nil {
+		t.Fatal(err)
 	}
+	return ParseList(out.String())
 }
 
 func TestSubmitAppearsWholeAndPrivate(t *testing.T) {
@@ -102,15 +136,14 @@ func TestLaunchFailureIsAnExitCode(t *testing.T) {
 	ClaimAll(context.Background(), r.incoming(), r.tasks(), func(string, map[string]string) error {
 		return errors.New("no shell")
 	})
-	state, err := Status(context.Background(), r, "recipe-triage-1")
-	if err != nil || state != Exited {
-		t.Fatalf("state = %q, %v; want exited", state, err)
+	if e, err := Find(listTasks(t, r), "recipe-triage-1", ""); err != nil || e.State != Exited {
+		t.Fatalf("task = %+v, %v; want exited", e, err)
 	}
 }
 
 // The whole round trip with the launcher the daemon uses: the client
-// submits, the daemon claims and starts, the client sees it start and the
-// task leaves the files AttachTask reads.
+// submits, the daemon claims and starts, and the task leaves the files
+// the task server reads.
 func TestRoundTrip(t *testing.T) {
 	r := localRemote{t.TempDir()}
 	stub := filepath.Join(t.TempDir(), "factory")
@@ -121,10 +154,7 @@ func TestRoundTrip(t *testing.T) {
 	submit(t, r, "recipe-triage-1", "", time.Now())
 	ClaimAll(ctx, r.incoming(), r.tasks(), ExecLauncher(ctx, stub, r.root))
 
-	if err := AwaitStart(ctx, r, "recipe-triage-1", time.Second, 5*time.Second); err != nil {
-		t.Fatalf("AwaitStart: %v", err)
-	}
-	tf := envd.NewTaskFiles(filepath.Join(r.tasks(), "recipe-triage-1"))
+	tf := taskfiles.NewTaskFiles(filepath.Join(r.tasks(), "recipe-triage-1"))
 	deadline := time.Now().Add(5 * time.Second)
 	for !nonEmpty(tf.ExitCodeFile) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
@@ -139,24 +169,6 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if !nonEmpty(tf.PIDFile) || !nonEmpty(tf.StartTimeFile) {
 		t.Error("pid/start_time missing: attaching and the kill commands need them")
-	}
-}
-
-// An image without the spool never claims: the client takes the task back
-// and nothing of it stays behind to run later.
-func TestUnclaimedTaskIsWithdrawn(t *testing.T) {
-	r := localRemote{t.TempDir()}
-	submit(t, r, "recipe-triage-1", "", time.Now())
-	err := AwaitStart(context.Background(), r, "recipe-triage-1", 0, time.Second)
-	if !errors.Is(err, ErrNotClaimed) {
-		t.Fatalf("err = %v, want ErrNotClaimed", err)
-	}
-	entries, _ := os.ReadDir(r.incoming())
-	if len(entries) != 0 {
-		t.Errorf("incoming still has %v", entries)
-	}
-	if entries, _ := os.ReadDir(r.path(WithdrawnDir)); len(entries) != 0 {
-		t.Errorf("withdrawn task kept (with its tokens): %v", entries)
 	}
 }
 
@@ -176,8 +188,8 @@ func TestFailUnstarted(t *testing.T) {
 	}
 	FailUnstarted(context.Background(), r.tasks())
 
-	if s, _ := Status(context.Background(), r, "recipe-triage-1"); s != Exited {
-		t.Errorf("unstarted spooled task state = %q, want exited", s)
+	if !nonEmpty(filepath.Join(r.tasks(), "recipe-triage-1", "exit_code")) {
+		t.Error("an unstarted spooled task has no exit code")
 	}
 	if _, err := os.Stat(filepath.Join(r.tasks(), "recipe-triage-1", EnvFile)); !os.IsNotExist(err) {
 		t.Errorf("%s left on disk", EnvFile)
@@ -193,13 +205,11 @@ func TestListAndFind(t *testing.T) {
 	submit(t, r, "a", "client-1", now.Add(-2*time.Minute))
 	submit(t, r, "b", "client-2", now.Add(-time.Minute))
 	ClaimAll(context.Background(), r.incoming(), r.tasks(), func(taskDir string, _ map[string]string) error {
-		return os.WriteFile(envd.NewTaskFiles(taskDir).ExitCodeFile, []byte("0\n"), 0o644)
+		return os.WriteFile(taskfiles.NewTaskFiles(taskDir).ExitCodeFile, []byte("0\n"), 0o644)
 	})
 	submit(t, r, "c", "client-1", now)
 	// A recipe that is its sandbox's main task lists as that task type.
-	if err := Submit(context.Background(), r, Task{ID: "d", Recipe: "plan", TaskType: "plan", SubmittedAt: now.Add(-3 * time.Minute)}, []byte("name: plan\n"), nil, nil); err != nil {
-		t.Fatal(err)
-	}
+	spoolTask(t, r, Task{ID: "d", Recipe: "plan", TaskType: "plan", SubmittedAt: now.Add(-3 * time.Minute)}, []byte("name: plan\n"), nil, nil)
 	// Tasks envd started: no task.json, kind and time from their names.
 	// fix is running (its pid is this test's); plan's process is gone
 	// without an exit code, as after a sandbox restart.
@@ -213,23 +223,20 @@ func TestListAndFind(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(r.tasks(), name), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(envd.NewTaskFiles(filepath.Join(r.tasks(), name)).PIDFile, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+		if err := os.WriteFile(taskfiles.NewTaskFiles(filepath.Join(r.tasks(), name)).PIDFile, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	entries, err := List(context.Background(), r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	entries := listTasks(t, r)
 	var got []string
 	for _, e := range entries {
 		got = append(got, e.ID+":"+e.Kind+":"+string(e.State)+e.ExitCode)
 	}
 	if want := "c:recipe-triage:pending b:recipe-triage:exited0 a:recipe-triage:exited0 d:plan:pending " + fix + ":fix:running " + plan + ":plan:exited137"; strings.Join(got, " ") != want {
-		t.Errorf("List = %v", got)
+		t.Errorf("list = %v", got)
 	}
-	if code, _ := os.ReadFile(envd.NewTaskFiles(filepath.Join(r.tasks(), plan)).ExitCodeFile); strings.TrimSpace(string(code)) != "137" {
+	if code, _ := os.ReadFile(taskfiles.NewTaskFiles(filepath.Join(r.tasks(), plan)).ExitCodeFile); strings.TrimSpace(string(code)) != "137" {
 		t.Errorf("dead task's exit_code = %q, want 137 recorded", code)
 	}
 	for _, tc := range []struct{ id, client, want string }{

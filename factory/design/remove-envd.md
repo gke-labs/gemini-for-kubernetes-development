@@ -127,7 +127,7 @@ Each step is a process of its own: `run-prepare` reads local-only from the check
 
 **repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipes' prefix, `recipe-run-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
 
-### 5. Removing envd
+### 5. Removing envd (done)
 
 - Delete `taskapi.EnvdSandbox`, the spool client's envd functions,
   recipe.go's `RunTaskResilient` fallback and `FACTORY_TASK_TRANSPORT`;

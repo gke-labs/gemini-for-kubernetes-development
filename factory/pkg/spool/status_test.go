@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 )
 
 func awaitExited(t *testing.T, taskDir string) TaskStatus {
@@ -50,7 +50,7 @@ func TestSignalledTaskGetsTheShellsCode(t *testing.T) {
 	if st.ExitCode != "137" {
 		t.Fatalf("exit code = %q, want 137", st.ExitCode)
 	}
-	if code := readCode(envd.NewTaskFiles(taskDir).ExitCodeFile); code != "137" {
+	if code := readCode(taskfiles.NewTaskFiles(taskDir).ExitCodeFile); code != "137" {
 		t.Fatalf("exit_code file = %q, want 137", code)
 	}
 }

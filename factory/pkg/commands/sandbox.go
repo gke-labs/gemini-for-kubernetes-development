@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
@@ -77,7 +76,7 @@ func NewSandboxInspectCommand(ctx context.Context) *cobra.Command {
 				fmt.Printf("Type: %s\n", labels["sandbox.gemini.google.com/type"])
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err == nil {
 				fmt.Printf("Active Pod: %s\n", podName)
 			} else {
@@ -106,7 +105,7 @@ func NewSandboxLogsCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
@@ -326,7 +325,7 @@ func NewSandboxCpCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
@@ -362,7 +361,7 @@ Note: factory flags (-e, -w) must precede positional arguments ([sandbox-name] [
 			if err := validateSandboxName(sandboxName); err != nil {
 				return err
 			}
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
@@ -389,7 +388,7 @@ func NewSandboxConnectCommand(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}
@@ -439,7 +438,7 @@ func NewSandboxChatCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("GEMINI_API_KEY not found in secret %s and TOKENSCRIPT_DIR was not set or returned empty", rootFlags.SecretName)
 			}
 
-			podName, err := envd.GetSandboxPodName(ctx, rootFlags.Namespace, sandboxName)
+			podName, err := k8s.SandboxPod(ctx, rootFlags.Namespace, sandboxName)
 			if err != nil {
 				return fmt.Errorf("getting sandbox pod: %w", err)
 			}

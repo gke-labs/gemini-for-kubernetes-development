@@ -220,8 +220,8 @@ func (s *Service) Exists(ctx context.Context, name string) (bool, error) {
 // IsTaskRunning reports whether the named sandbox is currently executing a task.
 //
 // It is authoritative rather than advisory: when the recorded annotation still
-// claims a task is running but the pod has terminated or envd reports an exit
-// code, the annotation is corrected as a side effect so subsequent probes are
+// claims a task is running but the pod has terminated or the task server
+// reports an exit code, the annotation is corrected as a side effect so subsequent probes are
 // cheap.
 func (s *Service) IsTaskRunning(ctx context.Context, name string) (bool, error) {
 	if s.kube == nil {

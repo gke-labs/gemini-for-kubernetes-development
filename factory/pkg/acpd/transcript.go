@@ -223,8 +223,8 @@ func (t *Transcript) Size() int64 {
 // offset to ask from next.
 //
 // Byte offsets rather than sequence numbers so a reader resumes with a
-// seek instead of a scan, and so the wire contract is the same one envd's
-// log tailing already uses.
+// seek instead of a scan, and so the wire contract is the same one a
+// task's log uses (the task server's ?offset=).
 func (t *Transcript) ReadFrom(offset int64) ([]byte, int64, error) {
 	t.mu.Lock()
 	size := t.size

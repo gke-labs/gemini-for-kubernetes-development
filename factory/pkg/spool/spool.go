@@ -4,9 +4,9 @@
 // A client writes a task directory into IncomingDir under a dot-name and
 // renames it into place, so it appears whole. The sandbox's daemon (PID 1)
 // claims it by renaming it to TasksDir/<id> and starts `factory recipe
-// exec` there, with the same pid, start_time, execution.log and exit_code
-// files envd-launched tasks have, so attaching to it (envd.AttachTask) and
-// recovery after a restart work as they always have.
+// exec` there, with the pid, start_time, execution.log and exit_code
+// files every task has (taskfiles.TaskFiles), which following it and
+// recovery after a restart read.
 //
 // Only recipes are spooled: the daemon builds the command from the task
 // directory's recipe.yaml and inputs.json and never runs one it is given.
@@ -23,13 +23,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"k8s.io/klog/v2"
 )
 
 const (
-	// Dir is outside envd.DefaultTasksDir on purpose: things list
+	// Dir is outside taskfiles.DefaultTasksDir on purpose: things list
 	// tasks/* to find the newest task, and must not find the spool.
 	Dir         = "/workspaces/spool"
 	IncomingDir = Dir + "/incoming"
@@ -164,7 +164,7 @@ func start(taskDir string, launch Launcher) error {
 // attached to it reads.
 func Fail(taskDir string, cause error) {
 	_ = os.Remove(filepath.Join(taskDir, SecretsFile))
-	tf := envd.NewTaskFiles(taskDir)
+	tf := taskfiles.NewTaskFiles(taskDir)
 	_ = os.WriteFile(tf.LogFile, []byte(fmt.Sprintf("spool: the task could not start: %v\n", cause)), 0o644)
 	_ = os.WriteFile(tf.ExitCodeFile, []byte("127\n"), 0o644)
 	failStatus(taskDir, cause)
@@ -179,7 +179,7 @@ func FailUnstarted(ctx context.Context, tasksDir string) {
 	}
 	for _, e := range entries {
 		taskDir := filepath.Join(tasksDir, e.Name())
-		tf := envd.NewTaskFiles(taskDir)
+		tf := taskfiles.NewTaskFiles(taskDir)
 		if !e.IsDir() || !exists(filepath.Join(taskDir, TaskFile)) || nonEmpty(tf.PIDFile) || nonEmpty(tf.ExitCodeFile) {
 			continue
 		}
@@ -202,8 +202,8 @@ func ExecLauncher(ctx context.Context, factory, workDir string) Launcher {
 // it, its end in the task's status.
 func Start(ctx context.Context, taskDir, cmdStr, workDir string, env map[string]string) error {
 	log := klog.FromContext(ctx)
-	tf := envd.NewTaskFiles(taskDir)
-	cmd := exec.Command("sh", "-c", envd.TaskScript(tf, cmdStr))
+	tf := taskfiles.NewTaskFiles(taskDir)
+	cmd := exec.Command("sh", "-c", taskfiles.TaskScript(tf, cmdStr))
 	cmd.Dir = workDir
 	cmd.Env = os.Environ()
 	for k, v := range env {

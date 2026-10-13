@@ -9,7 +9,7 @@
 - a dropped terminal kills the job
 - nobody notices CI failures or review comments until a human goes looking
 
-`factory` gives every task its own sandbox. That's an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) `Sandbox` with a persistent `/workspaces` volume and an `envd` daemon. The CLI drives that sandbox over a port-forward and leaves nothing behind on the host. The same CLI also runs as an unattended loop (`factory watch`, which the [Overseer](../overseer/docs/architecture-overseer-factory.md) runs in-cluster). That loop does several things:
+`factory` gives every task its own sandbox. That's an [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) `Sandbox` with a persistent `/workspaces` volume and factory's own daemon, which runs its tasks and serves them over a task server. The CLI drives that sandbox over a port-forward and leaves nothing behind on the host. The same CLI also runs as an unattended loop (`factory watch`, which the [Overseer](../overseer/docs/architecture-overseer-factory.md) runs in-cluster). That loop does several things:
 
 - picks up issues
 - reacts to CI failures, review comments and merge conflicts on its own PRs
@@ -20,7 +20,7 @@
  local / Overseer pod                     Kubernetes namespace
 +--------------------+   port-forward   +-------------------------------------------+
 |  factory CLI       | ===============> | Sandbox  factory-issue-917                |
-|  (or factory watch)|   envd :49983    |   envd (Connect-RPC)   daemon :49990     |
+|  (or factory watch)|   task server    |   factory daemon (task server) :49990    |
 +--------------------+                  |   /workspaces (PVC)                       |
                                         |     <repo>/                               |
                                         |     tasks/fix-20261002-101500/            |
@@ -122,7 +122,7 @@ A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/ru
 
 ### Observability and operations
 - **Token usage.** Every task records per-engine token usage. The CLI harvests it and posts it to a collector (`$COLLECTOR_URL`) served by the hidden `factory token-daemon`, which offers rollups by issue, PR, day and workflow. See [token usage collection](design/token-usage-collection.md).
-- **Sandbox tooling.** `factory sandbox` can list, inspect, stream logs (task or envd), exec, cp, suspend/resume, and connect over tmux, or resume a Gemini chat in a sandbox. `factory cleanup` deletes sandboxes older than a given age.
+- **Sandbox tooling.** `factory sandbox` can list, inspect, stream logs (a task's or the sandbox daemon's), exec, cp, suspend/resume, and connect over tmux, or resume a Gemini chat in a sandbox. `factory cleanup` deletes sandboxes older than a given age.
 - **Sandbox resources.** Per-sandbox resources: `--image`, `--workspace-disk-size`, `--workspace-storage-class`, `--ephemeral-storage`, `--cpu-request`/`--cpu-limit` and `--memory-request`/`--memory-limit`. Extra configuration can be injected with `--secret` and `--env`.
 
 ---
@@ -204,7 +204,7 @@ factory watch --repo owner/repo --dryrun --once
 Debugging a sandbox:
 ```bash
 factory sandbox list
-factory sandbox logs factory-issue-917            # task execution.log (--daemon for envd)
+factory sandbox logs factory-issue-917            # task execution.log (--daemon for the sandbox daemon's)
 factory sandbox exec -w /workspaces/repo factory-issue-917 -- make test
 factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 ```
@@ -238,7 +238,7 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |
 | `acpd` | Agent Client Protocol server (runs inside research sandboxes) |
 | `sshd` | Embedded SSH server over stdin/stdout for terminal forwarding |
-| `daemon`, `token-daemon` (hidden) | Sandbox entrypoint (envd + acpd); token-usage collector |
+| `daemon`, `token-daemon` (hidden) | Sandbox entrypoint (spool, task server, agent sessions); token-usage collector |
 
 Global flags (`--engine`, `--user`, `--namespace`, `--timeout`, `--disclose`, resource and injection flags) apply to every command; see `factory --help`.
 

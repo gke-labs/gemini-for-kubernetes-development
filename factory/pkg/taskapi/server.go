@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 	"k8s.io/klog/v2"
 )
@@ -105,7 +105,7 @@ func Serve(ctx context.Context, addr string, s *Server) error {
 	return nil
 }
 
-// list is every task, as spool.List finds them through envd.
+// list is every task: ListScript, run in the sandbox.
 func (s *Server) list(ctx context.Context) ([]spool.Entry, error) {
 	out, err := exec.CommandContext(ctx, "sh", "-c", spool.ListScript(s.incomingDir, s.tasksDir)).Output()
 	if err != nil {
@@ -259,7 +259,7 @@ func unserved(name string) bool {
 // awaitStarted waits for the task script to record its pid, or its exit,
 // which it does first thing.
 func (s *Server) awaitStarted(ctx context.Context, taskDir string) {
-	tf := envd.NewTaskFiles(taskDir)
+	tf := taskfiles.NewTaskFiles(taskDir)
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && !nonEmpty(tf.PIDFile) && !nonEmpty(tf.ExitCodeFile) {
 		select {
@@ -272,8 +272,7 @@ func (s *Server) awaitStarted(ctx context.Context, taskDir string) {
 
 // handleLog writes the task's log from offset, and with follow (the
 // default) goes on writing it until the task has ended. A task whose
-// process is gone without an exit code is given 137, as attaching
-// through envd gives it.
+// process is gone without an exit code is given 137.
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	taskDir, ok := s.taskDir(w, r)
 	if !ok {
@@ -289,7 +288,7 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		offset = parsed
 	}
 	follow := r.URL.Query().Get("follow") != "false"
-	tf := envd.NewTaskFiles(taskDir)
+	tf := taskfiles.NewTaskFiles(taskDir)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -326,8 +325,8 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		// The daemon records the end of a task it started; only one it
-		// did not, started through envd, is judged by its pid.
+		// The daemon records the end of a task it started; only one
+		// without a status (an older image's) is judged by its pid.
 		if !hasStatus && nonEmpty(tf.PIDFile) && !alive(tf) {
 			if goneSince.IsZero() {
 				goneSince = time.Now()
@@ -436,7 +435,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 // handleCancel ends the task's process group, not only its first process:
 // the recipe runner, the agent it started and whatever that started. A
 // kill records 137 even over an exit code the task wrote, as a quota kill
-// through envd does; a cancel keeps the task's own.
+// does; a cancel keeps the task's own.
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	taskDir, ok := s.taskDir(w, r)
 	if !ok {
@@ -449,7 +448,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	tf := envd.NewTaskFiles(taskDir)
+	tf := taskfiles.NewTaskFiles(taskDir)
 	sig, code := syscall.SIGTERM, 143
 	if req.Kill {
 		sig, code = syscall.SIGKILL, 137
@@ -501,8 +500,8 @@ func waitReaped(taskDir string, limit time.Duration) {
 }
 
 // signalGroup signals pid's process group, or pid alone when it shares
-// this process's group: a task started through envd, not by the daemon,
-// may, and the daemon must not signal itself.
+// this process's group, as a task the daemon did not start may: the
+// daemon must not signal itself.
 func signalGroup(pid int, sig syscall.Signal) {
 	if pgid, err := syscall.Getpgid(pid); err == nil && pgid != syscall.Getpgrp() {
 		_ = syscall.Kill(-pgid, sig)
@@ -538,7 +537,7 @@ func pathName(w http.ResponseWriter, r *http.Request, key string) (string, bool)
 // alive is whether the task's process still runs. Its pid cannot have
 // been reused by another: the daemon marks every task of an earlier
 // container ended before it starts any.
-func alive(tf envd.TaskFiles) bool {
+func alive(tf taskfiles.TaskFiles) bool {
 	pid, err := readPID(tf)
 	if err != nil {
 		return false
@@ -557,7 +556,7 @@ func alive(tf envd.TaskFiles) bool {
 	return true
 }
 
-func readPID(tf envd.TaskFiles) (int, error) {
+func readPID(tf taskfiles.TaskFiles) (int, error) {
 	data, err := os.ReadFile(tf.PIDFile)
 	if err != nil {
 		return 0, err

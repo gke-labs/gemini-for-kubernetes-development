@@ -1,7 +1,6 @@
 package taskapi
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,27 +9,20 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"k8s.io/klog/v2"
 )
 
-// EnvTransport set to "envd" makes Connect use envd even where a sandbox
-// has a task server: the way back, should the server misbehave.
-const EnvTransport = "FACTORY_TASK_TRANSPORT"
-
-// Sandbox is the tasks in one sandbox, reached through its task server or
-// through envd.
+// Sandbox is the tasks in one sandbox, reached through its task server.
 type Sandbox interface {
 	Name() string
-	// Transport is "task server" or "envd", for messages.
-	Transport() string
 	// List is every task, newest first.
 	List(ctx context.Context) ([]spool.Entry, error)
 	// Start hands the sandbox a recipe task and returns once it has
@@ -56,29 +48,23 @@ type Sandbox interface {
 	Close()
 }
 
-// Connect reaches the tasks in a sandbox, waking it if it sleeps: through
-// its task server, or through envd if its image predates one.
+// Connect reaches the tasks in a sandbox, waking it if it sleeps, through
+// its task server. A sandbox whose image has none is recreated, not
+// served another way.
 func Connect(ctx context.Context, namespace, name string) (Sandbox, error) {
-	if os.Getenv(EnvTransport) != "envd" {
-		sb, err := ConnectServer(ctx, namespace, name)
-		if err == nil {
-			fmt.Fprintf(os.Stderr, "Connected to sandbox %s's task server.\n", name)
-			return sb, nil
-		}
-		fmt.Fprintf(os.Stderr, "Sandbox %s has no task server to use (%v); using envd.\n", name, err)
-	}
-	c, err := envd.Connect(ctx, namespace, name)
+	sb, err := ConnectServer(ctx, namespace, name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sandbox %s has no task server to use (%w); recreate it on a current image", name, err)
 	}
-	return &EnvdSandbox{name: name, Client: c}, nil
+	fmt.Fprintf(os.Stderr, "Connected to sandbox %s's task server.\n", name)
+	return sb, nil
 }
 
 // ConnectServer reaches a sandbox's task server, failing if it has none
 // this factory can use.
 func ConnectServer(ctx context.Context, namespace, name string) (*ServerSandbox, error) {
 	fmt.Fprintf(os.Stderr, "Waiting for sandbox pod %s to become ready...\n", name)
-	pod, err := envd.GetSandboxPodName(ctx, namespace, name)
+	pod, err := k8s.SandboxPod(ctx, namespace, name)
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +109,7 @@ type ServerSandbox struct {
 	cli *Client
 }
 
-func (s *ServerSandbox) Name() string      { return s.name }
-func (s *ServerSandbox) Transport() string { return "task server" }
+func (s *ServerSandbox) Name() string { return s.name }
 
 func (s *ServerSandbox) open(ctx context.Context, pod string) error {
 	f, err := openForward(ctx, s.kc, s.namespace, pod)
@@ -155,7 +140,7 @@ func (s *ServerSandbox) forwarding() bool {
 
 // reconnect opens a new forward, to the sandbox's pod as it is now.
 func (s *ServerSandbox) reconnect(ctx context.Context) error {
-	pod, err := envd.GetSandboxPodName(ctx, s.namespace, s.name)
+	pod, err := k8s.SandboxPod(ctx, s.namespace, s.name)
 	if err != nil {
 		return err
 	}
@@ -278,7 +263,7 @@ func (s *ServerSandbox) Attach(ctx context.Context, id string, env map[string]st
 		}
 	}
 
-	quota := envd.NewQuotaWatch(env)
+	quota := taskfiles.NewQuotaWatch(env)
 	var offset int64
 	broken := 0
 	for {
@@ -339,7 +324,7 @@ func (s *ServerSandbox) Attach(ctx context.Context, id string, env map[string]st
 
 // follow copies the task's log from *offset to stdout until the server
 // ends it, which it does once the task has ended.
-func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, quota *envd.QuotaWatch) error {
+func (s *ServerSandbox) follow(ctx context.Context, id string, offset *int64, quota *taskfiles.QuotaWatch) error {
 	body, err := s.client().Log(ctx, id, *offset, true)
 	if err != nil {
 		return err
@@ -421,67 +406,3 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-time.After(d):
 	}
 }
-
-// EnvdSandbox reaches a sandbox's tasks through envd: shell commands for
-// everything, the spool for starting recipes.
-type EnvdSandbox struct {
-	name string
-	*envd.Client
-}
-
-func (s *EnvdSandbox) Name() string      { return s.name }
-func (s *EnvdSandbox) Transport() string { return "envd" }
-
-func (s *EnvdSandbox) List(ctx context.Context) ([]spool.Entry, error) {
-	return spool.List(ctx, s.Client)
-}
-
-func (s *EnvdSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error {
-	// The spool has only the environment to carry them in.
-	if len(secrets) > 0 {
-		return errNoSecrets(s.name)
-	}
-	if err := spool.Submit(ctx, s.Client, task, recipe, inputs, env); err != nil {
-		return err
-	}
-	fmt.Printf("Spooled task %s; waiting for the sandbox to start it...\n", task.ID)
-	return spool.AwaitStart(ctx, s.Client, task.ID, 20*time.Second, 2*time.Minute)
-}
-
-func (s *EnvdSandbox) AwaitStart(ctx context.Context, id string, claimTimeout, startTimeout time.Duration) error {
-	return spool.AwaitStart(ctx, s.Client, id, claimTimeout, startTimeout)
-}
-
-func (s *EnvdSandbox) Attach(ctx context.Context, id string, env map[string]string, abortOnCancel bool) error {
-	return s.AttachTask(ctx, spool.TaskDir(id), env, abortOnCancel)
-}
-
-func (s *EnvdSandbox) Log(ctx context.Context, id string, w io.Writer) error {
-	return s.Exec(ctx, "cat "+envd.NewTaskFiles(spool.TaskDir(id)).LogFile+" 2>/dev/null", "/workspaces", nil, nil, w, os.Stderr)
-}
-
-func (s *EnvdSandbox) ReadFile(ctx context.Context, id, name string) ([]byte, error) {
-	path := spool.TaskDir(id) + "/" + name
-	var out, errOut bytes.Buffer
-	if err := s.Exec(ctx, fmt.Sprintf("if [ -f %[1]s ]; then cat %[1]s; else echo missing >&2; fi", path), "/workspaces", nil, nil, &out, &errOut); err != nil {
-		return nil, fmt.Errorf("reading %s: %w (stderr: %s)", path, err, strings.TrimSpace(errOut.String()))
-	}
-	if strings.TrimSpace(errOut.String()) == "missing" {
-		return nil, fmt.Errorf("%w: %s", os.ErrNotExist, path)
-	}
-	return out.Bytes(), nil
-}
-
-func (s *EnvdSandbox) WriteFile(ctx context.Context, id, name string, data []byte) error {
-	return s.Client.WriteFile(ctx, spool.TaskDir(id)+"/"+name, data)
-}
-
-func (s *EnvdSandbox) Files(ctx context.Context, id string) ([]string, error) {
-	var out bytes.Buffer
-	if err := s.Exec(ctx, "ls -1 "+spool.TaskDir(id), "/workspaces", nil, nil, &out, nil); err != nil {
-		return nil, err
-	}
-	return strings.Fields(out.String()), nil
-}
-
-func (s *EnvdSandbox) Close() { s.Client.Close() }

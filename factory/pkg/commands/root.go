@@ -32,8 +32,9 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 		Use:   "factory",
 		Short: "AI Factory CLI for fixing bugs and reviewing PRs in Kubernetes sandboxes",
 		Long: `AI Factory CLI spins up isolated Kubernetes sandboxes (agents.x-k8s.io),
-port-forwards directly to the envd daemon via Connect-RPC, and executes LLM-powered
-coding tasks without local side effects or host dependencies.`,
+runs recipes in them through each sandbox's task server (reached by a
+port-forward), and executes LLM-powered coding tasks without local side
+effects or host dependencies.`,
 		SilenceUsage: true,
 	}
 

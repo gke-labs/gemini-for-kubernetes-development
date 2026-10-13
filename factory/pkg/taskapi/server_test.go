@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
@@ -240,7 +240,7 @@ func TestCancelEndsTheGroup(t *testing.T) {
 			t.Fatalf("Cancel(kill=%v) = %+v, %v; want exit %s", tc.kill, e, err, tc.code)
 		}
 		readLog(t, c, resp.Task.ID, 0) // ends, the task having ended
-		pid, err := readPID(envd.NewTaskFiles(filepath.Join(tasks, resp.Task.ID)))
+		pid, err := readPID(taskfiles.NewTaskFiles(filepath.Join(tasks, resp.Task.ID)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +267,7 @@ func TestLogGivesADeadTask137(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
-	tf := envd.NewTaskFiles(dir)
+	tf := taskfiles.NewTaskFiles(dir)
 	if err := os.WriteFile(tf.PIDFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
 		t.Fatal(err)
 	}

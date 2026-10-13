@@ -18,8 +18,8 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
-// The sandbox card: what actually happened inside a sandbox. Tasks are
-// nohup-launched by envd into /workspaces/tasks/<type>-<timestamp>/ with
+// The sandbox card: what actually happened inside a sandbox. Tasks run in
+// /workspaces/tasks/<id>/ (the sandbox's daemon starts them) with
 // pid / start_time / exit_code / execution.log files — that layout IS the
 // task history, read live via pod exec (no factory changes, no extra
 // state). Paused sandboxes have no pod: the card offers Wake instead.

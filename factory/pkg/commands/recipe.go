@@ -28,7 +28,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
@@ -1005,33 +1004,13 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 }
 
 // spoolRecipe hands a recipe to the sandbox and follows it, or, with
-// --detached, returns once the sandbox has started it. A sandbox whose
-// image predates the spool never claims it; the recipe is then started
-// through envd as before, in the same task directory.
+// --detached, returns once the sandbox has started it.
 func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) error {
 	recipeBytes, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
 	}
-	err = sb.Start(ctx, task, recipeBytes, inputs, envMap, secrets)
-	if es, ok := sb.(*taskapi.EnvdSandbox); ok && errors.Is(err, spool.ErrNotClaimed) {
-		fmt.Println("The sandbox's image has no spool (recreate the sandbox to get one); starting the recipe through envd instead.")
-		taskDir := spool.TaskDir(task.ID)
-		cmdStr, err := writeRecipe(ctx, es.Client, taskDir, recipeBytes, inputs)
-		if err != nil {
-			return err
-		}
-		// So that task list and attach find it like a spooled one.
-		if taskJSON, err := json.Marshal(task); err == nil {
-			_ = es.Client.WriteFile(ctx, taskDir+"/"+spool.TaskFile, taskJSON)
-		}
-		if err := es.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil || !rootFlags.Detached {
-			return err
-		}
-		printDetachedHint(sb.Name(), task.ID)
-		return nil
-	}
-	if err != nil {
+	if err := sb.Start(ctx, task, recipeBytes, inputs, envMap, secrets); err != nil {
 		return err
 	}
 	if rootFlags.Detached {
@@ -1233,28 +1212,8 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	return nil
 }
 
-// writeRecipe puts a recipe and its inputs into the sandbox and returns
-// the command that runs them. The recipe comes from this binary or the
-// caller's file; what its steps mean comes from the sandbox's binary.
-func writeRecipe(ctx context.Context, client *envd.Client, taskDir string, recipeBytes []byte, inputs map[string]string) (string, error) {
-	inputsJSON, err := json.Marshal(inputs)
-	if err != nil {
-		return "", err
-	}
-	recipePath, inputsPath := taskDir+"/recipe.yaml", taskDir+"/inputs.json"
-	fmt.Println("Writing the recipe into sandbox...")
-	if err := client.WriteFile(ctx, recipePath, recipeBytes); err != nil {
-		return "", fmt.Errorf("writing recipe: %w", err)
-	}
-	if err := client.WriteFile(ctx, inputsPath, inputsJSON); err != nil {
-		return "", fmt.Errorf("writing inputs: %w", err)
-	}
-	return fmt.Sprintf("factory recipe exec --recipe %s --inputs %s --task-dir %s", recipePath, inputsPath, taskDir), nil
-}
-
-// newRecipeExecCommand runs a recipe inside a sandbox. The CLI starts it
-// through envd where it would start a task script, with the same
-// environment, so detaching, the log and restart recovery are unchanged.
+// newRecipeExecCommand runs a recipe inside a sandbox: the sandbox's
+// daemon starts it for a task the CLI spooled, in the task's directory.
 func newRecipeExecCommand(ctx context.Context) *cobra.Command {
 	var recipePath, inputsPath, taskDir string
 	cmd := &cobra.Command{
