@@ -1597,7 +1597,7 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rec.RunsOn(OnRepo) || !rec.RunsOn(OnIssue) || !rec.RunsOn(OnPR) || rec.TaskType != "agent" ||
+	if !rec.RunsOn(OnRepo) || !rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "agent" ||
 		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || !rec.TaskOutput.Optional || !rec.StartOutputs() {
 		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
 	}
@@ -1605,7 +1605,7 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 	if _, err := rec.ResolveInputs(std, nil); err == nil {
 		t.Error("the agent recipe ran with no prompt")
 	}
-	for _, mode := range []string{"chore", "pr", "none", "workflow"} {
+	for _, mode := range []string{"chore", "none", "workflow"} {
 		inputs, err := rec.ResolveInputs(std, map[string]string{"prompt": "do it", "agent_name": "Docs Bot", "mode": mode})
 		if err != nil {
 			t.Fatal(err)
@@ -1661,8 +1661,6 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 		{"chore", 0, 0, "default,ask,change,push"},
 		{"chore", 0, 1, "default,ask"},
 		{"chore", 1, 0, ""},
-		{"pr", 0, 0, "ask,change,push"},
-		{"pr", 0, 1, "ask"},
 		{"none", 0, 0, "default,ask"},
 		{"workflow", 0, 0, "ask,journal"},
 		{"workflow", 1, 0, ""},
@@ -1674,8 +1672,7 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 }
 
 // The agent recipe's Change step: a chore's PR is titled after the
-// agent, lists the commits and carries the labels; on a PR, the Change is
-// empty (the PR keeps its title and body).
+// agent, lists the commits and carries the labels.
 func TestAgentChangeStep(t *testing.T) {
 	for _, tool := range []string{"git", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -1711,42 +1708,33 @@ func TestAgentChangeStep(t *testing.T) {
 	base := git("rev-parse", "HEAD")
 	git("commit", "-q", "--allow-empty", "-m", "chore: tidy the docs")
 
-	for _, mode := range []string{"chore", "pr"} {
-		taskDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(taskDir, "base"), []byte(base+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		e := &SandboxExecutor{TaskDir: taskDir, RepoDir: repo, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}}
-		var out strings.Builder
-		code, err := e.Run(context.Background(), step, map[string]string{
-			"mode": mode, "agent_name": "Docs Bot", "agent_file": ".agents/docs.md", "repo_owner": "o", "repo_name": "r", "labels": "factory,docs",
-		}, &out)
-		if err != nil || code != 0 {
-			t.Fatalf("%s: exited %d, %v\n%s", mode, code, err, out.String())
-		}
-		data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if mode == "pr" {
-			// The runner fills in the PR's title and body (KeepTitle).
-			if strings.TrimSpace(string(data)) != `{"change": {}}` {
-				t.Errorf("pr: change.yaml %s, want an empty Change", data)
-			}
-			continue
-		}
-		doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r"}, taskoutput.Source{})
-		if err != nil {
-			t.Fatalf("%s: %v\n%s", mode, err, data)
-		}
-		c, err := doc.ChangeSpec()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c.Title != "chore: Docs Bot" || !strings.Contains(c.Body, "- chore: tidy the docs") || strings.Contains(c.Body, "- base") ||
-			!strings.Contains(c.Body, "https://github.com/o/r/blob/HEAD/.agents/docs.md") || fmt.Sprint(c.Labels) != "[factory docs]" || c.Draft == nil || *c.Draft {
-			t.Errorf("chore: Change %+v", c)
-		}
+	taskDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(taskDir, "base"), []byte(base+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &SandboxExecutor{TaskDir: taskDir, RepoDir: repo, Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}}
+	var out strings.Builder
+	code, err := e.Run(context.Background(), step, map[string]string{
+		"agent_name": "Docs Bot", "agent_file": ".agents/docs.md", "repo_owner": "o", "repo_name": "r", "labels": "factory,docs",
+	}, &out)
+	if err != nil || code != 0 {
+		t.Fatalf("exited %d, %v\n%s", code, err, out.String())
+	}
+	data, err := os.ReadFile(filepath.Join(taskDir, "change.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := taskoutput.Wrap("Change", string(data), taskoutput.Target{URL: "https://github.com/o/r"}, taskoutput.Source{})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, data)
+	}
+	c, err := doc.ChangeSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "chore: Docs Bot" || !strings.Contains(c.Body, "- chore: tidy the docs") || strings.Contains(c.Body, "- base") ||
+		!strings.Contains(c.Body, "https://github.com/o/r/blob/HEAD/.agents/docs.md") || fmt.Sprint(c.Labels) != "[factory docs]" || c.Draft == nil || *c.Draft {
+		t.Errorf("Change %+v", c)
 	}
 }
 

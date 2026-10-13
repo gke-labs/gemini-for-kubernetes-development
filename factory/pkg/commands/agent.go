@@ -14,7 +14,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	githubv39 "github.com/google/go-github/v39/github"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -43,15 +42,16 @@ func NewAgentCreateCommand(ctx context.Context) *cobra.Command {
 		Use:   "create",
 		Short: "Run a custom agent definition in a sandbox",
 		Long: `Run a custom agent definition (.agents/<name>.md) in the agent's own
-sandbox, as the agent recipe (recipe/recipes/agent.yaml). A chore's
-commits are pushed to the member's fork and opened as a PR (open-pr); on
-a PR they are pushed to it; a skipPR agent commits nothing; a workflow's
-journal is pushed to its factory-<issue> branch.`,
+sandbox, as the agent recipe (recipe/recipes/agent.yaml), on a repository
+or an issue. A chore's commits are pushed to the member's fork and opened
+as a PR (open-pr); a skipPR agent commits nothing; a workflow's journal is
+pushed to its factory-<issue> branch. To change a PR, use
+factory recipe care-iterate.`,
 		Example: `  # Run an agent defined in .agents/my-agent.yaml on a repository
   factory agent create --url https://github.com/owner/repo --agent my-agent.yaml
 
-  # Run an agent defined locally in a sandbox for a PR
-  factory agent create --url https://github.com/owner/repo/pull/123 --agent ./my-agent.yaml --local`,
+  # Run a workflow defined locally for an issue
+  factory agent create --url https://github.com/owner/repo/issues/123 --agent ./my-workflow.md --local --session-id issue-123`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := ResolveRootFlags(cmd)
 			if err != nil {
@@ -74,9 +74,6 @@ journal is pushed to its factory-<issue> branch.`,
 					repo := parts[1]
 					agentName := common.Slugify(flags.Agent)
 					taskID := agentName
-					if len(parts) >= 4 && parts[2] == "pull" {
-						taskID = fmt.Sprintf("pr-%s-%s", parts[3], agentName)
-					}
 					sessionName = fmt.Sprintf("agent-%s-%s-agent", repo, taskID)
 				}
 			}
@@ -97,7 +94,7 @@ journal is pushed to its factory-<issue> branch.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&flags.URL, "url", "", "GitHub repository or PR URL (e.g. https://github.com/owner/repo or https://github.com/owner/repo/pull/123)")
+	cmd.Flags().StringVar(&flags.URL, "url", "", "GitHub repository or issue URL (e.g. https://github.com/owner/repo or https://github.com/owner/repo/issues/123)")
 	cmd.Flags().StringVar(&flags.Agent, "agent", "", "Agent file name (relative to .agents/ if remote) or local file path")
 	cmd.Flags().BoolVar(&flags.Local, "local", false, "Load the agent definition from a local path")
 	cmd.Flags().StringVar(&flags.SessionID, "session-id", "", "Unique session ID for workflow isolation")
@@ -116,23 +113,16 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 	path := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
-		return fmt.Errorf("expected URL format https://github.com/owner/repo or https://github.com/owner/repo/pull/123, got %s", flags.URL)
+		return fmt.Errorf("expected URL format https://github.com/owner/repo or https://github.com/owner/repo/issues/123, got %s", flags.URL)
 	}
 	owner, repo := parts[0], parts[1]
 
-	var prNum int
-	isPR := false
 	isIssue := false
 	targetNum := 0
 
 	if len(parts) >= 4 {
 		if parts[2] == "pull" {
-			isPR = true
-			targetNum, err = strconv.Atoi(parts[3])
-			if err != nil {
-				return fmt.Errorf("invalid PR number in URL: %s", parts[3])
-			}
-			prNum = targetNum
+			return fmt.Errorf("an agent runs on a repository or an issue, not a PR; to change a PR as an instruction asks, run factory recipe care-iterate --url %s --instruction …", flags.URL)
 		} else if parts[2] == "issues" {
 			isIssue = true
 			targetNum, err = strconv.Atoi(parts[3])
@@ -169,18 +159,8 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 			agentPath = ".agents/" + agentPath
 		}
 
-		var ref string
-		if isPR {
-			fmt.Printf("Fetching PR #%d details from GitHub...\n", prNum)
-			pr, _, err := ghClient.PullRequests.Get(ctx, owner, repo, prNum)
-			if err != nil {
-				return fmt.Errorf("fetching PR from github: %w", err)
-			}
-			ref = pr.GetHead().GetSHA()
-		}
-
-		fmt.Printf("Fetching remote agent definition %s (ref: %s) from repository...\n", agentPath, ref)
-		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, agentPath, &githubv39.RepositoryContentGetOptions{Ref: ref})
+		fmt.Printf("Fetching remote agent definition %s from repository...\n", agentPath)
+		fileContent, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, agentPath, nil)
 		if err != nil {
 			return fmt.Errorf("getting agent definition from github: %w", err)
 		}
@@ -206,11 +186,11 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		klog.Warningf("Failed to load factory config: %v", cfgErr)
 	}
 	prompt := agentDef.Prompt
-	if isPR || isIssue {
+	if isIssue {
 		fmt.Printf("Fetching details for #%d from GitHub...\n", targetNum)
 		issue, _, err := ghClient.Issues.Get(ctx, owner, repo, targetNum)
 		if err != nil {
-			return fmt.Errorf("fetching issue/PR details: %w", err)
+			return fmt.Errorf("fetching issue details: %w", err)
 		}
 
 		fmt.Printf("Fetching comments for #%d from GitHub...\n", targetNum)
@@ -218,14 +198,9 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		if err != nil {
 			return fmt.Errorf("fetching comments: %w", err)
 		}
-		// Only trusted authors' comments reach the prompt. On
-		// a PR its author is trusted too: their description is already here.
-		var prAuthor string
-		if isPR {
-			prAuthor = issue.GetUser().GetLogin()
-		}
+		// Only trusted authors' comments reach the prompt.
 		var commentMsgs []string
-		for _, c := range trustedIssueComments(comments, trustedLogins(cfg, prAuthor)) {
+		for _, c := range trustedIssueComments(comments, trustedLogins(cfg)) {
 			commentMsgs = append(commentMsgs, fmt.Sprintf("Comment from %s:\n%s", c.GetUser().GetLogin(), c.GetBody()))
 		}
 		prompt = fmt.Sprintf("%s\n\nOriginal GitHub Context:\nTitle: %s\n\nDescription:\n%s\n\nComments:\n%s",
@@ -239,8 +214,6 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 	taskID := common.Slugify(agentDef.Name)
 	if flags.SessionID != "" {
 		taskID = fmt.Sprintf("%s-%s", taskID, flags.SessionID)
-	} else if isPR {
-		taskID = fmt.Sprintf("pr-%d-%s", targetNum, taskID)
 	} else if isIssue {
 		taskID = fmt.Sprintf("issue-%d-%s", targetNum, taskID)
 	}
@@ -254,7 +227,7 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		"prompt":       prompt,
 		"agent_name":   agentDef.Name,
 		"agent_file":   agentPath,
-		"mode":         agentMode(agentDef, isPR),
+		"mode":         agentMode(agentDef),
 		"session_id":   flags.SessionID,
 		"precondition": agentDef.PreconditionScript,
 		"labels":       resolvePRLabels(cfg, nil, false),
@@ -263,15 +236,13 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
 }
 
-// agentMode is the agent recipe's mode for a definition run on a PR or
-// not: a skipPR agent's changes are not kept, a PR's are pushed to it, a
-// workflow's journal to its branch, and a chore's opened as a PR.
-func agentMode(def *common.AgentDefinition, isPR bool) string {
+// agentMode is the agent recipe's mode for a definition: a skipPR
+// agent's changes are not kept, a workflow's journal goes to its branch,
+// and a chore's changes are opened as a PR.
+func agentMode(def *common.AgentDefinition) string {
 	switch {
 	case def.SkipPR:
 		return "none"
-	case isPR:
-		return "pr"
 	case def.Mode == "workflow":
 		return "workflow"
 	}

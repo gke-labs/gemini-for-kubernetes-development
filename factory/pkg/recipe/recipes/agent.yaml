@@ -1,21 +1,22 @@
-# factory agent create --url <repo|issue|PR> --agent <definition>: a
+# factory agent create --url <repo|issue> --agent <definition>: a
 # custom agent (.agents/<name>.md) runs as this recipe, in the agent's own
 # sandbox. `factory agent create` reads the definition, writes the prompt
-# (the definition's, and the issue's or PR's title, description and
-# trusted comments) and picks the mode:
+# (the definition's, and the issue's title, description and trusted
+# comments) and picks the mode:
 #
 #   chore     the default: the agent works on agent/<slug> from the latest
 #             default branch (or on the branch already there, rebased) and
 #             commits; the push step pushes it to the member's fork, and
 #             the Change's open-pr opens the PR, or finds the one open.
-#   pr        on a PR: the agent works on the PR's head and commits; the
-#             push step pushes to the PR's branch, leased at its head.
 #   none      skipPR: the agent works on the default branch, and nothing is
 #             committed or pushed (a chore that only labels or comments).
 #   workflow  a workflow's journal: the branch factory-<issue> (or factory),
 #             rebased on the default branch; factory commits what the agent
 #             leaves and force-pushes it to origin, or deletes the branch
 #             once the workflow's issue is closed.
+#
+# There is no PR mode: changing a PR as an instruction asks is the
+# care-iterate recipe's.
 #
 # A precondition script, when the definition has one, runs first in the
 # checkout; when it fails nothing else runs (the agent is deferred).
@@ -24,7 +25,7 @@
 # label and open issues themselves.
 name: agent
 label: Agent
-on: [repo, issue, pr]
+on: [repo, issue]
 task-type: agent
 
 inputs:
@@ -37,7 +38,7 @@ inputs:
   agent_file:
     description: The definition's path in the repository
   mode:
-    description: chore, pr, none or workflow
+    description: chore, none or workflow
     default: chore
   session_id:
     description: The workflow's session (issue-<n>), which names its branch
@@ -63,7 +64,7 @@ context: |
 start:
   steps:
     - run: |
-        case "${INPUT_MODE}" in chore|pr|none|workflow) ;; *) echo "mode ${INPUT_MODE} is not chore, pr, none or workflow" >&2; exit 1 ;; esac
+        case "${INPUT_MODE}" in chore|none|workflow) ;; *) echo "mode ${INPUT_MODE} is not chore, none or workflow" >&2; exit 1 ;; esac
     - uses: setup-git
     - uses: setup-fork
     - run: sleep 5 # lib.sh's HACK: avoid git lock issues
@@ -80,7 +81,7 @@ start:
           exit 1
         fi
 
-    # The branch, by mode. chore and pr record what the push step pushes:
+    # The branch, by mode. chore records what the push step pushes:
     # the branch, the commit it starts from, and the head to lease against.
     - if: '{{ and (eq .Steps.precondition.ExitCode 0) (or (eq .Inputs.mode "chore") (eq .Inputs.mode "none")) }}'
       uses: checkout-default-branch
@@ -109,14 +110,6 @@ start:
           # No open PR: a closed one's commits do not come back.
           git checkout -B "${branch}"
         fi
-    - if: '{{ and (eq .Steps.precondition.ExitCode 0) (eq .Inputs.mode "pr") }}'
-      run: |
-        test -n "${INPUT_PUSHED_BRANCH}" && test -n "${INPUT_PUSHED_HEAD}" || { echo "mode pr needs a PR" >&2; exit 1; }
-        printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
-        printf '%s\n' "${INPUT_PUSHED_BASE}" > "$TASK_DIR/base"
-        printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
-        git fetch upstream "+pull/${INPUT_PR_NUMBER}/head:refs/remotes/upstream/pr-${INPUT_PR_NUMBER}"
-        git checkout -B "${INPUT_PUSHED_BRANCH}" "refs/remotes/upstream/pr-${INPUT_PR_NUMBER}"
     - if: '{{ and (eq .Steps.precondition.ExitCode 0) (eq .Inputs.mode "workflow") }}'
       run: |
         branch="factory"
@@ -148,9 +141,6 @@ start:
         changed and start with "chore: ". Never push: factory pushes your
         commits and opens or updates the pull request. If nothing needs
         changing, commit nothing.
-        {{- else if eq .Inputs.mode "pr" }}
-        You are on the pull request's branch. Commit your changes, with
-        clean commits; never push: factory pushes them to the pull request.
         {{- else if eq .Inputs.mode "workflow" }}
         Do not commit: factory commits what you leave in the checkout (the
         workflow's state and journal) and pushes it.
@@ -167,10 +157,10 @@ start:
         {{- end }}
         When you are done, say briefly what you did.
 
-    # chore and pr: what the agent left uncommitted is committed, rather
-    # than lost; then whether there is anything to push.
+    # chore: what the agent left uncommitted is committed, rather than
+    # lost; then whether there is anything to push.
     - id: changed
-      if: '{{ and (eq .Steps.precondition.ExitCode 0) (or (eq .Inputs.mode "chore") (eq .Inputs.mode "pr")) }}'
+      if: '{{ and (eq .Steps.precondition.ExitCode 0) (eq .Inputs.mode "chore") }}'
       continue-on-error: true
       run: |
         if [ -n "$(git status --porcelain)" ]; then
@@ -182,26 +172,24 @@ start:
           echo "No changes to push."
           exit 1
         fi
-    - if: '{{ and (eq .Steps.precondition.ExitCode 0) (or (eq .Inputs.mode "chore") (eq .Inputs.mode "pr")) (eq .Steps.changed.ExitCode 0) }}'
+    - if: '{{ and (eq .Steps.precondition.ExitCode 0) (eq .Inputs.mode "chore") (eq .Steps.changed.ExitCode 0) }}'
       run: |
-        # The Change is factory's, never an agent's: a chore's PR is
-        # titled after the agent; on a PR it keeps the PR's title and body.
+        # The Change is factory's, never an agent's: the PR is titled
+        # after the agent and lists its commits.
         python3 - <<'PY'
         import json, os, subprocess
-        change = {}
-        if os.environ["INPUT_MODE"] == "chore":
-            name, path = os.environ["INPUT_AGENT_NAME"], os.environ.get("INPUT_AGENT_FILE", "")
-            log = subprocess.run(["git", "log", "--format=- %s", open(os.path.join(os.environ["TASK_DIR"], "base")).read().strip() + "..HEAD"], capture_output=True, text=True).stdout
-            body = "This Pull Request was generated by the **%s** agent" % name
-            if path:
-                body += " ([%s](https://github.com/%s/%s/blob/HEAD/%s))" % (path, os.environ["INPUT_REPO_OWNER"], os.environ["INPUT_REPO_NAME"], path)
-            body += ".\n\n### Changes\n" + log
-            change = {"title": "chore: " + name, "body": body, "draft": False,
-                      "labels": [l for l in os.environ.get("INPUT_LABELS", "").split(",") if l]}
+        name, path = os.environ["INPUT_AGENT_NAME"], os.environ.get("INPUT_AGENT_FILE", "")
+        log = subprocess.run(["git", "log", "--format=- %s", open(os.path.join(os.environ["TASK_DIR"], "base")).read().strip() + "..HEAD"], capture_output=True, text=True).stdout
+        body = "This Pull Request was generated by the **%s** agent" % name
+        if path:
+            body += " ([%s](https://github.com/%s/%s/blob/HEAD/%s))" % (path, os.environ["INPUT_REPO_OWNER"], os.environ["INPUT_REPO_NAME"], path)
+        body += ".\n\n### Changes\n" + log
+        change = {"title": "chore: " + name, "body": body, "draft": False,
+                  "labels": [l for l in os.environ.get("INPUT_LABELS", "").split(",") if l]}
         with open(os.path.join(os.environ["TASK_DIR"], "change.yaml"), "w") as f:
             json.dump({"change": change}, f)  # JSON is YAML
         PY
-    - if: '{{ and (eq .Steps.precondition.ExitCode 0) (or (eq .Inputs.mode "chore") (eq .Inputs.mode "pr")) (eq .Steps.changed.ExitCode 0) }}'
+    - if: '{{ and (eq .Steps.precondition.ExitCode 0) (eq .Inputs.mode "chore") (eq .Steps.changed.ExitCode 0) }}'
       uses: push
 
     # workflow: the journal goes to origin as it is, or, once the
