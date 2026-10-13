@@ -342,7 +342,12 @@ describe('Work, all boards', () => {
         await flush();
         await flush();
 
-        // Lands on Up Next, as it always has.
+        // Opens on the first board; All boards is picked from the list,
+        // and lands on Up Next.
+        await act(async () => { container.querySelector('button[aria-label="Board"]').click(); });
+        await act(async () => { Array.from(container.querySelectorAll('[role="option"]')).find(o => o.textContent.startsWith('All boards')).click(); });
+        await flush();
+        await flush();
         expect(container.textContent).toContain('Nothing needs you anywhere');
 
         const tab = findButton('Research');
@@ -368,13 +373,19 @@ describe('Work, all boards', () => {
         await flush();
         expect(container.querySelector('.repo-tabs')).toBeNull();
         expect(container.textContent).not.toContain('need you —');
+        // Opens on the first board, its controls beside it.
         const picker = container.querySelector('button[aria-label="Board"]');
-        expect(picker.textContent).toBe('▣ All boards3 ▾');
-        // All boards has no links, settings or delete: they are a board's.
-        expect(findButton('⚙')).toBeUndefined();
+        expect(picker.textContent).toBe('▣ repo-agent2 ▾');
+        expect(findButton('⚙')).toBeTruthy();
         await act(async () => { picker.click(); });
         const options = Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent);
-        expect(options).toEqual(['✓All boards3', 'repo-agent2', 'kubectl1']);
+        expect(options).toEqual(['All boards3', '✓repo-agent2', 'kubectl1']);
+        // All boards has no links, settings or delete: they are a board's.
+        await act(async () => { Array.from(container.querySelectorAll('[role="option"]'))[0].click(); });
+        await flush();
+        expect(container.querySelector('button[aria-label="Board"]').textContent).toBe('▣ All boards3 ▾');
+        expect(findButton('⚙')).toBeUndefined();
+        await act(async () => { container.querySelector('button[aria-label="Board"]').click(); });
         // Type to filter, Enter to pick.
         const filterBox = container.querySelector('input[aria-label="Filter boards"]');
         await act(async () => {

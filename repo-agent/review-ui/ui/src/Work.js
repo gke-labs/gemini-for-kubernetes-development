@@ -1226,9 +1226,8 @@ function Work({ onBack, namespace }) {
         // Identity-stable: replacing boards with an equal array re-arms
         // the poll effect and double-fetches every tick.
         setBoards(prev => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
-        // Several boards open on All; one board opens on itself, since the
-        // picker offers no All for one.
-        setActiveBoard(prev => prev || (data.length > 1 ? ALL_BOARDS : (data[0] ? data[0].name : '')));
+        // Work opens on the first board; All boards is a pick away.
+        setActiveBoard(prev => prev || (data[0] ? data[0].name : ''));
       })
       .catch(err => console.error('Failed to fetch boards', err));
   }, []);
