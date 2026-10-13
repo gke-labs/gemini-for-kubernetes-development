@@ -13,8 +13,8 @@ import (
 // EventStream is a live read of one session's transcript.
 //
 // The unit of resumption is a byte offset, not an event index, because
-// that is the contract acpd's transcript exposes and the one envd's tail
-// already uses. Offset reports the position after the event just
+// that is the contract acpd's transcript exposes and the one a task's
+// log uses. Offset reports the position after the event just
 // returned, so a caller that stores it and reconnects sees each event
 // exactly once across a dropped connection.
 type EventStream struct {

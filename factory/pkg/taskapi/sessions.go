@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 )
 
 // EnvTaskToken carries a task's token into its process: what the task
@@ -144,7 +144,7 @@ func (t taskSessions) running(task string) bool {
 	if st, ok := spool.ReadStatus(dir); ok {
 		return st.State != spool.Exited
 	}
-	return !nonEmpty(envd.NewTaskFiles(dir).ExitCodeFile)
+	return !nonEmpty(taskfiles.NewTaskFiles(dir).ExitCodeFile)
 }
 
 // Token is the token of whoever drives task's session: a revise running

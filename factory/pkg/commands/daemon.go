@@ -4,16 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/acpd"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -21,7 +20,7 @@ import (
 func NewDaemonCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "daemon",
-		Short:  "Run the factory sandbox daemon to initialize workspace storage and start envd",
+		Short:  "Run the factory sandbox daemon: workspace storage, the spool and the task server",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
@@ -59,12 +58,12 @@ func runDaemon(ctx context.Context) error {
 	}
 
 	// Mark any tasks interrupted by a previous container crash/eviction/restart
-	// before envd starts or any new processes/threads can reuse old PIDs.
+	// before any new processes/threads can reuse old PIDs.
 	// Tasks with a status first, so theirs records why they ended.
-	for _, id := range spool.MarkInterrupted(envd.DefaultTasksDir) {
+	for _, id := range spool.MarkInterrupted(taskfiles.DefaultTasksDir) {
 		log.Info("Marked a task of the previous container ended (exit_code=137)", "task", id)
 	}
-	reconcileInterruptedTasks(ctx, envd.DefaultTasksDir)
+	reconcileInterruptedTasks(ctx, taskfiles.DefaultTasksDir)
 
 	// Recipes a client left in the spool: claimed and started here, so the
 	// client need not stay connected to start or keep them.
@@ -75,7 +74,7 @@ func runDaemon(ctx context.Context) error {
 	// Every task gets a token, which drives its agent session.
 	tokens := taskapi.NewTokens()
 	launch := tokens.Wrap(spool.ExecLauncher(ctx, factoryBin, sandbox.WorkspacesPath))
-	go spool.Watch(ctx, spool.IncomingDir, envd.DefaultTasksDir, 2*time.Second, launch)
+	go spool.Watch(ctx, spool.IncomingDir, taskfiles.DefaultTasksDir, 2*time.Second, launch)
 
 	// One registry of agent sessions, whichever way they are reached: two
 	// would each start an engine for the same id, writing one transcript.
@@ -87,8 +86,8 @@ func runDaemon(ctx context.Context) error {
 
 	// The same tasks over HTTP, and the agent sessions with them, on the
 	// loopback only: clients come in through a port-forward, which the
-	// API server authorises, rather than through envd, which nothing does.
-	server := taskapi.NewServer(spool.IncomingDir, envd.DefaultTasksDir, launch)
+	// API server authorises.
+	server := taskapi.NewServer(spool.IncomingDir, taskfiles.DefaultTasksDir, launch)
 	server.HostSessions(sessions, tokens)
 	go func() {
 		if err := taskapi.Serve(ctx, fmt.Sprintf("127.0.0.1:%d", taskapi.Port), server); err != nil {
@@ -99,23 +98,15 @@ func runDaemon(ctx context.Context) error {
 	// Start periodic cleanup in background
 	go startPeriodicCleanup(ctx)
 
-	log.Info("Starting envd daemon...")
-
-	cmd := exec.CommandContext(ctx, "envd", "--isnotfc")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		log.Error(err, "envd daemon exited with error")
-		return fmt.Errorf("envd daemon exited: %w", err)
-	}
-
-	log.Info("envd daemon exited successfully")
+	// The pod lives as long as this process: everything above runs until
+	// the container is stopped.
+	log.Info("Sandbox daemon running")
+	<-ctx.Done()
 	return nil
 }
 
-// reconcileInterruptedTasks sweeps tasksDir on container startup (when factory daemon
-// runs as PID 1 before envd starts) and writes exit_code=137 for any task directory
+// reconcileInterruptedTasks sweeps tasksDir on container startup (factory daemon
+// runs as PID 1) and writes exit_code=137 for any task directory
 // that has a recorded pid or start_time from a previous container lifecycle but no
 // exit_code file yet.
 func reconcileInterruptedTasks(ctx context.Context, tasksDir string) {
@@ -133,7 +124,7 @@ func reconcileInterruptedTasks(ctx context.Context, tasksDir string) {
 			continue
 		}
 		taskPath := filepath.Join(tasksDir, entry.Name())
-		tf := envd.NewTaskFiles(taskPath)
+		tf := taskfiles.NewTaskFiles(taskPath)
 
 		if hasNonEmptyFile(tf.ExitCodeFile) {
 			continue

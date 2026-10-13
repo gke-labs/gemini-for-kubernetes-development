@@ -492,7 +492,7 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 
 // prepareReusedSandbox readies an existing sandbox an Ensure* function is
 // handing back: it records the user, and wakes the sandbox if the idle
-// suspender scaled it to zero, stamping unpaused-at. envd.Connect also
+// suspender scaled it to zero, stamping unpaused-at. k8s.SandboxPod also
 // wakes a suspended sandbox, but without the stamp the suspender, counting
 // from the last task hours ago, scaled it straight back to zero and the
 // connect timed out waiting for the pod.

@@ -1,4 +1,4 @@
-package envd
+package taskfiles
 
 import "fmt"
 

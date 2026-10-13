@@ -203,7 +203,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 				"volumeMounts": volumeMounts,
 				"ports": []interface{}{
 					map[string]interface{}{"containerPort": int64(13337)},
-					map[string]interface{}{"containerPort": int64(49983)},
 				},
 			},
 		},
@@ -275,12 +274,6 @@ func NewAgentSandbox(opt AgentSandboxOptions) (*unstructured.Unstructured, *core
 					Port:        13338,
 					TargetPort:  intstr.FromInt(13337),
 					AppProtocol: stringPtr("kubernetes.io/ws"),
-				},
-				{
-					Name:       "envd",
-					Protocol:   corev1.ProtocolTCP,
-					Port:       49983,
-					TargetPort: intstr.FromInt(49983),
 				},
 			},
 		},

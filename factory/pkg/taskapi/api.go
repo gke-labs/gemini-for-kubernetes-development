@@ -1,5 +1,5 @@
-// Package taskapi is how factory reaches a sandbox's tasks without envd:
-// a small REST server in the sandbox's daemon, bound to the pod's
+// Package taskapi is how factory reaches a sandbox's tasks: a small REST
+// server in the sandbox's daemon, bound to the pod's
 // loopback and reached through a port-forward, so that the API server
 // authenticates and authorises every caller and nothing listens on the
 // pod's IP.
@@ -15,8 +15,8 @@
 //	POST /v1/tasks/{id}/cancel           end the task's process group
 //	     /v1/sessions[/...]              acpd's agent sessions, when the daemon hosts them
 //
-// The task directories stay what they are, so a task the server started
-// and one envd started read alike, by either.
+// The task directories are plain files (taskfiles.TaskFiles), which the
+// daemon, the server and the spool all read alike.
 package taskapi
 
 import "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
@@ -24,8 +24,8 @@ import "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 const (
 	// Port is the task server's, on the sandbox pod's loopback only.
 	Port = 49990
-	// APIVersion is what this server serves. A client needing more than a
-	// sandbox's server reports falls back to envd.
+	// APIVersion is what this server serves. A sandbox whose server
+	// reports less than a client needs is recreated.
 	APIVersion = 1
 )
 

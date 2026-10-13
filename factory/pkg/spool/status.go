@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 )
 
 // StatusFile is a task's record of how it runs and how it ended. The
 // daemon, the task's parent, is its only writer: it records the start
 // when it launches the task and the end when it reaps it, so nobody has
-// to infer either from pid files. Tasks the daemon did not start (envd's
-// classic tasks, images older than this file) have none.
+// to infer either from pid files. A task from an image older than this
+// file has none.
 const StatusFile = "status.json"
 
 // TaskStatus is what StatusFile holds.
@@ -67,7 +67,7 @@ func writeStatus(taskDir string, st TaskStatus) error {
 // as a shell reports it), written to exit_code too, so that readers of
 // the plain files agree.
 func recordExit(taskDir string, st TaskStatus, waitErr error, ps *os.ProcessState) TaskStatus {
-	tf := envd.NewTaskFiles(taskDir)
+	tf := taskfiles.NewTaskFiles(taskDir)
 	code := readCode(tf.ExitCodeFile)
 	if code == "" {
 		code = "1"
@@ -104,7 +104,7 @@ func MarkInterrupted(tasksDir string) []string {
 		if !e.IsDir() || !ok || st.State == Exited {
 			continue
 		}
-		tf := envd.NewTaskFiles(taskDir)
+		tf := taskfiles.NewTaskFiles(taskDir)
 		code := readCode(tf.ExitCodeFile)
 		if code == "" {
 			code = "137"
@@ -120,8 +120,8 @@ func MarkInterrupted(tasksDir string) []string {
 }
 
 // RecordKill records a task killed (exit code 137) after its end was
-// recorded: a kill overrides the task's own code, as the quota kill
-// through envd does. A task not yet reaped needs nothing: its end is
+// recorded: a kill overrides the task's own code, as a quota kill does.
+// A task not yet reaped needs nothing: its end is
 // recorded from the exit code the kill wrote.
 func RecordKill(taskDir string) {
 	st, ok := ReadStatus(taskDir)

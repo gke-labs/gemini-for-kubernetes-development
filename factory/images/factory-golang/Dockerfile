@@ -6,18 +6,6 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # --------------------------------
 
-# Build envd
-FROM golang:1.26.3 AS build-envd
-ENV GOTOOLCHAIN=auto
-RUN git clone --depth 1 --branch 2026.20 https://github.com/e2b-dev/infra.git /infra && \
-    cd /infra/packages/envd && \
-    sed -i 's/oomWrapperScript := fmt.Sprintf.*/oomWrapperScript := fmt.Sprintf("exec \\\"\${@}\\\" # %d", niceDelta)/' internal/services/process/handler/handler.go && \
-    # Future: To inherit full container environment in envd instead of stripping it, uncomment the following line:
-    sed -i 's/var formattedVars \[\]string/formattedVars := os.Environ()/' internal/services/process/handler/handler.go && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -v -o /envd .
-
-# --------------------------------
-
 # Build factory binary
 FROM golang:1.26.3 AS build-factory
 WORKDIR /app/factory
@@ -70,7 +58,6 @@ RUN curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://code-server
 RUN code-server --install-extension golang.go --install-extension vscodevim.vim
 
 COPY --from=build-gh /bin/gh /bin/gh
-COPY --from=build-envd /envd /usr/local/bin/envd
 COPY --from=build-factory /factory /usr/local/bin/factory
 
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go

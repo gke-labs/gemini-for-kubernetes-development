@@ -33,7 +33,6 @@ import (
 	githubv39 "github.com/google/go-github/v39/github"
 	"k8s.io/klog/v2"
 
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tokenusage"
@@ -62,26 +61,9 @@ func collectorURL() string {
 	return strings.TrimRight(os.Getenv("COLLECTOR_URL"), "/")
 }
 
-// ReadTaskUsage reads the accumulated usage stats file from a task dir
-// inside the sandbox. Returns (nil, nil) when the task wrote no usage file.
-func ReadTaskUsage(ctx context.Context, client *envd.Client, taskDir string) (*Stats, error) {
-	return readTaskUsage(envdReader(ctx, client, taskDir), taskDir)
-}
-
 // TaskFileReader reads a file of one task directory by name; a file
 // that is not there is empty, or os.ErrNotExist.
 type TaskFileReader func(name string) ([]byte, error)
-
-// envdReader reads the files of taskDir through envd.
-func envdReader(ctx context.Context, client *envd.Client, taskDir string) TaskFileReader {
-	return func(name string) ([]byte, error) {
-		var stdout, stderr bytes.Buffer
-		if err := client.Exec(ctx, fmt.Sprintf("cat %s/%s 2>/dev/null || true", taskDir, name), "/workspaces", nil, nil, &stdout, &stderr); err != nil {
-			return nil, fmt.Errorf("%w (stderr: %s)", err, stderr.String())
-		}
-		return stdout.Bytes(), nil
-	}
-}
 
 // readFile is a task file's content, "" when it is not there.
 func readFile(read TaskFileReader, name string) (string, error) {
@@ -201,11 +183,6 @@ func postJSON(ctx context.Context, path string, v any) error {
 	return nil
 }
 
-// ReadTaskToolTelemetry reads tool-telemetry.json from a task dir inside the sandbox.
-func ReadTaskToolTelemetry(ctx context.Context, client *envd.Client, taskDir string) (*ToolTelemetry, error) {
-	return readTaskToolTelemetry(envdReader(ctx, client, taskDir))
-}
-
 func readTaskToolTelemetry(read TaskFileReader) (*ToolTelemetry, error) {
 	data, err := readFile(read, "tool-telemetry.json")
 	if err != nil || data == "" {
@@ -216,12 +193,6 @@ func readTaskToolTelemetry(read TaskFileReader) (*ToolTelemetry, error) {
 		return nil, nil
 	}
 	return &telemetry, nil
-}
-
-// HarvestTask reads one task dir's usage and publishes it. Best-effort:
-// failures are logged, never returned.
-func HarvestTask(ctx context.Context, client *envd.Client, taskDir string, meta Meta) {
-	HarvestTaskFiles(ctx, taskDir, envdReader(ctx, client, taskDir), meta)
 }
 
 // HarvestTaskFiles is HarvestTask reading the task directory's files with

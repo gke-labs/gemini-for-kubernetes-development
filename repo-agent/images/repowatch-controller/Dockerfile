@@ -36,8 +36,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o manager cmd/repowatch-c
 WORKDIR /workspace/factory
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o factory ./main.go
 
-# Install kubectl: the factory CLI's envd layer shells out to it (sandbox
-# lookup, port-forward), same requirement overseer's image satisfies.
+# Install kubectl: factory's sandbox exec and shell commands shell out to
+# it, same requirement overseer's image satisfies.
 WORKDIR /workspace
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
     chmod +x kubectl

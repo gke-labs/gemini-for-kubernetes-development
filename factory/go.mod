@@ -3,7 +3,6 @@ module github.com/gke-labs/gemini-for-kubernetes-development/factory
 go 1.26.3
 
 require (
-	connectrpc.com/connect v1.18.1
 	github.com/creack/pty v1.1.24
 	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v39 v39.2.0
@@ -11,7 +10,6 @@ require (
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.36.0
-	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.35.4
 	k8s.io/apimachinery v0.35.4
@@ -59,6 +57,7 @@ require (
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect
