@@ -113,3 +113,13 @@ func TestSandbox_LauncherLabel(t *testing.T) {
 		}
 	}
 }
+
+// A sandbox's pod gets no service links: one set of variables per Service
+// in the namespace, which nothing in it uses and its agent would inherit.
+func TestAgentSandbox_NoServiceLinks(t *testing.T) {
+	sb, _ := NewAgentSandbox(AgentSandboxOptions{DevSandboxOptions: DevSandboxOptions{Name: "fix-r-1", Namespace: "ns"}})
+	links, found, err := unstructured.NestedBool(sb.Object, "spec", "podTemplate", "spec", "enableServiceLinks")
+	if err != nil || !found || links {
+		t.Errorf("enableServiceLinks = %v (found %v, %v), want false", links, found, err)
+	}
+}
