@@ -28,7 +28,7 @@ func TestRunScriptParses(t *testing.T) {
 	cmd := exec.Command("bash", "-n")
 	cmd.Stdin = strings.NewReader(string(b))
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("run.sh does not parse: %v\n%s", err, out)
+		t.Fatalf("lib.sh does not parse: %v\n%s", err, out)
 	}
 }
 
@@ -51,7 +51,7 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 		`git add -A "${legacy}"`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("run.sh missing %q", want)
+			t.Errorf("lib.sh missing %q", want)
 		}
 	}
 	// A bare `[ … ] && return 0` aborts the whole script under set -e
@@ -84,7 +84,7 @@ func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
 	}
 	s := string(b)
 	if !strings.Contains(s, `RUNS_BRANCH="research/runs"`) {
-		t.Error(`run.sh does not set RUNS_BRANCH="research/runs"; repo-agent reads that name`)
+		t.Error(`lib.sh does not set RUNS_BRANCH="research/runs"; repo-agent reads that name`)
 	}
 	// Checkout and push have to name the same variable. A literal
 	// anywhere in the pair is how the two drift apart.
@@ -93,7 +93,7 @@ func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
 		`git push origin "${RUNS_BRANCH}"`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("run.sh missing %q", want)
+			t.Errorf("lib.sh missing %q", want)
 		}
 	}
 	// research/notes belongs to the research write path, which is a
@@ -103,7 +103,7 @@ func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
 	// clears runs, and hand an auto-approving research session a push
 	// that lands next to deployment state.
 	if strings.Contains(s, "research/notes") {
-		t.Error("run.sh touches the notes branch; runs and notes are kept apart on purpose")
+		t.Error("lib.sh touches the notes branch; runs and notes are kept apart on purpose")
 	}
 }
 
@@ -148,7 +148,7 @@ func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
 	}
 	s := string(b)
 	if !strings.Contains(s, "git checkout -f -- .") {
-		t.Error("run.sh does not discard changes outside the run directory")
+		t.Error("lib.sh does not discard changes outside the run directory")
 	}
 	// Belt and braces: even a clean-tree check can race, so the replay
 	// must survive a dirty worktree on its own.
@@ -160,7 +160,7 @@ func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
 // instantiateRunbook is executed, not grepped: every string test above
 // passed while --from read a path runs had moved away from, and the
 // copy under it held two set -e traps nobody had ever reached. It runs
-// here the way run.sh runs it — under set -e, against a real git
+// here the way the run steps run it — under set -e, against a real git
 // repository, since a repository runbook is read at a commit.
 func TestInstantiateRunbook(t *testing.T) {
 	bash, err := exec.LookPath("bash")
@@ -180,7 +180,7 @@ func TestInstantiateRunbook(t *testing.T) {
 	from := strings.Index(s, "RUNBOOK_REF=\"\"\n")
 	fnAt := strings.Index(s, "function instantiateRunbook {")
 	if legacy == "" || from < 0 || fnAt < 0 || fnAt < from {
-		t.Fatal("run.sh is missing LEGACY_RUN_DIRS, RUNBOOK_REF or instantiateRunbook")
+		t.Fatal("lib.sh is missing LEGACY_RUN_DIRS, RUNBOOK_REF or instantiateRunbook")
 	}
 	body := s[from : fnAt+strings.Index(s[fnAt:], "\n}\n")+3]
 
@@ -212,7 +212,7 @@ func TestInstantiateRunbook(t *testing.T) {
 		git(t, root, "add", "-A")
 		git(t, root, "commit", "-qm", "x")
 	}
-	// instantiateAt runs the function as run.sh does and reports whether
+	// instantiateAt runs the function as run-prepare does and reports whether
 	// the script lived past it. ref is RUNBOOK_REF: "" is a failed fetch;
 	// fallback is RUNBOOK_FALLBACK_REF, set by a pull request target.
 	instantiateAt := func(t *testing.T, root, runbook, ref, fallback string) (string, bool) {
@@ -451,7 +451,7 @@ func TestRunbookIsAlwaysPlanned(t *testing.T) {
 	}
 	for _, gone := range []string{"rewriteParams", "RUNBOOK_FILES"} {
 		if strings.Contains(s, gone) {
-			t.Errorf("run.sh still has %s: making the copy this run's is the plan's job", gone)
+			t.Errorf("lib.sh still has %s: making the copy this run's is the plan's job", gone)
 		}
 	}
 }
@@ -478,7 +478,7 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 	from := strings.Index(s, "TARGET_PR=\"\"\n")
 	to := strings.Index(s, "\nfunction commitAndPushRun {")
 	if from < 0 || to < from {
-		t.Fatal("run.sh is missing TARGET_PR or commitAndPushRun")
+		t.Fatal("lib.sh is missing TARGET_PR or commitAndPushRun")
 	}
 	body := s[from:to]
 
@@ -540,7 +540,7 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 		git(t, ws, "commit", "-qm", "run")
 		return up, ws, head
 	}
-	// run executes resolveTarget, then then, as run.sh would.
+	// run executes resolveTarget, then then, as run-prepare would.
 	run := func(t *testing.T, ws, mode, pr, then string) (string, bool) {
 		t.Helper()
 		script := "set -e\nset -o pipefail\nSRC_REMOTE=upstream\nRUNBOOK_REF=main\nTARGET_FILE=target.env\n" +
@@ -701,7 +701,7 @@ func TestRunWritesItsResult(t *testing.T) {
 	finish := funcBody(t, s, "runFinish")
 	trapAt := strings.Index(finish, "trap ")
 	if from < 0 || to < from || trapAt < 0 {
-		t.Fatal("run.sh is missing TARGET_PR, the main section or runFinish's EXIT trap")
+		t.Fatal("lib.sh is missing TARGET_PR, the main section or runFinish's EXIT trap")
 	}
 	trap := finish[trapAt : trapAt+strings.Index(finish[trapAt:], "\n")]
 	body := s[from:to]
@@ -719,7 +719,7 @@ func TestRunWritesItsResult(t *testing.T) {
 
 	// run sets up a workspace whose runs branch already holds a PLANNED
 	// receipt, then runs engine as the invocation, with the EXIT trap
-	// run.sh installs. It returns the exit code and result.json.
+	// runFinish installs. It returns the exit code and result.json.
 	run := func(t *testing.T, engine string) (int, runResult, string) {
 		t.Helper()
 		root := t.TempDir()
@@ -832,20 +832,22 @@ commitAndPushRun deploy`)
 	})
 }
 
-// Runs push research/runs to origin, so origin must be the member's
-// fork before anything is pushed — and before the engine spends its
-// time, since a run that cannot push has nowhere to put its work.
-func TestRunScriptSetsUpTheForkBeforeTheEngine(t *testing.T) {
+// Runs push research/runs to origin, so origin must be the member's fork
+// before anything is pushed: runs-remote does that, before the checkout
+// (the recipes' order: recipe.TestBuiltinRunRecipes), and run-prepare,
+// a process of its own, reads from the checkout whether it made the run
+// local-only rather than setting the fork up again.
+func TestRunPrepareFindsTheRemoteRunsRemoteMade(t *testing.T) {
 	b, err := GetRecipeStepScript()
 	if err != nil {
 		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
-	// run-prepare, which runs before the ask (the recipe's order),
-	// makes origin the fork before it touches the checkout.
 	prepare := funcBody(t, string(b), "runPrepare")
-	fork, checkout := strings.Index(prepare, "setupRunsRemote"), strings.Index(prepare, "checkoutDefaultBranch")
-	if fork < 0 || checkout < fork {
-		t.Errorf("runPrepare does not set up the fork first:\n%s", prepare)
+	if strings.Contains(prepare, "setupRunsRemote") || strings.Contains(prepare, "checkoutDefaultBranch") {
+		t.Errorf("runPrepare does runs-remote's or checkout-default-branch's work again:\n%s", prepare)
+	}
+	if !strings.Contains(prepare, `= "${LOCAL_ONLY_PUSH_URL}" ]; then`) || !strings.Contains(prepare, "RUNS_LOCAL_ONLY=1") {
+		t.Errorf("runPrepare does not read local-only from the push URL:\n%s", prepare)
 	}
 }
 
@@ -879,7 +881,7 @@ func TestRunScriptLocalOnly(t *testing.T) {
 		`"localOnly": %s`,
 	} {
 		if !strings.Contains(s, want) {
-			t.Errorf("run.sh missing %q", want)
+			t.Errorf("lib.sh missing %q", want)
 		}
 	}
 	commit := s[strings.Index(s, "function commitAndPushRun"):]

@@ -59,7 +59,7 @@ func slugifyScenario(s string) string {
 // document other runs also read.
 //
 // A repository the member cannot fork runs local-only: the branch is
-// committed in the run's sandbox and never pushed (run.sh's
+// committed in the run's sandbox and never pushed (lib.sh's
 // enterLocalOnly).
 //
 // --runbook starts a new run from an existing runbook instead of from

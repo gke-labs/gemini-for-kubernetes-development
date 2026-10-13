@@ -8,11 +8,12 @@
 # generated from it; the receipts, its results. run-plan, run-deploy and
 # run-teardown are its three phases.
 #
-# The deterministic parts are run.sh's (pkg/tasks), as two named steps:
-# run-prepare (the fork or local-only, the runs branch, the pinned
-# target) and run-finish (one commit of everything the phase left,
-# pushed, and result.json). The agent's shell gets the member's GCP
-# project and region and the run's resource prefix.
+# The deterministic parts are lib.sh's (pkg/tasks), as named steps:
+# runs-remote (origin made the member's fork, or the run local-only),
+# run-prepare (the runs branch, the pinned target) and run-finish (one
+# commit of everything the phase left, pushed, and result.json). The
+# agent's shell gets the member's GCP project and region and the run's
+# resource prefix.
 name: run-teardown
 label: Tear down
 on: [repo]
@@ -43,6 +44,9 @@ start:
   steps:
     - uses: setup-git
     - uses: setup-repo
+    - uses: runs-remote
+    - run: sleep 5 # lib.sh's HACK: avoid git lock issues
+    - uses: checkout-default-branch
     - uses: configure-engine
     - uses: run-prepare
       with: {phase: teardown}

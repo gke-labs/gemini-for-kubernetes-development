@@ -1882,9 +1882,9 @@ func TestAgentEnv(t *testing.T) {
 	}
 }
 
-// The run recipes, a run's phases in the run's sandbox: the fork and the
-// runs branch before the ask (run-prepare, told the phase), the commit
-// after it (run-finish), each phase's own inputs, and the agent's shell
+// The run recipes, a run's phases in the run's sandbox: the fork
+// (runs-remote) before the checkout, the runs branch before the ask
+// (run-prepare, told the phase), the commit after it (run-finish), each phase's own inputs, and the agent's shell
 // told the member's GCP project and region and the run's resource prefix,
 // unset when the member has none.
 func TestBuiltinRunRecipes(t *testing.T) {
@@ -1907,7 +1907,7 @@ func TestBuiltinRunRecipes(t *testing.T) {
 				kinds = append(kinds, s.Kind())
 			}
 		}
-		if got, want := strings.Join(kinds, ","), "setup-git,setup-repo,configure-engine,run-prepare("+phase+"),ask,run-finish("+phase+")"; got != want {
+		if got, want := strings.Join(kinds, ","), "setup-git,setup-repo,runs-remote,run,checkout-default-branch,configure-engine,run-prepare("+phase+"),ask,run-finish("+phase+")"; got != want {
 			t.Errorf("%s: steps %s, want %s", rec.Name, got, want)
 		}
 		var inputs []string

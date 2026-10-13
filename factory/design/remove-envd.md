@@ -116,11 +116,14 @@ sandbox loses nothing but the clone.
 
 There are three recipes, one per phase: `run-plan`, `run-deploy` and `run-teardown`, all with `task-type: run`. Each phase's prompt is the recipe's ask, rendered from its inputs, so the `run_*.txt` templates and their renderer go. Each recipe declares only its own phase's inputs: plan takes `intent`, `runbook` and `target_pr`; deploy takes none of them, since it executes what was approved; teardown takes `intent`. `factory run plan|deploy|teardown` stays the entry point (repo-agent calls it unchanged) and runs `run-<phase>` in the run's sandbox, whose naming, labels, disk, ephemeral storage and GCP environment are unchanged.
 
-`run.sh` keeps the deterministic parts as functions, appended to the script that runs a recipe's `uses:` steps. Two named steps take the place of its main section, and each recipe passes them its phase with `with: {phase: …}`:
-- `run-prepare` sets up the fork (or local-only), the runs branch, the pinned target, and for a plan the runbook copy;
+The deterministic parts are `run.sh`'s functions, moved into `lib.sh` (and `run.sh` deleted). Three named steps take the place of its main section:
+- `runs-remote` makes origin the member's fork, or makes the run local-only;
+- `run-prepare` runs after `checkout-default-branch` and sets up the runs branch, the pinned target, and for a plan the runbook copy;
 - `run-finish` clears the target, makes one commit, pushes it, and writes `result.json`.
 
-Each step is a process of its own, so what the first finds reaches the second through `$TASK_DIR/run-state.sh`. A failed ask ends the recipe before `run-finish`. `result.json` then says `exitCode: -1`, and nothing is committed (before, it gave the exit code). The agent's shell gets `RUN_NAME`, `RUN_RESOURCE_PREFIX`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` and `CLOUDSDK_COMPUTE_REGION` through `agent-env`; an empty value is left unset.
+Each recipe passes the last two its phase with `with: {phase: …}`.
+
+Each step is a process of its own: `run-prepare` reads local-only from the checkout's push URL, and what it finds reaches `run-finish` through `$TASK_DIR/run-state.sh`. A failed ask ends the recipe before `run-finish`. `result.json` then says `exitCode: -1`, and nothing is committed (before, it gave the exit code). The agent's shell gets `RUN_NAME`, `RUN_RESOURCE_PREFIX`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` and `CLOUDSDK_COMPUTE_REGION` through `agent-env`; an empty value is left unset.
 
 **repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipes' prefix, `recipe-run-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
 
@@ -128,8 +131,9 @@ Each step is a process of its own, so what the first finds reaches the second th
 
 - Delete `taskapi.EnvdSandbox`, the spool client's envd functions,
   recipe.go's `RunTaskResilient` fallback and `FACTORY_TASK_TRANSPORT`;
-  `pkg/envd`'s client and its RPC spec; `run_agent.sh`, `run.sh`,
-  `adopt.sh` and the agent, run and adopt commands' envd code.
+  `pkg/envd`'s client and its RPC spec, and what is left of the agent,
+  run and adopt commands' envd code (`run_agent.sh`, `run.sh` and
+  `adopt.sh` went with steps 2–4).
 - What the task server and the spool share moves to `pkg/taskfiles`:
   `TaskFiles`, `DefaultTasksDir`, `TaskScript`, the pid check,
   `QuotaWatch`.
