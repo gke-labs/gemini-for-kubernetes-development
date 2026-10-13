@@ -10,9 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// localRunRepo makes <root>/<repo> with a run committed on a local
-// research/runs branch, the way a local-only run leaves it, and an
-// uncommitted receipt in the worktree that must not be read.
+// localRunRepo makes <root>/<repo> with a run committed on its own
+// local branch, runs/gke-std from the empty runs/root, the way a
+// local-only run leaves it, and an uncommitted receipt in the worktree
+// that must not be read.
 func localRunRepo(t *testing.T) (root string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -44,15 +45,21 @@ func localRunRepo(t *testing.T) (root string) {
 	write("README.md", "code\n")
 	git("add", ".")
 	git("commit", "-q", "-m", "main")
-	git("checkout", "-q", "-b", runsBranch)
-	dir := runsPath + "/gke-std/"
+	git("checkout", "-q", "--orphan", runRootBranch)
+	git("rm", "-rfq", ".")
+	git("commit", "-q", "--allow-empty", "-m", "runs root")
+	git("checkout", "-q", "-b", runBranch("other"))
+	write("runbook.md", "# another run\n")
+	git("add", ".")
+	git("commit", "-q", "-m", "run(other): plan")
+	git("checkout", "-q", "-b", runBranch("gke-std"), runRootBranch)
+	dir := ""
 	write(dir+"runbook.md", "# GKE Standard\n")
 	write(dir+"deploy.sh", "#!/bin/sh\n")
 	write(dir+"receipt-20261002-2116.md", "\n  PLANNED — nothing executed\nmore\n")
 	write(dir+"receipt-20261003-0900.md", "VERIFIED (3 resources)\n")
 	write(dir+runTargetFile, "TARGET_PR=42\nTARGET_SHA=0123456789abcdef0123456789abcdef01234567\n")
 	write(dir+"logs/deploy.log", "nested files are not listed\n")
-	write(runsPath+"/other/runbook.md", "# another run\n")
 	git("add", ".")
 	git("commit", "-q", "-m", "run(gke-std): plan")
 	write(dir+"receipt-20261004-0000.md", "TORN-DOWN\n")

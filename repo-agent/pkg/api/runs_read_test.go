@@ -1,8 +1,17 @@
 package api
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-github/v39/github"
 )
 
 // Deployed-ness decides whether teardown is offered, so the rule has
@@ -56,52 +65,22 @@ func TestVerdictWordIgnoresTrailingProse(t *testing.T) {
 	}
 }
 
-// Every layout a run may still be sitting in is read, until the last
-// one is adopted or torn down; teardown has to stay reachable.
-func TestEveryRunLayoutIsRead(t *testing.T) {
-	if runsPath != "docs-exploration/agent-runs" {
-		t.Errorf("runsPath = %q", runsPath)
-	}
-	// "runs/" is a bare .gitignore entry in a great many repos and a
-	// bare pattern matches at any depth, so this path was ignored
-	// wherever it appeared — silently.
-	if runsPath == "docs-exploration/runs" {
-		t.Error("runsPath is back under runs/, which repositories commonly gitignore")
-	}
-	want := map[string]bool{
-		"docs-exploration/runbook-deployments": true,
-		"docs-exploration/runs":                true,
-	}
-	for _, p := range legacyRunPaths {
-		if !want[p] {
-			t.Errorf("unexpected legacy path %q", p)
-		}
-		delete(want, p)
-	}
-	for p := range want {
-		t.Errorf("legacy path %q is no longer read; runs there become invisible", p)
-	}
-}
-
-// The branch runs live on is a string agreed with factory's run.sh and
+// The branches runs live on are a string agreed with factory's lib.sh and
 // linked by nothing. Reading a name the write path does not use finds
 // no runs at all and empties the Runs tab, with every run intact on a
 // branch the page never asks about.
 //
 // Notes are deliberately somewhere else. Runs carry teardown scripts
-// for live infrastructure and are pruned by the remove path; notes are
+// for live infrastructure and are deleted by the remove path; notes are
 // prose, archival, and written by a session that may be approving its
 // own tool calls. One branch would point the pruning at the archive and
 // put an auto-approving writer next to deployment state.
 func TestRunsAndNotesAreSeparateBranches(t *testing.T) {
-	if runsBranch != "research/runs" {
-		t.Errorf("runsBranch = %q; factory's run.sh writes runs to research/runs", runsBranch)
+	if runBranchPrefix != "runs/" || runRootBranch != "runs/root" {
+		t.Errorf("run branches = %q, root %q; factory's lib.sh writes runs/<run> from runs/root", runBranchPrefix, runRootBranch)
 	}
-	if notesBranch != "research/notes" {
-		t.Errorf("notesBranch = %q", notesBranch)
-	}
-	if runsBranch == notesBranch {
-		t.Error("runs and notes share a branch; the run remove path would be pointed at the notes archive")
+	if strings.HasPrefix(notesBranch, runBranchPrefix) {
+		t.Errorf("notes branch %q is among the run branches, which removing a run deletes", notesBranch)
 	}
 }
 
@@ -135,5 +114,48 @@ func TestFirstNonEmptyPrefersTheNewSpelling(t *testing.T) {
 	}
 	if got := firstNonEmpty("", " "); got != "" {
 		t.Errorf("firstNonEmpty = %q, want empty", got)
+	}
+}
+
+// The runs with a branch of their own are one listing of the fork's
+// runs/* refs, each read at its root; runs/root, the empty commit every
+// run branch starts from, is not a run, and nor is anything deeper.
+func TestScanRunBranches(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/m/r/git/matching-refs/heads/runs/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"ref":"refs/heads/runs/root"},{"ref":"refs/heads/runs/gke-std"},{"ref":"refs/heads/runs/a/b"}]`)
+	})
+	mux.HandleFunc("/repos/m/r/contents/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "runs/gke-std" {
+			http.NotFound(w, r)
+			return
+		}
+		switch strings.TrimPrefix(r.URL.Path, "/repos/m/r/contents/") {
+		case "":
+			fmt.Fprint(w, `[{"type":"file","name":"runbook.md","path":"runbook.md"},{"type":"file","name":"receipt-20261005-0000.md","path":"receipt-20261005-0000.md"}]`)
+		case "receipt-20261005-0000.md":
+			fmt.Fprintf(w, `{"type":"file","encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte("VERIFIED (2 resources)\n")))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClient(srv.Client())
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	runs := (&Server{}).scanRunBranches(context.Background(), gh, "m", "r")
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want gke-std alone", runs)
+	}
+	row := runs[0]
+	if row["name"] != "gke-std" || row["branch"] != "runs/gke-std" || row["htmlURL"] != "https://github.com/m/r/tree/runs/gke-std" {
+		t.Errorf("row = %v", row)
+	}
+	if rb, _ := row["runbook"].(gin.H); rb == nil || rb["path"] != "runbook.md" {
+		t.Errorf("runbook = %v, want the branch root's", row["runbook"])
+	}
+	if row["deployed"] != true {
+		t.Errorf("deployed = %v, want true from the VERIFIED receipt", row["deployed"])
 	}
 }

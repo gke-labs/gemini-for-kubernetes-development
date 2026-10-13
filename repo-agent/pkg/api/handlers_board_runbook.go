@@ -52,24 +52,13 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 		return
 	}
 	gh := githubClientForToken(ctx, token)
-	ref := runsBranch
-	opts := &github.RepositoryContentGetOptions{Ref: ref}
-	// Every layout the list reads, not the one this handler was written
-	// against. Runs moved to agent-runs/ and a legacy run is adopted
-	// into it only when something touches it, so the row on screen may
-	// have come from any of the three — removing from a guessed path
-	// deletes nothing and the run stays listed.
-	var files []*github.RepositoryContent
-	found := false
-	for _, base := range append([]string{runsPath}, legacyRunPaths...) {
-		inBase, ok := runFilePaths(ctx, gh, member, repo, base+"/"+instance, opts)
-		if !ok {
-			continue
+	// A run is removed with its branch: the branch is the run's and
+	// nothing else's.
+	if _, resp, err := gh.Git.GetRef(ctx, member, repo, "heads/"+runBranch(instance)); err != nil {
+		if resp == nil || resp.StatusCode != http.StatusNotFound {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "checking for branch " + runBranch(instance), "details": err.Error()})
+			return
 		}
-		found = true
-		files = append(files, inBase...)
-	}
-	if !found {
 		// A local-only run's records are the sandbox's: removing them is
 		// deleting the sandbox, which takes its teardown script with it.
 		if sb, _ := s.runSandboxFor(ctx, namespace, repo, instance); sb != "" {
@@ -79,44 +68,11 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "instance records not found"})
 		return
 	}
-	msg := "remove records for retired instance " + instance
-	for _, f := range files {
-		sha := f.GetSHA()
-		if _, _, ferr := gh.Repositories.DeleteFile(ctx, member, repo, f.GetPath(), &github.RepositoryContentFileOptions{
-			Message: &msg, SHA: &sha, Branch: &ref,
-		}); ferr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting " + f.GetName(), "details": ferr.Error()})
-			return
-		}
+	if _, err := gh.Git.DeleteRef(ctx, member, repo, "heads/"+runBranch(instance)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting branch " + runBranch(instance), "details": err.Error()})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance, "files": len(files)})
-}
-
-// runFilePaths lists every file under dir, descending into
-// subdirectories, and reports whether dir exists at all.
-//
-// The Contents API deletes one file at a time and will not remove a
-// directory, so a run that has grown a subtree has to be enumerated in
-// full: one file left behind keeps the directory alive, and a live
-// directory keeps the run in the list — the same silent half-removal
-// the caller is trying to fix.
-func runFilePaths(ctx context.Context, gh *github.Client, member, repo, dir string, opts *github.RepositoryContentGetOptions) ([]*github.RepositoryContent, bool) {
-	_, entries, _, err := gh.Repositories.GetContents(ctx, member, repo, dir, opts)
-	if err != nil {
-		return nil, false
-	}
-	var files []*github.RepositoryContent
-	for _, e := range entries {
-		switch e.GetType() {
-		case "file":
-			files = append(files, e)
-		case "dir":
-			if sub, ok := runFilePaths(ctx, gh, member, repo, e.GetPath(), opts); ok {
-				files = append(files, sub...)
-			}
-		}
-	}
-	return files, true
+	c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance, "branch": runBranch(instance)})
 }
 
 // repoShortName mirrors factory's shortName: initials of hyphenated
@@ -280,7 +236,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		return
 	}
 
-	out := gin.H{"forkOwner": member, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo), "runsBranch": runsBranch}
+	out := gin.H{"forkOwner": member, "sandboxes": []gin.H{}, "pending": []gin.H{}, "repoShort": repoShortName(repo)}
 	// The banner signal: with no deploy project, generation cannot
 	// verify feasibility and -gcp plans are BLOCKED by contract.
 	if sec, serr := s.K8sManager.Clientset.CoreV1().Secrets(namespace).Get(ctx, GcpSecretName, v1.GetOptions{}); serr == nil {
@@ -293,15 +249,11 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	token, terr := s.memberToken(ctx, namespace)
 	if terr == nil {
 		gh := githubClientForToken(ctx, token)
-		ref := &github.RepositoryContentGetOptions{Ref: runsBranch}
 
-		// Runs: one directory per run, holding its own runbook.md, the
-		// scripts generated from it, and the receipts. The legacy
-		// layout is read too — `factory runbook` kept artifacts under
-		// runbook-deployments/<instance>/ with the procedure in a
-		// shared document — because those deployments are live and
-		// their teardown has to stay reachable until each is adopted.
-		instances = s.scanRunDirectories(ctx, gh, member, repo, ref)
+		// Runs: a branch each, runs/<run>, holding its own runbook.md,
+		// the scripts generated from it, and the receipts
+		// (factory/design/run-branches.md).
+		instances = s.scanRunBranches(ctx, gh, member, repo)
 		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
 		out["instances"] = instances
 		// What a new run can start from, besides the runs above.
@@ -449,45 +401,32 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// runsPath is where `factory run` writes; legacyRunPaths are where a
-// run may still be found until it is adopted, which happens the first
-// time anything touches it.
+// Runs and research notes are on different branches of the member's
+// fork, deliberately.
 //
-// The middle path is a rename, not history: "runs/" is a bare
-// .gitignore entry in a great many repositories — TensorBoard and
-// friends write there — and a bare pattern matches at any depth, so
-// docs-exploration/runs/ was ignored wherever that appeared. The
-// symptom was quiet: agents could not read files under it, and a new
-// run's commit staged nothing at all.
-const runsPath = "docs-exploration/agent-runs"
-
-var legacyRunPaths = []string{
-	"docs-exploration/runbook-deployments",
-	"docs-exploration/runs",
-}
-
-// The two branches on the member's fork that agents write to. They are
-// deliberately not one branch.
-//
-// runsBranch carries live deployment state: the scripts that tear a
-// cluster down, and the receipts that say whether it is still up. The
-// runs read path prunes it — removing a run deletes files from it — and
-// it is written only by `factory run`, which no member's conversation
-// steers directly.
+// A run's branch carries live deployment state: the scripts that tear a
+// cluster down, and the receipts that say whether it is still up.
+// Removing a run deletes its branch, and it is written only by `factory
+// run`, which no member's conversation steers directly.
 //
 // notesBranch carries prose, is archival, and is written by the
 // research path, where the agent may be running with approvals turned
 // off. Keeping the two apart means an auto-approving session cannot
-// push next to a teardown script, and the pruning that clears runs is
-// never pointed at the branch that is supposed to keep everything.
-//
-// runsBranch must match RUNS_BRANCH in factory's run.sh. Nothing links
-// the two, so changing one alone leaves the runs on a branch no one
-// reads.
+// push next to a teardown script, and deleting a run is never pointed
+// at the branch that is supposed to keep everything.
+const notesBranch = "research/notes"
+
+// A run's own branch (factory/design/run-branches.md): runs/<run> on the
+// member's fork, holding only the run's files, at its root. Every run
+// branch starts from runRootBranch, an empty commit, which is not a run.
+// The prefix must match factory's lib.sh (RUN_BRANCH).
 const (
-	runsBranch  = "research/runs"
-	notesBranch = "research/notes"
+	runBranchPrefix = "runs/"
+	runRootBranch   = "runs/root"
 )
+
+// runBranch is the branch a run named run lives on.
+func runBranch(run string) string { return runBranchPrefix + run }
 
 // deployedVerdicts are the receipt verdicts that settle whether
 // infrastructure exists. PLANNED is absent on purpose: planning does
@@ -512,41 +451,41 @@ var deployedVerdicts = map[string]bool{
 // exactly the case we do not want to pay for.
 const receiptScanLimit = 5
 
-// scanRunDirectories reads both layouts and returns one row per run.
-// A run present in both wins from the new path: adoption moves the
-// directory, and a stale legacy copy must not shadow it.
-func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, member, repo string, ref *github.RepositoryContentGetOptions) []gin.H {
-	byName := map[string]gin.H{}
-	order := []string{}
-	for _, base := range append(append([]string{}, legacyRunPaths...), runsPath) {
-		_, dir, _, derr := gh.Repositories.GetContents(ctx, member, repo, base, ref)
-		if derr != nil {
-			continue
+// scanRunBranches reads the runs that have a branch of their own: one
+// call lists the fork's runs/* branches, and each is read at its root.
+func (s *Server) scanRunBranches(ctx context.Context, gh *github.Client, member, repo string) []gin.H {
+	var out []gin.H
+	opts := &github.ReferenceListOptions{Ref: "heads/" + runBranchPrefix, ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		refs, resp, err := gh.Git.ListMatchingRefs(ctx, member, repo, opts)
+		if err != nil {
+			return out
 		}
-		for _, entry := range dir {
-			if entry.GetType() != "dir" {
+		for _, r := range refs {
+			branch := strings.TrimPrefix(r.GetRef(), "refs/heads/")
+			run := strings.TrimPrefix(branch, runBranchPrefix)
+			if branch == runRootBranch || run == "" || strings.Contains(run, "/") {
 				continue
 			}
-			row := s.readRunDirectory(ctx, gh, member, repo, entry, ref)
-			row["legacy"] = base != runsPath
-			if _, seen := byName[entry.GetName()]; !seen {
-				order = append(order, entry.GetName())
-			}
-			byName[entry.GetName()] = row
+			htmlURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", member, repo, branch)
+			row := s.readRunFiles(ctx, gh, member, repo, run, "", htmlURL, &github.RepositoryContentGetOptions{Ref: branch})
+			row["branch"] = branch
+			out = append(out, row)
 		}
+		if resp == nil || resp.NextPage == 0 {
+			return out
+		}
+		opts.Page = resp.NextPage
 	}
-	out := make([]gin.H, 0, len(order))
-	for _, n := range order {
-		out = append(out, byName[n])
-	}
-	return out
 }
 
-// readRunDirectory turns one run's directory into a row: its files,
-// the newest receipt for display, and whether anything is deployed.
-func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member, repo string, entry *github.RepositoryContent, ref *github.RepositoryContentGetOptions) gin.H {
-	row := gin.H{"name": entry.GetName(), "htmlURL": entry.GetHTMLURL(), "files": []gin.H{}}
-	_, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref)
+// readRunFiles turns one run's files, in dir at ref (the root of the
+// run's branch: ""), into a row:
+// its files, the newest receipt for display, and whether anything is
+// deployed.
+func (s *Server) readRunFiles(ctx context.Context, gh *github.Client, member, repo, name, dir, htmlURL string, ref *github.RepositoryContentGetOptions) gin.H {
+	row := gin.H{"name": name, "htmlURL": htmlURL, "files": []gin.H{}}
+	_, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, dir, ref)
 	if serr != nil {
 		return row
 	}
@@ -562,8 +501,7 @@ func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member
 		case strings.HasPrefix(f.GetName(), "receipt-"):
 			receipts = append(receipts, fh)
 		case f.GetName() == "runbook.md":
-			// The review surface. A legacy deployment has none until
-			// its first deploy or teardown reconciles one.
+			// The review surface.
 			row["runbook"] = fh
 		case f.GetName() == runTargetFile:
 			// The pull request this run deploys: one read, and only for

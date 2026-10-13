@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -73,17 +74,16 @@ func TestRunsListingShowsTheirPullRequest(t *testing.T) {
 	resetRepoRunbookCache()
 	sha := strings.Repeat("a", 40)
 	gh := map[string]string{
-		contentsURL("docs-exploration/agent-runs"): `[
-			{"type": "dir", "name": "gke-pr42", "path": "docs-exploration/agent-runs/gke-pr42"},
-			{"type": "dir", "name": "gke", "path": "docs-exploration/agent-runs/gke"}
+		"https://api.github.com/repos/alice/repo/git/matching-refs/heads/runs/?per_page=100": `[
+			{"ref": "refs/heads/runs/root"}, {"ref": "refs/heads/runs/gke-pr42"}, {"ref": "refs/heads/runs/gke"}
 		]`,
-		contentsURL("docs-exploration/agent-runs/gke-pr42"): `[
-			{"type": "file", "name": "runbook.md", "path": "docs-exploration/agent-runs/gke-pr42/runbook.md"},
-			{"type": "file", "name": "target.env", "path": "docs-exploration/agent-runs/gke-pr42/target.env"}
+		runFileURL("gke-pr42", ""): `[
+			{"type": "file", "name": "runbook.md", "path": "runbook.md"},
+			{"type": "file", "name": "target.env", "path": "target.env"}
 		]`,
-		contentsURL("docs-exploration/agent-runs/gke-pr42/target.env"): `{"type": "file", "name": "target.env", "content": "TARGET_PR=42\nTARGET_SHA=` + sha + `\n"}`,
-		contentsURL("docs-exploration/agent-runs/gke"): `[
-			{"type": "file", "name": "runbook.md", "path": "docs-exploration/agent-runs/gke/runbook.md"}
+		runFileURL("gke-pr42", "target.env"): `{"type": "file", "name": "target.env", "content": "TARGET_PR=42\nTARGET_SHA=` + sha + `\n"}`,
+		runFileURL("gke", ""): `[
+			{"type": "file", "name": "runbook.md", "path": "runbook.md"}
 		]`,
 	}
 	_, r, _ := boardTestServer(t, gh, boardCR())
@@ -113,4 +113,10 @@ func TestRunsListingShowsTheirPullRequest(t *testing.T) {
 	if len(got) != 2 || got["gke-pr42"] != 42 || got["gke"] != 0 {
 		t.Errorf("targets = %v, want gke-pr42:42 and gke:0", got)
 	}
+}
+
+// runFileURL is the fake GitHub's key for reading path (a file, or "",
+// the root) on a run's branch, runs/<run>.
+func runFileURL(run, path string) string {
+	return "https://api.github.com/repos/alice/repo/contents/" + path + "?ref=" + url.QueryEscape(runBranch(run))
 }

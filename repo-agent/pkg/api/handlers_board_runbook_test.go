@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -16,26 +15,10 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 )
 
-// contentsURL is the fake GitHub's key for reading a directory of runs.
-// Runs live on runsBranch, and naming it here rather than repeating the
-// string keeps these fixtures honest if it ever moves again.
-func contentsURL(path string) string {
-	return "https://api.github.com/repos/alice/repo/contents/" + path +
-		"?ref=" + url.QueryEscape(runsBranch)
-}
-
-// Remove has to find the run wherever it is. Runs moved from
-// runbook-deployments/ to agent-runs/ and a legacy run is adopted only
-// when something touches it, so both layouts are on screen at once;
-// the handler looked in one of them and reported "not found" — or
-// worse, 404ed silently behind a button that gave no feedback — for
-// every run written since the move.
-func TestRemoveFindsARunUnderTheCurrentLayout(t *testing.T) {
+// Removing a run deletes its branch, and nothing else.
+func TestRemoveDeletesTheRunsBranch(t *testing.T) {
 	gh := map[string]string{
-		contentsURL("docs-exploration/agent-runs/instance1"): `[
-			{"type": "file", "name": "runbook.md", "path": "docs-exploration/agent-runs/instance1/runbook.md", "sha": "aaa"},
-			{"type": "file", "name": "receipt-1.md", "path": "docs-exploration/agent-runs/instance1/receipt-1.md", "sha": "bbb"}
-		]`,
+		"https://api.github.com/repos/alice/repo/git/ref/heads/runs/instance1": `{"ref": "refs/heads/runs/instance1", "object": {"sha": "aaa", "type": "commit"}}`,
 	}
 	_, r, _, rt := boardTestServerWithRT(t, gh, boardCR())
 
@@ -45,65 +28,7 @@ func TestRemoveFindsARunUnderTheCurrentLayout(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("remove returned %d, want 200: %s", w.Code, w.Body.String())
 	}
-	want := []string{
-		"DELETE /repos/alice/repo/contents/docs-exploration/agent-runs/instance1/runbook.md",
-		"DELETE /repos/alice/repo/contents/docs-exploration/agent-runs/instance1/receipt-1.md",
-	}
-	assertWrites(t, rt, want)
-}
-
-// A run's directory can hold a subdirectory — generated scripts, a
-// plan's attachments. The Contents API deletes files, never
-// directories, so anything left behind keeps the directory alive and
-// the run on screen: the button appears to do nothing.
-func TestRemoveDescendsIntoASubdirectory(t *testing.T) {
-	gh := map[string]string{
-		contentsURL("docs-exploration/agent-runs/instance1"): `[
-			{"type": "file", "name": "runbook.md", "path": "docs-exploration/agent-runs/instance1/runbook.md", "sha": "aaa"},
-			{"type": "dir", "name": "scripts", "path": "docs-exploration/agent-runs/instance1/scripts"}
-		]`,
-		contentsURL("docs-exploration/agent-runs/instance1/scripts"): `[
-			{"type": "file", "name": "apply.sh", "path": "docs-exploration/agent-runs/instance1/scripts/apply.sh", "sha": "ccc"}
-		]`,
-	}
-	_, r, _, rt := boardTestServerWithRT(t, gh, boardCR())
-
-	req, _ := http.NewRequest(http.MethodDelete, "/board/myboard/runbook/instance/instance1", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("remove returned %d, want 200: %s", w.Code, w.Body.String())
-	}
-	assertWrites(t, rt, []string{
-		"DELETE /repos/alice/repo/contents/docs-exploration/agent-runs/instance1/runbook.md",
-		"DELETE /repos/alice/repo/contents/docs-exploration/agent-runs/instance1/scripts/apply.sh",
-	})
-}
-
-// The older layouts still have live runs in them, and a run that was
-// half-adopted has files in two places at once. Remove clears every
-// copy, or the row comes back on the next reload.
-func TestRemoveClearsEveryLayoutTheRunAppearsIn(t *testing.T) {
-	gh := map[string]string{
-		contentsURL("docs-exploration/agent-runs/rel1"): `[
-			{"type": "file", "name": "runbook.md", "path": "docs-exploration/agent-runs/rel1/runbook.md", "sha": "aaa"}
-		]`,
-		contentsURL("docs-exploration/runbook-deployments/rel1"): `[
-			{"type": "file", "name": "receipt-0.md", "path": "docs-exploration/runbook-deployments/rel1/receipt-0.md", "sha": "bbb"}
-		]`,
-	}
-	_, r, _, rt := boardTestServerWithRT(t, gh, boardCR())
-
-	req, _ := http.NewRequest(http.MethodDelete, "/board/myboard/runbook/instance/rel1", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("remove returned %d, want 200: %s", w.Code, w.Body.String())
-	}
-	assertWrites(t, rt, []string{
-		"DELETE /repos/alice/repo/contents/docs-exploration/agent-runs/rel1/runbook.md",
-		"DELETE /repos/alice/repo/contents/docs-exploration/runbook-deployments/rel1/receipt-0.md",
-	})
+	assertWrites(t, rt, []string{"DELETE /repos/alice/repo/git/refs/heads/runs/instance1"})
 }
 
 // Nowhere at all is still a 404, and must not have deleted anything on
