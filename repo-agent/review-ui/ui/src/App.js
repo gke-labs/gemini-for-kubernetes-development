@@ -83,6 +83,11 @@ function App() {
     const hash = v === 'sessions' ? '#/sessions' : '';
     if (v !== 'sessions' || !sessionsRoute()) window.history.replaceState(null, '', hash || window.location.pathname);
   }, []);
+  // Sessions mounts the first time it is shown and stays mounted after,
+  // hidden behind Work like Work behind it: switching keeps each one's
+  // place. Not before: its start box takes the focus when it mounts.
+  const [sessionsSeen, setSessionsSeen] = useState(view === 'sessions');
+  useEffect(() => { if (view === 'sessions') setSessionsSeen(true); }, [view]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [termRoute] = useState(terminalRoute());
   const [taskRoute] = useState(taskSessionRoute());
@@ -304,7 +309,18 @@ function App() {
   return (
     <div className="App">
       <header className="App-header" style={{ position: 'relative', justifyContent: 'flex-end' }}>
-        {/* Compact bar: centered brand, everything else behind ☰. */}
+        {/* Compact bar: the Work | Sessions toggle, centered brand,
+            everything else behind ☰. */}
+        <nav aria-label="View" style={{ marginRight: 'auto', display: 'flex', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
+          {[['work', 'Work'], ['sessions', 'Sessions']].map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+              style={{
+                border: 'none', padding: '6px 14px', cursor: 'pointer', font: 'inherit', fontSize: '14px',
+                fontWeight: view === v ? 600 : 400,
+                background: view === v ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)',
+              }}>{label}</button>
+          ))}
+        </nav>
         <h1 style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', margin: 0 }}>
           <a href="/" onClick={(e) => { e.preventDefault(); setView('work'); }}>Repo Agent</a>
         </h1>
@@ -325,8 +341,6 @@ function App() {
                   </div>
                 )}
                 {[
-                  { label: 'Work', run: () => setView('work') },
-                  { label: 'Sessions', run: () => setView('sessions') },
                   ...(isAdmin ? [{ label: 'Overseer', run: () => setView('overseer') }] : []),
                   { label: 'Usage', run: () => setView('usage') },
                   { label: 'Feedback', run: handleFeedbackClick },
@@ -366,8 +380,8 @@ function App() {
         </div>
       )}
 
-      {view === 'work' && <Work namespace={user || 'default'} />}
-      {view === 'sessions' && <Sessions namespace={user || 'default'} />}
+      <div hidden={view !== 'work'}><Work namespace={user || 'default'} active={view === 'work'} /></div>
+      {sessionsSeen && <div hidden={view !== 'sessions'}><Sessions namespace={user || 'default'} active={view === 'sessions'} /></div>}
       {view === 'overseer' && <Overseer onBack={() => setView('work')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
       {view === 'usage' && <TokenUsage onBack={() => setView('work')} />}
       {view === 'settings' && <Settings onBack={() => setView('work')} />}

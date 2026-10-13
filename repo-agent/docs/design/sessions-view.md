@@ -18,8 +18,11 @@ box to start a repository-level session. It replaces the Research tabs.
 
 ## Decisions
 
-- **Work stays as it is.** Sessions is a separate entry point, an item in
-  the ☰ menu below Work. The menu is not flattened.
+- **Work stays as it is.** Sessions is a separate view, not interleaved
+  with it: a **Work | Sessions** toggle at the left of the header switches
+  between them (no badges; Work is the default). Both stay mounted,
+  the hidden one polling nothing, so switching keeps each one's place.
+  The ☰ menu keeps the rest (Overseer, Usage, Feedback, Settings).
 - **A row is a session**: one agent conversation in one sandbox, the runs
   recorded into the same task session (a revise's runs into the one it
   revised). The sandbox is a column, not the row: pause and delete act on

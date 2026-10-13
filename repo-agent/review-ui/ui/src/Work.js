@@ -741,7 +741,7 @@ function runningChipFor(sb, pend) {
 // the repository's (.agents/runbooks/) or another of your runs. The
 // runbook is copied into the new run and planned for it, so nothing is
 // shared afterwards; what you type then is only what to change.
-function TryPanel({ boardName, onOpenSandbox }) {
+function TryPanel({ boardName, onOpenSandbox, active = true }) {
   const [state, setState] = useState(null);
   const [name, setName] = useState('');
   const [intent, setIntent] = useState('');
@@ -758,10 +758,11 @@ function TryPanel({ boardName, onOpenSandbox }) {
       .catch(() => {});
   }, [boardName]);
   useEffect(() => {
+    if (!active) return undefined;
     load();
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, active]);
 
   const sandboxes = (state && state.sandboxes) || [];
   const pending = (state && state.pending) || [];
@@ -1016,7 +1017,12 @@ function TryPanel({ boardName, onOpenSandbox }) {
   );
 }
 
-function Work({ onBack, namespace }) {
+// active is whether Work is the view shown: hidden behind Sessions it
+// stays mounted, keeping its board, filters and scroll, but polls nothing,
+// and refreshes the moment it is shown again.
+function Work({ onBack, namespace, active = true }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState('');
   const [work, setWork] = useState([]);
@@ -1116,7 +1122,7 @@ function Work({ onBack, namespace }) {
   useEffect(() => {
     setRunState(null);
     fetchRunState();
-    const t = setInterval(() => { if (!document.hidden && !idle.current) fetchRunState(); }, RUN_STATE_EVERY);
+    const t = setInterval(() => { if (!document.hidden && !idle.current && activeRef.current) fetchRunState(); }, RUN_STATE_EVERY);
     return () => clearInterval(t);
   }, [fetchRunState]);
   // A plan just filed shows as a run only once factory has written it.
@@ -1153,9 +1159,9 @@ function Work({ onBack, namespace }) {
   useEffect(() => {
     fetchWork();
     const pollEvery = 20000;
-    const poll = () => { if (!document.hidden) { fetchWork(); fetchBoards(); } };
+    const poll = () => { if (!document.hidden && activeRef.current) { fetchWork(); fetchBoards(); } };
     const interval = setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || !activeRef.current) return;
       // A focused window is being read; keep its cadence. An unfocused one
       // may still be sitting in plain sight on another screen, which the
       // hidden check never catches — give it five quiet minutes and then
@@ -1191,6 +1197,14 @@ function Work({ onBack, namespace }) {
     };
   }, [fetchWork, fetchBoards, activeBoard]);
 
+  // Shown again after being hidden behind Sessions: refresh now rather
+  // than at the next tick, as returning to the tab does.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) { fetchWork(); fetchBoards(); fetchRunState(); }
+    wasActive.current = active;
+  }, [active, fetchWork, fetchBoards, fetchRunState]);
+
   // A write the controller is doing (a row reading "posting") is done in
   // seconds; at the twenty-second cadence the button would keep saying
   // posting long after it was. The server keeps such a feed fresh for
@@ -1198,7 +1212,7 @@ function Work({ onBack, namespace }) {
   const posting = anyPosting(work);
   useEffect(() => {
     if (!posting) return undefined;
-    const t = setInterval(() => { if (!document.hidden) fetchWork(); }, POSTING_POLL_EVERY);
+    const t = setInterval(() => { if (!document.hidden && activeRef.current) fetchWork(); }, POSTING_POLL_EVERY);
     return () => clearInterval(t);
   }, [posting, fetchWork]);
 
@@ -1493,7 +1507,7 @@ function Work({ onBack, namespace }) {
             </nav>
 
             {shown === 'try' ? (
-              <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} />
+              <TryPanel boardName={activeBoard} onOpenSandbox={setCardSandbox} active={active} />
             ) : (
             <div className="work-card">
               <table className="work-table">
