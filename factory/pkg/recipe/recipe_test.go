@@ -1628,8 +1628,8 @@ func stepsRun(t *testing.T, rec *Recipe, inputs map[string]string, exits map[str
 }
 
 // The agent recipe, a chore on the repository: a push and a Change only
-// when there is something to push, nothing kept with skip_pr, nothing
-// past a failed precondition.
+// when there is something to push, nothing kept with skip_pr, and no
+// precondition (a workflow's alone).
 func TestBuiltinAgentRecipe(t *testing.T) {
 	_, rec, err := Builtin(AgentRecipe)
 	if err != nil {
@@ -1643,6 +1643,9 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 	if _, err := rec.ResolveInputs(std, nil); err == nil {
 		t.Error("the agent recipe ran with no prompt")
 	}
+	if _, ok := rec.Inputs["precondition"]; ok {
+		t.Error("a chore takes a precondition")
+	}
 	for _, skip := range []string{"false", "true"} {
 		inputs, err := rec.ResolveInputs(std, map[string]string{"prompt": "do it", "agent_name": "Docs Bot", "skip_pr": skip})
 		if err != nil {
@@ -1653,19 +1656,17 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		skip                  string
-		precondition, changed int
-		want                  string
+		skip    string
+		changed int
+		want    string
 	}{
-		{"false", 0, 0, "default,ask,change,push"},
-		{"false", 0, 1, "default,ask"},
-		{"false", 1, 0, ""},
-		{"true", 0, 0, "default,ask"},
-		{"true", 1, 0, ""},
+		{"false", 0, "default,ask,change,push"},
+		{"false", 1, "default,ask"},
+		{"true", 0, "default,ask"},
 	} {
-		got := stepsRun(t, rec, map[string]string{"skip_pr": tc.skip, "precondition": "exit 1"}, map[string]int{"precondition": tc.precondition, "changed": tc.changed})
+		got := stepsRun(t, rec, map[string]string{"skip_pr": tc.skip}, map[string]int{"changed": tc.changed})
 		if got != tc.want {
-			t.Errorf("skip_pr %s (precondition %d, changed %d) ran %q, want %q", tc.skip, tc.precondition, tc.changed, got, tc.want)
+			t.Errorf("skip_pr %s (changed %d) ran %q, want %q", tc.skip, tc.changed, got, tc.want)
 		}
 	}
 }

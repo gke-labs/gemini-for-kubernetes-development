@@ -208,13 +208,16 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 	}
 
 	if !workflow {
+		// A chore has no precondition: preconditionScript is a workflow's.
+		if agentDef.PreconditionScript != "" {
+			fmt.Printf("Ignoring %s's preconditionScript: only a workflow's runs.\n", agentDef.Name)
+		}
 		inputs := map[string]string{
-			"prompt":       agentDef.Prompt,
-			"agent_name":   agentDef.Name,
-			"agent_file":   agentPath,
-			"skip_pr":      strconv.FormatBool(agentDef.SkipPR),
-			"precondition": agentDef.PreconditionScript,
-			"labels":       resolvePRLabels(cfg, nil, false),
+			"prompt":     agentDef.Prompt,
+			"agent_name": agentDef.Name,
+			"agent_file": agentPath,
+			"skip_pr":    strconv.FormatBool(agentDef.SkipPR),
+			"labels":     resolvePRLabels(cfg, nil, false),
 		}
 		return runRecipeIn(ctx, ensure, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
 			applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
