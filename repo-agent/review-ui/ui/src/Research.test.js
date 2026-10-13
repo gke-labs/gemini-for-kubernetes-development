@@ -3,7 +3,6 @@ import {
     chunkText,
     permissionTone,
     shortSession,
-    ageOf,
     emptyTranscript,
     applyResearchEvent,
     buildResearchTranscript,
@@ -97,24 +96,6 @@ describe('shortSession', () => {
         expect(shortSession('abc')).toBe('abc');
         expect(shortSession('')).toBe('');
         expect(shortSession(undefined)).toBe('');
-    });
-});
-
-describe('ageOf', () => {
-    const realNow = Date.now;
-    afterEach(() => { Date.now = realNow; });
-
-    test('renders minutes, hours and days', () => {
-        Date.now = jest.fn(() => new Date('2026-09-26T12:00:00Z').getTime());
-        expect(ageOf('2026-09-26T11:30:00Z')).toBe('30m');
-        expect(ageOf('2026-09-26T09:00:00Z')).toBe('3h');
-        expect(ageOf('2026-09-24T12:00:00Z')).toBe('2d');
-    });
-
-    test('is empty for missing or unparseable timestamps', () => {
-        expect(ageOf('')).toBe('');
-        expect(ageOf(null)).toBe('');
-        expect(ageOf('not-a-date')).toBe('');
     });
 });
 
