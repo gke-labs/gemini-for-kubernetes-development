@@ -347,72 +347,30 @@ type EntityStateCache struct {
 1. **Load Config & Secret**: Initialize GitHub and Kubernetes clients, resolve target bot identities.
 2. **Directory Verification**: Create `incoming`, `processing`, `processed`, and `logs` directories if they do not exist.
 3. **Queue Rehydration**: `TaskQueueManager.LoadFromDisk()` seeds in-memory maps from existing YAMLs.
-4. **Crash Recovery & Task Adoption**: Run `TaskDispatcher.Recover(ctx)` to reconcile tasks found in `processing/`. Active pod runs are adopted by supervisor goroutines owned by the dispatcher.
+4. **Crash Recovery**: Run `TaskDispatcher.Recover(ctx)`, which requeues every task found in `processing/` under its run name.
 5. **Start HTTP Server**: Launch queue server listening on `:13338`.
 
-### Startup Crash Recovery & Running Task Adoption
+### Startup Crash Recovery
 
-Because task execution inside cluster sandboxes is detached (`nohup ... &` via `envd`), a task may still be actively running inside a sandbox container even if the `factory watch` host process crashed or restarted. In the previous architecture, tasks found running during startup were simply left in `processing/` without any supervisor, causing them to become permanently orphaned.
+A task keeps running in its sandbox when the `factory watch` process that started it restarts. Every task's command names its run: a recipe task's `RunName` (`factory recipe … --run-name`) or an agent chore's `ChoreRunName` (`factory agent create … --run-name`). Run again under the same name, the command picks that run up instead of starting another:
+- it follows a run that's still going;
+- it applies the result of one that finished while nobody was watching;
+- it finds the result already applied;
+- or it starts the run if it never started.
 
-Recovery is owned by the `TaskDispatcher`, which already owns sandbox leases and task execution. It handles tasks in `processing/` across restarts using a deterministic three-way recovery flow:
+So `TaskDispatcher.Recover` asks no sandbox anything:
 
-```mermaid
-sequenceDiagram
-    participant TQD as TaskDispatcher.Recover
-    participant TQM as TaskQueueManager
-    participant SLR as SandboxLockRegistry
-    participant Mon as Adoption Monitor Goroutine
-    participant Pod as Cluster Sandbox (envd)
+1. Every task in `processing/` is requeued to `incoming/` with `Recovered=true` and its run name unchanged.
+2. The dispatcher dispatches it like any task. While its sandbox is still busy with the run, `dispatchTask` sends it back to the queue. Once the sandbox is free, the command picks up the run and reports the outcome as usual: `CompleteTask`/`FailTask`, the coordinator's comments and reactions, a chore's suspend.
+3. Task files in `processing/` that can't be parsed are returned to `incoming/` by `TaskQueueManager.RequeueUntrackedProcessingFiles()`.
 
-    Note over TQD: Watcher restarts, finds task-*.yaml in processing/
-    TQD->>TQM: SyncProcessingFromDisk() / ProcessingTasks()
-    TQD->>Pod: Probe IsTaskRunning()
-
-    alt State A: Pod already completed before restart
-        TQD->>TQM: CompleteTask() (move to processed/)
-    else State B: Pod failed / evicted / missing
-        TQD->>TQM: Re-queue to incoming/ with Recovered=true
-    else State C: Pod is still actively executing
-        TQD->>SLR: TryAcquire(sandboxName, filename) (Reserve Lease)
-        TQD->>Mon: Spawn monitorAdoptedTask(ctx, task, sandboxName)
-        Note over TQD: Recover returns; subcontrollers keep starting...
-
-        loop Poll Status (AdoptionPollInterval)
-            Mon->>Pod: Check envd exit_code file / pod status
-            Pod-->>Mon: Still running
-        end
-
-        Pod-->>Mon: Task finished! (Exit code 0 or != 0)
-        Mon->>TQM: CompleteTask() / FailTask()
-        Note over TQM: Moves processing/ -> processed/ on disk & memory
-        Mon->>SLR: Release(sandboxName)
-        Mon->>Mon: Notify coordinator (comment reactions) & write journal
-    end
-```
-
-#### Detailed Recovery States:
-1. **Tri-State Evaluation**: For every task found in `TaskQueueManager.processing`, the dispatcher probes the resolved sandbox exactly once:
-   * **State A (Already Finished)**: If `IsTaskCompleted(sandboxName)` is true, the dispatcher calls `TaskQueueManager.CompleteTask(filename, task)`, atomically moving the task file and logs to `processed/` and writing a journal event. No lease is taken.
-   * **State B (Terminated / Evicted / Missing)**: `task.Recovered = true` is set and the task is moved back to `incoming/` via `TaskQueueManager.Enqueue` so the dispatcher can re-schedule it. No lease is taken.
-   * **State C (Still Actively Running — Adoption)**: The sandbox lease is acquired (`sandboxLocks.TryAcquire`), guaranteeing that neither the dispatcher nor the scanners can target that sandbox, the task remains in `TaskQueueManager.processing`, and an **Adoption Monitor Goroutine** is spawned under the dispatcher's worker WaitGroup.
-2. **Unparsable Files**: Task files in `processing/` that cannot be parsed are returned to `incoming/` by `TaskQueueManager.RequeueUntrackedProcessingFiles()` instead of being orphaned.
-
-#### Adoption Monitor Goroutine (`monitorAdoptedTask`):
-* **Budget Tracking**: Computes the remaining timeout from the task's `StartedAt`/`EnqueuedAt`/`CreatedAt` so a restart does not grant a fresh full timeout.
-* **Status Polling**: Every `Config.AdoptionPollInterval` (default 5s), probes the sandbox via `SandboxService`.
-* **Post-Completion Execution**:
-  * On success: calls `TaskQueueManager.CompleteTask()` and `TaskCoordinator.NotifyTaskFinished(ctx, task, nil)`, which for a `pr-comments` task resolves the acknowledged conversation comments, review bodies, and inline review comments with `+1`.
-  * On failure: calls `TaskQueueManager.FailTask()` and notifies with an error, resolving reactions with `confused`.
-  * On timeout: force deletes the sandbox, then fails the task.
-  * Atomically renames YAML and `.log` files to `processed/` and appends a structured entry to `journal.jsonl`.
-  * Releases the sandbox lease when the goroutine exits.
-* **Reconciliation Safety Net** (*not yet implemented*): A task can be orphaned if its monitor goroutine dies without recording an outcome. The sweep that detects this must compare `TaskQueueManager.processing` against sandbox state and transition finished tasks to `processed/`. It belongs to the `TaskDispatcher`, which already owns task lifecycle, leases and adoption monitors — **not** to `SandboxReconciler`, which is deliberately free of any `TaskQueueManager` dependency so that cluster garbage collection can never mutate queue state.
+The watch used to probe each sandbox and adopt a still-running task with a monitor goroutine (`monitorAdoptedTask`). That path went with the last classic task, the agent chore, in factory/design/remove-envd.md step 3. A recipe's result (a chore's `open-pr`) is applied by the command that started the run, so an adopted run's result would never be applied.
 
 ### Subcontroller Coordination & Lifecycle Management
 Subcontrollers run under a shared cancelable context (`daemonCtx`). Each subcontroller owns the synchronization primitives for the **workers it spawns**; the `Watcher` never tracks another subcontroller's workers.
 
 * **Subcontroller-Owned Worker WaitGroups**:
-  * Each subcontroller that spawns goroutines declares a private `wg sync.WaitGroup` covering only the ones it starts. For `TaskDispatcher` this is both task workers (`executeTask`) and adopted-task monitors (`monitorAdoptedTask`). `SandboxReconciler` spawns none — its whole `Run` is one loop on the caller's goroutine — so it needs no WaitGroup at all.
+  * Each subcontroller that spawns goroutines declares a private `wg sync.WaitGroup` covering only the ones it starts. For `TaskDispatcher` these are its task workers (`executeTask`). `SandboxReconciler` spawns none — its whole `Run` is one loop on the caller's goroutine — so it needs no WaitGroup at all.
   * `Run(ctx)` drains its own goroutines via `wg.Wait()`, so returning from `Run` is itself the signal that the subcontroller is fully quiesced. The `Watcher` only has to wait for `Run` to return.
   * The `Watcher` exposes `Wait()`, which delegates to the subcontrollers' `Wait()` methods. This is used by `--once` mode, where no polling loop is started but workers may still be in flight.
   * *Rationale*: Mixing long-running controller loops and short-running tasks on a single shared WaitGroup causes `Wait()` to block indefinitely or triggers runtime panics if `Add()` is invoked concurrently with `Wait()`. Scoping each WaitGroup to its owning subcontroller makes the `Add()`/`Wait()` pairing local and auditable.

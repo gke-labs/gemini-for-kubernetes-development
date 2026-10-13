@@ -23,8 +23,9 @@ type RecipeTask struct {
 	Recorded string
 }
 
-// recipeTasks are the task types that run as recipes. The others run
-// the classic factory commands.
+// recipeTasks are the task types that run as `factory recipe`. The other,
+// agent-chore, runs as `factory agent create`, which runs the agent or
+// workflow recipe (ChoreRunName).
 var recipeTasks = map[TaskType]RecipeTask{
 	TypePRReview:      {Recipe: "review", Action: "submit-review", RunPrefix: "review", OwnSandbox: true},
 	TypePRInvestigate: {Recipe: "care-ci", Action: "post-replies", RunPrefix: "investigate"},
@@ -66,4 +67,16 @@ func (rt RecipeTask) RunName(t *QueueTask) string {
 		at = t.CreatedAt
 	}
 	return fmt.Sprintf("%s-%d-%s-%d", rt.RunPrefix, t.Number, sha, at.Unix())
+}
+
+// ChoreRunName names a run of an agent-chore task t (factory agent create
+// --run-name) as RunName names a recipe task's: by its issue, if it is a
+// workflow's, and when t was enqueued. Each agent has a sandbox of its
+// own, so the name need not say which agent it is.
+func ChoreRunName(t *QueueTask) string {
+	at := t.EnqueuedAt
+	if at.IsZero() {
+		at = t.CreatedAt
+	}
+	return fmt.Sprintf("agent-%d-%d", t.Number, at.Unix())
 }

@@ -11,9 +11,8 @@ package sandbox
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
+	"path"
 	"strings"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -96,19 +95,38 @@ func (s *Service) Namespace() string {
 	return s.namespace
 }
 
+// ResolveTaskName is the sandbox task runs in: ResolveName's, except for
+// an agent chore, which runs in its agent's own sandbox (factory agent
+// create), named by its definition and session rather than its type and
+// number: agent-<repo>-<agent>, or a workflow's wf-issue-<n>.
+func (s *Service) ResolveTaskName(ctx context.Context, task *api.QueueTask) string {
+	if task.Type != api.TypeAgentChore {
+		return s.ResolveName(ctx, task.Type, task.Number)
+	}
+	name := task.AgentName
+	if name == "" && task.SessionID == "" {
+		// Queued before tasks carried it: the definition's file name,
+		// which is usually its name.
+		base := path.Base(task.AgentFile)
+		name = strings.TrimSuffix(base, path.Ext(base))
+	}
+	sandboxName, _ := factorysandbox.AgentSandboxName(s.repo, common.AgentTaskID(name, task.SessionID))
+	return sandboxName
+}
+
 // ResolveName returns the name of the sandbox a task of the given type and
 // issue/PR number executes in: the one its factory command picks, so that
 // the busy checks and locks are about the sandbox the task really uses.
 //
-// Issue and chore tasks prefer an existing workflow sandbox and otherwise fall
-// back to the conventional per-issue name. A recipe that runs in a sandbox
+// Issue tasks prefer an existing workflow sandbox and otherwise fall back
+// to the conventional per-issue name. A chore's is ResolveTaskName's. A recipe that runs in a sandbox
 // of its own (review) gets that one. Other PR tasks, all recipes, prefer
 // the PR's fix sandbox, then a sandbox created for one of the issues the
 // PR closes (which is aliased to the PR as a side effect), and finally
 // fall back to the name `factory recipe` creates: fix-<repo>-<pr>
 // (EnsurePRSandbox).
 func (s *Service) ResolveName(ctx context.Context, taskType api.TaskType, num int) string {
-	if taskType == api.TypeIssueFix || taskType == api.TypeAgentChore {
+	if taskType == api.TypeIssueFix {
 		wfName := fmt.Sprintf("wf-issue-%d", num)
 		if s.kube != nil {
 			if _, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).Get(ctx, wfName, metav1.GetOptions{}); err == nil {
@@ -360,71 +378,6 @@ func (s *Service) probeTask(ctx context.Context, name string, annotations map[st
 	return false, nil
 }
 
-// AliasToTaskPR labels the sandbox with the pull request its latest task
-// opened, as named by the task's agent-output.txt.
-//
-// The factory process that runs a task does this when the task ends, but a
-// watcher restart kills that process and the task is adopted instead: without
-// this, the sandbox of a task that outlived a restart never learned its PR
-// (fix-k8s-config-connector-13652 and PR #13655).
-func (s *Service) AliasToTaskPR(ctx context.Context, name string) error {
-	if s.kube == nil {
-		return nil
-	}
-	sb, err := connectTasks(ctx, s.namespace, name)
-	if err != nil {
-		return fmt.Errorf("connecting to sandbox %s's task server: %w", name, err)
-	}
-	defer sb.Close()
-
-	entries, err := sb.List(ctx)
-	if err != nil {
-		return fmt.Errorf("listing the tasks in sandbox %s: %w", name, err)
-	}
-	if len(entries) == 0 {
-		return nil
-	}
-	out, err := sb.ReadFile(ctx, entries[0].ID, "agent-output.txt")
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("reading the latest task output in sandbox %s: %w", name, err)
-	}
-	prURL, prNum := factorysandbox.PRFromAgentOutput(string(out))
-	if prNum == 0 {
-		return nil
-	}
-	klog.Infof("Aliasing sandbox %s to PR #%d opened by its adopted task.", name, prNum)
-	return factorysandbox.AliasSandboxToPR(ctx, s.kube, s.namespace, name, prNum, prURL)
-}
-
-// IsTaskCompleted reports whether the named sandbox has already completed a
-// task of the given type, which is how a recovered task is recognised as
-// finished after a watcher restart.
-func (s *Service) IsTaskCompleted(ctx context.Context, name string, taskType api.TaskType) (bool, error) {
-	if s.kube == nil {
-		return false, nil
-	}
-
-	unstructObj, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return false, nil
-		}
-		return false, err
-	}
-
-	annotations := unstructObj.GetAnnotations()
-	if annotations == nil {
-		return false, nil
-	}
-
-	state := annotations[annotationLastTaskState]
-	recordedType := annotations[annotationLastTaskType]
-	return strings.EqualFold(state, taskStateCompleted) && strings.EqualFold(recordedType, sandboxTaskType(taskType)), nil
-}
-
 // CountRunningTasks returns the number of sandboxes currently executing a task,
 // excluding the sandbox the watcher itself may be running in and suspended sandboxes.
 func (s *Service) CountRunningTasks(ctx context.Context) (int, error) {
@@ -483,17 +436,4 @@ func lastTaskType(annotations map[string]string) string {
 		return taskType
 	}
 	return "task"
-}
-
-// sandboxTaskType maps a queue task type onto the task type recorded in sandbox annotations.
-func sandboxTaskType(taskType api.TaskType) string {
-	if rt, ok := api.RecipeTaskOf(taskType); ok {
-		return rt.RecordedType()
-	}
-	switch taskType {
-	case api.TypeAgentChore:
-		return "agent"
-	default:
-		return string(taskType)
-	}
 }

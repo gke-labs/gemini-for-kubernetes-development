@@ -390,18 +390,25 @@ func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 	return name, nil
 }
 
+// AgentSandboxName is the sandbox an agent's task runs in
+// (EnsureAgentSandbox), given its task id (common.AgentTaskID):
+// agent-<repo>-<task id>, or, for a workflow's session on an issue
+// (<workflow>-issue-<n>), wf-issue-<n>, with the workflow's name.
+func AgentSandboxName(repoName, taskID string) (name, workflow string) {
+	if idx := strings.Index(taskID, "-issue-"); idx != -1 {
+		return "wf-issue-" + taskID[idx+len("-issue-"):], taskID[:idx]
+	}
+	return fmt.Sprintf("agent-%s-%s", repoName, taskID), ""
+}
+
 func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, taskID, cloneURL, htmlURL, taskTitle, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := fmt.Sprintf("agent-%s-%s", repoName, taskID)
+	name, workflowName := AgentSandboxName(repoName, taskID)
 	labels := map[string]string{
 		"sandbox.gemini.google.com/type":    "agent",
 		"factory.gemini.google.com/managed": "true",
 		"factory.gemini.google.com/user":    user,
 	}
-
-	if idx := strings.Index(taskID, "-issue-"); idx != -1 {
-		workflowName := taskID[:idx]
-		issueNum := taskID[idx+len("-issue-"):]
-		name = fmt.Sprintf("wf-issue-%s", issueNum)
+	if workflowName != "" {
 		labels["factory.gemini.google.com/workflow"] = workflowName
 	}
 
@@ -451,22 +458,6 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 	}
 
 	return name, nil
-}
-
-// PRFromAgentOutput returns the pull request a task's agent-output.txt names:
-// the first line holding a /pull/<N> URL. It returns 0 when there is none.
-func PRFromAgentOutput(output string) (string, int) {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "/pull/") {
-			continue
-		}
-		parts := strings.Split(line, "/")
-		if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil && n > 0 {
-			return line, n
-		}
-	}
-	return "", 0
 }
 
 func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, sandboxName string, prNum int, prURL string) error {

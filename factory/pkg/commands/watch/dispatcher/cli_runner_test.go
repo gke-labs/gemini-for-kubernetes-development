@@ -275,20 +275,19 @@ func TestCLIRunner_Run_PropagatesExecutableResolutionError(t *testing.T) {
 	}
 }
 
-// Recovery requeues a task whose command applies a named run's result
-// rather than adopting it (appliesInCLI): that has to be exactly the tasks
-// BuildArgs runs as `recipe … --run-name … --apply`.
-func TestAppliesInCLIMatchesBuildArgs(t *testing.T) {
+// Recovery requeues every task (Recover), which is only safe because
+// each one's command names its run: a recipe task's, or an agent chore's.
+func TestEveryTaskTypeNamesItsRun(t *testing.T) {
 	r := testCLIRunner(t.TempDir())
 	for _, typ := range []api.TaskType{api.TypeIssueFix, api.TypePRInvestigate, api.TypePRComments, api.TypePRIterate, api.TypePRReview, api.TypeAgentChore} {
-		args := r.BuildArgs(&api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1}, "coder-bot")
-		named, applies := false, false
-		for _, a := range args {
-			named = named || a == "--run-name"
-			applies = applies || a == "--apply"
+		task := &api.QueueTask{Type: typ, URL: "https://github.com/o/r/pull/1", Number: 1, AgentFile: ".agents/x.md", EnqueuedAt: time.Unix(1760000000, 0)}
+		args := r.BuildArgs(task, "coder-bot")
+		want := api.ChoreRunName(task)
+		if rt, ok := api.RecipeTaskOf(typ); ok {
+			want = rt.RunName(task)
 		}
-		if want := len(args) > 0 && args[0] == "recipe" && named && applies; appliesInCLI(typ) != want {
-			t.Errorf("%s: appliesInCLI = %v, but BuildArgs %v", typ, appliesInCLI(typ), args)
+		if !slices.Contains(args, "--run-name") || args[slices.Index(args, "--run-name")+1] != want {
+			t.Errorf("%s: BuildArgs %v, want --run-name %s", typ, args, want)
 		}
 	}
 }

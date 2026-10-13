@@ -104,15 +104,18 @@ type QueueTask struct {
 	// StartedAt is the timestamp when the task began execution in processing.
 	StartedAt time.Time `yaml:"startedAt,omitempty"`
 	// CompletedAt is the timestamp when the task completed execution (either Completed or Failed).
-	CompletedAt  time.Time  `yaml:"completedAt,omitempty"`
-	Assignee     string     `yaml:"assignee,omitempty"`
-	Status       TaskStatus `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
-	Error        string     `yaml:"error,omitempty"`
-	AgentFile    string     `yaml:"agentFile,omitempty"` // For chore tasks
-	SessionID    string     `yaml:"sessionId,omitempty"` // For workflow sessions
-	CommitSHA    string     `yaml:"commitSHA,omitempty"`
-	RetryCount   int        `yaml:"retryCount,omitempty"`
-	Instructions []string   `yaml:"instructions,omitempty"`
+	CompletedAt time.Time  `yaml:"completedAt,omitempty"`
+	Assignee    string     `yaml:"assignee,omitempty"`
+	Status      TaskStatus `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
+	Error       string     `yaml:"error,omitempty"`
+	AgentFile   string     `yaml:"agentFile,omitempty"` // For chore tasks
+	// AgentName is a scheduled chore's name, from its definition, which
+	// names its sandbox (ChoreSandboxName).
+	AgentName    string   `yaml:"agentName,omitempty"`
+	SessionID    string   `yaml:"sessionId,omitempty"` // For workflow sessions
+	CommitSHA    string   `yaml:"commitSHA,omitempty"`
+	RetryCount   int      `yaml:"retryCount,omitempty"`
+	Instructions []string `yaml:"instructions,omitempty"`
 	// Recovered marks a task that startup recovery is moving back from processing to
 	// incoming, which is what allows Enqueue to overwrite a processing entry rather
 	// than treating it as a duplicate. It is cleared once the task starts again.

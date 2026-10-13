@@ -71,7 +71,9 @@ func (r *CLIRunner) BuildArgs(t *api.QueueTask, selectedUser string) []string {
 	}
 	switch t.Type {
 	case api.TypeAgentChore:
-		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile}
+		// Named as a recipe task's run is: a restarted watcher's
+		// recovered chore follows its run, or applies its result.
+		args = []string{"agent", "create", "--url", t.URL, "--agent", t.AgentFile, "--run-name", api.ChoreRunName(t)}
 		if t.SessionID != "" {
 			args = append(args, "--session-id", t.SessionID)
 		}

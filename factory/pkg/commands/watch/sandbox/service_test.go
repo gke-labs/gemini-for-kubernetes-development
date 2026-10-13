@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
@@ -62,49 +61,6 @@ func newSandbox(name string, annotations map[string]interface{}) *unstructured.U
 	}
 }
 
-func TestServiceIsTaskCompleted(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		taskType          api.TaskType
-		annotatedTaskType string
-		state             string
-		expectedCompleted bool
-	}{
-		{api.TypePRComments, "recipe-care-comments", "Completed", true},
-		{api.TypePRComments, "recipe-care-comments", "Running", false},
-		{api.TypePRComments, "address-comments", "Completed", false},
-		{api.TypePRInvestigate, "recipe-care-ci", "Completed", true},
-		{api.TypePRInvestigate, "investigate", "Completed", false},
-		{api.TypePRIterate, "recipe-care-rebase", "Completed", true},
-		{api.TypePRIterate, "iterate", "Completed", false},
-		{api.TypePRReview, "recipe-review", "Completed", true},
-		{api.TypePRReview, "review", "Completed", false},
-		{api.TypeIssueFix, "fix", "Completed", true},
-		{api.TypeIssueFix, "fix-issue", "Completed", false},
-		{api.TypeAgentChore, "agent", "Completed", true},
-		{api.TypePRComments, "wrong-type", "Completed", false},
-	}
-
-	for _, tc := range tests {
-		sbName := fmt.Sprintf("sb-%s-%s", tc.taskType, tc.state)
-		kubeClient := newFakeKubeClient(t, newSandbox(sbName, map[string]interface{}{
-			annotationLastTaskState: tc.state,
-			annotationLastTaskType:  tc.annotatedTaskType,
-		}))
-		svc := NewService(ServiceConfig{Namespace: testNamespace}, ServiceDeps{Kube: kubeClient})
-
-		completed, err := svc.IsTaskCompleted(ctx, sbName, tc.taskType)
-		if err != nil {
-			t.Errorf("Unexpected error for %s: %v", tc.taskType, err)
-		}
-		if completed != tc.expectedCompleted {
-			t.Errorf("For taskType=%s, annotatedTaskType=%s, state=%s: expected completed=%v, got %v",
-				tc.taskType, tc.annotatedTaskType, tc.state, tc.expectedCompleted, completed)
-		}
-	}
-}
-
 func TestServiceCountRunningTasks(t *testing.T) {
 	ctx := context.Background()
 
@@ -154,7 +110,6 @@ func TestServiceResolveName(t *testing.T) {
 		want     string
 	}{
 		{"issue task", api.TypeIssueFix, 10, "fix-test-repo-10"},
-		{"chore task falls back to the issue sandbox", api.TypeAgentChore, 10, "fix-test-repo-10"},
 		{"pr recipe runs in the PR's fix sandbox", api.TypePRComments, 55, "fix-test-repo-55"},
 		{"rebase runs in the PR's fix sandbox", api.TypePRIterate, 55, "fix-test-repo-55"},
 		{"review runs in the review recipe's sandbox", api.TypePRReview, 55, "review-test-repo-55"},
@@ -194,6 +149,28 @@ func TestServiceResolveNamePRRecipeFollowsFixSandbox(t *testing.T) {
 				t.Errorf("ResolveName = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// An agent chore runs in its agent's sandbox, as factory agent create
+// names it: a scheduled chore's by its name (or, queued before tasks
+// carried it, its file's), a workflow's by its issue. Any other task is
+// ResolveName's.
+func TestServiceResolveTaskName(t *testing.T) {
+	svc := NewService(ServiceConfig{Namespace: testNamespace, Owner: "test-owner", Repo: "test-repo"}, ServiceDeps{})
+	for _, tc := range []struct {
+		name string
+		task api.QueueTask
+		want string
+	}{
+		{"scheduled chore", api.QueueTask{Type: api.TypeAgentChore, AgentFile: ".agents/kcc-release.md", AgentName: "KCC Release Scheduler"}, "agent-test-repo-kcc-release-scheduler"},
+		{"chore queued without its name", api.QueueTask{Type: api.TypeAgentChore, AgentFile: ".agents/dependency-agent.md"}, "agent-test-repo-dependency-agent"},
+		{"workflow", api.QueueTask{Type: api.TypeAgentChore, Number: 12700, AgentFile: ".agents/workflows/kcc-example.txt", SessionID: "issue-12700"}, "wf-issue-12700"},
+		{"fix", api.QueueTask{Type: api.TypeIssueFix, Number: 10}, "fix-test-repo-10"},
+	} {
+		if got := svc.ResolveTaskName(context.Background(), &tc.task); got != tc.want {
+			t.Errorf("%s: ResolveTaskName = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

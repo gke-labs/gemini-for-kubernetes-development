@@ -86,30 +86,3 @@ func TestIsTaskRunningAsksTheTaskServer(t *testing.T) {
 		})
 	}
 }
-
-// After a restart, an adopted task's PR, named in its agent-output.txt,
-// is read through the task server.
-func TestAliasToTaskPRReadsTheTaskServer(t *testing.T) {
-	ts := &fakeTaskServer{
-		entries: []spool.Entry{{Task: spool.Task{ID: "agent-deps-2"}}, {Task: spool.Task{ID: "agent-deps-1"}}},
-		files:   map[string]string{"agent-deps-2/agent-output.txt": "https://github.com/o/r/pull/77\n"},
-	}
-	withTasks(t, ts, nil)
-	svc := NewService(ServiceConfig{Namespace: testNamespace}, ServiceDeps{Kube: newFakeKubeClient(t, newSandbox("agent-r-deps", nil))})
-	if err := svc.AliasToTaskPR(context.Background(), "agent-r-deps"); err != nil {
-		t.Fatal(err)
-	}
-	got, err := svc.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(testNamespace).Get(context.Background(), "agent-r-deps", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.GetLabels()[labelPR] != "77" {
-		t.Errorf("labels = %v, want the PR 77", got.GetLabels())
-	}
-
-	// No output file: nothing to alias, no error.
-	ts.files = nil
-	if err := svc.AliasToTaskPR(context.Background(), "agent-r-deps"); err != nil {
-		t.Errorf("no agent-output.txt: %v", err)
-	}
-}
