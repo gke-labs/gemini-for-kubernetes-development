@@ -479,6 +479,38 @@ func TestSessionEnvReachesTheProcess(t *testing.T) {
 	}
 }
 
+// The engine inherits the pod's environment — an overseer's project, the
+// warm workspace's Go caches — but nothing that looks like a credential,
+// and nothing acpd sets itself (InheritedEnv). The agent's shell commands
+// see what the sandbox was given.
+func TestTheEngineInheritsThePodsEnvironment(t *testing.T) {
+	registerFakeEngine(t)
+	t.Setenv("FAKE_EXTRA", "from the pod")
+	_, ts := newTestServer(t)
+
+	resp := createSession(t, ts, "s1", "k")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create returned %d", resp.StatusCode)
+	}
+	if echo := promptAndReadEcho(t, ts, "s1", "hello"); !strings.Contains(echo, "extra:from the pod") || !strings.Contains(echo, "key:k") {
+		t.Errorf("the engine did not inherit the pod's environment, or lost its key: %s", echo)
+	}
+}
+
+func TestInheritedEnv(t *testing.T) {
+	got := InheritedEnv([]string{
+		"GOOGLE_CLOUD_PROJECT=cnrm-barni-4", "GOCACHE=/workspaces/.cache/go-build", "TMPDIR=/workspaces/.tmp",
+		"GOOGLE_APPLICATION_CREDENTIALS=/etc/pakey/keys.json",
+		"GITHUB_TOKEN=ghp", "GEMINI_API_KEY=k", "FACTORY_TASK_TOKEN=t", "MY_SECRET=s", "DB_PASSWORD=p",
+		"LD_PRELOAD=x", "BASH_ENV=x", "HOME=/root", "PATH=/bin", "TERM=xterm", "GEMINI_CLI_TRUST_WORKSPACE=true", "malformed",
+	})
+	want := "GOOGLE_CLOUD_PROJECT=cnrm-barni-4 GOCACHE=/workspaces/.cache/go-build TMPDIR=/workspaces/.tmp GOOGLE_APPLICATION_CREDENTIALS=/etc/pakey/keys.json"
+	if strings.Join(got, " ") != want {
+		t.Errorf("InheritedEnv = %v\nwant %s", got, want)
+	}
+}
+
 func TestCreateSessionRequiresAPIKeyHeader(t *testing.T) {
 	registerFakeEngine(t)
 	_, ts := newTestServer(t)

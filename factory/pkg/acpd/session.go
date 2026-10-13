@@ -327,15 +327,19 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 	}
 	cmd := exec.CommandContext(ctx, engine.Command, args...)
 	cmd.Dir = cfg.CWD
-	// An explicit environment, not the inherited one. The credential goes
-	// to the engine and to nothing else: acpd's own /proc/<pid>/environ
-	// stays clean, and no other process in the pod inherits it.
-	cmd.Env = []string{
-		"HOME=" + envOr("HOME", "/workspaces/.home"),
-		"PATH=" + envOr("PATH", "/usr/local/bin:/usr/bin:/bin"),
+	// The pod's environment — the project an overseer configured, the Go
+	// caches the warm workspace restores, TMPDIR — less anything that
+	// looks like a credential (InheritedEnv), then what acpd sets itself.
+	// The engine's credential goes to the engine and to nothing else:
+	// acpd's own /proc/<pid>/environ stays clean, and no other process in
+	// the pod inherits it. A later entry wins over an earlier one.
+	cmd.Env = InheritedEnv(os.Environ())
+	cmd.Env = append(cmd.Env,
+		"HOME="+envOr("HOME", "/workspaces/.home"),
+		"PATH="+envOr("PATH", "/usr/local/bin:/usr/bin:/bin"),
 		"TERM=dumb",
-		engine.APIKeyEnv + "=" + cfg.APIKey,
-	}
+		engine.APIKeyEnv+"="+cfg.APIKey,
+	)
 	cmd.Env = append(cmd.Env, engine.Env...)
 	for _, k := range slices.Sorted(maps.Keys(cfg.Env)) {
 		cmd.Env = append(cmd.Env, k+"="+cfg.Env[k])
@@ -941,6 +945,35 @@ var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // load or start (LD_*, BASH_ENV, ENV), or one that looks like a
 // credential, which never goes to the engine this way.
 func CheckEnv(env map[string]string) error {
+	for k := range env {
+		if why := envRefusal(k); why != "" {
+			return fmt.Errorf("session env %s %s", k, why)
+		}
+	}
+	return nil
+}
+
+// InheritedEnv is what of a process's environment (os.Environ) an engine
+// inherits: everything but what CheckEnv would refuse — acpd's and the
+// system's own variables, and anything that looks like a credential (the
+// task's GitHub token, the task server's token). The sandbox pod's
+// environment is the point: the project an overseer configured
+// (GOOGLE_CLOUD_PROJECT), the Go caches the warm workspace restores
+// (GOCACHE, GOMODCACHE), TMPDIR.
+func InheritedEnv(environ []string) []string {
+	var out []string
+	for _, kv := range environ {
+		k, _, ok := strings.Cut(kv, "=")
+		if ok && envRefusal(k) == "" {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// envRefusal says why name may not be set in an engine's environment
+// from outside acpd; "" when it may.
+func envRefusal(name string) string {
 	reserved := map[string]bool{"HOME": true, "PATH": true, "TERM": true, "BASH_ENV": true, "ENV": true}
 	for _, e := range Engines {
 		reserved[e.APIKeyEnv] = true
@@ -949,16 +982,14 @@ func CheckEnv(env map[string]string) error {
 			reserved[k] = true
 		}
 	}
-	for k := range env {
-		upper := strings.ToUpper(k)
-		switch {
-		case !envNameRE.MatchString(k):
-			return fmt.Errorf("session env %q is not a variable name", k)
-		case reserved[upper] || strings.HasPrefix(upper, "LD_"):
-			return fmt.Errorf("session env %s is acpd's or the system's to set", k)
-		case strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "KEY"):
-			return fmt.Errorf("session env %s looks like a credential, which never goes to the engine this way", k)
-		}
+	upper := strings.ToUpper(name)
+	switch {
+	case !envNameRE.MatchString(name):
+		return "is not a variable name"
+	case reserved[upper] || strings.HasPrefix(upper, "LD_"):
+		return "is acpd's or the system's to set"
+	case strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "KEY"):
+		return "looks like a credential, which never goes to the engine this way"
 	}
-	return nil
+	return ""
 }
