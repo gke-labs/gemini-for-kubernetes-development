@@ -7,25 +7,19 @@ import (
 	"testing"
 )
 
-// Every script rendered as lib.sh + task body. run.sh was written
-// without being added here, which is how it shipped for two days
-// missing the token bridge below — the contract this file exists to
-// enforce was never applied to it. A new task script belongs in this
-// list on the commit that adds it.
-var taskScripts = []string{
-	"run.sh",
+// Every script rendered as lib.sh + more. run.sh was written without
+// being added here, which is how it shipped for two days missing the
+// token bridge below — the contract this file exists to enforce was never
+// applied to it. A new rendered script belongs in this list on the commit
+// that adds it. The one left is what a recipe's uses steps run: lib.sh,
+// run.sh's runbook functions and recipe_step.sh.
+var taskScripts = map[string]func() ([]byte, error){
+	"recipe step script": GetRecipeStepScript,
 }
 
 // Functions that live only in lib.sh — every rendered script must define
 // them exactly once (a duplicate means a script kept a stale copy).
 var libOnly = []string{"setupGit", "setGitHubURLRewrite", "configureGemini", "record_gemini_usage", "record_claude_usage", "record_engine_usage", "runEngine"}
-
-// The engine seam: every task that drives the model does it through
-// runEngine with its task-specific knobs; no script carries a private
-// engine loop anymore.
-var engineCalls = map[string]string{
-	"run.sh": "\n    runEngine\n",
-}
 
 // Scripts whose setupGitRepos deliberately shadows lib.sh's default
 // (bash: last definition wins, and lib.sh is prepended).
@@ -40,8 +34,8 @@ func defCount(script, fn string) int {
 // by redefinition; the models placeholder is resolved.
 func TestRenderedScripts(t *testing.T) {
 	bash, bashErr := exec.LookPath("bash")
-	for _, name := range taskScripts {
-		data, err := getScriptWithDefaults(name)
+	for name, render := range taskScripts {
+		data, err := render()
 		if err != nil {
 			t.Fatalf("%s: render failed: %v", name, err)
 		}
@@ -64,9 +58,6 @@ func TestRenderedScripts(t *testing.T) {
 		if n := defCount(script, "runGemini"); n != 0 {
 			t.Errorf("%s: stale runGemini definition survives (%d)", name, n)
 		}
-		if call, ok := engineCalls[name]; ok && !strings.Contains(script, call) {
-			t.Errorf("%s: expected engine call %q in rendered script", name, strings.TrimSpace(call))
-		}
 		if !strings.HasPrefix(script, "#!/bin/bash") {
 			t.Errorf("%s: rendered script must start with the lib shebang", name)
 		}
@@ -76,7 +67,7 @@ func TestRenderedScripts(t *testing.T) {
 		// writes an empty oauth_token into gh's hosts.yml and a
 		// passwordless credential into git, and then dies somewhere
 		// unrelated, in gh's words, about dbus.
-		if strings.Contains(script, "\nsetupGit\n") && !strings.Contains(script, "GITHUB_USER_TOKEN:-${GITHUB_TOKEN}") {
+		if !strings.Contains(script, "GITHUB_USER_TOKEN:-${GITHUB_TOKEN}") {
 			t.Errorf("%s: calls setupGit without bridging GITHUB_TOKEN to GITHUB_USER_TOKEN", name)
 		}
 		// execution.log is the script's xtrace; the token resolution must

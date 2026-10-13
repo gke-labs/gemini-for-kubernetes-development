@@ -49,6 +49,10 @@ const AgentRecipe = "agent"
 // definition with mode: workflow) takes its next step as, on its issue.
 const WorkflowRecipe = "workflow"
 
+// RunbookRecipe is the built-in recipe a run's phase (plan, deploy,
+// teardown) runs as: `factory run` runs it in the run's own sandbox.
+const RunbookRecipe = "runbook"
+
 // Recipe is one task.
 type Recipe struct {
 	Name string `yaml:"name"`
@@ -65,8 +69,9 @@ type Recipe struct {
 	Context string `yaml:"context,omitempty"`
 	// AgentEnv is more of the agent's environment, which its shell
 	// commands read: each value a template of the inputs (a workflow's
-	// SESSION_ID: "{{ .Inputs.session_id }}"). Facts, never credentials:
-	// acpd refuses those, and its own variables (acpd.CheckEnv).
+	// SESSION_ID: "{{ .Inputs.session_id }}"); one that renders empty is
+	// left unset. Facts, never credentials: acpd refuses those, and its
+	// own variables (acpd.CheckEnv).
 	AgentEnv map[string]string `yaml:"agent-env,omitempty"`
 	// Inputs declares what the recipe takes beyond what its caller always
 	// sets, so a missing or misspelt one fails before a sandbox is made.
@@ -187,7 +192,7 @@ const (
 // fullCredentialSteps are the named steps that put the token where the
 // agent can reach it later — on disk, or in the checkout's remote — or
 // write with it: setup-fork may fork, push pushes.
-var fullCredentialSteps = []string{"setup-git", "setup-repo", "setup-fork", "checkout-default-branch", "checkout-pr-branch", "push"}
+var fullCredentialSteps = []string{"setup-git", "setup-repo", "setup-fork", "checkout-default-branch", "checkout-pr-branch", "push", "runbook-prepare", "runbook-finish"}
 
 // Part is a list of steps run in order: the recipe's start, or a revise.
 type Part struct {
@@ -317,6 +322,8 @@ var NamedSteps = map[string]string{
 	"checkout-pr-branch":      "checkoutPRBranch",
 	"configure-engine":        "configureGemini",
 	"push":                    "pushToFork",
+	"runbook-prepare":         "runbookPrepare",
+	"runbook-finish":          "runbookFinish",
 	"ci-logs":                 "fetchPRCILogs",
 	"pr-comments":             "fetchPRComments",
 	"issue-comments":          "fetchIssueComments",

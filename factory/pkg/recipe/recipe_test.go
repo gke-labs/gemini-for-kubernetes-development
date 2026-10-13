@@ -1869,6 +1869,9 @@ func TestAgentEnv(t *testing.T) {
 	if err != nil || env["SESSION_ID"] != "issue-7" {
 		t.Errorf("env %v, %v", env, err)
 	}
+	if env, err := rec.RenderAgentEnv(map[string]string{"session_id": ""}); err != nil || len(env) != 0 {
+		t.Errorf("an empty value is set: env %v, %v", env, err)
+	}
 	if err := rec.CheckRender(map[string]string{}); err == nil {
 		t.Error("CheckRender passed an agent-env reading an input the run does not set")
 	}
@@ -1876,5 +1879,50 @@ func TestAgentEnv(t *testing.T) {
 		if _, err := Parse([]byte("name: a\nagent-env: " + bad + "\nstart: {steps: [{run: x}]}")); err == nil {
 			t.Errorf("agent-env %s parsed", bad)
 		}
+	}
+}
+
+// The runbook recipe, a run's phase in the run's sandbox: the fork and
+// the runs branch before the ask, the commit after it, and the agent's
+// shell told the member's GCP project and region and the run's resource
+// prefix, unset when the member has none.
+func TestBuiltinRunbookRecipe(t *testing.T) {
+	_, rec, err := Builtin(RunbookRecipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "run" || rec.TaskOutput != nil {
+		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
+	}
+	var kinds []string
+	for _, s := range rec.Start.Steps {
+		if s.Uses != "" {
+			kinds = append(kinds, s.Uses)
+		} else {
+			kinds = append(kinds, s.Kind())
+		}
+	}
+	if got := strings.Join(kinds, ","); got != "setup-git,setup-repo,configure-engine,runbook-prepare,ask,runbook-finish" {
+		t.Errorf("steps %s", got)
+	}
+	std := map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": "true"}
+	inputs, err := rec.ResolveInputs(std, map[string]string{"phase": "deploy", "run": "gke-1", "prompt": "Deploy it.", "resource_prefix": "r-gke-1", "gcp_project": "p1", "gcp_region": "us-central1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.CheckRender(inputs); err != nil {
+		t.Fatal(err)
+	}
+	env, err := rec.RenderAgentEnv(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"RUN_NAME": "gke-1", "RUN_RESOURCE_PREFIX": "r-gke-1", "GOOGLE_CLOUD_PROJECT": "p1", "CLOUDSDK_CORE_PROJECT": "p1", "CLOUDSDK_COMPUTE_REGION": "us-central1"}
+	if fmt.Sprint(env) != fmt.Sprint(want) {
+		t.Errorf("agent env %v, want %v", env, want)
+	}
+	inputs["gcp_project"], inputs["gcp_region"] = "", ""
+	if env, _ := rec.RenderAgentEnv(inputs); env["CLOUDSDK_CORE_PROJECT"] != "" || len(env) != 2 {
+		t.Errorf("no project: agent env %v, want the project and region unset", env)
 	}
 }

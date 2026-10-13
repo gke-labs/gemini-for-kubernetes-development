@@ -114,18 +114,15 @@ sandbox loses nothing but the clone.
 
 ### 4. Runbooks as a recipe
 
-Recipe `runbook`, `task-type: run`, input `phase` (`plan` | `deploy` |
-`teardown`). Its steps are run.sh's functions as named `uses:` steps:
-the runs remote or local-only mode, the `research/runs` branch, the
-runbook instantiated, the target pinned; then the ask; then commit and
-push, and the result. The runbook sandbox's naming, labels, disk and
-ephemeral storage, and the GCP environment stay.
+Recipe `runbook`, `task-type: run`, input `phase` (`plan` | `deploy` | `teardown`). `factory run plan|deploy|teardown` stays the entry point (repo-agent calls it unchanged). It renders the phase's prompt (`run_*.txt`) as the `prompt` input and runs the recipe in the run's sandbox, whose naming, labels, disk, ephemeral storage and GCP environment are unchanged.
 
-**repo-agent:** liveness (`runLivenessScript`) and the preflight prober
-find a run by the `run-*` glob and the `run` prefix of classic task
-directories. They read the run's recorded run (RecordedRun annotations)
-instead, as the board does for plan and fix. Reading a local-only run's
-files (`git show research/runs:…` over kube exec) stays.
+`run.sh` keeps the deterministic parts as functions, appended to the script that runs a recipe's `uses:` steps. Two named steps take the place of its main section:
+- `runbook-prepare` sets up the fork (or local-only), the runs branch, the pinned target and the runbook copy;
+- `runbook-finish` clears the target, makes one commit, pushes it, and writes `result.json`.
+
+Each step is a process of its own, so what the first finds reaches the second through `$TASK_DIR/runbook-state.sh`. A failed ask ends the recipe before `runbook-finish`. `result.json` then says `exitCode: -1`, and nothing is committed (before, it gave the exit code). The agent's shell gets `RUN_NAME`, `RUN_RESOURCE_PREFIX`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` and `CLOUDSDK_COMPUTE_REGION` through `agent-env`; an empty value is left unset.
+
+**repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipe's prefix, `recipe-runbook-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
 
 ### 5. Removing envd
 

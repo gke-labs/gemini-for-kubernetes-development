@@ -1,58 +1,37 @@
-
-set -e
-set -o pipefail
-
-# Run task: plan, deploy or tear down one run, in that run's own
-# sandbox. A run owns everything it needs — runbook.md is the
-# procedure, the scripts are generated from it, the receipts are the
-# test results — all under docs-exploration/agent-runs/<name>/ on the
-# research/runs branch of the member's fork.
+# The runbook recipe's steps (recipe/recipes/runbook.yaml): plan, deploy
+# or tear down one run, in that run's own sandbox. A run owns everything
+# it needs — runbook.md is the procedure, the scripts are generated from
+# it, the receipts are the test results — all under
+# docs-exploration/agent-runs/<name>/ on the research/runs branch of the
+# member's fork.
 #
 # A repository the member cannot fork — an organisation's policy keeps
 # forks of its private repositories out of personal accounts — runs
 # local-only: the same branch, committed in this sandbox and never
 # pushed anywhere. See enterLocalOnly.
 #
-# The difference from the runbook task this replaces is that nothing is
-# shared. One run reads and writes one directory, so there are no
-# siblings to hide, no source document to protect from edits, and no
-# stash to restore after a run is killed mid-phase. Each mode is a
-# single engine invocation.
+# One run reads and writes one directory, so there are no siblings to
+# hide, no source document to protect from edits, and no stash to
+# restore after a run is killed mid-phase. Each phase is one ask.
 #
-# The script owns the deterministic parts (branch, commit, push); the
-# engine owns authoring, execution and judgment.
+# These functions own the deterministic parts (branch, commit, push); the
+# agent owns authoring, execution and judgment. The recipe runs them as
+# two named steps, each a process of its own (recipe_step.sh, after
+# lib.sh): runbookPrepare before the ask and runbookFinish after it,
+# which reads what the first left in $TASK_DIR (saveRunbookState).
 #
-# It expects the following environment variables to be set:
-# - GEMINI_API_KEY or ANTHROPIC_API_KEY (per ENGINE)
-# - GITHUB_TOKEN
-# - REPO_NAME / CLONE_URL / PROMPT_FILE
-# - GITHUB_USER_ID / GITHUB_USER_EMAIL / GITHUB_USER_NAME
-# - RUN_NAME (the run's identity, e.g. deploy-gke-k8s1)
-# - RUN_MODE (plan | deploy | teardown)
-# - RUN_RESOURCE_PREFIX (what this run may name and own in the cloud)
-# - RUN_RUNBOOK (plan only, optional: the runbook this run starts from)
-# - RUN_TARGET_PR (plan only, optional: the pull request to deploy)
-# - RUN_INTENT (plan only, optional: what to build, or what to change)
-# - MODELS
-# - GOOGLE_CLOUD_PROJECT / CLOUDSDK_* when the member configured a project
-
-# The caller passes the PAT as GITHUB_TOKEN; lib.sh's setupGit reads it
-# as GITHUB_USER_TOKEN. Every other task script bridges the two names
-# here, and this one did not — so setupGit wrote an empty oauth_token
-# into gh's hosts.yml and `https://<user>:@github.com/` as the git
-# credential, and every run since was unauthenticated.
-#
-# It failed a long way from the cause: gh treats a hosts.yml entry with
-# no token as a config it must migrate and cannot, so it exits 1 for
-# every subcommand — `gh --version` included — and the run died in
-# checkoutDefaultBranch's `gh repo view` with a message about dbus.
-# Refuse up front instead, where the name of the missing thing is still
-# in scope.
-export GITHUB_USER_TOKEN="${GITHUB_USER_TOKEN:-${GITHUB_TOKEN}}"
-if [ -z "${GITHUB_USER_TOKEN}" ]; then
-    echo "No GitHub token: set GITHUB_TOKEN (or GITHUB_USER_TOKEN)." >&2
-    exit 1
-fi
+# The step reads the recipe's inputs (INPUT_*), set below as the RUN_*
+# names the functions use:
+# - run (the run's identity, e.g. deploy-gke-k8s1)
+# - phase (plan | deploy | teardown)
+# - runbook (plan only, optional: the runbook this run starts from)
+# - target_pr (plan only, optional: the pull request to deploy)
+# and the task's environment: GITHUB_TOKEN, REPO_NAME, CLONE_URL,
+# GITHUB_USER_ID / GITHUB_USER_EMAIL / GITHUB_USER_NAME, TASK_DIR.
+RUN_NAME="${RUN_NAME:-${INPUT_RUN:-}}"
+RUN_MODE="${RUN_MODE:-${INPUT_PHASE:-}}"
+RUN_RUNBOOK="${RUN_RUNBOOK:-${INPUT_RUNBOOK:-}}"
+RUN_TARGET_PR="${RUN_TARGET_PR:-${INPUT_TARGET_PR:-}}"
 
 RUNS_BRANCH="research/runs"
 RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
@@ -396,7 +375,7 @@ function clearTarget {
 # "unknown", not guessed at. Written on every exit, failures included:
 # a run that dies before its receipt is the one worth reading about.
 RESULT_FILE=""
-[ -n "${PROMPT_FILE:-}" ] && RESULT_FILE="$(dirname "${PROMPT_FILE}")/result.json"
+[ -n "${TASK_DIR:-}" ] && RESULT_FILE="${TASK_DIR}/result.json"
 RESULT_VERDICTS=" PLANNED VERIFIED DEPLOYED-UNVERIFIED FAILED BLOCKED TORN-DOWN PARTIAL "
 RESULT_RECEIPTS_BEFORE=""
 RESULT_COMMIT=""
@@ -546,46 +525,85 @@ function commitAndPushRun {
     popd > /dev/null
 }
 
-# Main execution
-trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
-setupGit
-setupGitRepos
-setupRunsRemote
-# HACK: Avoid git lock issues
-sleep 5
-checkoutDefaultBranch
-ensureRunsBranch
-resolveTarget
-snapshotReceipts
-configureGemini
+# Main execution: the recipe's two steps.
 
-case "${RUN_MODE}" in
-plan)
-    # Authors (or revises) runbook.md, then generates the scripts from
-    # it, then writes a PLANNED receipt. Nothing executes: the owner
-    # reviews the prose before anything spends money.
-    #
-    # From a runbook, the copy is what the engine plans from: it makes
-    # the runbook this run's, and verifies it here, like any plan.
-    if [ -n "${RUN_RUNBOOK:-}" ]; then
-        instantiateRunbook
-        runEngine
-        commitAndPushRun "plan from runbook ${RUNBOOK_ORIGIN}${TARGET_PR:+ for pull request #${TARGET_PR}} (nothing executed)"
-        exit 0
+# RUNBOOK_STATE is what runbookPrepare leaves runbookFinish, which runs in
+# a process of its own after the ask: whether the run is local-only, the
+# runbook it started from, the target it pinned, the receipts there were,
+# and what it threw away.
+RUNBOOK_STATE_VARS="RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED"
+
+# Plain assignments, not declare -p's output: sourced inside
+# loadRunbookState, declare would make each one local to it.
+function saveRunbookState {
+    local v
+    for v in ${RUNBOOK_STATE_VARS}; do
+        printf '%s=%q\n' "${v}" "${!v}"
+    done > "${TASK_DIR:?TASK_DIR is not set}/runbook-state.sh"
+}
+
+function loadRunbookState {
+    # shellcheck disable=SC1091
+    source "${TASK_DIR:?TASK_DIR is not set}/runbook-state.sh"
+}
+
+# runbookPrepare is the recipe's runbook-prepare step: the fork (or
+# local-only), the default branch, the runs branch, the target pinned, the
+# receipts noted, and, for a plan from a runbook, the runbook copied in.
+# Its result.json, written until runbookFinish writes the real one, says
+# the phase never finished (exitCode -1): a failed ask ends the recipe
+# before runbookFinish.
+function runbookPrepare {
+    set -e
+    set -o pipefail
+    # The token lib.sh's setupGit reads. Without it setupGit writes an
+    # empty oauth_token into gh's hosts.yml, and gh then exits 1 for every
+    # subcommand, a long way from the cause.
+    if [ -z "${GITHUB_USER_TOKEN:-}" ]; then
+        echo "No GitHub token: set GITHUB_TOKEN (or GITHUB_USER_TOKEN)." >&2
+        exit 1
     fi
-    runEngine
-    commitAndPushRun "plan${TARGET_PR:+ for pull request #${TARGET_PR}} (runbook.md, scripts, PLANNED receipt — nothing executed)"
-    ;;
-deploy)
-    # The owner reviewed the plan and clicked Deploy. The engine repairs
-    # the scripts as it goes and, once, at the end, brings runbook.md
-    # back in line with them — one commit carrying scripts, prose and
-    # receipt together, so a partial push cannot split the story.
-    runEngine
-    commitAndPushRun "deploy (execution receipt; runbook.md reconciled)"
-    ;;
-*)
-    runEngine
-    commitAndPushRun "${RUN_MODE} receipt"
-    ;;
-esac
+    case "${RUN_MODE}" in plan|deploy|teardown) ;; *) echo "phase ${RUN_MODE} is not plan, deploy or teardown" >&2; exit 1 ;; esac
+    [ -n "${RUN_NAME}" ] || { echo "run is not set" >&2; exit 1; }
+    setupRunsRemote
+    # HACK: Avoid git lock issues
+    sleep 5
+    checkoutDefaultBranch
+    ensureRunsBranch
+    resolveTarget
+    snapshotReceipts
+    # From a runbook, the copy is what the agent plans from: it makes the
+    # runbook this run's, and verifies it here, like any plan.
+    if [ "${RUN_MODE}" = "plan" ] && [ -n "${RUN_RUNBOOK:-}" ]; then
+        instantiateRunbook
+    fi
+    saveRunbookState
+    writeResult -1
+}
+
+# runbookFinish is the recipe's runbook-finish step, after the ask:
+# everything the phase left in the run's directory is committed, in one
+# commit — scripts, prose and receipt together, so a partial push cannot
+# split the story — and pushed (not in a local-only run), and result.json
+# says what it concluded.
+function runbookFinish {
+    set -e
+    set -o pipefail
+    loadRunbookState
+    trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
+    case "${RUN_MODE}" in
+    plan)
+        if [ -n "${RUN_RUNBOOK:-}" ]; then
+            commitAndPushRun "plan from runbook ${RUNBOOK_ORIGIN}${TARGET_PR:+ for pull request #${TARGET_PR}} (nothing executed)"
+        else
+            commitAndPushRun "plan${TARGET_PR:+ for pull request #${TARGET_PR}} (runbook.md, scripts, PLANNED receipt — nothing executed)"
+        fi
+        ;;
+    deploy)
+        commitAndPushRun "deploy (execution receipt; runbook.md reconciled)"
+        ;;
+    *)
+        commitAndPushRun "${RUN_MODE} receipt"
+        ;;
+    esac
+}

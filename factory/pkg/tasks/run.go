@@ -5,11 +5,6 @@ import (
 	"fmt"
 )
 
-// GetRunScript returns the in-sandbox run task script.
-func GetRunScript() ([]byte, error) {
-	return getScriptWithDefaults("run.sh")
-}
-
 // RunParams parameterize the run prompts.
 //
 // A run is self-contained: one name, one directory, one procedure. It

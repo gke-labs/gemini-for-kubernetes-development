@@ -91,9 +91,9 @@ func TestRunScriptParses(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	cmd := exec.Command("bash", "-n")
 	cmd.Stdin = strings.NewReader(string(b))
@@ -107,9 +107,9 @@ func TestRunScriptParses(t *testing.T) {
 // moment someone touches the run, rather than by a big-bang migration
 // of live infrastructure.
 func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	for _, want := range []string{
@@ -148,9 +148,9 @@ func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
 // that is not made on both empties the Runs tab of a member whose runs
 // are perfectly intact on a branch nobody looks at.
 func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	if !strings.Contains(s, `RUNS_BRANCH="research/runs"`) {
@@ -248,9 +248,9 @@ func TestThereIsNoDraftMode(t *testing.T) {
 // An empty RUN_NAME would make the legacy path the whole deployments
 // tree, moving every instance at once.
 func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	if !strings.Contains(string(b), `[ -z "${RUN_NAME}" ]`) {
 		t.Error("adoptLegacyInstance does not guard against an empty run name")
@@ -264,9 +264,9 @@ func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
 // rebase: You have unstaged changes", turning a recoverable race into
 // a lost receipt.
 func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	if !strings.Contains(s, "git checkout -f -- .") {
@@ -293,9 +293,9 @@ func TestInstantiateRunbook(t *testing.T) {
 	if err != nil {
 		t.Skip("git required")
 	}
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	legacy := regexp.MustCompile(`(?m)^LEGACY_RUN_DIRS=.*$`).FindString(s)
@@ -556,18 +556,20 @@ func TestInstantiateRunbook(t *testing.T) {
 // A run started from a runbook is always planned: the copy is the
 // plan's starting point, never a plan by itself.
 func TestRunbookIsAlwaysPlanned(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
-	at := strings.Index(s, "instantiateRunbook\n")
-	if at < 0 {
-		t.Fatal("the plan case does not instantiate the runbook")
+	// runbook-prepare copies it in and commits nothing; the ask plans
+	// from it, and only runbook-finish commits (the recipe's order:
+	// recipe.TestBuiltinRunbookRecipe).
+	prepare := funcBody(t, s, "runbookPrepare")
+	if !strings.Contains(prepare, "instantiateRunbook") {
+		t.Fatal("runbookPrepare does not instantiate the runbook")
 	}
-	next := s[at : at+200]
-	if !strings.Contains(next, "runEngine") || strings.Index(next, "runEngine") > strings.Index(next, "commitAndPushRun") {
-		t.Errorf("the copy is committed without the engine planning it:\n%s", next)
+	if strings.Contains(prepare, "commitAndPushRun") {
+		t.Errorf("the copy is committed before the agent plans from it:\n%s", prepare)
 	}
 	for _, gone := range []string{"rewriteParams", "RUNBOOK_FILES"} {
 		if strings.Contains(s, gone) {
@@ -605,9 +607,9 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 	if err != nil {
 		t.Skip("git required")
 	}
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	from := strings.Index(s, "TARGET_PR=\"\"\n")
@@ -799,16 +801,16 @@ func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
 // pull request has to come off the worktree; and resolveTarget has to
 // run before anything reads the checkout.
 func TestTargetIsClearedBeforeEveryCommit(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	fn := s[strings.Index(s, "function commitAndPushRun {"):]
 	if c, a := strings.Index(fn, "clearTarget"), strings.Index(fn, "git add"); c < 0 || c > a {
 		t.Error("commitAndPushRun stages before clearing the target")
 	}
-	if !strings.Contains(s, "ensureRunsBranch\nresolveTarget\nsnapshotReceipts\nconfigureGemini\n") {
+	if !strings.Contains(funcBody(t, s, "runbookPrepare"), "ensureRunsBranch\n    resolveTarget\n    snapshotReceipts\n") {
 		t.Error("resolveTarget does not run right after the runs branch is ready")
 	}
 }
@@ -862,18 +864,19 @@ func TestRunWritesItsResult(t *testing.T) {
 	if err != nil {
 		t.Skip("git required")
 	}
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	from := strings.Index(s, "TARGET_PR=\"\"\n")
-	to := strings.Index(s, "\n# Main execution\n")
-	trapAt := strings.Index(s, "\ntrap ")
-	if from < 0 || to < from || trapAt < to {
-		t.Fatal("run.sh is missing TARGET_PR, the main section or its EXIT trap")
+	to := strings.Index(s, "\n# Main execution")
+	finish := funcBody(t, s, "runbookFinish")
+	trapAt := strings.Index(finish, "trap ")
+	if from < 0 || to < from || trapAt < 0 {
+		t.Fatal("run.sh is missing TARGET_PR, the main section or runbookFinish's EXIT trap")
 	}
-	trap := s[trapAt+1 : trapAt+1+strings.Index(s[trapAt+1:], "\n")]
+	trap := finish[trapAt : trapAt+strings.Index(finish[trapAt:], "\n")]
 	body := s[from:to]
 
 	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
@@ -913,7 +916,7 @@ func TestRunWritesItsResult(t *testing.T) {
 		git(t, ws, "push", "-q", "origin", "research/runs")
 
 		script := "set -e\nset -o pipefail\nREPO_NAME=repo\nRUN_NAME=r1\nRUN_MODE=deploy\nRUNS_BRANCH=research/runs\nTARGET_FILE=target.env\n" +
-			"RUN_DIR=" + runDir + "\nPROMPT_FILE=" + filepath.Join(task, "prompt.txt") + "\n" +
+			"RUN_DIR=" + runDir + "\nTASK_DIR=" + task + "\n" +
 			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) + "\n" + trap + "\nsnapshotReceipts\ncd " + ws + "\n" + engine + "\n"
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = gitEnv
@@ -1006,19 +1009,27 @@ commitAndPushRun deploy`)
 // fork before anything is pushed — and before the engine spends its
 // time, since a run that cannot push has nowhere to put its work.
 func TestRunScriptSetsUpTheForkBeforeTheEngine(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
-	s := string(b)
-	body := s[strings.LastIndex(s, "\nsetupGitRepos\n"):]
-	fork, engine := strings.Index(body, "\nsetupRunsRemote\n"), strings.Index(body, "runEngine")
-	if fork < 0 {
-		t.Fatal("run.sh does not call setupRunsRemote after setupGitRepos")
+	// runbook-prepare, which runs before the ask (the recipe's order),
+	// makes origin the fork before it touches the checkout.
+	prepare := funcBody(t, string(b), "runbookPrepare")
+	fork, checkout := strings.Index(prepare, "setupRunsRemote"), strings.Index(prepare, "checkoutDefaultBranch")
+	if fork < 0 || checkout < fork {
+		t.Errorf("runbookPrepare does not set up the fork first:\n%s", prepare)
 	}
-	if engine >= 0 && engine < fork {
-		t.Error("run.sh runs the engine before setting up the fork")
+}
+
+// funcBody is the body of the shell function name in script.
+func funcBody(t *testing.T, script, name string) string {
+	t.Helper()
+	at := strings.Index(script, "function "+name+" {")
+	if at < 0 {
+		t.Fatalf("no function %s", name)
 	}
+	return script[at : at+strings.Index(script[at:], "\n}\n")+3]
 }
 
 // A repository the organisation will not let the member fork runs
@@ -1027,9 +1038,9 @@ func TestRunScriptSetsUpTheForkBeforeTheEngine(t *testing.T) {
 // must find the branch it left rather than rebuild it from the default
 // branch.
 func TestRunScriptLocalOnly(t *testing.T) {
-	b, err := GetRunScript()
+	b, err := GetRecipeStepScript()
 	if err != nil {
-		t.Fatalf("GetRunScript: %v", err)
+		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
 	for _, want := range []string{
@@ -1048,5 +1059,38 @@ func TestRunScriptLocalOnly(t *testing.T) {
 	local, push := strings.Index(commit, `elif [ -n "${RUNS_LOCAL_ONLY}" ]; then`), strings.Index(commit, `git push origin`)
 	if local < 0 || push < 0 || local > push {
 		t.Error("commitAndPushRun must branch off local-only runs before it pushes")
+	}
+}
+
+// runbook-finish runs in a process of its own after the ask: what
+// runbook-prepare found reaches it through $TASK_DIR, newlines and
+// quotes intact.
+func TestRunbookStateCrossesTheAsk(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	b, err := GetRecipeStepScript()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	from := strings.Index(s, "RUNBOOK_STATE_VARS=")
+	fns := s[from : from+strings.Index(s[from:], "# runbookPrepare is")]
+	task := t.TempDir()
+	script := "TASK_DIR=" + task + "\n" + fns + `
+RUNS_LOCAL_ONLY=1; RUNBOOK_ORIGIN="gke-std"; TARGET_PR=42; TARGET_SHA=abc
+RESULT_RECEIPTS_BEFORE=$'receipt-1.md\nreceipt-2.md'; RESULT_DISCARDED='we"ird path'
+saveRunbookState
+unset RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED
+loadRunbookState
+printf '%s|%s|%s|%s|%s|%s' "$RUNS_LOCAL_ONLY" "$RUNBOOK_ORIGIN" "$TARGET_PR" "$TARGET_SHA" "$RESULT_RECEIPTS_BEFORE" "$RESULT_DISCARDED"
+`
+	out, err := exec.Command(bash, "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "1|gke-std|42|abc|receipt-1.md\nreceipt-2.md|we\"ird path"; string(out) != want {
+		t.Errorf("state after the ask = %q, want %q", out, want)
 	}
 }
