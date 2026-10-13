@@ -359,6 +359,49 @@ describe('Work, all boards', () => {
         // board's own tab reached sideways.
         expect(global.fetch).toHaveBeenCalledWith('/api/research');
     });
+
+    test('a board picker in place of the tabs: All first, need-you badges, the board\'s controls beside it', async () => {
+        const counted = [{ ...boards[0], needsHuman: 2 }, { ...boards[1], needsHuman: 1 }];
+        global.fetch = jest.fn((url) => (url === '/api/boards' ? json(counted) : json([])));
+        await act(async () => { root.render(<Work namespace="alice" />); });
+        await flush();
+        await flush();
+        expect(container.querySelector('.repo-tabs')).toBeNull();
+        expect(container.textContent).not.toContain('need you —');
+        const picker = container.querySelector('button[aria-label="Board"]');
+        expect(picker.textContent).toBe('▣ All boards3 ▾');
+        // All boards has no links, settings or delete: they are a board's.
+        expect(findButton('⚙')).toBeUndefined();
+        await act(async () => { picker.click(); });
+        const options = Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent);
+        expect(options).toEqual(['✓All boards3', 'repo-agent2', 'kubectl1']);
+        // Type to filter, Enter to pick.
+        const filterBox = container.querySelector('input[aria-label="Filter boards"]');
+        await act(async () => {
+            const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            set.call(filterBox, 'kube');
+            filterBox.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent)).toEqual(['kubectl1']);
+        await act(async () => { filterBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+        await flush();
+        expect(container.querySelector('[role="listbox"]')).toBeNull();
+        expect(container.querySelector('button[aria-label="Board"]').textContent).toBe('▣ kubectl1 ▾');
+        expect(container.querySelector('a[title="https://github.com/kubernetes/kubectl"]').textContent).toBe('GitHub');
+        expect(findButton('⚙')).toBeTruthy();
+        expect(findButton('Delete')).toBeTruthy();
+    });
+
+    test('one board opens on itself, with no All', async () => {
+        global.fetch = jest.fn((url) => (url === '/api/boards' ? json([boards[0]]) : json([])));
+        await act(async () => { root.render(<Work namespace="alice" />); });
+        await flush();
+        await flush();
+        const picker = container.querySelector('button[aria-label="Board"]');
+        expect(picker.textContent).toBe('▣ repo-agent ▾');
+        await act(async () => { picker.click(); });
+        expect(Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent)).toEqual(['✓repo-agent']);
+    });
 });
 
 // A board's issues and pull requests are one Work list: what needs you or
@@ -400,8 +443,6 @@ describe('Work, one board', () => {
     const open = async () => {
         global.fetch = serve();
         await act(async () => { root.render(<Work namespace="alice" />); });
-        await settle();
-        await act(async () => { findButton('repo-agent').click(); });
         await settle();
     };
 
@@ -531,7 +572,8 @@ describe('Work, a feed that fails', () => {
         await act(async () => { root.render(<Work namespace="alice" />); });
         await settle();
 
-        expect(container.textContent).toContain('kubernetes: GitHub rejected your token (401 Bad credentials): update it in Settings');
+        // One board opens on itself (no All), which says it plainly.
+        expect(container.textContent).toContain('GitHub rejected your token (401 Bad credentials): update it in Settings');
         expect(container.textContent).not.toContain('Nothing needs you');
         expect(container.textContent).not.toContain('Gathering your boards');
     });
