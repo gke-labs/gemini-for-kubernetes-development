@@ -613,7 +613,11 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage); err != nil || !done {
+	// A repository's run is a research session's, in a sandbox that is
+	// the conversation's, unless the caller made it one of its own (an
+	// agent's, a run's) or it warms the workspace.
+	research := it.IsRepo() && opts.ensure == nil && rec.Name != recipe.WarmRecipe
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage, research); err != nil || !done {
 		return err
 	}
 	if apply.on {
@@ -927,7 +931,7 @@ func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e sp
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta)) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta), research bool) (bool, error) {
 	sandboxName := sb.Name()
 	taskType, side := recipeTaskType(rec, it)
 	update := factorysandbox.UpdateSandboxTaskAnnotation
@@ -939,7 +943,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if it.IsRepo() && task.Revise == "" && rec.Name != recipe.WarmRecipe && rec.Name != recipe.AgentRecipe {
+	if research && task.Revise == "" {
 		// The sandbox is the conversation's from here: the receipt that
 		// keeps EnsureResearchSandbox from taking it for an interrupted
 		// launch's and replacing it.

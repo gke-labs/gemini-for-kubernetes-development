@@ -187,7 +187,9 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 }
 
 // RenderAgentEnv is AgentEnv for a run with inputs: each value
-// rendered against them, as an ask is.
+// rendered against them, as an ask is. One that renders empty is left
+// unset rather than set empty: CLOUDSDK_CORE_PROJECT="" is not "no
+// project" to gcloud but an error.
 func (r *Recipe) RenderAgentEnv(inputs map[string]string) (map[string]string, error) {
 	if len(r.AgentEnv) == 0 {
 		return nil, nil
@@ -199,7 +201,9 @@ func (r *Recipe) RenderAgentEnv(inputs map[string]string) (map[string]string, er
 		if err != nil {
 			return nil, err
 		}
-		out[k] = val
+		if val != "" {
+			out[k] = val
+		}
 	}
 	return out, nil
 }

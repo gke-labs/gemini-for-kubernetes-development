@@ -724,7 +724,7 @@ func clampIntent(intent string) string {
 // found nothing, a stale Running was never healed, and the row stayed
 // disabled with its sandbox exempt from idle-pause.
 func runLivenessScript() string {
-	return `d=$(ls -dt /workspaces/tasks/` + factorycli.RunTaskPrefix + `-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
+	return `d=$(ls -dt /workspaces/tasks/` + factorycli.RunTaskDir + `-* 2>/dev/null | head -1); [ -n "$d" ] || exit 0; ` +
 		`code=$(cat $d/exit_code 2>/dev/null); pid=$(cat $d/pid 2>/dev/null); alive=no; ` +
 		`if [ -z "$code" ] && [ -n "$pid" ]; then ` +
 		`stat=$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1); ` +

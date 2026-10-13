@@ -72,12 +72,18 @@ func LaunchedElsewhere(labels map[string]string) bool {
 	return l != "" && l != LauncherName
 }
 
-// RunTaskPrefix is the task directory prefix `factory run` writes:
-// /workspaces/tasks/run-<ts>/. Everything that looks for a run's
-// in-flight work — the launch preflight, the Runs list's liveness probe
-// — reads it from here, so a rename cannot leave one of them looking
-// under a name nothing writes any more.
+// RunTaskPrefix is the task type a run records on its sandbox
+// (sandbox.gemini.google.com/last-task-*): the run recipes' task-type.
 const RunTaskPrefix = "run"
+
+// RunTaskDir is the task directory prefix `factory run` writes: a run
+// recipe's task (run-plan, run-deploy, run-teardown),
+// /workspaces/tasks/recipe-run-<phase>-<ts>-<hex>/, with the pid,
+// start_time and exit_code files every task has. Everything that looks
+// for a run's in-flight work — the launch preflight, the Runs list's
+// liveness probe — reads it from here, so a rename cannot leave one of
+// them looking under a name nothing writes any more.
+const RunTaskDir = "recipe-run"
 
 // FixSandboxName returns the sandbox name `factory fix` uses for an issue
 // (EnsureFixSandbox in factory/pkg/sandbox: fix-<repo>-<issueNumber>).
@@ -179,7 +185,7 @@ func (r *Runner) StartRun(key string, opts RunOptions) bool {
 		// A stale prefix here would make the preflight look for
 		// in-flight work under a name nothing writes any more, and every
 		// launch would think the sandbox was free.
-		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: RunTaskPrefix,
+		namespace: opts.Namespace, sandbox: opts.SandboxName, prefix: RunTaskPrefix, dir: RunTaskDir,
 	})
 }
 
@@ -317,7 +323,7 @@ type TaskProber interface {
 	// Probe inspects the newest <taskType>-* task in the sandbox against
 	// the sandbox's recorded task state for taskType, correcting stale
 	// annotations as a side effect (the watch IsTaskRunning discipline).
-	Probe(ctx context.Context, namespace, sandboxName, taskType string) (TaskProbe, error)
+	Probe(ctx context.Context, namespace, sandboxName, taskType, taskDir string) (TaskProbe, error)
 }
 
 // TaskProbe is a probe verdict.
@@ -340,7 +346,10 @@ const (
 type preflight struct {
 	namespace string
 	sandbox   string
-	prefix    string
+	// prefix is the task type the invocation records; dir, the prefix
+	// of its task directories.
+	prefix string
+	dir    string
 	// harvest, when set, turns the invocation's output and error into the
 	// result's, running more factory commands if it needs to.
 	harvest func(ctx context.Context, out string, err error) (string, error)
@@ -456,7 +465,7 @@ func (r *Runner) startWithPreflight(key string, args []string, githubToken strin
 	// has had its annotation corrected by Probe and launches normally.
 	if pre != nil && r.Prober != nil && pre.sandbox != "" {
 		probeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix)
+		probe, err := r.Prober.Probe(probeCtx, pre.namespace, pre.sandbox, pre.prefix, pre.dir)
 		cancel()
 		if err == nil && probe.State == ProbeRunning {
 			klog.Infof("factorycli: sandbox %s/%s busy with an in-flight %s task; skipping launch (key %s)", pre.namespace, pre.sandbox, pre.prefix, key)

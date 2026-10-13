@@ -17,7 +17,7 @@ func TestDefaultModels(t *testing.T) {
 
 func TestGetScriptWithDefaults(t *testing.T) {
 	// getScriptWithDefaults replaces the __DEFAULT_MODELS__ placeholder.
-	scriptBytes, err := GetRunScript()
+	scriptBytes, err := GetRecipeStepScript()
 	if err != nil {
 		t.Fatalf("Failed to get run script: %v", err)
 	}

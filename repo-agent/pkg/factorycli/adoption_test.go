@@ -14,7 +14,7 @@ type fakeProber struct {
 	taskType string
 }
 
-func (f *fakeProber) Probe(_ context.Context, _, _, taskType string) (TaskProbe, error) {
+func (f *fakeProber) Probe(_ context.Context, _, _, taskType, _ string) (TaskProbe, error) {
 	f.taskType = taskType
 	return f.probe, nil
 }

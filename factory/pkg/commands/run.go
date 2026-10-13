@@ -6,16 +6,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/envd"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +59,7 @@ func slugifyScenario(s string) string {
 // document other runs also read.
 //
 // A repository the member cannot fork runs local-only: the branch is
-// committed in the run's sandbox and never pushed (run.sh's
+// committed in the run's sandbox and never pushed (lib.sh's
 // enterLocalOnly).
 //
 // --runbook starts a new run from an existing runbook instead of from
@@ -183,122 +180,47 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 	if err != nil {
 		return err
 	}
-	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 	htmlURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
-
-	// Sandbox naming is unchanged from the runbook command on purpose:
-	// live deployments hold their teardown scripts inside these
-	// sandboxes, and renaming would orphan them.
-	fmt.Printf("Ensuring run sandbox for %s/%s (run %s)...\n", owner, repo, name)
-	sandboxName, err := factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, rootFlags.User)
-	if err != nil {
-		return fmt.Errorf("ensuring run sandbox: %w", err)
-	}
-
+	// BYO GCP project: Workload Identity supplies credentials via the
+	// pod's KSA; the secret only carries where to deploy.
 	secret, err := kubeClient.Clientset.CoreV1().Secrets(rootFlags.Namespace).Get(ctx, rootFlags.SecretName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("fetching %s secret in namespace %s: %w (make sure to run 'factory user onboard' first)", rootFlags.SecretName, rootFlags.Namespace, err)
 	}
-	githubLogin := string(secret.Data[constants.KeyGithubLogin])
-	githubEmail := string(secret.Data[constants.KeyGithubEmail])
 
-	promptBytes, err := tasks.RenderRunPrompt(mode, tasks.RunParams{
-		RepoName: repo,
-		HTMLURL:  htmlURL,
-		Name:     name,
-		Mode:     mode,
-		Intent:   intent,
-		Runbook:  runbook,
-		Target:   pr,
-	})
-	if err != nil {
-		return fmt.Errorf("rendering run %s prompt: %w", mode, err)
+	inputs := map[string]string{
+		"run":             name,
+		"resource_prefix": resourcePrefix(repo, name),
+		"gcp_project":     string(secret.Data[constants.KeyGcpProject]),
+		"gcp_region":      string(secret.Data[constants.KeyGcpRegion]),
 	}
-	scriptBytes, err := tasks.GetRunScript()
-	if err != nil {
-		return fmt.Errorf("getting run script: %w", err)
-	}
-
-	fmt.Printf("Connecting to sandbox %s via envd...\n", sandboxName)
-	client, err := envd.Connect(ctx, rootFlags.Namespace, sandboxName)
-	if err != nil {
-		return fmt.Errorf("connecting to sandbox: %w", err)
-	}
-	defer client.Close()
-
-	taskDir := fmt.Sprintf("/workspaces/tasks/run-%s", time.Now().Format("20060102-150405"))
-	promptPath := fmt.Sprintf("%s/agent-prompt.txt", taskDir)
-	scriptPath := fmt.Sprintf("%s/pre-script.sh", taskDir)
-
-	fmt.Println("Writing prompt and script into sandbox...")
-	if err := client.WriteFile(ctx, promptPath, promptBytes); err != nil {
-		return fmt.Errorf("writing prompt: %w", err)
-	}
-	if err := client.WriteFile(ctx, scriptPath, scriptBytes); err != nil {
-		return fmt.Errorf("writing script: %w", err)
-	}
-
-	envMap := map[string]string{
-		"HOME":                       "/workspaces/.home",
-		"GITHUB_TOKEN":               string(secret.Data[constants.KeyGithubToken]),
-		"GEMINI_CLI_TRUST_WORKSPACE": "true",
-		"REPO_OWNER":                 owner,
-		"REPO_NAME":                  repo,
-		"CLONE_URL":                  cloneURL,
-		"PROMPT_FILE":                promptPath,
-		"GITHUB_USER_ID":             githubLogin,
-		"GITHUB_USER_EMAIL":          githubEmail,
-		"GITHUB_USER_NAME":           githubLogin,
-		"RUN_NAME":                   name,
-		"RUN_MODE":                   mode,
-		"RUN_RUNBOOK":                runbook,
-		"RUN_RESOURCE_PREFIX":        resourcePrefix(repo, name),
-	}
-	// The script only needs to know whether changes were asked for: none
-	// means a --runbook run is finished once the copy is.
-	if mode == "plan" {
-		envMap["RUN_INTENT"] = intent
+	switch mode {
+	case "plan":
+		inputs["intent"], inputs["runbook"] = intent, runbook
 		if pr > 0 {
-			envMap["RUN_TARGET_PR"] = strconv.Itoa(pr)
+			inputs["target_pr"] = strconv.Itoa(pr)
 		}
+	case "teardown":
+		inputs["intent"] = intent
 	}
-	// BYO GCP project: Workload Identity supplies credentials via the
-	// pod's KSA; the secret only carries where to deploy.
-	if p := string(secret.Data[constants.KeyGcpProject]); p != "" {
-		envMap["GOOGLE_CLOUD_PROJECT"] = p
-		envMap["CLOUDSDK_CORE_PROJECT"] = p
+	// Sandbox naming is unchanged from the runbook command on purpose:
+	// live deployments hold their teardown scripts inside these
+	// sandboxes, and renaming would orphan them.
+	ensure := func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error) {
+		fmt.Printf("Ensuring run sandbox for %s/%s (run %s)...\n", owner, repo, name)
+		return factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
-	if r := string(secret.Data[constants.KeyGcpRegion]); r != "" {
-		envMap["CLOUDSDK_COMPUTE_REGION"] = r
-	}
-	if err := applyEngineEnv(envMap, secret); err != nil {
+	if err := runRecipeIn(ctx, recipeRunOpts{ensure: ensure}, recipe.RunRecipe(mode), htmlURL, "", "", "", false, applyMode{}, inputs, nil); err != nil {
 		return err
 	}
-
-	cmdStr := fmt.Sprintf("bash -c 'set -o pipefail; bash %s'", scriptPath)
-	// Stamp Running at dispatch so the board reads the truth mid-run;
-	// the prober corrects a stale Running if this invocation dies.
-	_ = factorysandbox.MarkSandboxTaskRunning(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", rootFlags.Engine)
-	if err := client.RunTaskResilient(ctx, cmdStr, envMap, taskDir, rootFlags.Detached, rootFlags.AbortOnCancel); err != nil {
-		_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Failed")
-		return fmt.Errorf("running run task: %w", err)
+	if !rootFlags.Detached {
+		fmt.Printf("Run %s %s finished for %s/%s; recorded on the research/runs branch.\n", name, mode, owner, repo)
 	}
-	if rootFlags.Detached {
-		return nil
-	}
-
-	usagereport.HarvestTask(ctx, client, taskDir, usagereport.Meta{
-		Repo:     owner + "/" + repo,
-		TaskType: "run",
-		Sandbox:  sandboxName,
-	})
-	_ = factorysandbox.UpdateSandboxTaskAnnotation(ctx, kubeClient, rootFlags.Namespace, sandboxName, "run", "Completed")
-	fmt.Printf("Run %s %s finished for %s/%s; recorded on the research/runs branch.\n", name, mode, owner, repo)
 	return nil
 }
 

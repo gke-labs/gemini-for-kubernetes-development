@@ -15,8 +15,8 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 )
 
-// PodTaskProber implements TaskProber against the sandbox pod. envd
-// launches tasks as nohup processes under /workspaces/tasks/<prefix>-<ts>/
+// PodTaskProber implements TaskProber against the sandbox pod. The
+// sandbox's daemon runs tasks as processes under /workspaces/tasks/<dir>-…/
 // with pid / exit_code / output files, and factory stamps the sandbox's
 // last-task annotations — together they distinguish the three verdicts the
 // dispatchTask discipline needs:
@@ -39,7 +39,7 @@ func NewPodTaskProber() (*PodTaskProber, error) {
 	return &PodTaskProber{kube: kube}, nil
 }
 
-func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix string) (TaskProbe, error) {
+func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefix, dir string) (TaskProbe, error) {
 	none := TaskProbe{State: ProbeNone}
 
 	sb, err := p.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, sandboxName, metav1.GetOptions{})
@@ -70,7 +70,7 @@ func (p *PodTaskProber) Probe(ctx context.Context, namespace, sandboxName, prefi
 		return none, nil
 	}
 
-	// One round-trip: newest <prefix>-* dir → running / finished verdict
+	// One round-trip: newest <dir>-* dir → running / finished verdict
 	// plus exit code.
 	// The busy verdict is sandbox-WIDE: one task per sandbox is the
 	// invariant (tasks share a workspace), so ANY live task — regardless
@@ -101,7 +101,7 @@ elif [ -f "$d/pid" ] && is_alive "$d"; then
 else
   echo 137 > "$d/exit_code" 2>/dev/null || true
   echo "dead|"
-fi`, prefix)
+fi`, dir)
 	var stdout, stderr bytes.Buffer
 	if err := sandbox.ExecInPod(ctx, p.kube, *podID, sandbox.ExecOptions{
 		Command: []string{"sh", "-c", script},
