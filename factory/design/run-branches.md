@@ -39,8 +39,18 @@ The agent works in the code checkout, as now, and writes the run's files under `
 - **List runs** with one call: the fork's `heads/runs/` refs (`git/matching-refs`), minus `runs/root`.
 - **Read a run's files** at `runs/<run>`, at the branch root.
 - **Remove a run** by deleting its branch. This keeps today's guard: a run whose receipts say something is deployed is offered teardown, not removal.
-- **Local-only runs:** the sandbox's `git show runs/<run>:<file>` instead of `research/runs:docs-exploration/agent-runs/<run>/<file>`.
+- **Local-only runs:** the sandbox's `git show runs/<run>:<file>` instead of `research/runs:docs-exploration/agent-runs/<run>/<file>`, with the warning label (see Where runs are stored).
 - `research/notes`, the research path's branch, is unaffected.
+
+## Where runs are stored
+
+There are two modes:
+- **The member's fork,** the default.
+- **Local-only,** for a repository the member cannot fork. The run's branch and worktree exist only in the run sandbox's clone, on its disk, and are never pushed. The push guard stays: origin's push URL is unusable. The board reads the files with `git show runs/<run>:<file>` in the sandbox.
+
+A local-only run's records are only as durable as its sandbox: deleting or losing the sandbox loses them, its `teardown.sh` included. The board says so on the run's row: a warning label, "local-only: stored only in this run's sandbox", wherever the run is shown. It isn't a hint in a tooltip.
+
+Nothing else for now. A run branch holds only the run's files, so any repository the member may push to could hold it, for example an org-owned runs repository for repositories that can't be forked. That's left out until a fork plus local-only is not enough.
 
 ## Migration
 
@@ -55,6 +65,6 @@ A PR per run is an addition, not part of this. It would open a draft PR in the f
 
 ## Steps
 
-1. **repo-agent reads both layouts:** runs from `runs/*` branches, and old runs from `research/runs`. Removing a run removes whichever it is. Nothing writes branches yet, so this changes nothing visible.
+1. **repo-agent reads both layouts:** runs from `runs/*` branches, and old runs from `research/runs`. Removing a run removes whichever it is. A local-only run gets its warning label. Nothing writes branches yet, so apart from the label this changes nothing visible.
 2. **factory writes branches:** `run-prepare` and `run-finish` as above, the lazy seeding, `RUN_DIR`, and the prompts naming it. lib.sh loses the shared-branch, overlay and discard code.
 3. **Later:** once no run is left on `research/runs`, delete the legacy read and the seeding.
