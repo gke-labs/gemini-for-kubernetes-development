@@ -156,3 +156,56 @@ func TestLocalRunRowWithoutFilesIsNoRow(t *testing.T) {
 		t.Errorf("row = %v, want nil", row)
 	}
 }
+
+// A run with a branch of its own (runs/<run>, from the empty runs/root)
+// is read from that branch, at its root, and wins over its old copy on
+// research/runs; a run still only on research/runs is read from there.
+func TestLocalRunScriptPrefersTheRunsOwnBranch(t *testing.T) {
+	root := localRunRepo(t)
+	repo := filepath.Join(root, "granule")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("stash", "-u", "-q")
+	git("checkout", "-q", "--orphan", runRootBranch)
+	git("rm", "-rfq", ".")
+	git("commit", "-q", "--allow-empty", "-m", "runs root")
+	git("checkout", "-q", "-b", runBranch("gke-std"))
+	for name, content := range map[string]string{"runbook.md": "# moved\n", "receipt-20261005-0000.md": "TORN-DOWN\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("commit", "-q", "-m", "run(gke-std): moved")
+
+	got := map[string]string{}
+	for _, f := range runLocalRunScript(t, root, "granule", "gke-std") {
+		got[f.name] = f.line
+	}
+	if len(got) != 2 || got["receipt-20261005-0000.md"] != "TORN-DOWN" {
+		t.Errorf("gke-std files = %v, want its branch's two", got)
+	}
+	out, err := exec.Command("sh", "-c", localRunFileScript, "sh", root, "granule", "gke-std", "runbook.md").CombinedOutput()
+	if err != nil || string(out) != "# moved\n" {
+		t.Errorf("runbook.md = %q, %v; want the branch's", out, err)
+	}
+	if files := runLocalRunScript(t, root, "granule", "other"); len(files) != 1 || files[0].name != "runbook.md" {
+		t.Errorf("other files = %v, want its research/runs copy", files)
+	}
+}
+
+// A run that has moved to its own branch is listed once, from the branch.
+func TestMergeRunsPrefersBranches(t *testing.T) {
+	got := mergeRuns(
+		[]gin.H{{"name": "gke-std", "branch": "runs/gke-std"}},
+		[]gin.H{{"name": "gke-std"}, {"name": "old-one"}},
+	)
+	if len(got) != 2 || got[0]["branch"] != "runs/gke-std" || got[1]["name"] != "old-one" {
+		t.Errorf("runs = %v", got)
+	}
+}

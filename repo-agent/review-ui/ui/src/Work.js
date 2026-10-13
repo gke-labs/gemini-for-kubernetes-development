@@ -665,13 +665,15 @@ function verdictBadge(receipt) {
 
 // localOnlyChip marks a run whose records live only in its sandbox:
 // the repository could not be forked, so nothing was pushed, and
-// deleting the sandbox deletes the run — teardown script and all.
+// deleting the sandbox deletes the run — teardown script and all. The
+// warning is the chip's text, not only its tooltip
+// (factory/design/run-branches.md).
 function localOnlyChip(run) {
   if (!run || !run.localOnly) return null;
   return (
     <span style={{ marginLeft: '6px' }}
       title={`Local-only: the repository can't be forked, so this run's records are kept in sandbox ${run.sandbox} and never pushed. Deleting that sandbox deletes them, teardown script included.`}>
-      <Chip text="local-only" color="#b08800" bg="rgba(176,136,0,0.12)" />
+      <Chip text="⚠ local-only: stored only in this run's sandbox" color="#b08800" bg="rgba(176,136,0,0.12)" />
     </span>
   );
 }

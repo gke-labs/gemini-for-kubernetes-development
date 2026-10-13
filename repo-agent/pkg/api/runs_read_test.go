@@ -1,8 +1,17 @@
 package api
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-github/v39/github"
 )
 
 // Deployed-ness decides whether teardown is offered, so the rule has
@@ -135,5 +144,48 @@ func TestFirstNonEmptyPrefersTheNewSpelling(t *testing.T) {
 	}
 	if got := firstNonEmpty("", " "); got != "" {
 		t.Errorf("firstNonEmpty = %q, want empty", got)
+	}
+}
+
+// The runs with a branch of their own are one listing of the fork's
+// runs/* refs, each read at its root; runs/root, the empty commit every
+// run branch starts from, is not a run, and nor is anything deeper.
+func TestScanRunBranches(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/m/r/git/matching-refs/heads/runs/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"ref":"refs/heads/runs/root"},{"ref":"refs/heads/runs/gke-std"},{"ref":"refs/heads/runs/a/b"}]`)
+	})
+	mux.HandleFunc("/repos/m/r/contents/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("ref") != "runs/gke-std" {
+			http.NotFound(w, r)
+			return
+		}
+		switch strings.TrimPrefix(r.URL.Path, "/repos/m/r/contents/") {
+		case "":
+			fmt.Fprint(w, `[{"type":"file","name":"runbook.md","path":"runbook.md"},{"type":"file","name":"receipt-20261005-0000.md","path":"receipt-20261005-0000.md"}]`)
+		case "receipt-20261005-0000.md":
+			fmt.Fprintf(w, `{"type":"file","encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte("VERIFIED (2 resources)\n")))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClient(srv.Client())
+	gh.BaseURL, _ = url.Parse(srv.URL + "/")
+
+	runs := (&Server{}).scanRunBranches(context.Background(), gh, "m", "r")
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want gke-std alone", runs)
+	}
+	row := runs[0]
+	if row["name"] != "gke-std" || row["branch"] != "runs/gke-std" || row["htmlURL"] != "https://github.com/m/r/tree/runs/gke-std" {
+		t.Errorf("row = %v", row)
+	}
+	if rb, _ := row["runbook"].(gin.H); rb == nil || rb["path"] != "runbook.md" {
+		t.Errorf("runbook = %v, want the branch root's", row["runbook"])
+	}
+	if row["deployed"] != true {
+		t.Errorf("deployed = %v, want true from the VERIFIED receipt", row["deployed"])
 	}
 }

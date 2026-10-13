@@ -198,7 +198,7 @@ describe('TryPanel local-only runs', () => {
         await act(async () => { root.render(<TryPanel boardName="myboard" />); });
         await flush();
 
-        expect(container.textContent).toContain('local-only');
+        expect(container.textContent).toContain("local-only: stored only in this run's sandbox");
         const links = Array.from(container.querySelectorAll('a')).map(a => a.getAttribute('href'));
         expect(links).toContain('/api/board/myboard/runbook/instance/gke-std/file/runbook.md');
         expect(links.some(h => h && h.includes('github.com'))).toBe(false);

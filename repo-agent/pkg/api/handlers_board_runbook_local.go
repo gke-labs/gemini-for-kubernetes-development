@@ -20,8 +20,8 @@ import (
 //
 // factory runs a repository the member cannot fork — an organisation's
 // policy keeps forks of its private repositories out of personal
-// accounts — local-only: research/runs is committed in the run's
-// sandbox and never pushed (run.sh's enterLocalOnly). The fork has
+// accounts — local-only: the run's branch is committed in the run's
+// sandbox and never pushed (lib.sh's enterLocalOnly). The fork has
 // nothing to list, so the Runs tab reads such a run from the sandbox
 // instead, and links its files to getLocalRunFile rather than GitHub.
 //
@@ -32,34 +32,47 @@ import (
 // workspacesRoot is where a sandbox keeps its clone, /workspaces/<repo>.
 const workspacesRoot = "/workspaces"
 
-// localRunScript lists one run's files on the sandbox's research/runs
-// branch: one "<name>\t<first line>" per file, the first line filled
-// in only where the row needs it — a receipt's verdict, and target.env
-// (its lines joined with spaces). Prints nothing when there is no such
-// run. Arguments: the workspaces root, the repository, the run.
+// localRunTree is the shell that picks where a run's files are in the
+// sandbox's clone: $t, the revision, and $p, the path prefix in it. The
+// run's own branch, runs/<run>, at its root, else its directory on
+// research/runs, where runs were before; neither, it exits.
+const localRunTree = `g() { git -c safe.directory='*' "$@"; }
+if g rev-parse -q --verify "refs/heads/` + runBranchPrefix + `$3" >/dev/null; then
+  t="` + runBranchPrefix + `$3"; p=""
+elif g rev-parse -q --verify "refs/heads/` + runsBranch + `" >/dev/null; then
+  t="` + runsBranch + `"; p="` + runsPath + `/$3/"
+else
+  exit 0
+fi
+`
+
+// localRunScript lists one run's files in the sandbox's clone (see
+// localRunTree): one "<name>\t<first line>" per file, the first line
+// filled in only where the row needs it — a receipt's verdict, and
+// target.env (its lines joined with spaces). Prints nothing when there
+// is no such run. Arguments: the workspaces root, the repository, the
+// run.
 //
 // safe.directory: the exec does not necessarily run as the user that
 // owns the clone, and git refuses to read a repository it does not own.
 const localRunScript = `cd "$1/$2" 2>/dev/null || exit 0
-g() { git -c safe.directory='*' "$@"; }
-g rev-parse -q --verify "refs/heads/` + runsBranch + `" >/dev/null || exit 0
-d="` + runsPath + `/$3"
-tab="$(printf '\t')"
-g ls-tree "` + runsBranch + `:$d" 2>/dev/null | while IFS="$tab" read -r meta name; do
+` + localRunTree + `tab="$(printf '\t')"
+g ls-tree "$t:$p" 2>/dev/null | while IFS="$tab" read -r meta name; do
   case "$meta" in *" blob "*) ;; *) continue ;; esac
   line=""
   case "$name" in
-    receipt-*) line="$(g show "` + runsBranch + `:$d/$name" | grep -m1 -v '^[[:space:]]*$' | tr -d '\t\r')" ;;
-    ` + runTargetFile + `) line="$(g show "` + runsBranch + `:$d/$name" | tr '\n\t\r' '   ')" ;;
+    receipt-*) line="$(g show "$t:$p$name" | grep -m1 -v '^[[:space:]]*$' | tr -d '\t\r')" ;;
+    ` + runTargetFile + `) line="$(g show "$t:$p$name" | tr '\n\t\r' '   ')" ;;
   esac
   printf '%s\t%s\n' "$name" "$line"
 done
 `
 
-// localRunFileScript prints one file of a run from the sandbox's
-// research/runs branch. Arguments: the workspaces root, the
-// repository, the run, the file.
-const localRunFileScript = `cd "$1/$2" && git -c safe.directory='*' show "` + runsBranch + `:` + runsPath + `/$3/$4"`
+// localRunFileScript prints one file of a run from the sandbox's clone
+// (see localRunTree). Arguments: the workspaces root, the repository,
+// the run, the file.
+const localRunFileScript = `cd "$1/$2" || exit 1
+` + localRunTree + `g show "$t:$p$4"`
 
 // localRunFile is one line of localRunScript's output.
 type localRunFile struct {
@@ -95,7 +108,7 @@ func localRunRow(board, run, sandboxName string, files []localRunFile) gin.H {
 	receipts := []gin.H{}
 	verdicts := map[string]string{}
 	for _, f := range files {
-		fh := gin.H{"name": f.name, "path": runsPath + "/" + run + "/" + f.name, "htmlURL": localRunFileURL(board, run, f.name)}
+		fh := gin.H{"name": f.name, "path": f.name, "htmlURL": localRunFileURL(board, run, f.name)}
 		out = append(out, fh)
 		switch {
 		case strings.HasPrefix(f.name, "receipt-"):

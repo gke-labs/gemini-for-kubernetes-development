@@ -52,6 +52,19 @@ func (s *Server) removeRunbookInstance(c *gin.Context) {
 		return
 	}
 	gh := githubClientForToken(ctx, token)
+	// A run with a branch of its own is removed with it: the branch is
+	// the run's and nothing else's.
+	if _, resp, err := gh.Git.GetRef(ctx, member, repo, "heads/"+runBranch(instance)); err == nil {
+		if _, derr := gh.Git.DeleteRef(ctx, member, repo, "heads/"+runBranch(instance)); derr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed deleting branch " + runBranch(instance), "details": derr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "removed", "instance": instance, "branch": runBranch(instance)})
+		return
+	} else if resp == nil || resp.StatusCode != http.StatusNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "checking for branch " + runBranch(instance), "details": err.Error()})
+		return
+	}
 	ref := runsBranch
 	opts := &github.RepositoryContentGetOptions{Ref: ref}
 	// Every layout the list reads, not the one this handler was written
@@ -301,7 +314,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 		// runbook-deployments/<instance>/ with the procedure in a
 		// shared document — because those deployments are live and
 		// their teardown has to stay reachable until each is adopted.
-		instances = s.scanRunDirectories(ctx, gh, member, repo, ref)
+		instances = mergeRuns(s.scanRunBranches(ctx, gh, member, repo), s.scanRunDirectories(ctx, gh, member, repo, ref))
 		sort.Slice(instances, func(i, j int) bool { return instances[i]["name"].(string) < instances[j]["name"].(string) })
 		out["instances"] = instances
 		// What a new run can start from, besides the runs above.
@@ -489,6 +502,19 @@ const (
 	notesBranch = "research/notes"
 )
 
+// A run's own branch (factory/design/run-branches.md): runs/<run> on the
+// member's fork, holding only the run's files, at its root. Every run
+// branch starts from runRootBranch, an empty commit, which is not a run.
+// research/runs is where runs were before; a run is read from there
+// until it has a branch of its own.
+const (
+	runBranchPrefix = "runs/"
+	runRootBranch   = "runs/root"
+)
+
+// runBranch is the branch a run named run lives on.
+func runBranch(run string) string { return runBranchPrefix + run }
+
 // deployedVerdicts are the receipt verdicts that settle whether
 // infrastructure exists. PLANNED is absent on purpose: planning does
 // not deploy anything, and a re-plan of a live run must not make it
@@ -527,7 +553,7 @@ func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, memb
 			if entry.GetType() != "dir" {
 				continue
 			}
-			row := s.readRunDirectory(ctx, gh, member, repo, entry, ref)
+			row := s.readRunFiles(ctx, gh, member, repo, entry.GetName(), entry.GetPath(), entry.GetHTMLURL(), ref)
 			row["legacy"] = base != runsPath
 			if _, seen := byName[entry.GetName()]; !seen {
 				order = append(order, entry.GetName())
@@ -542,11 +568,58 @@ func (s *Server) scanRunDirectories(ctx context.Context, gh *github.Client, memb
 	return out
 }
 
-// readRunDirectory turns one run's directory into a row: its files,
-// the newest receipt for display, and whether anything is deployed.
-func (s *Server) readRunDirectory(ctx context.Context, gh *github.Client, member, repo string, entry *github.RepositoryContent, ref *github.RepositoryContentGetOptions) gin.H {
-	row := gin.H{"name": entry.GetName(), "htmlURL": entry.GetHTMLURL(), "files": []gin.H{}}
-	_, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, entry.GetPath(), ref)
+// scanRunBranches reads the runs that have a branch of their own: one
+// call lists the fork's runs/* branches, and each is read at its root.
+func (s *Server) scanRunBranches(ctx context.Context, gh *github.Client, member, repo string) []gin.H {
+	var out []gin.H
+	opts := &github.ReferenceListOptions{Ref: "heads/" + runBranchPrefix, ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		refs, resp, err := gh.Git.ListMatchingRefs(ctx, member, repo, opts)
+		if err != nil {
+			return out
+		}
+		for _, r := range refs {
+			branch := strings.TrimPrefix(r.GetRef(), "refs/heads/")
+			run := strings.TrimPrefix(branch, runBranchPrefix)
+			if branch == runRootBranch || run == "" || strings.Contains(run, "/") {
+				continue
+			}
+			htmlURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", member, repo, branch)
+			row := s.readRunFiles(ctx, gh, member, repo, run, "", htmlURL, &github.RepositoryContentGetOptions{Ref: branch})
+			row["branch"] = branch
+			out = append(out, row)
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return out
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// mergeRuns is the runs with a branch of their own, then those still on
+// research/runs that have none: a run that has moved to its branch is
+// read from there, and its old copy must not shadow it.
+func mergeRuns(branches, old []gin.H) []gin.H {
+	out := append([]gin.H{}, branches...)
+	moved := map[string]bool{}
+	for _, r := range branches {
+		moved[r["name"].(string)] = true
+	}
+	for _, r := range old {
+		if !moved[r["name"].(string)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// readRunFiles turns one run's files, in dir at ref (a directory of
+// research/runs, or "", the root of the run's own branch), into a row:
+// its files, the newest receipt for display, and whether anything is
+// deployed.
+func (s *Server) readRunFiles(ctx context.Context, gh *github.Client, member, repo, name, dir, htmlURL string, ref *github.RepositoryContentGetOptions) gin.H {
+	row := gin.H{"name": name, "htmlURL": htmlURL, "files": []gin.H{}}
+	_, sub, _, serr := gh.Repositories.GetContents(ctx, member, repo, dir, ref)
 	if serr != nil {
 		return row
 	}
