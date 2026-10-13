@@ -309,10 +309,10 @@ function App() {
   return (
     <div className="App">
       <header className="App-header" style={{ position: 'relative', justifyContent: 'flex-end' }}>
-        {/* Compact bar: the Work | Sessions toggle, centered brand,
-            everything else behind ☰. */}
+        {/* Compact bar: the Work | Sessions (| Overseer, for admins)
+            toggle, centered brand, everything else behind ☰. */}
         <nav aria-label="View" style={{ marginRight: 'auto', display: 'flex', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
-          {[['work', 'Work'], ['sessions', 'Sessions']].map(([v, label]) => (
+          {[['work', 'Work'], ['sessions', 'Sessions'], ...(isAdmin ? [['overseer', 'Overseer']] : [])].map(([v, label]) => (
             <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
               style={{
                 border: 'none', padding: '6px 14px', cursor: 'pointer', font: 'inherit', fontSize: '14px',
@@ -341,7 +341,6 @@ function App() {
                   </div>
                 )}
                 {[
-                  ...(isAdmin ? [{ label: 'Overseer', run: () => setView('overseer') }] : []),
                   { label: 'Usage', run: () => setView('usage') },
                   { label: 'Feedback', run: handleFeedbackClick },
                   { label: 'Settings', run: () => setView('settings') },
@@ -382,7 +381,7 @@ function App() {
 
       <div hidden={view !== 'work'}><Work namespace={user || 'default'} active={view === 'work'} /></div>
       {sessionsSeen && <div hidden={view !== 'sessions'}><Sessions namespace={user || 'default'} active={view === 'sessions'} /></div>}
-      {view === 'overseer' && <Overseer onBack={() => setView('work')} getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
+      {view === 'overseer' && <Overseer getSandboxStatusClass={getSandboxStatusClass} namespace={user || 'default'} />}
       {view === 'usage' && <TokenUsage onBack={() => setView('work')} />}
       {view === 'settings' && <Settings onBack={() => setView('work')} />}
 

@@ -159,7 +159,7 @@ describe('the Overseer page', () => {
             if (url === '/api/overseers/kcc/work') return Promise.resolve({ ok: true, json: () => Promise.resolve(FEED) });
             return Promise.resolve({ ok: true, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
         });
-        await act(async () => { root.render(<Overseer onBack={() => {}} />); });
+        await act(async () => { root.render(<Overseer />); });
         await flush();
         await flush();
         const tabs = Array.from(container.querySelectorAll('button')).map(b => b.textContent.trim());

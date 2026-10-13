@@ -17,6 +17,7 @@ let container;
 let root;
 
 beforeEach(() => {
+    global.admin = false;
     jest.useFakeTimers();
     window.history.replaceState(null, '', '/');
     container = document.createElement('div');
@@ -24,7 +25,7 @@ beforeEach(() => {
     root = createRoot(container);
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     global.fetch = jest.fn((url) => {
-        if (url === '/api/auth/status') return json({ user: 'alice', isAdmin: false });
+        if (url === '/api/auth/status') return json({ user: 'alice', isAdmin: global.admin });
         if (url === '/api/auth/providers') return json({ github: true });
         if (url === '/api/settings') return json({ gemini_api_key_set: true });
         if (url === '/api/boards') return json([{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k' }]);
@@ -78,6 +79,23 @@ describe('the Work | Sessions toggle', () => {
         expect(fetched()).toContain('/api/board/g4k/work');
     });
 
+    test('Overseer is a third choice, for admins only', async () => {
+        await render();
+        expect(toggle('Overseer')).toBeUndefined();
+        act(() => root.unmount());
+        root = createRoot(container);
+        global.admin = true;
+        await render();
+        expect(Array.from(container.querySelectorAll('nav[aria-label="View"] button')).map(b => b.textContent)).toEqual(['Work', 'Sessions', 'Overseer']);
+        await act(async () => { toggle('Overseer').click(); });
+        await flush();
+        expect(toggle('Overseer').getAttribute('aria-pressed')).toBe('true');
+        expect(fetched()).toContain('/api/overseers');
+        expect(container.textContent).not.toContain('Back to Dashboard');
+        // Work stays mounted behind it.
+        expect(container.querySelector('button[aria-label="Board"]').closest('[hidden]')).not.toBeNull();
+    });
+
     test('the menu no longer lists Work or Sessions', async () => {
         await render();
         await act(async () => { container.querySelector('button[title="Menu"]').click(); });
@@ -86,5 +104,6 @@ describe('the Work | Sessions toggle', () => {
         expect(items).toContain('Usage');
         expect(items).not.toContain('Work');
         expect(items).not.toContain('Sessions');
+        expect(items).not.toContain('Overseer');
     });
 });
