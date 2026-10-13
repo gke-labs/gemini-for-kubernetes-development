@@ -11,16 +11,14 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
-// sessionsTestServer serves GET /api/sessions over sandboxes and pods,
-// with the member's board myboard (boardCR) on test/repo.
+// sessionsTestServer serves GET /api/sessions (researchTestServer's) over
+// sandboxes and pods, with the member's board myboard (boardCR) on
+// test/repo.
 func sessionsTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstructured.Unstructured, pods ...*corev1.Pod) *gin.Engine {
 	t.Helper()
 	objs := []runtime.Object{}
@@ -31,9 +29,6 @@ func sessionsTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(), boardCR(), v1.CreateOptions{}); err != nil {
 		t.Fatalf("seed board: %v", err)
 	}
-	server := &Server{K8sManager: &k8s.Manager{Client: dyn, Clientset: kubernetesfake.NewClientset(objs...)}}
-	server.Auth = &auth.Authenticator{K8sManager: server.K8sManager}
-	r.GET("/api/sessions", server.getSessions)
 	return r
 }
 

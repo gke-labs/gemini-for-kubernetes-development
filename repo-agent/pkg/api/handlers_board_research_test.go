@@ -251,3 +251,36 @@ func TestStartResearchSessionRejectsAnUnknownKickoff(t *testing.T) {
 		}
 	}
 }
+
+// The engine picked in the Sessions box rides on the click; none leaves
+// it to the board, and one the session daemon cannot run is refused.
+func TestStartResearchSessionCarriesThePickedEngine(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"kind":"topic","topic":"q","engine":"antigravity"}`: "antigravity",
+		`{"kind":"topic","topic":"q","engine":"gemini"}`:      "gemini",
+		`{"kind":"topic","topic":"q"}`:                        "",
+	} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("%s: expected 202, got %d: %s", body, w.Code, w.Body.String())
+		}
+		if got := theRequest(t, dyn, "alice").Spec.Research.Engine; got != want {
+			t.Errorf("%s: engine = %q, want %q", body, got, want)
+		}
+	}
+	for _, body := range []string{`{"kind":"topic","topic":"q","engine":"claude"}`, `{"kind":"topic","topic":"q","engine":"vim"}`} {
+		_, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
+		req, _ := http.NewRequest("POST", "/board/myboard/research", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", body, w.Code)
+		}
+		if filed := filedRequests(t, dyn, "alice"); len(filed) != 0 {
+			t.Errorf("%s: a refused click must file nothing, got %+v", body, filed)
+		}
+	}
+}

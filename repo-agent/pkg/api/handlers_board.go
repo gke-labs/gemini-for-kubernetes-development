@@ -316,6 +316,7 @@ func (s *Server) getBoards(c *gin.Context) {
 		if s.hasPushPermission(c.Request.Context(), namespace, sessionUser, repoURL) {
 			role = "maintainer"
 		}
+		engine, _, _ := unstructured.NestedString(item.Object, "spec", "sandbox", "engine")
 		boards = append(boards, models.Board{
 			Name:       item.GetName(),
 			Namespace:  item.GetNamespace(),
@@ -323,6 +324,7 @@ func (s *Server) getBoards(c *gin.Context) {
 			NeedsHuman: int(needsHuman),
 			Active:     int(active),
 			Role:       role,
+			Engine:     engineOrDefault(engine),
 		})
 	}
 	c.JSON(http.StatusOK, boards)

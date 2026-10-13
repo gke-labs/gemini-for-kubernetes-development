@@ -38,7 +38,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -169,11 +168,6 @@ type researchSandboxView struct {
 	Pod *corev1.Pod `json:"-"`
 }
 
-// acpSession is the conversation's id on the daemon: the recipe's task.
-func (v researchSandboxView) acpSession() string {
-	return v.Task
-}
-
 // researchClient reaches the daemon's task sessions, which host the
 // conversation. False when the sandbox's image keeps none.
 func (s *Server) researchClient(ctx context.Context, pod *corev1.Pod) (*acpd.Client, bool) {
@@ -217,76 +211,6 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		view.Paused = true
 	}
 	return view, true
-}
-
-// getResearchSessions lists the member's research sessions: every
-// research sandbox, plus the ones that have been asked for and do not
-// exist yet.
-//
-// The pending rows matter more here than in any other list. A sandbox
-// is minutes away — image pull, PVC, clone — and a member who clicked
-// "overview" and saw nothing appear would reasonably click again, which
-// costs another sandbox and another engine.
-func (s *Server) getResearchSessions(c *gin.Context) {
-	ctx := c.Request.Context()
-	namespace := s.Auth.GetNamespaceFromContext(c)
-
-	list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: researchTypeLabel + "=" + researchType,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list research sandboxes", "details": err.Error()})
-		return
-	}
-
-	running := s.runningSandboxPods(ctx, namespace)
-	views := []researchSandboxView{}
-	exists := map[string]bool{}
-	for i := range list.Items {
-		if view, ok := researchViewFromSandbox(&list.Items[i]); ok {
-			view.Pod = running[view.Sandbox]
-			view.Starting = !view.Paused && view.Pod == nil
-			views = append(views, view)
-			exists[view.SessionID] = true
-		}
-	}
-	s.attachResearchLiveState(ctx, views)
-	requested, claimed := s.requestedResearchSessions(ctx, namespace, exists)
-	views = append(views, requested...)
-	// Fill an untitled sandbox from the claim that asked for it.
-	//
-	// `factory recipe research` creates the Sandbox object early and then
-	// clones for minutes, while the title is stamped onto it by the
-	// controller in the pass that first notices it exists. Those are
-	// different moments, and between them the row has a sandbox (so the
-	// claim is hidden as served) and no annotation (so it has no name) —
-	// which is how a session that was just called "Changes in the last
-	// 2 weeks" turns into "untitled" and back again a minute later.
-	for i := range views {
-		if views[i].Title == "" {
-			views[i].Title = claimed[views[i].SessionID]
-		}
-	}
-	// Newest first: a session list is read from the top, and the one you
-	// just started is the one you want.
-	sort.Slice(views, func(i, j int) bool {
-		if views[i].CreatedAt != views[j].CreatedAt {
-			return views[i].CreatedAt > views[j].CreatedAt
-		}
-		return views[i].Sandbox < views[j].Sandbox
-	})
-	// forkOwner is the member's GitHub login, which is also the owner of
-	// the fork research notes are pushed to. The panel needs it only to
-	// build the footnote link to that branch; it is not per-session.
-	//
-	// The branch name is sent rather than written into the page, so the
-	// Go constant the write path has to agree with is the only copy of
-	// the string.
-	c.JSON(http.StatusOK, gin.H{
-		"sessions":    views,
-		"forkOwner":   s.Auth.GetUserFromContext(c),
-		"notesBranch": notesBranch,
-	})
 }
 
 // requestedResearchSessions reads the standing research claims off the
@@ -385,85 +309,16 @@ func (s *Server) findResearchSandbox(ctx context.Context, namespace, sessionID s
 	return researchSandboxView{}, false, nil
 }
 
-// runningSandboxPods maps the sandboxes in the namespace that have a
-// running pod behind them to that pod's IP.
-//
-// One list for the whole page rather than a lookup per row: a member
-// with a dozen sessions should not cost a dozen pod lists every ten
-// seconds. A failure is reported as "nothing is running", which reads as
-// starting — the honest answer when the pods cannot be seen at all.
-//
-// The pod comes back rather than a bare yes, because the caller's next
-// question is always "so what is it doing", and that is asked of the pod.
-// Re-deriving it per row would be researchPod once per session — the
-// list this function exists to avoid.
-func (s *Server) runningSandboxPods(ctx context.Context, namespace string) map[string]*corev1.Pod {
-	running := map[string]*corev1.Pod{}
-	pods, err := s.K8sManager.Clientset.CoreV1().Pods(namespace).List(ctx, v1.ListOptions{LabelSelector: "sandbox"})
-	if err != nil {
-		klog.V(2).Infof("research: cannot list sandbox pods in %s: %v", namespace, err)
-		return running
-	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
-			running[pod.Labels["sandbox"]] = pod
-		}
-	}
-	return running
-}
-
-// researchLiveTimeout bounds the whole fan-out below.
+// researchLiveTimeout bounds the Sessions feed's fan-out over the running
+// pods (attachSessionLiveState) as a whole.
 //
 // Short because this is a poll, not a page load: the list refreshes every
 // ten seconds, so a pod that cannot answer in a couple of seconds has
 // nothing to say that will not still be true next time. The cost of
 // waiting longer is paid by every other row, which is the wrong trade —
 // a member with nine healthy sessions and one wedged pod should not have
-// the whole rail stall on the wedged one.
+// the whole list stall on the wedged one.
 const researchLiveTimeout = 2 * time.Second
-
-// attachResearchLiveState fills in what each session's engine is doing,
-// for the rows that have a running pod to ask.
-//
-// This is the one place the list leaves Kubernetes. It is worth it
-// because the alternative is a rail that says "up" for everything, where
-// "up" means the pod is running — which is not a question anybody has.
-// What they want to know is which conversation is working, which has
-// stopped to ask them something, and which is simply sitting there.
-//
-// Asked in parallel and bounded as a whole. One request per running pod
-// sounds like a lot until you count them: it is one small HTTP call
-// inside the cluster per session the member actually has open, every ten
-// seconds, and they are concurrent, so the list costs the slowest pod
-// rather than the sum of all of them.
-//
-// Nothing here can fail the list. A pod that does not answer gets its
-// reason recorded on its own row and the rest of the page renders — the
-// sandboxes are the durable thing, and they are still there whether or
-// not a daemon inside one is talking.
-func (s *Server) attachResearchLiveState(ctx context.Context, views []researchSandboxView) {
-	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
-	defer cancel()
-
-	var wg sync.WaitGroup
-	for i := range views {
-		if views[i].Pod == nil || views[i].Legacy {
-			continue
-		}
-		wg.Add(1)
-		// By pointer into the slice: these are distinct elements, so the
-		// writes do not race, and the alternative — collecting into a map
-		// and merging — is a second pass for nothing.
-		go func(view *researchSandboxView) {
-			defer wg.Done()
-			live := s.probeTaskSession(ctx, view.Pod, view.acpSession())
-			view.Live, view.Busy, view.Waiting = live.Live, live.Busy, live.Waiting
-			view.Retrying, view.Held, view.Unreachable = live.Retrying, live.Held, live.Unreachable
-		}(&views[i])
-	}
-	wg.Wait()
-}
 
 // sessionLive is what a task session's engine is doing, as its pod's
 // daemon answers (researchSandboxView's fields of the same names).

@@ -27,6 +27,7 @@ package repoboard
 // board.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
@@ -83,6 +84,8 @@ type researchClaim struct {
 	// member is minutes and probably a closed tab away by the time
 	// anything can be said to the engine.
 	kickoff research.Kickoff
+	// engine is the agent the member picked, empty for the board's.
+	engine string
 }
 
 // researchKey is the runner's single-flight key. The sandbox name
@@ -174,9 +177,10 @@ func (r *Reconciler) ensureResearchClaims(ctx context.Context, work *workState, 
 		opts := r.recipeOptions(work, "research", claim.member, "", fmt.Sprintf("https://github.com/%s/%s", work.owner, work.repo), token, factorycli.ResearchRunName(claim.sessionID))
 		opts.Session, opts.Detached = claim.sessionID, true
 		opts.Inputs = map[string]string{"topic": topic}
-		// Read at launch, like a task's engine: switching the board
-		// changes the next session, not the ones already running.
-		opts.Engine = acpd.ResearchEngineFor(boardEngine(work.board))
+		// The member's pick, else the board's, read at launch like a
+		// task's engine: switching the board changes the next session,
+		// not the ones already running.
+		opts.Engine = acpd.ResearchEngineFor(cmp.Or(claim.engine, boardEngine(work.board)))
 		// A cold image pull and a fresh PVC, and short enough that a
 		// wedged create becomes a failure rather than a permanent
 		// "starting". Deliberately no secret: mounting the member secret
