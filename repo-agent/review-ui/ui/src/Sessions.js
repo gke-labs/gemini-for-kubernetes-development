@@ -497,8 +497,9 @@ function SessionStrip({ row, rows, onOpen, onCard }) {
   );
 }
 
-// useSessions polls /api/sessions.
-function useSessions() {
+// useSessions polls /api/sessions while active (the view shown), and
+// reads it again the moment it is shown.
+function useSessions(active) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const load = useCallback(() => {
@@ -508,15 +509,19 @@ function useSessions() {
       .catch(err => setError(`could not load sessions: ${err}`));
   }, []);
   useEffect(() => {
+    if (!active) return undefined;
     load();
     const t = setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, active]);
   return { rows, error, load };
 }
 
-export default function Sessions({ namespace }) {
-  const { rows, error, load } = useSessions();
+// active is whether Sessions is the view shown: hidden behind Work it
+// stays mounted, keeping the open session and the list, but polls
+// nothing and leaves the keyboard alone.
+export default function Sessions({ namespace, active = true }) {
+  const { rows, error, load } = useSessions(active);
   const [boards, setBoards] = useState([]);
   const [selected, setSelected] = useState(() => (sessionsRoute() || { key: '' }).key);
   // pending is the row a Start just asked for, until the feed lists it.
@@ -553,7 +558,7 @@ export default function Sessions({ namespace }) {
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target && e.target.tagName) || '';
-      if (e.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable)) return;
+      if (!active || e.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.target && e.target.isContentEditable)) return;
       if (e.key === 'Escape' && open) { select(''); return; }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       if (!flat.length) return;
@@ -564,7 +569,13 @@ export default function Sessions({ namespace }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [flat, selected, open, select]);
+  }, [flat, selected, open, select, active]);
+
+  // Shown again: the URL says which session is open, as it did before.
+  useEffect(() => {
+    if (active) window.history.replaceState(null, '', hashOf(selected));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const onDrag = (e) => {
     e.preventDefault();

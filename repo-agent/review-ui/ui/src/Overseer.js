@@ -63,7 +63,7 @@ export const formatTriggerReason = (reason) => {
     }
 };
 
-const Overseer = ({ onBack, namespace: userNamespace }) => {
+const Overseer = ({ namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
@@ -384,7 +384,6 @@ const Overseer = ({ onBack, namespace: userNamespace }) => {
                             </p>
                         )}
                     </div>
-                    <button className="btn" onClick={onBack} style={{ padding: '8px 16px', fontWeight: '500' }}>Back to Dashboard</button>
                 </div>
 
                 {/* Sub-Tab Navigation Bar */}
