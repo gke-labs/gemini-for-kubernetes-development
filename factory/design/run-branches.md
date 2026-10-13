@@ -44,9 +44,10 @@ The agent works in the code checkout, as now, and writes the run's files under `
 
 ## Where runs are stored
 
-There are two modes:
-- **The member's fork,** the default.
-- **Local-only,** for a repository the member cannot fork. The run's branch and worktree exist only in the run sandbox's clone, on its disk, and are never pushed. The push guard stays: origin's push URL is unusable. The board reads the files with `git show runs/<run>:<file>` in the sandbox.
+The modes aren't exclusive: a run is always stored in its sandbox, and also on the fork when there is one.
+- **Always, in the sandbox.** The run's branch and its worktree are in the run sandbox's clone, on its disk. Every phase reads and writes them there: deploy and teardown execute the scripts in the worktree.
+- **Both: also on the member's fork,** the default. `run-finish` pushes the branch there after every phase, so the fork has the durable copy. The board reads it from the fork. If the push fails, the phase fails, and the commit stays in the sandbox to be pushed by the next phase.
+- **Local only,** for a repository the member cannot fork. Nothing is pushed. The push guard stays: origin's push URL is unusable. The board reads the files with `git show runs/<run>:<file>` in the sandbox.
 
 A local-only run's records are only as durable as its sandbox: deleting or losing the sandbox loses them, its `teardown.sh` included. The board says so on the run's row: a warning label, "local-only: stored only in this run's sandbox", wherever the run is shown. It isn't a hint in a tooltip.
 
