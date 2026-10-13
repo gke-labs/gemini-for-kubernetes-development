@@ -13,7 +13,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/tasks"
 	"github.com/spf13/cobra"
 )
 
@@ -183,19 +182,6 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 	}
 	htmlURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 
-	promptBytes, err := tasks.RenderRunPrompt(mode, tasks.RunParams{
-		RepoName: repo,
-		HTMLURL:  htmlURL,
-		Name:     name,
-		Mode:     mode,
-		Intent:   intent,
-		Runbook:  runbook,
-		Target:   pr,
-	})
-	if err != nil {
-		return fmt.Errorf("rendering run %s prompt: %w", mode, err)
-	}
-
 	kubeClient, err := clients.NewKubernetesClient()
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
@@ -208,18 +194,19 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 	}
 
 	inputs := map[string]string{
-		"phase":           mode,
 		"run":             name,
-		"prompt":          string(promptBytes),
 		"resource_prefix": resourcePrefix(repo, name),
 		"gcp_project":     string(secret.Data[constants.KeyGcpProject]),
 		"gcp_region":      string(secret.Data[constants.KeyGcpRegion]),
 	}
-	if mode == "plan" {
-		inputs["runbook"] = runbook
+	switch mode {
+	case "plan":
+		inputs["intent"], inputs["runbook"] = intent, runbook
 		if pr > 0 {
 			inputs["target_pr"] = strconv.Itoa(pr)
 		}
+	case "teardown":
+		inputs["intent"] = intent
 	}
 	// Sandbox naming is unchanged from the runbook command on purpose:
 	// live deployments hold their teardown scripts inside these
@@ -228,7 +215,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 		fmt.Printf("Ensuring run sandbox for %s/%s (run %s)...\n", owner, repo, name)
 		return factorysandbox.EnsureRunbookSandbox(ctx, kubeClient, rootFlags.Namespace, repo, name, name, cloneURL, htmlURL, rootFlags.Image, rootFlags.DiskSize, rootFlags.StorageClass, rootFlags.EphemeralStorage, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	}
-	if err := runRecipeIn(ctx, recipeRunOpts{ensure: ensure}, recipe.RunbookRecipe, htmlURL, "", "", "", false, applyMode{}, inputs, nil); err != nil {
+	if err := runRecipeIn(ctx, recipeRunOpts{ensure: ensure}, recipe.RunRecipe(mode), htmlURL, "", "", "", false, applyMode{}, inputs, nil); err != nil {
 		return err
 	}
 	if !rootFlags.Detached {

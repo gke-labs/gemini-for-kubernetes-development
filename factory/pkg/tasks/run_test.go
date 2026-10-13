@@ -10,81 +10,11 @@ import (
 	"testing"
 )
 
-func renderRun(t *testing.T, mode string, p RunParams) string {
-	t.Helper()
-	b, err := RenderRunPrompt(mode, p)
-	if err != nil {
-		t.Fatalf("RenderRunPrompt(%s): %v", mode, err)
-	}
-	return string(b)
-}
-
-func TestRunPromptsCarryTheRunDirectory(t *testing.T) {
-	for _, mode := range []string{"plan", "deploy", "teardown"} {
-		got := renderRun(t, mode, RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-		if want := "docs-exploration/agent-runs/deploy-gke-k8s1/"; !strings.Contains(got, want) {
-			t.Errorf("%s prompt does not name %s", mode, want)
-		}
-		// A run owns one directory. Any mention of the old shared
-		// runbook tree means the split we just removed leaked back in.
-		if strings.Contains(got, "docs-exploration/runbooks/") {
-			t.Errorf("%s prompt still points at the shared runbook tree", mode)
-		}
-	}
-}
-
 // The order is the contract: prose first, shell transcribed from it.
 // Reversed, runbook.md becomes a summary of the scripts and drifts.
-func TestPlanPromptOrdersProseBeforeShell(t *testing.T) {
-	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-	md, sh := strings.Index(got, "runbook.md"), strings.Index(got, "deploy.sh")
-	if md < 0 || sh < 0 {
-		t.Fatalf("plan prompt must name both runbook.md and deploy.sh")
-	}
-	if md > sh {
-		t.Error("plan prompt introduces deploy.sh before runbook.md")
-	}
-	if !strings.Contains(got, "revise it rather than replacing it") {
-		t.Error("plan prompt must tell a re-plan to revise, not regenerate — otherwise deploy-learned corrections are lost")
-	}
-}
-
 // The deploy phase is the only thing that corrects the procedure, and
 // it must do so whether or not the deploy worked: the scripts changed,
 // so the prose that describes them has to change too.
-func TestDeployPromptReconcilesTheProcedure(t *testing.T) {
-	got := renderRun(t, "deploy", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-	for _, want := range []string{"RECONCILE runbook.md", "whether the deploy succeeded or failed", "Procedure amended"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("deploy prompt missing %q", want)
-		}
-	}
-	// The read-only rule and its consolation prize both existed only
-	// because the runbook was shared. They must not survive.
-	for _, gone := range []string{"READ-ONLY TO YOU", "Recommended runbook changes"} {
-		if strings.Contains(got, gone) {
-			t.Errorf("deploy prompt still carries %q, which only made sense for a shared runbook", gone)
-		}
-	}
-}
-
-func TestIntentIsOptional(t *testing.T) {
-	with := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n", Intent: "3 ubuntu nodes"})
-	if !strings.Contains(with, "3 ubuntu nodes") {
-		t.Error("intent not rendered")
-	}
-	without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n"})
-	if strings.Contains(without, "What the owner asked for") {
-		t.Error("empty intent still rendered its heading")
-	}
-}
-
-func TestUnknownModeIsRejected(t *testing.T) {
-	if _, err := RenderRunPrompt("execute", RunParams{}); err == nil {
-		t.Error("expected an error for a mode that does not exist")
-	}
-}
-
 // The script is assembled by concatenating lib.sh, so a syntax error
 // surfaces only in the sandbox unless something checks it here.
 func TestRunScriptParses(t *testing.T) {
@@ -181,70 +111,18 @@ func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
 // to tell the model how to read a terse refinement. "5 nodes" is an
 // amendment to an existing plan, not a brief that silently drops the
 // cluster, the IAM grants and the build.
-func TestPlanPromptDistinguishesAmendmentFromBrief(t *testing.T) {
-	got := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n", Intent: "5 nodes"})
-	for _, want := range []string{"AMENDMENT to it", "this is the whole brief"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("plan prompt missing %q — a refinement could be read as a replacement brief", want)
-		}
-	}
-}
-
 // Planning does not remove infrastructure, but a PLANNED receipt is
 // the newest thing anyone reads. If it drops the running-resources
 // list, a live cluster goes invisible and bills until noticed.
-func TestPlanReceiptCarriesRunningResourcesForward(t *testing.T) {
-	got := renderRun(t, "plan", RunParams{RepoName: "r", Name: "n"})
-	for _, want := range []string{"Currently deployed", "left\n   RUNNING", "has not been applied"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("plan prompt missing %q", want)
-		}
-	}
-}
-
 // Plan absorbs what a separate draft mode would have done: the
 // feasibility probing, and stopping at the procedure when the
 // parameters cannot be resolved. Nothing executes at plan time, so
 // there was never a reason for an earlier stopping point.
-func TestPlanPromptVerifiesFeasibility(t *testing.T) {
-	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-	for _, want := range []string{
-		"VERIFY FEASIBILITY",
-		"testIamPermissions",
-		"✗ MISSING",
-		"ACCOUNT-AGNOSTIC",
-		"docs-exploration/SKILL.md",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("plan prompt missing %q", want)
-		}
-	}
-}
-
 // A repo with no GCP project configured should still get a readable
 // procedure and a list of what it needs — not scripts built on
 // invented values.
-func TestPlanDegradesWhenParametersCannotResolve(t *testing.T) {
-	got := renderRun(t, "plan", RunParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-	for _, want := range []string{
-		"IF THE PARAMETERS CANNOT BE RESOLVED",
-		"BLOCKED instead of PLANNED",
-		"Needs from owner",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("plan prompt missing %q", want)
-		}
-	}
-}
-
 // There is no draft mode. If one reappears, the command surface and
 // the stage count grew back.
-func TestThereIsNoDraftMode(t *testing.T) {
-	if _, err := RenderRunPrompt("draft", RunParams{}); err == nil {
-		t.Error("draft resolved to a prompt; plan is supposed to do the drafting")
-	}
-}
-
 // An empty RUN_NAME would make the legacy path the whole deployments
 // tree, moving every instance at once.
 func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
@@ -561,12 +439,12 @@ func TestRunbookIsAlwaysPlanned(t *testing.T) {
 		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
 	s := string(b)
-	// runbook-prepare copies it in and commits nothing; the ask plans
-	// from it, and only runbook-finish commits (the recipe's order:
-	// recipe.TestBuiltinRunbookRecipe).
-	prepare := funcBody(t, s, "runbookPrepare")
+	// run-prepare copies it in and commits nothing; the ask plans
+	// from it, and only run-finish commits (the recipe's order:
+	// recipe.TestBuiltinRunRecipes).
+	prepare := funcBody(t, s, "runPrepare")
 	if !strings.Contains(prepare, "instantiateRunbook") {
-		t.Fatal("runbookPrepare does not instantiate the runbook")
+		t.Fatal("runPrepare does not instantiate the runbook")
 	}
 	if strings.Contains(prepare, "commitAndPushRun") {
 		t.Errorf("the copy is committed before the agent plans from it:\n%s", prepare)
@@ -580,21 +458,6 @@ func TestRunbookIsAlwaysPlanned(t *testing.T) {
 
 // The engine has to know the copy is there, that it makes it this
 // run's, and that it is not to redesign it.
-func TestPlanPromptKnowsItStartedFromARunbook(t *testing.T) {
-	with := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42", Runbook: "gke"})
-	for _, want := range []string{`started from the runbook "gke"`, "RESOURCE_PREFIX is this run's", "Change nothing else.", "verify it here"} {
-		if !strings.Contains(with, want) {
-			t.Errorf("plan prompt missing %q", want)
-		}
-	}
-	if amended := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42", Intent: "5 nodes", Runbook: "gke"}); !strings.Contains(amended, "Change nothing else beyond what the owner asked for above.") {
-		t.Error("with an intent, the prompt does not allow the owner's changes")
-	}
-	if without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "pr-42"}); strings.Contains(without, "started from the runbook") {
-		t.Error("the runbook paragraph renders for a run started from nothing")
-	}
-}
-
 // resolveTarget and clearTarget are executed against real repositories:
 // an upstream with a pull request ref, and a workspace cloned from it
 // with a run of its own, the way a sandbox has them.
@@ -810,45 +673,9 @@ func TestTargetIsClearedBeforeEveryCommit(t *testing.T) {
 	if c, a := strings.Index(fn, "clearTarget"), strings.Index(fn, "git add"); c < 0 || c > a {
 		t.Error("commitAndPushRun stages before clearing the target")
 	}
-	if !strings.Contains(funcBody(t, s, "runbookPrepare"), "ensureRunsBranch\n    resolveTarget\n    snapshotReceipts\n") {
+	if !strings.Contains(funcBody(t, s, "runPrepare"), "ensureRunsBranch\n    resolveTarget\n    snapshotReceipts\n") {
 		t.Error("resolveTarget does not run right after the runs branch is ready")
 	}
-}
-
-func TestPlanPromptKnowsItsTarget(t *testing.T) {
-	with := renderRun(t, "plan", RunParams{RepoName: "r", HTMLURL: "https://github.com/o/r", Name: "gke-pr42", Target: 42})
-	for _, want := range []string{"deploys pull request #42 (https://github.com/o/r/pull/42)", "target.env", "do not edit it", "TARGET_SHA"} {
-		if !strings.Contains(with, want) {
-			t.Errorf("plan prompt missing %q", want)
-		}
-	}
-	if without := renderRun(t, "plan", RunParams{RepoName: "r", Name: "gke"}); strings.Contains(without, "pull request #") {
-		t.Error("the target paragraph renders for a default-branch run")
-	}
-	for _, mode := range []string{"deploy", "teardown"} {
-		if !strings.Contains(renderRun(t, mode, RunParams{RepoName: "r", Name: "gke-pr42"}), "target.env") {
-			t.Errorf("the %s prompt does not know a run can be pinned to a pull request", mode)
-		}
-	}
-}
-
-// runResult is result.json as a reader sees it.
-type runResult struct {
-	Version   int        `json:"version"`
-	Run       string     `json:"run"`
-	Mode      string     `json:"mode"`
-	ExitCode  int        `json:"exitCode"`
-	Verdict   *string    `json:"verdict"`
-	Receipt   *string    `json:"receipt"`
-	Branch    string     `json:"branch"`
-	Commit    *string    `json:"commit"`
-	Target    *runTarget `json:"target"`
-	Discarded []string   `json:"discarded"`
-}
-
-type runTarget struct {
-	PR  int    `json:"pr"`
-	SHA string `json:"sha"`
 }
 
 // result.json is executed, not grepped: it is written from an EXIT
@@ -871,10 +698,10 @@ func TestRunWritesItsResult(t *testing.T) {
 	s := string(b)
 	from := strings.Index(s, "TARGET_PR=\"\"\n")
 	to := strings.Index(s, "\n# Main execution")
-	finish := funcBody(t, s, "runbookFinish")
+	finish := funcBody(t, s, "runFinish")
 	trapAt := strings.Index(finish, "trap ")
 	if from < 0 || to < from || trapAt < 0 {
-		t.Fatal("run.sh is missing TARGET_PR, the main section or runbookFinish's EXIT trap")
+		t.Fatal("run.sh is missing TARGET_PR, the main section or runFinish's EXIT trap")
 	}
 	trap := finish[trapAt : trapAt+strings.Index(finish[trapAt:], "\n")]
 	body := s[from:to]
@@ -1013,12 +840,12 @@ func TestRunScriptSetsUpTheForkBeforeTheEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRecipeStepScript: %v", err)
 	}
-	// runbook-prepare, which runs before the ask (the recipe's order),
+	// run-prepare, which runs before the ask (the recipe's order),
 	// makes origin the fork before it touches the checkout.
-	prepare := funcBody(t, string(b), "runbookPrepare")
+	prepare := funcBody(t, string(b), "runPrepare")
 	fork, checkout := strings.Index(prepare, "setupRunsRemote"), strings.Index(prepare, "checkoutDefaultBranch")
 	if fork < 0 || checkout < fork {
-		t.Errorf("runbookPrepare does not set up the fork first:\n%s", prepare)
+		t.Errorf("runPrepare does not set up the fork first:\n%s", prepare)
 	}
 }
 
@@ -1062,10 +889,10 @@ func TestRunScriptLocalOnly(t *testing.T) {
 	}
 }
 
-// runbook-finish runs in a process of its own after the ask: what
-// runbook-prepare found reaches it through $TASK_DIR, newlines and
+// run-finish runs in a process of its own after the ask: what
+// run-prepare found reaches it through $TASK_DIR, newlines and
 // quotes intact.
-func TestRunbookStateCrossesTheAsk(t *testing.T) {
+func TestRunStateCrossesTheAsk(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash required")
@@ -1075,15 +902,15 @@ func TestRunbookStateCrossesTheAsk(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	from := strings.Index(s, "RUNBOOK_STATE_VARS=")
-	fns := s[from : from+strings.Index(s[from:], "# runbookPrepare is")]
+	from := strings.Index(s, "RUN_STATE_VARS=")
+	fns := s[from : from+strings.Index(s[from:], "# runPrepare is")]
 	task := t.TempDir()
 	script := "TASK_DIR=" + task + "\n" + fns + `
 RUNS_LOCAL_ONLY=1; RUNBOOK_ORIGIN="gke-std"; TARGET_PR=42; TARGET_SHA=abc
 RESULT_RECEIPTS_BEFORE=$'receipt-1.md\nreceipt-2.md'; RESULT_DISCARDED='we"ird path'
-saveRunbookState
+saveRunState
 unset RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED
-loadRunbookState
+loadRunState
 printf '%s|%s|%s|%s|%s|%s' "$RUNS_LOCAL_ONLY" "$RUNBOOK_ORIGIN" "$TARGET_PR" "$TARGET_SHA" "$RESULT_RECEIPTS_BEFORE" "$RESULT_DISCARDED"
 `
 	out, err := exec.Command(bash, "-c", script).CombinedOutput()
@@ -1093,4 +920,23 @@ printf '%s|%s|%s|%s|%s|%s' "$RUNS_LOCAL_ONLY" "$RUNBOOK_ORIGIN" "$TARGET_PR" "$T
 	if want := "1|gke-std|42|abc|receipt-1.md\nreceipt-2.md|we\"ird path"; string(out) != want {
 		t.Errorf("state after the ask = %q, want %q", out, want)
 	}
+}
+
+// runResult is result.json as a reader sees it.
+type runResult struct {
+	Version   int        `json:"version"`
+	Run       string     `json:"run"`
+	Mode      string     `json:"mode"`
+	ExitCode  int        `json:"exitCode"`
+	Verdict   *string    `json:"verdict"`
+	Receipt   *string    `json:"receipt"`
+	Branch    string     `json:"branch"`
+	Commit    *string    `json:"commit"`
+	Target    *runTarget `json:"target"`
+	Discarded []string   `json:"discarded"`
+}
+
+type runTarget struct {
+	PR  int    `json:"pr"`
+	SHA string `json:"sha"`
 }

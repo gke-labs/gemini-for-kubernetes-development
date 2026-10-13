@@ -112,17 +112,17 @@ recipe its parts as inputs: the prompt, the precondition script, the mode
 A workflow's state is in git, its branch's journal, so recreating its
 sandbox loses nothing but the clone.
 
-### 4. Runbooks as a recipe
+### 4. Runs as recipes
 
-Recipe `runbook`, `task-type: run`, input `phase` (`plan` | `deploy` | `teardown`). `factory run plan|deploy|teardown` stays the entry point (repo-agent calls it unchanged). It renders the phase's prompt (`run_*.txt`) as the `prompt` input and runs the recipe in the run's sandbox, whose naming, labels, disk, ephemeral storage and GCP environment are unchanged.
+There are three recipes, one per phase: `run-plan`, `run-deploy` and `run-teardown`, all with `task-type: run`. Each phase's prompt is the recipe's ask, rendered from its inputs, so the `run_*.txt` templates and their renderer go. Each recipe declares only its own phase's inputs: plan takes `intent`, `runbook` and `target_pr`; deploy takes none of them, since it executes what was approved; teardown takes `intent`. `factory run plan|deploy|teardown` stays the entry point (repo-agent calls it unchanged) and runs `run-<phase>` in the run's sandbox, whose naming, labels, disk, ephemeral storage and GCP environment are unchanged.
 
-`run.sh` keeps the deterministic parts as functions, appended to the script that runs a recipe's `uses:` steps. Two named steps take the place of its main section:
-- `runbook-prepare` sets up the fork (or local-only), the runs branch, the pinned target and the runbook copy;
-- `runbook-finish` clears the target, makes one commit, pushes it, and writes `result.json`.
+`run.sh` keeps the deterministic parts as functions, appended to the script that runs a recipe's `uses:` steps. Two named steps take the place of its main section, and each recipe passes them its phase with `with: {phase: …}`:
+- `run-prepare` sets up the fork (or local-only), the runs branch, the pinned target, and for a plan the runbook copy;
+- `run-finish` clears the target, makes one commit, pushes it, and writes `result.json`.
 
-Each step is a process of its own, so what the first finds reaches the second through `$TASK_DIR/runbook-state.sh`. A failed ask ends the recipe before `runbook-finish`. `result.json` then says `exitCode: -1`, and nothing is committed (before, it gave the exit code). The agent's shell gets `RUN_NAME`, `RUN_RESOURCE_PREFIX`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` and `CLOUDSDK_COMPUTE_REGION` through `agent-env`; an empty value is left unset.
+Each step is a process of its own, so what the first finds reaches the second through `$TASK_DIR/run-state.sh`. A failed ask ends the recipe before `run-finish`. `result.json` then says `exitCode: -1`, and nothing is committed (before, it gave the exit code). The agent's shell gets `RUN_NAME`, `RUN_RESOURCE_PREFIX`, `GOOGLE_CLOUD_PROJECT`, `CLOUDSDK_CORE_PROJECT` and `CLOUDSDK_COMPUTE_REGION` through `agent-env`; an empty value is left unset.
 
-**repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipe's prefix, `recipe-runbook-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
+**repo-agent:** liveness (`runLivenessScript`) and the launch preflight keep reading task directories and their `pid` / `start_time` / `exit_code` files, which the spool writes as envd did. They now look under the recipes' prefix, `recipe-run-*` (`factorycli.RunTaskDir`), while the recorded task type stays `run`. Reading a local-only run's files (`git show research/runs:…` over kube exec) stays.
 
 ### 5. Removing envd
 

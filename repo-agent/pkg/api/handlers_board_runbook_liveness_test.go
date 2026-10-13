@@ -11,8 +11,8 @@ import (
 
 // The liveness probe is executed, not grepped: it looked for runbook-*
 // long after factory started writing run-*, and a string test of the
-// script would have passed the whole time. A run is the runbook
-// recipe's task now, recipe-runbook-*.
+// script would have passed the whole time. A run's phase is a run
+// recipe's task now, recipe-run-<phase>-*.
 func TestRunLivenessScriptFindsTheRunTask(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {
@@ -37,13 +37,14 @@ func TestRunLivenessScriptFindsTheRunTask(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mk("recipe-runbook-20260928-100000-0a1b", "0", 2*time.Hour)
-	mk("recipe-runbook-20260928-110000-2c3d", "3", time.Hour)
+	mk("recipe-run-plan-20260928-100000-0a1b", "0", 2*time.Hour)
+	mk("recipe-run-deploy-20260928-110000-2c3d", "3", time.Hour)
 	// Newer than both, and not a run: a task of another kind, or one
 	// left by the commands runs replaced, must not answer for the run.
 	mk("run-20260928-1200", "0", time.Minute)
 	mk("runbook-20260928-1200", "0", time.Minute)
 	mk("recipe-fix-20260928-120000-4e5f", "0", time.Minute)
+	mk("recipe-runbook-20260928-120000-6a7b", "0", time.Minute)
 
 	script := strings.ReplaceAll(runLivenessScript(), "/workspaces/tasks/", tasks+"/")
 	if script == runLivenessScript() {

@@ -73,18 +73,17 @@ func LaunchedElsewhere(labels map[string]string) bool {
 }
 
 // RunTaskPrefix is the task type a run records on its sandbox
-// (sandbox.gemini.google.com/last-task-*): the runbook recipe's
-// task-type.
+// (sandbox.gemini.google.com/last-task-*): the run recipes' task-type.
 const RunTaskPrefix = "run"
 
-// RunTaskDir is the task directory prefix `factory run` writes: the
-// runbook recipe's task, /workspaces/tasks/recipe-runbook-<ts>-<hex>/,
-// with the pid, start_time and exit_code files every task has.
-// Everything that looks for a run's in-flight work — the launch
-// preflight, the Runs list's liveness probe — reads it from here, so a
-// rename cannot leave one of them looking under a name nothing writes
-// any more.
-const RunTaskDir = "recipe-runbook"
+// RunTaskDir is the task directory prefix `factory run` writes: a run
+// recipe's task (run-plan, run-deploy, run-teardown),
+// /workspaces/tasks/recipe-run-<phase>-<ts>-<hex>/, with the pid,
+// start_time and exit_code files every task has. Everything that looks
+// for a run's in-flight work — the launch preflight, the Runs list's
+// liveness probe — reads it from here, so a rename cannot leave one of
+// them looking under a name nothing writes any more.
+const RunTaskDir = "recipe-run"
 
 // FixSandboxName returns the sandbox name `factory fix` uses for an issue
 // (EnsureFixSandbox in factory/pkg/sandbox: fix-<repo>-<issueNumber>).

@@ -1,5 +1,5 @@
-# The runbook recipe's steps (recipe/recipes/runbook.yaml): plan, deploy
-# or tear down one run, in that run's own sandbox. A run owns everything
+# The run recipes' steps (recipe/recipes/run-plan.yaml, run-deploy.yaml,
+# run-teardown.yaml): plan, deploy or tear down one run, in that run's own sandbox. A run owns everything
 # it needs — runbook.md is the procedure, the scripts are generated from
 # it, the receipts are the test results — all under
 # docs-exploration/agent-runs/<name>/ on the research/runs branch of the
@@ -17,19 +17,19 @@
 # These functions own the deterministic parts (branch, commit, push); the
 # agent owns authoring, execution and judgment. The recipe runs them as
 # two named steps, each a process of its own (recipe_step.sh, after
-# lib.sh): runbookPrepare before the ask and runbookFinish after it,
-# which reads what the first left in $TASK_DIR (saveRunbookState).
+# lib.sh): runPrepare before the ask and runFinish after it, which reads
+# what the first left in $TASK_DIR (saveRunState).
 #
-# The step reads the recipe's inputs (INPUT_*), set below as the RUN_*
-# names the functions use:
+# The step reads its with: phase (plan | deploy | teardown) and the
+# recipe's inputs (INPUT_*), set below as the RUN_* names the functions
+# use:
 # - run (the run's identity, e.g. deploy-gke-k8s1)
-# - phase (plan | deploy | teardown)
-# - runbook (plan only, optional: the runbook this run starts from)
-# - target_pr (plan only, optional: the pull request to deploy)
+# - runbook (run-plan, optional: the runbook this run starts from)
+# - target_pr (run-plan, optional: the pull request to deploy)
 # and the task's environment: GITHUB_TOKEN, REPO_NAME, CLONE_URL,
 # GITHUB_USER_ID / GITHUB_USER_EMAIL / GITHUB_USER_NAME, TASK_DIR.
 RUN_NAME="${RUN_NAME:-${INPUT_RUN:-}}"
-RUN_MODE="${RUN_MODE:-${INPUT_PHASE:-}}"
+RUN_MODE="${RUN_MODE:-${WITH_PHASE:-}}"
 RUN_RUNBOOK="${RUN_RUNBOOK:-${INPUT_RUNBOOK:-}}"
 RUN_TARGET_PR="${RUN_TARGET_PR:-${INPUT_TARGET_PR:-}}"
 
@@ -525,35 +525,35 @@ function commitAndPushRun {
     popd > /dev/null
 }
 
-# Main execution: the recipe's two steps.
+# Main execution: the recipes' two steps.
 
-# RUNBOOK_STATE is what runbookPrepare leaves runbookFinish, which runs in
+# RUN_STATE is what runPrepare leaves runFinish, which runs in
 # a process of its own after the ask: whether the run is local-only, the
 # runbook it started from, the target it pinned, the receipts there were,
 # and what it threw away.
-RUNBOOK_STATE_VARS="RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED"
+RUN_STATE_VARS="RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED"
 
 # Plain assignments, not declare -p's output: sourced inside
-# loadRunbookState, declare would make each one local to it.
-function saveRunbookState {
+# loadRunState, declare would make each one local to it.
+function saveRunState {
     local v
-    for v in ${RUNBOOK_STATE_VARS}; do
+    for v in ${RUN_STATE_VARS}; do
         printf '%s=%q\n' "${v}" "${!v}"
-    done > "${TASK_DIR:?TASK_DIR is not set}/runbook-state.sh"
+    done > "${TASK_DIR:?TASK_DIR is not set}/run-state.sh"
 }
 
-function loadRunbookState {
+function loadRunState {
     # shellcheck disable=SC1091
-    source "${TASK_DIR:?TASK_DIR is not set}/runbook-state.sh"
+    source "${TASK_DIR:?TASK_DIR is not set}/run-state.sh"
 }
 
-# runbookPrepare is the recipe's runbook-prepare step: the fork (or
+# runPrepare is the run recipes' run-prepare step: the fork (or
 # local-only), the default branch, the runs branch, the target pinned, the
 # receipts noted, and, for a plan from a runbook, the runbook copied in.
-# Its result.json, written until runbookFinish writes the real one, says
+# Its result.json, written until runFinish writes the real one, says
 # the phase never finished (exitCode -1): a failed ask ends the recipe
-# before runbookFinish.
-function runbookPrepare {
+# before runFinish.
+function runPrepare {
     set -e
     set -o pipefail
     # The token lib.sh's setupGit reads. Without it setupGit writes an
@@ -577,19 +577,19 @@ function runbookPrepare {
     if [ "${RUN_MODE}" = "plan" ] && [ -n "${RUN_RUNBOOK:-}" ]; then
         instantiateRunbook
     fi
-    saveRunbookState
+    saveRunState
     writeResult -1
 }
 
-# runbookFinish is the recipe's runbook-finish step, after the ask:
+# runFinish is the run recipes' run-finish step, after the ask:
 # everything the phase left in the run's directory is committed, in one
 # commit — scripts, prose and receipt together, so a partial push cannot
 # split the story — and pushed (not in a local-only run), and result.json
 # says what it concluded.
-function runbookFinish {
+function runFinish {
     set -e
     set -o pipefail
-    loadRunbookState
+    loadRunState
     trap 'rc=$?; writeResult "${rc}" || echo "WARN: could not write result.json" >&2; exit "${rc}"' EXIT
     case "${RUN_MODE}" in
     plan)
