@@ -348,17 +348,25 @@ func prInputs(it githubItem, pr *githubv39.PullRequest) map[string]string {
 // the task's result, picking up where an interrupted run left off. user is
 // the account the task runs as; empty, the command's own (--user).
 func runRecipe(ctx context.Context, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
-	return runRecipeIn(ctx, nil, recipeArg, itemURL, runName, session, user, newSession, apply, overrides, instructions)
+	return runRecipeIn(ctx, recipeRunOpts{}, recipeArg, itemURL, runName, session, user, newSession, apply, overrides, instructions)
 }
 
 // ensureSandbox makes the sandbox a run goes to, given its target's
 // clone and web URLs and the account it runs as.
 type ensureSandbox func(ctx context.Context, kubeClient *clients.KubernetesClient, cloneURL, htmlURL, user string) (string, error)
 
-// runRecipeIn is runRecipe, in the sandbox ensure makes when it is set
-// rather than the one the target's kind gets: `factory agent create`'s
-// runs go to the agent's own.
-func runRecipeIn(ctx context.Context, ensure ensureSandbox, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
+// recipeRunOpts are what `factory agent create` sets on a recipe's run.
+type recipeRunOpts struct {
+	// ensure makes the sandbox the run goes to, rather than the one its
+	// target's kind gets: the agent's own.
+	ensure ensureSandbox
+	// usage adds to the usage record of the run's task what only the
+	// caller knows: a workflow's session and name.
+	usage func(*usagereport.Meta)
+}
+
+// runRecipeIn is runRecipe with opts.
+func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
 	recipeBytes, rec, err := loadRecipe(recipeArg)
 	if err != nil {
 		return err
@@ -502,8 +510,8 @@ func runRecipeIn(ctx context.Context, ensure ensureSandbox, recipeArg, itemURL, 
 	// a research session's is, since its transcript is the sandbox's.
 	var sandboxName string
 	switch {
-	case ensure != nil:
-		sandboxName, err = ensure(ctx, kubeClient, cloneURL, htmlURL, user)
+	case opts.ensure != nil:
+		sandboxName, err = opts.ensure(ctx, kubeClient, cloneURL, htmlURL, user)
 	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
 		// Its disk becomes every new sandbox's (design/warm-workspace.md):
 		// a sandbox of its own, never restored, with no secret mounted.
@@ -605,7 +613,7 @@ func runRecipeIn(ctx context.Context, ensure ensureSandbox, recipeArg, itemURL, 
 	if apply.on {
 		fmt.Println("Interrupting stops the waiting, not the task: run the same command again to wait for it and apply its result.")
 	}
-	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets); err != nil || !done {
+	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage); err != nil || !done {
 		return err
 	}
 	if apply.on {
@@ -919,7 +927,7 @@ func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e sp
 // startRecipeTask records the task on its sandbox and hands it over.
 // Unless --detached it follows the task to its end and prints its
 // outputs, and returns true.
-func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) (bool, error) {
+func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, sb taskapi.Sandbox, it githubItem, rec *recipe.Recipe, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string, usage func(*usagereport.Meta)) (bool, error) {
 	sandboxName := sb.Name()
 	taskType, side := recipeTaskType(rec, it)
 	update := factorysandbox.UpdateSandboxTaskAnnotation
@@ -951,6 +959,9 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		meta.PR = it.Number
 	default:
 		meta.Issue = it.Number
+	}
+	if usage != nil {
+		usage(&meta)
 	}
 	taskDir := spool.TaskDir(task.ID)
 	usagereport.HarvestTaskFiles(ctx, taskDir, func(name string) ([]byte, error) { return sb.ReadFile(ctx, task.ID, name) }, meta)

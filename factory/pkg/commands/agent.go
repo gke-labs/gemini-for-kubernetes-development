@@ -14,6 +14,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/usagereport"
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 )
@@ -219,7 +220,7 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 			"skip_pr":    strconv.FormatBool(agentDef.SkipPR),
 			"labels":     resolvePRLabels(cfg, nil, false),
 		}
-		return runRecipeIn(ctx, ensure, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
+		return runRecipeIn(ctx, recipeRunOpts{ensure: ensure}, recipe.AgentRecipe, flags.URL, flags.RunName, "", "", false,
 			applyMode{on: true, verb: "open-pr", asUser: rootFlags.User != ""}, inputs, nil)
 	}
 
@@ -255,8 +256,24 @@ func RunAgent(ctx context.Context, flags AgentFlags) error {
 		"precondition":   agentDef.PreconditionScript,
 	}
 	// A workflow's result is the issues it opens and its journal: no task
-	// output to apply.
-	return runRecipeIn(ctx, ensure, recipe.WorkflowRecipe, flags.URL, flags.RunName, "", "", false, applyMode{}, inputs, nil)
+	// output to apply. Its usage is the workflow's: its session and name,
+	// as the usage sweep reads them off its sandbox.
+	opts := recipeRunOpts{ensure: ensure, usage: workflowUsage(flags.SessionID, agentDef.Name)}
+	if err := runRecipeIn(ctx, opts, recipe.WorkflowRecipe, flags.URL, flags.RunName, "", "", false, applyMode{}, inputs, nil); err != nil {
+		return err
+	}
+	if usagereport.Enabled() {
+		usagereport.ReportIssueSubject(ctx, owner+"/"+repo, issue)
+	}
+	return nil
+}
+
+// workflowUsage adds a workflow's session and name to its run's usage
+// record, as the usage sweep reads them off its sandbox (wf-issue-<n>).
+func workflowUsage(sessionID, name string) func(*usagereport.Meta) {
+	return func(m *usagereport.Meta) {
+		m.Workflow, m.WorkflowName = sessionID, name
+	}
 }
 
 // isWorkflow reports whether a definition is a workflow (mode: workflow),
