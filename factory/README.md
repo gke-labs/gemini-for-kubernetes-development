@@ -72,12 +72,12 @@
   - `GET /api/v1/status` returns the Gemini key-pool state.
 
 ### Runbooks: plan, deploy, tear down (`factory run`)
-A *run* is a directory `docs-exploration/agent-runs/<name>/` on the `research/runs` branch of your fork. It holds `runbook.md`, `params.env`, `deploy.sh`, `teardown.sh` and receipts.
+A *run* is a branch of its own, `runs/<name>`, which holds only the run's files: `runbook.md`, `params.env`, `deploy.sh`, `teardown.sh` and receipts. It lives in the run's sandbox, checked out at `.factory-run/` in the clone, and is pushed to your fork after every phase. Every run branch starts from `runs/root`, an empty commit.
 
 - `run plan` writes the procedure and generates the scripts, but executes nothing. `--runbook` starts from `.agents/runbooks/<name>` in the repository, or from one of your earlier runs. `--target <PR number|URL>` deploys a pull request and pins its head commit.
 - `run deploy` executes the approved plan, repairs scripts that fail, and then reconciles `runbook.md` with what actually worked.
 - `run teardown` removes what the run created, preferring the generated `teardown.sh`.
-- If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. The branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`.
+- If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. Its branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`. The Runs tab labels such a run.
 
 ### Research conversations (`factory recipe research`)
 - **Start a conversation.** `recipe research --url --session --topic` creates a research sandbox, clones the repository (private repos included; the token is never written to the volume) and hands the topic to a task session in the sandbox's daemon. The sandbox carries a `research-ready` receipt once setup has finished, and the conversation continues through `recipe revise`.

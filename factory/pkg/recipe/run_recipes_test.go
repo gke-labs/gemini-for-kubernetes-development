@@ -54,13 +54,18 @@ func renderRun(t *testing.T, mode string, p runParams) string {
 func TestRunPromptsCarryTheRunDirectory(t *testing.T) {
 	for _, mode := range []string{"plan", "deploy", "teardown"} {
 		got := renderRun(t, mode, runParams{RepoName: "open-rl", Name: "deploy-gke-k8s1"})
-		if want := "docs-exploration/agent-runs/deploy-gke-k8s1/"; !strings.Contains(got, want) {
-			t.Errorf("%s prompt does not name %s", mode, want)
+		// The run's worktree, where run-prepare puts its branch
+		// (lib.sh's RUN_DIR), and the branch it is.
+		for _, want := range []string{".factory-run/", "runs/deploy-gke-k8s1"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s prompt does not name %s", mode, want)
+			}
 		}
-		// A run owns one directory. Any mention of the old shared
-		// runbook tree means the split we just removed leaked back in.
-		if strings.Contains(got, "docs-exploration/runbooks/") {
-			t.Errorf("%s prompt still points at the shared runbook tree", mode)
+		// Runs are not directories of a shared branch any more.
+		for _, gone := range []string{"docs-exploration/agent-runs", "docs-exploration/runbooks/", "research/runs"} {
+			if strings.Contains(got, gone) {
+				t.Errorf("%s prompt still points at %s", mode, gone)
+			}
 		}
 	}
 }

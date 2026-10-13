@@ -5,17 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-// The order is the contract: prose first, shell transcribed from it.
-// Reversed, runbook.md becomes a summary of the scripts and drifts.
-// The deploy phase is the only thing that corrects the procedure, and
-// it must do so whether or not the deploy worked: the scripts changed,
-// so the prose that describes them has to change too.
-// The script is assembled by concatenating lib.sh, so a syntax error
+// The run steps (lib.sh's runs section) are executed here as the
+// recipes run them: runPrepare and runFinish each a bash process of its
+// own, against a clone whose origin is a bare "fork" and whose upstream
+// is a bare "repository", with the agent's turn in between played by a
+// shell snippet.
+
+// The step script is assembled by concatenating lib.sh, so a syntax error
 // surfaces only in the sandbox unless something checks it here.
 func TestRunScriptParses(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -28,811 +28,318 @@ func TestRunScriptParses(t *testing.T) {
 	cmd := exec.Command("bash", "-n")
 	cmd.Stdin = strings.NewReader(string(b))
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lib.sh does not parse: %v\n%s", err, out)
+		t.Fatalf("the step script does not parse: %v\n%s", err, out)
 	}
 }
 
-// Legacy deployments created by `factory runbook` live under
-// runbook-deployments/<instance>/. They are adopted lazily, at the
-// moment someone touches the run, rather than by a big-bang migration
-// of live infrastructure.
-func TestRunScriptAdoptsLegacyDeployments(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
+// runWorld is a sandbox's clone and the two remotes it talks to.
+type runWorld struct {
+	t                   *testing.T
+	root, ws, fork, src string
+	lib                 string
+}
+
+var gitIdentity = []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t"}
+
+// git runs git in dir; a bare repository (the fork, the repository) by
+// --git-dir, which works where safe.bareRepository is explicit.
+func (w *runWorld) git(dir string, args ...string) string {
+	w.t.Helper()
+	at := []string{"-C", dir}
+	if strings.HasSuffix(dir, ".git") {
+		at = []string{"--git-dir", dir}
 	}
-	s := string(b)
-	for _, want := range []string{
-		"adoptLegacyInstance",
-		"docs-exploration/runbook-deployments docs-exploration/runs",
-		// --ignore-removal will not record the old path vanishing, so
-		// the removal has to be staged explicitly or the branch keeps
-		// both copies.
-		`git add -A "${legacy}"`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("lib.sh missing %q", want)
+	cmd := exec.Command("git", append(at, args...)...)
+	cmd.Env = append(os.Environ(), gitIdentity...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		w.t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (w *runWorld) write(dir, rel, content string, mode os.FileMode) {
+	w.t.Helper()
+	p := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), mode); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// newRunWorld makes the repository (main, with a runbook under
+// .agents/runbooks/gke, and pull request 7), an empty fork, and the
+// sandbox's clone on main.
+func newRunWorld(t *testing.T) *runWorld {
+	t.Helper()
+	for _, tool := range []string{"bash", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " required")
 		}
 	}
-	// A bare `[ … ] && return 0` aborts the whole script under set -e
-	// when the test fails.
-	if strings.Contains(s, `[ -d "${RUN_DIR}" ] && return 0`) {
-		t.Error("guard written as a bare && list; under set -e a false test kills the run")
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// "runs/" is a bare .gitignore entry in a great many repos
-	// (TensorBoard writes there) and a bare pattern matches at any
-	// depth, so docs-exploration/runs/ was ignored wherever it
-	// appeared — silently, because git add's refusal was suppressed.
-	if strings.Contains(s, `RUN_DIR="docs-exploration/runs/`) {
-		t.Error("run directory is back under runs/, which repositories commonly gitignore")
-	}
-	// A staging failure must be loud. Swallowing it turns a completed
-	// run into "nothing to commit" with the work already done.
-	if strings.Contains(s, `git add --ignore-removal "${RUN_DIR}" 2>/dev/null`) {
-		t.Error("git add errors are suppressed again; an ignored path would vanish the run")
-	}
+	root := t.TempDir()
+	w := &runWorld{t: t, root: root, ws: filepath.Join(root, "ws"), fork: filepath.Join(root, "fork.git"), src: filepath.Join(root, "src.git"), lib: string(lib)}
+	seed := filepath.Join(root, "seed")
+	w.git(root, "init", "-q", "-b", "main", seed)
+	w.write(seed, "README.md", "code\n", 0644)
+	w.write(seed, ".agents/runbooks/gke/runbook.md", "# GKE\n", 0644)
+	w.write(seed, ".agents/runbooks/gke/deploy.sh", "#!/bin/sh\n", 0755)
+	w.write(seed, ".agents/runbooks/gke/receipt-20260101-0000.md", "VERIFIED elsewhere\n", 0644)
+	w.git(seed, "add", "-A")
+	w.git(seed, "commit", "-qm", "main")
+	w.git(seed, "checkout", "-qb", "pr7")
+	w.write(seed, "README.md", "code, changed by the pull request\n", 0644)
+	w.git(seed, "commit", "-qam", "pr")
+	w.git(root, "clone", "-q", "--bare", seed, w.src)
+	w.git(w.src, "update-ref", "refs/pull/7/head", "pr7")
+	w.git(root, "init", "-q", "--bare", w.fork)
+	w.git(root, "clone", "-q", "-b", "main", w.src, w.ws)
+	w.git(w.ws, "remote", "rename", "origin", "upstream")
+	w.git(w.ws, "remote", "add", "origin", w.fork)
+	return w
 }
 
-// Runs live on research/runs, and the repo-agent read path hardcodes
-// the same string. Nothing links the two, so a change on either side
-// that is not made on both empties the Runs tab of a member whose runs
-// are perfectly intact on a branch nobody looks at.
-func TestRunScriptWritesToTheRunsBranch(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
+// step runs one of the run functions in a process of its own, with the
+// recipe's with: phase and inputs, and returns its exit code and output.
+func (w *runWorld) step(fn, phase, run string, inputs map[string]string, extra string) (int, string) {
+	w.t.Helper()
+	task := filepath.Join(w.root, "task-"+run)
+	if err := os.MkdirAll(task, 0755); err != nil {
+		w.t.Fatal(err)
 	}
-	s := string(b)
-	if !strings.Contains(s, `RUNS_BRANCH="research/runs"`) {
-		t.Error(`lib.sh does not set RUNS_BRANCH="research/runs"; repo-agent reads that name`)
+	env := append(os.Environ(), gitIdentity...)
+	env = append(env, "REPO_NAME=ws", "RUN_REPO="+w.ws, "TASK_DIR="+task, "GITHUB_USER_TOKEN=x", "WITH_PHASE="+phase, "INPUT_RUN="+run)
+	for k, v := range inputs {
+		env = append(env, "INPUT_"+strings.ToUpper(k)+"="+v)
 	}
-	// Checkout and push have to name the same variable. A literal
-	// anywhere in the pair is how the two drift apart.
-	for _, want := range []string{
-		`git checkout -B "${RUNS_BRANCH}"`,
-		`git push origin "${RUNS_BRANCH}"`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("lib.sh missing %q", want)
-		}
-	}
-	// research/notes belongs to the research write path, which is a
-	// different writer with a different lifetime: notes are archival and
-	// the runs read path prunes what it finds. A run reaching that
-	// branch would put live teardown scripts behind the delete path that
-	// clears runs, and hand an auto-approving research session a push
-	// that lands next to deployment state.
-	if strings.Contains(s, "research/notes") {
-		t.Error("lib.sh touches the notes branch; runs and notes are kept apart on purpose")
-	}
+	cmd := exec.Command("bash", "-c", w.lib+"\n"+extra+"\n"+fn)
+	cmd.Env = env
+	out, _ := cmd.CombinedOutput()
+	return cmd.ProcessState.ExitCode(), string(out)
 }
 
-// A re-plan is the same command with the same flag, so the prompt has
-// to tell the model how to read a terse refinement. "5 nodes" is an
-// amendment to an existing plan, not a brief that silently drops the
-// cluster, the IAM grants and the build.
-// Planning does not remove infrastructure, but a PLANNED receipt is
-// the newest thing anyone reads. If it drops the running-resources
-// list, a live cluster goes invisible and bills until noticed.
-// Plan absorbs what a separate draft mode would have done: the
-// feasibility probing, and stopping at the procedure when the
-// parameters cannot be resolved. Nothing executes at plan time, so
-// there was never a reason for an earlier stopping point.
-// A repo with no GCP project configured should still get a readable
-// procedure and a list of what it needs — not scripts built on
-// invented values.
-// There is no draft mode. If one reappears, the command surface and
-// the stage count grew back.
-// An empty RUN_NAME would make the legacy path the whole deployments
-// tree, moving every instance at once.
-func TestAdoptionRefusesAnEmptyRunName(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
+// phase runs runPrepare, then agent in the run's worktree, then
+// runFinish, and fails the test if either step fails.
+func (w *runWorld) phase(phase, run string, inputs map[string]string, agent string) runResult {
+	w.t.Helper()
+	if code, out := w.step("runPrepare", phase, run, inputs, ""); code != 0 {
+		w.t.Fatalf("runPrepare %s %s: exit %d\n%s", phase, run, code, out)
 	}
-	if !strings.Contains(string(b), `[ -z "${RUN_NAME}" ]`) {
-		t.Error("adoptLegacyInstance does not guard against an empty run name")
-	}
-}
-
-// Observed live: a teardown edited .gitignore to get at its own files
-// and wandered into a shared doc. Neither is inside the run's
-// directory, so `git add ${RUN_DIR}` never staged them — and the
-// leftover modifications made the push-race replay fail with "cannot
-// rebase: You have unstaged changes", turning a recoverable race into
-// a lost receipt.
-func TestRunScriptLeavesNothingOutsideItsOwnDirectory(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	if !strings.Contains(s, "git checkout -f -- .") {
-		t.Error("lib.sh does not discard changes outside the run directory")
-	}
-	// Belt and braces: even a clean-tree check can race, so the replay
-	// must survive a dirty worktree on its own.
-	if !strings.Contains(s, `git rebase --autostash`) {
-		t.Error("the push-race replay is not autostashing; an unstaged file will block it")
-	}
-}
-
-// instantiateRunbook is executed, not grepped: every string test above
-// passed while --from read a path runs had moved away from, and the
-// copy under it held two set -e traps nobody had ever reached. It runs
-// here the way the run steps run it — under set -e, against a real git
-// repository, since a repository runbook is read at a commit.
-func TestInstantiateRunbook(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash required")
-	}
-	gitBin, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git required")
-	}
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	legacy := regexp.MustCompile(`(?m)^LEGACY_RUN_DIRS=.*$`).FindString(s)
-	from := strings.Index(s, "RUNBOOK_REF=\"\"\n")
-	fnAt := strings.Index(s, "function instantiateRunbook {")
-	if legacy == "" || from < 0 || fnAt < 0 || fnAt < from {
-		t.Fatal("lib.sh is missing LEGACY_RUN_DIRS, RUNBOOK_REF or instantiateRunbook")
-	}
-	body := s[from : fnAt+strings.Index(s[fnAt:], "\n}\n")+3]
-
-	const runs = "docs-exploration/agent-runs"
-	write := func(t *testing.T, root, rel, content string) {
-		t.Helper()
-		p := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content+"\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	git := func(t *testing.T, root string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(gitBin, append([]string{"-C", root}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if agent != "" {
+		cmd := exec.Command("bash", "-c", agent)
+		cmd.Dir = w.ws
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
+			w.t.Fatalf("agent: %v\n%s", err, out)
 		}
 	}
-	repo := func(t *testing.T) string {
-		root := t.TempDir()
-		git(t, root, "init", "-q", "-b", "main")
-		return root
+	if code, out := w.step("runFinish", phase, run, inputs, ""); code != 0 {
+		w.t.Fatalf("runFinish %s %s: exit %d\n%s", phase, run, code, out)
 	}
-	commit := func(t *testing.T, root string) {
-		git(t, root, "add", "-A")
-		git(t, root, "commit", "-qm", "x")
-	}
-	// instantiateAt runs the function as run-prepare does and reports whether
-	// the script lived past it. ref is RUNBOOK_REF: "" is a failed fetch;
-	// fallback is RUNBOOK_FALLBACK_REF, set by a pull request target.
-	instantiateAt := func(t *testing.T, root, runbook, ref, fallback string) (string, bool) {
-		t.Helper()
-		script := "set -e\nset -o pipefail\nRUNS_BRANCH=research/runs\n" + legacy + "\n" +
-			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", root) +
-			"RUNBOOK_REF='" + ref + "'\nRUNBOOK_FALLBACK_REF='" + fallback + "'\n" +
-			"instantiateRunbook\necho \"SURVIVED ${RUNBOOK_ORIGIN}\"\n"
-		cmd := exec.Command(bash, "-c", script)
-		cmd.Env = append(os.Environ(), "RUN_NAME=pr-42", "RUN_DIR="+runs+"/pr-42", "RUN_RUNBOOK="+runbook)
-		out, _ := cmd.CombinedOutput()
-		return string(out), strings.Contains(string(out), "SURVIVED")
-	}
-	instantiate := func(t *testing.T, root, runbook, ref string) (string, bool) {
-		t.Helper()
-		return instantiateAt(t, root, runbook, ref, "")
-	}
-	read := func(root, rel string) string {
-		b, _ := os.ReadFile(filepath.Join(root, rel))
-		return string(b)
-	}
-	copied := func(t *testing.T, root string) []string {
-		t.Helper()
-		var got []string
-		dir := filepath.Join(root, runs, "pr-42")
-		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				got = append(got, strings.TrimPrefix(p, dir+"/"))
-			}
-			return nil
-		})
-		return got
-	}
-
-	t.Run("a repository runbook is copied whole, as it is", func(t *testing.T) {
-		// No required shape: prose alone, or with scripts and whatever
-		// they read — the plan makes the run's files out of it.
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/README.md", "procedure")
-		write(t, root, ".agents/runbooks/gke/manifests/values.yaml", "nodes: 3")
-		write(t, root, ".agents/runbooks/gke/params.env", `RESOURCE_PREFIX="ab-gke"`)
-		commit(t, root)
-		out, ok := instantiate(t, root, "gke", "main")
-		if !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := strings.Join(copied(t, root), " "); got != "README.md manifests/values.yaml params.env" {
-			t.Errorf("copied %q", got)
-		}
-		// Nothing is rewritten here; making it this run's is the plan's.
-		if got := read(root, runs+"/pr-42/params.env"); got != "RESOURCE_PREFIX=\"ab-gke\"\n" {
-			t.Errorf("params.env was changed by the copy: %q", got)
-		}
-		if !strings.Contains(out, "SURVIVED .agents/runbooks/gke at main") {
-			t.Errorf("the origin is not recorded:\n%s", out)
-		}
-	})
-
-	t.Run("a repository runbook is read at the commit, not the worktree", func(t *testing.T) {
-		// research/runs merges the default branch with -X ours, so the
-		// worktree can hold the fork's copy of a runbook edited on both
-		// sides. The repository's is the one that was reviewed.
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		commit(t, root)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "worktree edit")
-		instantiate(t, root, "gke", "main")
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
-			t.Errorf("runbook.md = %q, want the committed one", got)
-		}
-	})
-
-	t.Run("the repository wins over a run of the same name", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		commit(t, root)
-		write(t, root, runs+"/gke/runbook.md", "my run")
-		instantiate(t, root, "gke", "main")
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
-			t.Errorf("runbook.md = %q, want the repository's", got)
-		}
-	})
-
-	t.Run("a run is a runbook, and its receipts stay behind", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		write(t, root, runs+"/gke/runbook.md", "my run")
-		write(t, root, runs+"/gke/deploy.sh", "create")
-		write(t, root, runs+"/gke/receipt-20260928-1200.md", "VERIFIED")
-		out, ok := instantiate(t, root, "gke", "main")
-		if !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := strings.Join(copied(t, root), " "); got != "deploy.sh runbook.md" {
-			t.Errorf("copied %q; another run's receipts are not this run's", got)
-		}
-	})
-
-	t.Run("a repository runbook's receipts stay behind too", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		write(t, root, ".agents/runbooks/gke/receipt-20260928-1200.md", "VERIFIED")
-		commit(t, root)
-		instantiate(t, root, "gke", "main")
-		if got := strings.Join(copied(t, root), " "); got != "runbook.md" {
-			t.Errorf("copied %q", got)
-		}
-	})
-
-	t.Run("another run's pull request pin stays behind", func(t *testing.T) {
-		// A copied target.env would have this run deploy that pull
-		// request, whatever it was started for.
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		write(t, root, runs+"/gke-pr7/runbook.md", "my run")
-		write(t, root, runs+"/gke-pr7/target.env", "TARGET_PR=7")
-		if out, ok := instantiate(t, root, "gke-pr7", "main"); !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := strings.Join(copied(t, root), " "); got != "runbook.md" {
-			t.Errorf("copied %q", got)
-		}
-	})
-
-	t.Run("a run still under a legacy path is found", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		write(t, root, "docs-exploration/runs/gke/runbook.md", "legacy")
-		if out, ok := instantiate(t, root, "gke", "main"); !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "legacy\n" {
-			t.Errorf("runbook.md = %q, want the legacy run's", got)
-		}
-	})
-
-	t.Run("a pull request that does not carry the runbook gets the default branch's", func(t *testing.T) {
-		// The runbooks on offer are the default branch's, and a pull
-		// request opened before one merged does not have it at its head.
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		git(t, root, "branch", "pr")
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		commit(t, root)
-		out, ok := instantiateAt(t, root, "gke", "pr", "main")
-		if !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "procedure\n" {
-			t.Errorf("runbook.md = %q, want the default branch's", got)
-		}
-		if !strings.Contains(out, "SURVIVED .agents/runbooks/gke at main") {
-			t.Errorf("the origin does not say it came from the default branch:\n%s", out)
-		}
-	})
-
-	t.Run("a pull request that changes the runbook is deployed with its own", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		commit(t, root)
-		git(t, root, "checkout", "-q", "-b", "pr")
-		write(t, root, ".agents/runbooks/gke/runbook.md", "changed by the pull request")
-		commit(t, root)
-		git(t, root, "checkout", "-q", "main")
-		if out, ok := instantiateAt(t, root, "gke", "pr", "main"); !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "changed by the pull request\n" {
-			t.Errorf("runbook.md = %q, want the pull request's", got)
-		}
-	})
-
-	t.Run("a failed fetch falls back to the worktree", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		out, ok := instantiate(t, root, "gke", "")
-		if !ok {
-			t.Fatalf("instantiateRunbook killed the script:\n%s", out)
-		}
-		if !strings.Contains(out, "(working tree)") {
-			t.Errorf("the origin does not say it came from the worktree:\n%s", out)
-		}
-	})
-
-	t.Run("an unknown runbook fails loudly and creates nothing", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, "README", "x")
-		commit(t, root)
-		out, ok := instantiate(t, root, "nope", "main")
-		if ok {
-			t.Fatalf("an unknown runbook did not fail the run:\n%s", out)
-		}
-		if !strings.Contains(out, "no runbook named 'nope'") {
-			t.Errorf("no explanation:\n%s", out)
-		}
-		if _, err := os.Stat(filepath.Join(root, runs, "pr-42")); err == nil {
-			t.Error("a run directory was created for a runbook that does not exist")
-		}
-	})
-
-	t.Run("an existing run is never overwritten", func(t *testing.T) {
-		root := repo(t)
-		write(t, root, ".agents/runbooks/gke/runbook.md", "procedure")
-		commit(t, root)
-		write(t, root, runs+"/pr-42/runbook.md", "mine")
-		if _, ok := instantiate(t, root, "gke", "main"); ok {
-			t.Error("instantiating over an existing run did not fail")
-		}
-		if got := read(root, runs+"/pr-42/runbook.md"); got != "mine\n" {
-			t.Errorf("runbook.md = %q; an existing run's procedure was overwritten", got)
-		}
-	})
+	return w.result(run)
 }
 
-// A run started from a runbook is always planned: the copy is the
-// plan's starting point, never a plan by itself.
-func TestRunbookIsAlwaysPlanned(t *testing.T) {
-	b, err := GetRecipeStepScript()
+func (w *runWorld) result(run string) runResult {
+	w.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(w.root, "task-"+run, "result.json"))
 	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
+		w.t.Fatal(err)
 	}
-	s := string(b)
-	// run-prepare copies it in and commits nothing; the ask plans
-	// from it, and only run-finish commits (the recipe's order:
-	// recipe.TestBuiltinRunRecipes).
-	prepare := funcBody(t, s, "runPrepare")
-	if !strings.Contains(prepare, "instantiateRunbook") {
-		t.Fatal("runPrepare does not instantiate the runbook")
+	var res runResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		w.t.Fatalf("result.json: %v\n%s", err, raw)
 	}
-	if strings.Contains(prepare, "commitAndPushRun") {
-		t.Errorf("the copy is committed before the agent plans from it:\n%s", prepare)
+	return res
+}
+
+// A plan makes the run's branch from the empty runs/root, with only the
+// run's files at its root, and pushes both to the fork; what the agent
+// changed in the checkout is listed, not committed. The deploy after it
+// starts from the fork's branch and adds to it.
+func TestRunBranchPlanThenDeploy(t *testing.T) {
+	w := newRunWorld(t)
+	res := w.phase("plan", "r1", nil, `printf 'PLANNED — nothing executed\n' > .factory-run/receipt-20261013-0900.md
+echo '# the procedure' > .factory-run/runbook.md
+echo edited >> README.md`)
+	if res.ExitCode != 0 || str(res.Verdict) != "PLANNED" || res.Branch != "runs/r1" || str(res.Receipt) != "receipt-20261013-0900.md" {
+		t.Errorf("plan result = %+v", res)
 	}
-	for _, gone := range []string{"rewriteParams", "RUNBOOK_FILES"} {
-		if strings.Contains(s, gone) {
-			t.Errorf("lib.sh still has %s: making the copy this run's is the plan's job", gone)
-		}
+	if strings.Join(res.Discarded, ",") != "README.md" {
+		t.Errorf("discarded = %v, want the checkout's README.md", res.Discarded)
+	}
+	if got := w.git(w.fork, "rev-parse", "runs/r1"); got != str(res.Commit) {
+		t.Errorf("fork runs/r1 = %s, want the commit %s", got, str(res.Commit))
+	}
+	if files := w.git(w.fork, "ls-tree", "--name-only", "runs/r1"); files != "receipt-20261013-0900.md\nrunbook.md" {
+		t.Errorf("runs/r1 holds %q, want the run's files alone", files)
+	}
+	rootSHA := w.git(w.fork, "rev-parse", "runs/root")
+	if w.git(w.fork, "rev-list", "--max-parents=0", "runs/r1") != rootSHA || w.git(w.fork, "ls-tree", "runs/root") != "" {
+		t.Error("runs/r1 does not start from the empty runs/root")
+	}
+	if w.git(w.ws, "diff", "--name-only") != "README.md" {
+		t.Error("the checkout's change was not left where it was")
+	}
+
+	res = w.phase("deploy", "r1", nil, `test -f .factory-run/runbook.md
+printf '**VERIFIED** — up\n' > .factory-run/receipt-20261013-1000.md`)
+	if str(res.Verdict) != "VERIFIED" || str(res.Receipt) != "receipt-20261013-1000.md" {
+		t.Errorf("deploy result = %+v", res)
+	}
+	if n := w.git(w.fork, "rev-list", "--count", "runs/r1"); n != "3" {
+		t.Errorf("runs/r1 has %s commits, want root, plan, deploy", n)
 	}
 }
 
-// The engine has to know the copy is there, that it makes it this
-// run's, and that it is not to redesign it.
-// resolveTarget and clearTarget are executed against real repositories:
-// an upstream with a pull request ref, and a workspace cloned from it
-// with a run of its own, the way a sandbox has them.
-func TestTargetIsPinnedAndLaidOverTheWorktree(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash required")
-	}
-	gitBin, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git required")
-	}
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	from := strings.Index(s, "TARGET_PR=\"\"\n")
-	to := strings.Index(s, "\nfunction commitAndPushRun {")
-	if from < 0 || to < from {
-		t.Fatal("lib.sh is missing TARGET_PR or commitAndPushRun")
-	}
-	body := s[from:to]
-
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	git := func(t *testing.T, dir string, args ...string) string {
-		t.Helper()
-		cmd := exec.Command(gitBin, append([]string{"-C", dir}, args...)...)
-		cmd.Env = gitEnv
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	write := func(t *testing.T, root, rel, content string) {
-		t.Helper()
-		p := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content+"\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	read := func(root, rel string) string {
-		b, err := os.ReadFile(filepath.Join(root, rel))
-		if err != nil {
-			return "<missing>"
-		}
-		return strings.TrimSpace(string(b))
-	}
-	const runDir = "docs-exploration/agent-runs/gke-pr42"
-
-	// setup returns the upstream (main, and pull request 42 changing
-	// app.txt, deleting old.txt, adding new.txt) and a workspace cloned
-	// from it with the run's own directory committed.
-	setup := func(t *testing.T) (up, ws, head string) {
-		up = t.TempDir()
-		git(t, up, "init", "-q", "-b", "main")
-		write(t, up, "app.txt", "base")
-		write(t, up, "old.txt", "old")
-		git(t, up, "add", "-A")
-		git(t, up, "commit", "-qm", "base")
-		git(t, up, "checkout", "-qb", "pr")
-		write(t, up, "app.txt", "pr")
-		write(t, up, "new.txt", "new")
-		git(t, up, "rm", "-q", "old.txt")
-		git(t, up, "add", "-A")
-		git(t, up, "commit", "-qm", "pr")
-		head = git(t, up, "rev-parse", "HEAD")
-		git(t, up, "update-ref", "refs/pull/42/head", head)
-		git(t, up, "checkout", "-q", "main")
-
-		ws = filepath.Join(t.TempDir(), "ws")
-		git(t, filepath.Dir(ws), "clone", "-q", up, ws)
-		git(t, ws, "remote", "rename", "origin", "upstream")
-		write(t, ws, runDir+"/runbook.md", "procedure")
-		git(t, ws, "add", "-A")
-		git(t, ws, "commit", "-qm", "run")
-		return up, ws, head
-	}
-	// run executes resolveTarget, then then, as run-prepare would.
-	run := func(t *testing.T, ws, mode, pr, then string) (string, bool) {
-		t.Helper()
-		script := "set -e\nset -o pipefail\nSRC_REMOTE=upstream\nRUNBOOK_REF=main\nTARGET_FILE=target.env\n" +
-			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) +
-			"\nresolveTarget\n" + then + "\necho \"SURVIVED ${RUNBOOK_REF} ${RUNBOOK_FALLBACK_REF}\"\n"
-		cmd := exec.Command(bash, "-c", script)
-		cmd.Env = append(gitEnv, "RUN_DIR="+runDir, "RUN_MODE="+mode, "RUN_TARGET_PR="+pr)
-		out, _ := cmd.CombinedOutput()
-		return string(out), strings.Contains(string(out), "SURVIVED")
-	}
-
-	t.Run("a plan pins the head and checks the pull request out", func(t *testing.T) {
-		_, ws, head := setup(t)
-		out, ok := run(t, ws, "plan", "42", "")
-		if !ok {
-			t.Fatalf("resolveTarget killed the script:\n%s", out)
-		}
-		if got, want := read(ws, runDir+"/target.env"), "TARGET_PR=42\nTARGET_SHA="+head; got != want {
-			t.Errorf("target.env = %q, want %q", got, want)
-		}
-		if read(ws, "app.txt") != "pr" || read(ws, "new.txt") != "new" || read(ws, "old.txt") != "<missing>" {
-			t.Errorf("the worktree is not the pull request: app=%q new=%q old=%q", read(ws, "app.txt"), read(ws, "new.txt"), read(ws, "old.txt"))
-		}
-		if read(ws, runDir+"/runbook.md") != "procedure" {
-			t.Error("the run's own directory was touched")
-		}
-		// A runbook the pull request changes is the one it runs with.
-		if !strings.Contains(out, "SURVIVED "+head) {
-			t.Errorf("RUNBOOK_REF is not the pinned commit:\n%s", out)
-		}
-		// And one it does not carry comes from the default branch.
-		if !strings.Contains(out, "SURVIVED "+head+" main") {
-			t.Errorf("RUNBOOK_FALLBACK_REF is not the default branch:\n%s", out)
-		}
-		// Nothing is staged: the pull request is never committed.
-		if staged := git(t, ws, "diff", "--cached", "--name-only"); staged != "" {
-			t.Errorf("staged %q", staged)
-		}
-	})
-
-	t.Run("a deploy executes the pin, not wherever the pull request is now", func(t *testing.T) {
-		up, ws, head := setup(t)
-		if out, ok := run(t, ws, "plan", "42", "clearTarget"); !ok {
-			t.Fatalf("plan: %s", out)
-		}
-		git(t, up, "checkout", "-q", "pr")
-		write(t, up, "app.txt", "moved")
-		git(t, up, "commit", "-qam", "moved")
-		git(t, up, "update-ref", "refs/pull/42/head", "HEAD")
-		out, ok := run(t, ws, "deploy", "", "")
-		if !ok {
-			t.Fatalf("resolveTarget killed the script:\n%s", out)
-		}
-		if got := read(ws, "app.txt"); got != "pr" {
-			t.Errorf("app.txt = %q; the deploy did not execute the commit the plan pinned", got)
-		}
-		if !strings.Contains(out, head) {
-			t.Errorf("the pinned commit is not named:\n%s", out)
-		}
-	})
-
-	t.Run("clearing puts the branch back and names what the engine changed", func(t *testing.T) {
-		_, ws, _ := setup(t)
-		out, ok := run(t, ws, "plan", "42", "echo edited >> "+ws+"/app.txt\nclearTarget")
-		if !ok {
-			t.Fatalf("killed:\n%s", out)
-		}
-		if !strings.Contains(out, "  app.txt") || strings.Contains(out, "  new.txt") {
-			t.Errorf("the collateral list is wrong — only app.txt was edited:\n%s", out)
-		}
-		if read(ws, "app.txt") != "base" || read(ws, "old.txt") != "old" || read(ws, "new.txt") != "<missing>" {
-			t.Error("the worktree is not back to the branch")
-		}
-		if got := git(t, ws, "status", "--porcelain"); got != "?? "+runDir+"/target.env" {
-			t.Errorf("status = %q; only the pin should be left to commit", got)
-		}
-	})
-
-	t.Run("no pin is the default branch, untouched", func(t *testing.T) {
-		_, ws, _ := setup(t)
-		out, ok := run(t, ws, "deploy", "", "clearTarget")
-		if !ok || !strings.Contains(out, "SURVIVED main") || read(ws, "app.txt") != "base" {
-			t.Errorf("a run with no target changed something:\n%s", out)
-		}
-	})
-
-	t.Run("a pin that is not a number and a commit is refused", func(t *testing.T) {
-		_, ws, _ := setup(t)
-		write(t, ws, runDir+"/target.env", "TARGET_PR=42; touch "+ws+"/pwned")
-		out, ok := run(t, ws, "deploy", "", "")
-		if ok || !strings.Contains(out, "does not pin a pull request and a commit") {
-			t.Errorf("a malformed pin was not refused:\n%s", out)
-		}
-		if read(ws, "pwned") != "<missing>" {
-			t.Error("target.env was executed")
-		}
-	})
-
-	t.Run("a pinned commit that is gone says to re-plan", func(t *testing.T) {
-		_, ws, _ := setup(t)
-		write(t, ws, runDir+"/target.env", "TARGET_PR=42\nTARGET_SHA="+strings.Repeat("0", 40))
-		out, ok := run(t, ws, "deploy", "", "")
-		if ok || !strings.Contains(out, "Re-plan with --target 42") {
-			t.Errorf("a missing commit was not explained:\n%s", out)
-		}
-	})
-
-	t.Run("a pull request that does not exist fails the plan", func(t *testing.T) {
-		_, ws, _ := setup(t)
-		out, ok := run(t, ws, "plan", "99", "")
-		if ok || !strings.Contains(out, "could not fetch pull request #99") {
-			t.Errorf("a missing pull request did not fail:\n%s", out)
-		}
-		if read(ws, runDir+"/target.env") != "<missing>" {
-			t.Error("a pin was written for a pull request that does not exist")
-		}
-	})
-}
-
-// Every commit goes through commitAndPushRun, so that is where the
-// pull request has to come off the worktree; and resolveTarget has to
-// run before anything reads the checkout.
-func TestTargetIsClearedBeforeEveryCommit(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	fn := s[strings.Index(s, "function commitAndPushRun {"):]
-	if c, a := strings.Index(fn, "clearTarget"), strings.Index(fn, "git add"); c < 0 || c > a {
-		t.Error("commitAndPushRun stages before clearing the target")
-	}
-	if !strings.Contains(funcBody(t, s, "runPrepare"), "ensureRunsBranch\n    resolveTarget\n    snapshotReceipts\n") {
-		t.Error("resolveTarget does not run right after the runs branch is ready")
-	}
-}
-
-// result.json is executed, not grepped: it is written from an EXIT
-// trap under set -e, where a failing command inside the writer would
-// take the exit code with it, and its one input from the engine is a
-// receipt's first line in whatever markdown the engine chose.
-func TestRunWritesItsResult(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash required")
-	}
-	gitBin, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("git required")
-	}
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	from := strings.Index(s, "TARGET_PR=\"\"\n")
-	to := strings.Index(s, "\n# Main execution")
-	finish := funcBody(t, s, "runFinish")
-	trapAt := strings.Index(finish, "trap ")
-	if from < 0 || to < from || trapAt < 0 {
-		t.Fatal("lib.sh is missing TARGET_PR, the main section or runFinish's EXIT trap")
-	}
-	trap := finish[trapAt : trapAt+strings.Index(finish[trapAt:], "\n")]
-	body := s[from:to]
-
-	gitEnv := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	git := func(t *testing.T, dir string, args ...string) {
-		t.Helper()
-		cmd := exec.Command(gitBin, append([]string{"-C", dir}, args...)...)
-		cmd.Env = gitEnv
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	const runDir = "docs-exploration/agent-runs/r1"
-
-	// run sets up a workspace whose runs branch already holds a PLANNED
-	// receipt, then runs engine as the invocation, with the EXIT trap
-	// runFinish installs. It returns the exit code and result.json.
-	run := func(t *testing.T, engine string) (int, runResult, string) {
-		t.Helper()
-		root := t.TempDir()
-		origin, ws, task := filepath.Join(root, "origin.git"), filepath.Join(root, "ws"), filepath.Join(root, "task")
-		git(t, root, "init", "-q", "--bare", origin)
-		git(t, root, "init", "-q", "-b", "research/runs", ws)
-		if err := os.MkdirAll(filepath.Join(ws, runDir), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(task, 0755); err != nil {
-			t.Fatal(err)
-		}
-		for rel, content := range map[string]string{"app.txt": "base", runDir + "/receipt-20260101-0000.md": "PLANNED"} {
-			if err := os.WriteFile(filepath.Join(ws, rel), []byte(content+"\n"), 0644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		git(t, ws, "add", "-A")
-		git(t, ws, "commit", "-qm", "base")
-		git(t, ws, "remote", "add", "origin", origin)
-		git(t, ws, "push", "-q", "origin", "research/runs")
-
-		script := "set -e\nset -o pipefail\nREPO_NAME=repo\nRUN_NAME=r1\nRUN_MODE=deploy\nRUNS_BRANCH=research/runs\nTARGET_FILE=target.env\n" +
-			"RUN_DIR=" + runDir + "\nTASK_DIR=" + task + "\n" +
-			strings.ReplaceAll(body, "/workspaces/${REPO_NAME}", ws) + "\n" + trap + "\nsnapshotReceipts\ncd " + ws + "\n" + engine + "\n"
-		cmd := exec.Command(bash, "-c", script)
-		cmd.Env = gitEnv
-		out, _ := cmd.CombinedOutput()
-		code := cmd.ProcessState.ExitCode()
-		raw, err := os.ReadFile(filepath.Join(task, "result.json"))
-		if err != nil {
-			t.Fatalf("no result.json (exit %d):\n%s", code, out)
-		}
-		var res runResult
-		if err := json.Unmarshal(raw, &res); err != nil {
-			t.Fatalf("result.json is not JSON: %v\n%s\n%s", err, raw, out)
-		}
-		return code, res, string(out)
-	}
-	str := func(p *string) string {
-		if p == nil {
-			return "<null>"
-		}
-		return *p
-	}
-
-	t.Run("a run names its verdict, receipt, commit and what it threw away", func(t *testing.T) {
-		code, res, out := run(t, `printf '\n**VERIFIED** — all good\n' > $RUN_DIR/receipt-20260929-0337.md
-echo x > .gcloudignore
-echo changed > app.txt
-commitAndPushRun deploy`)
+// runs/root is the same commit wherever it is made, so two sandboxes
+// making it at once never conflict on the fork.
+func TestRunsRootIsTheSameEverywhere(t *testing.T) {
+	a, b := newRunWorld(t), newRunWorld(t)
+	sha := func(w *runWorld) string {
+		code, out := w.step("runsRoot", "plan", "r1", nil, "")
 		if code != 0 {
-			t.Fatalf("exit %d:\n%s", code, out)
+			t.Fatalf("runsRoot: %s", out)
 		}
-		if res.Version != 1 || res.Run != "r1" || res.Mode != "deploy" || res.Branch != "research/runs" || res.ExitCode != 0 {
-			t.Errorf("identity = %+v", res)
-		}
-		if str(res.Verdict) != "VERIFIED" {
-			t.Errorf("verdict = %s, want VERIFIED (the first word, past the markdown)", str(res.Verdict))
-		}
-		if str(res.Receipt) != runDir+"/receipt-20260929-0337.md" {
-			t.Errorf("receipt = %s, want this invocation's, not the plan's", str(res.Receipt))
-		}
-		if len(str(res.Commit)) != 40 {
-			t.Errorf("commit = %s, want the pushed sha", str(res.Commit))
-		}
-		if strings.Join(res.Discarded, ",") != ".gcloudignore,app.txt" {
-			t.Errorf("discarded = %v, want the created file as well as the edited one", res.Discarded)
-		}
-		if !strings.Contains(out, "Not committed (created outside "+runDir+"):") {
-			t.Errorf("the created file went unmentioned in the log:\n%s", out)
-		}
-	})
-
-	t.Run("a run that dies before its receipt still says so, and keeps its exit code", func(t *testing.T) {
-		code, res, _ := run(t, "false")
-		if code != 1 || res.ExitCode != 1 {
-			t.Errorf("exit %d, exitCode %d, want 1 and 1", code, res.ExitCode)
-		}
-		if res.Verdict != nil || res.Receipt != nil || res.Commit != nil || res.Target != nil || len(res.Discarded) != 0 {
-			t.Errorf("a run with nothing to show claims something: %+v", res)
-		}
-	})
-
-	t.Run("a first line that is not a verdict is unknown, never guessed", func(t *testing.T) {
-		code, res, _ := run(t, "echo 'Deployment went fine' > $RUN_DIR/receipt-20260929-0500-teardown.md\nexit 3")
-		if code != 3 || res.ExitCode != 3 {
-			t.Errorf("exit %d, exitCode %d, want 3 and 3", code, res.ExitCode)
-		}
-		if str(res.Verdict) != "unknown" {
-			t.Errorf("verdict = %s, want unknown", str(res.Verdict))
-		}
-	})
-
-	t.Run("a pull request run names its pin", func(t *testing.T) {
-		_, res, _ := run(t, "echo TORN-DOWN > $RUN_DIR/receipt-20260929-0600-teardown.md\nTARGET_PR=42\nTARGET_SHA=abc")
-		if res.Target == nil || res.Target.PR != 42 || res.Target.SHA != "abc" {
-			t.Errorf("target = %+v, want pr 42 at abc", res.Target)
-		}
-		if str(res.Verdict) != "TORN-DOWN" {
-			t.Errorf("verdict = %s, want TORN-DOWN", str(res.Verdict))
-		}
-	})
-
-	t.Run("a path is escaped, not pasted into the JSON", func(t *testing.T) {
-		_, res, _ := run(t, `addDiscarded 'we"ird\path'`)
-		if strings.Join(res.Discarded, ",") != `we"ird\path` {
-			t.Errorf("discarded = %q", res.Discarded)
-		}
-	})
+		return strings.TrimSpace(out)
+	}
+	if x, y := sha(a), sha(b); x == "" || x != y {
+		t.Errorf("runsRoot = %q and %q, want one commit", x, y)
+	}
 }
 
-// Runs push research/runs to origin, so origin must be the member's fork
+// A plan from a runbook copies it in, from the repository or from
+// another run's branch — not its receipts, and not a target.env — and
+// never over a run that has one, or from itself.
+func TestRunBranchPlanFromARunbook(t *testing.T) {
+	w := newRunWorld(t)
+	head := w.git(w.src, "rev-parse", "refs/pull/7/head")
+	w.phase("plan", "gke-a", map[string]string{"runbook": "gke"}, `test -x .factory-run/deploy.sh
+test ! -e .factory-run/receipt-20260101-0000.md
+printf 'TARGET_PR=7\nTARGET_SHA=`+head+`\n' > .factory-run/target.env
+echo PLANNED > .factory-run/receipt-20261013-0900.md`)
+	if msg := w.git(w.fork, "log", "-1", "--format=%s", "runs/gke-a"); !strings.Contains(msg, "plan from runbook .agents/runbooks/gke at") {
+		t.Errorf("plan commit = %q", msg)
+	}
+	w.phase("plan", "gke-b", map[string]string{"runbook": "gke-a"}, `test -f .factory-run/runbook.md
+test ! -e .factory-run/target.env
+test ! -e .factory-run/receipt-20261013-0900.md`)
+	if msg := w.git(w.fork, "log", "-1", "--format=%s", "runs/gke-b"); !strings.Contains(msg, "plan from runbook run gke-a (runs/gke-a)") {
+		t.Errorf("plan commit = %q", msg)
+	}
+	for _, c := range []struct{ run, runbook, want string }{
+		{"gke-a", "gke", "already has a runbook.md"},
+		{"gke-c", "gke-c", "names this run itself"},
+		{"gke-d", "missing", "no runbook named 'missing'"},
+	} {
+		if code, out := w.step("runPrepare", "plan", c.run, map[string]string{"runbook": c.runbook}, ""); code == 0 || !strings.Contains(out, c.want) {
+			t.Errorf("plan %s from %s: exit %d, want %q\n%s", c.run, c.runbook, code, c.want, out)
+		}
+	}
+}
+
+// A pull request run pins the pull request's head in target.env and
+// checks the code out at it, detached; deploy reads the pin back and
+// checks out the same commit, however far the pull request moves.
+func TestRunBranchTarget(t *testing.T) {
+	w := newRunWorld(t)
+	head := w.git(w.src, "rev-parse", "refs/pull/7/head")
+	res := w.phase("plan", "pr7", map[string]string{"target_pr": "7"}, `grep -q 'changed by the pull request' README.md
+echo PLANNED > .factory-run/receipt-20261013-0900.md`)
+	if res.Target == nil || res.Target.PR != 7 || res.Target.SHA != head {
+		t.Errorf("target = %+v, want 7 at %s", res.Target, head)
+	}
+	if pin := w.git(w.fork, "show", "runs/pr7:target.env"); pin != "TARGET_PR=7\nTARGET_SHA="+head {
+		t.Errorf("target.env = %q", pin)
+	}
+	w.git(w.ws, "checkout", "-q", "main")
+	w.phase("deploy", "pr7", nil, `test "$(git rev-parse HEAD)" = `+head+`
+echo VERIFIED > .factory-run/receipt-20261013-1000.md`)
+
+	w.write(w.ws, ".factory-run/target.env", "TARGET_PR=7\nTARGET_SHA=nope\n", 0644)
+	w.git(w.ws+"/.factory-run", "commit", "-qam", "bad pin")
+	w.git(w.ws, "push", "-q", "origin", "runs/pr7")
+	if code, out := w.step("runPrepare", "teardown", "pr7", nil, ""); code == 0 || !strings.Contains(out, "does not pin a pull request and a commit") {
+		t.Errorf("a bad pin: exit %d\n%s", code, out)
+	}
+}
+
+// Local-only, nothing is pushed; the branch lives in the sandbox and the
+// next phase starts from it.
+func TestRunBranchLocalOnly(t *testing.T) {
+	w := newRunWorld(t)
+	guard := `git -C "$RUN_REPO" remote set-url --push origin "$LOCAL_ONLY_PUSH_URL"`
+	if code, out := w.step("true", "plan", "lo", nil, guard); code != 0 {
+		t.Fatal(out)
+	}
+	res := w.phase("plan", "lo", nil, `echo PLANNED > .factory-run/receipt-20261013-0900.md`)
+	if !res.LocalOnly || res.Commit == nil {
+		t.Errorf("result = %+v, want local-only with a commit", res)
+	}
+	if refs := w.git(w.fork, "for-each-ref"); refs != "" {
+		t.Errorf("the fork got %s", refs)
+	}
+	w.phase("deploy", "lo", nil, `test -f .factory-run/receipt-20261013-0900.md
+echo VERIFIED > .factory-run/receipt-20261013-1000.md`)
+	if n := w.git(w.ws, "rev-list", "--count", "runs/lo"); n != "3" {
+		t.Errorf("runs/lo has %s commits", n)
+	}
+}
+
+// A phase whose push failed keeps its commit in the sandbox, and the next
+// phase pushes it; a branch the sandbox and the fork disagree on stops
+// the phase rather than lose one of them.
+func TestRunBranchUnpushedAndDiverged(t *testing.T) {
+	w := newRunWorld(t)
+	w.phase("plan", "r1", nil, `echo PLANNED > .factory-run/receipt-20261013-0900.md`)
+	w.git(w.ws, "remote", "set-url", "--push", "origin", filepath.Join(w.root, "nowhere.git"))
+	if code, _ := w.step("runPrepare", "deploy", "r1", nil, ""); code != 0 {
+		t.Fatal("runPrepare failed")
+	}
+	w.write(w.ws, ".factory-run/receipt-20261013-1000.md", "VERIFIED\n", 0644)
+	if code, out := w.step("runFinish", "deploy", "r1", nil, ""); code == 0 || !strings.Contains(out, "kept in this sandbox") {
+		t.Fatalf("a failed push: exit %d\n%s", code, out)
+	}
+	w.git(w.ws, "remote", "set-url", "--push", "origin", w.fork)
+	w.phase("teardown", "r1", nil, `echo TORN-DOWN > .factory-run/receipt-20261013-1100.md`)
+	if files := w.git(w.fork, "ls-tree", "--name-only", "runs/r1"); !strings.Contains(files, "receipt-20261013-1000.md") {
+		t.Errorf("the unpushed deploy never reached the fork: %s", files)
+	}
+
+	other := filepath.Join(w.root, "other")
+	w.git(w.root, "clone", "-q", "-b", "runs/r1", w.fork, other)
+	w.write(other, "note.md", "pushed from elsewhere\n", 0644)
+	w.git(other, "add", "-A")
+	w.git(other, "commit", "-qm", "elsewhere")
+	w.git(other, "push", "-q", "origin", "runs/r1")
+	w.git(w.ws+"/.factory-run", "commit", "-q", "--allow-empty", "-m", "here")
+	if code, out := w.step("runPrepare", "plan", "r1", nil, ""); code == 0 || !strings.Contains(out, "have diverged") {
+		t.Errorf("a diverged branch: exit %d\n%s", code, out)
+	}
+}
+
+// A run that dies in the ask leaves runPrepare's result: the phase never
+// finished.
+func TestRunPrepareResultSaysUnfinished(t *testing.T) {
+	w := newRunWorld(t)
+	if code, out := w.step("runPrepare", "plan", "r1", nil, ""); code != 0 {
+		t.Fatal(out)
+	}
+	if res := w.result("r1"); res.ExitCode != -1 || res.Verdict != nil || res.Commit != nil {
+		t.Errorf("result = %+v, want exitCode -1 and nothing else", res)
+	}
+	for _, bad := range []string{"", "root", "Bad_Name", "a/b"} {
+		if code, out := w.step("runPrepare", "plan", bad, nil, ""); code == 0 || !strings.Contains(out, "is not a run name") {
+			t.Errorf("run %q: exit %d\n%s", bad, code, out)
+		}
+	}
+}
+
+// Runs push their branch to origin, so origin must be the member's fork
 // before anything is pushed: runs-remote does that, before the checkout
 // (the recipes' order: recipe.TestBuiltinRunRecipes), and run-prepare,
 // a process of its own, reads from the checkout whether it made the run
@@ -851,49 +358,9 @@ func TestRunPrepareFindsTheRemoteRunsRemoteMade(t *testing.T) {
 	}
 }
 
-// funcBody is the body of the shell function name in script.
-func funcBody(t *testing.T, script, name string) string {
-	t.Helper()
-	at := strings.Index(script, "function "+name+" {")
-	if at < 0 {
-		t.Fatalf("no function %s", name)
-	}
-	return script[at : at+strings.Index(script[at:], "\n}\n")+3]
-}
-
-// A repository the organisation will not let the member fork runs
-// local-only: origin is still the upstream repository, so its push URL
-// must be unusable, the commit must not be pushed, and the next phase
-// must find the branch it left rather than rebuild it from the default
-// branch.
-func TestRunScriptLocalOnly(t *testing.T) {
-	b, err := GetRecipeStepScript()
-	if err != nil {
-		t.Fatalf("GetRecipeStepScript: %v", err)
-	}
-	s := string(b)
-	for _, want := range []string{
-		"2) enterLocalOnly ;;",
-		`remote set-url --push origin "${LOCAL_ONLY_PUSH_URL}"`,
-		`if [ -z "${RUNS_LOCAL_ONLY}" ] && git fetch origin "${RUNS_BRANCH}"`,
-		`elif git show-ref --verify --quiet "refs/heads/${RUNS_BRANCH}"; then`,
-		`elif [ -n "${RUNS_LOCAL_ONLY}" ]; then`,
-		`"localOnly": %s`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("lib.sh missing %q", want)
-		}
-	}
-	commit := s[strings.Index(s, "function commitAndPushRun"):]
-	local, push := strings.Index(commit, `elif [ -n "${RUNS_LOCAL_ONLY}" ]; then`), strings.Index(commit, `git push origin`)
-	if local < 0 || push < 0 || local > push {
-		t.Error("commitAndPushRun must branch off local-only runs before it pushes")
-	}
-}
-
 // run-finish runs in a process of its own after the ask: what
-// run-prepare found reaches it through $TASK_DIR, newlines and
-// quotes intact.
+// run-prepare found reaches it through $TASK_DIR, newlines and quotes
+// intact.
 func TestRunStateCrossesTheAsk(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -908,20 +375,37 @@ func TestRunStateCrossesTheAsk(t *testing.T) {
 	fns := s[from : from+strings.Index(s[from:], "# runPrepare is")]
 	task := t.TempDir()
 	script := "TASK_DIR=" + task + "\n" + fns + `
-RUNS_LOCAL_ONLY=1; RUNBOOK_ORIGIN="gke-std"; TARGET_PR=42; TARGET_SHA=abc
-RESULT_RECEIPTS_BEFORE=$'receipt-1.md\nreceipt-2.md'; RESULT_DISCARDED='we"ird path'
+RUNS_LOCAL_ONLY=1; RUNBOOK_ORIGIN='run "gke" (runs/gke)'; TARGET_PR=42; TARGET_SHA=abc
+RESULT_RECEIPTS_BEFORE=$'receipt-1.md\nreceipt-2.md'
 saveRunState
-unset RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED
+unset RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE
 loadRunState
-printf '%s|%s|%s|%s|%s|%s' "$RUNS_LOCAL_ONLY" "$RUNBOOK_ORIGIN" "$TARGET_PR" "$TARGET_SHA" "$RESULT_RECEIPTS_BEFORE" "$RESULT_DISCARDED"
+printf '%s|%s|%s|%s|%s' "$RUNS_LOCAL_ONLY" "$RUNBOOK_ORIGIN" "$TARGET_PR" "$TARGET_SHA" "$RESULT_RECEIPTS_BEFORE"
 `
 	out, err := exec.Command(bash, "-c", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if want := "1|gke-std|42|abc|receipt-1.md\nreceipt-2.md|we\"ird path"; string(out) != want {
+	if want := "1|run \"gke\" (runs/gke)|42|abc|receipt-1.md\nreceipt-2.md"; string(out) != want {
 		t.Errorf("state after the ask = %q, want %q", out, want)
 	}
+}
+
+// funcBody is the body of the shell function name in script.
+func funcBody(t *testing.T, script, name string) string {
+	t.Helper()
+	at := strings.Index(script, "function "+name+" {")
+	if at < 0 {
+		t.Fatalf("no function %s", name)
+	}
+	return script[at : at+strings.Index(script[at:], "\n}\n")+3]
+}
+
+func str(p *string) string {
+	if p == nil {
+		return "<null>"
+	}
+	return *p
 }
 
 // runResult is result.json as a reader sees it.
@@ -933,6 +417,7 @@ type runResult struct {
 	Verdict   *string    `json:"verdict"`
 	Receipt   *string    `json:"receipt"`
 	Branch    string     `json:"branch"`
+	LocalOnly bool       `json:"localOnly"`
 	Commit    *string    `json:"commit"`
 	Target    *runTarget `json:"target"`
 	Discarded []string   `json:"discarded"`

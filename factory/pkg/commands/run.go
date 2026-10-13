@@ -51,9 +51,9 @@ func slugifyScenario(s string) string {
 // at plan time either way, so there was never a reason to offer a
 // separate, earlier stopping point.
 //
-// A run owns everything it needs, in one directory on the fork's
-// research/runs branch: runbook.md is the procedure, the scripts
-// are generated from it, the receipts are the test results. Nothing is
+// A run owns everything it needs, on a branch of its own, runs/<name>
+// (factory/design/run-branches.md): runbook.md is the procedure, the
+// scripts are generated from it, the receipts are the test results. Nothing is
 // shared between runs, which is what lets a deploy correct the
 // procedure in place instead of filing recommendations against a
 // document other runs also read.
@@ -219,7 +219,7 @@ func runRun(ctx context.Context, mode, repoURL, name, intent, runbook, target st
 		return err
 	}
 	if !rootFlags.Detached {
-		fmt.Printf("Run %s %s finished for %s/%s; recorded on the research/runs branch.\n", name, mode, owner, repo)
+		fmt.Printf("Run %s %s finished for %s/%s; recorded on its branch, runs/%s.\n", name, mode, owner, repo, name)
 	}
 	return nil
 }
