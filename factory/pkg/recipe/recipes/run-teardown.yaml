@@ -1,11 +1,12 @@
 # `factory run teardown --url <repo> --name <run>`: the teardown: the agent
 # removes what the run created, preferring its generated teardown script.
 #
-# A run, in its own sandbox (runbook-<repo>-<run>), owns one directory,
-# docs-exploration/agent-runs/<run>/, on the research/runs branch of the
-# member's fork (or, for a repository they cannot fork, of the sandbox's
-# checkout alone: local-only): runbook.md, the procedure; the scripts
-# generated from it; the receipts, its results. run-plan, run-deploy and
+# A run, in its own sandbox (runbook-<repo>-<run>), owns a branch,
+# runs/<run> (factory/design/run-branches.md), checked out as a worktree
+# at .factory-run/ in the checkout, and pushed to the member's fork (or,
+# for a repository they cannot fork, kept in the sandbox alone:
+# local-only): runbook.md, the procedure; the scripts generated from it;
+# the receipts, its results. run-plan, run-deploy and
 # run-teardown are its three phases.
 #
 # The deterministic parts are lib.sh's (pkg/tasks), as named steps:
@@ -53,7 +54,8 @@ start:
     - ask: |
         You are tearing down the run "{{ .Inputs.run }}" for the repository
         {{ .Inputs.repo_name }} ({{ .Inputs.repo_url }}). Everything it owns is in
-        docs-exploration/agent-runs/{{ .Inputs.run }}/ — runbook.md is the procedure,
+        .factory-run/, a worktree of its own branch, runs/{{ .Inputs.run }} —
+        runbook.md is the procedure,
         params.env the resolved parameters, teardown.sh the generated script,
         and the receipts record what each execution left running. If there
         is a target.env, the checkout is the pull request commit it pins, the

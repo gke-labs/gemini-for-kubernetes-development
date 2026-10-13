@@ -1372,20 +1372,21 @@ except Exception:
 # ---- Runs -------------------------------------------------------------
 #
 # The run recipes' steps (recipe/recipes/run-plan.yaml, run-deploy.yaml,
-# run-teardown.yaml): plan, deploy or tear down one run, in that run's own sandbox. A run owns everything
-# it needs — runbook.md is the procedure, the scripts are generated from
-# it, the receipts are the test results — all under
-# docs-exploration/agent-runs/<name>/ on the research/runs branch of the
-# member's fork.
+# run-teardown.yaml): plan, deploy or tear down one run, in that run's
+# own sandbox (factory/design/run-branches.md). A run owns everything it
+# needs — runbook.md is the procedure, the scripts are generated from
+# it, the receipts are the test results — on a branch of its own,
+# runs/<run>, which holds those files and nothing else, at its root.
+# Every run branch starts from runs/root, one empty commit (runsRoot).
 #
-# A repository the member cannot fork — an organisation's policy keeps
-# forks of its private repositories out of personal accounts — runs
-# local-only: the same branch, committed in this sandbox and never
-# pushed anywhere. See enterLocalOnly.
-#
-# One run reads and writes one directory, so there are no siblings to
-# hide, no source document to protect from edits, and no stash to
-# restore after a run is killed mid-phase. Each phase is one ask.
+# The run's branch is checked out as a worktree of the sandbox's clone,
+# RUN_DIR (.factory-run, inside the checkout: an engine's file tools are
+# confined to its workspace). The checkout itself stays on the code the
+# phase runs: the default branch, or the commit a pull request run pins.
+# The run's branch is always in the sandbox; with a fork it is pushed
+# there too, after every phase, and without one (an organisation's
+# policy keeps forks of its private repositories out of personal
+# accounts) it is local-only: never pushed. See enterLocalOnly.
 #
 # These functions own the deterministic parts (branch, commit, push); the
 # agent owns authoring, execution and judgment. The recipes run them as
@@ -1407,8 +1408,13 @@ RUN_MODE="${RUN_MODE:-${WITH_PHASE:-}}"
 RUN_RUNBOOK="${RUN_RUNBOOK:-${INPUT_RUNBOOK:-}}"
 RUN_TARGET_PR="${RUN_TARGET_PR:-${INPUT_TARGET_PR:-}}"
 
-RUNS_BRANCH="research/runs"
-RUN_DIR="docs-exploration/agent-runs/${RUN_NAME}"
+# RUN_REPO is the sandbox's clone; RUN_DIR, relative to it, the run's
+# worktree; RUN_BRANCH, the run's branch; RUNS_ROOT_BRANCH, the commit
+# every run branch starts from.
+RUN_REPO="${RUN_REPO:-/workspaces/${REPO_NAME}}"
+RUN_DIR=".factory-run"
+RUN_BRANCH="runs/${RUN_NAME}"
+RUNS_ROOT_BRANCH="runs/root"
 
 # RUNS_LOCAL_ONLY is set when this run's records stay in the sandbox;
 # see enterLocalOnly.
@@ -1422,8 +1428,8 @@ LOCAL_ONLY_PUSH_URL="local-only-run:never-push"
 # are pushed and where the UI reads them. setupGitRepos ignores a
 # failed fork, which left origin on the upstream repository: the push
 # then failed with a 403 after the engine had done all its work — or,
-# for a member with write access, would have put research/runs on the
-# upstream repository.
+# for a member with write access, would have put the run on the upstream
+# repository.
 function setupRunsRemote {
     local rc=0
     forkRemote || rc=$?
@@ -1445,107 +1451,75 @@ function setupRunsRemote {
 # PVC: deleting the sandbox deletes the teardown script with it.
 #
 # origin is still the upstream repository, so its push URL is replaced
-# with something that is not one: a push from this script, or from the
-# engine, fails instead of landing upstream. It is repository config,
+# with something that is not one: a push from these functions, or from
+# the engine, fails instead of landing upstream. It is repository config,
 # which persists on the PVC and which resetRepoGitConfig leaves alone.
 # If a fork becomes possible later, `gh repo fork --remote` renames
 # this remote to upstream and the guard goes with it.
 function enterLocalOnly {
     RUNS_LOCAL_ONLY=1
-    git -C "/workspaces/${REPO_NAME}" remote set-url --push origin "${LOCAL_ONLY_PUSH_URL}"
+    git -C "${RUN_REPO}" remote set-url --push origin "${LOCAL_ONLY_PUSH_URL}"
     echo "${REPO_OWNER}/${REPO_NAME} cannot be forked to ${GITHUB_USER_ID} (the organisation's policy forbids it)."
-    echo "This run is local-only: ${RUNS_BRANCH} is committed in this sandbox and never pushed."
+    echo "This run is local-only: its branch is committed in this sandbox and never pushed."
     echo "Deleting the sandbox deletes the run's records, its teardown script included."
 }
 
-function ensureRunsBranch {
-    echo "Ensuring runs branch ${RUNS_BRANCH}..."
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    # A local-only run's origin is the upstream repository, whose
-    # research/runs — if it has one — is not this member's.
-    #
-    # Without a branch on the remote, the local one is the record: a
-    # local-only run's, or a plan whose push failed. Recreating it from
-    # the default branch, which checkoutDefaultBranch just checked out,
-    # dropped those commits.
-    if [ -z "${RUNS_LOCAL_ONLY}" ] && git fetch origin "${RUNS_BRANCH}" 2>/dev/null; then
-        git checkout -B "${RUNS_BRANCH}" "origin/${RUNS_BRANCH}"
-    elif git show-ref --verify --quiet "refs/heads/${RUNS_BRANCH}"; then
-        git checkout "${RUNS_BRANCH}"
+# runsRoot is the commit every run branch starts from: empty, and the
+# same in every sandbox — the empty tree, a fixed author, committer and
+# date — so two sandboxes that create it at once create the same commit,
+# and a fork's runs/root never conflicts. It is what keeps a pull request
+# per run possible: GitHub opens none between branches with no common
+# history.
+function runsRoot {
+    local tree
+    tree="$(git -C "${RUN_REPO}" hash-object -t tree /dev/null)"
+    GIT_AUTHOR_NAME=factory GIT_AUTHOR_EMAIL=factory@users.noreply.github.com GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" \
+    GIT_COMMITTER_NAME=factory GIT_COMMITTER_EMAIL=factory@users.noreply.github.com GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" \
+        git -C "${RUN_REPO}" -c commit.gpgsign=false commit-tree "${tree}" -m "runs root" < /dev/null
+}
+
+# ensureRunBranch puts the run's branch in RUN_DIR: the fork's, when it
+# has one, or the sandbox's own, or a new one from runs/root.
+#
+# The sandbox's copy may be ahead of the fork's — a phase whose push
+# failed — and then it is kept, for this phase's push to carry; behind,
+# it catches up. Diverged, it stops: one of the two would be lost.
+#
+# The worktree is made anew every phase: a phase killed mid-write leaves
+# nothing for the next one to read but what was committed.
+function ensureRunBranch {
+    local remote=""
+    pushd "${RUN_REPO}" > /dev/null
+    git worktree remove --force "${RUN_DIR}" 2>/dev/null || true
+    rm -rf "${RUN_DIR}"
+    git worktree prune
+    if [ -z "${RUNS_LOCAL_ONLY}" ] && git fetch -q origin "+refs/heads/${RUN_BRANCH}:refs/remotes/origin/${RUN_BRANCH}" 2>/dev/null; then
+        remote="refs/remotes/origin/${RUN_BRANCH}"
+    fi
+    if git show-ref --verify --quiet "refs/heads/${RUN_BRANCH}"; then
+        if [ -n "${remote}" ]; then
+            if git merge-base --is-ancestor "refs/heads/${RUN_BRANCH}" "${remote}"; then
+                git update-ref "refs/heads/${RUN_BRANCH}" "${remote}"
+            elif git merge-base --is-ancestor "${remote}" "refs/heads/${RUN_BRANCH}"; then
+                echo "${RUN_BRANCH} has commits the fork does not yet; this phase pushes them."
+            else
+                echo "ERROR: ${RUN_BRANCH} in this sandbox and on the fork have diverged; not choosing one." >&2
+                exit 1
+            fi
+        fi
+    elif [ -n "${remote}" ]; then
+        git branch -q "${RUN_BRANCH}" "${remote}"
     else
-        git checkout -B "${RUNS_BRANCH}"
+        git show-ref --verify --quiet "refs/heads/${RUNS_ROOT_BRANCH}" || git update-ref "refs/heads/${RUNS_ROOT_BRANCH}" "$(runsRoot)"
+        git branch -q "${RUN_BRANCH}" "${RUNS_ROOT_BRANCH}"
     fi
-    # Runs must execute against LATEST code.
-    SRC_REMOTE="upstream"
-    git remote get-url upstream >/dev/null 2>&1 || SRC_REMOTE="origin"
-    DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
-    if [ -n "${DEFAULT_BRANCH}" ] && git fetch "${SRC_REMOTE}" "${DEFAULT_BRANCH}"; then
-        RUNBOOK_REF="${SRC_REMOTE}/${DEFAULT_BRANCH}"
-        git merge --no-edit -X ours "${SRC_REMOTE}/${DEFAULT_BRANCH}" || {
-            git merge --abort 2>/dev/null || true
-            echo "WARN: could not refresh the code base; running from the branch as-is."
-        }
-    fi
-    # Idempotent setup beats reliable cleanup: restore this run's
-    # directory from the branch before anything reads it, in case a
-    # previous invocation was killed mid-write. Scoped to this run, so
-    # nothing else in the worktree is touched.
-    git checkout -f -- "${RUN_DIR}" 2>/dev/null || true
-    adoptLegacyInstance
-    mkdir -p "${RUN_DIR}"
+    git worktree add -q "${RUN_DIR}" "${RUN_BRANCH}"
     popd > /dev/null
 }
 
-# LEGACY_RUN_DIRS are the paths a run has lived under before now:
-# runbook-deployments/<name>/ from `factory runbook`, and a short-lived
-# runs/<name>/ that had to be renamed — "runs/" is a bare .gitignore
-# entry in a great many repositories (TensorBoard and friends write
-# there), and a bare pattern matches at any depth, so
-# docs-exploration/runs/ was ignored wherever that appeared.
-LEGACY_RUN_DIRS="docs-exploration/runbook-deployments docs-exploration/runs"
-
-# adoptLegacyInstance moves a run from wherever it used to live into
-# RUN_DIR, lazily, and only for a run someone actually touches: a
-# big-bang migration of live deployments is a worse risk than a git mv
-# at the moment of use. The sandbox is already the same one — naming
-# is unchanged — so the PVC, the cluster state and the teardown script
-# all come along.
-#
-# runbook.md is deliberately NOT synthesised for a deployment that
-# never had one: the old shared runbook described a scenario, not what
-# this particular deployment did, and inventing prose about live
-# infrastructure is how a teardown removes the wrong thing. The first
-# deploy or teardown reconciles one from the scripts, which is the
-# only honest source.
-function adoptLegacyInstance {
-    # An empty name would make the legacy path the whole tree and move
-    # every run at once.
-    if [ -z "${RUN_NAME}" ] || [ -d "${RUN_DIR}" ]; then
-        return 0
-    fi
-    local legacy
-    for base in ${LEGACY_RUN_DIRS}; do
-        legacy="${base}/${RUN_NAME}"
-        [ -d "${legacy}" ] || continue
-        echo "Adopting ${legacy} into ${RUN_DIR}..."
-        mkdir -p "$(dirname "${RUN_DIR}")"
-        if ! git mv "${legacy}" "${RUN_DIR}" 2>/dev/null; then
-            mv "${legacy}" "${RUN_DIR}"
-        fi
-        # The commit stages RUN_DIR with --ignore-removal, which by
-        # design will not record the old path's disappearance. Stage
-        # that removal here, or the branch keeps both copies.
-        git add -A "${legacy}" 2>/dev/null || true
-        return 0
-    done
-}
-
-# RUNBOOK_REF is the commit a repository runbook is read at: the
-# default branch as ensureRunsBranch just fetched it. Read from the
-# commit, not the worktree — research/runs merges the default branch
-# with -X ours, so a runbook edited on both sides would come out as the
-# fork's copy, not the repository's. Empty when that fetch failed, and
-# then the worktree is the best there is.
+# RUNBOOK_REF is the commit a repository runbook is read at: the default
+# branch, as checkout-default-branch left the checkout. Read from the
+# commit, not the worktree.
 RUNBOOK_REF=""
 
 # RUNBOOK_FALLBACK_REF is where a runbook is read when RUNBOOK_REF does
@@ -1562,58 +1536,52 @@ RUNBOOK_ORIGIN=""
 # resolveTarget.
 TARGET_FILE="target.env"
 
+# copyRunFiles copies the files under path (or, with an empty path,
+# every file) at ref into dir, keeping the executable bit, except
+# receipts — the test results of the run they came from, not of this one
+# — and target.env, which pins the pull request another run deploys.
+# Reports whether there was anything there.
+function copyRunFiles {
+    local ref="$1" path="$2" dir="$3" mode type sha f rel found=1
+    while IFS=$'\t' read -r meta f; do
+        read -r mode type sha <<< "${meta}"
+        [ "${type}" = blob ] || continue
+        found=0
+        rel="${f#"${path:+${path}/}"}"
+        case "${rel##*/}" in receipt-*) continue ;; esac
+        [ "${rel}" != "${TARGET_FILE}" ] || continue
+        mkdir -p "$(dirname "${dir}/${rel}")"
+        git -C "${RUN_REPO}" cat-file blob "${sha}" > "${dir}/${rel}"
+        [ "${mode}" != 100755 ] || chmod +x "${dir}/${rel}"
+    done < <(git -C "${RUN_REPO}" ls-tree -r "${ref}" -- ${path:+"${path}/"} 2>/dev/null)
+    return "${found}"
+}
+
 # resolveRunbook finds RUN_RUNBOOK and copies it into $1. It looks in
 # the repository's .agents/runbooks/ first, where a runbook is reviewed
-# like code, then among the member's own runs — any run is a runbook —
-# including runs still under a legacy path.
+# like code — at RUNBOOK_REF, then RUNBOOK_FALLBACK_REF — then among the
+# member's own runs: any run's branch is a runbook.
 #
 # A runbook has no required shape. It is the plan's starting point, not
-# something this script executes: prose, scripts, a run's full set of
+# something these functions execute: prose, scripts, a run's full set of
 # files — the engine makes this run's files out of whatever is there.
-# So everything is copied, subdirectories included, except receipts:
-# they are the test results of the run they came from, not of this one.
-# Nor its target.env: that pins the pull request the other run deploys,
-# and a copy of it would have this run deploy that pull request too.
-#
-# The repository's copy is read at RUNBOOK_REF — with a pull request
-# target, its head, so a runbook the pull request changes is the one it
-# is deployed with — and then at RUNBOOK_FALLBACK_REF.
 #
 # Prints where it came from; prints nothing and copies nothing when
 # there is no such runbook.
 function resolveRunbook {
-    local out="$1" root="/workspaces/${REPO_NAME}"
-    local repoPath=".agents/runbooks/${RUN_RUNBOOK}" f base rel src ref
+    local out="$1" repoPath=".agents/runbooks/${RUN_RUNBOOK}" ref other="runs/${RUN_RUNBOOK}"
     for ref in "${RUNBOOK_REF}" "${RUNBOOK_FALLBACK_REF}"; do
-        if [ -z "${ref}" ] || [ -z "$(git -C "${root}" ls-tree -r --name-only "${ref}" -- "${repoPath}/" 2>/dev/null)" ]; then
-            continue
+        if [ -n "${ref}" ] && copyRunFiles "${ref}" "${repoPath}" "${out}"; then
+            echo "${repoPath} at $(git -C "${RUN_REPO}" rev-parse --short "${ref}")"
+            return 0
         fi
-        while IFS= read -r f; do
-            rel="${f#"${repoPath}"/}"
-            case "${rel##*/}" in receipt-*) continue ;; esac
-            [ "${rel}" != "${TARGET_FILE}" ] || continue
-            mkdir -p "$(dirname "${out}/${rel}")"
-            git -C "${root}" show "${ref}:${f}" > "${out}/${rel}"
-        done < <(git -C "${root}" ls-tree -r --name-only "${ref}" -- "${repoPath}/")
-        echo "${repoPath} at ${ref} $(git -C "${root}" rev-parse --short "${ref}")"
-        return 0
     done
-    for base in "${repoPath%/*}" "$(dirname "${RUN_DIR}")" ${LEGACY_RUN_DIRS}; do
-        # The repository path again, from the worktree: only reached
-        # when the ref could not be read.
-        if [ "${base}" = "${repoPath%/*}" ] && [ -n "${RUNBOOK_REF}" ]; then
-            continue
-        fi
-        src="${root}/${base}/${RUN_RUNBOOK}"
-        if [ -d "${src}" ] && [ -n "$(ls -A "${src}")" ]; then
-            cp -R "${src}/." "${out}/"
-            find "${out}" -name 'receipt-*' -type f -exec rm -f {} +
-            rm -f "${out}/${TARGET_FILE}"
-            if [ "${base}" = "${repoPath%/*}" ]; then
-                echo "${repoPath} (working tree)"
-            else
-                echo "run ${RUN_RUNBOOK} on ${RUNS_BRANCH} (${base}/${RUN_RUNBOOK})"
-            fi
+    if [ -z "${RUNS_LOCAL_ONLY}" ]; then
+        git -C "${RUN_REPO}" fetch -q origin "+refs/heads/${other}:refs/remotes/origin/${other}" 2>/dev/null || true
+    fi
+    for ref in "refs/remotes/origin/${other}" "refs/heads/${other}"; do
+        if git -C "${RUN_REPO}" rev-parse -q --verify "${ref}" > /dev/null && copyRunFiles "${ref}" "" "${out}"; then
+            echo "run ${RUN_RUNBOOK} (${other})"
             return 0
         fi
     done
@@ -1626,25 +1594,24 @@ function resolveRunbook {
 # owner asked to change — and verifies it against this run's
 # environment. Nothing here rewrites a file; a text substitution is not
 # something to trust with what a teardown will delete.
-#
-# Every step is written to survive set -e: a false test that ends a
-# loop or a function is enough to kill the plan.
 function instantiateRunbook {
-    local root="/workspaces/${REPO_NAME}"
-    local dst="${root}/${RUN_DIR}" stage
+    local dst="${RUN_REPO}/${RUN_DIR}" stage
     if [ -e "${dst}/runbook.md" ]; then
         echo "ERROR: run ${RUN_NAME} already has a runbook.md; --runbook starts a new run." >&2
         echo "       Re-plan it to change it, or pick a new name." >&2
         exit 1
     fi
+    if [ "${RUN_RUNBOOK}" = "${RUN_NAME}" ]; then
+        echo "ERROR: --runbook ${RUN_RUNBOOK} names this run itself; a run is started from a different one." >&2
+        exit 1
+    fi
     stage="$(mktemp -d)"
     RUNBOOK_ORIGIN="$(resolveRunbook "${stage}")"
     if [ -z "${RUNBOOK_ORIGIN}" ]; then
-        echo "ERROR: no runbook named '${RUN_RUNBOOK}': looked in .agents/runbooks/ and among your runs on ${RUNS_BRANCH}." >&2
+        echo "ERROR: no runbook named '${RUN_RUNBOOK}': looked in .agents/runbooks/ and among your runs." >&2
         exit 1
     fi
     echo "Starting ${RUN_NAME} from ${RUNBOOK_ORIGIN}..."
-    mkdir -p "${dst}"
     cp -R "${stage}/." "${dst}/"
     rm -rf "${stage}"
 }
@@ -1660,26 +1627,21 @@ TARGET_SHA=""
 # target.env; every later invocation — deploy, teardown, a re-plan
 # without --target — reads the pin back, so what executes is what the
 # owner reviewed, however far the pull request has moved since. A
-# re-plan with --target re-pins to the new head.
-#
-# The pull request's files are laid over the worktree, not merged:
-# research/runs is pushed, and a merge would carry the pull request's
-# commits into every later run on the branch. docs-exploration/ is
-# left alone — it is where the runs live. clearTarget puts the
-# worktree back before anything is committed.
+# re-plan with --target re-pins to the new head. The checkout is put
+# on the pinned commit, detached: the run's files are in a worktree of
+# their own, so nothing has to be laid over them or taken back off.
 #
 # No target.env and no --target: the default branch, as always.
 function resolveTarget {
-    local root="/workspaces/${REPO_NAME}" pin
-    pin="${root}/${RUN_DIR}/${TARGET_FILE}"
+    local pin="${RUN_REPO}/${RUN_DIR}/${TARGET_FILE}" src=upstream
+    git -C "${RUN_REPO}" remote get-url upstream > /dev/null 2>&1 || src=origin
     if [ "${RUN_MODE}" = "plan" ] && [ -n "${RUN_TARGET_PR:-}" ]; then
-        if ! git -C "${root}" fetch -q "${SRC_REMOTE}" "pull/${RUN_TARGET_PR}/head"; then
-            echo "ERROR: could not fetch pull request #${RUN_TARGET_PR} from ${SRC_REMOTE}." >&2
+        if ! git -C "${RUN_REPO}" fetch -q "${src}" "pull/${RUN_TARGET_PR}/head"; then
+            echo "ERROR: could not fetch pull request #${RUN_TARGET_PR} from ${src}." >&2
             exit 1
         fi
         TARGET_PR="${RUN_TARGET_PR}"
-        TARGET_SHA="$(git -C "${root}" rev-parse FETCH_HEAD)"
-        mkdir -p "$(dirname "${pin}")"
+        TARGET_SHA="$(git -C "${RUN_REPO}" rev-parse FETCH_HEAD)"
         printf 'TARGET_PR=%s\nTARGET_SHA=%s\n' "${TARGET_PR}" "${TARGET_SHA}" > "${pin}"
     elif [ -f "${pin}" ]; then
         # Read, never sourced: it is a file on a branch, and all it may
@@ -1687,16 +1649,16 @@ function resolveTarget {
         TARGET_PR="$(sed -n 's/^TARGET_PR=//p' "${pin}")"
         TARGET_SHA="$(sed -n 's/^TARGET_SHA=//p' "${pin}")"
         if ! [[ "${TARGET_PR}" =~ ^[0-9]+$ && "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: ${RUN_DIR}/${TARGET_FILE} does not pin a pull request and a commit." >&2
+            echo "ERROR: ${TARGET_FILE} does not pin a pull request and a commit." >&2
             exit 1
         fi
         # The pinned commit is usually here already. A force-push can
         # take it out of the pull request, so ask for it by name too.
-        if ! git -C "${root}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
-            git -C "${root}" fetch -q "${SRC_REMOTE}" "pull/${TARGET_PR}/head" 2>/dev/null || true
-            git -C "${root}" fetch -q "${SRC_REMOTE}" "${TARGET_SHA}" 2>/dev/null || true
+        if ! git -C "${RUN_REPO}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+            git -C "${RUN_REPO}" fetch -q "${src}" "pull/${TARGET_PR}/head" 2>/dev/null || true
+            git -C "${RUN_REPO}" fetch -q "${src}" "${TARGET_SHA}" 2>/dev/null || true
         fi
-        if ! git -C "${root}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+        if ! git -C "${RUN_REPO}" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
             echo "ERROR: commit ${TARGET_SHA} of pull request #${TARGET_PR} is no longer available." >&2
             echo "       Re-plan with --target ${TARGET_PR} to pin its current head." >&2
             exit 1
@@ -1710,39 +1672,14 @@ function resolveTarget {
     RUNBOOK_FALLBACK_REF="${RUNBOOK_REF}"
     RUNBOOK_REF="${TARGET_SHA}"
     echo "Target: pull request #${TARGET_PR} at ${TARGET_SHA}"
-    git -C "${root}" restore --source="${TARGET_SHA}" --worktree --no-overlay -- . ':(exclude)docs-exploration'
-}
-
-# clearTarget takes the pull request's files back off the worktree,
-# listing whatever the engine changed in them first: that is collateral,
-# exactly as it is on the default branch, and it is never committed.
-function clearTarget {
-    local root="/workspaces/${REPO_NAME}" changed idx
-    if [ -z "${TARGET_SHA}" ]; then
-        return 0
-    fi
-    # Against an index of the pull request's own tree: the real index
-    # does not know the files it adds, and diffing against the commit
-    # would list every one of them as changed.
-    idx="$(mktemp -d)"
-    GIT_INDEX_FILE="${idx}/index" git -C "${root}" read-tree "${TARGET_SHA}"
-    changed="$(GIT_INDEX_FILE="${idx}/index" git -C "${root}" diff --name-only -- . ':(exclude)docs-exploration'
-        GIT_INDEX_FILE="${idx}/index" git -C "${root}" ls-files --others --exclude-standard -- . ':(exclude)docs-exploration')"
-    rm -rf "${idx}"
-    if [ -n "${changed}" ]; then
-        echo "Discarding changes to pull request #${TARGET_PR}'s files:"
-        echo "${changed}" | sed "s/^/  /"
-        addDiscarded "${changed}"
-    fi
-    git -C "${root}" restore --source=HEAD --worktree --no-overlay -- . ':(exclude)docs-exploration'
-    git -C "${root}" clean -fdq -- . ':(exclude)docs-exploration'
+    git -C "${RUN_REPO}" checkout -q --detach "${TARGET_SHA}"
 }
 
 # result.json is what this invocation concluded, in the task directory
 # beside exit_code, for whoever launched it to read without GitHub and
 # without the engine's own output format.
 #
-# This script writes it, never the engine, so it is the same file
+# These functions write it, never the engine, so it is the same file
 # whichever engine ran. The one thing taken from the engine is the
 # receipt's first line, which every run prompt already makes the
 # verdict; a first word that is not a known verdict is recorded as
@@ -1753,8 +1690,8 @@ RESULT_FILE=""
 RESULT_VERDICTS=" PLANNED VERIFIED DEPLOYED-UNVERIFIED FAILED BLOCKED TORN-DOWN PARTIAL "
 RESULT_RECEIPTS_BEFORE=""
 RESULT_COMMIT=""
-# Newline-separated paths this run changed or created outside its own
-# directory, all of them thrown away.
+# Newline-separated paths this run changed or created in the checkout,
+# outside its own worktree: not kept.
 RESULT_DISCARDED=""
 
 function addDiscarded {
@@ -1763,10 +1700,9 @@ function addDiscarded {
 }
 
 # snapshotReceipts records the receipts already on the branch, so the
-# one this invocation writes is the one that is new — by name, since
-# restoring the run's directory rewrites every file's mtime.
+# one this invocation writes is the one that is new.
 function snapshotReceipts {
-    RESULT_RECEIPTS_BEFORE="$(ls "/workspaces/${REPO_NAME}/${RUN_DIR}" 2>/dev/null | grep '^receipt-' || true)"
+    RESULT_RECEIPTS_BEFORE="$(ls "${RUN_REPO}/${RUN_DIR}" 2>/dev/null | grep '^receipt-' || true)"
 }
 
 function jsonString {
@@ -1784,15 +1720,15 @@ function jsonOrNull {
 }
 
 function writeResult {
-    local rc="$1" root="/workspaces/${REPO_NAME}" receipt="" verdict="" name line word target="null" discarded="" first=1 p
+    local rc="$1" dir="${RUN_REPO}/${RUN_DIR}" receipt="" verdict="" name line word target="null" discarded="" first=1 p
     [ -n "${RESULT_FILE}" ] || return 0
-    for name in $(ls "${root}/${RUN_DIR}" 2>/dev/null | grep '^receipt-' | sort || true); do
+    for name in $(ls "${dir}" 2>/dev/null | grep '^receipt-' | sort || true); do
         if ! printf '%s\n' "${RESULT_RECEIPTS_BEFORE}" | grep -qxF "${name}"; then
-            receipt="${RUN_DIR}/${name}"
+            receipt="${name}"
         fi
     done
     if [ -n "${receipt}" ]; then
-        line="$(grep -m1 -v '^[[:space:]]*$' "${root}/${receipt}" 2>/dev/null || true)"
+        line="$(grep -m1 -v '^[[:space:]]*$' "${dir}/${receipt}" 2>/dev/null || true)"
         word="$(printf '%s' "${line}" | sed -E 's/^[^A-Za-z]*//; s/[^A-Z-].*$//')"
         verdict="unknown"
         if [ -n "${word}" ] && [[ "${RESULT_VERDICTS}" == *" ${word} "* ]]; then
@@ -1810,13 +1746,13 @@ function writeResult {
     done <<< "$(printf '%s\n' "${RESULT_DISCARDED}" | sort -u)"
     {
         printf '{\n'
-        printf '  "version": 1,\n'
+        printf '  "version": 2,\n'
         printf '  "run": %s,\n' "$(jsonString "${RUN_NAME}")"
         printf '  "mode": %s,\n' "$(jsonString "${RUN_MODE}")"
         printf '  "exitCode": %d,\n' "${rc}"
         printf '  "verdict": %s,\n' "$(jsonOrNull "${verdict}")"
         printf '  "receipt": %s,\n' "$(jsonOrNull "${receipt}")"
-        printf '  "branch": %s,\n' "$(jsonString "${RUNS_BRANCH}")"
+        printf '  "branch": %s,\n' "$(jsonString "${RUN_BRANCH}")"
         printf '  "localOnly": %s,\n' "$([ -n "${RUNS_LOCAL_ONLY}" ] && echo true || echo false)"
         printf '  "commit": %s,\n' "$(jsonOrNull "${RESULT_COMMIT}")"
         printf '  "target": %s,\n' "${target}"
@@ -1825,87 +1761,52 @@ function writeResult {
     } > "${RESULT_FILE}.tmp" && mv "${RESULT_FILE}.tmp" "${RESULT_FILE}"
 }
 
-
+# commitAndPushRun commits everything in the run's worktree — scripts,
+# prose and receipt together, in one commit, so a partial push cannot
+# split the story — and pushes the run's branch, and runs/root, to the
+# fork (not in a local-only run). Only this run writes its branch: a
+# rejected push fails the phase, and the commit waits in the sandbox for
+# the next phase to push.
+#
+# What the agent changed in the checkout itself is not the run's and is
+# never committed; it is listed, so a fix that depended on it (a
+# .gcloudignore at the repository root) does not go unrecorded.
 function commitAndPushRun {
-    local what="$1"
-    echo "Committing and pushing ${what}..."
-    clearTarget
-    pushd "/workspaces/${REPO_NAME}" > /dev/null
-    # Stage only this run's directory. --ignore-removal keeps the
-    # harness from recording a deletion as a side effect: whatever a
-    # killed phase left missing from the worktree, the branch keeps.
-    #
-    # Errors are NOT swallowed. git refuses to add a path the repo
-    # ignores, and suppressing that turned a whole run into a silent
-    # "nothing to commit" — the work done, the receipt written, and
-    # nothing on the branch to show for it.
-    if ! git add --ignore-removal "${RUN_DIR}"; then
-        echo "ERROR: could not stage ${RUN_DIR}. If the repository ignores this path," >&2
-        echo "       nothing would be committed and the run would vanish silently." >&2
+    local what="$1" changed
+    echo "Committing ${what}..."
+    changed="$(git -C "${RUN_REPO}" status --porcelain --untracked-files=all -- . ":(exclude)${RUN_DIR}" | cut -c4-)"
+    if [ -n "${changed}" ]; then
+        echo "Not kept (changed in the checkout, outside ${RUN_DIR}):"
+        echo "${changed}" | sed "s/^/  /"
+        addDiscarded "${changed}"
+    fi
+    git -C "${RUN_REPO}/${RUN_DIR}" add -A
+    if ! git -C "${RUN_REPO}/${RUN_DIR}" commit -q -m "run(${RUN_NAME}): ${what}"; then
+        echo "No changes to commit for ${what}."
+    fi
+    RESULT_COMMIT="$(git -C "${RUN_REPO}/${RUN_DIR}" rev-parse HEAD)"
+    if [ -n "${RUNS_LOCAL_ONLY}" ]; then
+        echo "Committed to ${RUN_BRANCH} in this sandbox; local-only, so nothing is pushed."
+        return 0
+    fi
+    if ! git -C "${RUN_REPO}" push -q origin "${RUN_BRANCH}"; then
+        echo "ERROR: could not push ${RUN_BRANCH} to the fork; the commit is kept in this sandbox for the next phase to push." >&2
         exit 1
     fi
-    # A run owns its own directory and nothing else. Anything it
-    # changed outside is collateral — a .gitignore it edited to get at
-    # its own files, a shared doc it wandered into — and committing it
-    # is not this run's business. Restoring also leaves the worktree
-    # clean, which matters: a stray modification made the replay below
-    # fail with "cannot rebase: You have unstaged changes", turning a
-    # recoverable push race into a lost receipt.
-    if ! git diff --quiet; then
-        echo "Discarding changes outside ${RUN_DIR}:"
-        git diff --name-only | sed "s/^/  /"
-        addDiscarded "$(git diff --name-only)"
-        git checkout -f -- . 2>/dev/null || true
+    # runs/root too, when this sandbox made it: the fork has the commit
+    # already (it is the run branch's first), and the branch names it.
+    if git -C "${RUN_REPO}" show-ref --verify --quiet "refs/heads/${RUNS_ROOT_BRANCH}"; then
+        git -C "${RUN_REPO}" push -q origin "${RUNS_ROOT_BRANCH}" 2>/dev/null || true
     fi
-    # A file the engine created outside the run is not committed
-    # either, and used to go unmentioned: a fix that depended on one (a
-    # .gcloudignore at the repository root) worked in that sandbox and
-    # nowhere else, and nothing recorded that it had ever existed.
-    local untracked
-    untracked="$(git ls-files --others --exclude-standard)"
-    if [ -n "${untracked}" ]; then
-        echo "Not committed (created outside ${RUN_DIR}):"
-        echo "${untracked}" | sed "s/^/  /"
-        addDiscarded "${untracked}"
-    fi
-    if ! git commit -m "run(${RUN_NAME}): ${what}"; then
-        echo "No changes to commit for ${what}."
-    elif [ -n "${RUNS_LOCAL_ONLY}" ]; then
-        echo "Committed ${what} to ${RUNS_BRANCH} in this sandbox; local-only, so nothing is pushed."
-        RESULT_COMMIT="$(git rev-parse HEAD)"
-    else
-        # A dropped connection after a successful server-side push makes
-        # the retry fail with 'cannot lock ref … is at <our sha>'. If the
-        # remote is already at our commit, the push succeeded.
-        if ! git push origin "${RUNS_BRANCH}"; then
-            git fetch origin "${RUNS_BRANCH}"
-            if [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/${RUNS_BRANCH}")" ]; then
-                echo "Remote already at our commit; push had succeeded."
-            # The remote moved: another run pushed to this branch while
-            # we worked. Replay onto it rather than dying — losing a
-            # completed plan to a race is how a run silently vanishes.
-            elif git rebase --autostash "origin/${RUNS_BRANCH}"; then
-                echo "Remote had moved; replayed onto it."
-                git push origin "${RUNS_BRANCH}"
-            else
-                git rebase --abort 2>/dev/null || true
-                echo "ERROR: push failed and the branch could not be replayed." >&2
-                exit 1
-            fi
-        fi
-        echo "Pushed ${what} to origin/${RUNS_BRANCH}"
-        RESULT_COMMIT="$(git rev-parse HEAD)"
-    fi
-    popd > /dev/null
+    echo "Pushed ${RUN_BRANCH} to the fork."
 }
 
-# Main execution: the recipes' two steps.
+# Main execution: the recipes' run-prepare and run-finish steps.
 
-# RUN_STATE is what runPrepare leaves runFinish, which runs in
-# a process of its own after the ask: whether the run is local-only, the
-# runbook it started from, the target it pinned, the receipts there were,
-# and what it threw away.
-RUN_STATE_VARS="RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE RESULT_DISCARDED"
+# RUN_STATE is what runPrepare leaves runFinish, which runs in a process
+# of its own after the ask: whether the run is local-only, the runbook it
+# started from, the target it pinned and the receipts there were.
+RUN_STATE_VARS="RUNS_LOCAL_ONLY RUNBOOK_ORIGIN TARGET_PR TARGET_SHA RESULT_RECEIPTS_BEFORE"
 
 # Plain assignments, not declare -p's output: sourced inside
 # loadRunState, declare would make each one local to it.
@@ -1922,11 +1823,11 @@ function loadRunState {
 }
 
 # runPrepare is the run recipes' run-prepare step, after runs-remote and
-# checkout-default-branch: the runs branch, the target pinned, the
-# receipts noted, and, for a plan from a runbook, the runbook copied in.
-# Its result.json, written until runFinish writes the real one, says
-# the phase never finished (exitCode -1): a failed ask ends the recipe
-# before runFinish.
+# checkout-default-branch: the run's branch in its worktree, the target
+# pinned and checked out, the receipts noted, and, for a plan from a
+# runbook, the runbook copied in. Its result.json, written until
+# runFinish writes the real one, says the phase never finished
+# (exitCode -1): a failed ask ends the recipe before runFinish.
 function runPrepare {
     set -e
     set -o pipefail
@@ -1938,13 +1839,14 @@ function runPrepare {
         exit 1
     fi
     case "${RUN_MODE}" in plan|deploy|teardown) ;; *) echo "phase ${RUN_MODE} is not plan, deploy or teardown" >&2; exit 1 ;; esac
-    [ -n "${RUN_NAME}" ] || { echo "run is not set" >&2; exit 1; }
+    [[ "${RUN_NAME}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] && [ "${RUN_NAME}" != root ] || { echo "run '${RUN_NAME}' is not a run name" >&2; exit 1; }
     # runs-remote, a step of its own, made origin the fork or the run
     # local-only; which it was is in the checkout's config.
-    if [ "$(git -C "/workspaces/${REPO_NAME}" remote get-url --push origin 2>/dev/null)" = "${LOCAL_ONLY_PUSH_URL}" ]; then
+    if [ "$(git -C "${RUN_REPO}" remote get-url --push origin 2>/dev/null)" = "${LOCAL_ONLY_PUSH_URL}" ]; then
         RUNS_LOCAL_ONLY=1
     fi
-    ensureRunsBranch
+    RUNBOOK_REF="$(git -C "${RUN_REPO}" rev-parse HEAD)"
+    ensureRunBranch
     resolveTarget
     snapshotReceipts
     # From a runbook, the copy is what the agent plans from: it makes the
@@ -1957,10 +1859,8 @@ function runPrepare {
 }
 
 # runFinish is the run recipes' run-finish step, after the ask:
-# everything the phase left in the run's directory is committed, in one
-# commit — scripts, prose and receipt together, so a partial push cannot
-# split the story — and pushed (not in a local-only run), and result.json
-# says what it concluded.
+# everything the phase left in the run's worktree is committed and
+# pushed (commitAndPushRun), and result.json says what it concluded.
 function runFinish {
     set -e
     set -o pipefail

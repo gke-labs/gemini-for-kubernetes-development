@@ -3,11 +3,12 @@
 # at the end, brings runbook.md in line with them; one commit carries
 # scripts, prose and receipt together.
 #
-# A run, in its own sandbox (runbook-<repo>-<run>), owns one directory,
-# docs-exploration/agent-runs/<run>/, on the research/runs branch of the
-# member's fork (or, for a repository they cannot fork, of the sandbox's
-# checkout alone: local-only): runbook.md, the procedure; the scripts
-# generated from it; the receipts, its results. run-plan, run-deploy and
+# A run, in its own sandbox (runbook-<repo>-<run>), owns a branch,
+# runs/<run> (factory/design/run-branches.md), checked out as a worktree
+# at .factory-run/ in the checkout, and pushed to the member's fork (or,
+# for a repository they cannot fork, kept in the sandbox alone:
+# local-only): runbook.md, the procedure; the scripts generated from it;
+# the receipts, its results. run-plan, run-deploy and
 # run-teardown are its three phases.
 #
 # The deterministic parts are lib.sh's (pkg/tasks), as named steps:
@@ -52,8 +53,9 @@ start:
       with: {phase: deploy}
     - ask: |
         You are DEPLOYING the run "{{ .Inputs.run }}" for the repository {{ .Inputs.repo_name }}
-        ({{ .Inputs.repo_url }}). Everything it owns is in docs-exploration/agent-runs/{{ .Inputs.run }}/
-        — runbook.md is the procedure the owner reviewed and approved,
+        ({{ .Inputs.repo_url }}). Everything it owns is in .factory-run/, a
+        worktree of its own branch, runs/{{ .Inputs.run }} — runbook.md is
+        the procedure the owner reviewed and approved,
         params.env holds the resolved parameters, and deploy.sh / teardown.sh
         were generated from runbook.md.
 
@@ -115,7 +117,7 @@ start:
            there. Change the steps that changed.
 
         5. Write the receipt to
-           docs-exploration/agent-runs/{{ .Inputs.run }}/receipt-<UTC yyyymmdd-hhmm>.md:
+           .factory-run/receipt-<UTC yyyymmdd-hhmm>.md:
            verdict on the first line — VERIFIED / DEPLOYED-UNVERIFIED /
            FAILED / BLOCKED. Then:
            - "## Procedure amended" — one line per change you made to

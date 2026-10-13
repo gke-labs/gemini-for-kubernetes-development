@@ -4,10 +4,10 @@ package tasks
 // notes are saved to. It must match notesBranch in repo-agent, which
 // builds the link members follow to read them.
 //
-// Runs live on research/runs, deliberately elsewhere: that branch
-// carries live deployment state and is pruned when a run is removed,
-// while this one is archival and is written by a session that may be
-// approving its own tool calls.
+// Runs live on branches of their own, runs/<run>, deliberately
+// elsewhere: they carry live deployment state and are deleted when a run
+// is removed, while this one is archival and is written by a session
+// that may be approving its own tool calls.
 const ResearchNotesBranch = "research/notes"
 
 // ResearchNotesDir is where the notes live on that branch: one file
