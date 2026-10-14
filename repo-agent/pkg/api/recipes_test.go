@@ -122,7 +122,7 @@ func TestRunSessions(t *testing.T) {
 	items := map[string]*models.WorkItem{"issue-12": {}, "pr-30": {}, "pr-9": {}, "issue-9": {}}
 	sandboxes := []*unstructured.Unstructured{
 		runSandbox("fix-repo-12", "https://github.com/o/repo/pull/30", map[string]string{
-			"sandbox.gemini.google.com/plan-run":   `{"name":"p","task":"plan-1","startedAt":"2026-10-01T10:00:00Z","recipe":"plan","kind":"Plan","state":"Completed","endedAt":"2026-10-01T10:05:00Z","revises":[{"id":"revise"}]}`,
+			"sandbox.gemini.google.com/plan-run":   `{"name":"p","task":"plan-1","startedAt":"2026-10-01T10:00:00Z","recipe":"plan","kind":"Plan","state":"Completed","endedAt":"2026-10-01T10:05:00Z"}`,
 			"sandbox.gemini.google.com/fix-run":    `{"name":"f","task":"fix-2","startedAt":"2026-10-02T10:00:00Z","recipe":"fix","kind":"Change","state":"Running"}`,
 			"board.gemini.google.com/plan-output":  "kind: Plan\nspec:\n  markdown: '## Fix the **crash**'\n",
 			"board.gemini.google.com/plan-applied": `{"comment":"2026-10-01T11:00:00Z"}`,
@@ -144,7 +144,7 @@ func TestRunSessions(t *testing.T) {
 	plan := issue[1]
 	if plan.Sandbox != "fix-repo-12" || plan.Task != "plan-1" || plan.Run != "sandbox.gemini.google.com/plan-run" ||
 		plan.State != "Completed" || plan.EndedAt != "2026-10-01T10:05:00Z" || !plan.Output ||
-		plan.Applied["comment"] == "" || len(plan.Revises) != 1 || plan.Revises[0] != "revise" {
+		plan.Applied["comment"] == "" {
 		t.Errorf("plan session = %+v", plan)
 	}
 	if issue[0].Output || issue[0].EndedAt != "" || issue[0].Status != "running" {
@@ -164,7 +164,7 @@ func TestRunSessions(t *testing.T) {
 		t.Errorf("PR 30 sessions = %+v, want the issue sandbox's two", got)
 	}
 	if got := items["pr-9"].Sessions; len(got) != 1 || got[0].Task != "s-0" {
-		t.Errorf("PR 9 sessions = %+v, want summarize's, in the session it revised in", got)
+		t.Errorf("PR 9 sessions = %+v, want summarize's, in the session it continued", got)
 	}
 	// A run's engine is its sandbox's; one never stamped ran gemini.
 	if got := items["pr-9"].Sessions[0].Engine; got != "claude" {

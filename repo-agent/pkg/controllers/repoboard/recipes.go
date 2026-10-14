@@ -35,10 +35,10 @@ import (
 // here as data: on its issue or PR, in the sandbox factory runs it in,
 // with the Request's inputs, and its task output, if it declares one,
 // stored on the sandbox as its run's (factorycli.KeepOutput), where the
-// board's drafts, revises and applies find it.
+// board's drafts and applies find it.
 
 // recipeApplies are the actions the runner applies to a recipe's task
-// output itself, by its kind, as reviseHooks' for a revise: a Change's
+// output itself, by its kind: a Change's
 // commits are pushed by its run, so the replies and report that answer
 // for them are posted with them, not held back for a click.
 var recipeApplies = map[string]string{"Change": "post-replies"}
@@ -170,7 +170,7 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 // ended with res, with what its runner applied stamped: nothing if the
 // apply failed, so the draft waits to be applied again. The board and
 // executor are stamped even on a run that left no output, so its
-// session can still revise it.
+// session's draft, written later (research's notes), is filed on it.
 func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *unstructured.Unstructured, rec boardv1alpha1.BoardRecipe, member string, res factorycli.Result) {
 	annotations := sb.GetAnnotations()
 	if annotations == nil {

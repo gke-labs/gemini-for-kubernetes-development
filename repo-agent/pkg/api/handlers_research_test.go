@@ -370,7 +370,7 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	r.POST("/api/task-sessions/:sandbox/:task/permission", server.resolveTaskSessionPermission)
 	r.POST("/api/task-sessions/:sandbox/:task/cancel", server.cancelTaskSession)
 	r.POST("/api/task-sessions/:sandbox/:task/mode", server.setTaskSessionMode)
-	r.POST("/api/task-sessions/:sandbox/:task/revise", server.reviseTaskSession)
+	r.POST("/api/task-sessions/:sandbox/:task/recipe", server.taskSessionRecipe)
 	r.POST("/api/task-sessions/:sandbox/:task/draft/:verb", server.taskSessionDraftAction)
 	r.GET("/api/task-session-events/:sandbox/:task", server.streamTaskSessionEvents)
 	return r, dynamicClient

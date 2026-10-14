@@ -37,7 +37,7 @@ func recipeLabel(catalog []boardv1alpha1.BoardRecipe, name string) string {
 func launchInputs(rec boardv1alpha1.BoardRecipe) []string {
 	var out []string
 	for _, in := range rec.Inputs {
-		if in.Required && in.Default == "" && !in.Revise {
+		if in.Required && in.Default == "" {
 			out = append(out, in.Name)
 		}
 	}

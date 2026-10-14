@@ -17,10 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
 
-	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 )
 
@@ -34,7 +33,7 @@ const (
 func issueSandboxCR(namespace string, replicas int64) *unstructured.Unstructured {
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "plan/b/42/1", Task: planTask, StartedAt: time.Unix(1_000_000, 0),
-		Kind: "Plan", Revises: []factorycli.RecordedRevise{{ID: "plan", Label: "Update plan"}},
+		Kind: "Plan",
 	})
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
@@ -212,108 +211,89 @@ func TestTheBoardNamesTheRecordedRunsSession(t *testing.T) {
 		t.Errorf("no sandbox, yet %+v", got)
 	}
 
-	// After a revise, the recorded run is the revise's; the session is
-	// still the plan's, the one conversation.
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: "revise/b/42/plan/2", Task: "recipe-plan-2", Session: planTask, StartedAt: time.Unix(1_000_100, 0)})
+	// After a run that continued the conversation, the recorded run is
+	// that one; the session is still the plan's, the one conversation.
+	run, _ := json.Marshal(factorycli.RecordedRun{Name: "plan/b/42/2", Task: "recipe-plan-2", Session: planTask, StartedAt: time.Unix(1_000_100, 0)})
 	a := sb.GetAnnotations()
 	a[factorycli.AnnotationPlanRun] = string(run)
 	sb.SetAnnotations(a)
 	if got := taskSession(sb, factorycli.AnnotationPlanRun); got == nil || got.Task != planTask {
-		t.Errorf("plan session after a revise = %+v", got)
+		t.Errorf("plan session after a continuing run = %+v", got)
 	}
 }
 
-// A plan session offers its recipe's revises, from its recorded run, and
-// the draft with the output's actions minus the revises; another session
-// offers neither; an approved plan's revise is disabled, saying why, and
-// its draft stays.
-func TestATaskSessionOffersItsRecipesRevisesAndDraft(t *testing.T) {
-	withDraft := func(approved bool) *unstructured.Unstructured {
-		sb := issueSandboxCR("alice", 1)
-		a := sb.GetAnnotations()
-		a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
-			"source:\n  task: recipe-plan-2\n  session: " + planTask + "\n" +
-			"spec:\n  markdown: |-\n    ## Summary\n    A plan.\n" +
-			"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
-		if approved {
-			a[factorycli.AnnotationPlanApplied] = `{"run":"2026-10-04T00:00:00Z"}`
-		}
-		sb.SetAnnotations(a)
-		return sb
-	}
-	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(false)},
-		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
-	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	for _, want := range []string{
-		`"revises":[{"verb":"revise","revise":"plan","label":"Update plan","enabled":true}]`,
-		// A sandbox on no board offers no writes.
-		`"draft":{"kind":"Plan","markdown":"## Summary\nA plan.","actions":[]}`,
-	} {
-		if !strings.Contains(w.Body.String(), want) {
-			t.Errorf("status lacks %s: %s", want, w.Body.String())
-		}
-	}
-	if w := doJSON(t, r, http.MethodGet, "/api/task-sessions/"+issueSandbox+"/recipe-triage-1", ""); strings.Contains(w.Body.String(), `"revises"`) || strings.Contains(w.Body.String(), `"draft"`) {
-		t.Errorf("another session offers the plan's revises or draft: %s", w.Body.String())
-	}
-
-	r = taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{withDraft(true)},
-		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
-	w = doJSON(t, r, http.MethodGet, taskSessionAt, "")
-	if !strings.Contains(w.Body.String(), `"reason":"its follow-up was started"`) || !strings.Contains(w.Body.String(), `"draft"`) {
-		t.Errorf("an approved plan: %s", w.Body.String())
-	}
+// planDoc is a plan's task output from planTask's session saying what.
+func planDoc(what string) string {
+	return "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
+		"source:\n  task: " + planTask + "\n" +
+		"spec:\n  markdown: |-\n    ## Summary\n    " + what + "\n" +
+		"actions:\n  - verb: comment\n"
 }
 
-// The session is where a revise is clicked, so it is where it is followed:
-// standing, the button says it is revising; failed, it says why.
-func TestATaskSessionFollowsItsRevise(t *testing.T) {
+// A plan session offers its draft; another session offers none, and a
+// plan, in no session group, runs no recipe from its session.
+func TestATaskSessionOffersItsDraft(t *testing.T) {
 	sb := issueSandboxCR("alice", 1)
 	a := sb.GetAnnotations()
-	a[factorycli.AnnotationPlanOutput] = "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
-		"source:\n  task: " + planTask + "\n" +
-		"spec:\n  markdown: |-\n    ## Summary\n    A plan.\n" +
-		"actions:\n  - verb: comment\n  - verb: revise\n    revise: plan\n    label: Update plan\n"
+	a[factorycli.AnnotationPlanOutput] = planDoc("A plan.")
 	sb.SetAnnotations(a)
-	r, dyn := taskSessionTestServerDyn(t, nil, true, []*unstructured.Unstructured{sb},
+	r := taskSessionTestServer(t, nil, true, []*unstructured.Unstructured{sb},
 		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
-	revises := func() []models.WorkAction {
+	w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
+	// A sandbox on no board offers no writes.
+	if want := `"draft":{"kind":"Plan","markdown":"## Summary\nA plan.","actions":[]}`; !strings.Contains(w.Body.String(), want) {
+		t.Errorf("status lacks %s: %s", want, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"recipes"`) {
+		t.Errorf("a plan session offers recipes: %s", w.Body.String())
+	}
+	if w := doJSON(t, r, http.MethodGet, "/api/task-sessions/"+issueSandbox+"/recipe-triage-1", ""); strings.Contains(w.Body.String(), `"draft"`) {
+		t.Errorf("another session offers the plan's draft: %s", w.Body.String())
+	}
+}
+
+// The session's draft follows its run's task output as the task server
+// serves it: unchanged, an edit made on the board stands; rewritten by
+// the agent in the conversation, it is the draft, unapplied.
+func TestATaskSessionDraftFollowsTheRewrittenResult(t *testing.T) {
+	sb := issueSandboxCR("alice", 1)
+	a := sb.GetAnnotations()
+	edited, err := factorycli.WithDraft("Plan", planDoc("First."), "## Summary\nEdited on the board.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a[factorycli.AnnotationPlanOutput] = edited
+	a[factorycli.OutputSourceAnnotation(factorycli.AnnotationPlanRun)] = factorycli.OutputHash(planDoc("First."))
+	a[factorycli.AnnotationPlanApplied] = `{"comment":"2026-10-13T00:00:00Z"}`
+	sb.SetAnnotations(a)
+	daemon := &fakeSessions{files: map[string]string{planTask + "/task-output.yaml": planDoc("First.")}}
+	r, dyn := taskSessionTestServerDyn(t, daemon, true, []*unstructured.Unstructured{sb},
+		researchPod("alice", issueSandbox, "10.1.2.3", corev1.PodRunning))
+	stored := func() map[string]string {
 		t.Helper()
-		var body struct {
-			Revises []models.WorkAction `json:"revises"`
+		got, err := dyn.Resource(k8s.SandboxGVR).Namespace("alice").Get(context.Background(), issueSandbox, v1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
 		}
-		w := doJSON(t, r, http.MethodGet, taskSessionAt, "")
-		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || len(body.Revises) != 1 {
-			t.Fatalf("revises in %s (%v)", w.Body.String(), err)
-		}
-		return body.Revises
-	}
-	if got := revises()[0]; !got.Enabled || got.Reason != "" || got.Error != "" {
-		t.Errorf("with no revise filed: %+v", got)
+		return got.GetAnnotations()
 	}
 
-	ctx := context.Background()
-	other := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Sandbox: "fix-granule-7", Number: 7, Revise: "plan"})
-	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, other, v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
+	if w := doJSON(t, r, http.MethodGet, taskSessionAt, ""); !strings.Contains(w.Body.String(), "Edited on the board.") {
+		t.Errorf("an unchanged result replaced the board's edit: %s", w.Body.String())
 	}
-	if got := revises()[0]; !got.Enabled {
-		t.Errorf("another issue's revise holds this one: %+v", got)
+	if got := stored(); got[factorycli.AnnotationPlanOutput] != edited || got[factorycli.AnnotationPlanApplied] == "" {
+		t.Errorf("an unchanged result touched the stored draft: %v", got)
 	}
 
-	click := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRevise, Sandbox: issueSandbox, Number: 42, Revise: "plan"})
-	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(ctx, click, v1.CreateOptions{}); err != nil {
-		t.Fatal(err)
+	daemon.mu.Lock()
+	daemon.files[planTask+"/task-output.yaml"] = planDoc("Rewritten in the session.")
+	daemon.mu.Unlock()
+	if w := doJSON(t, r, http.MethodGet, taskSessionAt, ""); !strings.Contains(w.Body.String(), "Rewritten in the session.") {
+		t.Errorf("the rewritten result is not the draft: %s", w.Body.String())
 	}
-	if got := revises()[0]; got.Enabled || got.Reason != "revising" {
-		t.Errorf("while the revise stands: %+v", got)
-	}
-
-	click.Object["status"] = map[string]interface{}{"phase": boardv1alpha1.RequestFailed, "message": "the session is busy"}
-	if _, err := dyn.Resource(requestGVR).Namespace("alice").Update(ctx, click, v1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := revises()[0]; !got.Enabled || got.Error != "the session is busy" {
-		t.Errorf("after the revise failed: %+v", got)
+	got := stored()
+	if factorycli.Draft("Plan", got[factorycli.AnnotationPlanOutput]) != "## Summary\nRewritten in the session." || got[factorycli.AnnotationPlanApplied] != "" ||
+		got[factorycli.OutputSourceAnnotation(factorycli.AnnotationPlanRun)] != factorycli.OutputHash(planDoc("Rewritten in the session.")) {
+		t.Errorf("after the rewrite: %v", got)
 	}
 }

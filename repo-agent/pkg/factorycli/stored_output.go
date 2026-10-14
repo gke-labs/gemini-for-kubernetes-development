@@ -1,6 +1,8 @@
 package factorycli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -16,7 +18,11 @@ import (
 // annotation per recorded run (OutputAnnotation): the draft is its spec,
 // edits rewrite the spec, and factory apply takes it as it is. What has
 // been applied of it is one more annotation per run (AppliedAnnotation):
-// action → when. A new output of the run replaces both.
+// action → when. A new output of the run replaces both. What the sandbox
+// said the output was, when the board stored it, is a third
+// (OutputSourceAnnotation): a hash, against which a later read of the
+// task output tells a result the agent rewrote in its session from the
+// board's own edit (RefreshOutput).
 const boardAnnotationPrefix = "board.gemini.google.com/"
 
 // The stored outputs, and what was applied of them, of the runs the board
@@ -27,9 +33,6 @@ const (
 	AnnotationTriageApplied = boardAnnotationPrefix + "recipe-triage-applied"
 	AnnotationPlanOutput    = boardAnnotationPrefix + "plan-output"
 	AnnotationPlanApplied   = boardAnnotationPrefix + "plan-applied"
-	// A research sandbox's Notes, the output of its Save notes revise.
-	AnnotationNotesOutput  = boardAnnotationPrefix + "research-output"
-	AnnotationNotesApplied = boardAnnotationPrefix + "research-applied"
 )
 
 // RunTaskType is the task type a run annotation is recorded for: what an
@@ -53,6 +56,21 @@ func OutputAnnotation(runKey string) string {
 // task output of the run recorded under runKey.
 func AppliedAnnotation(runKey string) string {
 	return boardAnnotationPrefix + RunTaskType(runKey) + "-applied"
+}
+
+// OutputSourceAnnotation is where the board keeps the hash of the task
+// output of the run recorded under runKey as the sandbox last said it was
+// (OutputHash).
+func OutputSourceAnnotation(runKey string) string {
+	return boardAnnotationPrefix + RunTaskType(runKey) + "-output-source"
+}
+
+// OutputHash is the hash of a task output as read from its sandbox,
+// whitespace around it aside: a harvest and a task server read of one
+// document hash alike.
+func OutputHash(doc string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(doc)))
+	return hex.EncodeToString(sum[:])
 }
 
 // RejectedAnnotation is where the board tombstones a rejected draft of
@@ -183,6 +201,7 @@ func KeepOutput(annotations map[string]string, runKey, doc string, at time.Time,
 		annotations[OutputAnnotation(runKey)] = doc
 		delete(annotations, AppliedAnnotation(runKey))
 	}
+	annotations[OutputSourceAnnotation(runKey)] = OutputHash(doc)
 	for _, action := range applied {
 		if !IsApplied(annotations, AppliedAnnotation(runKey), action) {
 			MarkApplied(annotations, AppliedAnnotation(runKey), action, at)
@@ -196,9 +215,34 @@ func PlanDraft(annotations map[string]string) string {
 	return Draft("Plan", annotations[AnnotationPlanOutput])
 }
 
-// NotesDraft is the notes draft stored in annotations, or "".
-func NotesDraft(annotations map[string]string) string {
-	return Draft("Notes", annotations[AnnotationNotesOutput])
+// RefreshOutput takes doc, the task output of the run recorded under
+// runKey as its sandbox says it is now, into annotations: the result the
+// agent wrote again in a later turn of its session (factory re-wraps it),
+// or an optional one it wrote only then (research's notes). It reports
+// whether annotations changed.
+//   - The sandbox says what it said when the board stored the output:
+//     nothing changes, so an edit made on the board stands.
+//   - It says something new: that is the draft now, unapplied, and an
+//     edit made on the board since is gone with the old one.
+//   - The board stored an output without its hash: the hash is recorded,
+//     and the output left as it is.
+//   - The board stored none: doc is stored.
+func RefreshOutput(annotations map[string]string, runKey, doc string) bool {
+	if TaskOutputKind(doc) == "" {
+		return false
+	}
+	hash, stored := OutputHash(doc), annotations[OutputAnnotation(runKey)]
+	switch source := annotations[OutputSourceAnnotation(runKey)]; {
+	case source == hash:
+		return false
+	case source == "" && stored != "":
+		annotations[OutputSourceAnnotation(runKey)] = hash
+		return true
+	}
+	annotations[OutputAnnotation(runKey)] = doc
+	delete(annotations, AppliedAnnotation(runKey))
+	annotations[OutputSourceAnnotation(runKey)] = hash
+	return true
 }
 
 // WithDraft is a stored task output of kind with draft, as edited (in

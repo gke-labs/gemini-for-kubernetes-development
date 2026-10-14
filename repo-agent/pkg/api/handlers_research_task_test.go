@@ -35,7 +35,6 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
 	podacpd "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
@@ -50,16 +49,13 @@ func recipeResearchSandboxCR() *unstructured.Unstructured {
 	sb := researchSandboxCR("alice", researchSession, researchRepo, false)
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: factorycli.ResearchRunName(researchSession), Task: researchTaskID, StartedAt: time.Now().UTC(),
-		Kind: "Notes", Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
+		Kind: "Notes",
 	})
 	annotations := sb.GetAnnotations()
 	annotations[factorycli.ResearchRunAnnotation] = string(run)
 	sb.SetAnnotations(annotations)
 	return sb
 }
-
-// notesRevise is the research recipe's Save notes revise.
-const notesRevise = "notes"
 
 // recipeConversation is the recipe sandbox's conversation: its task
 // session.
@@ -161,63 +157,25 @@ func TestRecipeResearchOnAnImageWithoutTaskSessionsIsConflict(t *testing.T) {
 	}
 }
 
-// Save notes on a research conversation files the recipe's notes revise
-// for its sandbox and pins the note's name; no engine is asked from the
-// API.
-func TestRecipeResearchCaptureFilesTheNotesRevise(t *testing.T) {
-	daemon := &fakeSessions{}
-	r, dyn := recipeResearchServerDyn(t, daemon, true)
-	seedNotesBoard(t, dyn)
+// notesOutput is where the board stores a research conversation's notes:
+// its run's output, as any run's.
+var notesOutput = factorycli.OutputAnnotation(factorycli.ResearchRunAnnotation)
 
-	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/revise", `{"revise":"notes"}`)
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
-	}
-	req := theRequest(t, dyn, "alice")
-	if req.Spec.Verb != boardv1alpha1.VerbRevise || req.Spec.Revise != notesRevise ||
-		req.Spec.Sandbox != recipeResearchSandboxCR().GetName() || req.Spec.Member != "alice" || req.Spec.Number != 0 {
-		t.Errorf("filed %+v, want the notes revise of the sandbox", req.Spec)
-	}
-	if note := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; note == "" {
-		t.Error("the note's name was not pinned")
-	}
-	if len(daemon.calls) != 0 {
-		t.Errorf("the save reached an engine: %v", daemon.calls)
-	}
-}
-
-// Without a board for the repository there is no controller to run the
-// revise: a 409, and nothing filed.
-func TestRecipeResearchCaptureWithoutABoardIsConflict(t *testing.T) {
-	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
-
-	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/revise", `{"revise":"notes"}`)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, body %s; want 409", w.Code, w.Body.String())
-	}
-	if reqs := filedRequests(t, dyn, "alice"); len(reqs) != 0 {
-		t.Errorf("filed %+v without a board", reqs)
-	}
-}
-
-// The status carries the draft and what the newest clicks on it say.
+// The status carries the notes draft with the actions Notes offer, filed
+// on the board of the conversation's repository, and what the newest
+// write on it says.
 func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
-	setNotesAnnotations(t, dyn, map[string]string{factorycli.AnnotationNotesOutput: storedOutput("Notes", "# Findings"), annoNotesDraftedAt: "2026-10-05T10:00:00Z"})
+	seedNotesBoard(t, dyn)
+	setNotesAnnotations(t, dyn, map[string]string{notesOutput: storedOutput("Notes", "# Findings")})
 	failed := requestCR(boardv1alpha1.RequestSpec{
-		Verb: boardv1alpha1.VerbApply, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(),
+		Board: researchBoardCR().GetName(), Verb: boardv1alpha1.VerbApply, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(),
 		Apply: &boardv1alpha1.ApplyRequest{Run: "research", Action: "push-notes"},
 	})
 	_ = unstructured.SetNestedField(failed.Object, string(boardv1alpha1.RequestFailed), "status", "phase")
 	_ = unstructured.SetNestedField(failed.Object, "push refused", "status", "message")
-	writing := requestCR(boardv1alpha1.RequestSpec{
-		Verb: boardv1alpha1.VerbRevise, Member: "alice", Sandbox: recipeResearchSandboxCR().GetName(), Revise: notesRevise,
-	})
-	writing.SetName("writing")
-	for _, obj := range []*unstructured.Unstructured{failed, writing} {
-		if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(context.Background(), obj, v1.CreateOptions{}); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := dyn.Resource(requestGVR).Namespace("alice").Create(context.Background(), failed, v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
 	}
 
 	w := doJSON(t, r, http.MethodGet, recipeConversation(), "")
@@ -225,42 +183,45 @@ func TestRecipeResearchStatusCarriesTheNotes(t *testing.T) {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	var got struct {
-		Revises []models.WorkAction `json:"revises"`
-		Draft   *taskSessionDraft   `json:"draft"`
+		Draft *taskSessionDraft `json:"draft"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if len(got.Revises) != 1 || got.Revises[0].Label != "Save notes" || got.Revises[0].Enabled || got.Revises[0].Reason != revisingReason {
-		t.Errorf("revises = %+v, want Save notes, revising", got.Revises)
-	}
 	if got.Draft == nil || got.Draft.Kind != "Notes" || got.Draft.Markdown != "# Findings" {
 		t.Fatalf("draft = %+v, want the notes", got.Draft)
 	}
-	push, ok := findWorkAction(got.Draft.Actions, "push-notes", "")
-	if !ok || push.Error != "push refused" || push.Enabled || push.Reason != notesRewritingReason {
-		t.Errorf("push-notes = %+v, want waiting on the rewrite, with the save's failure", push)
+	var verbs []string
+	for _, a := range got.Draft.Actions {
+		verbs = append(verbs, a.Verb)
 	}
-	if _, ok := findWorkAction(got.Draft.Actions, "revise", ""); ok {
-		t.Errorf("the draft offers the session's revise: %+v", got.Draft.Actions)
+	if strings.Join(verbs, ",") != "edit,push-notes,reject" {
+		t.Errorf("actions = %v, want edit, push-notes and reject", verbs)
+	}
+	if push, ok := findWorkAction(got.Draft.Actions, "push-notes", ""); !ok || !push.Enabled || push.Error != "push refused" {
+		t.Errorf("push-notes = %+v, want enabled, with the last save's failure", push)
 	}
 }
 
-// The draft's actions are offered once there is a draft, and Save notes
-// is offered from the start, before any output exists.
-func TestRecipeResearchOffersSaveNotesBeforeAnyDraft(t *testing.T) {
-	r := recipeResearchServer(t, &fakeSessions{}, true)
+// Notes the agent writes when asked, after the research run ended, are
+// read off the task server into the draft.
+func TestRecipeResearchNotesWrittenLaterBecomeTheDraft(t *testing.T) {
+	daemon := &fakeSessions{files: map[string]string{
+		researchTaskID + "/task-output.yaml": storedOutput("Notes", "# Written when asked"),
+	}}
+	r, dyn := recipeResearchServerDyn(t, daemon, true)
+	seedNotesBoard(t, dyn)
+
 	w := doJSON(t, r, http.MethodGet, recipeConversation(), "")
-	var got struct {
-		Revises []models.WorkAction `json:"revises"`
-		Draft   *taskSessionDraft   `json:"draft"`
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "# Written when asked") {
+		t.Fatalf("status = %d, body %s; want the notes", w.Code, w.Body.String())
 	}
-	_ = json.Unmarshal(w.Body.Bytes(), &got)
-	if len(got.Revises) != 1 || got.Revises[0].Revise != notesRevise || !got.Revises[0].Enabled || got.Draft != nil {
-		t.Errorf("status = %s, want Save notes and no draft", w.Body.String())
+	a := notesSandboxAnnotations(t, dyn)
+	if factorycli.Draft("Notes", a[notesOutput]) != "# Written when asked" || a[factorycli.OutputSourceAnnotation(factorycli.ResearchRunAnnotation)] == "" {
+		t.Errorf("stored %q (source %q), want the notes and their hash", a[notesOutput], a[factorycli.OutputSourceAnnotation(factorycli.ResearchRunAnnotation)])
 	}
 }
 
-// Save to research/notes files the push of the draft; with no draft there
-// is nothing to push.
+// Save to research/notes files the push of the draft, under a note name
+// pinned at the first save; with no draft there is nothing to push.
 func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
 	seedNotesBoard(t, dyn)
@@ -268,7 +229,7 @@ func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/push-notes", `{}`); w.Code != http.StatusNotFound {
 		t.Fatalf("save without a draft: status = %d, body %s; want 404", w.Code, w.Body.String())
 	}
-	setNotesAnnotations(t, dyn, map[string]string{factorycli.AnnotationNotesOutput: storedOutput("Notes", "# Findings")})
+	setNotesAnnotations(t, dyn, map[string]string{notesOutput: storedOutput("Notes", "# Findings")})
 	w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/push-notes", `{}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s; want 202", w.Code, w.Body.String())
@@ -278,32 +239,33 @@ func TestRecipeResearchSaveNotesFilesThePush(t *testing.T) {
 		req.Spec.Apply.Run != "research" || req.Spec.Apply.Action != "push-notes" || req.Spec.Sandbox != recipeResearchSandboxCR().GetName() {
 		t.Errorf("filed %+v, want push-notes of the sandbox", req.Spec)
 	}
+	if note := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; note == "" {
+		t.Error("the note's name was not pinned")
+	}
 }
 
-// An edit replaces the draft and makes it unsaved; a discard drops it all.
+// An edit replaces the draft and makes it unsaved; a reject drops it.
 func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
+	applied := factorycli.AppliedAnnotation(factorycli.ResearchRunAnnotation)
 	setNotesAnnotations(t, dyn, map[string]string{
-		factorycli.AnnotationNotesOutput: storedOutput("Notes", "# Findings"), annoNotesDraftedAt: "2026-10-05T10:00:00Z",
-		factorycli.AnnotationNotesApplied: `{"push-notes":"2026-10-05T10:05:00Z"}`,
+		notesOutput: storedOutput("Notes", "# Findings"),
+		applied:     `{"push-notes":"2026-10-05T10:05:00Z"}`,
 	})
 
-	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/edit", `{"text":"  "}`); w.Code != http.StatusBadRequest {
-		t.Errorf("empty edit: status = %d, want 400", w.Code)
-	}
-	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/edit", `{"text":"# Edited\n"}`); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/edit", `{"text":"# Edited\n"}`); w.Code != http.StatusOK {
 		t.Fatalf("edit: status = %d, body %s", w.Code, w.Body.String())
 	}
 	a := notesSandboxAnnotations(t, dyn)
-	if factorycli.NotesDraft(a) != "# Edited" || a[factorycli.AnnotationNotesApplied] != "" {
-		t.Errorf("after the edit: draft %q, applied %q", factorycli.NotesDraft(a), a[factorycli.AnnotationNotesApplied])
+	if factorycli.Draft("Notes", a[notesOutput]) != "# Edited" || a[applied] != "" {
+		t.Errorf("after the edit: draft %q, applied %q", factorycli.Draft("Notes", a[notesOutput]), a[applied])
 	}
 
-	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/reject", `{}`); w.Code != http.StatusNoContent {
+	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/reject", `{}`); w.Code != http.StatusOK {
 		t.Fatalf("discard: status = %d, body %s", w.Code, w.Body.String())
 	}
 	a = notesSandboxAnnotations(t, dyn)
-	for _, k := range []string{factorycli.AnnotationNotesOutput, annoNotesDraftedAt, factorycli.AnnotationNotesApplied} {
+	for _, k := range []string{notesOutput, applied} {
 		if a[k] != "" {
 			t.Errorf("after the discard %s = %q", k, a[k])
 		}
@@ -317,7 +279,7 @@ func TestRecipeResearchNotesEditAndDiscard(t *testing.T) {
 // is not one of them.
 func TestRecipeResearchDraftRefusesAnUnofferedVerb(t *testing.T) {
 	r, dyn := recipeResearchServerDyn(t, &fakeSessions{}, true)
-	setNotesAnnotations(t, dyn, map[string]string{factorycli.AnnotationNotesOutput: storedOutput("Notes", "# Findings")})
+	setNotesAnnotations(t, dyn, map[string]string{notesOutput: storedOutput("Notes", "# Findings")})
 	if w := doJSON(t, r, http.MethodPost, recipeConversation()+"/draft/comment", `{}`); w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, body %s; want 400", w.Code, w.Body.String())
 	}

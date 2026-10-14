@@ -16,13 +16,12 @@ limitations under the License.
 
 package api
 
-// What a task session offers, whichever recipe it is: the recipe's
-// revises (Update plan, Save notes), from the run factory recorded on the
-// sandbox, and the draft its task output is, with the output's actions.
-// Clicking one files a Request where the draft lives: the issue's row when
-// the sandbox is for an issue, the sandbox itself when it is not (a
-// research conversation). The browser never picks; it posts to the
-// session.
+// What a task session offers, whichever recipe it is: the recipes of its
+// session tag's group, each a run into the same conversation, and the
+// draft its task output is, with the output's actions. Clicking one files
+// a Request where the draft lives: the issue's or PR's row when the
+// sandbox is for one, the sandbox itself when it is not (a research
+// conversation). The browser never picks; it posts to the session.
 
 import (
 	"context"
@@ -41,11 +40,11 @@ import (
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/models"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
 // taskSessionDraft is a session's draft: its task output, as the board
 // stores it, with the actions it offers and what the clicks on them say.
-// The output's revises are not among them; they are the session's.
 type taskSessionDraft struct {
 	Kind     string `json:"kind"`
 	Markdown string `json:"markdown"`
@@ -62,9 +61,9 @@ type taskSessionDraft struct {
 	AppliedAt string              `json:"appliedAt,omitempty"`
 	Actions   []models.WorkAction `json:"actions"`
 
-	// runKey is the run the draft is the output of, for a kind the board
-	// keeps no draft of its own for (anyDraft); board and number are
-	// where its writes are filed.
+	// runKey is the run the draft is the output of; board and number are
+	// where its writes are filed (a research conversation's: its board,
+	// and no number).
 	runKey string
 	board  *unstructured.Unstructured
 	item   string
@@ -73,10 +72,6 @@ type taskSessionDraft struct {
 
 // appliedReason is a write's reason once it was applied to the draft.
 const appliedReason = "applied"
-
-// notesRewritingReason is why a notes draft's actions wait while Save
-// notes rewrites it.
-const notesRewritingReason = "the notes are being rewritten"
 
 // sessionIssue is the issue the sandbox is for, and the board its row is
 // on; false for a sandbox that has none (a research conversation's).
@@ -119,101 +114,21 @@ func sessionResearch(sb *unstructured.Unstructured) (researchSandboxView, bool) 
 	return view, ok && !view.Legacy
 }
 
-// sessionRevises are the revises task's recipe offers, from its recorded
-// run, each with what stands in its way and what its newest Request says.
-// A recipe whose draft cannot be revised from here offers them disabled,
-// with why.
-func (s *Server) sessionRevises(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) []models.WorkAction {
-	a := sb.GetAnnotations()
-	run, ok := factorycli.SessionRun(a, task)
+// sessionGroupActions are the recipes of the group task's recipe is in,
+// if it has a session tag (sessionGroup), each with what stands in its
+// way and what its newest Request says.
+func (s *Server) sessionGroupActions(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) []models.WorkAction {
+	run, ok := factorycli.SessionRun(sb.GetAnnotations(), task)
 	if !ok {
 		return nil
 	}
-	if group, ok := s.sessionGroup(ctx, c, sb, run); ok {
-		return group.actions
-	}
-	if len(run.Revises) == 0 {
-		return nil
-	}
-	kind := run.Kind
-	revises := reviseActions(run)
-	disable := func(reason string) []models.WorkAction {
-		for i := range revises {
-			revises[i].Enabled, revises[i].Reason = false, reason
-		}
-		return revises
-	}
-	_, _, onIssue := sessionIssue(sb)
-	_, _, onPR := sessionPR(sb)
-	if onIssue || onPR {
-		if kind == "Change" {
-			// The fix's follow-ups push to its PR and answer on it: there
-			// must be one, and the fix's sandbox must be idle.
-			switch {
-			case a[annoTaskState] == "Running":
-				return disable("the fix is running")
-			case !strings.Contains(a["htmlURL"], "/pull/"):
-				return disable("the fix has no PR yet")
-			}
-			s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
-			for i := range revises {
-				if revises[i].Reason == planRevisingReason {
-					revises[i].Reason = "another follow-up is running"
-				}
-			}
-			return revises
-		}
-		if kind != "Plan" {
-			return disable(fmt.Sprintf("a %s is not revised from here", kind))
-		}
-		doc := a[factorycli.OutputAnnotation(run.Key)]
-		switch {
-		case factorycli.IsApplied(a, factorycli.AppliedAnnotation(run.Key), "run"):
-			return disable("its follow-up was started")
-		case factorycli.Draft(kind, doc) == "":
-			return disable("there is no draft yet")
-		case a[annoTaskState] == "Running":
-			return disable("a task is running")
-		}
-		if from := factorycli.TaskOutputSession(kind, doc); from != "" && from != task {
-			return disable("the draft came from another session")
-		}
-		s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
-		return revises
-	}
-	if _, board, ok := sessionReview(sb); ok {
-		// The review is GitHub's pending review: an Update review posts
-		// over it, so there must be one, and the review must be done.
-		switch {
-		case kind != "Review":
-			return disable(fmt.Sprintf("a %s is not revised from here", kind))
-		case a[annoTaskState] == "Running":
-			return disable("the review is running")
-		case a["reviewState"] == "" || board == "":
-			return disable("the review is not on GitHub yet")
-		}
-		s.markSandboxRevises(ctx, s.Auth.GetNamespaceFromContext(c), sb.GetName(), revises)
-		return revises
-	}
-	view, ok := sessionResearch(sb)
-	if !ok || kind != "Notes" {
-		return disable("the sandbox has no issue to file it on")
-	}
-	notes := s.researchNotes(ctx, view)
-	for i := range revises {
-		switch {
-		case notes.Writing:
-			revises[i].Enabled, revises[i].Reason = false, revisingReason
-		case notes.WriteError != "":
-			revises[i].Error = notes.WriteError
-		}
-	}
-	return revises
+	group, _ := s.sessionGroup(ctx, c, sb, run)
+	return group.actions
 }
 
 // sessionRecipes is what a session of a recipe group (a session tag)
-// offers in place of revises: every recipe of the group, each a run
-// into the same conversation, on the PR whose sandbox it is.
+// offers: every recipe of the group, each a run into the same
+// conversation, on the PR whose sandbox it is.
 type sessionRecipes struct {
 	board   *unstructured.Unstructured
 	pr      int
@@ -245,7 +160,7 @@ func (s *Server) sessionGroup(ctx context.Context, c *gin.Context, sb *unstructu
 		if rec.Session != tag {
 			continue
 		}
-		action := models.WorkAction{Verb: "recipe", Revise: rec.Name, Label: recipeLabel(catalog, rec.Name), Inputs: launchInputs(rec), Enabled: true}
+		action := models.WorkAction{Verb: "recipe", Recipe: rec.Name, Label: recipeLabel(catalog, rec.Name), Inputs: launchInputs(rec), Enabled: true}
 		// The recipe named like the session first: New conversation runs it.
 		if rec.Name == tag {
 			group.actions = append([]models.WorkAction{action}, group.actions...)
@@ -281,65 +196,28 @@ func (s *Server) sessionGroup(ctx context.Context, c *gin.Context, sb *unstructu
 			continue
 		}
 		seen[spec.Recipe] = true
-		markRevise(group.actions, req)
+		markRecipe(group.actions, req)
 	}
 	return group, true
 }
 
-// reviseActions are run's revises as buttons, with the inputs each asks
-// for.
-func reviseActions(run factorycli.RecordedRun) []models.WorkAction {
-	revises := make([]models.WorkAction, 0, len(run.Revises))
-	for _, rv := range run.Revises {
-		revises = append(revises, models.WorkAction{Verb: "revise", Revise: rv.ID, Label: rv.Label, Inputs: rv.Inputs, Enabled: true})
-	}
-	return revises
-}
-
-// sessionDraft is task's draft, nil when it has none: a research
-// conversation's notes, and any other run's stored task output
-// (anyDraft).
+// sessionDraft is task's draft, nil when it has none: its run's stored
+// task output (anyDraft).
 func (s *Server) sessionDraft(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, task string) *taskSessionDraft {
-	a := sb.GetAnnotations()
-	run, ok := factorycli.SessionRun(a, task)
+	run, ok := factorycli.SessionRun(sb.GetAnnotations(), task)
 	if !ok {
 		return nil
 	}
-	kind := run.Kind
-	view, ok := sessionResearch(sb)
-	if !ok || inOverseerScope(c) {
-		return s.anyDraft(ctx, c, sb, run)
-	}
-	if kind != "Notes" || view.Notes.Markdown == "" {
-		return nil
-	}
-	notes := s.researchNotes(ctx, view)
-	actions := workActions(factorycli.OfferedActions("Notes", a[factorycli.AnnotationNotesOutput]), func(act factorycli.Action) string {
-		switch {
-		case notes.Writing && act.Verb != "reject":
-			return notesRewritingReason
-		case act.Verb == "push-notes" && notes.Saving:
-			return postingReason
-		}
-		return ""
-	})
-	for i := range actions {
-		if actions[i].Verb == "push-notes" && !notes.Saving {
-			actions[i].Error = notes.SaveError
-		}
-	}
-	return &taskSessionDraft{
-		Kind: "Notes", Markdown: notes.Markdown, DraftedAt: notes.DraftedAt, SavedAt: notes.SavedAt, Note: notes.Note,
-		Actions: withoutRevises(actions),
-	}
+	return s.anyDraft(ctx, c, sb, run)
 }
 
 // anyDraft is a run's draft, whichever recipe it is (a triage, a plan, a
-// fix's Change, a review's Review, a new recipe's): its stored task
-// output, as markdown or its spec as YAML, with the writes, follow-ups,
-// edit and reject it offers. A write or a follow-up is filed on the
-// board of the issue or PR the sandbox is for; a sandbox for neither
-// offers none.
+// fix's Change, a review's Review, a research conversation's Notes, a new
+// recipe's): its stored task output, as markdown or its spec as YAML,
+// with the writes, follow-ups, edit and reject it offers. A write or a
+// follow-up is filed on the board of the issue or PR the sandbox is for,
+// or of a research conversation's repository; a sandbox for none offers
+// none.
 func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.Unstructured, run factorycli.RecordedRun) *taskSessionDraft {
 	a := sb.GetAnnotations()
 	doc := a[factorycli.OutputAnnotation(run.Key)]
@@ -372,11 +250,16 @@ func (s *Server) anyDraft(ctx context.Context, c *gin.Context, sb *unstructured.
 		draft.Actions = []models.WorkAction{}
 		return draft
 	}
+	applied := factorycli.Applied(a, factorycli.AppliedAnnotation(run.Key))
 	if ok {
 		draft.board, _, _ = s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
 		draft.item, draft.number = item, number
+	} else if view, isResearch := sessionResearch(sb); isResearch {
+		// Notes are saved to the member's fork of the conversation's
+		// repository, under the file name it pins at the first save.
+		draft.board, _ = s.researchBoard(ctx, view)
+		draft.Note, draft.SavedAt = view.Note, applied["push-notes"]
 	}
-	applied := factorycli.Applied(a, factorycli.AppliedAnnotation(run.Key))
 	var offered []factorycli.Action
 	for _, act := range factorycli.OfferedActions(kind, doc) {
 		if act.Verb == "edit" || act.Verb == "reject" || ((factorycli.IsApplyVerb(act.Verb) || act.Verb == "run") && draft.board != nil) {
@@ -486,6 +369,14 @@ func (s *Server) anyDraftAction(c *gin.Context, sb *unstructured.Unstructured, d
 	case verb == "run" && draft.board != nil:
 		s.runFollowUp(c, sb, draft, run)
 	case factorycli.IsApplyVerb(verb) && draft.board != nil:
+		if view, ok := sessionResearch(sb); ok && verb == "push-notes" {
+			// Pinned at the first save, so a second one updates the file.
+			note := s.researchNoteName(ctx, view, s.Auth.GetUserFromContext(c))
+			if err := s.updateResearchAnnotations(ctx, view.Namespace, view.Sandbox, map[string]string{research.NoteAnnotation: note}); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to pin the note's name", "details": err.Error()})
+				return
+			}
+		}
 		s.fileApply(c, draft.board, sb.GetName(), draft.number, factorycli.RunTaskType(draft.runKey), verb)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the %s does not take %s here", strings.ToLower(draft.Kind), verb)})
@@ -532,83 +423,34 @@ func (s *Server) runFollowUp(c *gin.Context, sb *unstructured.Unstructured, draf
 	}
 }
 
-// withoutRevises drops the revise actions: a session shows its revises
-// apart from its draft.
-func withoutRevises(actions []models.WorkAction) []models.WorkAction {
-	out := []models.WorkAction{}
-	for _, a := range actions {
-		if a.Verb != "revise" {
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-// reviseTaskSession is a session's revise button: POST …/revise {revise,
-// inputs}. 202 with the Request filed.
-func (s *Server) reviseTaskSession(c *gin.Context) {
+// taskSessionRecipe runs one of the session's group's recipes into its
+// conversation: POST …/recipe {recipe, inputs, newSession}. 202 with the
+// Request filed.
+func (s *Server) taskSessionRecipe(c *gin.Context) {
 	sb, task, ok := s.taskSessionSandbox(c)
 	if !ok {
 		return
 	}
 	var req struct {
-		Revise string            `json:"revise"`
+		Recipe string            `json:"recipe"`
 		Inputs map[string]string `json:"inputs"`
-		// NewSession runs a recipe of the session's group in a new
-		// conversation of the session.
+		// NewSession runs it in a new conversation of the session.
 		NewSession bool `json:"newSession"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Revise == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "revise is required"})
+	if err := c.ShouldBindJSON(&req); err != nil || req.Recipe == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "recipe is required"})
 		return
 	}
-	offers := s.sessionRevises(c.Request.Context(), c, sb, task)
-	action, offered := findWorkAction(offers, "revise", req.Revise)
-	if !offered {
-		// A recipe of the session's group: it runs into this
-		// conversation as a launch on the PR does.
-		if action, offered = findWorkAction(offers, "recipe", req.Revise); offered && action.Enabled {
-			s.runSessionRecipe(c, sb, task, action, req.Inputs, req.NewSession)
-			return
-		}
-	}
-	if req.NewSession {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "only a recipe of the session's group opens a new conversation"})
-		return
-	}
+	action, offered := findWorkAction(s.sessionGroupActions(c.Request.Context(), c, sb, task), "recipe", req.Recipe)
 	switch {
 	case !offered:
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the session does not offer revise %s", req.Revise)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("the session does not offer %s", req.Recipe)})
 		return
 	case !action.Enabled:
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot revise now: %s", action.Reason)})
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot run %s now: %s", req.Recipe, action.Reason)})
 		return
 	}
-	// The inputs are the revise's own, all of them given.
-	inputs := map[string]string{}
-	for name, value := range req.Inputs {
-		if !slices.Contains(action.Inputs, name) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s takes no input %s", req.Revise, name)})
-			return
-		}
-		inputs[name] = strings.TrimSpace(value)
-	}
-	for _, name := range action.Inputs {
-		if inputs[name] == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("revise %s needs %s", req.Revise, name)})
-			return
-		}
-	}
-	if view, ok := sessionResearch(sb); ok {
-		s.saveRecipeNotes(c, view, req.Revise)
-		return
-	}
-	boardName := sb.GetAnnotations()[annoBoard]
-	number, _, _ := sessionIssue(sb)
-	if _, board, ok := sessionReview(sb); ok {
-		boardName = board
-	}
-	s.reviseSandbox(c, sb, boardName, number, req.Revise, inputs)
+	s.runSessionRecipe(c, sb, task, action, req.Inputs, req.NewSession)
 }
 
 // runSessionRecipe files a launch of one of the session's group's recipes
@@ -620,14 +462,14 @@ func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured,
 	inputs := map[string]string{}
 	for name, value := range given {
 		if !slices.Contains(action.Inputs, name) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s takes no input %s", action.Revise, name)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s takes no input %s", action.Recipe, name)})
 			return
 		}
 		inputs[name] = strings.TrimSpace(value)
 	}
 	for _, name := range action.Inputs {
 		if inputs[name] == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s needs %s", action.Revise, name)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s needs %s", action.Recipe, name)})
 			return
 		}
 	}
@@ -641,7 +483,7 @@ func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured,
 	}
 	filed, err := s.fileRequest(ctx, group.board, boardv1alpha1.RequestSpec{
 		Verb:       boardv1alpha1.VerbRecipe,
-		Recipe:     action.Revise,
+		Recipe:     action.Recipe,
 		Item:       "pr",
 		Member:     member,
 		Number:     group.pr,
@@ -654,57 +496,6 @@ func (s *Server) runSessionRecipe(c *gin.Context, sb *unstructured.Unstructured,
 	}
 	invalidateWorkFeed(group.board.GetNamespace(), group.board.GetName())
 	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
-}
-
-// reviseSandbox files a revise keyed by its sandbox, whichever recipe's:
-// the controller runs it in the session of the run that offers it. An
-// issue's sandbox names the issue too, so its row follows the revise.
-// 202.
-func (s *Server) reviseSandbox(c *gin.Context, sb *unstructured.Unstructured, boardName string, number int, revise string, inputs map[string]string) {
-	ctx := c.Request.Context()
-	board, member, err := s.resolveBoard(ctx, s.Auth.GetNamespaceFromContext(c), s.Auth.GetUserFromContext(c), boardName)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
-		return
-	}
-	if len(inputs) == 0 {
-		inputs = nil
-	}
-	filed, err := s.fileRequest(ctx, board, boardv1alpha1.RequestSpec{
-		Verb:    boardv1alpha1.VerbRevise,
-		Member:  member,
-		Sandbox: sb.GetName(),
-		Number:  number,
-		Revise:  revise,
-		Inputs:  inputs,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to file the revise", "details": err.Error()})
-		return
-	}
-	c.JSON(http.StatusAccepted, gin.H{"request": filed.Name})
-}
-
-// markSandboxRevises says on a session's revises what the revise Requests
-// filed for its sandbox say: one standing is "revising", and the last one
-// failed carries why. This view is where a revise is clicked, so it is
-// where it is followed.
-func (s *Server) markSandboxRevises(ctx context.Context, namespace, sandbox string, revises []models.WorkAction) {
-	reqs, err := s.listRequests(ctx, namespace, v1.ListOptions{
-		LabelSelector: boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbRevise,
-	})
-	if err != nil {
-		return
-	}
-	seen := map[string]bool{}
-	// Newest first: the newest Request for a revise is the word on it.
-	for _, req := range reqs {
-		if req.Spec.Sandbox != sandbox || seen[req.Spec.Revise] {
-			continue
-		}
-		seen[req.Spec.Revise] = true
-		markRevise(revises, req)
-	}
 }
 
 // taskSessionDraftAction takes one of the session's draft's actions:
@@ -737,19 +528,5 @@ func (s *Server) taskSessionDraftAction(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("cannot %s now: %s", verb, action.Reason)})
 		return
 	}
-	if draft.runKey != "" {
-		s.anyDraftAction(c, sb, draft, verb, req.Run, req.Text)
-		return
-	}
-	view, _ := sessionResearch(sb)
-	switch {
-	case verb == "edit":
-		s.editResearchNotes(c, view, req.Text)
-	case verb == "reject":
-		s.discardResearchNotes(c, view)
-	case factorycli.IsApplyVerb(verb):
-		s.applyResearchNotes(c, view, verb)
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("notes do not take %s here", verb)})
-	}
+	s.anyDraftAction(c, sb, draft, verb, req.Run, req.Text)
 }

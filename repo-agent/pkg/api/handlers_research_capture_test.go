@@ -28,8 +28,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/research"
 )
 
-// savePath is Save notes on researchSession's conversation.
-func savePath() string { return recipeConversation() + "/revise" }
+// savePath is Save to research/notes on researchSession's conversation,
+// which pins the note's name at the first save.
+func savePath() string { return recipeConversation() + "/draft/push-notes" }
 
 // titled is a sandbox that has been named, which is every session past
 // its first turn and the only kind whose note gets a readable name.
@@ -40,15 +41,17 @@ func titled(sb *unstructured.Unstructured, title string) *unstructured.Unstructu
 	return sb
 }
 
-// recipeSandboxFor is a recipe research sandbox for any session.
+// recipeSandboxFor is a recipe research sandbox for any session, with
+// notes to save.
 func recipeSandboxFor(sessionID string) *unstructured.Unstructured {
 	sb := researchSandboxCR("alice", sessionID, researchRepo, false)
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: factorycli.ResearchRunName(sessionID), Task: researchTaskID, StartedAt: time.Now().UTC(),
-		Kind: "Notes", Revises: []factorycli.RecordedRevise{{ID: notesRevise, Label: "Save notes"}},
+		Kind: "Notes",
 	})
 	annotations := sb.GetAnnotations()
 	annotations[factorycli.ResearchRunAnnotation] = string(run)
+	annotations[factorycli.OutputAnnotation(factorycli.ResearchRunAnnotation)] = storedOutput("Notes", "# Findings")
 	sb.SetAnnotations(annotations)
 	return sb
 }
@@ -60,7 +63,7 @@ func TestSaveNotesFallsBackToTheSessionIDWhenUnnamed(t *testing.T) {
 	r, dyn := recipeResearchServerWith(t, &fakeSessions{}, true, recipeSandboxFor(researchSession))
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != researchSession+".md" {
@@ -74,7 +77,7 @@ func TestSaveNotesNamesTheNoteAfterTheSession(t *testing.T) {
 		titled(recipeSandboxFor(researchSession), "Where the retry loop terminates"))
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != "where-the-retry-loop-terminates.md" {
@@ -97,7 +100,7 @@ func TestSaveNotesDoesNotTakeAnotherSessionsNote(t *testing.T) {
 		titled(recipeSandboxFor(researchSession), "First read"), taken)
 	seedNotesBoard(t, dyn)
 
-	if w := doJSON(t, r, http.MethodPost, savePath(), `{"revise":"notes"}`); w.Code != http.StatusAccepted {
+	if w := doJSON(t, r, http.MethodPost, savePath(), `{}`); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}
 	if got := notesSandboxAnnotations(t, dyn)[research.NoteAnnotation]; got != "first-read-2.md" {

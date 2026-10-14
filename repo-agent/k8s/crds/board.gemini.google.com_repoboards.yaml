@@ -203,8 +203,6 @@ spec:
                             type: string
                           required:
                             type: boolean
-                          revise:
-                            type: boolean
                           type:
                             type: string
                         required:
@@ -220,22 +218,6 @@ spec:
                     "on":
                       items:
                         type: string
-                      type: array
-                    revises:
-                      items:
-                        properties:
-                          id:
-                            type: string
-                          inputs:
-                            items:
-                              type: string
-                            type: array
-                          label:
-                            type: string
-                        required:
-                        - id
-                        - label
-                        type: object
                       type: array
                     session:
                       type: string

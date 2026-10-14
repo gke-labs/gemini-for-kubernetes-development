@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,10 +127,7 @@ type researchSandboxView struct {
 	// browser never picks it, and a name the member has not been shown
 	// is not one they can be surprised by.
 	Note string `json:"-"`
-	// Notes is the conversation's notes draft, for a recipe's: what its
-	// last Save notes wrote, edits included. Internal: the conversation's
-	// status reports it, with the clicks standing on it.
-	Notes researchNotesDraft `json:"-"`
+
 	// Requested marks a session that has been asked for but has no
 	// sandbox yet: a standing claim on the board, not an object.
 	Requested bool `json:"requested,omitempty"`
@@ -198,12 +196,6 @@ func researchViewFromSandbox(sb *unstructured.Unstructured) (researchSandboxView
 		Note:      annotations[research.NoteAnnotation],
 	}
 	view.Legacy = view.Task == ""
-	view.Notes = researchNotesDraft{
-		Markdown:  factorycli.NotesDraft(annotations),
-		DraftedAt: annotations[annoNotesDraftedAt],
-		SavedAt:   factorycli.Applied(annotations, factorycli.AnnotationNotesApplied)["push-notes"],
-		doc:       annotations[factorycli.AnnotationNotesOutput],
-	}
 	if ts := sb.GetCreationTimestamp(); !ts.IsZero() {
 		view.CreatedAt = ts.UTC().Format(time.RFC3339)
 	}
@@ -658,4 +650,20 @@ func (w *wsJSON) ping() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+}
+
+// researchBoard is the board a research sandbox is reconciled by: the
+// member's board for its repository, as the controller matches them.
+func (s *Server) researchBoard(ctx context.Context, view researchSandboxView) (*unstructured.Unstructured, error) {
+	owner, repo, err := parseRepoURL(view.HTMLURL)
+	if err != nil {
+		return nil, fmt.Errorf("the sandbox names no repository: %w", err)
+	}
+	for _, board := range s.visibleBoards(ctx, view.Namespace, "") {
+		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
+		if o, r, err := parseRepoURL(repoURL); err == nil && strings.EqualFold(o, owner) && strings.EqualFold(r, repo) {
+			return &board, nil
+		}
+	}
+	return nil, fmt.Errorf("no board in %s for %s/%s", view.Namespace, owner, repo)
 }

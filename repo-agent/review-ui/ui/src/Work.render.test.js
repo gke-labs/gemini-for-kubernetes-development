@@ -624,10 +624,10 @@ describe('WorkRow Deploy', () => {
     });
 });
 
-// A row says a write or a revise filed on its runs stands, and the board
+// A row says a write filed on its runs stands, and the board
 // polls fast while one does.
 describe('anyPosting', () => {
-    test('is whether a row has a write or a revise standing', () => {
+    test('is whether a row has a write standing', () => {
         expect(anyPosting([])).toBe(false);
         expect(anyPosting([{ number: 1 }])).toBe(false);
         expect(anyPosting([{ number: 1 }, { number: 2, posting: true }])).toBe(true);
@@ -698,7 +698,7 @@ describe('WorkRow review', () => {
 });
 
 // A PR of yours is looked after by care, a recipe like any other: no
-// drawer of the fix's revises (those are care's and the sessions' now).
+// drawer of the fix's follow-ups (those are care's and the sessions' now).
 describe('WorkRow your PR', () => {
     const pr = {
         type: 'pull', number: 9, group: 'prs', mine: true, myPR: true, title: 'the fix',

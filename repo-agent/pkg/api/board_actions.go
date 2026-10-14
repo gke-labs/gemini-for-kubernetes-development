@@ -37,17 +37,17 @@ func (s *Server) fileApply(c *gin.Context, board *unstructured.Unstructured, san
 // postingReason is a write's action's reason while it stands.
 const postingReason = "posting"
 
-// revisingReason is a revise's action's reason while it stands; the
-// draft's other actions wait for the plan it writes (planRevisingReason).
-const revisingReason = "revising"
+// runningReason is a session recipe's action's reason while its Request
+// stands; the group's others wait for it (anotherRunningReason).
+const runningReason = "running"
 
-// markApplies marks the rows a write or a revise filed on their runs
+// markApplies marks the rows a write filed on their runs
 // still stands on (WorkItem.Posting). Requests carry the number of the
 // issue or PR whose row follows them.
 func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructured, items map[string]*models.WorkItem) {
 	reqs, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
 		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName() + "," +
-			boardv1alpha1.LabelVerb + " in (" + boardv1alpha1.VerbApply + "," + boardv1alpha1.VerbRevise + ")",
+			boardv1alpha1.LabelVerb + "=" + boardv1alpha1.VerbApply,
 	})
 	if err != nil {
 		return
@@ -64,19 +64,19 @@ func (s *Server) markApplies(ctx context.Context, board *unstructured.Unstructur
 	}
 }
 
-// markRevise says on a plan's actions what a revise Request says: while
-// it stands, the revise is "revising" and the rest wait for the plan it
-// writes; failed, the revise carries why.
-func markRevise(actions []models.WorkAction, req boardv1alpha1.Request) {
+// markRecipe says on a session group's recipes what a recipe Request
+// says: while it stands, its recipe is "running" and the rest wait for
+// it, one conversation taking one turn at a time; failed, its recipe
+// carries why.
+func markRecipe(actions []models.WorkAction, req boardv1alpha1.Request) {
 	for i := range actions {
 		a := &actions[i]
-		mine := (a.Verb == "revise" && req.Spec.Verb == boardv1alpha1.VerbRevise && a.Revise == req.Spec.Revise) ||
-			(a.Verb == "recipe" && req.Spec.Verb == boardv1alpha1.VerbRecipe && a.Revise == req.Spec.Recipe)
+		mine := a.Verb == "recipe" && req.Spec.Verb == boardv1alpha1.VerbRecipe && a.Recipe == req.Spec.Recipe
 		switch {
 		case req.Active() && mine:
-			a.Enabled, a.Reason = false, revisingReason
-		case req.Active() && a.Enabled && a.Verb != "reject":
-			a.Enabled, a.Reason = false, planRevisingReason
+			a.Enabled, a.Reason = false, runningReason
+		case req.Active() && a.Enabled:
+			a.Enabled, a.Reason = false, anotherRunningReason
 		case req.Status.Phase == boardv1alpha1.RequestFailed && mine:
 			a.Error = req.Status.Message
 		}
@@ -114,27 +114,27 @@ func actionsFor(actions []models.WorkAction, perms repoPerms) []models.WorkActio
 	return out
 }
 
-// findWorkAction is the offered action verb, with arg its run or revise
+// findWorkAction is the offered action verb, with arg its run or recipe
 // when given.
 func findWorkAction(actions []models.WorkAction, verb, arg string) (models.WorkAction, bool) {
 	for _, a := range actions {
-		if a.Verb == verb && (arg == "" || a.Run == arg || a.Revise == arg) {
+		if a.Verb == verb && (arg == "" || a.Run == arg || a.Recipe == arg) {
 			return a, true
 		}
 	}
 	return models.WorkAction{}, false
 }
 
-// planRevisingReason is why a plan's actions wait while the agent
-// rewrites it.
-const planRevisingReason = "the plan is being revised"
+// anotherRunningReason is why a session group's recipes wait while one
+// of them runs.
+const anotherRunningReason = "another recipe of the session is running"
 
 func workActions(offered []factorycli.Action, disabled func(factorycli.Action) string) []models.WorkAction {
 	var out []models.WorkAction
 	for _, a := range offered {
 		reason := disabled(a)
 		out = append(out, models.WorkAction{
-			Verb: a.Verb, Run: a.Run, Revise: a.Revise, Label: a.Label, Field: a.Field, Format: a.Format,
+			Verb: a.Verb, Run: a.Run, Label: a.Label, Field: a.Field, Format: a.Format,
 			Enabled: reason == "", Reason: reason,
 		})
 	}

@@ -539,7 +539,7 @@ func TestGetBoardWork(t *testing.T) {
 }
 
 // The PR a fix opened carries the fix's session, and its row follows the
-// fix's run, a revise of it included: working while it runs, needs you
+// fix's run, one continuing its session included: working while it runs, needs you
 // with the reason when it failed, waiting on others once it is done.
 func TestPRRowFromTheFixRun(t *testing.T) {
 	for _, tc := range []struct{ state, status, attention string }{
@@ -553,7 +553,7 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 				 "user": {"login": "alice"}, "body": "Fixes #7"}
 			]`,
 		}
-		run := `{"name":"revise/myboard/fix-repo-7/fix-ci/2","task":"recipe-fix-2","session":"recipe-fix-1","recipe":"fix","state":"` + tc.state + `","startedAt":"2026-09-16T12:00:00Z"}`
+		run := `{"name":"request/2","task":"recipe-fix-2","session":"recipe-fix-1","recipe":"fix","state":"` + tc.state + `","startedAt":"2026-09-16T12:00:00Z"}`
 		sb := sandboxCR("fix-repo-7",
 			map[string]interface{}{"factory.gemini.google.com/managed": "true", "factory.gemini.google.com/pr": "9", factorycli.LabelIssue: "7"},
 			map[string]interface{}{

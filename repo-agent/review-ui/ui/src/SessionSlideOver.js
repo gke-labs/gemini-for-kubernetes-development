@@ -4,7 +4,7 @@ import { ResearchConversation } from './Research';
 // apiBase is where the session's routes are: /api, the member's (the
 // board's), by default; /api/overseers/<name> for an overseer's
 // sandboxes (docs/design/overseer-work-view.md), whose session answers
-// with no revises and a draft without actions, so the same component is
+// with no recipes and a draft without actions, so the same component is
 // read-only there beyond the conversation.
 // SessionSlideOver: a task's session beside the board, 80% of its width,
 // the same view as its own tab (which its ↗ pops out to). Escape or the

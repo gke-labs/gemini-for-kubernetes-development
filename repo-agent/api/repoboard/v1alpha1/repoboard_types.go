@@ -192,8 +192,8 @@ type RepoBoardStatus struct {
 	Counts BoardCounts `json:"counts,omitempty"`
 
 	// Recipes are the recipes the controller's factory runs (factory
-	// recipe list), in the board's order: what its rows offer to launch
-	// and revise. A new built-in shows up with the image that ships it.
+	// recipe list), in the board's order: what its rows offer to launch.
+	// A new built-in shows up with the image that ships it.
 	// +kubebuilder:validation:Optional
 	Recipes []BoardRecipe `json:"recipes,omitempty"`
 }
@@ -210,8 +210,6 @@ type BoardRecipe struct {
 	// Kind is its task output's kind, if it declares one.
 	// +kubebuilder:validation:Optional
 	Kind string `json:"kind,omitempty"`
-	// +kubebuilder:validation:Optional
-	Revises []BoardRecipeRevise `json:"revises,omitempty"`
 	// TaskType is what its runs are recorded under on a sandbox.
 	// +kubebuilder:validation:Optional
 	TaskType string `json:"taskType,omitempty"`
@@ -236,8 +234,7 @@ type BoardRecipeApplicableWhen struct {
 	Labels []string `json:"labels"`
 }
 
-// BoardRecipeInput is one input a recipe declares. Revise marks one only
-// its revises take.
+// BoardRecipeInput is one input a recipe declares.
 type BoardRecipeInput struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:Optional
@@ -248,20 +245,10 @@ type BoardRecipeInput struct {
 	Required bool `json:"required,omitempty"`
 	// +kubebuilder:validation:Optional
 	Type string `json:"type,omitempty"`
-	// +kubebuilder:validation:Optional
-	Revise bool `json:"revise,omitempty"`
 	// From is the task output kind whose result the input takes:
 	// a run: <recipe> action on that kind's draft fills it.
 	// +kubebuilder:validation:Optional
 	From string `json:"from,omitempty"`
-}
-
-// BoardRecipeRevise is one revise of a recipe, and the inputs it asks for.
-type BoardRecipeRevise struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	// +kubebuilder:validation:Optional
-	Inputs []string `json:"inputs,omitempty"`
 }
 
 //+kubebuilder:object:root=true

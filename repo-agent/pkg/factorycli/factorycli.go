@@ -27,10 +27,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/exec"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -282,10 +280,6 @@ type Launcher interface {
 	// StartPRWatch launches `factory pr watch` for key unless one is
 	// already running.
 	StartPRWatch(key string, opts PRWatchOptions) bool
-	// StartRevise launches `factory recipe revise` for key unless one is
-	// already running; harvested as a recipe's run is, ReviseOptions.Apply
-	// applied.
-	StartRevise(key string, opts ReviseOptions) bool
 	// StartRun launches `factory run <mode>` (plan, deploy or teardown
 	// of one run, in that run's sandbox) unless one is already running.
 	StartRun(key string, opts RunOptions) bool
@@ -398,62 +392,6 @@ func (r *Runner) StartPRWatch(key string, opts PRWatchOptions) bool {
 	}
 	args = append(args, "--disclose="+strconv.FormatBool(opts.Disclose))
 	return r.start(key, args, opts.GithubToken, timeout)
-}
-
-// ReviseOptions are the inputs for a `factory recipe revise` invocation:
-// one of a recipe's revises, asked into the agent session its task ran
-// in, as the next turn of the conversation a member continued there — a
-// plan's Update plan (a Plan task output, as a plan's) or a research
-// conversation's Save notes (a Notes task output). Nothing is written to
-// GitHub.
-type ReviseOptions struct {
-	// SandboxName is the sandbox the task ran in.
-	SandboxName string
-	Namespace   string
-	// Revise is the revise's id in the recipe ("plan", "notes").
-	Revise string
-	// Session is the task whose session to revise in; empty lets factory
-	// pick the sandbox's newest task with the revise.
-	Session     string
-	GithubToken string
-	Timeout     time.Duration
-	// RunName records the revise's task in the sandbox, to read its
-	// result back by.
-	RunName string
-	// Apply is the action applied to the revise's task output when it
-	// ends: a review's Update review posts its Review as the pending
-	// review (post-review), replacing the one factory posted before; a
-	// fix's follow-ups post the replies their Change carries
-	// (post-replies). Empty applies nothing.
-	Apply string
-	// Inputs are the revise's inputs (factory --input name=value), such
-	// as an Iterate's instruction.
-	Inputs map[string]string
-}
-
-// StartRevise runs `factory recipe revise` and reads its result back as
-// StartRecipe does, applying Apply to it. The revise runs on the
-// sandbox's disk and engine as its task left them, so it takes no image,
-// disk or engine.
-func (r *Runner) StartRevise(key string, opts ReviseOptions) bool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 15 * time.Minute
-	}
-	args := []string{
-		"recipe", "revise", opts.SandboxName, opts.Revise,
-		"--run-name", opts.RunName,
-		"--namespace", opts.Namespace,
-		"--timeout", timeout.String(),
-		"--abort-on-cancel=false",
-	}
-	if opts.Session != "" {
-		args = append(args, "--task", opts.Session)
-	}
-	for _, name := range slices.Sorted(maps.Keys(opts.Inputs)) {
-		args = append(args, "--input", name+"="+opts.Inputs[name])
-	}
-	return r.startWithPreflight(key, args, opts.GithubToken, timeout, r.harvest(opts.SandboxName, opts.Namespace, opts.RunName, opts.Apply, opts.GithubToken))
 }
 
 func (r *Runner) start(key string, args []string, githubToken string, timeout time.Duration) bool {

@@ -690,8 +690,8 @@ function taskSessionFallback(namespace, task) {
 //
 // `task` is the session: `{ sandbox, task }`, whichever recipe started
 // it — a research conversation, a plan, a triage. Everything this shows
-// besides the conversation comes from the session's GET: the recipe's
-// revises as buttons, its draft as one panel with that draft's actions.
+// besides the conversation comes from the session's GET: its group's
+// recipes as buttons, its draft as one panel with that draft's actions.
 // Nothing here knows which recipe it is.
 // `sessionId` is the research conversation the session is, when it is
 // one — the list knows it before the session does — and is what rename
@@ -700,9 +700,9 @@ function taskSessionFallback(namespace, task) {
 // composer stays shut and the member watches.
 // A research row with no task yet (`pending`, or `legacy`, made by the
 // old research path) has no session to open, and says so instead.
-// REVISE_POLL_EVERY is how often a running revise or a standing write is
-// looked at again.
-const REVISE_POLL_EVERY = 3000;
+// POLL_EVERY is how often a running recipe of the session or a standing
+// write is looked at again.
+const POLL_EVERY = 3000;
 
 // DRAFT_VERBS is how a verb a draft offers looks when the output gives
 // it no label, and what to confirm before taking it. Whether the member
@@ -1115,8 +1115,11 @@ export function ResearchConversation({
     el.select();
   });
 
-  const send = () => {
-    const text = draft.trim();
+  const send = () => sendText(draft.trim(), true);
+
+  // sendText sends text as the member's turn; clearDraft empties the
+  // composer once it is sent.
+  const sendText = (text, clearDraft) => {
     if (!text || sending || busy || phase !== 'live') return;
     setSending(true);
     setError('');
@@ -1130,7 +1133,7 @@ export function ResearchConversation({
           // The turn appears on the stream as a user_prompt event, which
           // is what draws the bubble and sets busy. Nothing to do here
           // but stop holding the text the member already sent.
-          setDraft('');
+          if (clearDraft) setDraft('');
           stickRef.current = true;
           return;
         }
@@ -1266,24 +1269,25 @@ export function ResearchConversation({
       .catch(err => setError(`cancel failed: ${err}`));
   };
 
-  // The recipe's revises (Update plan, Save notes): each runs a step of
-  // the recipe into this session, so it shows here as the next turn and
-  // what it writes becomes the draft. The draft is the session's task
-  // output with the actions it offers (post it, save it, edit, discard).
-  // Both come from the session's GET, which says what the newest click
-  // of each says — revising, posting, or why the last one failed — and
-  // is read again while one stands. The server files each click where
-  // the draft lives; this only names the session.
-  const [revising, setRevising] = useState(''); // the revise POST in flight
-  const [revised, setRevised] = useState('');
+  // The session's group's recipes (care's): each runs into this
+  // conversation, so it shows here as the next turn. The draft is the
+  // session's task output with the actions it offers (post it, save it,
+  // edit, discard); the agent writes it again when asked to in the
+  // conversation, and it is read again when a turn ends. Both come from
+  // the session's GET, which says what the newest click of each says —
+  // running, posting, or why the last one failed — and is read again
+  // while one stands. The server files each click where the draft lives;
+  // this only names the session.
+  const [starting, setStarting] = useState(''); // the recipe POST in flight
+  const [ran, setRan] = useState('');
   const [drafting, setDrafting] = useState(''); // the draft action POST in flight
   const [draftEdit, setDraftEdit] = useState(null); // the edit box, when open
   // The draft folds to its one line unless asked for: open, it took half
   // the pane from the conversation, and stayed that way after the save.
   const [draftOpen, setDraftOpen] = useState(false);
-  const revises = useMemo(() => (info && info.revises) || [], [info]);
+  const recipes = useMemo(() => (info && info.recipes) || [], [info]);
   const sessionDraft = (info && info.draft) || null;
-  const standing = revises.some(r => r.reason === 'revising')
+  const standing = recipes.some(r => r.reason === 'running')
     || !!(sessionDraft && sessionDraft.actions.some(a => a.reason === 'posting'));
   const refreshInfo = useCallback(() => {
     if (!api) return;
@@ -1294,61 +1298,68 @@ export function ResearchConversation({
   }, [api]);
   useEffect(() => {
     if (!standing) return undefined;
-    const timer = setInterval(refreshInfo, REVISE_POLL_EVERY);
+    const timer = setInterval(refreshInfo, POLL_EVERY);
     return () => clearInterval(timer);
   }, [standing, refreshInfo]);
+  // A turn that ended may have written the draft again (the agent asked
+  // to change or save it), so the session is read again.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !busy) refreshInfo();
+    wasBusy.current = busy;
+  }, [busy, refreshInfo]);
   // Done: it ran, and did not fail.
   const wasRunning = useRef('');
   useEffect(() => {
-    const running = revises.find(r => r.reason === 'revising');
+    const running = recipes.find(r => r.reason === 'running');
     if (running) {
-      wasRunning.current = running.revise;
+      wasRunning.current = running.recipe;
       return;
     }
     if (!wasRunning.current) return;
-    const done = revises.find(r => r.revise === wasRunning.current);
+    const done = recipes.find(r => r.recipe === wasRunning.current);
     wasRunning.current = '';
-    if (done && !done.error) setRevised(done.label || done.revise);
-  }, [revises]);
+    if (done && !done.error) setRan(done.label || done.recipe);
+  }, [recipes]);
 
   // A session's group leads with the recipe named like the session: a
   // new conversation starts with it.
-  const newConversation = revises.find(r => r.verb === 'recipe');
+  const newConversation = recipes[0];
 
-  const revise = (r, newSession) => {
-    // A revise that asks for inputs (Iterate's instruction) gets them
-    // asked for, one at a time; cancelling any files nothing.
+  const runRecipe = (r, newSession) => {
+    // A recipe that asks for inputs (care-iterate's instruction) gets
+    // them asked for, one at a time; cancelling any files nothing.
     const inputs = {};
     for (const name of r.inputs || []) {
-      const value = window.prompt(`${r.label || r.revise}: ${name}`);
+      const value = window.prompt(`${r.label || r.recipe}: ${name}`);
       if (!value || !value.trim()) return;
       inputs[name] = value.trim();
     }
-    setRevising(r.revise);
-    setRevised('');
+    setStarting(r.recipe);
+    setRan('');
     setError('');
-    fetch(`${api}/revise`, {
+    fetch(`${api}/recipe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        revise: r.revise,
+        recipe: r.recipe,
         ...(r.inputs && r.inputs.length ? { inputs } : {}),
         ...(newSession ? { newSession: true } : {}),
       }),
     })
       .then(async res => {
         if (res.ok) {
-          // The revise is a turn like any other, so it scrolls in below
-          // — and the member should be looking at it.
+          // The run is a turn like any other, so it scrolls in below —
+          // and the member should be looking at it.
           stickRef.current = true;
           refreshInfo();
           return;
         }
         const body = await res.json().catch(() => ({}));
-        setError(body.error || `${r.label || 'revise'} failed: HTTP ${res.status}`);
+        setError(body.error || `${r.label || r.recipe} failed: HTTP ${res.status}`);
       })
-      .catch(err => setError(`${r.label || 'revise'} failed: ${err}`))
-      .finally(() => setRevising(''));
+      .catch(err => setError(`${r.label || r.recipe} failed: ${err}`))
+      .finally(() => setStarting(''));
   };
 
   const takeDraftAction = (a, text) => {
@@ -1594,20 +1605,31 @@ export function ResearchConversation({
           {phase === 'live' && busy && !taskState.held && (
             <button className="btn btn-sm" onClick={cancel} title="Interrupt the turn in flight">Stop</button>
           )}
-          {/* The recipe's revises: run a step of it again from this
-              conversation. Not while a turn is in flight or the session is
-              a task's — factory would refuse it — and not twice at once. */}
-          {revises.map(r => (
-            <button key={r.revise} className="btn btn-sm"
-              disabled={!r.enabled || busy || taskState.held || !!revising}
-              onClick={() => revise(r)}
-              title={r.reason === 'revising' ? `${r.label || r.revise}: running in this conversation`
+          {/* A research conversation's notes are what the agent writes
+              when asked: this asks, as a turn of the member's. */}
+          {researchId && phase === 'live' && (
+            <button className="btn btn-sm"
+              disabled={busy || sending || taskState.held}
+              onClick={() => sendText('Save notes.', false)}
+              title={taskState.held ? 'The session is a task\'s until it ends'
+                : busy ? 'The agent is working — once the turn ends'
+                  : 'Asks the agent to write this conversation up as notes; they become the draft below, and nothing is pushed'}>
+              Save notes
+            </button>
+          )}
+          {/* The session's group's recipes: each runs in this conversation.
+              Not while a turn is in flight or the session is a task's —
+              factory would refuse it — and not twice at once. */}
+          {recipes.map(r => (
+            <button key={r.recipe} className="btn btn-sm"
+              disabled={!r.enabled || busy || taskState.held || !!starting}
+              onClick={() => runRecipe(r)}
+              title={r.reason === 'running' ? `${r.label || r.recipe}: running in this conversation`
                 : !r.enabled ? `Not now: ${r.reason}`
                   : taskState.held ? 'The session is a task\'s until it ends'
                     : busy ? 'The agent is working — once the turn ends'
-                      : r.verb === 'recipe' ? `Runs ${r.label || r.revise} in this conversation, on the PR as it is now, as the row's button does`
-                        : 'Runs in this conversation; what it writes becomes the draft below, and nothing is posted'}>
-              {revising === r.revise || r.reason === 'revising' ? `${r.label || r.revise}…` : (r.label || r.revise)}
+                      : `Runs ${r.label || r.recipe} in this conversation, on the PR as it is now, as the row's button does`}>
+              {starting === r.recipe || r.reason === 'running' ? `${r.label || r.recipe}…` : (r.label || r.recipe)}
             </button>
           ))}
           {/* Two ways to get more room, and they are different enough to
@@ -1683,12 +1705,12 @@ export function ResearchConversation({
                       readable, and the row's chip follows the new one. */}
                   {newConversation && (
                     <button role="menuitem" className="btn btn-sm"
-                      disabled={!newConversation.enabled || busy || taskState.held || !!revising}
+                      disabled={!newConversation.enabled || busy || taskState.held || !!starting}
                       onClick={() => {
                         setMenuOpen(false);
-                        if (window.confirm(`Run ${newConversation.label || newConversation.revise} in a new conversation? This one stays as it is.`)) revise(newConversation, true);
+                        if (window.confirm(`Run ${newConversation.label || newConversation.recipe} in a new conversation? This one stays as it is.`)) runRecipe(newConversation, true);
                       }}
-                      title={newConversation.enabled ? `Run ${newConversation.label || newConversation.revise} in a new conversation of the session` : `Not now: ${newConversation.reason}`}>
+                      title={newConversation.enabled ? `Run ${newConversation.label || newConversation.recipe} in a new conversation of the session` : `Not now: ${newConversation.reason}`}>
                       New conversation
                     </button>
                   )}
@@ -1715,23 +1737,23 @@ export function ResearchConversation({
           <div className="warning-banner" style={{ cursor: 'pointer', flex: '0 0 auto' }}
             onClick={() => setError('')} title="Dismiss">{error}</div>
         )}
-        {revises.filter(r => r.error).map(r => (
-          <div key={`revise-err-${r.revise}`} className="warning-banner" style={{ flex: '0 0 auto' }}>
-            {r.label || r.revise} failed: {r.error}
+        {recipes.filter(r => r.error).map(r => (
+          <div key={`recipe-err-${r.recipe}`} className="warning-banner" style={{ flex: '0 0 auto' }}>
+            {r.label || r.recipe} failed: {r.error}
           </div>
         ))}
-        {revised && (
+        {ran && (
           <div role="status" style={{ cursor: 'pointer', flex: '0 0 auto', fontSize: 'small', padding: '4px 10px' }}
-            onClick={() => setRevised('')} title="Dismiss">
-            {revised}: done — what it wrote is the draft.
+            onClick={() => setRan('')} title="Dismiss">
+            {ran}: done — what it wrote is the draft.
           </div>
         )}
-        {revises.filter(r => r.reason === 'revising').map(r => (
-          <div key={`revising-${r.revise}`} style={{
+        {recipes.filter(r => r.reason === 'running').map(r => (
+          <div key={`running-${r.recipe}`} style={{
             flex: '0 0 auto', padding: '4px 10px', textAlign: 'left', fontSize: 'x-small',
             color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-color)',
           }}>
-            {r.label || r.revise}: running in this conversation — the draft appears here when the turn finishes.
+            {r.label || r.recipe}: running in this conversation — the draft appears here when the turn finishes.
           </div>
         ))}
         {/* A review's draft is a pending review on GitHub, visible only to

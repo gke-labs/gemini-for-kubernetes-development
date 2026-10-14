@@ -8,14 +8,12 @@ import (
 
 // Action is one thing a task output offers to do with its result, as
 // factory declares it (factory/pkg/taskoutput): a verb, what an edit
-// edits, the follow-up a run starts, the recipe revise a revise runs, and
-// a label for a button.
+// edits, the follow-up a run starts, and a label for a button.
 type Action struct {
 	Verb   string `yaml:"verb" json:"verb"`
 	Field  string `yaml:"field,omitempty" json:"field,omitempty"`
 	Format string `yaml:"format,omitempty" json:"format,omitempty"`
 	Run    string `yaml:"run,omitempty" json:"run,omitempty"`
-	Revise string `yaml:"revise,omitempty" json:"revise,omitempty"`
 	Label  string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
@@ -29,14 +27,13 @@ const (
 )
 
 // verbNeeds are the verbs the board knows what they need. The draft verbs
-// (edit, reject) and the follow-ups (run, revise) are the board's own;
+// (edit, reject) and the follow-up (run) are the board's own;
 // the rest are factory apply's writes, with the caller's token, to the
 // target or the caller's fork. A verb not here needs push access.
 var verbNeeds = map[string]string{
 	"edit":         NeedsNothing,
 	"reject":       NeedsNothing,
 	"run":          NeedsNothing,
-	"revise":       NeedsNothing,
 	"comment":      NeedsNothing,
 	"post-review":  NeedsNothing,
 	"push-notes":   NeedsNothing,
@@ -57,7 +54,7 @@ func VerbNeeds(verb string) string {
 // verb or a follow-up, which are the board's.
 func IsApplyVerb(verb string) bool {
 	switch verb {
-	case "edit", "reject", "run", "revise":
+	case "edit", "reject", "run":
 		return false
 	}
 	return true
@@ -121,7 +118,7 @@ func parseTaskOutputMeta(kind, doc string) (taskOutputMeta, bool) {
 // document's, or the kind's defaults when it declares none or there is
 // none. Whatever the kind, every verb is offered — what the viewer may
 // take is VerbNeeds' — but for the follow-ups the board cannot start: a
-// run other than fix, a revise with no id.
+// run other than fix.
 func OfferedActions(kind, doc string) []Action {
 	actions := defaultActions[kind]
 	if m, ok := parseTaskOutputMeta(kind, doc); ok && len(m.Actions) > 0 {
@@ -129,7 +126,7 @@ func OfferedActions(kind, doc string) []Action {
 	}
 	var out []Action
 	for _, a := range actions {
-		if a.Verb == "" || (a.Verb == "run" && a.Run != "fix") || (a.Verb == "revise" && a.Revise == "") {
+		if a.Verb == "" || (a.Verb == "run" && a.Run != "fix") {
 			continue
 		}
 		out = append(out, a)
@@ -150,8 +147,8 @@ func TaskOutputTask(kind, doc string) string {
 }
 
 // TaskOutputSession is the agent session a kind's task output came from,
-// or "": its task's, or for a revise's output, the session it revised in.
-// A revise of it revises in the same one.
+// or "": its task's, or for a run that continued a session, that
+// session.
 func TaskOutputSession(kind, doc string) string {
 	m, _ := parseTaskOutputMeta(kind, doc)
 	if m.Source.Session != "" {

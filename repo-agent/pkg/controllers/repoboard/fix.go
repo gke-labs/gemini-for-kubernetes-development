@@ -30,11 +30,9 @@ import (
 
 // The fix (factory/design/fix-recipe.md): `factory recipe fix` in the
 // issue's sandbox commits, and pushes to the member's fork; the runner
-// opens the branch as a draft PR (open-pr) when the run ends. The PR's
-// follow-ups (Iterate, Address comments, Fix CI) are revises of the fix,
-// asked into its session: each pushes to the same branch, and the runner
-// posts the replies and report it wrote on the PR (post-replies). The
-// run, and every revise of it, is recorded under fix-run.
+// opens the branch as a draft PR (open-pr) when the run ends. Changing
+// the PR afterwards is the care recipes', on the PR. The run is recorded
+// under fix-run.
 
 // fixKey is the runner key of an issue's fixes. PR/issue numbers repeat
 // across repos, so it carries the repo: two boards in one namespace must
@@ -55,8 +53,8 @@ func fixRunPrefix(board string, issue int) string {
 
 // fixRunUnread is the fix run recorded on the sandbox whose result the
 // controller has not read: started after the last one it read, and after
-// any Fix again. A revise of the fix, recorded under the same key, is not
-// the fix's.
+// any Fix again. Another run recorded under the same key (one named
+// otherwise) is not the fix's.
 func fixRunUnread(annotations map[string]string, board string, issue int) (string, bool) {
 	var since time.Time
 	for _, key := range []string{AnnotationFixHarvestedAt, AnnotationRefixRequested} {
