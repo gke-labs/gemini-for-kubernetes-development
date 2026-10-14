@@ -30,16 +30,13 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-// A recipe Request launches any recipe factory recipe list lists. Triage,
-// plan, fix and review go to their own passes (requestMailbox), which
-// know their drafts, claims and follow-ups; any other recipe is launched
-// here as data: on its issue or PR, in the sandbox factory runs it in,
-// with the Request's inputs, and its task output, if it declares one,
-// stored on the sandbox as its run's (factorycli.KeepOutput), where the
-// board's drafts and applies find it.
-
-// hookedRecipes are the recipes with passes of their own.
-var hookedRecipes = []string{"triage", "plan", "fix", "review"}
+// A recipe Request launches any recipe factory recipe list lists, as
+// data: on its issue or PR, in the sandbox factory runs it in, with the
+// Request's inputs, finished as the catalog says (onFinish, timeout), and
+// its task output, if it declares one, stored on the sandbox as its run's
+// (factorycli.KeepOutput), where the board's drafts and applies find it.
+// A Triage, Plan, Fix or Review click is one like any other; only their
+// automation (spec.auto) still has passes of its own.
 
 // recipeCatalog is the recipes the controller's factory runs, read once
 // per process (the binary does not change under it), and retried on the

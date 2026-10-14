@@ -97,11 +97,13 @@ func sessionReview(sb *unstructured.Unstructured) (int, string, bool) {
 	return n, a[annoBoard], ok && a["repo"] != ""
 }
 
-// pendingReviewURL is where a review sandbox's pending review is
-// finalized on GitHub, "" when it has none there.
+// pendingReviewURL is where the pending review a review sandbox's run
+// posted (its post-review applied) is finalized on GitHub, "" when it
+// posted none.
 func pendingReviewURL(sb *unstructured.Unstructured) string {
 	a := sb.GetAnnotations()
-	if _, _, ok := sessionReview(sb); !ok || a["reviewState"] != "pending" || !strings.Contains(a["htmlURL"], "/pull/") {
+	if _, _, ok := sessionReview(sb); !ok || !factorycli.IsApplied(a, factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun), "post-review") ||
+		!strings.Contains(a["htmlURL"], "/pull/") {
 		return ""
 	}
 	return strings.TrimSuffix(a["htmlURL"], "/") + "/files"
