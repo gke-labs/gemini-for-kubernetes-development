@@ -69,46 +69,40 @@ A repository recipe gets nothing a built-in does not, and less by default:
 - `credentials:` defaults to `full`, as for built-ins (the engine GitHub write-access note applies to every recipe alike);
 - task-output actions are the known verbs; nothing in a recipe adds one.
 
-## Follow-ups instead of revises
+## Results are files the agent writes
 
-A recipe's `revise:` parts and a session of recipes (`session:`, as care's) do the same job by two mechanisms: both continue a conversation in its sandbox and capture a new result. One mechanism is simpler for anyone writing a recipe, and a repository's recipes (which cannot declare `revise:`, see Loading) need only that one.
+A recipe's `revise:` parts exist because a result is captured from one ask's reply (`capture:`): only a step the runner sends can produce one, so changing a result after the run takes a recipe step of its own (Update plan, Update review, Save notes, Iterate, Update summary). A repository's recipes cannot declare `revise:` (see Loading), and the mechanism is one more thing to reason about for every recipe.
 
-Two revises are removed rather than converted:
-- **fix's `iterate`.** It duplicates `care-iterate`. A fix's Change opens a draft PR by default, and the PR is then changed with care-iterate. Before the PR is open, its Change can be edited, rejected, or the fix run again with `--instruction`.
-- **summarize's `summary`.** Run summarize again instead.
-- **review's `review`.** Run review again with an instruction (its `instructions` input, `--instruction`) saying what to change: review with instructions. Posting replaces the pending review factory posted before: GitHub keeps one pending review per person. A board click already reviews again (the re-review marker), but drops the click's inputs: the controller passes a Request's inputs to fix only. Review's pass takes them too, and so do plan's and triage's, which drop them the same way.
+Instead, the agent writes the result to a file, as the prompt tells it to. The file belongs to the conversation, not to an ask: in Continue session a member can add instructions and say "save the plan", and the agent rewrites it. No step, recipe or button is needed for that, so `revise:` goes, with no follow-up recipes in its place.
 
-The other two become recipes of their own, in their start recipe's session:
+**The recipe.** A result is a file in the run's task directory, named by `task-output.from` and listed in `outputs`, as now. An ask names its path with a template function, `{{ output "plan.md" }}`, which renders the absolute path in the run's task directory: the agent writes there, and the instruction stays in the conversation's history for later turns. `capture:` goes from the result-producing asks: their prompts say "write … to <path>" instead of "respond with ONLY …", so a reply's prose, fences and a restarted generation (#1845) no longer reach the result.
 
-| revise | follow-up recipe | session |
-|---|---|---|
-| plan `plan` (Update plan) | `plan-update` | `plan` |
-| research `notes` (Save notes) | `research-notes` | `research` |
+**The runner.**
+- Before the first step, it removes the run's output files, so a file the agent did not write is never a stale result.
+- After the last step, a declared output that is missing or empty fails the run, unless the recipe marks it `optional`. research's notes are optional: they exist once someone asks for them.
+- `run:` steps that read a result (plan's copy to `/workspaces/plan-issue-<n>.md`) read the file, as they read a capture now.
 
-`plan-update` stays beside plan's `--feedback`: a re-plan with feedback is a new conversation reading the last plan, while plan-update writes the plan from the conversation the member had in the session. research's start has no result: `research-notes` is the only recipe that writes Notes, so research loses its `task-output` and `StartOutputs` its revise-only case.
+**The board.** It stores a run's output on its sandbox (`OutputAnnotation`) when the run ends. It reads the run's output files again, through the task server, whenever a turn in the session ends, the member's included, and a file whose hash changed replaces the stored output: a new draft, which is unapplied again if it had been posted, and which replaces any edit made on the board since. A file that does not parse (a review.yaml) shows its error on the draft, and the stored draft stays.
 
-What a revise did that a follow-up recipe needs:
-- **The same sandbox.** A recipe in a session already runs where its group's last run did: an issue's or a PR's sandbox, or with `--session` a repository's.
-- **The same conversation.** A run in a session continues the conversation its group's last run recorded (`sessionToContinue`), including the member's turns from the board's Continue session. plan declares its session tag, as `research` does.
-- **Only after a start.** `applicable-when: {session: started}`: the recipe runs only where its session has a run. factory refuses it otherwise, and a board offers it only on an item whose group has one.
-- **The same result.** A follow-up declares its start recipe's `outputs` and `task-output`, copied: YAML anchors do not cross files. plan-update copies plan's save step the same way. A test holds each copy equal to its original.
-- **A result's actions.** An output offers `run: <follow-up>` instead of `revise: <id>`. The `run:` verb starts a recipe on the result's target, and passes the result as the recipe's input only when the recipe takes one from that kind.
+**What changes per recipe.**
+- **plan:** writes `plan.md`. Update plan goes: say so in the session.
+- **review:** writes `review.yaml`. Update review goes: say so in the session, then post the new draft. Review with instructions is a new run: review takes its `instructions` input from the board's click too (below). Posting replaces the pending review factory posted before, as GitHub keeps one pending review per person.
+- **research:** its notes are an optional output, `notes.md`, which the agent writes when asked. The prompt says how a note is written (the text of today's Save notes ask), so "save notes" in the conversation is enough. A Save notes button, if kept, sends that turn: a canned message, not a recipe.
+- **summarize:** writes `summary.md`. Update summary goes.
+- **fix:** writes `change.yaml` before the push step. Iterate goes: a fix's Change opens a draft PR by default, and the PR is changed with care-iterate. Before then, its Change can be edited, rejected, or the fix run again with `--instruction`. A fix changed in its session afterwards is not pushed: nothing runs the push step outside a run.
+- **triage, care's recipes:** write their results the same way.
 
-**The board.** The session view's button row (`Research.js`) already lists two kinds of entry, both from `GET …/task-sessions/:sandbox/:task` (`revises`): a revise (`verb: revise`, posted to `POST …/revise`) and a recipe of the session (`verb: recipe`, care's follow-ups, run as the row's button runs them). Only the second kind is left:
-- Update plan and Save notes are `plan-update` and `research-notes`, listed as the session's recipes once it has a run, and started by a recipe Request, as care's are. The row offers them in the session's group too.
-- Iterate, Update review and Update summary go, from the session view and its slide-over.
-- Review, Plan and Triage ask for their instructions on launch, so a second click with an instruction is review (plan, triage) with instructions. Iterate's `window.prompt` for a revise input goes.
-- The API's revise route, `markSandboxRevises` and the revise entries in the session's info go; the list keeps its recipe entries, and their `revising` state becomes a recipe run's.
+**The board's launch.** A board click on review, plan or triage passes the click's inputs to the recipe, as fix's does (the controller reads a Request's inputs for fix only today), and the launch asks for instructions. A second click with an instruction is review (plan, triage) with instructions; a click already reviews again (the re-review marker).
 
-What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `recipe_revise.go` with its push lookup (`pushed_*` from a session's tasks; a PR's come from the PR, as now), `RecordedRevise`, the `revise` action verb, and repo-agent's revise Requests. The board's Update plan and Save notes become the follow-up recipes' buttons in their session group; Iterate, Update review and Update summary go.
+**What goes.** `revise:`, revise inputs (`revise: true`) and capture of results in the recipe model; `recipe_revise.go` with its push lookup (a PR's `pushed_*` come from the PR, as now); `RecordedRevise`; the `revise` action verb; repo-agent's revise Requests, the revise route and `markSandboxRevises`. The session view's button row (`Research.js`) keeps its recipe entries (care's) and loses its revise entries, with Iterate's prompt for an input.
 
 ## Steps
 
 1. **A run keeps its recipe** (#1934).
 2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources (#1935).
-3. **Follow-ups instead of revises:**
-   - factory: the two follow-up recipes, `applicable-when: {session: started}`, and `run:` without an input; fix's iterate, review's and summarize's updates removed; then `revise` removed;
-   - repo-agent: review, plan and triage pass a Request's inputs to their recipe (review with instructions), and their launch asks for instructions; the session view's revise buttons become the follow-ups' recipe buttons or go, and the revise route, verb and Requests go.
+3. **Results are files the agent writes:**
+   - factory: the `output` template function, output files cleared at a run's start and required at its end (`optional`), every built-in's prompts writing their result, `revise:` and result capture removed;
+   - repo-agent: outputs read again when a turn ends, review, plan and triage passing a Request's inputs with instructions asked on launch, and the revise route, verb, Requests and buttons removed.
 4. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
 5. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
 6. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).
