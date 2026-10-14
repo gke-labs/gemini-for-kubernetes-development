@@ -114,6 +114,10 @@ type Reconciler struct {
 	// catalog is the recipes factory runs (recipeCatalog).
 	catalogMu sync.Mutex
 	catalog   []boardv1alpha1.BoardRecipe
+
+	// refusals are the recipe Requests ensureRecipe refused to launch, by
+	// UID, with why: settleRecipe fails them with it (refuseRecipe).
+	refusals sync.Map
 }
 
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch

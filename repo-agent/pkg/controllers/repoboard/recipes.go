@@ -17,6 +17,7 @@ limitations under the License.
 package repoboard
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -136,6 +137,13 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 		return
 	}
 
+	// Another run at work in the sandbox (a plan, a care run): this one
+	// waits for it rather than being refused by factory. settleRecipe says
+	// so on the Request.
+	if busy, ok := busyRun(sb, recipeRunName(req)); ok {
+		logger.Info("recipe waits: its sandbox is busy", "recipe", rec.Name, "number", spec.Number, "sandbox", name, "running", busy.Recipe)
+		return
+	}
 	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
 		logger.Info("recipe deferred: board at maxActive", "recipe", rec.Name, "number", spec.Number, "limit", maxActive(work.board))
 		return
@@ -144,6 +152,21 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	if err != nil {
 		logger.Error(err, "recipe executor has no token", "executor", spec.Member, "recipe", rec.Name)
 		return
+	}
+	// GitHub keeps one pending review per person, and factory's post
+	// replaces only one it posted: over the member's own, a Review could
+	// never be posted. A submitted review does not stop a click.
+	if rec.Kind == "Review" && spec.Item == "pr" {
+		pending, _, err := executorReviewStates(ctx, newGithubClientFromToken(ctx, token), work.owner, work.repo, spec.Number, spec.Member)
+		if err != nil {
+			logger.Error(err, "unable to check for the member's pending review; deferring", "recipe", rec.Name, "pr", spec.Number)
+			return
+		}
+		if pending {
+			r.refuseRecipe(req, requestOutcome{phase: boardv1alpha1.RequestFailed, reason: "OwnPendingReview",
+				message: fmt.Sprintf("you have a pending review on #%d that factory did not post; submit or discard it on GitHub first", spec.Number)})
+			return
+		}
 	}
 	if err := r.ensureFactoryUserSecret(ctx, spec.Member, spec.Member, ""); err != nil {
 		logger.Error(err, "unable to sync factory-user secret", "namespace", spec.Member)
@@ -164,6 +187,27 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe", "recipe", rec.Name, "item", spec.Item, "number", spec.Number, "board", work.board.Name, "executor", spec.Member)
 	}
+}
+
+// busyRun is the run at work in sb other than the one named runName, if
+// there is one: factory refuses a sandbox that is running a task, so a
+// recipe waits for it.
+func busyRun(sb *unstructured.Unstructured, runName string) (factorycli.RecordedRun, bool) {
+	if sb == nil {
+		return factorycli.RecordedRun{}, false
+	}
+	for _, run := range factorycli.Runs(sb.GetAnnotations()) {
+		if run.State == factorycli.TaskStateRunning && run.Name != runName {
+			return run, true
+		}
+	}
+	return factorycli.RecordedRun{}, false
+}
+
+// refuseRecipe records why req is not launched, for settleRecipe to fail
+// it with.
+func (r *Reconciler) refuseRecipe(req *boardv1alpha1.Request, out requestOutcome) {
+	r.refusals.Store(req.UID, out)
 }
 
 // keepRecipeOutput stores on sb the output of rec's run there, which
@@ -226,8 +270,18 @@ func (r *Reconciler) settleRecipe(work *workState, req *boardv1alpha1.Request, n
 	if r.Factory.IsRunning(key) {
 		return requestOutcome{phase: boardv1alpha1.RequestRunning, reason: "Running", sandbox: name}
 	}
+	if out, refused := r.refusals.LoadAndDelete(req.UID); refused {
+		return out.(requestOutcome)
+	}
 	res, ok := r.Factory.LastResult(key)
 	if !ok || res.FinishedAt.Before(req.CreationTimestamp.Time) {
+		if busy, ok := busyRun(sb, recipeRunName(req)); ok {
+			if out := pendingOutcome(req, now); out.phase != "" {
+				return out
+			}
+			return requestOutcome{phase: boardv1alpha1.RequestPending, reason: "Waiting", sandbox: name,
+				message: fmt.Sprintf("waiting for %s to finish in %s", cmp.Or(busy.Recipe, "another task"), name)}
+		}
 		return pendingOutcome(req, now)
 	}
 	if res.Err != nil {

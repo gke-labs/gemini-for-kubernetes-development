@@ -585,6 +585,45 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 	}
 }
 
+// A click claims on GitHub by what its recipe makes: a Change on an issue
+// assigns the clicker, a Review requests them as reviewer, anything else
+// claims nothing (a Summary, care's Change on a PR).
+func TestKickoffClaimsByKind(t *testing.T) {
+	for _, tc := range []struct {
+		path  string
+		claim string
+	}{
+		{"/board/myboard/issues/77/recipes/fix", "POST /repos/test/repo/issues/77/assignees"},
+		{"/board/myboard/prs/42/recipes/review", "POST /repos/test/repo/pulls/42/requested_reviewers"},
+		{"/board/myboard/issues/78/recipes/summarize", ""},
+		{"/board/myboard/prs/43/recipes/care", ""},
+	} {
+		_, r, _, rt := boardTestServerWithRT(t, map[string]string{
+			"https://api.github.com/repos/test/repo/issues/77/assignees":          `{}`,
+			"https://api.github.com/repos/test/repo/pulls/42/requested_reviewers": `{}`,
+		}, boardCR())
+		req, _ := http.NewRequest("POST", tc.path, strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d: %s", tc.path, w.Code, w.Body.String())
+		}
+		var claims []string
+		for _, write := range rt.writes {
+			if strings.HasSuffix(write, "/assignees") || strings.HasSuffix(write, "/requested_reviewers") {
+				claims = append(claims, write)
+			}
+		}
+		want := []string{}
+		if tc.claim != "" {
+			want = []string{tc.claim}
+		}
+		if strings.Join(claims, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: claims %v, want %v", tc.path, claims, want)
+		}
+	}
+}
+
 func TestKickoffFixFilesARequest(t *testing.T) {
 	_, r, dyn := boardTestServer(t, map[string]string{
 		// Best-effort assignment + label calls; served happily.

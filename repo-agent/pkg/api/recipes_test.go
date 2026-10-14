@@ -399,3 +399,39 @@ func TestASessionsRunsAreOneGroup(t *testing.T) {
 		t.Errorf("latest runs = %s, want care's newest and review's", got)
 	}
 }
+
+// A row shows why its newest recipe click failed, until a run of the
+// recipe's group starts after it; an error the row already has (a fix's,
+// from its sandbox) stands.
+func TestRowShowsItsFailedRecipe(t *testing.T) {
+	catalog := []boardv1alpha1.BoardRecipe{{Name: "summarize", Label: "Summarize", On: []string{"issue"}, Kind: "Summary"}}
+	at := func(minute int) *metav1.Time {
+		ts := metav1.NewTime(time.Date(2026, 10, 14, 10, minute, 0, 0, time.UTC))
+		return &ts
+	}
+	failed := func(n, minute int, msg string) boardv1alpha1.Request {
+		return boardv1alpha1.Request{
+			Spec:   boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "summarize", Item: "issue", Number: n},
+			Status: boardv1alpha1.RequestStatus{Phase: boardv1alpha1.RequestFailed, Reason: "RunFailed", Message: msg, CompletedAt: at(minute)},
+		}
+	}
+	items := map[string]*models.WorkItem{
+		"issue-1": {Type: "issue", Number: 1},
+		"issue-2": {Type: "issue", Number: 2, Sessions: []models.RunSession{{Recipe: "summarize", Status: "running", StartedAt: "2026-10-14T10:30:00Z"}}},
+		"issue-3": {Type: "issue", Number: 3, Error: "the fix failed"},
+	}
+	markFailedRecipes(items, catalog, []boardv1alpha1.Request{
+		failed(1, 5, "older"), failed(1, 10, "exit status 1"),
+		failed(2, 10, "superseded"),
+		failed(3, 10, "not this one"),
+	})
+	if got := items["issue-1"].Error; got != "Summarize failed: exit status 1" {
+		t.Errorf("issue 1 error = %q, want the newest failure", got)
+	}
+	if got := items["issue-2"].Error; got != "" {
+		t.Errorf("issue 2 error = %q, want none: a run started after the failure", got)
+	}
+	if got := items["issue-3"].Error; got != "the fix failed" {
+		t.Errorf("issue 3 error = %q, want the sandbox's", got)
+	}
+}

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"cmp"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -42,6 +44,17 @@ func launchInputs(rec boardv1alpha1.BoardRecipe) []string {
 		}
 	}
 	return out
+}
+
+// recipeKind is the kind of task output recipe name in catalog makes, or
+// "".
+func recipeKind(catalog []boardv1alpha1.BoardRecipe, name string) string {
+	for _, rec := range catalog {
+		if rec.Name == name {
+			return rec.Kind
+		}
+	}
+	return ""
 }
 
 // instructionsInput is rec's input that takes instructions (type
@@ -156,6 +169,30 @@ func applyRowRules(items map[string]*models.WorkItem, catalog []boardv1alpha1.Bo
 	}
 	for _, item := range items {
 		item.Attention = attentionOf(item, now)
+	}
+}
+
+// markFailedRecipes gives a row the error of its newest recipe Request
+// that failed (its run failed, or it could not be launched), unless a run
+// of the recipe's group started after it, or the row already has one
+// (a fix's or a review's error, from their sandboxes).
+func markFailedRecipes(items map[string]*models.WorkItem, catalog []boardv1alpha1.BoardRecipe, requests []boardv1alpha1.Request) {
+	newest := map[string]boardv1alpha1.Request{}
+	for _, req := range requests {
+		if req.Spec.Verb != boardv1alpha1.VerbRecipe || req.Status.Phase != boardv1alpha1.RequestFailed || req.Status.CompletedAt == nil {
+			continue
+		}
+		key := req.Spec.Item + "-" + strconv.Itoa(req.Spec.Number)
+		if prev, ok := newest[key]; !ok || req.Status.CompletedAt.After(prev.Status.CompletedAt.Time) {
+			newest[key] = req
+		}
+	}
+	for key, req := range newest {
+		item := items[key]
+		if item == nil || item.Error != "" || runSince(item, recipeGroup(catalog, req.Spec.Recipe), req.Status.CompletedAt.Time) {
+			continue
+		}
+		item.Error = fmt.Sprintf("%s failed: %s", recipeLabel(catalog, req.Spec.Recipe), cmp.Or(req.Status.Message, req.Status.Reason))
 	}
 }
 
