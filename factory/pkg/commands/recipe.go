@@ -1027,11 +1027,13 @@ func newSpoolTask(recipeName, runName, itemURL string) spool.Task {
 // spoolRecipe hands a recipe to the sandbox and follows it, or, with
 // --detached, returns once the sandbox has started it.
 func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recipeBytes []byte, inputs, envMap, secrets map[string]string) error {
-	recipeBytes, err := recipe.ForSandbox(recipeBytes)
+	stripped, err := recipe.ForSandbox(recipeBytes)
 	if err != nil {
 		return err
 	}
-	if err := sb.Start(ctx, task, recipeBytes, inputs, envMap, secrets); err != nil {
+	// The task keeps the recipe it ran, whole, for its revises, resumes
+	// and applies to read (taskRecipe).
+	if err := sb.Start(ctx, task, stripped, recipeBytes, inputs, envMap, secrets); err != nil {
 		return err
 	}
 	if rootFlags.Detached {
@@ -1039,6 +1041,40 @@ func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recip
 		return nil
 	}
 	return sb.Attach(ctx, task.ID, envMap, rootFlags.AbortOnCancel)
+}
+
+// taskRecipe is the recipe task e ran, or nil for a task that ran none:
+// the source the task keeps (spool.RecipeSourceFile), whichever recipe it
+// was — a built-in, a file, a repository's — as it was when the task
+// started. A task started before tasks kept it has the sandbox's copy
+// (spool.RecipeFile, factory's fields stripped), and else ran a built-in,
+// read by its name.
+func taskRecipe(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]byte, *recipe.Recipe, error) {
+	if e.Recipe == "" {
+		return nil, nil, nil
+	}
+	for _, name := range []string{spool.RecipeSourceFile, spool.RecipeFile} {
+		data, err := sb.ReadFile(ctx, e.ID, name)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, fmt.Errorf("reading task %s's recipe: %w", e.ID, err)
+		}
+		if len(data) == 0 {
+			continue
+		}
+		if name == spool.RecipeFile {
+			// Stripped: a built-in's whole copy, where there is one,
+			// knows its task output and revises' inputs.
+			if b, r, err := recipe.Builtin(e.Recipe); err == nil {
+				return b, r, nil
+			}
+		}
+		rec, err := recipe.Parse(data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("task %s's recipe: %w", e.ID, err)
+		}
+		return data, rec, nil
+	}
+	return recipe.Builtin(e.Recipe)
 }
 
 func printDetachedHint(sandboxName, taskID string) {
@@ -1190,7 +1226,7 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 		return fmt.Errorf("task %s is %s; run again to wait for it", e.ID, e.State)
 	}
 	if rec == nil {
-		_, rec, _ = recipe.Builtin(e.Recipe)
+		_, rec, _ = taskRecipe(ctx, sb, e)
 	}
 	if rec != nil {
 		settleRun(ctx, rec, sandboxName, e)

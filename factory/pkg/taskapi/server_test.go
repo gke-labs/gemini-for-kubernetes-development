@@ -290,3 +290,25 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// A task keeps the recipe it was posted with, whole, beside the copy the
+// sandbox runs; a caller older than the source keeps none.
+func TestPostKeepsTheRecipeSource(t *testing.T) {
+	c, _ := newTestServer(t)
+	ctx := context.Background()
+	req := post("plan-20261014-090000", "", "true")
+	req.Source = []byte("name: plan\non: [issue]\ntask-output: {kind: Plan, from: plan.md}\n")
+	if _, err := c.Post(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if src, err := c.ReadFile(ctx, req.Task.ID, spool.RecipeSourceFile); err != nil || string(src) != string(req.Source) {
+		t.Errorf("source = %q, %v", src, err)
+	}
+	old := post("plan-20261014-090001", "", "true")
+	if _, err := c.Post(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReadFile(ctx, old.Task.ID, spool.RecipeSourceFile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a task posted without a source has one: %v", err)
+	}
+}

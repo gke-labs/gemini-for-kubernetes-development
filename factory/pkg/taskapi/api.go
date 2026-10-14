@@ -49,8 +49,11 @@ const SecretsVersion = 1
 // from the recipe and inputs, as the spool does: it never runs one it is
 // given. Env reaches the task's process and is never written to disk.
 type PostRequest struct {
-	Task   spool.Task        `json:"task"`
-	Recipe []byte            `json:"recipe"`
+	Task   spool.Task `json:"task"`
+	Recipe []byte     `json:"recipe"`
+	// Source is the recipe as the caller loaded it, kept beside it as
+	// spool.RecipeSourceFile.
+	Source []byte            `json:"source,omitempty"`
 	Inputs map[string]string `json:"inputs"`
 	Env    map[string]string `json:"env,omitempty"`
 	// Secrets reach only the recipe steps allowed them, never the task's

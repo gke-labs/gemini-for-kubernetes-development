@@ -39,7 +39,12 @@ const (
 
 	TaskFile   = "task.json"
 	RecipeFile = "recipe.yaml"
-	InputsFile = "inputs.json"
+	// RecipeSourceFile is the recipe as the caller loaded it, factory's
+	// fields included (RecipeFile has them stripped): what a revise,
+	// a resume or an apply of the task reads it from, whether it was a
+	// built-in, a file or a repository's.
+	RecipeSourceFile = "recipe.source.yaml"
+	InputsFile       = "inputs.json"
 	// EnvFile holds the task's environment, tokens included. The daemon
 	// deletes it as soon as it has read it.
 	EnvFile = "env.json"
