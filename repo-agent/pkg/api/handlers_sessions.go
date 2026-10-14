@@ -27,6 +27,10 @@ import (
 // recorded into it and what its engine is doing now.
 type SessionRow struct {
 	Sandbox string `json:"sandbox"`
+	// Overseer names the overseer whose sandbox this is, in
+	// overseer-<name>: its routes are /api/overseers/<name>/…. Empty for
+	// the member's own.
+	Overseer string `json:"overseer,omitempty"`
 	// Task is the conversation's session id, for
 	// /api/task-sessions/<sandbox>/<task>. Empty on a requested row.
 	Task string `json:"task,omitempty"`
@@ -75,7 +79,9 @@ type SessionRow struct {
 // getSessions lists every agent conversation in the member's namespace,
 // newest change first: the runs recorded on each sandbox grouped by the
 // conversation they ran in, the research sessions asked for and not made
-// yet, and what each running pod's engine is doing.
+// yet, and what each running pod's engine is doing. With them, unless
+// ?overseers=false, the conversations of every overseer the member may
+// see (overseerAllows), each row naming its overseer.
 func (s *Server) getSessions(c *gin.Context) {
 	ctx := c.Request.Context()
 	namespace := s.Auth.GetNamespaceFromContext(c)
@@ -84,11 +90,21 @@ func (s *Server) getSessions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list sandboxes", "details": err.Error()})
 		return
 	}
-	pods, running := s.sandboxPods(ctx, namespace)
 	boards := sessionBoardsOf(s.visibleBoards(ctx, namespace, ""))
+	// running is every namespace's dialable pods, by namespace/sandbox:
+	// an overseer's sandbox may share its name with one of the member's.
+	running := map[string]*corev1.Pod{}
+	podsIn := func(ns string) map[string]*corev1.Pod {
+		all, up := s.sandboxPods(ctx, ns)
+		for name, pod := range up {
+			running[ns+"/"+name] = pod
+		}
+		return all
+	}
 
 	var rows []SessionRow
 	exists := map[string]bool{}
+	pods := podsIn(namespace)
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if id := sb.GetAnnotations()[researchSessionIDAnnotation]; id != "" {
@@ -96,7 +112,16 @@ func (s *Server) getSessions(c *gin.Context) {
 		}
 		rows = append(rows, sandboxSessionRows(sb, boards, podState(sb, pods))...)
 	}
-	s.attachSessionLiveState(ctx, rows, running)
+	if c.Query("overseers") != "false" {
+		rows = append(rows, s.overseerSessionRows(c, boards, podsIn)...)
+	}
+	s.attachSessionLiveState(ctx, rows, func(row SessionRow) *corev1.Pod {
+		ns := namespace
+		if row.Overseer != "" {
+			ns = "overseer-" + row.Overseer
+		}
+		return running[ns+"/"+row.Sandbox]
+	})
 
 	requested, claimed := s.requestedResearchSessions(ctx, namespace, exists)
 	for i := range rows {
@@ -133,10 +158,49 @@ func (s *Server) getSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"sessions": rows})
 }
 
+// overseerSessionRows are the conversations in the sandboxes of every
+// overseer the member may see, each naming its overseer. Board-less: an
+// overseer's sandboxes are on no board, so their revises and drafts are
+// the overseer routes', not a board's.
+func (s *Server) overseerSessionRows(c *gin.Context, boards sessionBoards, podsIn func(string) map[string]*corev1.Pod) []SessionRow {
+	ctx := c.Request.Context()
+	overseers, err := s.K8sManager.ListOverseers(ctx)
+	if err != nil {
+		return nil
+	}
+	var rows []SessionRow
+	for i := range overseers.Items {
+		ov := &overseers.Items[i]
+		if !s.overseerAllows(c, ov) {
+			continue
+		}
+		ns := "overseer-" + ov.GetName()
+		list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(ns).List(ctx, v1.ListOptions{})
+		if err != nil {
+			continue
+		}
+		pods := podsIn(ns)
+		for j := range list.Items {
+			sb := &list.Items[j]
+			if sb.GetName() == ns {
+				continue // the overseer's own controller sandbox
+			}
+			for _, row := range sandboxSessionRows(sb, boards, podState(sb, pods)) {
+				row.Overseer, row.Board = ov.GetName(), ""
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows
+}
+
 // sessionBoards are the member's boards as the rows need them: each one's
-// recipe catalog, and the board of each repository that has exactly one.
+// recipe catalog, every board's recipes together (for a sandbox on no
+// board of theirs, an overseer's), and the board of each repository that
+// has exactly one.
 type sessionBoards struct {
 	catalogs map[string][]boardv1alpha1.BoardRecipe
+	all      []boardv1alpha1.BoardRecipe
 	byRepo   map[string]string // lower-cased owner/name → board
 }
 
@@ -147,6 +211,11 @@ func sessionBoardsOf(boards []unstructured.Unstructured) sessionBoards {
 		board := &boards[i]
 		catalog, _ := boardRecipes(board)
 		out.catalogs[board.GetName()] = catalog
+		for _, rec := range catalog {
+			if !slices.ContainsFunc(out.all, func(r boardv1alpha1.BoardRecipe) bool { return r.Name == rec.Name }) {
+				out.all = append(out.all, rec)
+			}
+		}
 		repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
 		owner, repo, err := parseRepoURL(repoURL)
 		if err != nil {
@@ -199,7 +268,11 @@ func sandboxSessionRows(sb *unstructured.Unstructured, boards sessionBoards, pod
 
 	var rows []SessionRow
 	index := map[string]int{}
-	for _, run := range recordedRunSessions(sb, boards.catalogs[base.Board]) {
+	catalog := boards.catalogs[base.Board]
+	if len(catalog) == 0 {
+		catalog = boards.all
+	}
+	for _, run := range recordedRunSessions(sb, catalog) {
 		if run.Recipe == "" {
 			run.Recipe = factorycli.RunTaskType(run.Run)
 			run.Label = run.Recipe
@@ -279,15 +352,16 @@ func (s *Server) sandboxPods(ctx context.Context, namespace string) (map[string]
 	return all, running
 }
 
-// attachSessionLiveState asks each running pod's daemon what its rows'
-// sessions are doing, in parallel and bounded as a whole: a list costs
-// the slowest pod, not the sum, and a wedged one cannot stall the rest.
-func (s *Server) attachSessionLiveState(ctx context.Context, rows []SessionRow, running map[string]*corev1.Pod) {
+// attachSessionLiveState asks each running pod's daemon (podOf a row, nil
+// when none is up) what its rows' sessions are doing, in parallel and
+// bounded as a whole: a list costs the slowest pod, not the sum, and a
+// wedged one cannot stall the rest.
+func (s *Server) attachSessionLiveState(ctx context.Context, rows []SessionRow, podOf func(SessionRow) *corev1.Pod) {
 	ctx, cancel := context.WithTimeout(ctx, researchLiveTimeout)
 	defer cancel()
 	var wg sync.WaitGroup
 	for i := range rows {
-		pod := running[rows[i].Sandbox]
+		pod := podOf(rows[i])
 		if pod == nil || rows[i].Task == "" {
 			continue
 		}

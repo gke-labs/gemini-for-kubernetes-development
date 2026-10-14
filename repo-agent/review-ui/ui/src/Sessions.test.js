@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const Sessions = require('./Sessions').default;
-const { parseItemRef, refBoard, itemSuggestions, pickSuggestion, orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
+const { apiBaseOf, parseItemRef, refBoard, itemSuggestions, pickSuggestion, orderedRows, visibleRows, rowDoing, rowKey, sessionsRoute } = require('./Sessions');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -298,6 +298,64 @@ describe('the item launcher', () => {
         await type('how does the reconciler delete?');
         expect(container.querySelector('[aria-label="Item launcher"]')).toBeNull();
         expect(global.fetch).not.toHaveBeenCalledWith('/api/board/kcc/work');
+    });
+});
+
+describe('overseer sessions', () => {
+    const OV = {
+        sessions: [
+            { sandbox: 'fix-repo-9', task: 'recipe-fix-1', repo: 'gke-labs/g4k', item: 'issue', number: 9, label: 'Fix', recipe: 'fix', pod: 'running', state: 'done', updatedAt: now, runs: [{ status: 'done' }] },
+            // kcc's, in a sandbox named like the member's.
+            { overseer: 'kcc', sandbox: 'fix-repo-9', task: 'recipe-fix-1', repo: 'G/kcc', item: 'pr', number: 12, label: 'Fix CI', recipe: 'care-ci', pod: 'running', busy: true, state: 'working', updatedAt: now, runs: [{ status: 'running' }] },
+        ],
+    };
+    const serve = () => {
+        global.fetch = jest.fn((url) => {
+            if (url === '/api/sessions') return Promise.resolve({ ok: true, json: () => Promise.resolve(OV) });
+            if (url === '/api/sessions?overseers=false') return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: OV.sessions.slice(0, 1) }) });
+            if (url === '/api/boards') return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+            return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+        });
+    };
+    const rowButtons = () => Array.from(container.querySelectorAll('button[title]')).filter(b => b.title.includes(' · '));
+
+    test('listed with a chip, by default; opening one uses the overseer\'s routes', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        expect(rowButtons().length).toBe(2);
+        const ov = rowButtons().find(b => b.textContent.includes('🤖 kcc'));
+        expect(ov.title).toBe("Fix CI · working · kcc's fix-repo-9");
+        await act(async () => { ov.click(); });
+        await flush();
+        expect(global.fetch.mock.calls.map(c => c[0])).toContain('/api/overseers/kcc/task-sessions/fix-repo-9/recipe-fix-1');
+        expect(window.location.hash).toBe('#/sessions/overseers/kcc/fix-repo-9/recipe-fix-1');
+        // The member's sandbox of the same name is not "also here".
+        expect(container.textContent).not.toContain('also here');
+    });
+
+    test('the 🤖 Overseers button hides them, reads without them, and is remembered', async () => {
+        serve();
+        await act(async () => { root.render(<Sessions namespace="alice" />); });
+        await flush();
+        const filter = button('🤖 Overseers');
+        expect(filter.getAttribute('aria-pressed')).toBe('true');
+        await act(async () => { filter.click(); });
+        await flush();
+        expect(button('🤖 Overseers').getAttribute('aria-pressed')).toBe('false');
+        expect(rowButtons().some(b => b.textContent.includes('🤖 kcc'))).toBe(false);
+        expect(rowButtons().length).toBe(1);
+        expect(global.fetch.mock.calls.map(c => c[0])).toContain('/api/sessions?overseers=false');
+        expect(localStorage.getItem('sessions.overseers')).toBe('false');
+    });
+
+    test('keys, routes and API bases name the overseer', () => {
+        const row = { overseer: 'kcc', sandbox: 'fix-repo-9', task: 't' };
+        expect(rowKey(row)).toBe('o:kcc/fix-repo-9/t');
+        expect(rowKey({ sandbox: 'fix-repo-9', task: 't' })).toBe('fix-repo-9/t');
+        expect(sessionsRoute('#/sessions/overseers/kcc/fix-repo-9/t')).toEqual({ key: 'o:kcc/fix-repo-9/t' });
+        expect(apiBaseOf(row)).toBe('/api/overseers/kcc');
+        expect(apiBaseOf({ sandbox: 's' })).toBe('/api');
     });
 });
 

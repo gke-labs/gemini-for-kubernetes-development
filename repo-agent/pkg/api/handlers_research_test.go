@@ -314,9 +314,10 @@ func researchTestServer(t *testing.T, daemon *fakeSessions, sandboxes []*unstruc
 	t.Helper()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		gvrSandbox:   "SandboxList",
-		repoBoardGVR: "RepoBoardList",
-		requestGVR:   "RequestList",
+		gvrSandbox:      "SandboxList",
+		repoBoardGVR:    "RepoBoardList",
+		requestGVR:      "RequestList",
+		k8s.OverseerGVR: "OverseerList",
 	})
 	generateNames(dynamicClient)
 	for _, sb := range sandboxes {

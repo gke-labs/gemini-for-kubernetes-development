@@ -236,8 +236,13 @@ it.
 
 ## Later
 
-- **Overseer sessions**, behind a `Scope: Mine | overseer-<name>` picker.
-  The overseer's work view already shares the slide-over.
+- ~~Overseer sessions~~ built: every overseer the member may see (an
+  admin, a maintainer of its repository, or on its
+  `spec.allowlistedUsers`) has its sessions on the list, sorted with the
+  rest, tagged 🤖 with its name and opened through
+  `/api/overseers/<name>/…`; a **🤖 Overseers** button beside the search,
+  on by default and remembered, hides them (and the feed reads without
+  them, `?overseers=false`). Links: `#/sessions/overseers/<name>/<sandbox>/<task>`.
 - **Multi-repo sessions.** A primary repository plus read-only context
   repositories cloned in one sandbox (`on: repos`); outputs go to the
   primary, whose board files the revises. Writes to several repositories

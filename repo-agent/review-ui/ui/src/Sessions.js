@@ -42,13 +42,19 @@ const LIST_MIN = 240;
 const LIST_DEFAULT = 340;
 
 // rowKey names a row across polls: a research conversation by its id, so
-// a requested row and the sandbox that serves it are one selection.
+// a requested row and the sandbox that serves it are one selection; an
+// overseer's by its overseer too, since its sandbox may share a name with
+// one of the member's.
 export function rowKey(row) {
-  return row.research ? `r:${row.research}` : `${row.sandbox}/${row.task}`;
+  if (row.research) return `r:${row.research}`;
+  return row.overseer ? `o:${row.overseer}/${row.sandbox}/${row.task}` : `${row.sandbox}/${row.task}`;
 }
 
-// sessionsRoute reads #/sessions[/<sandbox>/<task> | /research/<id>].
+// sessionsRoute reads #/sessions[/<sandbox>/<task> | /research/<id> |
+// /overseers/<name>/<sandbox>/<task>].
 export function sessionsRoute(hash = window.location.hash) {
+  const o = hash.match(/^#\/sessions\/overseers\/([A-Za-z0-9._-]+)\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127})$/);
+  if (o) return { key: `o:${o[1]}/${o[2]}/${o[3]}` };
   const m = hash.match(/^#\/sessions(?:\/([a-z0-9][-a-z0-9.]{0,252})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,127}))?$/);
   if (!m) return null;
   if (!m[1]) return { key: '' };
@@ -57,7 +63,14 @@ export function sessionsRoute(hash = window.location.hash) {
 
 function hashOf(key) {
   if (!key) return '#/sessions';
+  if (key.startsWith('o:')) return `#/sessions/overseers/${key.slice(2)}`;
   return key.startsWith('r:') ? `#/sessions/research/${key.slice(2)}` : `#/sessions/${key}`;
+}
+
+// apiBaseOf is where a row's session and sandbox routes are: an
+// overseer's under /api/overseers/<name>, the member's under /api.
+export function apiBaseOf(row) {
+  return row && row.overseer ? `/api/overseers/${row.overseer}` : '/api';
 }
 
 // rowTitle is what a row is called: a research conversation's name, else
@@ -92,13 +105,15 @@ function shortRepo(repo) {
   return (repo || '').split('/').pop();
 }
 
-// visibleRows are the rows the search leaves: it matches the title, the
-// repository, the sandbox, the recipe and the item.
-export function visibleRows(rows, { query }) {
+// visibleRows are the rows the search leaves (it matches the title, the
+// repository, the sandbox, the recipe, the item and the overseer), less
+// the overseers' unless withOverseers.
+export function visibleRows(rows, { query, withOverseers = true }) {
   const q = (query || '').trim().toLowerCase();
   return rows.filter(r => {
+    if (r.overseer && !withOverseers) return false;
     if (!q) return true;
-    return [rowTitle(r), r.repo, r.sandbox, r.recipe, itemText(r), r.title].some(s => (s || '').toLowerCase().includes(q));
+    return [rowTitle(r), r.repo, r.sandbox, r.recipe, itemText(r), r.title, r.overseer].some(s => (s || '').toLowerCase().includes(q));
   });
 }
 
@@ -144,7 +159,7 @@ const small = { fontSize: 'x-small' };
 // hover; the item's link is in the open session's strip.
 function SessionListRow({ row, selected, onOpen }) {
   const title = rowTitle(row);
-  const hover = [title, row.recipe !== 'research' ? row.title : '', rowDoing(row), row.sandbox].filter(Boolean).join(' · ');
+  const hover = [title, row.recipe !== 'research' ? row.title : '', rowDoing(row), row.overseer ? `${row.overseer}'s ${row.sandbox}` : row.sandbox].filter(Boolean).join(' · ');
   return (
     <button type="button" title={hover} onClick={() => onOpen(row)} aria-current={selected || undefined}
       style={{
@@ -161,6 +176,7 @@ function SessionListRow({ row, selected, onOpen }) {
         <span style={{ ...muted, padding: '0 6px', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden', textOverflow: 'ellipsis', flex: '0 1 auto', minWidth: '40px' }}>
           {shortRepo(row.repo)}</span>
       )}
+      {row.overseer && <span title={`Overseer ${row.overseer}`} style={{ ...muted, flex: '0 0 auto' }}>🤖 {row.overseer}</span>}
       <span style={muted}>{ageOf(row.updatedAt)}</span>
     </button>
   );
@@ -456,7 +472,7 @@ export function StartBox({ boards, onStarted, onOpen, onLaunched, autoFocus }) {
 // SessionStrip heads the open session: its runs, its sandbox and the
 // sandbox's other sessions, since Pause and End act on all of them.
 function SessionStrip({ row, rows, onOpen, onCard }) {
-  const others = rows.filter(r => r.sandbox === row.sandbox && rowKey(r) !== rowKey(row));
+  const others = rows.filter(r => r.sandbox === row.sandbox && (r.overseer || '') === (row.overseer || '') && rowKey(r) !== rowKey(row));
   const runs = [...(row.runs || [])].reverse();
   return (
     <div style={{ padding: '8px 14px 0', fontSize: 'small', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -498,16 +514,17 @@ function SessionStrip({ row, rows, onOpen, onCard }) {
 }
 
 // useSessions polls /api/sessions while active (the view shown), and
-// reads it again the moment it is shown.
-function useSessions(active) {
+// reads it again the moment it is shown; withOverseers false leaves the
+// overseers' out of the read too, not only the list.
+function useSessions(active, withOverseers) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const load = useCallback(() => {
-    fetch('/api/sessions')
+    fetch(withOverseers ? '/api/sessions' : '/api/sessions?overseers=false')
       .then(res => (res.ok ? res.json() : res.json().then(b => Promise.reject(b.error || res.statusText), () => Promise.reject(res.statusText))))
       .then(data => { setRows(data.sessions || []); setError(''); })
       .catch(err => setError(`could not load sessions: ${err}`));
-  }, []);
+  }, [withOverseers]);
   useEffect(() => {
     if (!active) return undefined;
     load();
@@ -521,7 +538,9 @@ function useSessions(active) {
 // stays mounted, keeping the open session and the list, but polls
 // nothing and leaves the keyboard alone.
 export default function Sessions({ namespace, active = true }) {
-  const { rows, error, load } = useSessions(active);
+  // Whether the overseers' sessions are listed: on unless switched off.
+  const [withOverseers, setWithOverseers] = useStored('sessions.overseers', true);
+  const { rows, error, load } = useSessions(active, withOverseers);
   const [boards, setBoards] = useState([]);
   const [selected, setSelected] = useState(() => (sessionsRoute() || { key: '' }).key);
   // pending is the row a Start just asked for, until the feed lists it.
@@ -549,7 +568,7 @@ export default function Sessions({ namespace, active = true }) {
   }, []);
   const open = all.find(r => rowKey(r) === selected) || null;
 
-  const shown = visibleRows(all, { query });
+  const shown = visibleRows(all, { query, withOverseers });
   const flat = orderedRows(shown);
   const needs = all.filter(r => r.state === 'needs-you').length;
 
@@ -605,7 +624,7 @@ export default function Sessions({ namespace, active = true }) {
     // Only while + New is still open: a session opened meanwhile stays.
     if (!launched || !rows || open) return;
     const repo = (launched.repoURL || '').replace(/\.git$/, '').replace(/^https?:\/\/github\.com\//, '').toLowerCase();
-    const row = rows.find(r => (r.repo || '').toLowerCase() === repo && r.number === launched.number && r.task &&
+    const row = rows.find(r => !r.overseer && (r.repo || '').toLowerCase() === repo && r.number === launched.number && r.task &&
       (r.recipe === launched.recipe || (r.session || r.recipe) === launched.group) &&
       (r.runs || []).some(run => run.startedAt && new Date(run.startedAt).getTime() >= launched.since - 60000));
     if (row) { setLaunched(null); select(rowKey(row)); }
@@ -657,6 +676,10 @@ export default function Sessions({ namespace, active = true }) {
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '6px' }}>
               <input type="search" aria-label="Search sessions" placeholder="🔍 search" value={query} onChange={e => setQuery(e.target.value)}
                 style={{ flex: 1, minWidth: 0, fontSize: 'x-small' }} />
+              <button type="button" aria-pressed={withOverseers} onClick={() => setWithOverseers(!withOverseers)}
+                title={withOverseers ? "Overseers' sessions are listed: click to hide them" : "Overseers' sessions are hidden: click to list them"}
+                style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '1px 6px', cursor: 'pointer', fontSize: 'x-small',
+                  background: withOverseers ? 'var(--bg-secondary)' : 'none', color: 'var(--text-primary)', opacity: withOverseers ? 1 : 0.55 }}>🤖 Overseers</button>
               <button type="button" title="Collapse the list" aria-label="Collapse the list" onClick={() => setCollapsed(true)}
                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}>«</button>
             </div>
@@ -682,13 +705,14 @@ export default function Sessions({ namespace, active = true }) {
           </div>
         ) : (
           <>
-            <SessionStrip row={open} rows={all} onOpen={x => select(rowKey(x))} onCard={setCard} />
+            <SessionStrip row={open} rows={all} onOpen={x => select(rowKey(x))} onCard={(name) => setCard({ name, apiBase: apiBaseOf(open) })} />
             <ResearchConversation
-              key={open.task ? `${open.sandbox}/${open.task}` : rowKey(open)}
+              key={open.task ? `${apiBaseOf(open)}/${open.sandbox}/${open.task}` : rowKey(open)}
               task={open.task ? { sandbox: open.sandbox, task: open.task } : null}
               sessionId={open.research || undefined}
               pending={!!open.requested}
               title={open.recipe === 'research' || open.requested ? (open.title || '') : `${rowTitle(open)} · ${open.sandbox}`}
+              apiBase={apiBaseOf(open)}
               fill
               onDismiss={() => select('')}
               onDeleted={() => { select(''); load(); }}
@@ -697,7 +721,7 @@ export default function Sessions({ namespace, active = true }) {
           </>
         )}
       </div>
-      {card && <SandboxCard name={card} namespace={namespace} onClose={() => setCard(null)} />}
+      {card && <SandboxCard name={card.name} namespace={namespace} apiBase={card.apiBase} onClose={() => setCard(null)} />}
     </div>
   );
 }
