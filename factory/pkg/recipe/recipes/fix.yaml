@@ -16,6 +16,7 @@
 # review comments, checks, rebasing — is the care recipes'
 # (design/care-recipe.md).
 name: fix
+timeout: 3h
 on: [issue]
 task-type: fix
 
@@ -173,6 +174,8 @@ outputs:
 
 task-output:
   kind: Change
+  # Applied by a board's runner when the run ends.
+  on-finish: open-pr
   from: change.yaml
   preview: spec.body
   actions:

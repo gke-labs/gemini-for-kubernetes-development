@@ -39,6 +39,11 @@ type RecipeInfo struct {
 	// its label spelled for this factory's trigger label; unset, every one
 	// On names.
 	ApplicableWhen *RecipeApplicableInfo `json:"applicableWhen,omitempty"`
+	// OnFinish is the action a board's runner applies when a run ends
+	// (task-output.on-finish), and Timeout how long a run may take
+	// (recipe.Timeout); unset, none and the runner's default.
+	OnFinish string `json:"onFinish,omitempty"`
+	Timeout  string `json:"timeout,omitempty"`
 	// Source is where it comes from: "builtin", or the path of a
 	// repository's recipe file (.agents/recipes/<name>.yaml).
 	Source string `json:"source"`
@@ -65,7 +70,7 @@ type RecipeInputInfo struct {
 }
 
 func recipeInfo(rec *recipe.Recipe) RecipeInfo {
-	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType, Session: rec.Session}
+	info := RecipeInfo{Name: rec.Name, Label: rec.DisplayLabel(), On: rec.On, TaskType: rec.TaskType, Session: rec.Session, Timeout: rec.Timeout}
 	if labels, err := applicableLabels(rec, watchTriggerLabel()); err == nil && len(labels) > 0 {
 		info.ApplicableWhen = &RecipeApplicableInfo{Labels: labels}
 	}
@@ -77,6 +82,7 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	}
 	if rec.TaskOutput != nil {
 		info.Kind = rec.TaskOutput.Kind
+		info.OnFinish = rec.TaskOutput.OnFinish
 	}
 	for _, name := range sortedInputNames(rec) {
 		in := rec.Inputs[name]

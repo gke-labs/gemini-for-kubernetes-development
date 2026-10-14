@@ -48,6 +48,12 @@ type Decl struct {
 	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
 	Actions  []Action `yaml:"actions,omitempty" json:"actions,omitempty"`
 	Preview  string   `yaml:"preview,omitempty" json:"preview,omitempty"`
+	// OnFinish is the one action whoever runs the recipe for a board
+	// applies when the run ends (fix's open-pr, review's post-review): an
+	// apply action the result offers. Unset, the result waits for a
+	// click. The CLI applies nothing unless asked (--apply), and the
+	// overseer says what it applies itself.
+	OnFinish string `yaml:"on-finish,omitempty" json:"onFinish,omitempty"`
 }
 
 // PreviewRE is what a preview names: a text field of the spec, such as

@@ -133,6 +133,8 @@ outputs:
 
 task-output:
   kind: Change
+  # Applied by a board's runner when the run ends.
+  on-finish: post-replies
   from: change.yaml
   preview: spec.report
   actions:

@@ -360,8 +360,14 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 		t.Errorf("fanout applicableWhen = %+v, want labels overseer/fanout, factory/fanout", aw)
 	}
 	fix := byName["fix"]
-	if fix.Label != "Fix" || fix.Kind != "Change" {
+	if fix.Label != "Fix" || fix.Kind != "Change" || fix.OnFinish != "open-pr" || fix.Timeout != "3h" {
 		t.Errorf("fix = %+v", fix)
+	}
+	if review := byName["review"]; review.OnFinish != "post-review" || review.Timeout != "45m" {
+		t.Errorf("review = %+v, want on-finish post-review, timeout 45m", review)
+	}
+	if plan := byName["plan"]; plan.OnFinish != "" || plan.Timeout != "" {
+		t.Errorf("plan = %+v, want nothing applied on finish", plan)
 	}
 	// care's jobs are recipes of session care, each a Change: the others
 	// are its follow-ups.
