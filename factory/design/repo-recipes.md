@@ -94,6 +94,12 @@ What a revise did that a follow-up recipe needs:
 - **The same result.** A follow-up declares its start recipe's `outputs` and `task-output`, copied: YAML anchors do not cross files. plan-update copies plan's save step the same way. A test holds each copy equal to its original.
 - **A result's actions.** An output offers `run: <follow-up>` instead of `revise: <id>`. The `run:` verb starts a recipe on the result's target, and passes the result as the recipe's input only when the recipe takes one from that kind.
 
+**The board.** The session view's button row (`Research.js`) already lists two kinds of entry, both from `GET …/task-sessions/:sandbox/:task` (`revises`): a revise (`verb: revise`, posted to `POST …/revise`) and a recipe of the session (`verb: recipe`, care's follow-ups, run as the row's button runs them). Only the second kind is left:
+- Update plan and Save notes are `plan-update` and `research-notes`, listed as the session's recipes once it has a run, and started by a recipe Request, as care's are. The row offers them in the session's group too.
+- Iterate, Update review and Update summary go, from the session view and its slide-over.
+- Review, Plan and Triage ask for their instructions on launch, so a second click with an instruction is review (plan, triage) with instructions. Iterate's `window.prompt` for a revise input goes.
+- The API's revise route, `markSandboxRevises` and the revise entries in the session's info go; the list keeps its recipe entries, and their `revising` state becomes a recipe run's.
+
 What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `recipe_revise.go` with its push lookup (`pushed_*` from a session's tasks; a PR's come from the PR, as now), `RecordedRevise`, the `revise` action verb, and repo-agent's revise Requests. The board's Update plan and Save notes become the follow-up recipes' buttons in their session group; Iterate, Update review and Update summary go.
 
 ## Steps
@@ -102,7 +108,7 @@ What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `re
 2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources (#1935).
 3. **Follow-ups instead of revises:**
    - factory: the two follow-up recipes, `applicable-when: {session: started}`, and `run:` without an input; fix's iterate, review's and summarize's updates removed; then `revise` removed;
-   - repo-agent: the buttons become the follow-ups' recipe Requests, and the revise verb goes; review, plan and triage pass a Request's inputs to their recipe (review with instructions).
+   - repo-agent: review, plan and triage pass a Request's inputs to their recipe (review with instructions), and their launch asks for instructions; the session view's revise buttons become the follow-ups' recipe buttons or go, and the revise route, verb and Requests go.
 4. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
 5. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
 6. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).
