@@ -266,6 +266,9 @@ echo VERIFIED > .factory-run/receipt-20261013-1000.md`)
 	if code, out := w.step("runPrepare", "teardown", "pr7", nil, ""); code == 0 || !strings.Contains(out, "does not pin a pull request and a commit") {
 		t.Errorf("a bad pin: exit %d\n%s", code, out)
 	}
+	if code, out := w.step("runPrepare", "plan", "prx", map[string]string{"target_pr": "#7"}, ""); code == 0 || !strings.Contains(out, "is not a pull request number") {
+		t.Errorf("a target that is not a number: exit %d\n%s", code, out)
+	}
 }
 
 // Local-only, nothing is pushed; the branch lives in the sandbox and the

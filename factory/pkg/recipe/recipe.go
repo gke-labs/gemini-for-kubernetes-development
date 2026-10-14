@@ -111,6 +111,23 @@ type Recipe struct {
 	// ApplicableWhen narrows the items on: names to those the recipe
 	// applies to. Unset, all of them. Like TaskOutput it is factory's.
 	ApplicableWhen *ApplicableWhen `yaml:"applicable-when,omitempty"`
+	// Sandbox gives a repository's recipe a sandbox of its own rather
+	// than a session's. Like TaskOutput it is factory's.
+	Sandbox *SandboxDecl `yaml:"sandbox,omitempty"`
+}
+
+// SandboxRun is the one kind of sandbox a recipe may declare: a run's own,
+// run-<repo>-<run>, one per value of the recipe's run input, kept for
+// every phase of the run (the run recipes).
+const SandboxRun = "run"
+
+// SandboxDecl is the sandbox a recipe's tasks run in, and the size it is
+// made at when the caller chose none (--workspace-disk-size,
+// --ephemeral-storage, or a factory config's).
+type SandboxDecl struct {
+	Kind             string `yaml:"kind"`
+	Disk             string `yaml:"disk,omitempty"`
+	EphemeralStorage string `yaml:"ephemeral-storage,omitempty"`
 }
 
 // ApplicableWhen is which items a recipe applies to: factory refuses to
@@ -360,6 +377,17 @@ func (r *Recipe) Validate() error {
 	if r.Name == "" {
 		return fmt.Errorf("recipe has no name")
 	}
+	if sb := r.Sandbox; sb != nil {
+		if sb.Kind != SandboxRun {
+			return fmt.Errorf("recipe %s: sandbox kind %q is not one of: %s", r.Name, sb.Kind, SandboxRun)
+		}
+		if in, ok := r.Inputs["run"]; !ok || !in.Required {
+			return fmt.Errorf("recipe %s: a run sandbox is named by the recipe's run input, which it must require", r.Name)
+		}
+		if len(r.On) != 1 || r.On[0] != OnRepo {
+			return fmt.Errorf("recipe %s: a run sandbox is for a recipe on: [repo]", r.Name)
+		}
+	}
 	if len(r.Start.Steps) == 0 {
 		return fmt.Errorf("recipe %s has no start steps", r.Name)
 	}
@@ -367,7 +395,7 @@ func (r *Recipe) Validate() error {
 		return fmt.Errorf("agent-env: %w", err)
 	}
 	for k, v := range r.AgentEnv {
-		if _, err := template.New(k).Option("missingkey=error").Parse(v); err != nil {
+		if _, err := template.New(k).Option("missingkey=error").Funcs(templateFuncs("")).Parse(v); err != nil {
 			return fmt.Errorf("agent-env %s: %w", k, err)
 		}
 	}
@@ -580,7 +608,7 @@ func validateSteps(steps []Step) error {
 			return fmt.Errorf("step %d: continue-on-error is only for run steps", i+1)
 		}
 		if s.If != "" {
-			if _, err := template.New("if").Option("missingkey=error").Funcs(template.FuncMap{"file": func(string) string { return "" }}).Parse(s.If); err != nil {
+			if _, err := template.New("if").Option("missingkey=error").Funcs(templateFuncs("")).Parse(s.If); err != nil {
 				return fmt.Errorf("step %d: if: %w", i+1, err)
 			}
 		}
@@ -699,7 +727,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when"} {
+	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when", "sandbox"} {
 		if dropKey(m, k) {
 			changed = true
 		}

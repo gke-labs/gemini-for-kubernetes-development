@@ -1,7 +1,7 @@
-# `factory run teardown --url <repo> --name <run>`: the teardown: the agent
+# `factory recipe run-teardown --url <repo> --run <run>`: the teardown: the agent
 # removes what the run created, preferring its generated teardown script.
 #
-# A run, in its own sandbox (runbook-<repo>-<run>), owns a branch,
+# A run, in its own sandbox (run-<repo>-<run>), owns a branch,
 # runs/<run> (factory/design/run-branches.md), checked out as a worktree
 # at .factory-run/ in the checkout, and pushed to the member's fork (or,
 # for a repository they cannot fork, kept in the sandbox alone:
@@ -19,6 +19,13 @@ name: run-teardown
 label: Tear down
 on: [repo]
 task-type: run
+# Its own sandbox, run-<repo>-<run>, kept for all the run's phases and
+# never another item's: a run outlives what it deploys until it is torn
+# down. Sized for building images unless the caller chose.
+sandbox:
+  kind: run
+  disk: 30Gi
+  ephemeral-storage: 10Gi
 
 inputs:
   run:
@@ -26,17 +33,10 @@ inputs:
     required: true
   intent:
     description: Anything the owner wants watched during teardown
-  resource_prefix:
-    description: What the run may name and own in the cloud
-    required: true
-  gcp_project:
-    description: The member's GCP project, if they configured one
-  gcp_region:
-    description: The member's GCP region, if they configured one
 
 agent-env:
   RUN_NAME: "{{ .Inputs.run }}"
-  RUN_RESOURCE_PREFIX: "{{ .Inputs.resource_prefix }}"
+  RUN_RESOURCE_PREFIX: "{{ resourcePrefix .Inputs.repo_name .Inputs.run }}"
   GOOGLE_CLOUD_PROJECT: "{{ .Inputs.gcp_project }}"
   CLOUDSDK_CORE_PROJECT: "{{ .Inputs.gcp_project }}"
   CLOUDSDK_COMPUTE_REGION: "{{ .Inputs.gcp_region }}"

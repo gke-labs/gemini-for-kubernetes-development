@@ -185,7 +185,7 @@ describe('TryPanel local-only runs', () => {
         json: () => Promise.resolve({
             repoShort: 'granule', gcpProject: 'p', sandboxes: [], pending: [],
             instances: [{
-                name: 'gke-std', deployed: false, localOnly: true, sandbox: 'runbook-granule-gke-std',
+                name: 'gke-std', deployed: false, localOnly: true, sandbox: 'run-granule-gke-std',
                 htmlURL: '/api/board/myboard/runbook/instance/gke-std/file/runbook.md',
                 runbook: { name: 'runbook.md', htmlURL: '/api/board/myboard/runbook/instance/gke-std/file/runbook.md' },
             }],

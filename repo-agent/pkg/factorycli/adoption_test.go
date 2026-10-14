@@ -3,6 +3,7 @@ package factorycli
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,43 @@ func TestLaunchedElsewhere(t *testing.T) {
 		if got := LaunchedElsewhere(l); got != want {
 			t.Errorf("LaunchedElsewhere(launcher=%q) = %v, want %v", labels, got, want)
 		}
+	}
+}
+
+// A run's phase is the run-<mode> recipe, named by --run, each phase only
+// what its recipe takes: deploy no intent, and only a plan a runbook and
+// a target.
+func TestStartRunInvokesTheRunRecipe(t *testing.T) {
+	dir := t.TempDir()
+	argv := filepath.Join(dir, "argv")
+	bin := filepath.Join(dir, "factory")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argv+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		mode string
+		want string
+	}{
+		{"plan", "recipe run-plan --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --intent 3 nodes --runbook gke --target-pr 42"},
+		{"deploy", "recipe run-deploy --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1"},
+		{"teardown", "recipe run-teardown --url https://github.com/o/r --namespace alice --timeout 1h0m0s --abort-on-cancel=false --run r1 --intent 3 nodes"},
+	} {
+		r := &Runner{Binary: bin, Prober: &fakeProber{probe: TaskProbe{State: ProbeNone}},
+			running: map[string]context.CancelFunc{}, results: map[string]Result{}}
+		key := "alice/" + tc.mode
+		if !r.StartRun(key, RunOptions{Namespace: "alice", SandboxName: RunSandboxName("r", "r1"), Mode: tc.mode, Name: "r1", Intent: "3 nodes", Runbook: "gke", Target: 42, RepoURL: "https://github.com/o/r"}) {
+			t.Fatalf("%s did not launch", tc.mode)
+		}
+		waitResult(t, r, key)
+		b, err := os.ReadFile(argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(strings.Fields(strings.ReplaceAll(string(b), "\n", " ")), " "); !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%s: factory %s\nwant %s", tc.mode, got, tc.want)
+		}
+	}
+	if got := RunSandboxName("k8s-config-connector", "gke-std"); got != "run-k8s-config-connector-gke-std" {
+		t.Errorf("RunSandboxName = %s", got)
 	}
 }

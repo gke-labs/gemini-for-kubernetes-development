@@ -1135,7 +1135,7 @@ type runbookClaim struct {
 
 func runbookKey(member, repo string, c runbookClaim) string {
 	instance := factorycli.RunbookInstance(c.scenario, c.instance)
-	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunbookSandboxName(repo, instance), c.mode)
+	return fmt.Sprintf("%s/%s-%s", member, factorycli.RunSandboxName(repo, instance), c.mode)
 }
 
 // runbookClaimConsumed: runbook claims are ONE-SHOT — a click buys
@@ -1180,7 +1180,7 @@ func (r *Reconciler) ensureRunbookClaims(ctx context.Context, work *workState, c
 			continue
 		}
 		instance := factorycli.RunbookInstance(claim.scenario, claim.instance)
-		name := factorycli.RunbookSandboxName(work.repo, instance)
+		name := factorycli.RunSandboxName(work.repo, instance)
 		if sb := work.findSandbox(claim.member, name); sb != nil {
 			r.stampUnpaused(ctx, sb)
 			r.stampEngine(ctx, sb, boardEngine(work.board))
@@ -1252,10 +1252,10 @@ func runIntent(scenario, name, guidance string) string {
 func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after time.Duration) {
 	logger := log.FromContext(ctx)
 	for _, sb := range work.sandboxes {
-		// Run environments (type=runbook) may be SERVING something — idle
+		// Run sandboxes (type=run) may be SERVING something — idle
 		// pause would kill the deployment. Excluded for now; lifecycle
 		// is the Tear down button.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "runbook" {
+		if sb.GetLabels()["sandbox.gemini.google.com/type"] == factorycli.RunSandboxType {
 			continue
 		}
 		annotations := sb.GetAnnotations()
@@ -1311,9 +1311,9 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 func (r *Reconciler) activeCount(work *workState) int {
 	active := 0
 	for _, sb := range work.sandboxes {
-		// Run environments (type=runbook) host living deployments — they
+		// Run sandboxes (type=run) host living deployments — they
 		// are not task slots and never count against maxActive.
-		if sb.GetLabels()["sandbox.gemini.google.com/type"] == "runbook" {
+		if sb.GetLabels()["sandbox.gemini.google.com/type"] == factorycli.RunSandboxType {
 			continue
 		}
 		replicas, found, err := unstructured.NestedInt64(sb.Object, "spec", "replicas")

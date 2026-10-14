@@ -41,7 +41,7 @@ func runClick(mode, name string) *boardv1alpha1.Request {
 
 // runSandboxName is where the fixture board's run of that name lands.
 func runSandboxName(name string) string {
-	return factorycli.RunbookSandboxName("repo", factorycli.RunbookInstance(name, name))
+	return factorycli.RunSandboxName("repo", factorycli.RunbookInstance(name, name))
 }
 
 // runSandbox is the sandbox a run shares across its modes, carrying the

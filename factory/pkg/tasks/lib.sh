@@ -1636,6 +1636,10 @@ function resolveTarget {
     local pin="${RUN_REPO}/${RUN_DIR}/${TARGET_FILE}" src=upstream
     git -C "${RUN_REPO}" remote get-url upstream > /dev/null 2>&1 || src=origin
     if [ "${RUN_MODE}" = "plan" ] && [ -n "${RUN_TARGET_PR:-}" ]; then
+        if ! [[ "${RUN_TARGET_PR}" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: target_pr '${RUN_TARGET_PR}' is not a pull request number." >&2
+            exit 1
+        fi
         if ! git -C "${RUN_REPO}" fetch -q "${src}" "pull/${RUN_TARGET_PR}/head"; then
             echo "ERROR: could not fetch pull request #${RUN_TARGET_PR} from ${src}." >&2
             exit 1

@@ -72,6 +72,13 @@ func LaunchedElsewhere(labels map[string]string) bool {
 	return l != "" && l != LauncherName
 }
 
+// RunSandboxType is a run sandbox's sandbox.gemini.google.com/type, and
+// RunNameAnnotation the run it is (factory's sandbox package).
+const (
+	RunSandboxType    = "run"
+	RunNameAnnotation = "sandbox.gemini.google.com/run-name"
+)
+
 // RunTaskPrefix is the task type a run records on its sandbox
 // (sandbox.gemini.google.com/last-task-*): the run recipes' task-type.
 const RunTaskPrefix = "run"
@@ -100,9 +107,9 @@ func RunbookInstance(runbook, instance string) string {
 	return runbook
 }
 
-// RunbookSandboxName mirrors factory's run-environment naming:
-// runbook-<repo>-<instance>, budgeted for the -lb DNS cap.
-func RunbookSandboxName(repo, instance string) string {
+// RunSandboxName mirrors factory's: a run's own sandbox,
+// run-<repo>-<run>, budgeted for the -lb DNS cap.
+func RunSandboxName(repo, instance string) string {
 	slugify := func(s string) string {
 		s = strings.ToLower(s)
 		var b strings.Builder
@@ -117,10 +124,10 @@ func RunbookSandboxName(repo, instance string) string {
 	}
 	suffix := slugify(instance)
 	slug := slugify(repo)
-	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
+	if budget := 60 - len("run-") - len(suffix) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "runbook-" + slug + "-" + suffix
+	return "run-" + slug + "-" + suffix
 }
 
 // RunOptions parameterize `factory run <mode>` — planning, deploying
@@ -148,34 +155,36 @@ type RunOptions struct {
 	Engine      string
 }
 
-// StartRun launches `factory run <mode>`.
+// StartRun launches a run's phase: `factory recipe run-<mode>`, in the
+// run's own sandbox (RunSandboxName).
 func (r *Runner) StartRun(key string, opts RunOptions) bool {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Minute
 	}
 	args := []string{
-		"run", opts.Mode,
+		"recipe", "run-" + opts.Mode,
 		"--url", opts.RepoURL,
 		"--namespace", opts.Namespace,
 		"--timeout", timeout.String(),
 		"--abort-on-cancel=false",
-		"--name", opts.Name,
+		"--run", opts.Name,
 	}
 	if opts.Intent != "" && opts.Mode != "deploy" {
 		// Deploy executes a plan the owner already reviewed; taking
-		// fresh instructions there would change what was approved.
+		// fresh instructions there would change what was approved, and
+		// run-deploy takes none.
 		args = append(args, "--intent", opts.Intent)
 	}
 	if opts.Runbook != "" && opts.Mode == "plan" {
-		// Only a plan starts from a runbook; factory refuses it anywhere
-		// else, and a refusal there would strand the click.
+		// Only a plan starts from a runbook; the other phases' recipes
+		// take none, and a refusal there would strand the click.
 		args = append(args, "--runbook", opts.Runbook)
 	}
 	if opts.Target > 0 && opts.Mode == "plan" {
 		// Plan only, for the same reason: deploy and teardown execute
 		// the commit the plan pinned.
-		args = append(args, "--target", strconv.Itoa(opts.Target))
+		args = append(args, "--target-pr", strconv.Itoa(opts.Target))
 	}
 	if opts.Engine != "" {
 		args = append(args, "--engine", opts.Engine)
