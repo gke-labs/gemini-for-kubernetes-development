@@ -135,11 +135,11 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			case spec.Recipe == "fix" && spec.Item == "issue":
 				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member, since: req.CreationTimestamp.Time, inputs: spec.Inputs})
 			case spec.Recipe == "review" && spec.Item == "pr":
-				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member})
+				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member, inputs: spec.Inputs})
 			case spec.Recipe == "triage" && spec.Item == "issue":
-				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID), since: req.CreationTimestamp.Time})
+				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID), since: req.CreationTimestamp.Time, inputs: spec.Inputs})
 			case spec.Recipe == "plan" && spec.Item == "issue":
-				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member, since: req.CreationTimestamp.Time})
+				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member, since: req.CreationTimestamp.Time, inputs: spec.Inputs})
 			case !slices.Contains(hookedRecipes, spec.Recipe):
 				box.recipes = append(box.recipes, req)
 			}

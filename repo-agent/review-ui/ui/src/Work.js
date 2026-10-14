@@ -332,6 +332,14 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     inputs: rec.inputs,
     title: `Run ${rec.label}${again ? ' again' : ''} as you`,
   });
+  // A recipe that takes instructions runs with them from the menu: a
+  // review with instructions is Review again, saying what to change.
+  const withInstructions = rec => ({
+    ...recipeAction(rec, false),
+    label: `${rec.label} with instructions…`,
+    instructions: rec.instructions,
+    title: `Run ${rec.label} as you, with instructions you give`,
+  });
   for (const { group: g, recipes } of groups) {
     const status = statusOf(g);
     // Running, a click starting, or a draft to judge: the chip is the
@@ -343,11 +351,15 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
     // A requested review is the same verb wearing the urgency: someone
     // is waiting on you, so the button tints red instead of adding a chip.
     const requested = rec.name === 'review' && item.reviewRequested && !again;
+    const menuItems = [
+      ...recipes.filter(r => r.instructions).map(withInstructions),
+      ...recipes.filter(r => r !== rec).map(r => recipeAction(r, false)),
+    ];
     actions.push({
       ...recipeAction(rec, again),
       tint: requested ? ATTENTION_STYLE['needs-you'] : undefined,
       title: requested ? `Your review was requested — run ${rec.label} as you` : recipeAction(rec, again).title,
-      menu: recipes.length > 1 ? { group: g, items: recipes.filter(r => r !== rec).map(r => recipeAction(r, false)) } : undefined,
+      menu: menuItems.length ? { group: g, items: menuItems } : undefined,
     });
   }
   if (isPR && item.mine && item.draftPR) {
@@ -403,14 +415,15 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
   const failedChip = chips.some(c => c.status === 'failed');
 
   // A recipe's required inputs with no default are asked here.
+  // and a run with instructions asks for them.
   const runAction = a => {
     const inputs = {};
-    for (const name of a.inputs || []) {
+    for (const name of [...(a.inputs || []), ...(a.instructions ? [a.instructions] : [])]) {
       const v = window.prompt(`${a.label}: ${name}`);
       if (!v || !v.trim()) return;
       inputs[name] = v.trim();
     }
-    onAction(a.path, a.label, (a.inputs || []).length ? { inputs } : {});
+    onAction(a.path, a.label, Object.keys(inputs).length ? { inputs } : {});
   };
 
   return (
@@ -571,7 +584,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
           <span key={a.label} style={{ position: 'relative', display: 'inline-block', marginLeft: '4px' }}>
             <button className="btn btn-sm" title={a.title} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
               onClick={() => runAction(a)}>{a.label}</button>
-            <button className="btn btn-sm" aria-label={`More ${a.label} recipes`} title={`The other recipes of ${a.label}'s session`}
+            <button className="btn btn-sm" aria-label={`More ${a.label} recipes`} title={`${a.label} with instructions, or the other recipes of its session`}
               style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: 'none', padding: '0 6px' }}
               onClick={() => setMenu(m => m === a.menu.group ? '' : a.menu.group)}>▾</button>
             {menu === a.menu.group && (
@@ -587,7 +600,7 @@ function WorkRow({ item, boardName, onAction, onRefresh, namespace, groupTag, on
                   {a.menu.items.map(m => (
                     <button key={m.label} role="menuitem" className="btn btn-sm" title={m.title}
                       onClick={() => { setMenu(''); runAction(m); }}>
-                      {m.label}{(m.inputs || []).length ? '…' : ''}
+                      {m.label}{(m.inputs || []).length && !m.instructions ? '…' : ''}
                     </button>
                   ))}
                 </div>

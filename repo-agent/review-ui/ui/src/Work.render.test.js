@@ -861,6 +861,19 @@ describe('WorkRow run rules', () => {
         expect(onAction).toHaveBeenCalledWith('issues/5/recipes/summarize', 'Summarize', { inputs: { length: 'short' } });
     });
 
+    test('a recipe that takes instructions runs with them from its menu', async () => {
+        const onAction = jest.fn();
+        window.prompt = jest.fn(() => ' focus on the error paths ');
+        await renderRow({ ...issue, recipes: [{ name: 'plan', label: 'Plan', instructions: 'instructions' }] }, onAction);
+        expect(Array.from(container.querySelectorAll('button')).map(b => b.textContent)).toEqual(['Plan', '▾']);
+        await act(async () => { findButton('Plan').click(); });
+        expect(onAction).toHaveBeenLastCalledWith('issues/5/recipes/plan', 'Plan', {});
+        await act(async () => { findButton('▾').click(); });
+        expect(Array.from(container.querySelectorAll('[role=menuitem]')).map(b => b.textContent)).toEqual(['Plan with instructions…']);
+        await act(async () => { findButton('Plan with instructions…').click(); });
+        expect(onAction).toHaveBeenLastCalledWith('issues/5/recipes/plan', 'Plan with instructions…', { inputs: { instructions: 'focus on the error paths' } });
+    });
+
     test('a cancelled input launches nothing', async () => {
         const onAction = jest.fn();
         window.prompt = jest.fn(() => null);

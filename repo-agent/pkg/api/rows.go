@@ -44,6 +44,17 @@ func launchInputs(rec boardv1alpha1.BoardRecipe) []string {
 	return out
 }
 
+// instructionsInput is rec's input that takes instructions (type
+// instructions), or "": a row offers "<recipe> with instructions…" for it.
+func instructionsInput(rec boardv1alpha1.BoardRecipe) string {
+	for _, in := range rec.Inputs {
+		if in.Type == "instructions" {
+			return in.Name
+		}
+	}
+	return ""
+}
+
 // recipeGroup is name's group in catalog: its session tag, else itself.
 // A group's runs are one conversation and one chip on the row, and it is
 // one button.
@@ -81,7 +92,7 @@ func rowRecipes(catalog []boardv1alpha1.BoardRecipe, item string, myPR bool, lab
 		if !recipeRunsOn(rec, item, myPR) || !recipeOffered(rec, labels) {
 			continue
 		}
-		out = append(out, models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name), Session: rec.Session, Inputs: launchInputs(rec)})
+		out = append(out, models.RowRecipe{Name: rec.Name, Label: recipeLabel(catalog, rec.Name), Session: rec.Session, Inputs: launchInputs(rec), Instructions: instructionsInput(rec)})
 	}
 	return out
 }
