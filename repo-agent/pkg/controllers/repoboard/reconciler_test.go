@@ -75,6 +75,8 @@ type fakeLauncher struct {
 	refuseRun bool
 	// stopped are the keys Stop was called for.
 	stopped []string
+	// catalog, when set, is what Recipes lists instead of the built-ins.
+	catalog []boardv1alpha1.BoardRecipe
 }
 
 func newFakeLauncher() *fakeLauncher {
@@ -145,15 +147,18 @@ func (f *fakeLauncher) StartApply(key string, opts factorycli.ApplyOptions) bool
 }
 
 // Recipes is the built-ins as factory lists them, in the board's order,
-// and summarize: a recipe the board has no pass of its own for, on issues
+// with what they apply when a run ends and their timeouts, and summarize: a recipe the board has no pass of its own for, on issues
 // and PRs, writing a Summary.
 func (f *fakeLauncher) Recipes(context.Context) ([]boardv1alpha1.BoardRecipe, error) {
+	if f.catalog != nil {
+		return f.catalog, nil
+	}
 	return []boardv1alpha1.BoardRecipe{
 		{Name: "triage", Label: "Triage", On: []string{"issue"}, Kind: "Triage", TaskType: "recipe-triage"},
 		{Name: "plan", Label: "Plan", On: []string{"issue"}, Kind: "Plan", TaskType: "plan"},
-		{Name: "fix", Label: "Fix", On: []string{"issue"}, Kind: "Change", TaskType: "fix"},
-		{Name: "care", Label: "Care", On: []string{"my-pr"}, Kind: "Change", TaskType: "recipe-care", Session: "care"},
-		{Name: "review", Label: "Review", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-review", Credentials: "clone"},
+		{Name: "fix", Label: "Fix", On: []string{"issue"}, Kind: "Change", TaskType: "fix", OnFinish: "open-pr", Timeout: "3h"},
+		{Name: "care", Label: "Care", On: []string{"my-pr"}, Kind: "Change", TaskType: "recipe-care", Session: "care", OnFinish: "post-replies"},
+		{Name: "review", Label: "Review", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-review", Credentials: "clone", OnFinish: "post-review", Timeout: "45m"},
 		{Name: "research", Label: "Research", On: []string{"repo"}, Kind: "Notes", TaskType: "research"},
 		{Name: "summarize", Label: "Summarize", On: []string{"issue", "pr"}, Kind: "Summary", TaskType: "recipe-summarize"},
 	}, nil

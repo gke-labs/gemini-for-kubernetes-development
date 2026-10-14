@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 )
 
 const triageTaskOutput = `apiVersion: factory.gemini.google.com/v1alpha1
@@ -268,5 +270,29 @@ func TestRecipeArgsNewSession(t *testing.T) {
 	opts.NewSession = true
 	if args := strings.Join(recipeArgs(opts, time.Minute), " "); !strings.Contains(args, " --new-session") {
 		t.Errorf("args = %q, want --new-session", args)
+	}
+}
+
+// The catalog carries what each recipe applies when a run ends and how
+// long a run may take, as factory recipe list publishes them.
+func TestRecipesCarryOnFinishAndTimeout(t *testing.T) {
+	bin, _ := fakeFactory(t, `recipe) cat <<'JSON'
+[{"name":"summarize","label":"Summarize"},
+ {"name":"fix","label":"Fix","kind":"Change","onFinish":"open-pr","timeout":"3h"}]
+JSON
+;;`)
+	recipes, err := newRunner(bin, &fakeProber{}).Recipes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]boardv1alpha1.BoardRecipe{}
+	for _, rec := range recipes {
+		byName[rec.Name] = rec
+	}
+	if fix := byName["fix"]; fix.OnFinish != "open-pr" || fix.Timeout != "3h" {
+		t.Errorf("fix = %+v, want onFinish open-pr and timeout 3h", fix)
+	}
+	if s := byName["summarize"]; s.OnFinish != "" || s.Timeout != "" {
+		t.Errorf("summarize = %+v, want neither", s)
 	}
 }

@@ -179,8 +179,37 @@ func TestCareLaunchesOnAPR(t *testing.T) {
 	g.Expect(launches[0].RecipeOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].RecipeOpts.Recipe).To(gomega.Equal("care"))
 	g.Expect(launches[0].RecipeOpts.SandboxName).To(gomega.Equal("fix-repo-12"))
-	// Its run pushes, so it posts the replies that answer for the push.
+	// Its run pushes, so it posts the replies that answer for the push:
+	// the catalog's onFinish, not anything the board knows of care.
 	g.Expect(launches[0].RecipeOpts.Apply).To(gomega.Equal("post-replies"))
+	// No timeout declared: the runner's default.
+	g.Expect(launches[0].RecipeOpts.Timeout).To(gomega.BeZero())
+}
+
+// A recipe's run is bounded by the timeout the catalog declares for it,
+// and finishes with the action it declares; one with neither gets the
+// runner's default and applies nothing.
+func TestRecipeFinishesAsTheCatalogSays(t *testing.T) {
+	g := gomega.NewWithT(t)
+	catalog := []boardv1alpha1.BoardRecipe{
+		{Name: "gate", Label: "Gate", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-gate", OnFinish: "post-review", Timeout: "20m"},
+		{Name: "odd", Label: "Odd", On: []string{"pr"}, Kind: "Summary", TaskType: "recipe-odd", Timeout: "soon"},
+	}
+	for _, tc := range []struct {
+		recipe  string
+		apply   string
+		timeout time.Duration
+	}{{"gate", "post-review", 20 * time.Minute}, {"odd", "", 0}} {
+		fake := newFakeLauncher()
+		fake.catalog = catalog
+		req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: tc.recipe, Item: "pr", Number: 12})
+		r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), req)
+		r.reconcileBoard(t)
+		launches := fake.launches()
+		g.Expect(launches).To(gomega.HaveLen(1), tc.recipe)
+		g.Expect(launches[0].RecipeOpts.Apply).To(gomega.Equal(tc.apply), tc.recipe)
+		g.Expect(launches[0].RecipeOpts.Timeout).To(gomega.Equal(tc.timeout), tc.recipe)
+	}
 }
 
 // A Change's replies were posted by its run: its output is stored with

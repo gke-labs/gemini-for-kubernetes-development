@@ -37,12 +37,6 @@ import (
 // stored on the sandbox as its run's (factorycli.KeepOutput), where the
 // board's drafts and applies find it.
 
-// recipeApplies are the actions the runner applies to a recipe's task
-// output itself, by its kind: a Change's
-// commits are pushed by its run, so the replies and report that answer
-// for them are posted with them, not held back for a click.
-var recipeApplies = map[string]string{"Change": "post-replies"}
-
 // hookedRecipes are the recipes with passes of their own.
 var hookedRecipes = []string{"triage", "plan", "fix", "review"}
 
@@ -160,7 +154,13 @@ func (r *Reconciler) ensureRecipe(ctx context.Context, work *workState, req *boa
 	opts := r.recipeOptions(work, rec.Name, spec.Member, name, itemURL(work, spec.Item, spec.Number), token, recipeRunName(req))
 	opts.Inputs = spec.Inputs
 	opts.NewSession = spec.NewSession && rec.Session != ""
-	opts.Apply = recipeApplies[rec.Kind]
+	// What the recipe declares the board applies when the run ends (care's
+	// post-replies: its commits are pushed by the run, so the replies that
+	// answer for them go with them), and how long a run may take.
+	opts.Apply = rec.OnFinish
+	if d, err := time.ParseDuration(rec.Timeout); err == nil && d > 0 {
+		opts.Timeout = d
+	}
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe", "recipe", rec.Name, "item", spec.Item, "number", spec.Number, "board", work.board.Name, "executor", spec.Member)
 	}
@@ -177,8 +177,8 @@ func (r *Reconciler) keepRecipeOutput(ctx context.Context, work *workState, sb *
 		annotations = map[string]string{}
 	}
 	var applied []string
-	if a := recipeApplies[rec.Kind]; a != "" && res.Err == nil {
-		applied = []string{a}
+	if rec.OnFinish != "" && res.Err == nil {
+		applied = []string{rec.OnFinish}
 	}
 	kept := rec.Kind != "" && factorycli.KeepOutput(annotations, factorycli.RunAnnotation(rec.TaskType), factorycli.HarvestedOutput(rec.Kind, res.Output), res.FinishedAt, applied...)
 	if !kept && annotations[AnnotationBoard] == work.board.Name && annotations[AnnotationExecutor] == member {

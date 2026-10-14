@@ -225,6 +225,15 @@ type BoardRecipe struct {
 	// on those. Unset, every item On names.
 	// +kubebuilder:validation:Optional
 	ApplicableWhen *BoardRecipeApplicableWhen `json:"applicableWhen,omitempty"`
+	// OnFinish is the action of its task output the board's runner
+	// applies when a run ends (fix's open-pr, review's post-review, care's
+	// post-replies). Empty, the output waits for a click.
+	// +kubebuilder:validation:Optional
+	OnFinish string `json:"onFinish,omitempty"`
+	// Timeout bounds a run, as a Go duration (3h). Empty, the runner's
+	// default.
+	// +kubebuilder:validation:Optional
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // BoardRecipeApplicableWhen is which items a recipe applies to.
