@@ -14,6 +14,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 )
 
 // sessionsTestServer serves GET /api/sessions (researchTestServer's) over
@@ -158,5 +159,67 @@ func TestIdleSessionsAndSandboxesWithoutRuns(t *testing.T) {
 		researchPod("alice", idle.GetName(), "10.0.0.3", corev1.PodRunning)))
 	if len(rows) != 1 || rows[0].State != "idle" || !rows[0].Live {
 		t.Errorf("rows: %+v", rows)
+	}
+}
+
+// An overseer's conversations are on the list too, for an overseer the
+// member may see: named by it, on no board, labelled from the member's
+// catalogs, and live from its own pod even where its sandbox shares a
+// name with one of the member's. ?overseers=false leaves them out.
+func TestSessionsCarryTheOverseersTheMemberMaySee(t *testing.T) {
+	run := func(recipe, task, state string) string {
+		return `{"task":"` + task + `","recipe":"` + recipe + `","state":"` + state + `","startedAt":"2026-10-11T10:00:00Z"}`
+	}
+	mine := sandboxCR("fix-repo-9", map[string]interface{}{factorycli.LabelIssue: "9"}, map[string]interface{}{
+		"htmlURL": "https://github.com/test/repo/issues/9", factorycli.AnnotationFixRun: run("fix", "recipe-fix-1", "Completed"),
+	}, 1)
+	theirs := sandboxCR("fix-repo-9", map[string]interface{}{"factory.gemini.google.com/pr": "12"}, map[string]interface{}{
+		"htmlURL": "https://github.com/test/repo/pull/12", "sandbox.gemini.google.com/recipe-care-run": run("care-ci", "recipe-care-ci-7", "Running"),
+	}, 1)
+	theirs.SetNamespace("overseer-kcc")
+	hidden := sandboxCR("fix-x-1", nil, map[string]interface{}{
+		"htmlURL": "https://github.com/test/elsewhere/issues/1", factorycli.AnnotationFixRun: run("fix", "recipe-fix-9", "Running"),
+	}, 1)
+	hidden.SetNamespace("overseer-other")
+	// kcc's own controller sandbox is not a conversation.
+	controller := sandboxCR("overseer-kcc", nil, map[string]interface{}{factorycli.AnnotationFixRun: run("fix", "recipe-x", "Running")}, 1)
+	controller.SetNamespace("overseer-kcc")
+
+	daemon := &fakeSessions{live: map[string]acpd.Session{"recipe-care-ci-7": {ID: "recipe-care-ci-7", Busy: true}}}
+	r, dyn := researchTestServer(t, daemon, []*unstructured.Unstructured{mine, theirs, hidden, controller},
+		researchPod("overseer-kcc", "fix-repo-9", "10.0.0.7", corev1.PodRunning))
+	if _, err := dyn.Resource(repoBoardGVR).Namespace("alice").Create(context.Background(), boardCR(), v1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for name, allow := range map[string][]interface{}{"kcc": {"alice"}, "other": nil} {
+		ov := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "overseer.gemini.google.com/v1alpha1", "kind": "Overseer",
+			"metadata": map[string]interface{}{"name": name},
+			"spec":     map[string]interface{}{"repoURL": "https://github.com/test/" + name, "allowlistedUsers": allow},
+		}}
+		if _, err := dyn.Resource(k8s.OverseerGVR).Create(context.Background(), ov, v1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	by := sessionsByTask(listSessions(t, r))
+	if len(by) != 2 {
+		t.Fatalf("rows = %+v, want the member's fix and kcc's care", by)
+	}
+	care := by["recipe-care-ci-7"]
+	if care.Overseer != "kcc" || care.Board != "" || care.Label != "Fix CI" || care.Item != "pr" || care.Number != 12 || !care.Busy || care.State != "working" {
+		t.Errorf("kcc's row: %+v", care)
+	}
+	if fix := by["recipe-fix-1"]; fix.Overseer != "" || fix.Busy || fix.Board != "myboard" {
+		t.Errorf("the member's row: %+v", fix)
+	}
+
+	w := doJSON(t, r, http.MethodGet, "/api/sessions?overseers=false", "")
+	var got struct{ Sessions []SessionRow }
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].Overseer != "" {
+		t.Errorf("?overseers=false: %+v", got.Sessions)
 	}
 }
