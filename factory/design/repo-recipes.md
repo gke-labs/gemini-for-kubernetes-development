@@ -76,7 +76,7 @@ A recipe's `revise:` parts and a session of recipes (`session:`, as care's) do t
 Two revises are removed rather than converted:
 - **fix's `iterate`.** It duplicates `care-iterate`. A fix's Change opens a draft PR by default, and the PR is then changed with care-iterate. Before the PR is open, its Change can be edited, rejected, or the fix run again with `--instruction`.
 - **summarize's `summary`.** Run summarize again instead.
-- **review's `review`.** Run review again with `--instruction` (its `instructions` input) saying what to change. Posting replaces the pending review factory posted before: GitHub keeps one pending review per person.
+- **review's `review`.** Run review again with an instruction (its `instructions` input, `--instruction`) saying what to change: review with instructions. Posting replaces the pending review factory posted before: GitHub keeps one pending review per person. A board click already reviews again (the re-review marker), but drops the click's inputs: the controller passes a Request's inputs to fix only. Review's pass takes them too, and so do plan's and triage's, which drop them the same way.
 
 The other two become recipes of their own, in their start recipe's session:
 
@@ -102,7 +102,7 @@ What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `re
 2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources (#1935).
 3. **Follow-ups instead of revises:**
    - factory: the two follow-up recipes, `applicable-when: {session: started}`, and `run:` without an input; fix's iterate, review's and summarize's updates removed; then `revise` removed;
-   - repo-agent: the buttons become the follow-ups' recipe Requests, and the revise verb goes.
+   - repo-agent: the buttons become the follow-ups' recipe Requests, and the revise verb goes; review, plan and triage pass a Request's inputs to their recipe (review with instructions).
 4. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
 5. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
 6. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).
