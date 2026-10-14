@@ -71,32 +71,37 @@ A repository recipe gets nothing a built-in does not, and less by default:
 
 ## Follow-ups instead of revises
 
-A recipe's `revise:` parts and a session of recipes (`session:`, as care's) do the same job by two mechanisms: both continue a conversation in its sandbox and capture a new result. fix's `iterate` and `care-iterate` are already the same follow-up written both ways. One mechanism is simpler for anyone writing a recipe, and a repository's recipes (which cannot declare `revise:`, see Loading) need only that one. So each revise becomes a recipe of its own, in its start recipe's session:
+A recipe's `revise:` parts and a session of recipes (`session:`, as care's) do the same job by two mechanisms: both continue a conversation in its sandbox and capture a new result. One mechanism is simpler for anyone writing a recipe, and a repository's recipes (which cannot declare `revise:`, see Loading) need only that one.
+
+Two revises are removed rather than converted:
+- **fix's `iterate`.** It duplicates `care-iterate`. A fix's Change opens a draft PR by default, and the PR is then changed with care-iterate. Before the PR is open, its Change can be edited, rejected, or the fix run again with `--instruction`.
+- **summarize's `summary`.** Run summarize again instead.
+
+The other three become recipes of their own, in their start recipe's session:
 
 | revise | follow-up recipe | session |
 |---|---|---|
-| fix `iterate` (Iterate) | `fix-iterate` | `fix` |
 | plan `plan` (Update plan) | `plan-update` | `plan` |
 | review `review` (Update review) | `review-update` | `review` |
 | research `notes` (Save notes) | `research-notes` | `research` |
-| summarize `summary` (Update summary) | `summarize-update` | `summarize` |
+
+`plan-update` stays beside plan's `--feedback`: a re-plan with feedback is a new conversation reading the last plan, while plan-update writes the plan from the conversation the member had in the session. research's start has no result: `research-notes` is the only recipe that writes Notes, so research loses its `task-output` and `StartOutputs` its revise-only case.
 
 What a revise did that a follow-up recipe needs:
 - **The same sandbox.** A recipe in a session already runs where its group's last run did: an issue's or a PR's sandbox, or with `--session` a repository's. A `credentials: clone` recipe's own sandbox is named after its recipe today (`review-<repo>-<n>`). It is named after its session instead (`RecipeSandboxName(repo, n, session)`), so `review-update` lands beside `review`.
-- **The same conversation.** A run in a session continues the conversation its group's last run recorded (`sessionToContinue`), including the member's turns from the board's Continue session.
+- **The same conversation.** A run in a session continues the conversation its group's last run recorded (`sessionToContinue`), including the member's turns from the board's Continue session. plan and review declare their session tag, as `research` does.
 - **Only after a start.** `applicable-when: {session: started}`: the recipe runs only where its session has a run. factory refuses it otherwise, and a board offers it only on an item whose group has one.
-- **The last push.** A Change recipe in a session gets the push its group last made (`pushed_*`, from the session's tasks, as revises did), so `fix-iterate` pushes to the start's branch, leased at the head it pushed.
-- **No new input.** The follow-ups need none beyond their own (`fix-iterate`'s `instruction`): the conversation has the draft.
+- **The same result.** A follow-up declares its start recipe's `outputs` and `task-output`, copied: YAML anchors do not cross files. plan-update copies plan's save step and review-update review's write ask the same way. A test holds each copy equal to its original.
 - **A result's actions.** An output offers `run: <follow-up>` instead of `revise: <id>`. The `run:` verb starts a recipe on the result's target, and passes the result as the recipe's input only when the recipe takes one from that kind.
 
-What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `recipe_revise.go`, `RecordedRevise`, the `revise` action verb, and repo-agent's revise Requests. The board's Update plan, Iterate, Save notes, Update review and Update summary become the follow-up recipes' buttons in their session group.
+What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `recipe_revise.go` with its push lookup (`pushed_*` from a session's tasks; a PR's come from the PR, as now), `RecordedRevise`, the `revise` action verb, and repo-agent's revise Requests. The board's Update plan, Update review and Save notes become the follow-up recipes' buttons in their session group; Iterate and Update summary go.
 
 ## Steps
 
 1. **A run keeps its recipe** (#1934).
 2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources (#1935).
 3. **Follow-ups instead of revises:**
-   - factory: the five follow-up recipes, `applicable-when: {session: started}`, a clone recipe's sandbox named by session, the last push for a session's Change recipes, and `run:` without an input; then `revise` removed;
+   - factory: the three follow-up recipes, `applicable-when: {session: started}`, a clone recipe's sandbox named by session, and `run:` without an input; fix's iterate and summarize's update removed; then `revise` removed;
    - repo-agent: the buttons become the follow-ups' recipe Requests, and the revise verb goes.
 4. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
 5. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
