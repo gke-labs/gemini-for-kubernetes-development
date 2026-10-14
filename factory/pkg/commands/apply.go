@@ -12,7 +12,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
@@ -193,7 +192,7 @@ func runFollowUps(ctx context.Context, c *cobra.Command, docs []*taskoutput.Docu
 	}
 	for _, d := range docs {
 		a, _ := d.Offer("run", run)
-		input, text, err := followUpInput(d, a.Run)
+		input, text, err := followUpInput(ctx, d, a.Run, followUpRepo(ctx, d))
 		if err != nil {
 			return fmt.Errorf("%s: %w", d.Target.URL, err)
 		}
@@ -208,10 +207,26 @@ func runFollowUps(ctx context.Context, c *cobra.Command, docs []*taskoutput.Docu
 	return nil
 }
 
-// followUpInput is the input of built-in recipe name that takes the
-// document's kind, and the document's text to give it.
-func followUpInput(d *taskoutput.Document, name string) (string, string, error) {
-	_, rec, err := recipe.Builtin(name)
+// followUpRepo reads the repository of d's target, where a follow-up
+// recipe that is not built in is (.agents/recipes); nil when d's target
+// is not a GitHub item or no client can be made.
+func followUpRepo(ctx context.Context, d *taskoutput.Document) repoFile {
+	it, err := parseRecipeTarget(d.Target.URL)
+	if err != nil {
+		return nil
+	}
+	gh, err := github.NewClient(ctx)
+	if err != nil {
+		return nil
+	}
+	return githubRepoFile(gh, it.Owner, it.Repo)
+}
+
+// followUpInput is the input of recipe name — a built-in, or read with
+// readRepo — that takes the document's kind, and the document's text to
+// give it.
+func followUpInput(ctx context.Context, d *taskoutput.Document, name string, readRepo repoFile) (string, string, error) {
+	_, rec, err := resolveRecipe(ctx, name, readRepo)
 	if err != nil {
 		return "", "", err
 	}

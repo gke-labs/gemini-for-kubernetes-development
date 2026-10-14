@@ -104,7 +104,7 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 	var recipeBytes []byte
 	var rec *recipe.Recipe
 	if f.recipe != "" {
-		if recipeBytes, rec, err = loadRecipe(f.recipe); err != nil {
+		if recipeBytes, rec, err = resolveRecipe(ctx, f.recipe, nil); err != nil {
 			return "", err
 		}
 	}

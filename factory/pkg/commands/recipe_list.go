@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 )
 
@@ -38,6 +40,12 @@ type RecipeInfo struct {
 	// its label spelled for this factory's trigger label; unset, every one
 	// On names.
 	ApplicableWhen *RecipeApplicableInfo `json:"applicableWhen,omitempty"`
+	// Source is where it comes from: "builtin", or the path of a
+	// repository's recipe file (.agents/recipes/<name>.yaml).
+	Source string `json:"source"`
+	// Error says why a repository's file is not a recipe it can run; the
+	// rest of its description is then empty but its name.
+	Error string `json:"error,omitempty"`
 }
 
 // RecipeApplicableInfo is which items a recipe applies to: those with one
@@ -105,7 +113,9 @@ func builtinRecipeInfos() ([]RecipeInfo, error) {
 			return nil, err
 		}
 		recs = append(recs, rec)
-		infos = append(infos, recipeInfo(rec))
+		info := recipeInfo(rec)
+		info.Source = "builtin"
+		infos = append(infos, info)
 	}
 	if err := recipe.CheckSessions(recs); err != nil {
 		return nil, err
@@ -113,18 +123,56 @@ func builtinRecipeInfos() ([]RecipeInfo, error) {
 	return infos, nil
 }
 
-func newRecipeListCommand() *cobra.Command {
-	var output string
+// repoRecipeInfos describes the recipes of the repository repoURL names:
+// each of its .agents/recipes files, a recipe or why it is not one.
+func repoRecipeInfos(ctx context.Context, repoURL string) ([]RecipeInfo, error) {
+	it, err := parseRecipeTarget(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	gh, err := github.NewClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating github client: %w", err)
+	}
+	recs, err := listRepoRecipes(ctx, gh, it.Owner, it.Repo)
+	if err != nil {
+		return nil, err
+	}
+	var infos []RecipeInfo
+	for _, r := range recs {
+		if r.err != nil {
+			infos = append(infos, RecipeInfo{Name: r.name, Source: r.path, Error: r.err.Error()})
+			continue
+		}
+		info := recipeInfo(r.rec)
+		info.Source = r.path
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+func newRecipeListCommand(ctx context.Context) *cobra.Command {
+	var output, repoURL string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List the built-in recipes: what each runs on, its result, its session and its revises",
+		Short: "List the recipes: the built-in ones, and with --url a repository's; what each runs on, its result, its session and its revises",
 		Example: `  factory recipe list
-  factory recipe list -o json`,
+  factory recipe list --url https://github.com/owner/repo -o json`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			infos, err := builtinRecipeInfos()
 			if err != nil {
 				return err
+			}
+			if repoURL != "" {
+				if _, err := ResolveRootFlags(c); err != nil {
+					return err
+				}
+				repo, err := repoRecipeInfos(ctx, repoURL)
+				if err != nil {
+					return err
+				}
+				infos = append(infos, repo...)
 			}
 			switch output {
 			case "json":
@@ -136,8 +184,12 @@ func newRecipeListCommand() *cobra.Command {
 				return fmt.Errorf("unknown output format %q (want json)", output)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tON\tRESULT\tSESSION\tREVISES")
+			fmt.Fprintln(w, "NAME\tSOURCE\tON\tRESULT\tSESSION\tREVISES")
 			for _, info := range infos {
+				if info.Error != "" {
+					fmt.Fprintf(w, "%s\t%s\t-\t-\t-\t(not a recipe: %s)\n", info.Name, info.Source, info.Error)
+					continue
+				}
 				on := strings.Join(info.On, ",")
 				if on == "" {
 					on = "any"
@@ -146,11 +198,12 @@ func newRecipeListCommand() *cobra.Command {
 				for _, rv := range info.Revises {
 					revises = append(revises, rv.ID)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", info.Name, on, orDash(info.Kind), orDash(info.Session), orDash(strings.Join(revises, ",")))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", info.Name, info.Source, on, orDash(info.Kind), orDash(info.Session), orDash(strings.Join(revises, ",")))
 			}
 			return w.Flush()
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json")
+	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL: list its own recipes too (.agents/recipes at its default branch)")
 	return cmd
 }
