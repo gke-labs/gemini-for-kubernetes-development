@@ -78,12 +78,8 @@ type Recipe struct {
 	// sets, so a missing or misspelt one fails before a sandbox is made.
 	Inputs map[string]Input `yaml:"inputs,omitempty"`
 	// Start is what runs when the task is launched, wherever the recipe
-	// runs: it opens the session its revises continue.
+	// runs.
 	Start Part `yaml:"start"`
-	// Revise are parts that run later, into the started task's session,
-	// to write its output again from the conversation since: each one a
-	// button for whoever continued it.
-	Revise []Revise `yaml:"revise,omitempty"`
 	// Outputs are the task-directory files `recipe run` prints when the
 	// recipe ends, in order. Unset, they are the capture files.
 	Outputs []string `yaml:"outputs,omitempty"`
@@ -212,7 +208,7 @@ const (
 // write with it: setup-fork may fork, push pushes.
 var fullCredentialSteps = []string{"setup-git", "setup-repo", "setup-fork", "checkout-default-branch", "checkout-pr-branch", "push", "runs-remote", "run-prepare", "run-finish"}
 
-// Part is a list of steps run in order: the recipe's start, or a revise.
+// Part is a list of steps run in order: the recipe's start.
 type Part struct {
 	Steps []Step `yaml:"steps"`
 }
@@ -223,33 +219,6 @@ func (r *Recipe) RunsOn(target string) bool {
 	return len(r.On) == 0 || slices.Contains(r.On, target) || (target == OnMyPR && slices.Contains(r.On, OnPR))
 }
 
-// Steps is the part to run: start's for "", else the named revise's.
-func (r *Recipe) Steps(revise string) ([]Step, error) {
-	if revise == "" {
-		return r.Start.Steps, nil
-	}
-	for _, rv := range r.Revise {
-		if rv.ID == revise {
-			return rv.Steps, nil
-		}
-	}
-	return nil, fmt.Errorf("recipe %s has no revise %q", r.Name, revise)
-}
-
-// Revise is a part that writes the task's output again, asking in the
-// started task's session.
-type Revise struct {
-	// ID names it, for `factory recipe revise` and its action.
-	ID string `yaml:"id"`
-	// Label is the button's text.
-	Label string `yaml:"label"`
-	// Inputs are the inputs the caller is asked for when running it, such
-	// as fix's iterate instruction. Each is a declared input. Factory's:
-	// ForSandbox drops it.
-	Inputs []string `yaml:"inputs,omitempty"`
-	Steps  []Step   `yaml:"steps"`
-}
-
 // Input is one declared input.
 type Input struct {
 	Description string `yaml:"description,omitempty"`
@@ -258,10 +227,6 @@ type Input struct {
 	// Type is "" for a string, or InstructionsType. Like task-output it is
 	// factory's: ForSandbox drops it.
 	Type string `yaml:"type,omitempty"`
-	// Revise marks an input only revises read: `factory recipe revise
-	// --input` sets it, or factory does, and a built-in's command has no
-	// flag for it. Factory's too: ForSandbox drops it.
-	Revise bool `yaml:"revise,omitempty"`
 	// From is a task output kind the input takes: a result of that kind
 	// whose actions offer `run: <this recipe>` starts it with its draft
 	// (markdown, or spec as YAML) as this input. Factory's: ForSandbox
@@ -299,6 +264,12 @@ type Step struct {
 	// Capture writes an ask's reply to this file in the task directory,
 	// where the CLI reads it back, as runEngine's output file is today.
 	Capture string `yaml:"capture,omitempty"`
+	// Expects is the file in the task directory an ask tells the agent to
+	// write ({{ output "<file>" }}): after the ask it must be there and
+	// not empty. An agent that forgot is asked once more, then the step
+	// fails, before a later step (a push) acts on a result that is not
+	// there.
+	Expects string `yaml:"expects,omitempty"`
 	// ContinueOnError lets a failed run step be judged by a later one
 	// instead of ending the recipe.
 	ContinueOnError bool `yaml:"continue-on-error,omitempty"`
@@ -351,7 +322,6 @@ var NamedSteps = map[string]string{
 
 var (
 	stepIDRE   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	reviseIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	inputRE    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	taskTypeRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	withKeyRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -406,9 +376,6 @@ func (r *Recipe) Validate() error {
 		if in.Required && in.Default != "" {
 			return fmt.Errorf("input %s: required and default are exclusive", name)
 		}
-		if in.Revise && (in.Required || in.Type != "") {
-			return fmt.Errorf("input %s: a revise input is an optional string", name)
-		}
 		if in.Type != "" && in.Type != InstructionsType {
 			return fmt.Errorf("input %s: type %q is not one of: %s", name, in.Type, InstructionsType)
 		}
@@ -416,7 +383,7 @@ func (r *Recipe) Validate() error {
 			if !taskoutput.Known(in.From) {
 				return fmt.Errorf("input %s: from %q is not one of: %s", name, in.From, strings.Join(taskoutput.KnownKinds(), ", "))
 			}
-			if in.Required || in.Revise || in.Type != "" {
+			if in.Required || in.Type != "" {
 				return fmt.Errorf("input %s: an input from a result is an optional string", name)
 			}
 			if other, _ := r.InputFrom(in.From); other != name {
@@ -438,8 +405,6 @@ func (r *Recipe) Validate() error {
 			return fmt.Errorf("session %q must match %s", r.Session, taskTypeRE)
 		case r.TaskType != "":
 			return fmt.Errorf("a recipe in a session is recorded under it; it takes no task-type")
-		case len(r.Revise) > 0:
-			return fmt.Errorf("a recipe in a session has no revises: the session's other recipes are its follow-ups")
 		}
 	}
 	if aw := r.ApplicableWhen; aw != nil {
@@ -462,9 +427,6 @@ func (r *Recipe) Validate() error {
 		if to.Preview != "" && !taskoutput.PreviewRE.MatchString(to.Preview) {
 			return fmt.Errorf("task-output: preview %q must name a spec field, such as spec.body", to.Preview)
 		}
-		if slices.ContainsFunc(to.Actions, func(a taskoutput.Action) bool { return a.Verb == "revise" }) {
-			return fmt.Errorf("task-output: revise actions come from the recipe's revises, one each; declare them there")
-		}
 		for _, a := range to.Actions {
 			if a.Verb == "run" && !takesFrom(r, a.Run, to.Kind) {
 				return fmt.Errorf("task-output: action run %s: recipe %s has no input from a %s", a.Run, a.Run, to.Kind)
@@ -482,39 +444,6 @@ func (r *Recipe) Validate() error {
 	if err := r.validateCredentials(); err != nil {
 		return err
 	}
-	outputs := r.OutputFiles()
-	revises := map[string]bool{}
-	for _, rv := range r.Revise {
-		if !reviseIDRE.MatchString(rv.ID) {
-			return fmt.Errorf("revise id %q must match %s", rv.ID, reviseIDRE)
-		}
-		if revises[rv.ID] {
-			return fmt.Errorf("duplicate revise %q", rv.ID)
-		}
-		revises[rv.ID] = true
-		if rv.Label == "" {
-			return fmt.Errorf("revise %s has no label", rv.ID)
-		}
-		if len(rv.Steps) == 0 {
-			return fmt.Errorf("revise %s has no steps", rv.ID)
-		}
-		for _, in := range rv.Inputs {
-			if _, ok := r.Inputs[in]; !ok {
-				return fmt.Errorf("revise %s asks for input %s, which the recipe does not declare", rv.ID, in)
-			}
-		}
-		if err := validateSteps(rv.Steps); err != nil {
-			return fmt.Errorf("revise %s: %w", rv.ID, err)
-		}
-		// A revise that captures none of the outputs would change nothing.
-		if !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture != "" && slices.Contains(outputs, s.Capture) }) {
-			return fmt.Errorf("revise %s captures none of the outputs (%s)", rv.ID, strings.Join(outputs, ", "))
-		}
-		// Its result is a task output too, written from the same file.
-		if to := r.TaskOutput; to != nil && !slices.ContainsFunc(rv.Steps, func(s Step) bool { return s.Capture == to.From }) {
-			return fmt.Errorf("revise %s does not capture %s, the task output's", rv.ID, to.From)
-		}
-	}
 	return nil
 }
 
@@ -529,18 +458,9 @@ func (r *Recipe) validateCredentials() error {
 	default:
 		return fmt.Errorf("credentials %q is not one of: %s, %s", r.Credentials, CredentialsFull, CredentialsClone)
 	}
-	parts := map[string][]Step{"start": r.Start.Steps}
-	for _, rv := range r.Revise {
-		parts["revise "+rv.ID] = rv.Steps
-	}
-	for part, steps := range parts {
-		for i, s := range steps {
-			if slices.Contains(fullCredentialSteps, s.Uses) {
-				return fmt.Errorf("%s: step %d: %s leaves the GitHub token behind; credentials: clone allows only %s", part, i+1, s.Uses, CloneStep)
-			}
-			if s.Uses == CloneStep && part != "start" {
-				return fmt.Errorf("%s: step %d: a revise has no token to clone with", part, i+1)
-			}
+	for i, s := range r.Start.Steps {
+		if slices.Contains(fullCredentialSteps, s.Uses) {
+			return fmt.Errorf("start: step %d: %s leaves the GitHub token behind; credentials: clone allows only %s", i+1, s.Uses, CloneStep)
 		}
 	}
 	clones, asked := 0, false
@@ -604,6 +524,17 @@ func validateSteps(steps []Step) error {
 				return fmt.Errorf("step %d: capture %q must be a plain file name", i+1, s.Capture)
 			}
 		}
+		if s.Expects != "" {
+			if s.Ask == "" {
+				return fmt.Errorf("step %d: expects is only for ask steps", i+1)
+			}
+			if !safeFileName(s.Expects) {
+				return fmt.Errorf("step %d: expects %q must be a plain file name", i+1, s.Expects)
+			}
+			if s.Capture != "" {
+				return fmt.Errorf("step %d: an ask either captures its reply or expects a file the agent writes, not both", i+1)
+			}
+		}
 		if s.ContinueOnError && s.Run == "" {
 			return fmt.Errorf("step %d: continue-on-error is only for run steps", i+1)
 		}
@@ -643,36 +574,14 @@ func (r *Recipe) ResolveInputs(standard, overrides map[string]string) (map[strin
 	return out, nil
 }
 
-// OutputDecl is the task output a task of the recipe declares, start or
-// revise: TaskOutput, with an action for each revise after the actions
-// it declares (its kind's, when it declares none). Nil without one.
+// OutputDecl is the task output a task of the recipe declares: a copy of
+// TaskOutput, or nil without one.
 func (r *Recipe) OutputDecl() *taskoutput.Decl {
 	if r.TaskOutput == nil {
 		return nil
 	}
 	decl := *r.TaskOutput
-	if len(r.Revise) == 0 {
-		return &decl
-	}
-	decl.Actions = slices.Clone(decl.Actions)
-	if len(decl.Actions) == 0 {
-		decl.Actions = taskoutput.DefaultActions(decl.Kind)
-	}
-	for _, rv := range r.Revise {
-		decl.Actions = append(decl.Actions, taskoutput.Action{Verb: "revise", Revise: rv.ID, Label: rv.Label})
-	}
 	return &decl
-}
-
-// StartOutputs reports whether start leaves the task output: one of its
-// asks captures it, or, in a recipe with no revise, a run step writes it
-// (adopt's Change). A recipe whose result only a revise writes
-// (research's notes) has none until then.
-func (r *Recipe) StartOutputs() bool {
-	if r.TaskOutput == nil {
-		return false
-	}
-	return len(r.Revise) == 0 || slices.ContainsFunc(r.Start.Steps, func(s Step) bool { return s.Capture == r.TaskOutput.From })
 }
 
 // OutputFiles is what `recipe run` prints: Outputs, or else every file an
@@ -714,9 +623,9 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without label,
-// on, task-output, task-type, session, applicable-when, input types and
-// revise inputs, which
-// runners older than them reject as unknown fields.
+// on, task-output, task-type, session, applicable-when, sandbox and input
+// types and sources, which runners older than them reject as unknown
+// fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -732,19 +641,12 @@ func ForSandbox(data []byte) ([]byte, error) {
 			changed = true
 		}
 	}
-	if revises := mapValue(m, "revise"); revises != nil && revises.Kind == yaml.SequenceNode {
-		for _, rv := range revises.Content {
-			if rv.Kind == yaml.MappingNode && dropKey(rv, "inputs") {
-				changed = true
-			}
-		}
-	}
 	if inputs := mapValue(m, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
 		for i := 1; i < len(inputs.Content); i += 2 {
 			if inputs.Content[i].Kind != yaml.MappingNode {
 				continue
 			}
-			for _, k := range []string{"type", "revise", "from"} {
+			for _, k := range []string{"type", "from"} {
 				if dropKey(inputs.Content[i], k) {
 					changed = true
 				}

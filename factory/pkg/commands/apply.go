@@ -45,7 +45,7 @@ Without --action, apply does each write the result offers:
   Change  open-pr: opens the branch the fix pushed to your fork as a draft
           PR, unless it has one open already, and aliases the fix's
           sandbox to the PR
-          post-replies: posts a revise's replies on the PR, each in the
+          post-replies: posts the agent's replies on the PR, each in the
           thread of the review comment it answers, or quoting the
           conversation comment it answers, and its report as a PR comment
 
@@ -60,9 +60,6 @@ Without --action, apply does each write the result offers:
   run             the follow-up it offers (run:fix names it): the recipe
                   on the result's target, with the result, as edited, as
                   its input from that kind (fix's plan, from: Plan)
-  revise          one of the recipe's revises (revise:plan names it):
-                  factory recipe revise, into the conversation the result
-                  came from; it writes a new result and posts nothing
 
 edit and reject are for whoever keeps the result as a draft: edit the
 file before applying it, or don't apply it.
@@ -73,8 +70,7 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
   factory sandbox task output fix-repo-123 > triage.yaml   # look, edit
   factory apply -f triage.yaml
   factory apply -f plan.yaml --action comment
-  factory apply -f plan.yaml --action run:fix
-  factory apply -f plan.yaml --action revise:plan`,
+  factory apply -f plan.yaml --action run:fix`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			var data []byte
@@ -105,9 +101,6 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 						return fmt.Errorf("%s: %w", d.Target.URL, err)
 					}
 				}
-				if verb == "revise" {
-					return runRevises(ctx, c, docs, run, dryRun)
-				}
 				if class == taskoutput.ClassFollowUp {
 					return runFollowUps(ctx, c, docs, run, dryRun)
 				}
@@ -126,7 +119,7 @@ a review that was submitted, nor open a second PR, nor reply twice.`,
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "Task output file, or - for stdin")
-	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, submit-review, open-pr, post-replies, run[:<follow-up>], revise[:<revise>]) instead of all its writes")
+	cmd.Flags().StringVar(&action, "action", "", "Do one action the task output offers (label, comment, push-notes, post-review, submit-review, open-pr, post-replies, run[:<follow-up>]) instead of all its writes")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be written, and write nothing")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
@@ -241,31 +234,4 @@ func followUpInput(ctx context.Context, d *taskoutput.Document, name string, rea
 // runFollowUp is runFollowUps' sandbox call.
 var runFollowUp = func(ctx context.Context, name, url string, inputs map[string]string) error {
 	return runRecipe(ctx, name, url, "", "", "", false, applyMode{}, inputs, nil)
-}
-
-// runRevises runs the revise each document offers, in the conversation of
-// the task it came from: in the sandbox it names, or else its target's.
-func runRevises(ctx context.Context, c *cobra.Command, docs []*taskoutput.Document, revise string, dryRun bool) error {
-	for _, d := range docs {
-		a, _ := d.Offer("revise", revise)
-		task := d.Source.Session
-		if task == "" {
-			task = d.Source.Task
-		}
-		if task == "" {
-			return fmt.Errorf("%s: the %s names no task to revise", d.Target.URL, d.Kind)
-		}
-		where := d.Source.Sandbox
-		if where == "" {
-			where = d.Target.URL
-		}
-		if dryRun {
-			fmt.Printf("Would run: factory recipe revise %s %s --task %s\n", where, a.Revise, task)
-			continue
-		}
-		if err := runRevise(ctx, c, where, a.Revise, reviseFlags{task: task}); err != nil {
-			return fmt.Errorf("%s: %w", d.Target.URL, err)
-		}
-	}
-	return nil
 }

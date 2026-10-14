@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
@@ -47,16 +48,16 @@ func TestWriteTaskOutput(t *testing.T) {
 	}
 }
 
-// A revise's result names the conversation it came from beside itself.
-func TestWriteTaskOutputOfARevise(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "recipe-plan-20261005-101010-abcd")
+// A result of a run in a session names the conversation it continued
+// beside itself.
+func TestWriteTaskOutputInASession(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-care-ci-20261005-101010-abcd")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	actions := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}}
-	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Revise: "plan", Session: "recipe-plan-20261004-101010-0001",
-		Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: actions}},
-		map[string]string{"plan-output.md": "## Summary\nDo it.\n"})
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "summarize", Session: "recipe-care-20261004-101010-0001",
+		Output: &taskoutput.Decl{Kind: "Summary", From: "summary-output.md", Actions: []taskoutput.Action{{Verb: "comment"}}}},
+		map[string]string{"summary-output.md": "It is about x.\n"})
 	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +70,10 @@ func TestWriteTaskOutputOfARevise(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := docs[0]
-	if d.Source.Task != filepath.Base(dir) || d.Source.Session != "recipe-plan-20261004-101010-0001" {
+	if d.Source.Task != filepath.Base(dir) || d.Source.Session != "recipe-care-20261004-101010-0001" {
 		t.Errorf("source = %+v", d.Source)
 	}
-	if _, err := d.Offer("revise", "plan"); err != nil {
+	if _, err := d.Offer("comment", ""); err != nil {
 		t.Error(err)
 	}
 }
@@ -228,5 +229,90 @@ func TestWriteTaskOutputOptional(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
 			t.Errorf("optional %v: a task output was written with no result", optional)
 		}
+	}
+}
+
+// A result the agent rewrites after the task, in a later turn of the
+// conversation, is wrapped again when it is read (taskoutput.Refresh),
+// about the same target and from the same task; one that no longer
+// parses leaves the last good one.
+func TestTaskOutputFollowsARewrittenResult(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-plan-20261013-101010-abcd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "plan", Output: &taskoutput.Decl{Kind: "Plan", From: "plan-output.md", Actions: []taskoutput.Action{{Verb: "comment"}}}},
+		map[string]string{"plan-output.md": "## Summary\nFirst.\n"})
+	if err := writeTaskOutput(dir, dir, map[string]string{"issue_url": "https://github.com/o/r/issues/1"}, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	rewrite := func(content string) {
+		t.Helper()
+		path := filepath.Join(dir, "plan-output.md")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		later := time.Now().Add(time.Minute)
+		if err := os.Chtimes(path, later, later); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewrite("## Summary\nSecond.\n")
+	if changed, err := taskoutput.Refresh(dir, "plan-output.md"); err != nil || !changed {
+		t.Fatalf("Refresh = %v, %v; want rewrapped", changed, err)
+	}
+	if changed, _ := taskoutput.Refresh(dir, "plan-output.md"); changed {
+		t.Error("Refresh rewrapped a result it had already wrapped")
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	docs, err := taskoutput.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := docs[0]
+	if !strings.Contains(string(data), "Second.") || d.Target.URL != "https://github.com/o/r/issues/1" || d.Source.Task != filepath.Base(dir) || len(d.Actions) != 1 {
+		t.Errorf("rewrapped = %s", data)
+	}
+
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "triage", Output: &taskoutput.Decl{Kind: "Triage", From: "triage-output.yaml"}},
+		map[string]string{"triage-output.yaml": "triage:\n  assessment: x\n"})
+	if err := writeTaskOutput(dir, dir, nil, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "triage-output.yaml")
+	later := time.Now().Add(2 * time.Minute)
+	_ = os.WriteFile(path, []byte("not a triage"), 0o644)
+	_ = os.Chtimes(path, later, later)
+	if _, err := taskoutput.Refresh(dir, "triage-output.yaml"); err == nil {
+		t.Error("a rewritten result that does not parse was accepted")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, taskoutput.File)); !strings.Contains(string(data), "assessment: x") {
+		t.Errorf("the last good result was not kept: %s", data)
+	}
+}
+
+// An optional result the task did not leave is wrapped once the agent
+// writes it: research's notes, written when someone asks for them.
+func TestTaskOutputOfAnOptionalResultWrittenLater(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "recipe-research-20261013-101010-abcd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFiles(t, dir, spool.Task{ID: filepath.Base(dir), Recipe: "research", URL: "https://github.com/o/r", Output: &taskoutput.Decl{Kind: "Notes", From: "notes.md", Optional: true}}, map[string]string{})
+	if err := writeTaskOutput(dir, dir, nil, "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, taskoutput.File)); !os.IsNotExist(err) {
+		t.Fatal("a task output was written with no notes")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# Notes\nFound it.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := taskoutput.Refresh(dir, "notes.md"); err != nil || !changed {
+		t.Fatalf("Refresh = %v, %v; want the notes wrapped", changed, err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, taskoutput.File))
+	if docs, err := taskoutput.Parse(data); err != nil || docs[0].Kind != "Notes" || docs[0].Target.URL != "https://github.com/o/r" {
+		t.Errorf("notes = %s (%v)", data, err)
 	}
 }

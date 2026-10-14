@@ -15,7 +15,7 @@ import (
 )
 
 // RecipeInfo is one built-in recipe as `factory recipe list -o json`
-// prints it: what a board needs to offer it, run it and revise it.
+// prints it: what a board needs to offer it and run it.
 type RecipeInfo struct {
 	Name  string `json:"name"`
 	Label string `json:"label"`
@@ -23,8 +23,7 @@ type RecipeInfo struct {
 	On     []string          `json:"on,omitempty"`
 	Inputs []RecipeInputInfo `json:"inputs,omitempty"`
 	// Kind is its task output's kind, if it declares one.
-	Kind    string             `json:"kind,omitempty"`
-	Revises []RecipeReviseInfo `json:"revises,omitempty"`
+	Kind string `json:"kind,omitempty"`
 	// TaskType is what its runs are recorded under on the sandbox
 	// (sandbox.gemini.google.com/<taskType>-run), and Credentials its
 	// recipe.Credentials when not full: a PR's credentials: clone recipe
@@ -54,24 +53,15 @@ type RecipeApplicableInfo struct {
 	Labels []string `json:"labels"`
 }
 
-// RecipeInputInfo is one declared input. Revise marks one only revises
-// take, which a launch does not ask for.
+// RecipeInputInfo is one declared input.
 type RecipeInputInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Default     string `json:"default,omitempty"`
 	Required    bool   `json:"required,omitempty"`
 	Type        string `json:"type,omitempty"`
-	Revise      bool   `json:"revise,omitempty"`
 	// From is the task output kind whose result the input takes.
 	From string `json:"from,omitempty"`
-}
-
-// RecipeReviseInfo is one revise, with the inputs it asks for.
-type RecipeReviseInfo struct {
-	ID     string   `json:"id"`
-	Label  string   `json:"label"`
-	Inputs []string `json:"inputs,omitempty"`
 }
 
 func recipeInfo(rec *recipe.Recipe) RecipeInfo {
@@ -90,10 +80,7 @@ func recipeInfo(rec *recipe.Recipe) RecipeInfo {
 	}
 	for _, name := range sortedInputNames(rec) {
 		in := rec.Inputs[name]
-		info.Inputs = append(info.Inputs, RecipeInputInfo{Name: name, Description: in.Description, Default: in.Default, Required: in.Required, Type: in.Type, Revise: in.Revise, From: in.From})
-	}
-	for _, rv := range rec.Revise {
-		info.Revises = append(info.Revises, RecipeReviseInfo{ID: rv.ID, Label: rv.Label, Inputs: rv.Inputs})
+		info.Inputs = append(info.Inputs, RecipeInputInfo{Name: name, Description: in.Description, Default: in.Default, Required: in.Required, Type: in.Type, From: in.From})
 	}
 	return info
 }
@@ -155,7 +142,7 @@ func newRecipeListCommand(ctx context.Context) *cobra.Command {
 	var output, repoURL string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List the recipes: the built-in ones, and with --url a repository's; what each runs on, its result, its session and its revises",
+		Short: "List the recipes: the built-in ones, and with --url a repository's; what each runs on, its result and its session",
 		Example: `  factory recipe list
   factory recipe list --url https://github.com/owner/repo -o json`,
 		Args: cobra.NoArgs,
@@ -184,21 +171,17 @@ func newRecipeListCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("unknown output format %q (want json)", output)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tSOURCE\tON\tRESULT\tSESSION\tREVISES")
+			fmt.Fprintln(w, "NAME\tSOURCE\tON\tRESULT\tSESSION")
 			for _, info := range infos {
 				if info.Error != "" {
-					fmt.Fprintf(w, "%s\t%s\t-\t-\t-\t(not a recipe: %s)\n", info.Name, info.Source, info.Error)
+					fmt.Fprintf(w, "%s\t%s\t-\t-\t(not a recipe: %s)\n", info.Name, info.Source, info.Error)
 					continue
 				}
 				on := strings.Join(info.On, ",")
 				if on == "" {
 					on = "any"
 				}
-				var revises []string
-				for _, rv := range info.Revises {
-					revises = append(revises, rv.ID)
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", info.Name, info.Source, on, orDash(info.Kind), orDash(info.Session), orDash(strings.Join(revises, ",")))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", info.Name, info.Source, on, orDash(info.Kind), orDash(info.Session))
 			}
 			return w.Flush()
 		},

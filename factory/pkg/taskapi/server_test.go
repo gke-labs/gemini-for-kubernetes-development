@@ -223,6 +223,39 @@ func TestFilesAreGuarded(t *testing.T) {
 	}
 }
 
+// A result the agent writes after its task, in a later turn of the
+// conversation, is what the task's task output says when it is next read
+// or listed.
+func TestTaskOutputFollowsTheResultFile(t *testing.T) {
+	c, tasks := newTestServer(t)
+	ctx := context.Background()
+	req := post("research-20261013-120000", "", "true")
+	req.Task.Recipe = "research"
+	req.Task.Output = &taskoutput.Decl{Kind: "Notes", From: "notes.md", Optional: true}
+	resp, err := c.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	id := resp.Task.ID
+	frame := &taskoutput.Document{APIVersion: taskoutput.APIVersion, Kind: "Notes", Target: taskoutput.Target{URL: "https://github.com/o/r"}, Source: taskoutput.Source{Task: id}}
+	if err := taskoutput.WriteFrame(filepath.Join(tasks, id), frame); err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := c.Files(ctx, id); contains(names, taskoutput.File) {
+		t.Fatalf("a task output listed before the notes were written: %v", names)
+	}
+	if err := os.WriteFile(filepath.Join(tasks, id, "notes.md"), []byte("# Notes\nFound it.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := c.Files(ctx, id); !contains(names, taskoutput.File) {
+		t.Errorf("the notes' task output is not listed: %v", names)
+	}
+	data, err := c.ReadFile(ctx, id, taskoutput.File)
+	if err != nil || !strings.Contains(string(data), "Found it.") {
+		t.Errorf("task output = %s, %v; want the notes", data, err)
+	}
+}
+
 func TestCancelEndsTheGroup(t *testing.T) {
 	for _, tc := range []struct {
 		kill bool

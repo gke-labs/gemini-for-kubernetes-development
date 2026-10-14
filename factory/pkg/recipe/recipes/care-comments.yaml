@@ -114,9 +114,8 @@ start:
         {{- end }}
         When you are done, say briefly what you did.
     - ask: |
-        Now write the result. Respond with EXACTLY the following YAML
-        structure and nothing else — no prose before or after, no markdown
-        fences:
+        Now write the result to the file {{ output "change.yaml" }}, as YAML
+        in EXACTLY this structure, with nothing else in the file:
 
         change:
           replies:
@@ -142,7 +141,11 @@ start:
         {{- else }}
         - Do not say anywhere that an agent or AI wrote this.
         {{- end }}
-      capture: change.yaml
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it, then say in a line that it is
+        written.
+      expects: change.yaml
     - uses: push
 
 outputs:

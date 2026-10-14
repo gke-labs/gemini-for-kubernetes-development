@@ -23,19 +23,12 @@ type Action struct {
 	Format string `yaml:"format,omitempty" json:"format,omitempty"`
 	// Run is the follow-up a run starts, with this result as its input.
 	Run string `yaml:"run,omitempty" json:"run,omitempty"`
-	// Revise is the recipe's revise a revise action runs, into the
-	// conversation the result came from.
-	Revise string `yaml:"revise,omitempty" json:"revise,omitempty"`
 	// Label is what to call it, for a button.
 	Label string `yaml:"label,omitempty" json:"label,omitempty"`
 }
 
-// arg is what the action's verb acts with: the follow-up a run starts,
-// the revise a revise runs.
+// arg is what the action's verb acts with: the follow-up a run starts.
 func (a Action) arg() string {
-	if a.Verb == "revise" {
-		return a.Revise
-	}
 	return a.Run
 }
 
@@ -84,7 +77,6 @@ var verbs = map[string]verb{
 	"post-replies":  {class: ClassApply, kinds: []string{"Change"}, apply: applyPostReplies},
 	"post-spec":     {class: ClassApply, kinds: []string{"FanOut"}, apply: applyPostSpec},
 	"run":           {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
-	"revise":        {class: ClassFollowUp, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary"}},
 	"edit":          {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
 	"reject":        {class: ClassDraft, kinds: []string{"Triage", "Plan", "Notes", "Review", "Change", "Summary", "FanOut"}},
 }
@@ -135,7 +127,7 @@ var defaultActions = map[string][]Action{
 
 var (
 	editFieldRE = regexp.MustCompile(`^spec(\.[a-z][A-Za-z0-9]*)?$`)
-	reviseRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	recipeRE    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
 // VerbClass is verb's class, and false for a verb the registry doesn't
@@ -192,21 +184,14 @@ func ValidateActions(kind string, actions []Action) error {
 		case "run":
 			// Whether the recipe takes the result is the recipe's to say
 			// (an input from: kind), checked where recipes are.
-			if !reviseRE.MatchString(a.Run) {
-				return fmt.Errorf("action run: recipe %q must match %s", a.Run, reviseRE)
+			if !recipeRE.MatchString(a.Run) {
+				return fmt.Errorf("action run: recipe %q must match %s", a.Run, recipeRE)
 			}
-			if a.Field != "" || a.Format != "" || a.Revise != "" {
+			if a.Field != "" || a.Format != "" {
 				return fmt.Errorf("action run takes only a run and a label")
 			}
-		case "revise":
-			if !reviseRE.MatchString(a.Revise) {
-				return fmt.Errorf("action revise: revise %q must match %s", a.Revise, reviseRE)
-			}
-			if a.Field != "" || a.Format != "" || a.Run != "" {
-				return fmt.Errorf("action revise takes only a revise and a label")
-			}
 		default:
-			if a.Field != "" || a.Format != "" || a.Run != "" || a.Revise != "" {
+			if a.Field != "" || a.Format != "" || a.Run != "" {
 				return fmt.Errorf("action %s takes only a label", a.Verb)
 			}
 		}
@@ -232,7 +217,7 @@ func (d *Document) Offered() []Action {
 }
 
 // Offer is the action the document offers for verb (and arg: for a run,
-// the follow-up; for a revise, the revise), or an error saying what it
+// the follow-up), or an error saying what it
 // offers instead.
 func (d *Document) Offer(verbName, arg string) (Action, error) {
 	var offered []string

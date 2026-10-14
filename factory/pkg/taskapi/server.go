@@ -362,11 +362,30 @@ func copyFrom(w io.Writer, path string, offset int64) (int64, error) {
 	return io.Copy(w, f)
 }
 
+// refreshOutput wraps a result the agent wrote after its task, in a later
+// turn of the conversation, into the task's task output before it is
+// listed or read (taskoutput.Refresh). A result that does not parse
+// leaves the last good one, and is logged.
+func refreshOutput(taskDir string) {
+	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
+	if err != nil {
+		return
+	}
+	var task spool.Task
+	if json.Unmarshal(data, &task) != nil || task.Output == nil {
+		return
+	}
+	if _, err := taskoutput.Refresh(taskDir, task.Output.From); err != nil {
+		klog.Warningf("task %s: %s left as it was: %v", filepath.Base(taskDir), taskoutput.File, err)
+	}
+}
+
 func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	taskDir, ok := s.taskDir(w, r)
 	if !ok {
 		return
 	}
+	refreshOutput(taskDir)
 	entries, err := os.ReadDir(taskDir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -393,6 +412,9 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	if unserved(file) {
 		writeError(w, http.StatusForbidden, "a task's environment and secrets are not served")
 		return
+	}
+	if file == taskoutput.File {
+		refreshOutput(taskDir)
 	}
 	data, err := os.ReadFile(filepath.Join(taskDir, file))
 	switch {

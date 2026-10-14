@@ -77,8 +77,7 @@ func TestLoadRecipe(t *testing.T) {
 }
 
 // Every built-in recipe is a command of its own, `factory recipe <name>`,
-// with a flag per input that shadows no other flag, but for the inputs
-// only revises read.
+// with a flag per input that shadows no other flag.
 func TestBuiltinRecipeCommands(t *testing.T) {
 	root := NewRootCommand(context.Background())
 	recipeCmd, _, err := root.Find([]string{"recipe"})
@@ -86,7 +85,7 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range recipe.BuiltinNames() {
-		if name == "run" || name == "exec" || name == "revise" || name == "list" {
+		if name == "run" || name == "exec" || name == "list" {
 			t.Errorf("built-in recipe %q takes the name of a recipe command", name)
 			continue
 		}
@@ -103,17 +102,6 @@ func TestBuiltinRecipeCommands(t *testing.T) {
 			flag := inputFlagName(in, decl)
 			if root.PersistentFlags().Lookup(flag) != nil || flag == "url" || flag == "input" || flag == "run-name" {
 				t.Errorf("recipe %s: input %s's flag --%s is taken", name, in, flag)
-			}
-			if decl.Revise {
-				// fix's instruction: --instruction is its instructions'.
-				owned := false
-				for other, d := range rec.Inputs {
-					owned = owned || (other != in && !d.Revise && inputFlagName(other, d) == flag)
-				}
-				if cmd.Flags().Lookup(flag) != nil && !owned {
-					t.Errorf("factory recipe %s has --%s, which only its revises read", name, flag)
-				}
-				continue
 			}
 			if cmd.Flags().Lookup(flag) == nil {
 				t.Errorf("factory recipe %s has no --%s", name, flag)
@@ -166,54 +154,6 @@ func TestRunByName(t *testing.T) {
 	}
 	if _, ok, err := runByName(entries, "request/y", "triage", "https://github.com/o/r/issues/8"); err == nil || ok {
 		t.Errorf("runByName of another issue's id = %v, %v; want an error", ok, err)
-	}
-}
-
-// A revise revises the task named, or the newest that ran a recipe with
-// that revise, a revise of it included.
-func TestRevisedTask(t *testing.T) {
-	entry := func(id, recipeName, session string) spool.Entry {
-		return spool.Entry{Task: spool.Task{ID: id, Recipe: recipeName, Session: session}}
-	}
-	entries := []spool.Entry{ // newest first
-		entry("recipe-triage-3", "triage", ""),
-		entry("fix-2", "", ""),
-		entry("recipe-plan-2", "plan", "recipe-plan-1"),
-		entry("recipe-plan-1", "plan", ""),
-	}
-	// Each task's recipe, as the task keeps it (taskRecipe): here, the
-	// built-in of its name.
-	builtin := func(e spool.Entry) (*recipe.Recipe, error) {
-		_, r, err := recipe.Builtin(e.Recipe)
-		return r, err
-	}
-	if e, err := revisedTask(entries, "", "plan", builtin); err != nil || e.ID != "recipe-plan-2" {
-		t.Errorf("newest = %s, %v; want recipe-plan-2", e.ID, err)
-	}
-	if e, err := revisedTask(entries, "recipe-plan-1", "plan", builtin); err != nil || e.ID != "recipe-plan-1" {
-		t.Errorf("named = %s, %v", e.ID, err)
-	}
-	if _, err := revisedTask(entries, "fix-2", "plan", builtin); err == nil {
-		t.Error("revised a task that ran no recipe")
-	}
-	if _, err := revisedTask(entries, "", "nope", builtin); err == nil {
-		t.Error("found a task for a revise no recipe has")
-	}
-	// A task's own recipe decides, not the binary's: one that kept a
-	// recipe named triage with a plan revise is the one revised.
-	_, mine, err := recipe.Builtin("plan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mine.Name = "triage"
-	kept := func(e spool.Entry) (*recipe.Recipe, error) {
-		if e.Recipe == "triage" {
-			return mine, nil
-		}
-		return builtin(e)
-	}
-	if e, err := revisedTask(entries, "", "plan", kept); err != nil || e.ID != "recipe-triage-3" {
-		t.Errorf("with the task's own recipe = %s, %v; want the newest task whose recipe has the revise", e.ID, err)
 	}
 }
 
@@ -309,7 +249,7 @@ func TestRecipeExecRefusesACloneRecipeWithATokenInItsEnvironment(t *testing.T) {
 	}
 }
 
-func TestRecordedRunCarriesRevises(t *testing.T) {
+func TestRecordedRun(t *testing.T) {
 	_, rec, err := recipe.Builtin("research")
 	if err != nil {
 		t.Fatal(err)
@@ -320,20 +260,6 @@ func TestRecordedRunCarriesRevises(t *testing.T) {
 		run.Recipe != "research" || run.Kind != "Notes" || run.State != "Running" || run.EndedAt != nil {
 		t.Errorf("run = %+v", run)
 	}
-	if len(run.Revises) != 1 || run.Revises[0].ID != "notes" || run.Revises[0].Label != "Save notes" || run.Revises[0].Inputs != nil {
-		t.Errorf("revises = %+v", run.Revises)
-	}
-
-	// A revise's inputs are recorded with it: fix's iterate asks for an
-	// instruction.
-	_, rec, err = recipe.Builtin("fix")
-	if err != nil {
-		t.Fatal(err)
-	}
-	run = recordedRun(spool.Task{ID: "t2"}, rec, started)
-	if len(run.Revises) != 1 || run.Revises[0].ID != "iterate" || !slices.Equal(run.Revises[0].Inputs, []string{"instruction"}) || run.Kind != "Change" {
-		t.Errorf("fix run = %+v", run)
-	}
 
 	// A run in a session records the recipe it ran, and the conversation
 	// it continued.
@@ -342,7 +268,7 @@ func TestRecordedRunCarriesRevises(t *testing.T) {
 		t.Fatal(err)
 	}
 	run = recordedRun(spool.Task{ID: "t3", Session: "t1"}, rec, started)
-	if run.Recipe != "care-ci" || run.Session != "t1" || run.Revises != nil {
+	if run.Recipe != "care-ci" || run.Session != "t1" {
 		t.Errorf("care-ci run = %+v", run)
 	}
 }
@@ -413,7 +339,7 @@ func TestCheckApplicable(t *testing.T) {
 }
 
 // recipe list describes the built-ins as a board reads them: where each
-// runs, its result, and its revises with their inputs.
+// runs and its result.
 func TestBuiltinRecipeInfos(t *testing.T) {
 	infos, err := builtinRecipeInfos()
 	if err != nil {
@@ -437,15 +363,11 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	if fix.Label != "Fix" || fix.Kind != "Change" {
 		t.Errorf("fix = %+v", fix)
 	}
-	// fix iterates; looking after the PR is care's.
-	if len(fix.Revises) != 1 || fix.Revises[0].ID != "iterate" || !slices.Equal(fix.Revises[0].Inputs, []string{"instruction"}) {
-		t.Errorf("fix revises = %+v, want iterate alone, asking for instruction", fix.Revises)
-	}
-	// care's jobs are recipes of session care, each a Change, none with
-	// revises: the others are its follow-ups.
+	// care's jobs are recipes of session care, each a Change: the others
+	// are its follow-ups.
 	for name, label := range map[string]string{"care": "Care", "care-comments": "Address comments", "care-ci": "Fix CI", "care-rebase": "Rebase", "care-iterate": "Iterate"} {
-		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != "care" || got.Revises != nil || !slices.Equal(got.On, []string{"my-pr"}) {
-			t.Errorf("%s = %+v, want %q, a Change in session care with no revises", name, got, label)
+		if got := byName[name]; got.Label != label || got.Kind != "Change" || got.Session != "care" || !slices.Equal(got.On, []string{"my-pr"}) {
+			t.Errorf("%s = %+v, want %q, a Change in session care", name, got, label)
 		}
 	}
 	if byName["fix"].Session != "" {
@@ -459,9 +381,10 @@ func TestBuiltinRecipeInfos(t *testing.T) {
 	if byName["review"].Credentials != "clone" || fix.Credentials != "" {
 		t.Errorf("credentials: review %q, fix %q; want clone and none", byName["review"].Credentials, fix.Credentials)
 	}
+	// Changing a fix once its PR is open is care-iterate's.
 	for _, in := range fix.Inputs {
-		if in.Name == "instruction" && !in.Revise {
-			t.Errorf("fix's instruction input is not marked revise: %+v", in)
+		if in.Name == "instruction" {
+			t.Errorf("fix takes an instruction: %+v", in)
 		}
 	}
 }
@@ -608,7 +531,7 @@ func TestResolveRepoRecipe(t *testing.T) {
 	for name, want := range map[string]string{
 		"misnamed": "not misnamed as its file is",
 		"own":      "cannot declare a sandbox",
-		"revised":  "cannot declare revise",
+		"revised":  "field revise not found",
 		"caring":   "built-in group's",
 		"missing":  "has no .agents/recipes/missing.yaml",
 		"Bad_Name": "is not a recipe name",

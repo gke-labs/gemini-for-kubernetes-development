@@ -16,7 +16,7 @@ import (
 
 // Change is a Change document's spec: commits a fix pushed to a branch of
 // the member's fork, and the PR they are for. The agent writes the title,
-// body and, for a revise, replies and report; Fork, Branch and Base are
+// body and, on a PR (care's), replies and report; Fork, Branch and Base are
 // the push step's (SetPushed), never the agent's.
 type Change struct {
 	// Fork is the repository the branch is on, owner/name: the member's
@@ -101,7 +101,8 @@ func (d *Document) changeSpec() (*Change, error) {
 }
 
 // KeepTitle gives a Change the title and body the PR had, each where the
-// agent wrote none: a revise's agent writes them only to change them.
+// agent wrote none: an agent on a PR (care's) writes them only to change
+// them.
 func (d *Document) KeepTitle(title, body string) error {
 	c, err := d.changeSpec()
 	if err != nil {
@@ -210,7 +211,7 @@ func parseChange(raw string) (any, error) {
 		}
 	}
 	c.Rerun = reruns
-	// A revise's may have no title: it keeps the PR's (KeepTitle), and
+	// One on a PR may have no title: it keeps the PR's (KeepTitle), and
 	// ChangeSpec refuses a Change that still has none.
 	return c, nil
 }

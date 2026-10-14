@@ -40,8 +40,8 @@ const (
 	TaskFile   = "task.json"
 	RecipeFile = "recipe.yaml"
 	// RecipeSourceFile is the recipe as the caller loaded it, factory's
-	// fields included (RecipeFile has them stripped): what a revise,
-	// a resume or an apply of the task reads it from, whether it was a
+	// fields included (RecipeFile has them stripped): what a resume
+	// or an apply of the task reads it from, whether it was a
 	// built-in, a file or a repository's.
 	RecipeSourceFile = "recipe.source.yaml"
 	InputsFile       = "inputs.json"
@@ -62,11 +62,8 @@ type Task struct {
 	// by later; factory does not interpret it.
 	RunName string `json:"run_name,omitempty"`
 	Recipe  string `json:"recipe"`
-	// Revise is the recipe's part the task runs: "" for start, else the
-	// id of one of its revises.
-	Revise string `json:"revise,omitempty"`
-	// Session is the task whose agent session a revise continues: the
-	// task that started the conversation, never another revise.
+	// Session is the task whose agent session the task continues (a
+	// recipe in a session): the task that started the conversation.
 	Session string `json:"session,omitempty"`
 	// TaskType is the recipe's task-type, when it is its sandbox's main
 	// task; unset, the task's kind is recipe-<Recipe>.

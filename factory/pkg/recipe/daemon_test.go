@@ -92,7 +92,7 @@ func TestDaemonSessionAsksTurnByTurnAsTheTask(t *testing.T) {
 	}
 }
 
-func TestARevisePromptsTheSessionItRevises(t *testing.T) {
+func TestARunPromptsTheSessionItContinues(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 required")
 	}
@@ -110,9 +110,9 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 	}
 	session := filepath.Base(taskDir)
 	sessions := acpd.NewServer(filepath.Join(root, "acpd"), root)
-	// The daemon holds the started task's session for the revise: its
-	// token is the revise's.
-	sessions.SetTasks(oneTask{dir: taskDir, token: "revise-tok"})
+	// The daemon holds the started task's session for the run: its
+	// token is the run's.
+	sessions.SetTasks(oneTask{dir: taskDir, token: "run-tok"})
 	ts := httptest.NewServer(http.StripPrefix("/v1", sessions.Handler()))
 	t.Cleanup(func() {
 		ts.Close()
@@ -129,9 +129,9 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}
 
-	// Nobody has it open: the revise starts it, and ends it. Nothing asked
-	// in it before (the first revise), so there is no conversation to load: it is fresh.
-	s, err := OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root, nil)
+	// Nobody has it open: the run starts it, and ends it. Nothing asked
+	// in it before, so there is no conversation to load: it is fresh.
+	s, err := OpenDaemonSession(ctx, base, "run-tok", session, "recipe-fake", "", "k", root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,16 +142,16 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 		t.Errorf("ask = %q, %v", got, err)
 	}
 	if err := s.Close(); err != nil || live() {
-		t.Errorf("a session the revise started outlived it: %v", err)
+		t.Errorf("a session the run started outlived it: %v", err)
 	}
 
-	// A member has it open: the revise uses it and leaves it open.
-	member, err := StartDaemonSession(ctx, base, "revise-tok", "recipe-fake", "", "k", root, taskDir, nil)
+	// A member has it open: the run uses it and leaves it open.
+	member, err := StartDaemonSession(ctx, base, "run-tok", "recipe-fake", "", "k", root, taskDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = member.Close() })
-	s, err = OpenDaemonSession(ctx, base, "revise-tok", session, "recipe-fake", "", "k", root, nil)
+	s, err = OpenDaemonSession(ctx, base, "run-tok", session, "recipe-fake", "", "k", root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +162,11 @@ func TestARevisePromptsTheSessionItRevises(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil || !live() {
-		t.Errorf("the revise closed the member's session: %v", err)
+		t.Errorf("the run closed the member's session: %v", err)
 	}
 }
 
-func TestARevisePromptsNothingIntoABusySession(t *testing.T) {
+func TestARunPromptsNothingIntoABusySession(t *testing.T) {
 	var prompted bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -182,7 +182,7 @@ func TestARevisePromptsNothingIntoABusySession(t *testing.T) {
 		t.Errorf("err = %v, want busy", err)
 	}
 	if prompted {
-		t.Error("the revise sent something to a busy session")
+		t.Error("the run sent something to a busy session")
 	}
 }
 

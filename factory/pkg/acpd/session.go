@@ -477,8 +477,9 @@ func (s *Session) handshake(ctx context.Context, engine Engine, cfg SessionConfi
 // so they are dropped rather than written twice. Not only while the load
 // is in flight: gemini answers session/load first and replays after, so
 // the replay runs until the session's first prompt (see Prompt). Every
-// revise and every Continue session loads the conversation, and each
-// load used to write the whole of it into the transcript again.
+// run continuing a session and every Continue session loads the
+// conversation, and each load used to write the whole of it into the
+// transcript again.
 func (s *Session) load(ctx context.Context, init *acp.InitializeResponse, cfg SessionConfig) (*acp.SessionModeState, bool) {
 	rec, ok := ReadRecord(cfg.Dir)
 	if !ok || rec.Engine != cfg.Engine || rec.CWD != cfg.CWD {

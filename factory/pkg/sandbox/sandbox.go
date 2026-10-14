@@ -593,7 +593,7 @@ type RecordedRun struct {
 	Name string `json:"name,omitempty"`
 	Task string `json:"task"`
 	// Session is the task whose conversation the run continues, for a
-	// revise; unset, the run's task has its own.
+	// recipe in a session; unset, the run's task has its own.
 	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	// Recipe is the recipe the run ran, and Kind its task output's kind,
@@ -606,20 +606,6 @@ type RecordedRun struct {
 	// stopped running.
 	State   string     `json:"state,omitempty"`
 	EndedAt *time.Time `json:"endedAt,omitempty"`
-	// Revises are the revises the run's recipe offers, which can run into
-	// its session: what a session view offers as buttons from the start,
-	// before any task output names them (research's notes have none
-	// until the first Save notes).
-	Revises []RecordedRevise `json:"revises,omitempty"`
-}
-
-// RecordedRevise is one of a recipe's revises, as a button: its id and
-// the label it is shown under.
-type RecordedRevise struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
-	// Inputs are the inputs it asks for.
-	Inputs []string `json:"inputs,omitempty"`
 }
 
 // SettleRecordedRun records the end of task, the run recorded for
