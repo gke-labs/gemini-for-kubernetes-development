@@ -264,6 +264,12 @@ type Step struct {
 	// Capture writes an ask's reply to this file in the task directory,
 	// where the CLI reads it back, as runEngine's output file is today.
 	Capture string `yaml:"capture,omitempty"`
+	// Expects is the file in the task directory an ask tells the agent to
+	// write ({{ output "<file>" }}): after the ask it must be there and
+	// not empty. An agent that forgot is asked once more, then the step
+	// fails, before a later step (a push) acts on a result that is not
+	// there.
+	Expects string `yaml:"expects,omitempty"`
 	// ContinueOnError lets a failed run step be judged by a later one
 	// instead of ending the recipe.
 	ContinueOnError bool `yaml:"continue-on-error,omitempty"`
@@ -516,6 +522,17 @@ func validateSteps(steps []Step) error {
 			}
 			if !safeFileName(s.Capture) {
 				return fmt.Errorf("step %d: capture %q must be a plain file name", i+1, s.Capture)
+			}
+		}
+		if s.Expects != "" {
+			if s.Ask == "" {
+				return fmt.Errorf("step %d: expects is only for ask steps", i+1)
+			}
+			if !safeFileName(s.Expects) {
+				return fmt.Errorf("step %d: expects %q must be a plain file name", i+1, s.Expects)
+			}
+			if s.Capture != "" {
+				return fmt.Errorf("step %d: an ask either captures its reply or expects a file the agent writes, not both", i+1)
 			}
 		}
 		if s.ContinueOnError && s.Run == "" {

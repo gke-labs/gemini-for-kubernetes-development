@@ -104,6 +104,7 @@ start:
         conversation you are asked to change the spec or to save it, write
         that file again, whole, in these sections. Then say in a line or two
         that it is written.
+      expects: fanout-output.md
 
 outputs:
   - fanout-output.md

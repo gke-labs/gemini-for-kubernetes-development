@@ -52,6 +52,7 @@ start:
         conversation you are asked to change the summary or to save it, write
         that file again, whole, as markdown. Then say in a line or two that it
         is written.
+      expects: summary-output.md
 
 outputs:
   - summary-output.md

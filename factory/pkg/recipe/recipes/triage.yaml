@@ -69,6 +69,7 @@ start:
         conversation you are asked to change the triage or to save it, write
         that file again, whole, in this structure. Then say in a line or two
         that it is written.
+      expects: triage-output.yaml
 
 outputs:
   - triage-output.yaml

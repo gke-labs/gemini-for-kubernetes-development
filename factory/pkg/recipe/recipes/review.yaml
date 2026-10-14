@@ -104,6 +104,7 @@ start:
         that file again, whole, in this structure and by these rules: keep
         what was not disputed, change what was, drop what was agreed to be
         wrong. Then say in a line or two that it is written.
+      expects: review.yaml
 
 outputs:
   - review.yaml

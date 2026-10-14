@@ -163,6 +163,9 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			if err == nil && step.Capture != "" {
 				err = os.WriteFile(filepath.Join(r.TaskDir, step.Capture), []byte(res.Reply), 0o644)
 			}
+			if err == nil && step.Expects != "" {
+				err = r.expect(ctx, session, label, step.Expects)
+			}
 		}
 
 		if step.ID != "" {
@@ -175,6 +178,34 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 	}
 	fmt.Fprintf(r.Log, "::done %s\n", rec.Name)
 	return nil
+}
+
+// expect checks that the agent wrote the file an ask told it to, asking
+// once more if it did not.
+func (r *Runner) expect(ctx context.Context, session Session, label, name string) error {
+	path := filepath.Join(r.TaskDir, name)
+	if nonEmptyFile(path) {
+		return nil
+	}
+	fmt.Fprintf(r.Log, "::warning %s: the agent wrote no %s; asking again\n", label, name)
+	_, err := session.Ask(ctx, fmt.Sprintf("You have not written %s. Write it now, whole, as asked, then say in a line that it is written.", path))
+	if u, ok := session.(UsageSession); ok {
+		if uerr := AddUsage(r.TaskDir, u.TurnUsage()); uerr != nil {
+			fmt.Fprintf(r.Log, "::warning recording %s's token usage: %v\n", label, uerr)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if !nonEmptyFile(path) {
+		return fmt.Errorf("the agent wrote no %s", name)
+	}
+	return nil
+}
+
+func nonEmptyFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 // RenderAgentEnv is AgentEnv for a run with inputs: each value

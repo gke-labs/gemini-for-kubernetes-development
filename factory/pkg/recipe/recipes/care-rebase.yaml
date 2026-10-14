@@ -135,6 +135,7 @@ start:
         Write the whole file with your file tool (if it refuses the path, with
         the shell), replacing anything in it, then say in a line that it is
         written.
+      expects: change.yaml
     # The rebase happened: the default branch the ask named is under
     # HEAD. push refuses one left half done.
     - run: |

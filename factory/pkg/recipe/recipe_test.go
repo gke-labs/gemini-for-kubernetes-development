@@ -157,10 +157,15 @@ func (f *fakeExec) Run(_ context.Context, script string, _ map[string]string, lo
 type fakeSession struct {
 	prompts []string
 	closed  bool
+	// onAsk, when set, is what the agent does in a turn: write a file.
+	onAsk func(n int, prompt string)
 }
 
 func (s *fakeSession) Ask(_ context.Context, prompt string) (string, error) {
 	s.prompts = append(s.prompts, prompt)
+	if s.onAsk != nil {
+		s.onAsk(len(s.prompts), prompt)
+	}
 	return fmt.Sprintf("reply %d", len(s.prompts)), nil
 }
 
@@ -245,6 +250,59 @@ func TestRunnerOutputIsTheTaskDirPath(t *testing.T) {
 	}
 	if err := bad.CheckRender(nil); err == nil {
 		t.Error("output ../x rendered, want a plain file name required")
+	}
+}
+
+// An ask that expects a file goes on once the agent wrote it; an agent
+// that forgot is asked once more, and the step fails if it still has not,
+// before a later step acts on the result.
+func TestRunnerExpectsTheFileTheAgentWrites(t *testing.T) {
+	rec, err := Parse([]byte(`
+name: demo
+start:
+  steps:
+    - ask: 'write it to {{ output "change.yaml" }}'
+      expects: change.yaml
+    - run: push
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		writeAt int // the turn the agent writes the file in; 0: never
+		turns   int
+		fails   bool
+	}{
+		{"written", 1, 1, false},
+		{"written when reminded", 2, 2, false},
+		{"never written", 0, 2, true},
+	} {
+		r, ex, sess, _ := newTestRunner(t)
+		sess.onAsk = func(n int, _ string) {
+			if n == tc.writeAt {
+				_ = os.WriteFile(filepath.Join(r.TaskDir, "change.yaml"), []byte("change: {}\n"), 0o644)
+			}
+		}
+		err := r.Run(context.Background(), rec)
+		if (err != nil) != tc.fails {
+			t.Errorf("%s: Run = %v, want failure %v", tc.name, err, tc.fails)
+		}
+		if len(sess.prompts) != tc.turns {
+			t.Errorf("%s: %d turns, want %d", tc.name, len(sess.prompts), tc.turns)
+		}
+		if pushed := len(ex.ran) > 0; pushed == tc.fails {
+			t.Errorf("%s: push ran %v, want %v", tc.name, pushed, !tc.fails)
+		}
+	}
+	for _, bad := range []string{
+		"name: a\nstart: {steps: [{run: x, expects: f}]}",
+		"name: a\nstart: {steps: [{ask: x, expects: ../f}]}",
+		"name: a\nstart: {steps: [{ask: x, expects: f, capture: f}]}",
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
 
@@ -1856,6 +1914,9 @@ func TestSandboxDeclValidation(t *testing.T) {
 // Every built-in's result is a file its agent writes ({{ output "<from>" }}
 // in an ask), or a run step does (adopt's Change): none is captured from
 // a reply, so a later turn of the conversation can write it again.
+// outputNameRE finds the files an ask tells the agent to write.
+var outputNameRE = regexp.MustCompile(`\{\{ output "([^"]+)" \}\}`)
+
 func TestBuiltinResultsAreWrittenFiles(t *testing.T) {
 	for _, name := range BuiltinNames() {
 		_, rec, err := Builtin(name)
@@ -1865,6 +1926,12 @@ func TestBuiltinResultsAreWrittenFiles(t *testing.T) {
 		for i, s := range rec.Start.Steps {
 			if s.Capture != "" {
 				t.Errorf("%s: step %s captures %s", name, s.Label(i), s.Capture)
+			}
+			// An ask that names a file the agent writes expects it.
+			for _, m := range outputNameRE.FindAllStringSubmatch(s.Ask, -1) {
+				if s.Expects != m[1] && !(rec.TaskOutput != nil && rec.TaskOutput.Optional && rec.TaskOutput.From == m[1]) {
+					t.Errorf("%s: step %s names %s but does not expect it", name, s.Label(i), m[1])
+				}
 			}
 		}
 		if rec.TaskOutput == nil {

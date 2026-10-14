@@ -110,6 +110,7 @@ start:
         conversation you are asked to change the plan or to save it, write
         that file again, whole, in the same sections. Then say in a line or
         two that it is written and what it proposes.
+      expects: plan-output.md
 
     # The next plan run revises the plan it finds there: a link, so a plan
     # rewritten later in the conversation is the one it finds.

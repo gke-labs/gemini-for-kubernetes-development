@@ -180,6 +180,7 @@ start:
         Write the whole file with your file tool (if it refuses the path, with
         the shell), replacing anything in it, then say in a line that it is
         written.
+      expects: change.yaml
     # A rebase onto the default branch moved the base.
     - run: |
         if git merge-base --is-ancestor "$(cat "$TASK_DIR/upstream")" HEAD; then
