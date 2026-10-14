@@ -170,6 +170,9 @@ type RowRecipe struct {
 	// Inputs are the inputs a launch must be given: required, with no
 	// default.
 	Inputs []string `json:"inputs,omitempty"`
+	// Instructions is the input that takes instructions, if the recipe
+	// has one: the row offers the recipe with instructions too.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // RunSession is one recipe run on an item: its recipe, the session its

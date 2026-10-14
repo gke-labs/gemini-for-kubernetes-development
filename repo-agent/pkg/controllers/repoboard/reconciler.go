@@ -181,6 +181,9 @@ type reviewPlan struct {
 	// the record, so this survives lost breadcrumbs), while a member's
 	// click may deliberately review again.
 	auto bool
+	// inputs are the click's recipe inputs: its instructions, for a
+	// review with instructions.
+	inputs map[string]string
 }
 
 // planRequest is one plan (or plan refinement) to ensure: PLAN -> human
@@ -193,6 +196,8 @@ type planRequest struct {
 	// since is when the click was made, zero for none: a click after the
 	// plan was drafted is Plan again.
 	since time.Time
+	// inputs are the click's recipe inputs: its instructions.
+	inputs map[string]string
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -359,7 +364,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if !clicked || member == "" {
 			member = board.Namespace
 		}
-		r.ensureTriage(ctx, work, issue, member, triageRunName(board.Name, issue.GetNumber(), click), clicked, click.since)
+		r.ensureTriage(ctx, work, issue, member, triageRunName(board.Name, issue.GetNumber(), click), clicked, click.since, click.inputs)
 	}
 	for _, req := range mail.plans {
 		r.ensurePlan(ctx, work, req)
@@ -966,6 +971,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, "review", plan.executor, name, fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr), token, runName)
 	opts.Timeout, opts.Apply = 45*time.Minute, "post-review"
+	opts.Inputs = plan.inputs
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
 	}

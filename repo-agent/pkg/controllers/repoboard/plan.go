@@ -19,6 +19,7 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -113,8 +114,12 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, "plan", req.member, name, fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, req.issue), token, runName)
+	opts.Inputs = maps.Clone(req.inputs)
 	if feedback != "" {
-		opts.Inputs = map[string]string{"feedback": feedback}
+		if opts.Inputs == nil {
+			opts.Inputs = map[string]string{}
+		}
+		opts.Inputs["feedback"] = feedback
 	}
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe plan", "issue", req.issue, "board", work.board.Name, "executor", req.member, "refine", needRefine)

@@ -293,6 +293,22 @@ func TestRowRecipesFollowTheirUI(t *testing.T) {
 	}
 }
 
+// A recipe that takes instructions says which input takes them, for the
+// row's "<recipe> with instructions…".
+func TestRowRecipesNameTheirInstructions(t *testing.T) {
+	catalog := []boardv1alpha1.BoardRecipe{
+		{Name: "review", Label: "Review", On: []string{"pr"}, Inputs: []boardv1alpha1.BoardRecipeInput{{Name: "instructions", Type: "instructions"}}},
+		{Name: "summarize", Label: "Summarize", On: []string{"pr"}, Inputs: []boardv1alpha1.BoardRecipeInput{{Name: "length", Default: "short"}}},
+	}
+	got := map[string]string{}
+	for _, rec := range rowRecipes(catalog, "pr", false, nil) {
+		got[rec.Name] = rec.Instructions
+	}
+	if got["review"] != "instructions" || got["summarize"] != "" {
+		t.Errorf("instructions inputs = %v, want review's alone", got)
+	}
+}
+
 // Auto on a PR of the member's files their watch Request; off deletes it.
 func TestAutoTogglesTheWatchRequest(t *testing.T) {
 	_, r, dyn := boardTestServer(t, nil, boardCR())
