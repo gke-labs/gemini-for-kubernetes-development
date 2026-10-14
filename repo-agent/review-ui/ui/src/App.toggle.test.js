@@ -69,7 +69,8 @@ describe('the Work | Sessions toggle', () => {
 
         await act(async () => { toggle('Work').click(); });
         await flush();
-        expect(window.location.hash).toBe('');
+        // Back on Work, the URL names its board again.
+        expect(window.location.hash).toBe('#/boards/g4k');
         // Still mounted, now hidden.
         expect(container.querySelector('textarea[aria-label="Start a session"]').closest('[hidden]')).not.toBeNull();
         expect(container.querySelector('button[aria-label="Board"]').closest('[hidden]')).toBeNull();
@@ -94,6 +95,70 @@ describe('the Work | Sessions toggle', () => {
         expect(container.textContent).not.toContain('Back to Dashboard');
         // Work stays mounted behind it.
         expect(container.querySelector('button[aria-label="Board"]').closest('[hidden]')).not.toBeNull();
+    });
+
+    test('the URL keeps the board and the overseer, across reloads and toggles', async () => {
+        global.admin = true;
+        const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+        const overseers = [
+            { metadata: { name: 'kcc' }, spec: { repoURL: 'https://github.com/G/k8s-config-connector' } },
+            { metadata: { name: 'g4k-ov', annotations: { 'overseer.gemini.google.com/upgrade-mode': 'true' } }, spec: { repoURL: 'https://github.com/gke-labs/g4k' } },
+        ];
+        const base = global.fetch.getMockImplementation();
+        global.fetch.mockImplementation((url) => {
+            if (url === '/api/boards') return json([{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k' }, { name: 'kcc', repoURL: 'https://github.com/G/k8s-config-connector' }]);
+            if (url === '/api/overseers') return json(overseers);
+            return base(url);
+        });
+        localStorage.removeItem('overseer.active');
+        // A link to a board opens Work on it.
+        window.history.replaceState(null, '', '/#/boards/kcc');
+        await render();
+        expect(container.querySelector('button[aria-label="Board"]').textContent).toContain('kcc');
+        expect(window.location.hash).toBe('#/boards/kcc');
+
+        // Overseer opens on the first, the URL naming it; picking another
+        // moves the URL and is remembered.
+        await act(async () => { toggle('Overseer').click(); });
+        await flush();
+        expect(window.location.hash).toBe('#/overseers/kcc');
+        const picker = () => container.querySelector('button[aria-label="Overseer"]');
+        await act(async () => { picker().click(); });
+        const opts = Array.from(container.querySelectorAll('[role="option"]')).map(o => o.textContent);
+        expect(opts).toEqual(['✓kccG/k8s-config-connector', 'g4k-ovgke-labs/g4kUPGRADING']);
+        // Picking the one shown changes nothing: no deselect.
+        await act(async () => { container.querySelectorAll('[role="option"]')[0].click(); });
+        expect(picker().textContent).toContain('kcc');
+        await act(async () => { picker().click(); });
+        await act(async () => { container.querySelectorAll('[role="option"]')[1].click(); });
+        await flush();
+        expect(window.location.hash).toBe('#/overseers/g4k-ov');
+        expect(localStorage.getItem('overseer.active')).toBe('g4k-ov');
+        expect(container.textContent).toContain('🚧 UPGRADING');
+
+        // Toggled away and back, the overseer page reopens on it.
+        await act(async () => { toggle('Work').click(); });
+        await flush();
+        expect(window.location.hash).toBe('#/boards/kcc');
+        await act(async () => { toggle('Overseer').click(); });
+        await flush();
+        expect(picker().textContent).toContain('g4k-ov');
+        expect(window.location.hash).toBe('#/overseers/g4k-ov');
+    });
+
+    test('a link to an overseer opens the Overseer view on it', async () => {
+        global.admin = true;
+        const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+        const base = global.fetch.getMockImplementation();
+        global.fetch.mockImplementation((url) => (url === '/api/overseers'
+            ? json([{ metadata: { name: 'a' }, spec: { repoURL: 'https://github.com/o/a' } }, { metadata: { name: 'b' }, spec: { repoURL: 'https://github.com/o/b' } }])
+            : base(url)));
+        localStorage.setItem('overseer.active', 'a');
+        window.history.replaceState(null, '', '/#/overseers/b');
+        await render();
+        expect(toggle('Overseer').getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('button[aria-label="Overseer"]').textContent).toContain('b');
+        expect(window.location.hash).toBe('#/overseers/b');
     });
 
     test('the menu no longer lists Work or Sessions', async () => {

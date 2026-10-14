@@ -89,6 +89,12 @@ function latestRuns(item) {
   return (item.sessions || []).filter(s => !seen.has(runGroup(s)) && seen.add(runGroup(s)));
 }
 
+// boardRoute reads #/boards/<name>: the board Work is on.
+export function boardRoute(hash = window.location.hash) {
+  const m = hash.match(/^#\/boards\/([A-Za-z0-9._-]+)$/);
+  return m ? { name: m[1] } : null;
+}
+
 // fetchWorkFeed reads a board's feed, failing with the API's reason (a
 // rejected GitHub token says to update it in Settings) rather than a bare
 // status.
@@ -1074,8 +1080,9 @@ function Work({ onBack, namespace, active = true }) {
         // Identity-stable: replacing boards with an equal array re-arms
         // the poll effect and double-fetches every tick.
         setBoards(prev => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
-        // Work opens on the first board; All boards is a pick away.
-        setActiveBoard(prev => prev || (data[0] ? data[0].name : ''));
+        // Work opens on the board the URL names, else the first.
+        const wanted = (boardRoute() || {}).name;
+        setActiveBoard(prev => prev || (data.some(b => b.name === wanted) ? wanted : (data[0] ? data[0].name : '')));
       })
       .catch(err => console.error('Failed to fetch boards', err));
   }, []);
@@ -1198,6 +1205,13 @@ function Work({ onBack, namespace, active = true }) {
       activity.forEach(e => document.removeEventListener(e, onActivity));
     };
   }, [fetchWork, fetchBoards, activeBoard]);
+
+  // The URL says which board is shown, while Work is the view: a reload
+  // or a link opens on it, and toggling back from another view puts it
+  // back.
+  useEffect(() => {
+    if (active && activeBoard) window.history.replaceState(null, '', `#/boards/${activeBoard}`);
+  }, [active, activeBoard]);
 
   // Shown again after being hidden behind Sessions: refresh now rather
   // than at the next tick, as returning to the tab does.

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Settings from './Settings';
-import Overseer from './Overseer';
+import Overseer, { overseerRoute } from './Overseer';
 import TokenUsage from './TokenUsage';
 import Work from './Work';
 import Sessions, { sessionsRoute } from './Sessions';
@@ -76,8 +76,11 @@ function App() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [view, setViewState] = useState(sessionsRoute() ? 'sessions' : 'work'); // 'work', 'sessions', 'overseer', 'usage', 'settings'
-  // Only Sessions keeps its place in the URL; leaving it drops the hash.
+  // #/sessions… opens on Sessions, #/overseers/<name> on Overseer, and
+  // anything else (#/boards/<name> included) on Work.
+  const [view, setViewState] = useState(sessionsRoute() ? 'sessions' : overseerRoute() ? 'overseer' : 'work'); // 'work', 'sessions', 'overseer', 'usage', 'settings'
+  // Switching views drops the hash; the view switched to puts its own
+  // place back (#/boards/<name>, #/sessions/…, #/overseers/<name>).
   const setView = useCallback((v) => {
     setViewState(v);
     const hash = v === 'sessions' ? '#/sessions' : '';

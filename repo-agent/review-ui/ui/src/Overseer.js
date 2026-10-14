@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import OverseerWork from './OverseerWork';
+import BoardPicker from './BoardPicker';
 
 export const getTimestampDetails = (ts) => {
     if (!ts) return null;
@@ -63,10 +64,29 @@ export const formatTriggerReason = (reason) => {
     }
 };
 
+// overseerRoute reads #/overseers/<name>: the overseer the page is on.
+// (#/overseers/<name>/task-session/… is a popped-out session, App's.)
+export function overseerRoute(hash = window.location.hash) {
+    const m = hash.match(/^#\/overseers\/([A-Za-z0-9._-]+)$/);
+    return m ? { name: m[1] } : null;
+}
+
+// OVERSEER_KEY remembers the overseer last shown: the page unmounts when
+// another view is toggled to, and comes back to it.
+const OVERSEER_KEY = 'overseer.active';
+
+const repoPath = (url) => (url || '').replace(/\.git$/, '').replace(/^https?:\/\/github\.com\//, '');
+
 const Overseer = ({ namespace: userNamespace }) => {
     const [overseers, setOverseers] = useState([]);
     const [error, setError] = useState(null);
     const [activeOverseer, setActiveOverseer] = useState(null);
+    // The overseer to open on: the URL's, else the one last shown.
+    const wantedRef = useRef((() => {
+        const route = overseerRoute();
+        if (route) return route.name;
+        try { return localStorage.getItem(OVERSEER_KEY) || ''; } catch (e) { return ''; }
+    })());
 
     const [logs, setLogs] = useState('');
     const [showOverseerLogs, setShowOverseerLogs] = useState(false);
@@ -193,7 +213,7 @@ const Overseer = ({ namespace: userNamespace }) => {
                 });
                 setActiveOverseer(prev => {
                     if (data && data.length > 0 && !prev) {
-                        return data[0];
+                        return data.find(o => o.metadata?.name === wantedRef.current) || data[0];
                     } else if (prev) {
                         const updated = (data || []).find(o => o.metadata?.name === prev.metadata?.name);
                         if (!updated) return prev;
@@ -241,18 +261,19 @@ const Overseer = ({ namespace: userNamespace }) => {
     }, [showOverseerLogs, fetchLogs]);
 
     const handleOverseerClick = (ov) => {
-        if (activeOverseer?.metadata.name === ov.metadata.name) {
-            setActiveOverseer(null);
-            setShowOverseerLogs(false);
-            setShowStatus(false);
-            setShowTaskQueue(false);
-        } else {
-            setActiveOverseer(ov);
-            setShowOverseerLogs(false);
-            setShowStatus(false);
-            setShowTaskQueue(false);
-        }
+        setActiveOverseer(ov);
+        setShowOverseerLogs(false);
+        setShowStatus(false);
+        setShowTaskQueue(false);
     };
+
+    // The URL and the browser say which overseer is shown: a reload, a
+    // link, or a toggle back from another view opens on it.
+    useEffect(() => {
+        if (!activeOverseerName) return;
+        window.history.replaceState(null, '', `#/overseers/${activeOverseerName}`);
+        try { localStorage.setItem(OVERSEER_KEY, activeOverseerName); } catch (e) { /* private mode */ }
+    }, [activeOverseerName]);
 
     const isOverseerInUpgradeMode = (overseer) => {
         if (!overseer) return false;
@@ -325,65 +346,31 @@ const Overseer = ({ namespace: userNamespace }) => {
                     </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px', flexWrap: 'wrap', gap: '15px' }}>
-                    <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                                📂 Overseer Repo:
-                            </span>
-                            {overseers.length > 1 ? (
-                                <select 
-                                    value={activeOverseer?.metadata.name || ''} 
-                                    onChange={(e) => {
-                                        const selected = overseers.find(o => o.metadata.name === e.target.value);
-                                        if (selected) handleOverseerClick(selected);
-                                    }}
-                                    style={{
-                                        padding: '6px 14px',
-                                        borderRadius: '6px',
-                                        border: '1px solid var(--border-color)',
-                                        backgroundColor: 'var(--bg-card)',
-                                        color: 'var(--text-primary)',
-                                        fontSize: '1.1rem',
-                                        fontWeight: 'bold'
-                                    }}
-                                >
-                                    {overseers.map(o => (
-                                        <option key={o.metadata.name} value={o.metadata.name}>
-                                            {o.metadata.name}{isOverseerInUpgradeMode(o) ? ' (UPGRADING)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            ) : (
-                                <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text-active)' }}>
-                                    {activeOverseer?.metadata.name || 'Loading...'}
-                                </span>
-                            )}
-                            {isOverseerInUpgradeMode(activeOverseer) && (
-                                <span style={{
-                                    padding: '4px 12px',
-                                    borderRadius: '16px',
-                                    fontSize: '0.78rem',
-                                    fontWeight: 'bold',
-                                    backgroundColor: '#fff3cd',
-                                    color: '#856404',
-                                    border: '1px solid #ffeeba',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px'
-                                }} title="Overseer is in upgrade mode and not accepting new tasks">
-                                    🚧 UPGRADING (DO NOT PROCESS)
-                                </span>
-                            )}
-                        </div>
-                        {activeOverseer && (
-                            <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                Repo: <a href={activeOverseer.spec?.repoURL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text-link)', fontWeight: '500' }}>{activeOverseer.spec?.repoURL}</a>
-                                {activeOverseer.spec?.pollInterval && ` • Poll: ${activeOverseer.spec?.pollInterval}`}
-                                {activeOverseer.spec?.robotAccount && ` • Bot: ${activeOverseer.spec?.robotAccount}`}
-                            </p>
-                        )}
-                    </div>
+                {/* One line, as Work's: the overseer picker, its repository's
+                    links, its bot and poll, and whether it is upgrading. */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '16px', fontSize: 'small', color: 'var(--text-secondary)' }}>
+                    {overseers.length > 0 ? (
+                        <BoardPicker label="Overseer" showRepo active={activeOverseerName}
+                            boards={overseers.map(o => ({ name: o.metadata.name, repoURL: o.spec?.repoURL, tag: isOverseerInUpgradeMode(o) ? 'UPGRADING' : '' }))}
+                            onPick={(name) => { const ov = overseers.find(o => o.metadata.name === name); if (ov) handleOverseerClick(ov); }} />
+                    ) : (
+                        <span>{error ? 'No overseers.' : 'Loading…'}</span>
+                    )}
+                    {activeOverseer && activeOverseer.spec?.repoURL && (
+                        <span>
+                            <a href={activeOverseer.spec.repoURL} target="_blank" rel="noopener noreferrer" title={activeOverseer.spec.repoURL}>GitHub</a>
+                            <span style={{ margin: '0 6px' }}>·</span>
+                            <a href={`https://gitdiagram.com/${repoPath(activeOverseer.spec.repoURL)}`} target="_blank" rel="noopener noreferrer" title="Architecture diagram (gitdiagram.com)">GitDiagram</a>
+                            <span style={{ margin: '0 6px' }}>·</span>
+                            <a href={`https://codewiki.google/github.com/${repoPath(activeOverseer.spec.repoURL)}`} target="_blank" rel="noopener noreferrer" title="Code wiki (codewiki.google)">CodeWiki</a>
+                        </span>
+                    )}
+                    {activeOverseer?.spec?.robotAccount && <span title="The bot account it works as">🤖 {activeOverseer.spec.robotAccount}</span>}
+                    {activeOverseer?.spec?.pollInterval && <span title="How often it polls the repository">⏱ {activeOverseer.spec.pollInterval}</span>}
+                    {isOverseerInUpgradeMode(activeOverseer) && (
+                        <span style={{ padding: '2px 10px', borderRadius: '12px', fontSize: 'x-small', fontWeight: 'bold', backgroundColor: '#fff3cd', color: '#856404', border: '1px solid #ffeeba' }}
+                            title="Overseer is in upgrade mode and not accepting new tasks">🚧 UPGRADING</span>
+                    )}
                 </div>
 
                 {/* Sub-Tab Navigation Bar */}
