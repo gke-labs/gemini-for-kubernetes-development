@@ -61,17 +61,17 @@ func TestParseInputArgs(t *testing.T) {
 }
 
 func TestLoadRecipe(t *testing.T) {
-	if _, r, err := loadRecipe("triage"); err != nil || r.Name != "triage" {
+	if _, r, err := resolveRecipe(context.Background(), "triage", nil); err != nil || r.Name != "triage" {
 		t.Errorf("built-in: %v, %v", r, err)
 	}
-	if _, _, err := loadRecipe("no-such-recipe"); err == nil {
+	if _, _, err := resolveRecipe(context.Background(), "no-such-recipe", nil); err == nil {
 		t.Error("unknown built-in loaded")
 	}
 	path := filepath.Join(t.TempDir(), "mine.yaml")
 	if err := os.WriteFile(path, []byte("name: mine\nstart: {steps: [{run: 'true'}]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, r, err := loadRecipe(path); err != nil || r.Name != "mine" {
+	if _, r, err := resolveRecipe(context.Background(), path, nil); err != nil || r.Name != "mine" {
 		t.Errorf("file: %v, %v", r, err)
 	}
 }
@@ -573,5 +573,51 @@ func TestTaskRecipe(t *testing.T) {
 	}
 	if _, r, err := taskRecipe(ctx, sb, entry("e", "")); err != nil || r != nil {
 		t.Errorf("no recipe: %+v, %v", r, err)
+	}
+}
+
+// A name that is not a built-in's is the target repository's
+// .agents/recipes/<name>.yaml; a built-in's name stays the built-in's,
+// and a repository recipe may not take one, be named otherwise than its
+// file, or declare a sandbox of its own.
+func TestResolveRepoRecipe(t *testing.T) {
+	files := map[string]string{
+		".agents/recipes/explain-pr.yaml": "name: explain-pr\non: [pr]\nstart: {steps: [{ask: explain}]}\n",
+		".agents/recipes/misnamed.yaml":   "name: other\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/fix.yaml":        "name: fix\nstart: {steps: [{run: evil}]}\n",
+		".agents/recipes/own.yaml":        "name: own\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}\n",
+		".agents/recipes/caring.yaml":     "name: caring\non: [my-pr]\nsession: care\nstart: {steps: [{ask: a}]}\n",
+		".agents/recipes/revised.yaml":    "name: revised\nstart: {steps: [{ask: a, capture: out.md}]}\noutputs: [out.md]\ntask-output: {kind: Summary, from: out.md}\nrevise: [{id: again, label: Again, steps: [{ask: b, capture: out.md}]}]\n",
+	}
+	var read []string
+	repo := func(_ context.Context, path string) ([]byte, error) {
+		read = append(read, path)
+		if s, ok := files[path]; ok {
+			return []byte(s), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	ctx := context.Background()
+	if data, r, err := resolveRecipe(ctx, "explain-pr", repo); err != nil || r.Name != "explain-pr" || !r.RunsOn(recipe.OnPR) || string(data) != files[".agents/recipes/explain-pr.yaml"] {
+		t.Errorf("repository recipe: %+v, %v", r, err)
+	}
+	read = nil
+	if _, r, err := resolveRecipe(ctx, "fix", repo); err != nil || len(r.Start.Steps) < 3 || len(read) != 0 {
+		t.Errorf("fix = %d steps, %v, read %v; want the built-in, the repository not asked", len(r.Start.Steps), err, read)
+	}
+	for name, want := range map[string]string{
+		"misnamed": "not misnamed as its file is",
+		"own":      "cannot declare a sandbox",
+		"revised":  "cannot declare revise",
+		"caring":   "built-in group's",
+		"missing":  "has no .agents/recipes/missing.yaml",
+		"Bad_Name": "is not a recipe name",
+	} {
+		if _, _, err := resolveRecipe(ctx, name, repo); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", name, err, want)
+		}
+	}
+	if _, err := parseRepoRecipe("fix", []byte(files[".agents/recipes/fix.yaml"])); err == nil || !strings.Contains(err.Error(), "built-in recipe's name") {
+		t.Errorf("a repository fix: %v", err)
 	}
 }

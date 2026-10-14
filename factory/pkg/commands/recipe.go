@@ -49,7 +49,7 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
 	cmd.AddCommand(newRecipeReviseCommand(ctx))
-	cmd.AddCommand(newRecipeListCommand())
+	cmd.AddCommand(newRecipeListCommand(ctx))
 	for _, name := range recipe.BuiltinNames() {
 		// run, exec, revise and list are taken; TestBuiltinRecipeCommands keeps
 		// them so.
@@ -217,8 +217,11 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 	var f recipeRunFlags
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run a recipe file against a GitHub issue or PR in a sandbox",
-		Example: `  # A recipe file, with an input it declares
+		Short: "Run a recipe file, a built-in recipe or one of the repository's against a GitHub issue, PR or repository",
+		Example: `  # One of the repository's recipes, .agents/recipes/explain-pr.yaml at its default branch
+  factory recipe run --recipe explain-pr --url https://github.com/owner/repo/pull/45
+
+  # A recipe file, with an input it declares
   factory recipe run --recipe ./explain-pr.yaml --url https://github.com/owner/repo/pull/45 --input focus="error handling"
 
   # A built-in recipe; the same as: factory recipe triage --url …
@@ -227,27 +230,10 @@ func newRecipeRunCommand(ctx context.Context) *cobra.Command {
 			return f.run(ctx, c, recipeArg, nil)
 		},
 	}
-	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A recipe file (a path, or a name ending in .yaml), or a built-in recipe's name")
+	cmd.Flags().StringVar(&recipeArg, "recipe", "", "A recipe file (a path, or a name ending in .yaml), a built-in recipe's name, or one of the target repository's (.agents/recipes/<name>.yaml at its default branch)")
 	f.add(cmd)
 	_ = cmd.MarkFlagRequired("recipe")
 	return cmd
-}
-
-// loadRecipe reads a built-in recipe by name, or a file when arg looks
-// like one.
-func loadRecipe(arg string) ([]byte, *recipe.Recipe, error) {
-	if !strings.ContainsRune(arg, '/') && !strings.HasSuffix(arg, ".yaml") && !strings.HasSuffix(arg, ".yml") {
-		return recipe.Builtin(arg)
-	}
-	data, err := os.ReadFile(arg)
-	if err != nil {
-		return nil, nil, err
-	}
-	rec, err := recipe.Parse(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", arg, err)
-	}
-	return data, rec, nil
 }
 
 func parseInputArgs(args []string) (map[string]string, error) {
@@ -366,16 +352,21 @@ type recipeRunOpts struct {
 
 // runRecipeIn is runRecipe with opts.
 func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, runName, session, user string, newSession bool, apply applyMode, overrides map[string]string, instructions map[string][]string) error {
-	recipeBytes, rec, err := loadRecipe(recipeArg)
+	it, err := parseRecipeTarget(itemURL)
+	if err != nil {
+		return err
+	}
+	ghClient, err := github.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+	// A built-in, a file, or the target repository's own recipe.
+	recipeBytes, rec, err := resolveRecipe(ctx, recipeArg, githubRepoFile(ghClient, it.Owner, it.Repo))
 	if err != nil {
 		return err
 	}
 	if apply.on && rec.TaskOutput == nil {
 		return fmt.Errorf("recipe %s declares no task output; there is nothing to --apply", rec.Name)
-	}
-	it, err := parseRecipeTarget(itemURL)
-	if err != nil {
-		return err
 	}
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
@@ -387,10 +378,6 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 		return fmt.Errorf("recipe %s is in no session (session:); every run of it opens a new conversation", rec.Name)
 	}
 
-	ghClient, err := github.NewClient(ctx)
-	if err != nil {
-		return fmt.Errorf("creating github client: %w", err)
-	}
 	// The process's own client: an overseer's, which labels its fixes'
 	// PRs where the bot that opens them may not (--pr-labels).
 	ownClient := ghClient

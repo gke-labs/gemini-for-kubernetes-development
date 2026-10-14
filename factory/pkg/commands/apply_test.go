@@ -22,7 +22,7 @@ func TestRunFixFollowUpPassesThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, text, err := followUpInput(d, "fix")
+	input, text, err := followUpInput(context.Background(), d, "fix", nil)
 	if err != nil || input != "plan" || text != "## Summary\nDo it.\n" {
 		t.Errorf("followUpInput = %q %q %v, want fix's plan input with the plan", input, text, err)
 	}
@@ -35,7 +35,7 @@ func TestRunFollowUpNeedsAnInputFromTheKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := followUpInput(d, "fix"); err == nil {
+	if _, _, err := followUpInput(context.Background(), d, "fix", nil); err == nil {
 		t.Error("fix took a Summary")
 	}
 }
