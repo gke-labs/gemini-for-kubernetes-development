@@ -69,10 +69,35 @@ A repository recipe gets nothing a built-in does not, and less by default:
 - `credentials:` defaults to `full`, as for built-ins (the engine GitHub write-access note applies to every recipe alike);
 - task-output actions are the known verbs; nothing in a recipe adds one.
 
+## Follow-ups instead of revises
+
+A recipe's `revise:` parts and a session of recipes (`session:`, as care's) do the same job by two mechanisms: both continue a conversation in its sandbox and capture a new result. fix's `iterate` and `care-iterate` are already the same follow-up written both ways. One mechanism is simpler for anyone writing a recipe, and a repository's recipes (which cannot declare `revise:`, see Loading) need only that one. So each revise becomes a recipe of its own, in its start recipe's session:
+
+| revise | follow-up recipe | session |
+|---|---|---|
+| fix `iterate` (Iterate) | `fix-iterate` | `fix` |
+| plan `plan` (Update plan) | `plan-update` | `plan` |
+| review `review` (Update review) | `review-update` | `review` |
+| research `notes` (Save notes) | `research-notes` | `research` |
+| summarize `summary` (Update summary) | `summarize-update` | `summarize` |
+
+What a revise did that a follow-up recipe needs:
+- **The same sandbox.** A recipe in a session already runs where its group's last run did: an issue's or a PR's sandbox, or with `--session` a repository's. A `credentials: clone` recipe's own sandbox is named after its recipe today (`review-<repo>-<n>`). It is named after its session instead (`RecipeSandboxName(repo, n, session)`), so `review-update` lands beside `review`.
+- **The same conversation.** A run in a session continues the conversation its group's last run recorded (`sessionToContinue`), including the member's turns from the board's Continue session.
+- **Only after a start.** `applicable-when: {session: started}`: the recipe runs only where its session has a run. factory refuses it otherwise, and a board offers it only on an item whose group has one.
+- **The last push.** A Change recipe in a session gets the push its group last made (`pushed_*`, from the session's tasks, as revises did), so `fix-iterate` pushes to the start's branch, leased at the head it pushed.
+- **No new input.** The follow-ups need none beyond their own (`fix-iterate`'s `instruction`): the conversation has the draft.
+- **A result's actions.** An output offers `run: <follow-up>` instead of `revise: <id>`. The `run:` verb starts a recipe on the result's target, and passes the result as the recipe's input only when the recipe takes one from that kind.
+
+What goes: `revise:` and revise inputs (`revise: true`) in the recipe model, `recipe_revise.go`, `RecordedRevise`, the `revise` action verb, and repo-agent's revise Requests. The board's Update plan, Iterate, Save notes, Update review and Update summary become the follow-up recipes' buttons in their session group.
+
 ## Steps
 
-1. **A run keeps its recipe:** `recipe.source.yaml` in the task, and revise, resume and apply read it from there. Built-ins only change in where they are read from.
-2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources.
-3. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
-4. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
-5. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).
+1. **A run keeps its recipe** (#1934).
+2. **Loading from the repository,** with no shadowing of built-ins, plus `recipe list --url` with sources (#1935).
+3. **Follow-ups instead of revises:**
+   - factory: the five follow-up recipes, `applicable-when: {session: started}`, a clone recipe's sandbox named by session, the last push for a session's Change recipes, and `run:` without an input; then `revise` removed;
+   - repo-agent: the buttons become the follow-ups' recipe Requests, and the revise verb goes.
+4. **Generic `sandbox:`:** `key`, `identity`, `long-lived`, `kind: warm`, `board: false`. The run and warm recipes move to it, and the name checks go.
+5. **repo-agent:** the catalog per repository, `long-lived` read from labels, and the board's `repoRecipes.identity` setting.
+6. **Later:** the overseer launching repository recipes (on labels or events), and a PR per run (factory/design/run-branches.md).
