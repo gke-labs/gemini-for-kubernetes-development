@@ -404,9 +404,8 @@ func TestLabelDiscovery_ExecutorConsent(t *testing.T) {
 	g.Expect(secret.Data["GITHUB_TOKEN"]).To(gomega.Equal([]byte("gho_alice")))
 }
 
-// A completed fix is not relaunched; a re-fix request overrides the terminal
-// state.
-func TestFixTerminalAndRefix(t *testing.T) {
+// A completed fix is not relaunched.
+func TestFixTerminal(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[
 		{"number": 10, "title": "mine", "html_url": "https://github.com/test/repo/issues/10",
@@ -440,16 +439,6 @@ func TestFixTerminalAndRefix(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
-
-	// Re-fix requested after completion: relaunch.
-	fake2 := newFakeLauncher()
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), completedSandbox(map[string]interface{}{
-		"review.gemini.google.com/refix-requested-at": time.Now().UTC().Format(time.RFC3339),
-	}))
-	_, err = r2.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake2.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/fix-repo-10"))
 }
 
 // reviewSandboxFixture is the member's review sandbox of PR 42, as `factory
@@ -1079,20 +1068,6 @@ func TestPlanLifecycle(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.BeEmpty())
 	g.Expect(requestStatus(t, r2, planReq).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-
-	// 3. Refine: feedback newer than the draft relaunches with --feedback,
-	// with no standing click at all (the resume pass drives it).
-	annotations := updated.GetAnnotations()
-	annotations[AnnotationPlanFeedback] = "merge steps 2 and 3"
-	annotations[AnnotationPlanFeedbackAt] = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
-	updated.SetAnnotations(annotations)
-	g.Expect(r2.Update(context.Background(), updated)).To(gomega.Succeed())
-	_, err = r2.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	launches = fake2.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
-	g.Expect(launches[0].PlanOpts.Inputs["feedback"]).To(gomega.Equal("merge steps 2 and 3"))
 }
 
 // The plan a fix follows is the click's: a plan's run: fix files the fix
@@ -1161,7 +1136,7 @@ func TestPlanResultStale(t *testing.T) {
 	}, now.Add(-time.Minute))).To(gomega.BeTrue())
 	g.Expect(planResultStale(map[string]string{}, now)).To(gomega.BeFalse())
 	g.Expect(planResultStale(map[string]string{
-		AnnotationPlanFeedbackAt: now.Add(-time.Hour).UTC().Format(time.RFC3339),
+		AnnotationPlanRejected: now.Add(-time.Hour).UTC().Format(time.RFC3339),
 	}, now)).To(gomega.BeFalse())
 }
 
@@ -1326,13 +1301,13 @@ func TestResumableRun(t *testing.T) {
 		result      bool
 		want        string
 	}{
-		"recorded":           {map[string]string{factorycli.AnnotationPlanRun: recorded}, false, "plan/b/5/1"},
-		"none recorded":      {map[string]string{}, false, "fresh"},
-		"result in memory":   {map[string]string{factorycli.AnnotationPlanRun: recorded}, true, "fresh"},
-		"after the feedback": {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanFeedbackAt: start.Add(-time.Minute).Format(time.RFC3339)}, false, "plan/b/5/1"},
-		"before the reject":  {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(time.Minute).Format(time.RFC3339)}, false, "fresh"},
-		"same second":        {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlannedAt: start.Format(time.RFC3339)}, false, "fresh"},
-		"unreadable":         {map[string]string{factorycli.AnnotationPlanRun: "{"}, false, "fresh"},
+		"recorded":          {map[string]string{factorycli.AnnotationPlanRun: recorded}, false, "plan/b/5/1"},
+		"none recorded":     {map[string]string{}, false, "fresh"},
+		"result in memory":  {map[string]string{factorycli.AnnotationPlanRun: recorded}, true, "fresh"},
+		"after the reject":  {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(-time.Minute).Format(time.RFC3339)}, false, "plan/b/5/1"},
+		"before the reject": {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(time.Minute).Format(time.RFC3339)}, false, "fresh"},
+		"same second":       {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlannedAt: start.Format(time.RFC3339)}, false, "fresh"},
+		"unreadable":        {map[string]string{factorycli.AnnotationPlanRun: "{"}, false, "fresh"},
 	} {
 		fake := newFakeLauncher()
 		if tc.result {
@@ -1340,7 +1315,7 @@ func TestResumableRun(t *testing.T) {
 		}
 		r := &Reconciler{Factory: fake}
 		got := r.resumableRun("alice/plan-repo-5", tc.annotations, factorycli.AnnotationPlanRun, "fresh",
-			AnnotationPlannedAt, AnnotationPlanFeedbackAt, AnnotationPlanRejected)
+			AnnotationPlannedAt, AnnotationPlanRejected)
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}

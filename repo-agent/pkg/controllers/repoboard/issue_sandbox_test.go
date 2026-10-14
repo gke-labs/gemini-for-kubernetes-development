@@ -45,7 +45,7 @@ func getSandbox(t *testing.T, r *Reconciler, name string) *unstructured.Unstruct
 }
 
 // A triage that ran in the issue's sandbox leaves its draft there under its
-// own key: agentDraft in that sandbox is a review's.
+// own key.
 func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := issueSandbox("repo-30", "30", map[string]interface{}{
@@ -62,7 +62,6 @@ func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
 
 	a := getSandbox(t, r, "repo-30").GetAnnotations()
 	g.Expect(a[factorycli.AnnotationTriageOutput]).To(gomega.ContainSubstring("labels: [bug]"))
-	g.Expect(a[AnnotationAgentDraft]).To(gomega.BeEmpty())
 	g.Expect(a[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }

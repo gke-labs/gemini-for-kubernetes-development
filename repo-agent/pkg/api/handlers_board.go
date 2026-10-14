@@ -773,19 +773,6 @@ func workSandbox(sb *unstructured.Unstructured) *models.WorkSandbox {
 	}
 }
 
-// taskSession is the agent session of the run recorded on sb under key,
-// nil when there is none.
-func taskSession(sb *unstructured.Unstructured, key string) *models.TaskSession {
-	if sb == nil {
-		return nil
-	}
-	task := factorycli.RecordedRunSession(sb.GetAnnotations(), key)
-	if task == "" {
-		return nil
-	}
-	return &models.TaskSession{Sandbox: sb.GetName(), Task: task}
-}
-
 // addRunSessions gives every item the runs recorded on its sandboxes: an
 // issue's own sandbox's on the issue, and on the PR its fix opened (the
 // sandbox's URL turns to it); a PR's (by its URL, or a review sandbox's
@@ -1160,7 +1147,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		DraftPR:         pr.GetDraft(),
 		Fixes:           closingRefs(pr.GetBody()),
 		Sandbox:         workSandbox(sb),
-		ReviewSession:   taskSession(rsb, factorycli.AnnotationReviewRun),
 		UpdatedAt:       pr.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
 	if sb == nil {

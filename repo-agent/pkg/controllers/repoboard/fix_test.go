@@ -143,23 +143,3 @@ func TestFixKeepsItsChange(t *testing.T) {
 	g.Expect(a["board.gemini.google.com/fix-output"]).To(gomega.Equal(changeDoc("Fix it")))
 	g.Expect(factorycli.IsApplied(a, "board.gemini.google.com/fix-applied", "open-pr")).To(gomega.BeTrue())
 }
-
-// Fix again relaunches the fix in its sandbox, under a new run name.
-func TestFixAgainRelaunches(t *testing.T) {
-	g := gomega.NewWithT(t)
-	fake := newFakeLauncher()
-	done := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
-	sb := issueSandbox("fix-repo-7", "7", fixedSandbox(factorycli.TaskStateFailed, fixRun("fix/test-board/7/100", ""), map[string]interface{}{
-		AnnotationFixHarvestedAt:            done,
-		factorycli.AnnotationCompletionTime: done,
-		AnnotationRefixRequested:            time.Now().UTC().Format(time.RFC3339),
-	}))
-	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	launches := fake.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].FixOpts.RunName).To(gomega.HavePrefix("fix/test-board/7/"))
-	g.Expect(launches[0].FixOpts.RunName).NotTo(gomega.Equal("fix/test-board/7/100"))
-}
