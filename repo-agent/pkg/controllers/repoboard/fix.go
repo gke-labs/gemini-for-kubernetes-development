@@ -52,16 +52,10 @@ func fixRunPrefix(board string, issue int) string {
 }
 
 // fixRunUnread is the fix run recorded on the sandbox whose result the
-// controller has not read: started after the last one it read, and after
-// any Fix again. Another run recorded under the same key (one named
-// otherwise) is not the fix's.
+// controller has not read: started after the last one it read. Another
+// run recorded under the same key (one named otherwise) is not the fix's.
 func fixRunUnread(annotations map[string]string, board string, issue int) (string, bool) {
-	var since time.Time
-	for _, key := range []string{AnnotationFixHarvestedAt, AnnotationRefixRequested} {
-		if at, err := time.Parse(time.RFC3339, annotations[key]); err == nil && at.After(since) {
-			since = at
-		}
-	}
+	since, _ := time.Parse(time.RFC3339, annotations[AnnotationFixHarvestedAt])
 	name, ok := factorycli.RecordedRunName(annotations, factorycli.AnnotationFixRun, since)
 	if !ok || !strings.HasPrefix(name, fixRunPrefix(board, issue)) {
 		return "", false

@@ -47,14 +47,10 @@ import (
 )
 
 const (
-	// Draft/claim annotations on factory sandboxes; same wire contract the
-	// PR-review flow established (legacy names kept so the API/UI read one
-	// shape).
-	AnnotationAgentDraft        = "agentDraft"
-	AnnotationAgentState        = "agentState"
+	// Review and sandbox annotations; the review names are the PR-review
+	// flow's wire contract, kept so the API/UI read one shape.
 	AnnotationReviewedAt        = "review.gemini.google.com/reviewed-at"
 	AnnotationRereviewRequested = "review.gemini.google.com/rereview-requested-at"
-	AnnotationRefixRequested    = "review.gemini.google.com/refix-requested-at"
 	AnnotationPreventAutoPause  = "sandbox.gemini.google.com/prevent-auto-shutdown"
 	AnnotationUnpausedAt        = "sandbox.gemini.google.com/unpaused-at"
 	AnnotationBoard             = "board.gemini.google.com/board"
@@ -84,9 +80,7 @@ const (
 	// board-only until the member applies its run action
 	// (factorycli.AnnotationPlanApplied), which files the fix with it as
 	// the plan input; the fix publishes it in its PR's description.
-	AnnotationPlannedAt      = "board.gemini.google.com/planned-at"
-	AnnotationPlanFeedback   = "board.gemini.google.com/plan-feedback"
-	AnnotationPlanFeedbackAt = "board.gemini.google.com/plan-feedback-at"
+	AnnotationPlannedAt = "board.gemini.google.com/planned-at"
 	// AnnotationFixHarvestedAt is when the controller last read a fix
 	// run's result (the PR it opened, or why it failed): a fix run
 	// recorded after it has not been read yet, and a restarted controller
@@ -378,7 +372,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// controller restarts, independent of how the review was triggered.
 	r.resumeReviews(ctx, work)
 	r.resumeTriages(ctx, work)
-	r.resumePlans(ctx, work)
 	r.settleSubmittedReviews(ctx, work)
 
 	// Settle every standing click against what the passes above left
@@ -707,11 +700,9 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 
 // resumeFixes revisits the issue sandboxes whose fix is owed something
 // no standing Request asks for (the fix Request, which carries a plan
-// clicked into it, settles only once the fix runs):
-//
-//   - a Fix again, which is a marker on the sandbox, not a Request;
-//   - a fix run whose result the controller has not read: still running
-//     when it restarted, or just ended. Its PR is opened from it.
+// clicked into it, settles only once the fix runs): a fix run whose
+// result the controller has not read, still running when it restarted,
+// or just ended. Its PR is opened from it.
 //
 // The runner's single-flight and the run name make relaunching
 // idempotent (a standing Request planning the same fix in the same pass
@@ -725,7 +716,7 @@ func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
 		}
 		annotations := sb.GetAnnotations()
 		_, unread := fixRunUnread(annotations, work.board.Name, n)
-		if !unread && !(refixRequested(sb) && fixLike(annotations[factorycli.AnnotationTaskType])) {
+		if !unread {
 			continue
 		}
 		executor := annotations[AnnotationExecutor]
@@ -791,7 +782,7 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) &&
 		fixLike(annotations[factorycli.AnnotationTaskType])
 	again := clickedSince(annotations[factorycli.AnnotationCompletionTime], plan.since)
-	if terminal && !refixRequested(sb) && !again && !follow {
+	if terminal && !again && !follow {
 		return
 	}
 	// Something else is at work in the sandbox (a plan, a follow-up the
@@ -1274,17 +1265,11 @@ func (r *Reconciler) pauseFinished(ctx context.Context, work *workState, after t
 		if unpausedAt, err := time.Parse(time.RFC3339, annotations[AnnotationUnpausedAt]); err == nil && unpausedAt.After(idleSince) {
 			idleSince = unpausedAt
 		}
-		// A rerun marker newer than the last completion means a relaunch
+		// A re-review marker newer than the last completion means a relaunch
 		// is waking this sandbox (factory patches replicas directly and
 		// stamps no unpaused-at) — pausing now would kill the container
 		// mid-provision and fail the run.
-		restarting := false
-		for _, key := range []string{AnnotationRereviewRequested, AnnotationRefixRequested} {
-			if t, err := time.Parse(time.RFC3339, annotations[key]); err == nil && t.After(idleSince) {
-				restarting = true
-			}
-		}
-		if restarting {
+		if t, err := time.Parse(time.RFC3339, annotations[AnnotationRereviewRequested]); err == nil && t.After(idleSince) {
 			continue
 		}
 		if time.Since(idleSince) < after {
@@ -1323,10 +1308,6 @@ func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
 	needsHuman := 0
 	for _, sb := range work.sandboxes {
 		annotations := sb.GetAnnotations()
-		if annotations[AnnotationAgentDraft] != "" && annotations["reviewState"] != "submitted" {
-			needsHuman++
-			continue
-		}
 		if annotations[factorycli.AnnotationTriageOutput] != "" && !factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "comment") {
 			needsHuman++
 			continue
@@ -1445,26 +1426,6 @@ func (r *Reconciler) stampEngine(ctx context.Context, sb *unstructured.Unstructu
 	if err := r.Update(ctx, sb); err != nil {
 		log.FromContext(ctx).Error(err, "unable to stamp engine on sandbox", "sandbox", sb.GetName())
 	}
-}
-
-func rerunRequested(sb *unstructured.Unstructured, requestKey, completedKey string) bool {
-	if sb == nil {
-		return false
-	}
-	annotations := sb.GetAnnotations()
-	requestedAt, err := time.Parse(time.RFC3339, annotations[requestKey])
-	if err != nil {
-		return false
-	}
-	completedAt, err := time.Parse(time.RFC3339, annotations[completedKey])
-	if err != nil {
-		return true
-	}
-	return requestedAt.After(completedAt)
-}
-
-func refixRequested(sb *unstructured.Unstructured) bool {
-	return rerunRequested(sb, AnnotationRefixRequested, factorycli.AnnotationCompletionTime)
 }
 
 // reviewRerunRequested reports whether a re-review click is newer than the

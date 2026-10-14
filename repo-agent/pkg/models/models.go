@@ -133,9 +133,6 @@ type WorkItem struct {
 	// stands: the controller does it in seconds, so the feed is kept fresh
 	// for seconds, and the UI polls faster, until it is done.
 	Posting bool `json:"posting,omitempty"`
-	// ReviewSession is a PR's review session (the review recipe's), for
-	// Continue session and Update review.
-	ReviewSession *TaskSession `json:"reviewSession,omitempty"`
 	// Mine is a PR the member authored; MyPR one they authored whose head
 	// is on their fork, which a recipe may push to.
 	Mine bool `json:"mine,omitempty"`
@@ -218,11 +215,4 @@ type RunSession struct {
 type RunAction struct {
 	Verb  string `json:"verb"`
 	Label string `json:"label,omitempty"`
-}
-
-// TaskSession names a factory task's agent session: the sandbox it ran in
-// and the task, whose id is the session's.
-type TaskSession struct {
-	Sandbox string `json:"sandbox"`
-	Task    string `json:"task"`
 }

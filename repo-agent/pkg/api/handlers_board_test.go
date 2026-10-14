@@ -527,10 +527,6 @@ func TestGetBoardWork(t *testing.T) {
 	if row := byKey["pr-42"]; !row.ReviewPending || row.Attention != "needs-you" {
 		t.Errorf("pr-42 row wrong: %+v", row)
 	}
-	// The review's session, for Continue session and Update review.
-	if rs := byKey["pr-42"].ReviewSession; rs == nil || rs.Sandbox != "review-repo-42" || rs.Task != "recipe-review-1" {
-		t.Errorf("pr-42 review session wrong: %+v", rs)
-	}
 
 	// needs-you rows sort before working rows.
 	if work[len(work)-1].Attention != "working" {

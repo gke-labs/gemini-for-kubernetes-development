@@ -198,30 +198,6 @@ func TestARunningTasksSessionIsNotTheMembersToStart(t *testing.T) {
 	}
 }
 
-func TestTheBoardNamesTheRecordedRunsSession(t *testing.T) {
-	sb := issueSandboxCR("alice", 1)
-	got := taskSession(sb, factorycli.AnnotationPlanRun)
-	if got == nil || got.Sandbox != issueSandbox || got.Task != planTask {
-		t.Errorf("plan session = %+v", got)
-	}
-	if got := taskSession(sb, factorycli.AnnotationTriageRun); got != nil {
-		t.Errorf("triage session with no triage run = %+v", got)
-	}
-	if got := taskSession(nil, factorycli.AnnotationPlanRun); got != nil {
-		t.Errorf("no sandbox, yet %+v", got)
-	}
-
-	// After a run that continued the conversation, the recorded run is
-	// that one; the session is still the plan's, the one conversation.
-	run, _ := json.Marshal(factorycli.RecordedRun{Name: "plan/b/42/2", Task: "recipe-plan-2", Session: planTask, StartedAt: time.Unix(1_000_100, 0)})
-	a := sb.GetAnnotations()
-	a[factorycli.AnnotationPlanRun] = string(run)
-	sb.SetAnnotations(a)
-	if got := taskSession(sb, factorycli.AnnotationPlanRun); got == nil || got.Task != planTask {
-		t.Errorf("plan session after a continuing run = %+v", got)
-	}
-}
-
 // planDoc is a plan's task output from planTask's session saying what.
 func planDoc(what string) string {
 	return "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
