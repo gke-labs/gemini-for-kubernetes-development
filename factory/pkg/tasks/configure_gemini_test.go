@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskfiles"
 )
 
 // gemini's session cleanup, on by default, deletes a conversation that
@@ -26,6 +29,9 @@ func TestConfigureGeminiKeepsSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var settings struct {
+		Context struct {
+			IncludeDirectories []string `json:"includeDirectories"`
+		} `json:"context"`
 		General struct {
 			SessionRetention *struct {
 				Enabled *bool `json:"enabled"`
@@ -37,5 +43,9 @@ func TestConfigureGeminiKeepsSessions(t *testing.T) {
 	}
 	if r := settings.General.SessionRetention; r == nil || r.Enabled == nil || *r.Enabled {
 		t.Errorf("settings.json leaves gemini's session cleanup on:\n%s", raw)
+	}
+	// A recipe's result is a file the agent writes in its task directory.
+	if !slices.Contains(settings.Context.IncludeDirectories, taskfiles.DefaultTasksDir) {
+		t.Errorf("settings.json does not let gemini write in %s:\n%s", taskfiles.DefaultTasksDir, raw)
 	}
 }

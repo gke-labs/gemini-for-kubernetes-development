@@ -85,12 +85,9 @@ func resolveRecipe(ctx context.Context, arg string, readRepo repoFile) ([]byte, 
 // parseRepoRecipe parses a repository's recipe file name.yaml. It must
 // be named as its file is, may not take a built-in's name — the overseer
 // and every board rely on those meaning what they do — and may not
-// declare yet:
-//   - a sandbox of its own: a run sandbox runs as the deployer service
-//     account, which reaches the member's GCP project, and a repository
-//     recipe gets that only once a board allows it;
-//   - revises: a follow-up is a recipe of its own in the same session,
-//     which revises are on their way to being.
+// declare yet a sandbox of its own: a run sandbox runs as the deployer
+// service account, which reaches the member's GCP project, and a
+// repository recipe gets that only once a board allows it.
 func parseRepoRecipe(name string, data []byte) (*recipe.Recipe, error) {
 	rec, err := recipe.Parse(data)
 	if err != nil {
@@ -105,8 +102,6 @@ func parseRepoRecipe(name string, data []byte) (*recipe.Recipe, error) {
 		return nil, fmt.Errorf("a repository's recipe cannot declare a sandbox: of its own yet")
 	case builtinSession(rec.Session):
 		return nil, fmt.Errorf("session %s is a built-in group's; a repository's recipe cannot join its conversation", rec.Session)
-	case len(rec.Revise) > 0:
-		return nil, fmt.Errorf("a repository's recipe cannot declare revise: parts; make a follow-up a recipe of its own in the same session")
 	}
 	return rec, nil
 }

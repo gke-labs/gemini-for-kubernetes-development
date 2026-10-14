@@ -12,11 +12,9 @@
 # apply --action run:fix`, or the board's "Fix with this plan") starts
 # this recipe with its markdown, as edited, as the plan.
 #
-# Its one revise (factory recipe revise <sandbox> iterate) changes the fix
-# as asked, in the fix's session. It ends with the same push, to the
-# branch the start pushed, leased against the head last pushed, so the PR
-# follows. Looking after the PR — review comments, checks, rebasing — is
-# the care recipe's (design/care-recipe.md).
+# Changing the fix once its PR is open — as asked (care-iterate), or for
+# review comments, checks, rebasing — is the care recipes'
+# (design/care-recipe.md).
 name: fix
 on: [issue]
 task-type: fix
@@ -33,9 +31,6 @@ inputs:
   instructions:
     type: instructions
     description: Additional instructions the agent must follow
-  instruction:
-    description: What the iterate revise changes, which it asks for (factory recipe revise … iterate --input instruction=…)
-    revise: true
 
 context: |
   You are an automated coding agent. You fix GitHub issues; your commits
@@ -140,9 +135,9 @@ start:
         considered. This summary is for the human reviewer.
 
     - ask: |
-        Now write the pull request's title and description. Respond with
-        EXACTLY the following YAML structure and nothing else — no prose
-        before or after, no markdown fences:
+        Now write the pull request's title and description to the file
+        {{ output "change.yaml" }}, as YAML in EXACTLY this structure, with
+        nothing else in the file:
 
         change:
           title: "A brief title, like a commit subject, in double quotes"
@@ -165,57 +160,12 @@ start:
         {{- else }}
         - Do not say anywhere that an agent or AI wrote this.
         {{- end }}
-      capture: change.yaml
+
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it, then say in a line that it is
+        written.
 
     - uses: push
-
-# factory hands the revise the push the fix last made (INPUT_PUSHED_*:
-# fork, branch, base, head); its Change keeps the previous title and body
-# unless the agent writes new ones.
-revise:
-  - id: iterate
-    label: Iterate
-    inputs: [instruction]
-    steps:
-      # The branch to push and the head to lease against: a commit someone
-      # else pushed to the PR since is never overwritten.
-      - run: |
-          test -n "${INPUT_PUSHED_BRANCH}" && test -n "${INPUT_PUSHED_HEAD}" || { echo "the fix pushed nothing; there is no branch to revise" >&2; exit 1; }
-          printf '%s\n' "${INPUT_PUSHED_BRANCH}" > "$TASK_DIR/branch"
-          printf '%s\n' "${INPUT_PUSHED_BASE}" > "$TASK_DIR/base"
-          printf '%s' "${INPUT_PUSHED_HEAD}" > "$TASK_DIR/lease"
-          git checkout "${INPUT_PUSHED_BRANCH}"
-      - run: |
-          test -n "${INPUT_INSTRUCTION}" || { echo "iterate needs --input instruction=…" >&2; exit 1; }
-      - ask: |
-          Change the fix as this instruction asks, and commit the change.
-
-          <instruction>
-          {{ .Inputs.instruction }}
-          </instruction>
-
-          The same rules as before: commit, never push; keep the history
-          clean (`git commit --fixup` and an autosquash rebase for small
-          fixes to earlier commits are fine: factory pushes with a lease).
-          If the instruction needs no change, say so and commit nothing.
-          When you are done, say briefly what you changed.
-      - ask: |
-          Now write the result. Respond with EXACTLY the following YAML
-          structure and nothing else — no prose before or after, no
-          markdown fences:
-
-          change: {}
-
-          or, if the pull request's title or description no longer fit the
-          change, with new ones in it:
-
-          change:
-            title: "A brief title, like a commit subject, in double quotes"
-            body: |
-              The whole new description; it keeps the description's
-              `Fixes #…` line, if it has one.
-        capture: change.yaml
-      - uses: push
 
 outputs:
   - change.yaml

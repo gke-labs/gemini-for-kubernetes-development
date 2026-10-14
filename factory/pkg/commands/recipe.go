@@ -48,10 +48,9 @@ func NewRecipeCommand(ctx context.Context) *cobra.Command {
 	}
 	cmd.AddCommand(newRecipeRunCommand(ctx))
 	cmd.AddCommand(newRecipeExecCommand(ctx))
-	cmd.AddCommand(newRecipeReviseCommand(ctx))
 	cmd.AddCommand(newRecipeListCommand(ctx))
 	for _, name := range recipe.BuiltinNames() {
-		// run, exec, revise and list are taken; TestBuiltinRecipeCommands keeps
+		// run, exec and list are taken; TestBuiltinRecipeCommands keeps
 		// them so.
 		cmd.AddCommand(newBuiltinRecipeCommand(ctx, name))
 	}
@@ -152,9 +151,6 @@ func newBuiltinRecipeCommand(ctx context.Context, name string) *cobra.Command {
 	f.add(cmd)
 	for _, in := range sortedInputNames(rec) {
 		decl := rec.Inputs[in]
-		if decl.Revise {
-			continue // factory recipe revise --input
-		}
 		if decl.Type == recipe.InstructionsType {
 			// An array, not a slice: an instruction's text may have commas.
 			f.instructions[in] = cmd.Flags().StringArray(inputFlagName(in, decl), nil, decl.Description+" (a local file, a file in the repository, or the text itself). Repeatable.")
@@ -603,9 +599,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	}
 
 	task := newSpoolTask(rec.Name, runName, itemURL)
-	if rec.StartOutputs() {
-		task.Output = rec.OutputDecl()
-	}
+	task.Output = rec.OutputDecl()
 	task.TaskType = rec.TaskType
 	if rec.Session != "" && !newSession && !it.IsRepo() {
 		if task.Session, err = sessionToContinue(ctx, kubeClient, sb, sandboxName, rec, it); err != nil {
@@ -630,7 +624,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if apply.on {
 		return awaitAndApply(ctx, sb, ghClient, rec, sandboxName, task.ID, apply.verb, apply.dryRun)
 	}
-	printResultHint(rec, task, sandboxName)
+	printResultHint(task, sandboxName)
 	return nil
 }
 
@@ -838,16 +832,10 @@ func isMyPR(pr *githubv39.PullRequest, login string) bool {
 		!strings.EqualFold(head.GetFullName(), pr.GetBase().GetRepo().GetFullName())
 }
 
-// printResultHint says where a finished task's result is: its task output,
-// or for a start that leaves none, the revises that write one.
-func printResultHint(rec *recipe.Recipe, task spool.Task, sandboxName string) {
-	switch {
-	case task.Output != nil:
+// printResultHint says where a finished task's result is: its task output.
+func printResultHint(task spool.Task, sandboxName string) {
+	if task.Output != nil {
 		fmt.Printf("Its %s result, to look at and apply:\n  factory sandbox task output %s -n %s --task %s | factory apply -f -\n", task.Output.Kind, sandboxName, rootFlags.Namespace, task.ID)
-	case rec.TaskOutput != nil:
-		for _, rv := range rec.Revise {
-			fmt.Printf("%s, once you have talked in its session:\n  factory recipe revise %s %s -n %s\n", rv.Label, sandboxName, rv.ID, rootFlags.Namespace)
-		}
 	}
 }
 
@@ -887,15 +875,11 @@ func recipeEnv(secret *corev1.Secret, it githubItem, credentials string) (envMap
 	return envMap, secrets, nil
 }
 
-// recordedRun is the run recorded on the sandbox for task: with the
-// recipe's revises, so a session view has its buttons before any output.
+// recordedRun is the run recorded on the sandbox for task.
 func recordedRun(task spool.Task, rec *recipe.Recipe, started time.Time) factorysandbox.RecordedRun {
 	run := factorysandbox.RecordedRun{Name: task.RunName, Task: task.ID, Session: task.Session, StartedAt: started, Recipe: rec.Name, State: "Running"}
 	if rec.TaskOutput != nil {
 		run.Kind = rec.TaskOutput.Kind
-	}
-	for _, rv := range rec.Revise {
-		run.Revises = append(run.Revises, factorysandbox.RecordedRevise{ID: rv.ID, Label: rv.Label, Inputs: rv.Inputs})
 	}
 	return run
 }
@@ -950,7 +934,7 @@ func startRecipeTask(ctx context.Context, kubeClient *clients.KubernetesClient, 
 		_ = update(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, "Failed")
 		return false, fmt.Errorf("running recipe: %w", err)
 	}
-	if research && task.Revise == "" {
+	if research {
 		// The sandbox is the conversation's from here: the receipt that
 		// keeps EnsureResearchSandbox from taking it for an interrupted
 		// launch's and replacing it.
@@ -988,7 +972,7 @@ func printRecipeOutputs(ctx context.Context, sb taskapi.Sandbox, rec *recipe.Rec
 	for _, name := range rec.OutputFiles() {
 		out, err := sb.ReadFile(ctx, id, name)
 		if errors.Is(err, os.ErrNotExist) {
-			continue // not written by this part: a start before any revise
+			continue // not written: an optional result nobody asked for yet
 		}
 		if err != nil {
 			return fmt.Errorf("reading %s from sandbox: %w", name, err)
@@ -1018,8 +1002,8 @@ func spoolRecipe(ctx context.Context, sb taskapi.Sandbox, task spool.Task, recip
 	if err != nil {
 		return err
 	}
-	// The task keeps the recipe it ran, whole, for its revises, resumes
-	// and applies to read (taskRecipe).
+	// The task keeps the recipe it ran, whole, for its resumes and
+	// applies to read (taskRecipe).
 	if err := sb.Start(ctx, task, stripped, recipeBytes, inputs, envMap, secrets); err != nil {
 		return err
 	}
@@ -1050,7 +1034,7 @@ func taskRecipe(ctx context.Context, sb taskapi.Sandbox, e spool.Entry) ([]byte,
 		}
 		if name == spool.RecipeFile {
 			// Stripped: a built-in's whole copy, where there is one,
-			// knows its task output and revises' inputs.
+			// knows its task output.
 			if b, r, err := recipe.Builtin(e.Recipe); err == nil {
 				return b, r, nil
 			}
@@ -1350,8 +1334,8 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			// daemon's, so it can be watched and continued after the task.
 			if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
 				base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
-				// A revise continues the conversation of the task it
-				// revises; a run in a session, its session's.
+				// A run in a session continues its session's
+				// conversation.
 				if task.Session != "" {
 					return recipe.OpenDaemonSession(ctx, base, token, task.Session, engine, model, apiKey, repoDir, env)
 				}
@@ -1364,7 +1348,6 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 		},
 		TaskDir: taskDir,
 		Inputs:  inputs,
-		Revise:  task.Revise,
 		Log:     os.Stdout,
 	}
 	if err := r.Run(ctx, rec); err != nil {
@@ -1411,7 +1394,10 @@ func readSpoolTask(taskDir string) spool.Task {
 
 // writeTaskOutput wraps the result the task declared (task.json's output)
 // into taskoutput.File. A result that does not parse fails the task: it is
-// caught here, not when someone applies it.
+// caught here, not when someone applies it. Any kind but a Change leaves
+// its frame too, for the task server to wrap the result in again when the
+// agent rewrites it in a later turn (taskoutput.Refresh); an optional
+// result the task did not leave is wrapped once the agent writes it.
 func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine string) error {
 	data, err := os.ReadFile(filepath.Join(taskDir, spool.TaskFile))
 	if err != nil {
@@ -1421,14 +1407,6 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	if err := json.Unmarshal(data, &task); err != nil || task.Output == nil {
 		return nil
 	}
-	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
-	if errors.Is(err, os.ErrNotExist) && task.Output.Optional {
-		fmt.Printf("::task-output none: the task left no %s\n", task.Output.From)
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
-	}
 	if !slices.Contains(taskoutput.KnownKinds(), task.Output.Kind) {
 		// A kind newer than this sandbox's image: the client, which knows
 		// it, wraps the result when it is read (sandbox task output).
@@ -1437,19 +1415,42 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 	}
 	target := taskTarget(task, inputs)
 	target.Commit = prHeadCommit(repoDir)
-	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), target, taskoutput.Source{
+	source := taskoutput.Source{
 		Task:    filepath.Base(taskDir),
 		Session: task.Session,
 		Recipe:  task.Recipe,
 		Engine:  engine,
-	})
+	}
+	if task.Output.Kind != "Change" {
+		frame := &taskoutput.Document{APIVersion: taskoutput.APIVersion, Kind: task.Output.Kind, Target: target, Source: source, Actions: task.Output.Actions, Preview: task.Output.Preview}
+		if err := taskoutput.WriteFrame(taskDir, frame); err != nil {
+			return err
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(taskDir, task.Output.From))
+	if (errors.Is(err, os.ErrNotExist) || err == nil && len(raw) == 0) && task.Output.Optional {
+		fmt.Printf("::task-output none: the task left no %s\n", task.Output.From)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading the task's %s result: %w", task.Output.Kind, err)
+	}
+	if len(raw) == 0 {
+		return fmt.Errorf("the task's %s result, %s, is empty", task.Output.Kind, task.Output.From)
+	}
+	if task.Output.Kind != "Change" {
+		if _, err := taskoutput.Refresh(taskDir, task.Output.From); err != nil {
+			return err
+		}
+		fmt.Printf("::task-output %s %s\n", task.Output.Kind, taskoutput.File)
+		return nil
+	}
+	doc, err := taskoutput.Wrap(task.Output.Kind, string(raw), target, source)
 	if err != nil {
 		return err
 	}
-	if doc.Kind == "Change" {
-		if err := fillChange(doc, task, taskDir, inputs); err != nil {
-			return err
-		}
+	if err := fillChange(doc, task, taskDir, inputs); err != nil {
+		return err
 	}
 	doc.Actions = task.Output.Actions
 	doc.Preview = task.Output.Preview
@@ -1464,8 +1465,8 @@ func writeTaskOutput(taskDir, repoDir string, inputs map[string]string, engine s
 // fillChange puts on a Change what the push step recorded (where the
 // commits went, and which they are) rather than what the agent said, and
 // the labels the task was given, and whether its PR is a draft (the draft
-// input; unset, it is). A Change on a PR — a revise's, or a
-// start's on a PR such as care's — is about the PR (pr_url), and keeps
+// input; unset, it is). A Change on a PR — such as care's —
+// is about the PR (pr_url), and keeps
 // the title and body it had (pushed_title, pushed_body) where the agent
 // wrote none.
 func fillChange(doc *taskoutput.Document, task spool.Task, taskDir string, inputs map[string]string) error {

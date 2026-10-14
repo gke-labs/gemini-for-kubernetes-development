@@ -27,18 +27,18 @@ type DaemonSession struct {
 	token string
 	hc    *http.Client
 	// created is whether this task started the engine, and so ends it: a
-	// revise leaves a session it found open to the member using it.
+	// run continuing a session leaves one it found open to the member
+	// using it.
 	created bool
 	// fresh is whether the session it created remembers nothing: no
-	// conversation to load, as for the first revise where the recipe
-	// has no start, or a start that asked nothing.
+	// conversation to load, as after a run that asked nothing.
 	fresh bool
 	// usage is the last turn's (TurnUsage).
 	usage []acpd.ModelUsage
 }
 
-// Fresh reports whether the agent starts from nothing, so a revise sends
-// the recipe's context as a start would.
+// Fresh reports whether the agent starts from nothing, so a run
+// continuing a session sends the recipe's context as a first run would.
 func (d *DaemonSession) Fresh() bool { return d.fresh }
 
 // StartDaemonSession creates the task's session on the task server at
@@ -53,11 +53,10 @@ func StartDaemonSession(ctx context.Context, base, token, engine, model, apiKey,
 	return d, nil
 }
 
-// OpenDaemonSession is a revise's way in to the session of the task it
-// revises, session: the daemon holds it for the revise, whose token is
-// token. Open already — a member is talking in it — it is used as it is,
-// unless a turn is in flight, which refuses the revise before it sends
-// anything. Otherwise it is created, which loads the conversation.
+// OpenDaemonSession is a run's way in to the session it continues,
+// session: the daemon holds it for the run, whose token is token. Open
+// already — a member is talking in it — it is used as it is, unless a
+// turn is in flight, which refuses the run before it sends anything. Otherwise it is created, which loads the conversation.
 func OpenDaemonSession(ctx context.Context, base, token, session, engine, model, apiKey, repoDir string, env map[string]string) (*DaemonSession, error) {
 	d := newDaemonSession(base, session, token)
 	var state struct {
@@ -67,7 +66,7 @@ func OpenDaemonSession(ctx context.Context, base, token, session, engine, model,
 	var status statusError
 	switch {
 	case err == nil && state.Busy:
-		return nil, fmt.Errorf("session %s is busy: a turn is in flight; revise once it has ended", session)
+		return nil, fmt.Errorf("session %s is busy: a turn is in flight; run again once it has ended", session)
 	case err == nil:
 		return d, nil
 	case errors.As(err, &status) && status.code == http.StatusNotFound:

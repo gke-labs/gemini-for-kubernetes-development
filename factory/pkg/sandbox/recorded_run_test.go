@@ -41,8 +41,7 @@ func TestTheRecordedRunCarriesItsState(t *testing.T) {
 	}
 
 	start := func(taskType, task string, side bool) {
-		run := RecordedRun{Task: task, StartedAt: time.Now().UTC(), Recipe: taskType, Kind: "Plan", State: "Running",
-			Revises: []RecordedRevise{{ID: "plan", Label: "Update plan"}}}
+		run := RecordedRun{Task: task, StartedAt: time.Now().UTC(), Recipe: taskType, Kind: "Plan", State: "Running"}
 		if err := MarkSandboxRunStarted(ctx, kc, ns, "fix-r-7", taskType, "gemini", side, run); err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +54,7 @@ func TestTheRecordedRunCarriesItsState(t *testing.T) {
 		t.Fatal(err)
 	}
 	start("fix", "recipe-fix-1", false)
-	if run := recordedRunOn(t, sb, RunAnnotation("plan")); run.State != "Completed" || run.EndedAt == nil || run.Recipe != "plan" || len(run.Revises) != 1 {
+	if run := recordedRunOn(t, sb, RunAnnotation("plan")); run.State != "Completed" || run.EndedAt == nil || run.Recipe != "plan" {
 		t.Errorf("plan run once the fix started = %+v", run)
 	}
 	if got := sb().GetAnnotations()["sandbox.gemini.google.com/last-task-type"]; got != "fix" {

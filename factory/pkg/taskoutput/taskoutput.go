@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -27,7 +29,12 @@ const (
 	// AppliedFile marks, in a task directory, that the task's result was
 	// applied: `factory recipe --apply` run again does not pick it up.
 	AppliedFile = "task-output.applied"
-	APIVersion  = "factory.gemini.google.com/v1alpha1"
+	// FrameFile is a task's result without the result: what it is about,
+	// where it came from and what can be done with it. File is the result
+	// file wrapped in it, again whenever the agent writes the file after
+	// the task (Refresh), in a later turn of the conversation.
+	FrameFile  = "task-output.frame.yaml"
+	APIVersion = "factory.gemini.google.com/v1alpha1"
 )
 
 // Decl declares a task's result: which kind it is, the task-directory
@@ -76,8 +83,8 @@ type Target struct {
 type Source struct {
 	Sandbox string `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 	Task    string `yaml:"task,omitempty" json:"task,omitempty"`
-	// Session is the task whose conversation a revise continued, the one
-	// to revise again or continue; unset, it is Task's own.
+	// Session is the task whose conversation the task continued, the one
+	// to continue; unset, it is Task's own.
 	Session string `yaml:"session,omitempty" json:"session,omitempty"`
 	Recipe  string `yaml:"recipe,omitempty" json:"recipe,omitempty"`
 	Engine  string `yaml:"engine,omitempty" json:"engine,omitempty"`
@@ -276,4 +283,59 @@ func CleanAgentYAML(raw, indicator string) string {
 		}
 	}
 	return s
+}
+
+// WriteFrame leaves doc, whose spec is not read, as the frame Refresh
+// wraps the result file in.
+func WriteFrame(taskDir string, doc *Document) error {
+	frame := *doc
+	frame.Spec = yaml.Node{}
+	out, err := Marshal(&frame)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(taskDir, FrameFile), out, 0o644)
+}
+
+// Refresh wraps the result file, from, in the task's frame into File,
+// when the agent wrote the file since File was wrapped (or File is not
+// there yet): a result rewritten in a later turn is read as rewritten. False
+// with no error when there is nothing to do: no frame, no result, or
+// File as new. A result that does not parse leaves File as it was.
+func Refresh(taskDir, from string) (bool, error) {
+	result, err := os.Stat(filepath.Join(taskDir, from))
+	if err != nil || result.Size() == 0 {
+		return false, nil
+	}
+	// File carries the result's time once it wraps it: any other time is
+	// a result written since.
+	if out, err := os.Stat(filepath.Join(taskDir, File)); err == nil && out.ModTime().Equal(result.ModTime()) {
+		return false, nil
+	}
+	data, err := os.ReadFile(filepath.Join(taskDir, FrameFile))
+	if err != nil {
+		return false, nil // a task older than frames, or a Change, which is not rewrapped
+	}
+	var frame Document
+	if err := yaml.Unmarshal(data, &frame); err != nil {
+		return false, fmt.Errorf("reading %s: %w", FrameFile, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(taskDir, from))
+	if err != nil {
+		return false, err
+	}
+	doc, err := Wrap(frame.Kind, string(raw), frame.Target, frame.Source)
+	if err != nil {
+		return false, err
+	}
+	doc.Actions, doc.Preview = frame.Actions, frame.Preview
+	out, err := Marshal(doc)
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(taskDir, File)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return false, err
+	}
+	return true, os.Chtimes(path, result.ModTime(), result.ModTime())
 }

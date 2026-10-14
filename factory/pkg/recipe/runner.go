@@ -68,22 +68,13 @@ type Runner struct {
 	// TaskDir is where step logs and captured replies are written.
 	TaskDir string
 	Inputs  map[string]string
-	// Revise selects the part to run: "" for start, else a revise's id.
-	// A revise asks in a session that already has the recipe's context,
-	// so it is not sent again, unless the session is a fresh one
-	// (FreshSession): one after a start that asked nothing.
-	Revise string
 	// Log receives a line per step and everything the steps print.
 	Log io.Writer
 }
 
-// Run runs the selected part's steps in order and stops at the first
-// failure.
+// Run runs the recipe's steps in order and stops at the first failure.
 func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
-	steps, err := rec.Steps(r.Revise)
-	if err != nil {
-		return err
-	}
+	steps := rec.Start.Steps
 	if err := os.MkdirAll(filepath.Join(r.TaskDir, "steps"), 0o755); err != nil {
 		return err
 	}
@@ -97,7 +88,7 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 			_ = session.Close()
 		}
 	}()
-	contextSent := r.Revise != ""
+	contextSent := false
 
 	for i, step := range steps {
 		label := step.Label(i)
@@ -208,7 +199,7 @@ func (r *Recipe) RenderAgentEnv(inputs map[string]string) (map[string]string, er
 	return out, nil
 }
 
-// CheckRender renders every ask of every part with inputs, as far as can
+// CheckRender renders every ask with inputs, as far as can
 // be done before anything has run (step results and files empty), so an
 // ask reading an input its target does not set — an issue's, on a
 // repository — fails before a sandbox is made rather than in it.
@@ -216,11 +207,7 @@ func (r *Recipe) CheckRender(inputs map[string]string) error {
 	if _, err := r.RenderAgentEnv(inputs); err != nil {
 		return err
 	}
-	parts := map[string][]Step{"start": r.Start.Steps}
-	for _, rv := range r.Revise {
-		parts["revise "+rv.ID] = rv.Steps
-	}
-	for part, steps := range parts {
+	for part, steps := range map[string][]Step{"start": r.Start.Steps} {
 		data := templateData{Inputs: inputs, Steps: map[string]*StepResult{}}
 		for _, s := range steps {
 			if s.ID != "" {
@@ -298,6 +285,19 @@ func templateFuncs(taskDir string) template.FuncMap {
 			}
 			b, err := os.ReadFile(filepath.Join(taskDir, name))
 			return string(b), err
+		},
+		// output is where an ask tells the agent to write a result: a
+		// file of the task directory, by its absolute path. The agent
+		// writes it, not the runner, so a later turn of the conversation
+		// (a member's, in Continue session) can write it again.
+		"output": func(name string) (string, error) {
+			if !safeFileName(name) {
+				return "", fmt.Errorf("output %q must be a plain file name", name)
+			}
+			if taskDir == "" {
+				return name, nil // CheckRender: nothing has run
+			}
+			return filepath.Join(taskDir, name), nil
 		},
 		"resourcePrefix": ResourcePrefix,
 	}

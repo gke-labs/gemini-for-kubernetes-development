@@ -841,6 +841,10 @@ function configureGemini {
     # unlinks every file with that id, the real one too, so the next
     # session/load finds "No previous sessions found for this project".
     # A sandbox's chats go with the sandbox anyway.
+    #
+    # A recipe's result is a file the agent writes in its task directory,
+    # which is outside the checkout gemini works in: includeDirectories
+    # lets its file tools write there.
     echo "writing gemini config"
     cat <<EOF > "${USER_HOME}/.gemini/settings.json"
 {
@@ -851,6 +855,9 @@ function configureGemini {
     "sessionRetention": {
       "enabled": false
     }
+  },
+  "context": {
+    "includeDirectories": ["/workspaces/tasks"]
   }
 }
 EOF

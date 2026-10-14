@@ -26,9 +26,10 @@ func TestBuiltinTriageParses(t *testing.T) {
 	if len(data) == 0 || r.Name != "triage" || r.Context == "" {
 		t.Fatalf("recipe = %+v", r)
 	}
+	// The agent writes the triage to the file the CLI reads.
 	last := r.Start.Steps[len(r.Start.Steps)-1]
-	if last.Capture != "triage-output.yaml" || fmt.Sprint(r.Outputs) != "[triage-output.yaml]" {
-		t.Errorf("captures %q, outputs %v; want triage-output.yaml as both (what the CLI reads)", last.Capture, r.Outputs)
+	if !strings.Contains(last.Ask, `{{ output "triage-output.yaml" }}`) || last.Capture != "" || fmt.Sprint(r.Outputs) != "[triage-output.yaml]" {
+		t.Errorf("last ask %q captures %q, outputs %v; want it to name triage-output.yaml as its output", last.Ask, last.Capture, r.Outputs)
 	}
 }
 
@@ -221,6 +222,29 @@ start:
 	}
 	if b, _ := os.ReadFile(filepath.Join(r.TaskDir, "out.txt")); string(b) != "reply 2" {
 		t.Errorf("out.txt = %q", b)
+	}
+}
+
+// output names a result file by its absolute path in the task directory,
+// for the agent to write; a name that is not a plain file name fails.
+func TestRunnerOutputIsTheTaskDirPath(t *testing.T) {
+	r, _, sess, _ := newTestRunner(t)
+	rec, err := Parse([]byte("name: demo\nstart: {steps: [{ask: 'write it to {{ output \"plan.md\" }}'}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Run(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if want := "write it to " + filepath.Join(r.TaskDir, "plan.md"); len(sess.prompts) != 1 || sess.prompts[0] != want {
+		t.Errorf("prompts = %q, want %q", sess.prompts, want)
+	}
+	bad, err := Parse([]byte("name: demo\nstart: {steps: [{ask: '{{ output \"../x\" }}'}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.CheckRender(nil); err == nil {
+		t.Error("output ../x rendered, want a plain file name required")
 	}
 }
 
@@ -442,7 +466,7 @@ func TestInputFrom(t *testing.T) {
 	for name, y := range map[string]string{
 		"unknown kind":      "inputs: {p: {from: Nope}}\n",
 		"required":          "inputs: {p: {from: Plan, required: true}}\n",
-		"a revise input":    "inputs: {p: {from: Plan, revise: true}}\n",
+		"revise, gone":      "inputs: {p: {from: Plan, revise: true}}\n",
 		"typed":             "inputs: {p: {from: Plan, type: instructions}}\n",
 		"two from one kind": "inputs: {p: {from: Plan}, q: {from: Plan}}\n",
 		"run takes nothing": "task-output: {kind: Summary, from: s.md, actions: [{verb: run, run: fix}]}\n",
@@ -486,12 +510,12 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 		t.Errorf("sandbox recipe's instructions input = %+v, want it without its type", in)
 	}
 
-	// The fix's revise inputs lose their mark.
+	// The fix's plan input loses its source.
 	data, rec, err = Builtin("fix")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rec.Inputs["instruction"].Revise || rec.Inputs["plan"].From != "Plan" {
+	if rec.Inputs["plan"].From != "Plan" {
 		t.Fatalf("fix inputs = %+v", rec.Inputs)
 	}
 	if out, err = ForSandbox(data); err != nil {
@@ -500,7 +524,7 @@ func TestForSandboxDropsFactoryFields(t *testing.T) {
 	if got, err = Parse(out); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Inputs["instruction"].Revise || got.Inputs["plan"].From != "" || len(got.Revise) != len(rec.Revise) {
+	if got.Inputs["plan"].From != "" || len(got.Start.Steps) != len(rec.Start.Steps) {
 		t.Errorf("sandbox fix recipe = %+v", got)
 	}
 
@@ -642,7 +666,7 @@ func TestBuiltinPlanRenders(t *testing.T) {
 }
 
 // TestBuiltinReviewRenders: `recipe review` from a PR URL alone holds the
-// token to the clone, and revises into its session.
+// token to the clone.
 func TestBuiltinReviewRenders(t *testing.T) {
 	_, r, err := Builtin("review")
 	if err != nil {
@@ -662,8 +686,12 @@ func TestBuiltinReviewRenders(t *testing.T) {
 	if err := r.CheckRender(inputs); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.OutputDecl().Actions; got[len(got)-1].Verb != "revise" || got[len(got)-1].Revise != "review" {
-		t.Errorf("actions = %v, want a revise review last", got)
+	var verbs []string
+	for _, a := range r.OutputDecl().Actions {
+		verbs = append(verbs, a.Verb)
+	}
+	if got := strings.Join(verbs, " "); got != "edit post-review reject" {
+		t.Errorf("actions = %s, want edit post-review reject", got)
 	}
 }
 
@@ -692,7 +720,7 @@ func TestBuiltinActions(t *testing.T) {
 	}
 }
 
-const reviseRecipe = `
+const demoRecipe = `
 name: demo
 context: RULES
 outputs: [plan.md]
@@ -700,78 +728,29 @@ start:
   steps:
     - ask: investigate
     - id: write
-      ask: write it
-      capture: plan.md
+      ask: "write it for {{ .Inputs.issue }} to {{ output \"plan.md\" }}"
     - id: save
       run: &save cp plan.md /somewhere
-revise:
-  - id: plan
-    label: Update plan
-    steps:
-      - ask: "rewrite it for {{ .Inputs.issue }}"
-        capture: plan.md
-      - run: *save
+    - run: *save
 `
 
-func TestARevisePartRunsItsOwnStepsWithoutTheContext(t *testing.T) {
-	rec, err := Parse([]byte(reviseRecipe))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, ex, sess, _ := newTestRunner(t)
-	r.Revise = "plan"
-	if err := r.Run(context.Background(), rec); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(sess.prompts, "|"); got != "rewrite it for #7" {
-		t.Errorf("prompts = %q, want only the revise's ask, without the context the session already has", got)
-	}
-	if got := strings.Join(ex.ran, ","); got != "run:cp plan.md /somewhere" {
-		t.Errorf("ran %s, want the anchored save step", got)
-	}
-	if b, _ := os.ReadFile(filepath.Join(r.TaskDir, "plan.md")); string(b) != "reply 1" {
-		t.Errorf("plan.md = %q", b)
-	}
-
-	r, _, _, _ = newTestRunner(t)
-	r.Revise = "nope"
-	if err := r.Run(context.Background(), rec); err == nil || !strings.Contains(err.Error(), `no revise "nope"`) {
-		t.Errorf("an unknown revise: %v", err)
-	}
-}
-
-func TestRevisesAreValidated(t *testing.T) {
-	start := "name: a\noutputs: [p.md]\nstart: {steps: [{ask: x, capture: p.md}]}\n"
+// revise: parts are gone: a result is a file the agent writes, again
+// whenever it is asked to later in the conversation.
+func TestRemovedFieldsAreRejected(t *testing.T) {
+	start := "name: a\noutputs: [p.md]\nstart: {steps: [{ask: x}]}\n"
 	for name, y := range map[string]string{
-		"top-level steps":  "name: a\nsteps: [{run: x}]",
-		"bad id":           start + "revise: [{id: Plan, label: L, steps: [{ask: y, capture: p.md}]}]",
-		"duplicate id":     start + "revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}, {id: p, label: M, steps: [{ask: z, capture: p.md}]}]",
-		"no label":         start + "revise: [{id: p, steps: [{ask: y, capture: p.md}]}]",
-		"no steps":         start + "revise: [{id: p, label: L}]",
-		"bad step":         start + "revise: [{id: p, label: L, steps: [{run: y, capture: p.md}]}]",
-		"captures nothing": start + "revise: [{id: p, label: L, steps: [{ask: y}]}]",
-		"captures another": start + "revise: [{id: p, label: L, steps: [{ask: y, capture: other.md}]}]",
-		"declared revise action": start + "task-output: {kind: Plan, from: p.md, actions: [{verb: revise, revise: p}]}\n" +
-			"revise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]",
-		"misses the task output": "name: a\noutputs: [p.md, q.md]\nstart: {steps: [{ask: x, capture: p.md}, {ask: x2, capture: q.md}]}\n" +
-			"task-output: {kind: Plan, from: p.md}\nrevise: [{id: p, label: L, steps: [{ask: y, capture: q.md}]}]",
+		"top-level steps": "name: a\nsteps: [{run: x}]",
+		"revise":          start + "revise: [{id: p, label: L, steps: [{ask: y}]}]",
+		"revise action":   start + "task-output: {kind: Plan, from: p.md, actions: [{verb: revise, revise: p}]}\n",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
 	}
-	// A start may ask nothing: the first revise opens the session.
-	if _, err := Parse([]byte("name: a\noutputs: [p.md]\nstart: {steps: [{run: x}]}\nrevise: [{id: p, label: L, steps: [{ask: y, capture: p.md}]}]")); err != nil {
-		t.Errorf("a start that asks nothing: %v", err)
-	}
-	// Step ids are each part's own.
-	if _, err := Parse([]byte(start + "revise: [{id: redo-labels, label: L, steps: [{id: x, ask: y, capture: p.md}, {id: x2, run: z}]}]")); err != nil {
-		t.Errorf("a valid revise: %v", err)
-	}
 }
 
 func TestForSandboxKeepsAnchoredSteps(t *testing.T) {
-	data, err := ForSandbox([]byte(reviseRecipe + "task-output: {kind: Plan, from: plan.md}\n"))
+	data, err := ForSandbox([]byte(demoRecipe + "task-output: {kind: Plan, from: plan.md}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,51 +758,37 @@ func TestForSandboxKeepsAnchoredSteps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, data)
 	}
-	steps, _ := rec.Steps("plan")
-	if rec.TaskOutput != nil || len(steps) != 2 || steps[1].Run != "cp plan.md /somewhere" {
-		t.Errorf("revise steps = %+v\n%s", steps, data)
+	steps := rec.Start.Steps
+	if rec.TaskOutput != nil || len(steps) != 4 || steps[3].Run != "cp plan.md /somewhere" {
+		t.Errorf("steps = %+v\n%s", steps, data)
 	}
 }
 
-// A task of a recipe with revises offers each, after the actions declared
-// or, with none declared, the kind's.
-func TestOutputDeclOffersEachRevise(t *testing.T) {
-	base := reviseRecipe + "  - id: shorter\n    label: Shorter\n    steps: [{ask: shorter, capture: plan.md}]\n"
-	rec, err := Parse([]byte(base + "task-output: {kind: Plan, from: plan.md, actions: [{verb: comment}]}\n"))
+// A task's task output is the recipe's declaration, a copy of it.
+func TestOutputDeclIsTheDeclaration(t *testing.T) {
+	rec, err := Parse([]byte(demoRecipe + "task-output: {kind: Plan, from: plan.md, actions: [{verb: comment}]}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := rec.OutputDecl().Actions
-	want := []taskoutput.Action{{Verb: "comment"}, {Verb: "revise", Revise: "plan", Label: "Update plan"}, {Verb: "revise", Revise: "shorter", Label: "Shorter"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("actions = %+v\nwant      %+v", got, want)
+	got := rec.OutputDecl()
+	if want := []taskoutput.Action{{Verb: "comment"}}; got.Kind != "Plan" || got.From != "plan.md" || !reflect.DeepEqual(got.Actions, want) {
+		t.Errorf("decl = %+v", got)
 	}
-	if len(rec.TaskOutput.Actions) != 1 {
-		t.Errorf("the recipe's declaration changed: %+v", rec.TaskOutput.Actions)
-	}
-
-	rec, err = Parse([]byte(base + "task-output: {kind: Plan, from: plan.md}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got = rec.OutputDecl().Actions
-	if n := len(taskoutput.DefaultActions("Plan")); len(got) != n+2 || got[0].Verb != "edit" || got[n].Revise != "plan" {
-		t.Errorf("actions = %+v, want Plan's defaults and the revises", got)
-	}
-	if err := taskoutput.ValidateActions("Plan", got); err != nil {
-		t.Error(err)
+	if got == rec.TaskOutput {
+		t.Error("OutputDecl is the recipe's own declaration, not a copy")
 	}
 }
 
-// The built-in plan's Update plan saves the plan as its start does, in
-// the recipe as a sandbox gets it.
+// The built-in plan's plan is the file its agent writes, offered to fix,
+// and linked where the next plan run revises it, in the recipe as a
+// sandbox gets it.
 func TestPlanUseAsPlan(t *testing.T) {
 	data, rec, err := Builtin("plan")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a := rec.OutputDecl().Actions; a[len(a)-1] != (taskoutput.Action{Verb: "revise", Revise: "plan", Label: "Update plan"}) {
-		t.Errorf("last action = %+v", a[len(a)-1])
+	if _, err := (&taskoutput.Document{Kind: "Plan", Actions: rec.OutputDecl().Actions}).Offer("run", "fix"); err != nil {
+		t.Error(err)
 	}
 	data, err = ForSandbox(data)
 	if err != nil {
@@ -832,13 +797,9 @@ func TestPlanUseAsPlan(t *testing.T) {
 	if rec, err = Parse(data); err != nil {
 		t.Fatal(err)
 	}
-	steps, err := rec.Steps("plan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	save := rec.Start.Steps[len(rec.Start.Steps)-1].Run
-	if len(steps) != 2 || steps[0].Capture != "plan-output.md" || steps[1].Run != save || !strings.Contains(save, "plan-issue-") {
-		t.Errorf("revise plan = %+v", steps)
+	link := rec.Start.Steps[len(rec.Start.Steps)-1].Run
+	if !strings.Contains(link, "plan-issue-") || !strings.Contains(link, "ln -sfn") {
+		t.Errorf("last step = %q, want the plan linked at plan-issue-<n>.md", link)
 	}
 }
 
@@ -848,15 +809,14 @@ func TestCredentialsCloneValidated(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 	for name, y := range map[string]string{
-		"unknown":           "name: a\ncredentials: some\nstart: {steps: [{uses: clone}]}",
-		"no clone":          "name: a\ncredentials: clone\nstart: {steps: [{ask: x}]}",
-		"two clones":        "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: clone}, {ask: x}]}",
-		"clone after ask":   "name: a\ncredentials: clone\nstart: {steps: [{ask: x}, {uses: clone}]}",
-		"setup-git":         "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: setup-git}, {ask: x}]}",
-		"checkout":          "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: checkout-default-branch}, {ask: x}]}",
-		"setup-fork":        "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: setup-fork}, {ask: x}]}",
-		"push":              "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {ask: x}, {uses: push}]}",
-		"clone in a revise": "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {ask: x, capture: o.md}]}\nrevise: [{id: r, label: R, steps: [{uses: clone}, {ask: y, capture: o.md}]}]",
+		"unknown":         "name: a\ncredentials: some\nstart: {steps: [{uses: clone}]}",
+		"no clone":        "name: a\ncredentials: clone\nstart: {steps: [{ask: x}]}",
+		"two clones":      "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: clone}, {ask: x}]}",
+		"clone after ask": "name: a\ncredentials: clone\nstart: {steps: [{ask: x}, {uses: clone}]}",
+		"setup-git":       "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: setup-git}, {ask: x}]}",
+		"checkout":        "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: checkout-default-branch}, {ask: x}]}",
+		"setup-fork":      "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {uses: setup-fork}, {ask: x}]}",
+		"push":            "name: a\ncredentials: clone\nstart: {steps: [{uses: clone}, {ask: x}, {uses: push}]}",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
@@ -897,11 +857,15 @@ func TestBuiltinResearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Credentials != CredentialsClone || rec.TaskType != "research" || rec.StartOutputs() {
-		t.Fatalf("research = credentials %q, task-type %q, start outputs %v", rec.Credentials, rec.TaskType, rec.StartOutputs())
+	if rec.Credentials != CredentialsClone || rec.TaskType != "research" {
+		t.Fatalf("research = credentials %q, task-type %q", rec.Credentials, rec.TaskType)
 	}
-	if d := rec.OutputDecl(); d == nil || d.Kind != "Notes" || d.Actions[len(d.Actions)-1].Revise != "notes" {
+	// The notes are there once someone asks for them, in the conversation.
+	if d := rec.OutputDecl(); d == nil || d.Kind != "Notes" || !d.Optional || d.From != "notes.md" {
 		t.Fatalf("output decl = %+v", d)
+	}
+	if ask := rec.Start.Steps[len(rec.Start.Steps)-1].Ask; !strings.Contains(ask, `{{ output "notes.md" }}`) || !strings.Contains(ask, "save notes") {
+		t.Errorf("research's ask does not say where saved notes go:\n%s", ask)
 	}
 	// What a repository target sets, and the member's question.
 	repo := map[string]string{"repo_owner": "o", "repo_name": "r", "url": "https://github.com/o/r", "repo_url": "https://github.com/o/r"}
@@ -943,8 +907,11 @@ func TestBuiltinFixRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" || len(r.Revise) != 1 {
-		t.Fatalf("fix task-type %q, credentials %q, task-output %+v, %d revises", r.TaskType, r.Credentials, r.TaskOutput, len(r.Revise))
+	if r.TaskType != "fix" || r.Credentials != "" || r.TaskOutput == nil || r.TaskOutput.Kind != "Change" || r.TaskOutput.From != "change.yaml" {
+		t.Fatalf("fix task-type %q, credentials %q, task-output %+v", r.TaskType, r.Credentials, r.TaskOutput)
+	}
+	if _, ok := r.Inputs["instruction"]; ok {
+		t.Error("fix takes an instruction: changing a fix once its PR is open is care-iterate's")
 	}
 	var uses []string
 	for _, s := range r.Start.Steps {
@@ -1019,103 +986,20 @@ func TestBuiltinFixRenders(t *testing.T) {
 	}
 }
 
-// TestBuiltinFixRevises: the fix's one revise, iterate, starts from the
-// push the fix last made, writes a Change, and ends with the push; its asks
-// render with the start's inputs and say what they must.
-func TestBuiltinFixRevises(t *testing.T) {
-	_, r, err := Builtin("fix")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ids []string
-	for _, rv := range r.Revise {
-		ids = append(ids, rv.ID)
-		first, last := rv.Steps[0], rv.Steps[len(rv.Steps)-1]
-		if !strings.Contains(first.Run, "INPUT_PUSHED_HEAD") || !strings.Contains(first.Run, "/lease") {
-			t.Errorf("%s does not start from the push: %q", rv.ID, first.Run)
-		}
-		if last.Uses != "push" {
-			t.Errorf("%s ends with %s, not the push", rv.ID, last.Label(len(rv.Steps)-1))
-		}
-		if c := rv.Steps[len(rv.Steps)-2]; c.Ask == "" || c.Capture != "change.yaml" {
-			t.Errorf("%s does not capture change.yaml before the push", rv.ID)
-		}
-	}
-	if got := strings.Join(ids, " "); got != "iterate" {
-		t.Errorf("revises = %s", got)
-	}
-	acts := r.OutputDecl().Actions
-	var verbs []string
-	for _, a := range acts {
-		verbs = append(verbs, strings.TrimSpace(a.Verb+" "+a.Revise))
-	}
-	if got := strings.Join(verbs, ","); got != "edit,open-pr,reject,revise iterate" {
-		t.Errorf("actions = %s", got)
-	}
-
-	inputs, err := r.ResolveInputs(map[string]string{
-		"repo_owner": "o", "repo_name": "r", "url": "u", "disclose": "true",
-		"issue_url": "u", "issue_number": "7", "issue_title": "t", "issue_body": "b",
-	}, map[string]string{"instruction": "rename foo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	for name, v := range map[string]string{"pr": "12", "lease": "h1", "base": "b2"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	asks := map[string]string{}
-	for _, rv := range r.Revise {
-		var all strings.Builder
-		for i, s := range rv.Steps {
-			if s.Ask == "" {
-				continue
-			}
-			out, err := render(s.Label(i), s.Ask, templateData{Inputs: inputs, Steps: map[string]*StepResult{}}, dir)
-			if err != nil {
-				t.Fatalf("%s step %s: %v", rv.ID, s.Label(i), err)
-			}
-			all.WriteString(out)
-		}
-		asks[rv.ID] = all.String()
-	}
-	for id, want := range map[string][]string{
-		"iterate": {"rename foo", "change: {}"},
-	} {
-		for _, w := range want {
-			if !strings.Contains(asks[id], w) {
-				t.Errorf("%s's asks lack %q:\n%s", id, w, asks[id])
-			}
-		}
-	}
-}
-
-// The step a revise of fix, and care's start and revises, begin with points
-// the push at the PR's branch, leased against the head last pushed, and
-// checks that branch out; care's also remembers the PR.
+// The step care's start begins with points the push at the PR's branch,
+// leased against the head last pushed, checks that branch out, and
+// remembers the PR.
 func TestPushedStepPointsThePushAtTheBranch(t *testing.T) {
-	_, fix, err := Builtin("fix")
-	if err != nil {
-		t.Fatal(err)
-	}
 	_, care, err := Builtin("care")
 	if err != nil {
 		t.Fatal(err)
 	}
 	carePushed := care.Start.Steps[4].Run
-	for _, rv := range care.Revise {
-		if rv.Steps[0].Run != carePushed {
-			t.Errorf("care's %s does not start from the push", rv.ID)
-		}
-	}
 	for name, tc := range map[string]struct {
 		script string
 		want   map[string]string
 	}{
-		"fix iterate": {fix.Revise[0].Steps[0].Run, map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1"}},
-		"care":        {carePushed, map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1", "pr": "12"}},
+		"care": {carePushed, map[string]string{"branch": "issue-7-1\n", "base": "b0\n", "lease": "h1", "pr": "12"}},
 	} {
 		repo, taskDir := t.TempDir(), t.TempDir()
 		git := func(args ...string) {
@@ -1175,16 +1059,16 @@ func TestSandboxUsesGetsTheTaskDir(t *testing.T) {
 	}
 }
 
-// on: and a revise's inputs are checked when parsed, and kept from a
-// sandbox's runner, which may predate them.
-func TestOnAndReviseInputs(t *testing.T) {
-	withOn := "label: Draft it\non: [issue, my-pr]\ninputs:\n  instruction:\n    revise: true\n" + strings.Replace(reviseRecipe, "    label: Update plan\n", "    label: Update plan\n    inputs: [instruction]\n", 1)
+// on: and label are checked when parsed, and kept from a sandbox's
+// runner, which may predate them.
+func TestOnAndLabel(t *testing.T) {
+	withOn := "label: Draft it\non: [issue, my-pr]\n" + demoRecipe
 	rec, err := Parse([]byte(withOn))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(rec.On, []string{OnIssue, OnMyPR}) || !slices.Equal(rec.Revise[0].Inputs, []string{"instruction"}) || rec.DisplayLabel() != "Draft it" {
-		t.Errorf("parsed = on %v, revise inputs %v, label %q", rec.On, rec.Revise[0].Inputs, rec.DisplayLabel())
+	if !slices.Equal(rec.On, []string{OnIssue, OnMyPR}) || rec.DisplayLabel() != "Draft it" {
+		t.Errorf("parsed = on %v, label %q", rec.On, rec.DisplayLabel())
 	}
 	if (&Recipe{Name: "fix"}).DisplayLabel() != "Fix" {
 		t.Error("an unlabelled recipe is not shown under its name")
@@ -1197,24 +1081,18 @@ func TestOnAndReviseInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got.On != nil || got.Label != "" || got.Revise[0].Inputs != nil || len(got.Revise[0].Steps) != 2 {
+	if got.On != nil || got.Label != "" || len(got.Start.Steps) != 4 {
 		t.Errorf("sandbox recipe kept factory's fields:\n%s", out)
 	}
-
-	for name, bad := range map[string]string{
-		"unknown target":          "on: [commit]\n" + reviseRecipe,
-		"undeclared revise input": strings.Replace(reviseRecipe, "    label: Update plan\n", "    label: Update plan\n    inputs: [instruction]\n", 1),
-	} {
-		if _, err := Parse([]byte(bad)); err == nil {
-			t.Errorf("%s: parsed", name)
-		}
+	if _, err := Parse([]byte("on: [commit]\n" + demoRecipe)); err == nil {
+		t.Error("an unknown target parsed")
 	}
 }
 
 // A recipe runs on its on: targets, a PR of yours on [pr] as well, and
 // everywhere with none; setup: and start.on are gone, and refused.
 func TestRunsOn(t *testing.T) {
-	plain, err := Parse([]byte(reviseRecipe))
+	plain, err := Parse([]byte(demoRecipe))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1226,7 +1104,7 @@ func TestRunsOn(t *testing.T) {
 		"[pr]":    {OnIssue: false, OnPR: true, OnMyPR: true},
 		"[my-pr]": {OnIssue: false, OnPR: false, OnMyPR: true},
 	} {
-		rec, err := Parse([]byte("on: " + on + "\n" + reviseRecipe))
+		rec, err := Parse([]byte("on: " + on + "\n" + demoRecipe))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1237,8 +1115,8 @@ func TestRunsOn(t *testing.T) {
 		}
 	}
 	for name, bad := range map[string]string{
-		"setup":    strings.Replace(reviseRecipe, "start:\n  steps:", "setup:\n  steps:\n    - run: prepare\nstart:\n  steps:", 1),
-		"start.on": strings.Replace(reviseRecipe, "start:\n  steps:", "start:\n  on: [issue]\n  steps:", 1),
+		"setup":    strings.Replace(demoRecipe, "start:\n  steps:", "setup:\n  steps:\n    - run: prepare\nstart:\n  steps:", 1),
+		"start.on": strings.Replace(demoRecipe, "start:\n  steps:", "start:\n  on: [issue]\n  steps:", 1),
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%s: parsed", name)
@@ -1246,20 +1124,20 @@ func TestRunsOn(t *testing.T) {
 	}
 }
 
-// A revise into a fresh session sends the context as a start would.
-func TestAReviseIntoAFreshSessionSendsTheContext(t *testing.T) {
-	rec, err := Parse([]byte(reviseRecipe))
+// A run into a fresh session sends the context, once, with its first ask.
+func TestARunIntoAFreshSessionSendsTheContext(t *testing.T) {
+	rec, err := Parse([]byte(demoRecipe))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, _, sess, _ := newTestRunner(t)
-	r.Revise = "plan"
 	r.StartSession = func(context.Context) (Session, error) { return freshSession{sess}, nil }
 	if err := r.Run(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(sess.prompts) != 1 || !strings.HasPrefix(sess.prompts[0], "RULES\n") {
-		t.Errorf("prompts = %q, want the context first", sess.prompts)
+	want := "write it for #7 to " + filepath.Join(r.TaskDir, "plan.md")
+	if len(sess.prompts) != 2 || !strings.HasPrefix(sess.prompts[0], "RULES\n") || sess.prompts[1] != want {
+		t.Errorf("prompts = %q, want the context first, once, and the output's path", sess.prompts)
 	}
 }
 
@@ -1370,8 +1248,8 @@ func TestBuiltinFanoutRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.TaskOutput == nil || r.TaskOutput.Kind != "FanOut" || len(r.Revise) != 0 {
-		t.Fatalf("fanout task-output %+v, revises %d", r.TaskOutput, len(r.Revise))
+	if r.TaskOutput == nil || r.TaskOutput.Kind != "FanOut" {
+		t.Fatalf("fanout task-output %+v", r.TaskOutput)
 	}
 	std := map[string]string{
 		"repo_owner": "o", "repo_name": "r", "url": "u",
@@ -1392,7 +1270,7 @@ func TestBuiltinFanoutRenders(t *testing.T) {
 }
 
 // A session's recipes land in one sandbox and one of them names the
-// group; a recipe in one is recorded under it, and has no revises.
+// group; a recipe in one is recorded under it.
 func TestSessions(t *testing.T) {
 	var builtins []*Recipe
 	for _, name := range BuiltinNames() {
@@ -1432,7 +1310,6 @@ func TestSessions(t *testing.T) {
 	for _, r := range []*Recipe{
 		{Name: "x", Session: "Bad Name", Start: start},
 		{Name: "x", Session: "s", TaskType: "fix", Start: start},
-		{Name: "x", Session: "s", Start: start, Revise: []Revise{{ID: "again", Steps: []Step{{Run: "true"}}}}},
 	} {
 		if err := r.Validate(); err == nil {
 			t.Errorf("%+v validated", r)
@@ -1514,8 +1391,8 @@ func TestBuiltinAdoptRecipe(t *testing.T) {
 		t.Fatalf("on %v, task-output %+v", rec.On, rec.TaskOutput)
 	}
 	// A run step writes the Change, which a task of it still declares.
-	if !rec.StartOutputs() {
-		t.Fatal("adopt's start leaves no task output")
+	if d := rec.OutputDecl(); d == nil || d.Kind != "Change" {
+		t.Fatalf("adopt's task declares %+v", d)
 	}
 	std := map[string]string{"pr_url": "https://github.com/o/r/pull/5", "pr_title": "t", "pr_body": "b", "pr_number": "5", "pr_base": "main", "repo_owner": "o", "repo_name": "r", "disclose": "true"}
 	inputs, err := rec.ResolveInputs(std, nil)
@@ -1636,7 +1513,7 @@ func TestBuiltinAgentRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "agent" ||
-		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || !rec.TaskOutput.Optional || !rec.StartOutputs() {
+		rec.TaskOutput == nil || rec.TaskOutput.Kind != "Change" || !rec.TaskOutput.Optional {
 		t.Fatalf("on %v, task-type %q, task-output %+v", rec.On, rec.TaskType, rec.TaskOutput)
 	}
 	std := map[string]string{"repo_owner": "o", "repo_name": "r", "disclose": "true"}
@@ -1972,6 +1849,33 @@ func TestSandboxDeclValidation(t *testing.T) {
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed", name)
+		}
+	}
+}
+
+// Every built-in's result is a file its agent writes ({{ output "<from>" }}
+// in an ask), or a run step does (adopt's Change): none is captured from
+// a reply, so a later turn of the conversation can write it again.
+func TestBuiltinResultsAreWrittenFiles(t *testing.T) {
+	for _, name := range BuiltinNames() {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, s := range rec.Start.Steps {
+			if s.Capture != "" {
+				t.Errorf("%s: step %s captures %s", name, s.Label(i), s.Capture)
+			}
+		}
+		if rec.TaskOutput == nil {
+			continue
+		}
+		from := rec.TaskOutput.From
+		named := fmt.Sprintf(`{{ output %q }}`, from)
+		if !slices.ContainsFunc(rec.Start.Steps, func(s Step) bool {
+			return strings.Contains(s.Ask, named) || strings.Contains(s.Run, from)
+		}) {
+			t.Errorf("%s: no ask names %s, and no run step writes %s", name, named, from)
 		}
 	}
 }

@@ -77,7 +77,7 @@ func TestWrapChange(t *testing.T) {
 	if _, err := Wrap("Change", "no change here", Target{}, Source{}); err == nil {
 		t.Error("an answer with no change: block was wrapped")
 	}
-	// A revise's may have no title, and keeps the PR's; a Change with
+	// One on a PR may have no title, and keeps the PR's; a Change with
 	// none at all is refused.
 	untitled, err := Wrap("Change", "change:\n  title: \"\"\n  report: r\n", Target{}, Source{})
 	if err != nil {
@@ -376,7 +376,7 @@ func (f *fakeThreads) mux() *http.ServeMux {
 	return mux
 }
 
-func reviseChange(t *testing.T, raw string) *Document {
+func prChange(t *testing.T, raw string) *Document {
 	t.Helper()
 	doc, err := Wrap("Change", raw, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "fix-2", Recipe: "fix"})
 	if err != nil {
@@ -393,7 +393,7 @@ func TestPostReplies(t *testing.T) {
 	const answers = "change:\n  replies:\n    - inReplyTo: 100\n      body: Moved it.\n    - inReplyTo: 200\n      body: Done, it does now.\n  report: All addressed.\n"
 
 	t.Run("a thread reply, a quoted reply and the report, once", func(t *testing.T) {
-		doc := reviseChange(t, answers)
+		doc := prChange(t, answers)
 		f := &fakeThreads{}
 		var out bytes.Buffer
 		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
@@ -424,7 +424,7 @@ func TestPostReplies(t *testing.T) {
 	t.Run("dry run posts nothing", func(t *testing.T) {
 		f := &fakeThreads{}
 		var out bytes.Buffer
-		if err := ApplyAction(ctx, f.client(t), reviseChange(t, answers), "post-replies", true, &out); err != nil {
+		if err := ApplyAction(ctx, f.client(t), prChange(t, answers), "post-replies", true, &out); err != nil {
 			t.Fatal(err)
 		}
 		if len(f.review)+len(f.issue) != 0 || !strings.Contains(out.String(), "Would reply") {
@@ -446,8 +446,8 @@ func TestPostReplies(t *testing.T) {
 
 	t.Run("refused", func(t *testing.T) {
 		for name, doc := range map[string]*Document{
-			"another PR's comment": reviseChange(t, "change:\n  replies:\n    - inReplyTo: 300\n      body: x\n"),
-			"no such comment":      reviseChange(t, "change:\n  replies:\n    - inReplyTo: 400\n      body: x\n"),
+			"another PR's comment": prChange(t, "change:\n  replies:\n    - inReplyTo: 300\n      body: x\n"),
+			"no such comment":      prChange(t, "change:\n  replies:\n    - inReplyTo: 400\n      body: x\n"),
 		} {
 			f := &fakeThreads{}
 			var out bytes.Buffer
@@ -455,7 +455,7 @@ func TestPostReplies(t *testing.T) {
 				t.Errorf("%s: %v, posted %d", name, err, len(f.review)+len(f.issue))
 			}
 		}
-		atIssue := reviseChange(t, answers)
+		atIssue := prChange(t, answers)
 		atIssue.Target.URL = issueURL
 		var out bytes.Buffer
 		if err := ApplyAction(ctx, (&fakeThreads{}).client(t), atIssue, "post-replies", false, &out); err == nil {
@@ -523,7 +523,7 @@ func TestPostRepliesReruns(t *testing.T) {
 	const reruns = "change:\n  report: A flake.\n  rerun:\n    - run: 1\n    - run: 2\n    - run: 3\n    - run: 4\n    - retest: /test pull-unit\n    - retest: /retest\n    - retest: /lgtm\n    - retest: \"/test a; rm\"\n"
 
 	t.Run("failed runs of the head, Prow commands once", func(t *testing.T) {
-		doc := reviseChange(t, reruns)
+		doc := prChange(t, reruns)
 		f := &fakeChecks{}
 		var out bytes.Buffer
 		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
@@ -557,7 +557,7 @@ func TestPostRepliesReruns(t *testing.T) {
 	t.Run("dry run reruns nothing", func(t *testing.T) {
 		f := &fakeChecks{}
 		var out bytes.Buffer
-		if err := ApplyAction(ctx, f.client(t), reviseChange(t, reruns), "post-replies", true, &out); err != nil {
+		if err := ApplyAction(ctx, f.client(t), prChange(t, reruns), "post-replies", true, &out); err != nil {
 			t.Fatal(err)
 		}
 		if len(f.reran)+len(f.issue) != 0 || !strings.Contains(out.String(), "Would rerun the failed jobs of run 1") {

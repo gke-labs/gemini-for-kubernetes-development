@@ -6,8 +6,9 @@
 # /workspaces/plan-issue-<n>.md, for the next plan run to revise.
 #
 # Run again, it revises the plan it finds there, against --feedback if
-# given. After a conversation in its session, `factory recipe revise
-# <issue> plan` rewrites the plan from that conversation.
+# given. The agent writes the plan to a file of its task, so after a
+# conversation in its session (Continue session) it rewrites the plan
+# when asked, and the task's result follows (taskoutput.Refresh).
 name: plan
 on: [issue]
 task-type: plan
@@ -26,8 +27,9 @@ context: |
   plan.
 
   You must not change anything: do NOT modify or create files in the
-  repository, do NOT run git write operations (commit, branch, push), and
-  do NOT post anything to GitHub (no comments, labels, or assignments).
+  repository (the result file you are asked to write is outside it), do
+  NOT run git write operations (commit, branch, push), and do NOT post
+  anything to GitHub (no comments, labels, or assignments).
 
   The repository is already cloned in the current directory.
 
@@ -80,9 +82,8 @@ start:
         Summarise what you found in a few lines.
 
     - ask: |
-        Now write the plan. Respond with ONLY the plan as markdown — no prose
-        before or after it, no top-level title heading, no code fences around
-        the whole plan. Use exactly these sections:
+        Now write the plan to the file {{ output "plan-output.md" }}, as
+        markdown, with no top-level title heading, in exactly these sections:
 
         ## Summary
         2-3 sentences: what the issue asks for and the shape of the fix.
@@ -103,28 +104,18 @@ start:
         ## Test plan
         How the change will be verified: which tests to add or update, and any
         manual verification worth doing.
-      capture: plan-output.md
 
-    # Where the board and a continued chat read the plan, without a
-    # fence around all of it.
-    - run: &save |
-        test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty" >&2; exit 1; }
-        sed -e '1{/^```/d;}' -e '${/^```$/d;}' "$TASK_DIR/plan-output.md" > "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
+        Write the whole file with your file tool (if it refuses the path, with
+        the shell), replacing anything in it. Whenever later in this
+        conversation you are asked to change the plan or to save it, write
+        that file again, whole, in the same sections. Then say in a line or
+        two that it is written and what it proposes.
 
-# After the task, a member can keep talking to the agent in its session
-# (Continue session). Update plan rewrites the plan from that conversation,
-# into the same session, as a new task with its own result.
-revise:
-  - id: plan
-    label: Update plan
-    steps:
-      - ask: |
-          Rewrite the plan to reflect our conversation. Respond with ONLY the
-          plan as markdown — no prose before or after it, no top-level title
-          heading, no code fences around the whole plan — with the same
-          sections as before: Summary, Approach, Steps, Risks, Test plan.
-        capture: plan-output.md
-      - run: *save
+    # The next plan run revises the plan it finds there: a link, so a plan
+    # rewritten later in the conversation is the one it finds.
+    - run: |
+        test -s "$TASK_DIR/plan-output.md" || { echo "the plan is empty: the agent wrote no $TASK_DIR/plan-output.md" >&2; exit 1; }
+        ln -sfn "$TASK_DIR/plan-output.md" "/workspaces/plan-issue-${INPUT_ISSUE_NUMBER}.md"
 
 outputs:
   - plan-output.md

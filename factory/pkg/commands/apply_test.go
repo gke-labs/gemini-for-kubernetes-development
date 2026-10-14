@@ -152,8 +152,7 @@ func TestFillChange(t *testing.T) {
 		t.Error("draft maybe was taken")
 	}
 
-	// A Change on a PR — a revise's, or a start's on one, such as care's —
-	// is about the PR, and keeps its title and body where the agent wrote
+	// A Change on a PR — such as care's — is about the PR, and keeps its title and body where the agent wrote
 	// none.
 	rev, err := taskoutput.Wrap("Change", "change:\n  report: fixed the lint\n", taskoutput.Target{URL: "https://github.com/o/r/issues/7"}, taskoutput.Source{})
 	if err != nil {
@@ -163,17 +162,17 @@ func TestFillChange(t *testing.T) {
 		t.Error("a start's Change with no title was filled")
 	}
 	inputs := map[string]string{"pr_url": "https://github.com/o/r/pull/9", "pushed_title": "t0", "pushed_body": "b0"}
-	if err := fillChange(rev, spool.Task{Revise: "fix-ci"}, dir, inputs); err != nil {
+	if err := fillChange(rev, spool.Task{Recipe: "care-ci"}, dir, inputs); err != nil {
 		t.Fatal(err)
 	}
 	if c, err = rev.ChangeSpec(); err != nil {
 		t.Fatal(err)
 	}
 	if c.Title != "t0" || c.Body != "b0" || c.Report != "fixed the lint" || rev.Target.URL != "https://github.com/o/r/pull/9" || rev.Target.Commit != "h1" {
-		t.Errorf("revise filled %+v, target %+v", c, rev.Target)
+		t.Errorf("care's filled %+v, target %+v", c, rev.Target)
 	}
 	retitled, _ := taskoutput.Wrap("Change", "change:\n  title: t1\n", taskoutput.Target{}, taskoutput.Source{})
-	if err := fillChange(retitled, spool.Task{Revise: "iterate"}, dir, inputs); err != nil {
+	if err := fillChange(retitled, spool.Task{Recipe: "care-iterate"}, dir, inputs); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ = retitled.ChangeSpec(); c.Title != "t1" || c.Body != "b0" {
