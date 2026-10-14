@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -110,6 +111,10 @@ type Recipe struct {
 	// Sandbox gives a repository's recipe a sandbox of its own rather
 	// than a session's. Like TaskOutput it is factory's.
 	Sandbox *SandboxDecl `yaml:"sandbox,omitempty"`
+	// Timeout is how long a run may take (a Go duration: 3h), for
+	// whoever runs the recipe for a board; unset, its own default. Like
+	// TaskOutput it is factory's.
+	Timeout string `yaml:"timeout,omitempty"`
 }
 
 // SandboxRun is the one kind of sandbox a recipe may declare: a run's own,
@@ -432,6 +437,23 @@ func (r *Recipe) Validate() error {
 				return fmt.Errorf("task-output: action run %s: recipe %s has no input from a %s", a.Run, a.Run, to.Kind)
 			}
 		}
+		if to.OnFinish != "" {
+			if class, _ := taskoutput.VerbClass(to.OnFinish); class != taskoutput.ClassApply {
+				return fmt.Errorf("task-output: on-finish %q must be an apply action, such as open-pr", to.OnFinish)
+			}
+			offered := to.Actions
+			if len(offered) == 0 {
+				offered = taskoutput.DefaultActions(to.Kind)
+			}
+			if !slices.ContainsFunc(offered, func(a taskoutput.Action) bool { return a.Verb == to.OnFinish }) {
+				return fmt.Errorf("task-output: on-finish %s is not one of the %s's actions", to.OnFinish, to.Kind)
+			}
+		}
+	}
+	if r.Timeout != "" {
+		if d, err := time.ParseDuration(r.Timeout); err != nil || d <= 0 {
+			return fmt.Errorf("timeout %q must be a positive duration, such as 45m", r.Timeout)
+		}
 	}
 	for _, o := range r.Outputs {
 		if !safeFileName(o) {
@@ -623,8 +645,8 @@ func safeFileName(name string) bool {
 }
 
 // ForSandbox is the recipe as a sandbox's runner gets it: without label,
-// on, task-output, task-type, session, applicable-when, sandbox and input
-// types and sources, which runners older than them reject as unknown
+// on, task-output, task-type, session, applicable-when, sandbox, timeout
+// and input types and sources, which runners older than them reject as unknown
 // fields.
 func ForSandbox(data []byte) ([]byte, error) {
 	var doc yaml.Node
@@ -636,7 +658,7 @@ func ForSandbox(data []byte) ([]byte, error) {
 	}
 	m := doc.Content[0]
 	changed := false
-	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when", "sandbox"} {
+	for _, k := range []string{"label", "on", "task-output", "task-type", "session", "applicable-when", "sandbox", "timeout"} {
 		if dropKey(m, k) {
 			changed = true
 		}

@@ -56,6 +56,12 @@ func TestParseRejects(t *testing.T) {
 		"applicable-when empty":         "name: a\napplicable-when: {}\nstart: {steps: [{run: x}]}",
 		"applicable-when bad template":  "name: a\napplicable-when: {label: \"{{ .Trigger\"}\nstart: {steps: [{run: x}]}",
 		"applicable-when unknown field": "name: a\napplicable-when: {label: \"{{ .Repo }}/x\"}\nstart: {steps: [{run: x}]}",
+		"bad timeout":                   "name: a\ntimeout: soon\nstart: {steps: [{run: x}]}",
+		"zero timeout":                  "name: a\ntimeout: 0s\nstart: {steps: [{run: x}]}",
+		"on-finish not offered":         "name: a\ntask-output: {kind: Change, from: c.yaml, actions: [{verb: open-pr}], on-finish: post-replies}\nstart: {steps: [{run: x}]}",
+		"on-finish edit":                "name: a\ntask-output: {kind: Plan, from: p.md, on-finish: edit}\nstart: {steps: [{run: x}]}",
+		"on-finish reject":              "name: a\ntask-output: {kind: Plan, from: p.md, on-finish: reject}\nstart: {steps: [{run: x}]}",
+		"on-finish unknown":             "name: a\ntask-output: {kind: Plan, from: p.md, on-finish: deploy}\nstart: {steps: [{run: x}]}",
 	} {
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: parsed, want an error", name)
@@ -535,6 +541,48 @@ func TestInputFrom(t *testing.T) {
 	}
 	if _, err := Parse([]byte("name: a\non: [issue]\nstart: {steps: [{ask: x}]}\ninputs: {p: {from: Plan}}\ntask-output: {kind: Plan, from: s.md, actions: [{verb: run, run: a}]}\n")); err != nil {
 		t.Errorf("a recipe that follows itself: %v", err)
+	}
+}
+
+// on-finish names an apply action the result offers, its kind's defaults
+// when it declares none; timeout is a positive duration.
+func TestOnFinishAndTimeout(t *testing.T) {
+	rec, err := Parse([]byte("name: a\ntimeout: 3h\ntask-output: {kind: Plan, from: p.md, on-finish: comment}\nstart: {steps: [{run: x}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Timeout != "3h" || rec.TaskOutput.OnFinish != "comment" {
+		t.Errorf("timeout %q, on-finish %q", rec.Timeout, rec.TaskOutput.OnFinish)
+	}
+	out, err := ForSandbox([]byte("name: a\ntimeout: 3h\nstart: {steps: [{run: x}]}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "timeout") {
+		t.Errorf("timeout still in the sandbox's recipe:\n%s", out)
+	}
+}
+
+// What a board's runner applies when a run ends, and how long it waits.
+func TestBuiltinsDeclareHowTheyFinish(t *testing.T) {
+	for name, want := range map[string][2]string{
+		"fix":           {"open-pr", "3h"},
+		"review":        {"post-review", "45m"},
+		"care":          {"post-replies", ""},
+		"care-ci":       {"post-replies", ""},
+		"care-comments": {"post-replies", ""},
+		"care-rebase":   {"post-replies", ""},
+		"care-iterate":  {"post-replies", ""},
+		"plan":          {"", ""},
+		"triage":        {"", ""},
+	} {
+		_, rec, err := Builtin(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := [2]string{rec.TaskOutput.OnFinish, rec.Timeout}; got != want {
+			t.Errorf("%s: on-finish, timeout = %q, want %q", name, got, want)
+		}
 	}
 }
 

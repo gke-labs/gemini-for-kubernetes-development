@@ -15,6 +15,7 @@
 # task's result follows. Run again with --instruction, review is a new
 # review with instructions.
 name: review
+timeout: 45m
 on: [pr]
 credentials: clone
 
@@ -111,6 +112,8 @@ outputs:
 
 task-output:
   kind: Review
+  # Applied by a board's runner when the run ends.
+  on-finish: post-review
   from: review.yaml
   preview: spec.body
   actions:
