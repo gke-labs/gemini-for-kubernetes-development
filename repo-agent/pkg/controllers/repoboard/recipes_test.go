@@ -19,14 +19,17 @@ package repoboard
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/google/go-github/v39/github"
 	"github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
@@ -321,4 +324,70 @@ func TestRecipeNewSession(t *testing.T) {
 		}
 	}
 	g.Expect(byRecipe).To(gomega.Equal(map[string]bool{"care": true, "summarize": false}))
+}
+
+// A recipe whose sandbox is running another run waits for it, saying so
+// on its Request, instead of launching into factory's refusal; once the
+// other run has ended, it launches.
+func TestRecipeWaitsForABusySandbox(t *testing.T) {
+	g := gomega.NewWithT(t)
+	sb := recipeSandbox("fix-repo-12", "https://github.com/test/repo/pull/12")
+	sb.SetAnnotations(map[string]string{
+		"htmlURL":                       "https://github.com/test/repo/pull/12",
+		factorycli.RunAnnotation("fix"): `{"name":"fix/b/12/1","task":"t1","recipe":"fix","state":"Running","startedAt":"2026-10-14T10:00:00Z"}`,
+	})
+	fake := newFakeLauncher()
+	req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "care", Item: "pr", Number: 12})
+	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), sb, req)
+	r.reconcileBoard(t)
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+	status := requestStatus(t, r, req)
+	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestPending))
+	g.Expect(status.Reason).To(gomega.Equal("Waiting"))
+	g.Expect(status.Message).To(gomega.ContainSubstring("waiting for fix"))
+
+	// The other run ended: the recipe launches.
+	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "fix-repo-12", Namespace: "alice"}, sb)).To(gomega.Succeed())
+	annotations := sb.GetAnnotations()
+	annotations[factorycli.RunAnnotation("fix")] = `{"name":"fix/b/12/1","task":"t1","recipe":"fix","state":"Completed","startedAt":"2026-10-14T10:00:00Z"}`
+	sb.SetAnnotations(annotations)
+	g.Expect(r.Update(context.Background(), sb)).To(gomega.Succeed())
+	r.reconcileBoard(t)
+	g.Expect(fake.launches()).To(gomega.HaveLen(1))
+}
+
+// A recipe whose output is a Review is not launched over a pending
+// review of the member's that factory did not post: it could never be
+// posted. One factory posted, or a submitted review, does not stop it.
+func TestReviewRecipeRefusedOverTheMembersPendingReview(t *testing.T) {
+	g := gomega.NewWithT(t)
+	catalog := []boardv1alpha1.BoardRecipe{{Name: "gate", Label: "Gate", On: []string{"pr"}, Kind: "Review", TaskType: "recipe-gate", Credentials: "clone"}}
+	for _, tc := range []struct {
+		name    string
+		reviews string
+		refused bool
+	}{
+		{"own pending", `[{"id":1,"state":"PENDING","body":"mine","user":{"login":"alice"}}]`, true},
+		{"factory's pending", `[{"id":1,"state":"PENDING","body":"x <!-- factory:task-output kind=Review task=t -->","user":{"login":"alice"}}]`, false},
+		{"submitted", `[{"id":1,"state":"COMMENTED","body":"mine","user":{"login":"alice"}}]`, false},
+		{"someone else's pending", `[{"id":1,"state":"PENDING","body":"theirs","user":{"login":"bob"}}]`, false},
+	} {
+		fake := newFakeLauncher()
+		fake.catalog = catalog
+		req := testRequest(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "gate", Item: "pr", Number: 12})
+		r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(map[string]string{}), githubSecret(), req)
+		reviews := tc.reviews
+		newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
+			return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{suffix: "/reviews", body: reviews}})
+		}
+		r.reconcileBoard(t)
+		if tc.refused {
+			g.Expect(fake.launches()).To(gomega.BeEmpty(), tc.name)
+			status := requestStatus(t, r, req)
+			g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed), tc.name)
+			g.Expect(status.Reason).To(gomega.Equal("OwnPendingReview"), tc.name)
+		} else {
+			g.Expect(fake.launches()).To(gomega.HaveLen(1), tc.name)
+		}
+	}
 }

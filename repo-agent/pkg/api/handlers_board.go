@@ -678,7 +678,9 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	// Clicks beyond the launch limit are honestly queued, not starting:
 	// the controller defers them until a slot frees.
 	atCapacity := int64(running) >= boardLimit(board, "maxActive", 5)
-	requests := s.boardRequests(ctx, board)
+	all := s.allBoardRequests(ctx, board)
+	requests := activeRequests(all)
+	markFailedRecipes(items, catalog, all)
 	applyRowRules(items, catalog, requests, atCapacity, time.Now())
 	markAutos(items, requests, namespace)
 	s.markApplies(ctx, board, items)
@@ -1255,14 +1257,21 @@ func (s *Server) kickoff(c *gin.Context, item, recipe string, inputs map[string]
 	}
 	// GitHub-native claim, best-effort under the clicker's token: kickoff
 	// proceeds via the Request even when the token lacks triage rights.
-	// The trigger label is deliberately NOT written: a click is a one-time
-	// consent, while a label is a standing trigger that would relaunch the
-	// item forever after cleanup.
+	// What the recipe makes says what it claims: a Change on an issue
+	// assigns the clicker, a Review requests them as reviewer. The trigger
+	// label is deliberately NOT written: a click is a one-time consent,
+	// while a label is a standing trigger that would relaunch the item
+	// forever after cleanup.
+	kind := ""
+	if catalog, err := boardRecipes(board); err == nil {
+		kind = recipeKind(catalog, recipe)
+	}
+	assign, requestReview := item == "issue" && kind == "Change", kind == "Review"
 	if token, err := s.memberToken(ctx, namespace); err != nil {
 		log.Info("member token unavailable; request-only kickoff", "err", err)
-	} else if recipe == "fix" || recipe == "review" {
+	} else if assign || requestReview {
 		gh := githubClientForToken(ctx, token)
-		if recipe == "fix" {
+		if assign {
 			if _, _, err := gh.Issues.AddAssignees(ctx, owner, repo, number, []string{member}); err != nil {
 				log.Info("best-effort assignment failed", "issue", number, "err", err)
 			}

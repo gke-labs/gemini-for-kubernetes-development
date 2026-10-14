@@ -170,10 +170,11 @@ func (s *Server) listRequests(ctx context.Context, namespace string, opts v1.Lis
 	return out, nil
 }
 
-// boardRequests is the read half: every standing click on one board,
-// which is what the work feed and the Runs tab render as "starting" and
-// "queued" rows before any sandbox exists.
-func (s *Server) boardRequests(ctx context.Context, board *unstructured.Unstructured) []boardv1alpha1.Request {
+// allBoardRequests is the read half: every click on one board, settled
+// ones too. The work feed renders the standing ones as "starting" and
+// "queued" rows before any sandbox exists (activeRequests), and a failed
+// one, kept a week, as the row's error.
+func (s *Server) allBoardRequests(ctx context.Context, board *unstructured.Unstructured) []boardv1alpha1.Request {
 	list, err := s.listRequests(ctx, board.GetNamespace(), v1.ListOptions{
 		LabelSelector: boardv1alpha1.LabelBoard + "=" + board.GetName(),
 	})
@@ -182,7 +183,12 @@ func (s *Server) boardRequests(ctx context.Context, board *unstructured.Unstruct
 		// those are the more important half of the answer.
 		return nil
 	}
-	active := list[:0]
+	return list
+}
+
+// activeRequests are the Requests of list still owed something.
+func activeRequests(list []boardv1alpha1.Request) []boardv1alpha1.Request {
+	var active []boardv1alpha1.Request
 	for _, req := range list {
 		if req.Active() {
 			active = append(active, req)
