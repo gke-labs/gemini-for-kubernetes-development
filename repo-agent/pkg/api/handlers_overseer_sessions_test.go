@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-github/v39/github"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/acpd"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/auth"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/podacpd"
@@ -65,8 +67,24 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 	t.Helper()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dyn := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		gvrSandbox: "SandboxList", repoBoardGVR: "RepoBoardList", requestGVR: "RequestList",
+		gvrSandbox: "SandboxList", repoBoardGVR: "RepoBoardList", requestGVR: "RequestList", k8s.OverseerGVR: "OverseerList",
 	})
+	// kcc watches test/repo; dora is on its allowlist.
+	kcc := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "overseer.gemini.google.com/v1alpha1", "kind": "Overseer",
+		"metadata": map[string]interface{}{"name": "kcc"},
+		"spec":     map[string]interface{}{"repoURL": "https://github.com/test/repo", "allowlistedUsers": []interface{}{"Dora"}},
+	}}
+	other := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "overseer.gemini.google.com/v1alpha1", "kind": "Overseer",
+		"metadata": map[string]interface{}{"name": "other"},
+		"spec":     map[string]interface{}{"repoURL": "https://github.com/test/elsewhere"},
+	}}
+	for _, ov := range []*unstructured.Unstructured{kcc, other} {
+		if _, err := dyn.Resource(k8s.OverseerGVR).Create(context.Background(), ov, v1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// fix-repo-44: a care-ci run recorded, with no output stored by a board.
 	care := overseerSandbox("fix-repo-44", false)
 	careRun, _ := json.Marshal(factorycli.RecordedRun{Name: "investigate-44-a-1", Task: "recipe-care-ci-9", Recipe: "care-ci", StartedAt: time.Unix(1_000_100, 0), Kind: "Change", State: "Completed"})
@@ -87,7 +105,21 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 		// the one its runs used.
 		&corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: "factory-user", Namespace: "overseer-kcc"}, Data: map[string][]byte{"GEMINI_API_KEY": []byte("dead-key")}},
 		&corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: "user-coder-bot", Namespace: "overseer-kcc"}, Data: map[string][]byte{"GEMINI_API_KEY": []byte("bot-key")}},
+		// mia has a GitHub token, which GitHub says can push to test/repo;
+		// alice has none.
+		&corev1.Secret{ObjectMeta: v1.ObjectMeta{Name: "github-pat", Namespace: "mia"}, Data: map[string][]byte{"oauth_pat": []byte("gho_mia")}},
 	)
+	repoPermCache.Lock()
+	repoPermCache.entries = map[string]repoPermEntry{}
+	repoPermCache.Unlock()
+	rt := &boardMockRT{responses: map[string]string{
+		"https://api.github.com/repos/test/repo": `{"permissions": {"push": true}}`,
+	}}
+	prevGH := githubClientForToken
+	githubClientForToken = func(_ context.Context, _ string) *github.Client {
+		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: rt})
+	}
+	t.Cleanup(func() { githubClientForToken = prevGH })
 	manager := &k8s.Manager{Client: dyn, Clientset: clientset}
 	server := &Server{K8sManager: manager, Auth: &auth.Authenticator{K8sManager: manager, AdminUsers: []string{"root"}}}
 
@@ -106,7 +138,8 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 		c.Set(auth.NamespaceKey, c.GetHeader("X-User"))
 		c.Next()
 	})
-	overseer := r.Group("/api/overseers", server.Auth.AdminMiddleware())
+	r.GET("/api/overseers", server.getOverseers)
+	overseer := r.Group("/api/overseers", server.overseerAccess())
 	overseer.GET("/:name/work", server.getOverseerWork)
 	scoped := overseer.Group("/:name", server.overseerScope())
 	scoped.GET("/task-sessions/:sandbox/:task", server.getTaskSession)
@@ -127,16 +160,56 @@ func doAs(t *testing.T, r *gin.Engine, user, method, path, body string) *httptes
 
 const overseerSessionAt = "/api/overseers/kcc/task-sessions/fix-repo-42/recipe-fix-1"
 
-// Only an admin reaches an overseer's sessions and cards.
-func TestOverseerSessionsAreAdminOnly(t *testing.T) {
+// An overseer is an admin's, a maintainer's of its repository, and an
+// allowlisted login's, all of it: sessions, cards, and driving them.
+// Anyone else is refused, as for an overseer that does not exist.
+func TestOverseerAccess(t *testing.T) {
 	r := overseerSessionServer(t, &fakeSessions{})
-	for _, path := range []string{overseerSessionAt, "/api/overseers/kcc/sandbox-card/fix-repo-43"} {
+	paths := []string{overseerSessionAt, "/api/overseers/kcc/sandbox-card/fix-repo-43", "/api/overseers/kcc/work"}
+	for _, user := range []string{"root", "dora", "mia"} {
+		for _, path := range paths {
+			if w := doAs(t, r, user, http.MethodGet, path, ""); w.Code != http.StatusOK {
+				t.Errorf("%s GET %s: %d, want 200: %s", user, path, w.Code, w.Body.String())
+			}
+		}
+	}
+	if w := doAs(t, r, "mia", http.MethodPost, overseerSessionAt+"/prompt", `{"text":"hi"}`); w.Code != http.StatusAccepted {
+		t.Errorf("a maintainer drives the session too: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range append(paths, "/api/overseers/nope/work") {
 		if w := doAs(t, r, "alice", http.MethodGet, path, ""); w.Code != http.StatusForbidden {
 			t.Errorf("alice GET %s: %d, want 403", path, w.Code)
 		}
 	}
 	if w := doAs(t, r, "root", http.MethodGet, "/api/overseers/Bad%20Name/sandbox-card/x", ""); w.Code != http.StatusBadRequest {
 		t.Errorf("a bad overseer name: %d, want 400", w.Code)
+	}
+}
+
+// The list is the overseers the member may see.
+func TestOverseerListIsTheOnesYouMaySee(t *testing.T) {
+	r := overseerSessionServer(t, &fakeSessions{})
+	names := func(user string) []string {
+		w := doAs(t, r, user, http.MethodGet, "/api/overseers", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", user, w.Code, w.Body.String())
+		}
+		var items []struct {
+			Metadata struct{ Name string } `json:"metadata"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &items); err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, it := range items {
+			out = append(out, it.Metadata.Name)
+		}
+		return out
+	}
+	for user, want := range map[string]string{"root": "kcc,other", "dora": "kcc", "mia": "kcc", "alice": ""} {
+		if got := strings.Join(names(user), ","); got != want {
+			t.Errorf("%s sees %q, want %q", user, got, want)
+		}
 	}
 }
 

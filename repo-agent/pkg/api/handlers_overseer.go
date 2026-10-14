@@ -42,10 +42,15 @@ func (s *Server) getOverseers(c *gin.Context) {
 		return
 	}
 
-	items := make([]map[string]interface{}, len(overseers.Items))
-	for i, ov := range overseers.Items {
+	// Only the overseers the member may see (overseerAllows).
+	items := []map[string]interface{}{}
+	for i := range overseers.Items {
+		ov := &overseers.Items[i]
+		if !s.overseerAllows(c, ov) {
+			continue
+		}
 		enrichOverseerObject(ov.Object)
-		items[i] = ov.Object
+		items = append(items, ov.Object)
 	}
 	c.JSON(http.StatusOK, items)
 }

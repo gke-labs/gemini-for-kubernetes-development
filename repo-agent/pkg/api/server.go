@@ -103,11 +103,13 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.GET("/proxy", s.proxy)
 		api.GET("/usage/*path", s.proxyUsage)
 
-		// Overseer routes (admin only)
+		// Overseer routes: an overseer's are for an admin, a maintainer of
+		// its repository, or a login on its allowlist (overseerAccess); the
+		// list is the overseers the member may see.
+		api.GET("/overseers", s.getOverseers)
 		overseer := api.Group("/overseers")
-		overseer.Use(s.Auth.AdminMiddleware())
+		overseer.Use(s.overseerAccess())
 		{
-			overseer.GET("", s.getOverseers)
 			overseer.GET("/:name", s.getOverseer)
 			overseer.GET("/:name/work", s.getOverseerWork)
 			overseer.GET("/:name/logs", s.getOverseerLogs)
@@ -142,7 +144,7 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		taskSessions.GET("/:sandbox/:task", s.streamTaskSessionEvents)
 	}
 	overseerSessions := router.Group("/api/overseers/:name/task-session-events")
-	overseerSessions.Use(s.Auth.Middleware(), s.Auth.AdminMiddleware(), s.overseerScope())
+	overseerSessions.Use(s.Auth.Middleware(), s.overseerAccess(), s.overseerScope())
 	{
 		overseerSessions.GET("/:sandbox/:task", s.streamTaskSessionEvents)
 	}

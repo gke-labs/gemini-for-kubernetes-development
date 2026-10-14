@@ -75,7 +75,10 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Whether the member may see any overseer: an admin, a maintainer of an
+  // overseer's repository, or on its allowlist. The server decides; the
+  // toggle offers Overseer when the list it answers is not empty.
+  const [hasOverseers, setHasOverseers] = useState(false);
   // #/sessions… opens on Sessions, #/overseers/<name> on Overseer, and
   // anything else (#/boards/<name> included) on Work.
   const [view, setViewState] = useState(sessionsRoute() ? 'sessions' : overseerRoute() ? 'overseer' : 'work'); // 'work', 'sessions', 'overseer', 'usage', 'settings'
@@ -137,7 +140,6 @@ function App() {
       .then(data => {
         setIsAuthenticated(true);
         setUser(data.user);
-        setIsAdmin(data.isAdmin);
         setIsLoadingAuth(false);
       })
       .catch(() => {
@@ -147,6 +149,14 @@ function App() {
 
     fetchProviders();
   }, [fetchProviders]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetch('/api/overseers')
+      .then(res => (res.ok ? res.json() : []))
+      .then(list => setHasOverseers(Array.isArray(list) && list.length > 0))
+      .catch(() => {});
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!providersError) return;
@@ -312,10 +322,10 @@ function App() {
   return (
     <div className="App">
       <header className="App-header" style={{ position: 'relative', justifyContent: 'flex-end' }}>
-        {/* Compact bar: the Work | Sessions (| Overseer, for admins)
-            toggle, centered brand, everything else behind ☰. */}
+        {/* Compact bar: the Work | Sessions (| Overseer, for whoever may
+            see one) toggle, centered brand, everything else behind ☰. */}
         <nav aria-label="View" style={{ marginRight: 'auto', display: 'flex', border: '1px solid var(--border-color)', borderRadius: '8px', overflow: 'hidden' }}>
-          {[['work', 'Work'], ['sessions', 'Sessions'], ...(isAdmin ? [['overseer', 'Overseer']] : [])].map(([v, label]) => (
+          {[['work', 'Work'], ['sessions', 'Sessions'], ...(hasOverseers ? [['overseer', 'Overseer']] : [])].map(([v, label]) => (
             <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
               style={{
                 border: 'none', padding: '6px 14px', cursor: 'pointer', font: 'inherit', fontSize: '14px',

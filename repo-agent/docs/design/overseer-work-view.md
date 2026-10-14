@@ -126,7 +126,9 @@ Work.js into modules of their own, which both pages import.
 
 ## API
 
-All under `/api/overseers/:name`, admin-only like the rest, in namespace
+All under `/api/overseers/:name`, for whoever may see the overseer (an
+admin, a maintainer of its repository, or a login on its
+`spec.allowlistedUsers`, all of it; `overseerAccess`), in namespace
 `overseer-<name>`:
 
 - `GET /work` builds the rows above: the sandboxes (`getOverseerSandboxes`
