@@ -17,7 +17,7 @@ let container;
 let root;
 
 beforeEach(() => {
-    global.admin = false;
+    global.seesOverseer = false;
     jest.useFakeTimers();
     window.history.replaceState(null, '', '/');
     container = document.createElement('div');
@@ -25,11 +25,13 @@ beforeEach(() => {
     root = createRoot(container);
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
     global.fetch = jest.fn((url) => {
-        if (url === '/api/auth/status') return json({ user: 'alice', isAdmin: global.admin });
+        if (url === '/api/auth/status') return json({ user: 'alice', isAdmin: false });
         if (url === '/api/auth/providers') return json({ github: true });
         if (url === '/api/settings') return json({ gemini_api_key_set: true });
         if (url === '/api/boards') return json([{ name: 'g4k', repoURL: 'https://github.com/gke-labs/g4k' }]);
         if (url === '/api/sessions') return json({ sessions: [] });
+        // The server lists the overseers the member may see.
+        if (url === '/api/overseers') return json(global.seesOverseer ? [{ metadata: { name: 'overseer' }, spec: { repoURL: 'https://github.com/gke-labs/g4k' } }] : []);
         return json([]);
     });
 });
@@ -80,12 +82,12 @@ describe('the Work | Sessions toggle', () => {
         expect(fetched()).toContain('/api/board/g4k/work');
     });
 
-    test('Overseer is a third choice, for admins only', async () => {
+    test('Overseer is a third choice, for whoever may see an overseer', async () => {
         await render();
         expect(toggle('Overseer')).toBeUndefined();
         act(() => root.unmount());
         root = createRoot(container);
-        global.admin = true;
+        global.seesOverseer = true;
         await render();
         expect(Array.from(container.querySelectorAll('nav[aria-label="View"] button')).map(b => b.textContent)).toEqual(['Work', 'Sessions', 'Overseer']);
         await act(async () => { toggle('Overseer').click(); });
@@ -98,7 +100,7 @@ describe('the Work | Sessions toggle', () => {
     });
 
     test('the URL keeps the board and the overseer, across reloads and toggles', async () => {
-        global.admin = true;
+        global.seesOverseer = true;
         const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
         const overseers = [
             { metadata: { name: 'kcc' }, spec: { repoURL: 'https://github.com/G/k8s-config-connector' } },
@@ -147,7 +149,7 @@ describe('the Work | Sessions toggle', () => {
     });
 
     test('a link to an overseer opens the Overseer view on it', async () => {
-        global.admin = true;
+        global.seesOverseer = true;
         const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
         const base = global.fetch.getMockImplementation();
         global.fetch.mockImplementation((url) => (url === '/api/overseers'
