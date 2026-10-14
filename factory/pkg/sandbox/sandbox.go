@@ -75,13 +75,12 @@ func fillEnvResources(opts *DevSandboxOptions) {
 	}
 }
 
-// RunbookSandboxName is the run environment for one deployment
-// instance: runbook-<repo>-<instance>. One sandbox per instance (the
-// same runbook deploys many times with different parameters); re-runs
-// of an instance reuse it — the PVC holds the deployment's state
-// (kubeconfig, built artifacts, the serving process), so the sandbox
-// IS the handle to the deployment.
-func RunbookSandboxName(repo, instance string) string {
+// RunSandboxName is a run's own sandbox: run-<repo>-<run>. One sandbox
+// per run, whose phases all run there — the PVC holds the deployment's
+// state (kubeconfig, built artifacts, the serving process), so the
+// sandbox is the handle to the deployment. It is never another item's
+// (a PR's): a run outlives what it deploys until it is torn down.
+func RunSandboxName(repo, run string) string {
 	slugify := func(s string) string {
 		s = strings.ToLower(s)
 		var b strings.Builder
@@ -94,16 +93,16 @@ func RunbookSandboxName(repo, instance string) string {
 		}
 		return strings.Trim(b.String(), "-")
 	}
-	suffix := slugify(instance)
+	suffix := slugify(run)
 	slug := slugify(repo)
-	if budget := 60 - len("runbook-") - len(suffix) - 1; len(slug) > budget {
+	if budget := 60 - len("run-") - len(suffix) - 1; len(slug) > budget {
 		slug = strings.Trim(slug[:budget], "-")
 	}
-	return "runbook-" + slug + "-" + suffix
+	return "run-" + slug + "-" + suffix
 }
 
 // DeployerServiceAccount is the per-namespace KSA the research and
-// runbook sandboxes run as. Direct Workload Identity federation makes it
+// run sandboxes run as. Direct Workload Identity federation makes it
 // a GCP principal (principal://…/subject/ns/<ns>/sa/factory-deployer) the
 // member grants roles to in their own project — no keys stored anywhere.
 // It carries no Kubernetes RBAC; only the research/deploy surface uses it.
@@ -126,12 +125,20 @@ func ensureDeployerServiceAccount(ctx context.Context, kubeClient *clients.Kuber
 	return nil
 }
 
-// EnsureRunbookSandbox creates (or finds) the run environment for one
-// runbook path. Type label "runbook": the board controller excludes these
-// from slot counting and idle-pause — a run environment hosts living
+// RunSandboxType is a run sandbox's sandbox.gemini.google.com/type, and
+// RunNameAnnotation names the run it is: the board controller excludes these
+// from slot counting and idle-pause — a run's sandbox hosts living
 // deployments, it is not a task slot.
-func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, scenario, instance, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
-	name := RunbookSandboxName(repoName, instance)
+const (
+	RunSandboxType    = "run"
+	RunNameAnnotation = "sandbox.gemini.google.com/run-name"
+)
+
+// EnsureRunSandbox creates (or finds) a run's own sandbox (RunSandboxName),
+// as the deployer service account, whose Workload Identity reaches the
+// member's project.
+func EnsureRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace, repoName, run, cloneURL, htmlURL, image, diskSize, storageClass, ephemeralStorage string, secrets []SecretMount, envs []EnvVar, user string) (string, error) {
+	name := RunSandboxName(repoName, run)
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	switch {
@@ -161,16 +168,15 @@ func EnsureRunbookSandbox(ctx context.Context, kubeClient *clients.KubernetesCli
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"sandbox.gemini.google.com/type":    "runbook",
+				"sandbox.gemini.google.com/type":    RunSandboxType,
 				"factory.gemini.google.com/managed": "true",
 				"factory.gemini.google.com/user":    user,
 			},
 			Annotations: map[string]string{
-				"repo":     repoName,
-				"cloneURL": cloneURL,
-				"htmlURL":  htmlURL,
-				"sandbox.gemini.google.com/runbook-scenario": scenario,
-				"sandbox.gemini.google.com/runbook-instance": instance,
+				"repo":            repoName,
+				"cloneURL":        cloneURL,
+				"htmlURL":         htmlURL,
+				RunNameAnnotation: run,
 			},
 			Image:                 image,
 			Replicas:              1,

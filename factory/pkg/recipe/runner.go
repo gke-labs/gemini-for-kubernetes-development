@@ -263,18 +263,7 @@ func condition(label, text string, data templateData, taskDir string) (bool, err
 // render fills one ask. `file "name"` reads a file a step left in the task
 // directory, so a turn can quote a log without the recipe inlining it.
 func render(label, text string, data templateData, taskDir string) (string, error) {
-	t, err := template.New(label).Option("missingkey=error").Funcs(template.FuncMap{
-		"file": func(name string) (string, error) {
-			if !safeFileName(name) {
-				return "", fmt.Errorf("file %q must be a plain file name", name)
-			}
-			if taskDir == "" {
-				return "", nil // CheckRender: nothing has run
-			}
-			b, err := os.ReadFile(filepath.Join(taskDir, name))
-			return string(b), err
-		},
-	}).Parse(text)
+	t, err := template.New(label).Option("missingkey=error").Funcs(templateFuncs(taskDir)).Parse(text)
 	if err != nil {
 		return "", err
 	}
@@ -293,4 +282,61 @@ func sanitize(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// templateFuncs are the functions a recipe's templates (asks, if:,
+// agent-env) may call. With no taskDir (CheckRender, Validate) file reads
+// nothing.
+func templateFuncs(taskDir string) template.FuncMap {
+	return template.FuncMap{
+		"file": func(name string) (string, error) {
+			if !safeFileName(name) {
+				return "", fmt.Errorf("file %q must be a plain file name", name)
+			}
+			if taskDir == "" {
+				return "", nil // CheckRender: nothing has run
+			}
+			b, err := os.ReadFile(filepath.Join(taskDir, name))
+			return string(b), err
+		},
+		"resourcePrefix": ResourcePrefix,
+	}
+}
+
+// ResourcePrefix is the project-unique identity of everything a run
+// creates in the cloud: the repository's short name, then the run's,
+// shortName(repo)-run. Deliberately dumb — no stutter collapsing (it
+// would be renaming the user cannot control, and it can alias two runs
+// onto one prefix). Stutter is prevented at the source: the UI shows the
+// prefix so nobody hand-types it.
+func ResourcePrefix(repo, run string) string {
+	return shortName(repo) + "-" + run
+}
+
+// shortName is a repository's short name: the initials of a hyphenated
+// one (in-cluster-storage → ics), else the name, cut to 8.
+func shortName(repo string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(repo)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_':
+			b.WriteRune('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if words := strings.Split(slug, "-"); len(words) >= 2 {
+		var initials strings.Builder
+		for _, w := range words {
+			if w != "" {
+				initials.WriteByte(w[0])
+			}
+		}
+		return initials.String()
+	}
+	if len(slug) > 8 {
+		return slug[:8]
+	}
+	return slug
 }

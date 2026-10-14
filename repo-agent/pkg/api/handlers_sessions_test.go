@@ -152,7 +152,7 @@ func TestOnlyTheResearchSessionCarriesItsID(t *testing.T) {
 // runs has no conversation to list.
 func TestIdleSessionsAndSandboxesWithoutRuns(t *testing.T) {
 	idle := researchSandboxCR("alice", researchSession, researchRepo, false)
-	bare := sandboxCR("runbook-x", nil, map[string]interface{}{"htmlURL": "https://github.com/test/repo"}, 1)
+	bare := sandboxCR("run-x", nil, map[string]interface{}{"htmlURL": "https://github.com/test/repo"}, 1)
 	daemon := &fakeSessions{live: map[string]acpd.Session{researchTaskOf(researchSession): {ID: researchTaskOf(researchSession)}}}
 	rows := listSessions(t, sessionsTestServer(t, daemon, []*unstructured.Unstructured{idle, bare},
 		researchPod("alice", idle.GetName(), "10.0.0.3", corev1.PodRunning)))

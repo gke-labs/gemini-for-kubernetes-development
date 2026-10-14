@@ -101,10 +101,6 @@ effects or host dependencies.`,
 	prCmd.GroupID = "workflows"
 	cmd.AddCommand(prCmd)
 
-	runCmd := NewRunCommand(ctx)
-	runCmd.GroupID = "workflows"
-	cmd.AddCommand(runCmd)
-
 	watchCmd := NewWatchCommand(ctx)
 	watchCmd.GroupID = "workflows"
 	cmd.AddCommand(watchCmd)

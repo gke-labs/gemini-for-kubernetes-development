@@ -23,8 +23,8 @@ func renderRun(t *testing.T, mode string, p runParams) string {
 	if err != nil {
 		t.Fatalf("Builtin(%s): %v", RunRecipe(mode), err)
 	}
-	std := map[string]string{"repo_owner": "o", "repo_name": p.RepoName, "repo_url": p.HTMLURL, "url": p.HTMLURL, "disclose": "true"}
-	overrides := map[string]string{"run": p.Name, "resource_prefix": "r-" + p.Name}
+	std := map[string]string{"repo_owner": "o", "repo_name": p.RepoName, "repo_url": p.HTMLURL, "url": p.HTMLURL, "disclose": "true", "gcp_project": "", "gcp_region": ""}
+	overrides := map[string]string{"run": p.Name}
 	if p.Intent != "" {
 		overrides["intent"] = p.Intent
 	}

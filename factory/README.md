@@ -71,12 +71,14 @@
   - `DELETE /api/v1/queue/<file>` drops a task, and `POST /api/v1/queue/<file>/priority` re-prioritizes one.
   - `GET /api/v1/status` returns the Gemini key-pool state.
 
-### Runbooks: plan, deploy, tear down (`factory run`)
+### Runbooks: plan, deploy, tear down (the `run-*` recipes)
 A *run* is a branch of its own, `runs/<name>`, which holds only the run's files: `runbook.md`, `params.env`, `deploy.sh`, `teardown.sh` and receipts. It lives in the run's sandbox, checked out at `.factory-run/` in the clone, and is pushed to your fork after every phase. Every run branch starts from `runs/root`, an empty commit.
 
-- `run plan` writes the procedure and generates the scripts, but executes nothing. `--runbook` starts from `.agents/runbooks/<name>` in the repository, or from one of your earlier runs. `--target <PR number|URL>` deploys a pull request and pins its head commit.
-- `run deploy` executes the approved plan, repairs scripts that fail, and then reconciles `runbook.md` with what actually worked.
-- `run teardown` removes what the run created, preferring the generated `teardown.sh`.
+Each phase is a recipe on the repository, `factory recipe run-<phase> --url <repo> --run <name>`, in the run's own sandbox, `run-<repo>-<name>`.
+
+- `run-plan` writes the procedure and generates the scripts, but executes nothing. `--runbook <name>` starts from `.agents/runbooks/<name>` in the repository, or from one of your earlier runs. `--target-pr <n>` deploys a pull request and pins its head commit.
+- `run-deploy` executes the approved plan, repairs scripts that fail, and then reconciles `runbook.md` with what actually worked.
+- `run-teardown` removes what the run created, preferring the generated `teardown.sh`.
 - If the repository can't be forked (some organisations don't allow forks of private repositories into personal accounts), the run is local-only. Its branch is committed in the run's sandbox and never pushed, so deleting that sandbox deletes the run's records, including its `teardown.sh`. The Runs tab labels such a run.
 
 ### Research conversations (`factory recipe research`)
@@ -193,8 +195,8 @@ factory pr watch --pr-url https://github.com/owner/repo/pull/1
 factory pr adopt open --pr-url https://github.com/owner/repo/pull/1 --strategy reuse
 
 # Deploy a PR from an existing runbook
-factory run plan   --url https://github.com/owner/repo --name deploy-pr-42 --runbook deploy-gke --target 42
-factory run deploy --url https://github.com/owner/repo --name deploy-pr-42
+factory recipe run-plan   --url https://github.com/owner/repo --run deploy-pr-42 --runbook deploy-gke --target-pr 42
+factory recipe run-deploy --url https://github.com/owner/repo --run deploy-pr-42
 
 # Watch a repository (what the Overseer runs)
 factory watch --repo owner/repo
@@ -232,7 +234,6 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `pr watch` | Follow up one PR with care until it merges or closes |
 | `pr adopt open\|close` | Re-home a third-party PR under the bot (`--strategy reuse\|reimplement`) |
 | `agent create` | Run an `.agents/` (or `--local`) agent definition |
-| `run plan\|deploy\|teardown` | Runbook-driven deployments (`--runbook`, `--target`) |
 | `watch` | The autonomous scan / dispatch / GC loop |
 | `sandbox list\|inspect\|logs\|exec\|cp\|connect\|chat\|suspend\|resume\|delete` | Manage individual sandboxes |
 | `cleanup` | Delete sandboxes older than `--older-than` (default 24h) |

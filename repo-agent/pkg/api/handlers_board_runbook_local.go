@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/k8s"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/sandbox"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,14 +157,14 @@ func (s *Server) readLocalRun(ctx context.Context, namespace, board, sandboxName
 // runSandboxFor finds the sandbox a run lives in.
 func (s *Server) runSandboxFor(ctx context.Context, namespace, repo, run string) (string, error) {
 	list, err := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "sandbox.gemini.google.com/type=runbook",
+		LabelSelector: "sandbox.gemini.google.com/type=" + factorycli.RunSandboxType,
 	})
 	if err != nil {
 		return "", err
 	}
 	for _, sb := range list.Items {
 		a := sb.GetAnnotations()
-		if a["repo"] == repo && a["sandbox.gemini.google.com/runbook-instance"] == run {
+		if a["repo"] == repo && a[factorycli.RunNameAnnotation] == run {
 			return sb.GetName(), nil
 		}
 	}

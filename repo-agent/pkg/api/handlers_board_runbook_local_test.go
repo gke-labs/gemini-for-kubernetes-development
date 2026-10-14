@@ -124,7 +124,7 @@ func TestLocalRunFileScriptServesACommittedFile(t *testing.T) {
 }
 
 func TestLocalRunRowMatchesTheForkRow(t *testing.T) {
-	row := localRunRow("myboard", "gke-std", "runbook-granule-gke-std", []localRunFile{
+	row := localRunRow("myboard", "gke-std", "run-granule-gke-std", []localRunFile{
 		{name: "deploy.sh"},
 		{name: "receipt-20261002-2116.md", line: "PLANNED — nothing executed"},
 		{name: "receipt-20261003-0900.md", line: "VERIFIED (3 resources)"},
@@ -132,7 +132,7 @@ func TestLocalRunRowMatchesTheForkRow(t *testing.T) {
 		{name: "runbook.md"},
 		{name: runTargetFile, line: "TARGET_PR=42 TARGET_SHA=abc"},
 	})
-	if row["localOnly"] != true || row["sandbox"] != "runbook-granule-gke-std" {
+	if row["localOnly"] != true || row["sandbox"] != "run-granule-gke-std" {
 		t.Errorf("row = %v, want localOnly and its sandbox", row)
 	}
 	runbookURL := "/api/board/myboard/runbook/instance/gke-std/file/runbook.md"

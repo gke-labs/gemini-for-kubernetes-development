@@ -158,7 +158,7 @@ with the team.
 **How it uses factory:** repo-agent never imports factory code. The
 controller runs the bundled `factory` CLI as child processes
 (`pkg/factorycli`), for example `factory recipe fix`, `factory recipe review`,
-`factory pr watch`, `factory run` and the research commands. It reads back
+`factory pr watch`, the recipes (a run's phases are `factory recipe run-<phase>`) and the research commands. It reads back
 the labels and annotations factory puts on its sandboxes. factory and
 overseer do not depend on repo-agent; repo-agent is the per-member UI and
 controller layer on top of factory.

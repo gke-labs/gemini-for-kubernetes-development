@@ -380,6 +380,9 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	if session != "" && !it.IsRepo() {
 		return fmt.Errorf("--session is for a repository; an issue's or PR's recipes run in its own sandbox")
 	}
+	if session != "" && rec.Sandbox != nil {
+		return fmt.Errorf("--session is for a repository's conversations; recipe %s runs in a sandbox of its own, named by --run", rec.Name)
+	}
 	if newSession && rec.Session == "" {
 		return fmt.Errorf("recipe %s is in no session (session:); every run of it opens a new conversation", rec.Name)
 	}
@@ -461,6 +464,11 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	}
 	// Whether what the agent writes for GitHub says an agent wrote it.
 	standard["disclose"] = strconv.FormatBool(rootFlags.Disclose)
+	// Where the member deploys, if they said (factory user onboard): a
+	// run's agent resolves params.env from it. Workload Identity supplies
+	// the credentials; the secret only says where.
+	standard["gcp_project"] = string(secret.Data[constants.KeyGcpProject])
+	standard["gcp_region"] = string(secret.Data[constants.KeyGcpRegion])
 	inputs, err := rec.ResolveInputs(standard, overrides)
 	if err != nil {
 		return err
@@ -511,6 +519,19 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	switch {
 	case opts.ensure != nil:
 		sandboxName, err = opts.ensure(ctx, kubeClient, cloneURL, htmlURL, user)
+	case rec.Sandbox != nil && rec.Sandbox.Kind == recipe.SandboxRun:
+		// A run's own sandbox, kept for all its phases, sized for
+		// building images unless the caller chose: Go's build and module
+		// caches for a big monorepo alone run ~7.5Gi.
+		disk, ephemeral := rootFlags.DiskSize, rootFlags.EphemeralStorage
+		if workspaceDiskDefaulted && rec.Sandbox.Disk != "" {
+			disk = rec.Sandbox.Disk
+		}
+		if ephemeralStorageDefaulted && rec.Sandbox.EphemeralStorage != "" {
+			ephemeral = rec.Sandbox.EphemeralStorage
+		}
+		fmt.Printf("Ensuring run %s's sandbox for %s/%s...\n", inputs["run"], it.Owner, it.Repo)
+		sandboxName, err = factorysandbox.EnsureRunSandbox(ctx, kubeClient, rootFlags.Namespace, it.Repo, inputs["run"], cloneURL, htmlURL, rootFlags.Image, disk, rootFlags.StorageClass, ephemeral, rootFlags.ResolvedSecrets, rootFlags.ResolvedEnvs, user)
 	case it.IsRepo() && rec.Name == recipe.WarmRecipe:
 		// Its disk becomes every new sandbox's (design/warm-workspace.md):
 		// a sandbox of its own, never restored, with no secret mounted.
@@ -615,7 +636,7 @@ func runRecipeIn(ctx context.Context, opts recipeRunOpts, recipeArg, itemURL, ru
 	// A repository's run is a research session's, in a sandbox that is
 	// the conversation's, unless the caller made it one of its own (an
 	// agent's, a run's) or it warms the workspace.
-	research := it.IsRepo() && opts.ensure == nil && rec.Name != recipe.WarmRecipe
+	research := it.IsRepo() && opts.ensure == nil && rec.Sandbox == nil && rec.Name != recipe.WarmRecipe
 	if done, err := startRecipeTask(ctx, kubeClient, sb, it, rec, task, recipeBytes, inputs, envMap, secrets, opts.usage, research); err != nil || !done {
 		return err
 	}

@@ -261,7 +261,7 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 	}
 
 	if list, lerr := s.K8sManager.Client.Resource(k8s.SandboxGVR).Namespace(namespace).List(ctx, v1.ListOptions{
-		LabelSelector: "sandbox.gemini.google.com/type=runbook",
+		LabelSelector: "sandbox.gemini.google.com/type=" + factorycli.RunSandboxType,
 	}); lerr == nil {
 		boardEngine, _, _ := unstructured.NestedString(board.Object, "spec", "sandbox", "engine")
 		sandboxes := []gin.H{}
@@ -276,8 +276,8 @@ func (s *Server) getBoardRunbooks(c *gin.Context) {
 			engine := sandboxEngine(annotations, engineOrDefault(boardEngine))
 			row := gin.H{
 				"name":      sb.GetName(),
-				"scenario":  annotations["sandbox.gemini.google.com/runbook-scenario"],
-				"instance":  annotations["sandbox.gemini.google.com/runbook-instance"],
+				"scenario":  annotations[factorycli.RunNameAnnotation],
+				"instance":  annotations[factorycli.RunNameAnnotation],
 				"taskState": annotations[annoTaskState],
 				"engine":    engine,
 			}
@@ -589,7 +589,7 @@ func (s *Server) receiptVerdict(ctx context.Context, gh *github.Client, member, 
 const runTargetFile = "target.env"
 
 // maxTargetRunName keeps a pull request run's sandbox name inside the
-// DNS budget RunbookSandboxName works to: the run's name is kept whole.
+// DNS budget RunSandboxName works to: the run's name is kept whole.
 const maxTargetRunName = 40
 
 // runTarget reads a run's target.env: TARGET_PR=<n> and

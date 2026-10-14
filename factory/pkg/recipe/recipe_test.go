@@ -1896,6 +1896,9 @@ func TestBuiltinRunRecipes(t *testing.T) {
 		if !rec.RunsOn(OnRepo) || rec.RunsOn(OnIssue) || rec.RunsOn(OnPR) || rec.TaskType != "run" || rec.TaskOutput != nil {
 			t.Fatalf("%s: on %v, task-type %q, task-output %+v", rec.Name, rec.On, rec.TaskType, rec.TaskOutput)
 		}
+		if sb := rec.Sandbox; sb == nil || sb.Kind != SandboxRun || sb.Disk != "30Gi" || sb.EphemeralStorage != "10Gi" {
+			t.Errorf("%s: sandbox %+v, want its own run sandbox at 30Gi/10Gi", rec.Name, rec.Sandbox)
+		}
 		var kinds []string
 		for _, s := range rec.Start.Steps {
 			switch {
@@ -1912,7 +1915,7 @@ func TestBuiltinRunRecipes(t *testing.T) {
 		}
 		var inputs []string
 		for name := range rec.Inputs {
-			if name != "run" && name != "resource_prefix" && name != "gcp_project" && name != "gcp_region" {
+			if name != "run" {
 				inputs = append(inputs, name)
 			}
 		}
@@ -1921,8 +1924,8 @@ func TestBuiltinRunRecipes(t *testing.T) {
 			t.Errorf("%s takes %v, want %v", rec.Name, inputs, own)
 		}
 
-		std := map[string]string{"repo_owner": "o", "repo_name": "r", "repo_url": "https://github.com/o/r", "url": "https://github.com/o/r", "disclose": "true"}
-		resolved, err := rec.ResolveInputs(std, map[string]string{"run": "gke-1", "resource_prefix": "r-gke-1", "gcp_project": "p1", "gcp_region": "us-central1"})
+		std := map[string]string{"repo_owner": "o", "repo_name": "in-cluster-storage", "repo_url": "https://github.com/o/r", "url": "https://github.com/o/r", "disclose": "true", "gcp_project": "p1", "gcp_region": "us-central1"}
+		resolved, err := rec.ResolveInputs(std, map[string]string{"run": "gke-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1933,13 +1936,42 @@ func TestBuiltinRunRecipes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := map[string]string{"RUN_NAME": "gke-1", "RUN_RESOURCE_PREFIX": "r-gke-1", "GOOGLE_CLOUD_PROJECT": "p1", "CLOUDSDK_CORE_PROJECT": "p1", "CLOUDSDK_COMPUTE_REGION": "us-central1"}
+		want := map[string]string{"RUN_NAME": "gke-1", "RUN_RESOURCE_PREFIX": "ics-gke-1", "GOOGLE_CLOUD_PROJECT": "p1", "CLOUDSDK_CORE_PROJECT": "p1", "CLOUDSDK_COMPUTE_REGION": "us-central1"}
 		if fmt.Sprint(env) != fmt.Sprint(want) {
 			t.Errorf("%s: agent env %v, want %v", rec.Name, env, want)
 		}
 		resolved["gcp_project"], resolved["gcp_region"] = "", ""
 		if env, _ := rec.RenderAgentEnv(resolved); env["CLOUDSDK_CORE_PROJECT"] != "" || len(env) != 2 {
 			t.Errorf("%s, no project: agent env %v, want the project and region unset", rec.Name, env)
+		}
+	}
+}
+
+// A run's cloud resources are named shortName(repo)-run: a hyphenated
+// repository's initials, else its name cut to 8.
+func TestResourcePrefix(t *testing.T) {
+	for repo, want := range map[string]string{"in-cluster-storage": "ics-r1", "k8s-config-connector": "kcc-r1", "granule": "granule-r1", "verylongname": "verylong-r1", "My_Repo": "mr-r1"} {
+		if got := ResourcePrefix(repo, "r1"); got != want {
+			t.Errorf("ResourcePrefix(%s) = %s, want %s", repo, got, want)
+		}
+	}
+}
+
+// A run sandbox is a repository recipe's, named by the run input it
+// requires; no other kind of sandbox is declared.
+func TestSandboxDeclValidation(t *testing.T) {
+	ok := "name: a\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}"
+	if _, err := Parse([]byte(ok)); err != nil {
+		t.Fatal(err)
+	}
+	for name, y := range map[string]string{
+		"kind":     "name: a\non: [repo]\nsandbox: {kind: pr}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}",
+		"no input": "name: a\non: [repo]\nsandbox: {kind: run}\nstart: {steps: [{run: x}]}",
+		"optional": "name: a\non: [repo]\nsandbox: {kind: run}\ninputs: {run: {}}\nstart: {steps: [{run: x}]}",
+		"on a pr":  "name: a\non: [repo, pr]\nsandbox: {kind: run}\ninputs: {run: {required: true}}\nstart: {steps: [{run: x}]}",
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: parsed", name)
 		}
 	}
 }

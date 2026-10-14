@@ -521,7 +521,7 @@ func (r *Reconciler) settleRun(work *workState, req *boardv1alpha1.Request, now 
 		}
 	}
 	key := runbookKey(claim.member, work.repo, claim)
-	sandbox := factorycli.RunbookSandboxName(work.repo, factorycli.RunbookInstance(claim.scenario, claim.instance))
+	sandbox := factorycli.RunSandboxName(work.repo, factorycli.RunbookInstance(claim.scenario, claim.instance))
 
 	if res, found := r.Factory.LastResult(key); found && res.FinishedAt.After(claim.claimedAt) {
 		if res.Err != nil {
