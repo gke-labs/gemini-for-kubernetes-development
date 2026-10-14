@@ -112,13 +112,20 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 	if err != nil {
 		return "", err
 	}
-	started, err := revisedTask(entries, f.task, reviseID, rec)
+	recipeOf := func(e spool.Entry) (*recipe.Recipe, error) {
+		if rec != nil {
+			return rec, nil
+		}
+		_, r, err := taskRecipe(ctx, sb, e)
+		return r, err
+	}
+	started, err := revisedTask(entries, f.task, reviseID, recipeOf)
 	if err != nil {
 		return "", fmt.Errorf("sandbox %s: %w", sandboxName, err)
 	}
 	if rec == nil {
-		if recipeBytes, rec, err = recipe.Builtin(started.Recipe); err != nil {
-			return "", fmt.Errorf("task %s ran recipe %s, which is not a built-in one: give it with --recipe", started.ID, started.Recipe)
+		if recipeBytes, rec, err = taskRecipe(ctx, sb, started); err != nil {
+			return "", fmt.Errorf("task %s ran recipe %s, which it did not keep and is not a built-in one: give it with --recipe (%w)", started.ID, started.Recipe, err)
 		}
 	}
 	if rec.Name != started.Recipe {
@@ -215,7 +222,7 @@ func reviseIn(ctx context.Context, sb taskapi.Sandbox, reviseID string, f revise
 // revisedTask is the task a revise revises: the one named, or else the
 // newest (entries are newest first) that ran a recipe with the revise —
 // rec, or with none, a built-in one.
-func revisedTask(entries []spool.Entry, id, reviseID string, rec *recipe.Recipe) (spool.Entry, error) {
+func revisedTask(entries []spool.Entry, id, reviseID string, recipeOf func(spool.Entry) (*recipe.Recipe, error)) (spool.Entry, error) {
 	if id != "" {
 		e, err := spool.Find(entries, id, "")
 		if err != nil {
@@ -227,12 +234,12 @@ func revisedTask(entries []spool.Entry, id, reviseID string, rec *recipe.Recipe)
 		return e, nil
 	}
 	for _, e := range entries {
-		r := rec
-		if r == nil {
-			var err error
-			if _, r, err = recipe.Builtin(e.Recipe); err != nil {
-				continue
-			}
+		if e.Recipe == "" {
+			continue
+		}
+		r, err := recipeOf(e)
+		if err != nil {
+			continue
 		}
 		if e.Recipe != r.Name {
 			continue

@@ -20,6 +20,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
 )
 
 func TestParseGitHubItemURL(t *testing.T) {
@@ -180,25 +181,39 @@ func TestRevisedTask(t *testing.T) {
 		entry("recipe-plan-2", "plan", "recipe-plan-1"),
 		entry("recipe-plan-1", "plan", ""),
 	}
-	if e, err := revisedTask(entries, "", "plan", nil); err != nil || e.ID != "recipe-plan-2" {
+	// Each task's recipe, as the task keeps it (taskRecipe): here, the
+	// built-in of its name.
+	builtin := func(e spool.Entry) (*recipe.Recipe, error) {
+		_, r, err := recipe.Builtin(e.Recipe)
+		return r, err
+	}
+	if e, err := revisedTask(entries, "", "plan", builtin); err != nil || e.ID != "recipe-plan-2" {
 		t.Errorf("newest = %s, %v; want recipe-plan-2", e.ID, err)
 	}
-	if e, err := revisedTask(entries, "recipe-plan-1", "plan", nil); err != nil || e.ID != "recipe-plan-1" {
+	if e, err := revisedTask(entries, "recipe-plan-1", "plan", builtin); err != nil || e.ID != "recipe-plan-1" {
 		t.Errorf("named = %s, %v", e.ID, err)
 	}
-	if _, err := revisedTask(entries, "fix-2", "plan", nil); err == nil {
+	if _, err := revisedTask(entries, "fix-2", "plan", builtin); err == nil {
 		t.Error("revised a task that ran no recipe")
 	}
-	if _, err := revisedTask(entries, "", "nope", nil); err == nil {
+	if _, err := revisedTask(entries, "", "nope", builtin); err == nil {
 		t.Error("found a task for a revise no recipe has")
 	}
+	// A task's own recipe decides, not the binary's: one that kept a
+	// recipe named triage with a plan revise is the one revised.
 	_, mine, err := recipe.Builtin("plan")
 	if err != nil {
 		t.Fatal(err)
 	}
 	mine.Name = "triage"
-	if e, err := revisedTask(entries, "", "plan", mine); err != nil || e.ID != "recipe-triage-3" {
-		t.Errorf("with --recipe = %s, %v; want the newest task of that recipe", e.ID, err)
+	kept := func(e spool.Entry) (*recipe.Recipe, error) {
+		if e.Recipe == "triage" {
+			return mine, nil
+		}
+		return builtin(e)
+	}
+	if e, err := revisedTask(entries, "", "plan", kept); err != nil || e.ID != "recipe-triage-3" {
+		t.Errorf("with the task's own recipe = %s, %v; want the newest task whose recipe has the revise", e.ID, err)
 	}
 }
 
@@ -517,5 +532,46 @@ func TestMergeLabels(t *testing.T) {
 	}
 	if got := mergeLabels("", ""); got != "" {
 		t.Errorf("mergeLabels of nothing = %q", got)
+	}
+}
+
+// fileSandbox serves task files from a map, for taskRecipe.
+type fileSandbox struct {
+	taskapi.Sandbox
+	files map[string]string // "<task>/<name>"
+}
+
+func (f fileSandbox) ReadFile(_ context.Context, id, name string) ([]byte, error) {
+	if s, ok := f.files[id+"/"+name]; ok {
+		return []byte(s), nil
+	}
+	return nil, os.ErrNotExist
+}
+
+// A task's recipe is the one it kept, whatever it was; a task from before
+// tasks kept it ran a built-in, read whole by its name, or failing that
+// the sandbox's stripped copy. A task that ran no recipe has none.
+func TestTaskRecipe(t *testing.T) {
+	sb := fileSandbox{files: map[string]string{
+		"a/" + spool.RecipeSourceFile: "name: mine\non: [repo]\nstart: {steps: [{run: x}]}\n",
+		"b/" + spool.RecipeFile:       "name: plan\nstart: {steps: [{run: stripped}]}\n",
+		"c/" + spool.RecipeFile:       "name: gone\nstart: {steps: [{run: stripped}]}\n",
+	}}
+	entry := func(id, name string) spool.Entry { return spool.Entry{Task: spool.Task{ID: id, Recipe: name}} }
+	ctx := context.Background()
+	if _, r, err := taskRecipe(ctx, sb, entry("a", "mine")); err != nil || r.Name != "mine" || !r.RunsOn(recipe.OnRepo) {
+		t.Errorf("kept source: %+v, %v", r, err)
+	}
+	if _, r, err := taskRecipe(ctx, sb, entry("b", "plan")); err != nil || r.Name != "plan" || r.TaskOutput == nil {
+		t.Errorf("a built-in's stripped copy: %+v, %v; want the built-in, whole", r, err)
+	}
+	if _, r, err := taskRecipe(ctx, sb, entry("c", "gone")); err != nil || r.Name != "gone" {
+		t.Errorf("a stripped copy of no built-in: %+v, %v", r, err)
+	}
+	if _, r, err := taskRecipe(ctx, sb, entry("d", "triage")); err != nil || r.Name != "triage" {
+		t.Errorf("nothing kept: %+v, %v; want the built-in", r, err)
+	}
+	if _, r, err := taskRecipe(ctx, sb, entry("e", "")); err != nil || r != nil {
+		t.Errorf("no recipe: %+v, %v", r, err)
 	}
 }

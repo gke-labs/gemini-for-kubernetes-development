@@ -18,7 +18,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
-	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/recipe"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
@@ -307,7 +306,7 @@ program to read.`,
 				_, err = os.Stdout.Write(doc)
 				return err
 			}
-			rec, err := taskRecipe(ctx, sb, e.ID)
+			_, rec, err := taskRecipe(ctx, sb, e)
 			if err != nil {
 				return err
 			}
@@ -402,22 +401,6 @@ func printTaskFile(ctx context.Context, sb taskapi.Sandbox, id, name string) err
 	return err
 }
 
-// taskRecipe is the recipe a task ran, or nil for a task that is not one.
-func taskRecipe(ctx context.Context, sb taskapi.Sandbox, id string) (*recipe.Recipe, error) {
-	recipeYAML, err := sb.ReadFile(ctx, id, spool.RecipeFile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("reading the task's recipe: %w", err)
-	}
-	if len(recipeYAML) == 0 {
-		return nil, nil
-	}
-	rec, err := recipe.Parse(recipeYAML)
-	if err != nil {
-		return nil, fmt.Errorf("reading the task's recipe: %w", err)
-	}
-	return rec, nil
-}
-
 // newTaskAttachCommand reconnects to a task: it follows the log to the end
 // and returns the task's result; for a recipe it prints the outputs, as
 // `recipe run` would have. Interrupting it leaves the task running.
@@ -447,7 +430,7 @@ func newTaskAttachCommand(ctx context.Context) *cobra.Command {
 				return fmt.Errorf("task %s: %w", e.ID, err)
 			}
 			_, _ = (&taskSelectFlags{id: e.ID}).find(ctx, sb)
-			rec, err := taskRecipe(ctx, sb, e.ID)
+			_, rec, err := taskRecipe(ctx, sb, e)
 			if err != nil || rec == nil {
 				return err
 			}

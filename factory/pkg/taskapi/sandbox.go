@@ -30,7 +30,7 @@ type Sandbox interface {
 	// and nothing of it runs. secrets go to the task outside its
 	// environment (PostRequest.Secrets); a sandbox that cannot keep them
 	// so refuses them, and nothing of the task runs.
-	Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error
+	Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string) error
 	// AwaitStart waits for a task in the spool to start.
 	AwaitStart(ctx context.Context, id string, claimTimeout, startTimeout time.Duration) error
 	// Attach follows a started task's log to stdout until it ends, and
@@ -187,13 +187,13 @@ func (s *ServerSandbox) get(ctx context.Context, id string) (spool.Entry, error)
 	return e, err
 }
 
-func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe []byte, inputs, env, secrets map[string]string) error {
+func (s *ServerSandbox) Start(ctx context.Context, task spool.Task, recipe, source []byte, inputs, env, secrets map[string]string) error {
 	if len(secrets) > 0 && !s.secrets {
 		return errNoSecrets(s.name)
 	}
 	var resp PostResponse
 	err := s.call(ctx, func(c *Client) (err error) {
-		resp, err = c.Post(ctx, PostRequest{Task: task, Recipe: recipe, Inputs: inputs, Env: env, Secrets: secrets})
+		resp, err = c.Post(ctx, PostRequest{Task: task, Recipe: recipe, Source: source, Inputs: inputs, Env: env, Secrets: secrets})
 		return err
 	})
 	if err != nil {

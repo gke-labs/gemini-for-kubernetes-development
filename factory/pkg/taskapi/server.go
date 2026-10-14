@@ -233,7 +233,10 @@ func writeTask(taskDir string, req PostRequest) error {
 	for _, f := range []struct {
 		name string
 		data []byte
-	}{{spool.RecipeFile, req.Recipe}, {spool.InputsFile, inputsJSON}, {spool.TaskFile, taskJSON}} {
+	}{{spool.RecipeFile, req.Recipe}, {spool.RecipeSourceFile, req.Source}, {spool.InputsFile, inputsJSON}, {spool.TaskFile, taskJSON}} {
+		if len(f.data) == 0 && f.name == spool.RecipeSourceFile {
+			continue // a caller older than the source
+		}
 		if err := os.WriteFile(filepath.Join(taskDir, f.name), f.data, 0o600); err != nil {
 			return fmt.Errorf("writing %s: %w", f.name, err)
 		}
