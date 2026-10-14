@@ -24,7 +24,6 @@ import (
 
 	"github.com/onsi/gomega"
 
-	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
@@ -163,105 +162,4 @@ func TestFixAgainRelaunches(t *testing.T) {
 	g.Expect(launches).To(gomega.HaveLen(1))
 	g.Expect(launches[0].FixOpts.RunName).To(gomega.HavePrefix("fix/test-board/7/"))
 	g.Expect(launches[0].FixOpts.RunName).NotTo(gomega.Equal("fix/test-board/7/100"))
-}
-
-const fixReviseKeyAt = "alice/revise-fix-repo-7"
-
-func fixReviseClick(revise, instruction string) *boardv1alpha1.Request {
-	spec := boardv1alpha1.RequestSpec{
-		Verb:    boardv1alpha1.VerbRevise,
-		Sandbox: "fix-repo-7",
-		Number:  7,
-		Revise:  revise,
-	}
-	if instruction != "" {
-		spec.Inputs = map[string]string{"instruction": instruction}
-	}
-	return testRequest(spec)
-}
-
-// prSandbox is issue 7's sandbox once its fix opened PR 9.
-func prSandbox() map[string]interface{} {
-	return fixedSandbox(factorycli.TaskStateCompleted, fixRun("fix/test-board/7/100", ""), map[string]interface{}{
-		AnnotationFixHarvestedAt: time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-// Iterate revises in the fix's session with the member's instruction, and
-// the runner posts its replies; the click succeeds when it ends.
-func TestFixReviseIterates(t *testing.T) {
-	g := gomega.NewWithT(t)
-	req := fixReviseClick("iterate", "rename it")
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), issueSandbox("fix-repo-7", "7", prSandbox()), req)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	launches := fake.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal(fixReviseKeyAt))
-	opts := launches[0].ReviseOpts
-	g.Expect(opts).NotTo(gomega.BeNil())
-	g.Expect(opts.SandboxName).To(gomega.Equal("fix-repo-7"))
-	g.Expect(opts.Revise).To(gomega.Equal("iterate"))
-	g.Expect(opts.Session).To(gomega.Equal("recipe-fix-1"))
-	g.Expect(opts.Apply).To(gomega.Equal("post-replies"))
-	g.Expect(opts.Inputs).To(gomega.Equal(map[string]string{"instruction": "rename it"}))
-	g.Expect(opts.RunName).To(gomega.HavePrefix("revise/test-board/fix-repo-7/iterate/"))
-
-	fake.running[fixReviseKeyAt] = true
-	_, err = r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake.launches()).To(gomega.HaveLen(1))
-	g.Expect(requestStatus(t, r, req).Phase).To(gomega.Equal(boardv1alpha1.RequestRunning))
-
-	delete(fake.running, fixReviseKeyAt)
-	fake.results[fixReviseKeyAt] = factorycli.Result{
-		FinishedAt: time.Now().Add(time.Second),
-		Output:     "================== TASK OUTPUT =================\n" + changeDoc("Renamed") + "\n" + closer + "\nposted 2 replies\n",
-	}
-	_, err = r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	status := requestStatus(t, r, req)
-	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(status.Reason).To(gomega.Equal("Revised"))
-	// The revise's Change is the run's output now, its replies posted.
-	a := sandboxAnnotations(t, r, "fix-repo-7")
-	g.Expect(a["board.gemini.google.com/fix-output"]).To(gomega.ContainSubstring("title: Renamed"))
-	g.Expect(factorycli.Applied(a, "board.gemini.google.com/fix-applied")).To(gomega.HaveKey("post-replies"))
-	// The fix itself is not relaunched by any of this.
-	for _, l := range fake.launches() {
-		g.Expect(l.FixOpts).To(gomega.BeNil())
-	}
-}
-
-// A follow-up with no instruction (Address comments) passes no inputs; one
-// that fails fails the click with what factory said.
-func TestFixReviseFailure(t *testing.T) {
-	g := gomega.NewWithT(t)
-	req := fixReviseClick("address-comments", "")
-	fake := newFakeLauncher()
-	fake.results[fixReviseKeyAt] = factorycli.Result{
-		FinishedAt: time.Now().Add(time.Second),
-		Output:     "push: the branch moved on the fork\n",
-		Err:        errors.New("exit status 1"),
-	}
-	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), issueSandbox("fix-repo-7", "7", prSandbox()), req)
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake.launches()).To(gomega.BeEmpty())
-	status := requestStatus(t, r, req)
-	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestFailed))
-	g.Expect(status.Message).To(gomega.ContainSubstring("the branch moved"))
-}
-
-// Not while the fix itself runs.
-func TestFixReviseWaitsForTheFix(t *testing.T) {
-	g := gomega.NewWithT(t)
-	fake := newFakeLauncher()
-	fake.running[fixKeyAt] = true
-	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), issueSandbox("fix-repo-7", "7", prSandbox()), fixReviseClick("fix-ci", ""))
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }

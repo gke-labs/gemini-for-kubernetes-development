@@ -12,7 +12,7 @@ func TestStoredOutputAnnotations(t *testing.T) {
 	for run, want := range map[string]string{
 		AnnotationTriageRun:   AnnotationTriageOutput,
 		AnnotationPlanRun:     AnnotationPlanOutput,
-		ResearchRunAnnotation: AnnotationNotesOutput,
+		ResearchRunAnnotation: "board.gemini.google.com/research-output",
 		AnnotationFixRun:      "board.gemini.google.com/fix-output",
 	} {
 		if got := OutputAnnotation(run); got != want {
@@ -22,8 +22,59 @@ func TestStoredOutputAnnotations(t *testing.T) {
 	if got := AppliedAnnotation(AnnotationPlanRun); got != AnnotationPlanApplied {
 		t.Errorf("AppliedAnnotation = %s", got)
 	}
-	if AppliedAnnotation(AnnotationTriageRun) != AnnotationTriageApplied || AppliedAnnotation(ResearchRunAnnotation) != AnnotationNotesApplied {
-		t.Error("the triage's or the notes' applied annotation is not their run's")
+	if AppliedAnnotation(AnnotationTriageRun) != AnnotationTriageApplied {
+		t.Error("the triage's applied annotation is not its run's")
+	}
+	if got := OutputSourceAnnotation(AnnotationPlanRun); got != "board.gemini.google.com/plan-output-source" {
+		t.Errorf("OutputSourceAnnotation = %s", got)
+	}
+}
+
+// A harvest records what the sandbox said the output was, and a later
+// read of it (RefreshOutput) tells the agent's rewrite in its session
+// from the board's own edit.
+func TestRefreshOutput(t *testing.T) {
+	const run = AnnotationPlanRun
+	first := planTaskOutput
+	second := strings.Replace(planTaskOutput, "markdown:", "markdown: |-\n    ## Rewritten\n  old:", 1)
+	at := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+
+	a := map[string]string{}
+	KeepOutput(a, run, first, at)
+	MarkApplied(a, AppliedAnnotation(run), "comment", at)
+	if a[OutputSourceAnnotation(run)] != OutputHash(first) {
+		t.Fatalf("the harvest recorded no source: %v", a)
+	}
+	// The sandbox says the same (whitespace aside): an edit on the board
+	// stands, and so does what was applied.
+	edited, err := WithDraft("Plan", first, "## Edited on the board\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a[OutputAnnotation(run)] = edited
+	if RefreshOutput(a, run, "\n"+first+"\n") || a[OutputAnnotation(run)] != edited || !IsApplied(a, AppliedAnnotation(run), "comment") {
+		t.Errorf("an unchanged task output touched the draft: %v", a)
+	}
+	// The agent rewrote it: that is the draft now, unapplied.
+	if !RefreshOutput(a, run, second) || a[OutputAnnotation(run)] != second || a[AppliedAnnotation(run)] != "" || a[OutputSourceAnnotation(run)] != OutputHash(second) {
+		t.Errorf("a rewritten task output did not replace the draft: %v", a)
+	}
+
+	// Stored before hashes were: recorded, the draft left as it is.
+	old := map[string]string{OutputAnnotation(run): edited}
+	if !RefreshOutput(old, run, first) || old[OutputAnnotation(run)] != edited || old[OutputSourceAnnotation(run)] != OutputHash(first) {
+		t.Errorf("a draft stored without its source was clobbered: %v", old)
+	}
+
+	// An optional output written only later (research's notes) is stored.
+	const notes = "apiVersion: " + TaskOutputAPIVersion + "\nkind: Notes\nspec:\n  markdown: found it\n"
+	none := map[string]string{}
+	if !RefreshOutput(none, ResearchRunAnnotation, notes) || none[OutputAnnotation(ResearchRunAnnotation)] != notes {
+		t.Errorf("the notes written later were not stored: %v", none)
+	}
+	// Something that is no task output changes nothing.
+	if RefreshOutput(none, ResearchRunAnnotation, "not a task output") {
+		t.Error("a document of no kind was taken")
 	}
 }
 

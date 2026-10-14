@@ -249,13 +249,15 @@ func (s *Server) getTaskSession(c *gin.Context) {
 		"live":    false,
 	}
 	ctx := c.Request.Context()
-	// What the session offers, whichever recipe it is: the recipe's
-	// revises, and the draft its output is. An overseer's sandbox is on
-	// no board, which files revises and writes: none, and a draft to read.
+	// What the session offers, whichever recipe it is: the recipes of its
+	// group, and the draft its output is, as the agent last wrote it. An
+	// overseer's sandbox is on no board, which files runs and writes:
+	// none, and a draft to read.
 	if !inOverseerScope(c) {
-		if revises := s.sessionRevises(ctx, c, conn.sandbox, conn.task); len(revises) > 0 {
-			body["revises"] = revises
+		if recipes := s.sessionGroupActions(ctx, c, conn.sandbox, conn.task); len(recipes) > 0 {
+			body["recipes"] = recipes
 		}
+		s.refreshSessionOutput(ctx, conn)
 	}
 	draft := s.sessionDraft(ctx, c, conn.sandbox, conn.task)
 	if draft == nil && inOverseerScope(c) {

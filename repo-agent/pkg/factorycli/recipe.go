@@ -143,7 +143,7 @@ const taskOutputBanner = "================== TASK OUTPUT ================="
 // bannerCloser closes what a banner opens.
 const bannerCloser = "================================================"
 
-// harvest reads a finished run's (or revise's) task output back by its run
+// harvest reads a finished run's task output back by its run
 // name and applies action to it, if any. Every action the runner applies
 // is idempotent in factory (open-pr aliases to the branch's open PR, a
 // reply carries its task's marker, post-review replaces the pending review

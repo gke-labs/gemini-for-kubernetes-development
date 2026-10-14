@@ -153,8 +153,6 @@ func (r *Reconciler) requestMailbox(work *workState) mailbox {
 			}
 		case boardv1alpha1.VerbApply:
 			box.applies = append(box.applies, req)
-		case boardv1alpha1.VerbRevise:
-			box.revises = append(box.revises, req)
 		case boardv1alpha1.VerbWatch:
 			box.watches = append(box.watches, req)
 		}
@@ -352,9 +350,6 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 
 	case boardv1alpha1.VerbApply:
 		return r.settleApply(ctx, work, req, now)
-
-	case boardv1alpha1.VerbRevise:
-		return r.settleRevise(ctx, work, req, now)
 
 	case boardv1alpha1.VerbWatch:
 		return r.settleWatch(work, req)

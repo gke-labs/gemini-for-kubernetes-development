@@ -277,7 +277,7 @@ function sessionClick(onOpenSession, session) {
   };
 }
 
-// anyPosting is whether a row has a write or a revise standing, filed on
+// anyPosting is whether a row has a write standing, filed on
 // one of its runs.
 function anyPosting(items) {
   return (items || []).some(item => item.posting);

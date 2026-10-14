@@ -56,7 +56,6 @@ type fakeLaunch struct {
 	// Any other recipe's.
 	RecipeOpts  *factorycli.RecipeOptions
 	PRWatchOpts *factorycli.PRWatchOptions
-	ReviseOpts  *factorycli.ReviseOptions
 	RunOpts     *factorycli.RunOptions
 	ApplyOpts   *factorycli.ApplyOptions
 }
@@ -116,16 +115,6 @@ func (f *fakeLauncher) StartPRWatch(key string, opts factorycli.PRWatchOptions) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeLaunch{Key: key, PRWatchOpts: &opts})
-	return true
-}
-
-func (f *fakeLauncher) StartRevise(key string, opts factorycli.ReviseOptions) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.running[key] {
-		return false
-	}
-	f.calls = append(f.calls, fakeLaunch{Key: key, ReviseOpts: &opts})
 	return true
 }
 

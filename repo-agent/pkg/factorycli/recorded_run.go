@@ -20,8 +20,7 @@ const (
 	// AnnotationReviewRun is a review's: the recipe has no task type, so
 	// it runs as recipe-review, the main task of a sandbox of its own.
 	AnnotationReviewRun = "sandbox.gemini.google.com/recipe-review-run"
-	// AnnotationFixRun is a fix's, and its follow-ups' (the revises of
-	// its session).
+	// AnnotationFixRun is a fix's.
 	AnnotationFixRun = "sandbox.gemini.google.com/fix-run"
 )
 
@@ -31,44 +30,25 @@ type RecordedRun struct {
 	Key  string `json:"-"`
 	Name string `json:"name,omitempty"`
 	Task string `json:"task"`
-	// Session is the task whose agent session a revise ran in; empty for
-	// a task that ran in its own.
+	// Session is the task whose agent session the run continued (a
+	// recipe of a session tag's); empty for a task that ran in its own.
 	Session   string    `json:"session,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	// Recipe is the recipe the run ran, and Kind the kind of task output
 	// it writes, if it declares one.
 	Recipe string `json:"recipe,omitempty"`
 	Kind   string `json:"kind,omitempty"`
-	// State is the run's own: Running, Completed or Failed, a revise of
-	// it included. EndedAt is when it stopped running.
+	// State is the run's own: Running, Completed or Failed. EndedAt is
+	// when it stopped running.
 	State   string     `json:"state,omitempty"`
 	EndedAt *time.Time `json:"endedAt,omitempty"`
-	// Revises are the revises the run's recipe offers into its session.
-	Revises []RecordedRevise `json:"revises,omitempty"`
 }
 
-// RecordedRevise is one of a recipe's revises: its id, its button's
-// label, and the inputs it asks for.
-type RecordedRevise struct {
-	ID     string   `json:"id"`
-	Label  string   `json:"label,omitempty"`
-	Inputs []string `json:"inputs,omitempty"`
-}
-
-// SessionOf is the agent session the run's revises go into: the one it
-// revised in, else its task's own. A session is named after the task
-// that started it.
+// SessionOf is the agent session the run is in: the one it continued,
+// else its task's own. A session is named after the task that started
+// it.
 func (r RecordedRun) SessionOf() string {
 	return cmp.Or(r.Session, r.Task)
-}
-
-// Offers is the revise id of the run's recipe, if it offers it.
-func (r RecordedRun) Offers(revise string) (RecordedRevise, bool) {
-	i := slices.IndexFunc(r.Revises, func(rv RecordedRevise) bool { return rv.ID == revise })
-	if i < 0 {
-		return RecordedRevise{}, false
-	}
-	return r.Revises[i], true
 }
 
 // RecordedRunName is the name of the run recorded under key, when it
@@ -98,8 +78,8 @@ func RecordedRunAt(annotations map[string]string, key string) (RecordedRun, bool
 }
 
 // RecordedRunSession is the agent session of the run recorded under key,
-// empty when there is none: the run's task's, or for a revise, the
-// session it revised in, so every revise of a plan is one conversation.
+// empty when there is none: the run's task's, or the session it
+// continued.
 func RecordedRunSession(annotations map[string]string, key string) string {
 	run, _ := RecordedRunAt(annotations, key)
 	return run.SessionOf()
@@ -138,17 +118,6 @@ func SessionRun(annotations map[string]string, session string) (RecordedRun, boo
 	}
 	for _, run := range Runs(annotations) {
 		if run.SessionOf() == session {
-			return run, true
-		}
-	}
-	return RecordedRun{}, false
-}
-
-// ReviseRun is the run a revise of a sandbox revises: the newest recorded
-// run whose recipe offers it.
-func ReviseRun(annotations map[string]string, revise string) (RecordedRun, bool) {
-	for _, run := range Runs(annotations) {
-		if _, ok := run.Offers(revise); ok {
 			return run, true
 		}
 	}

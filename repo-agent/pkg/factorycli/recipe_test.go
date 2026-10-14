@@ -217,49 +217,6 @@ func TestStartRecipeDetached(t *testing.T) {
 	}
 }
 
-// A revise runs in its run's sandbox and session with its inputs, is read
-// back as a run is, and applies its action.
-func TestStartRevise(t *testing.T) {
-	bin, argsLog := fakeFactory(t, writes(changeTaskOutput, "Change"))
-	r := newRunner(bin, nil)
-	r.StartRevise("alice/revise-fix-repo-5", ReviseOptions{
-		Namespace: "alice", SandboxName: "fix-repo-5", Revise: "iterate", Session: "recipe-fix-1",
-		RunName: "revise/b/fix-repo-5/iterate/1", Apply: "post-replies",
-		Inputs: map[string]string{"instruction": "rename it", "a": "b"},
-	})
-	res := waitResult(t, r, "alice/revise-fix-repo-5")
-	if res.Err != nil {
-		t.Fatalf("run: %v\n%s", res.Err, res.Output)
-	}
-	if HarvestedOutput("Change", res.Output) != changeTaskOutput {
-		t.Errorf("output = %q, want the Change", res.Output)
-	}
-	args := readArgs(t, argsLog)
-	if len(args) != 3 || !strings.HasPrefix(args[0], "recipe revise fix-repo-5 iterate --run-name revise/b/fix-repo-5/iterate/1 ") {
-		t.Fatalf("commands run = %q, want revise, task output, apply", args)
-	}
-	if !strings.Contains(args[0], "--task recipe-fix-1 --input a=b --input instruction=rename it") {
-		t.Errorf("revise args = %q, want the session and the inputs, sorted", args[0])
-	}
-	if !strings.HasPrefix(args[1], "sandbox task output fix-repo-5 --namespace alice --run-name revise/b/fix-repo-5/iterate/1") {
-		t.Errorf("output args = %q", args[1])
-	}
-	if !strings.Contains(args[2], "--action post-replies") || !strings.Contains(args[2], "--namespace alice") {
-		t.Errorf("apply args = %q", args[2])
-	}
-
-	// Without an action, nothing is applied.
-	bin, argsLog = fakeFactory(t, writes(planTaskOutput, "Plan"))
-	r = newRunner(bin, nil)
-	r.StartRevise("alice/revise-plan", ReviseOptions{Namespace: "alice", SandboxName: "fix-repo-5", Revise: "plan", RunName: "revise/b/5/plan/1"})
-	if res := waitResult(t, r, "alice/revise-plan"); HarvestedOutput("Plan", res.Output) != planTaskOutput {
-		t.Errorf("output = %q, want the plan", res.Output)
-	}
-	if args := readArgs(t, argsLog); len(args) != 2 {
-		t.Errorf("commands run = %q, want revise then task output", args)
-	}
-}
-
 // Any kind's task output is found after the banner, behind progress lines
 // and without the runner's words after the closer; only one of the kind
 // asked for, with a draft, is that kind's.

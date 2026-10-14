@@ -86,10 +86,10 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 		api.POST("/task-sessions/:sandbox/:task/permission", s.resolveTaskSessionPermission)
 		api.POST("/task-sessions/:sandbox/:task/cancel", s.cancelTaskSession)
 		api.POST("/task-sessions/:sandbox/:task/mode", s.setTaskSessionMode)
-		// The session's revises and its draft's actions. The server files
-		// the Request on the issue's row, or on the sandbox when it has no
-		// issue.
-		api.POST("/task-sessions/:sandbox/:task/revise", s.reviseTaskSession)
+		// The session's group's recipes and its draft's actions. The
+		// server files the Request on the issue's or PR's row, or on the
+		// sandbox when it has neither.
+		api.POST("/task-sessions/:sandbox/:task/recipe", s.taskSessionRecipe)
 		api.POST("/task-sessions/:sandbox/:task/draft/:verb", s.taskSessionDraftAction)
 
 		api.POST("/board/:board/runbook", s.kickoffRunbook)
@@ -119,8 +119,8 @@ func (s *Server) RegisterRoutes(router *gin.Engine) {
 
 			// The board's session slide-over and sandbox card on the
 			// overseer's sandboxes (docs/design/overseer-work-view.md):
-			// the same handlers, in overseer-<name>, with no revises and
-			// no writes.
+			// the same handlers, in overseer-<name>, with no runs and no
+			// writes.
 			scoped := overseer.Group("/:name", s.overseerScope())
 			scoped.GET("/task-sessions/:sandbox/:task", s.getTaskSession)
 			scoped.POST("/task-sessions/:sandbox/:task/prompt", s.promptTaskSession)

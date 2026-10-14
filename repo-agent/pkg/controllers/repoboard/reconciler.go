@@ -101,7 +101,6 @@ const (
 	reviewStatePending      = "pending"
 	defaultRequeue          = time.Minute
 	applyRequeue            = 5 * time.Second
-	reviseRequeue           = 15 * time.Second
 	launchRetryBackoff      = 30 * time.Minute
 	prWatchRelaunchInterval = 10 * time.Minute
 )
@@ -370,7 +369,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.ensurePlan(ctx, work, req)
 	}
 	r.ensureApplies(ctx, work, mail.applies)
-	r.ensureRevises(ctx, work, mail.revises)
 	r.ensureRecipes(ctx, work, mail.recipes)
 	r.ensureWatches(ctx, work, mail.watches)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
@@ -405,11 +403,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// than leave the button saying "posting" for a minute.
 	if len(mail.applies) > 0 {
 		return ctrl.Result{RequeueAfter: applyRequeue}, nil
-	}
-	// A revise is a turn or two of the agent: a minute is long to wait
-	// for its plan after watching the agent write it.
-	if len(mail.revises) > 0 {
-		return ctrl.Result{RequeueAfter: reviseRequeue}, nil
 	}
 	return ctrl.Result{RequeueAfter: defaultRequeue}, nil
 }
@@ -632,7 +625,6 @@ type mailbox struct {
 	runbooks []runbookClaim
 	research []researchClaim
 	applies  []*boardv1alpha1.Request
-	revises  []*boardv1alpha1.Request
 	// watches are the PRs' autos.
 	watches []*boardv1alpha1.Request
 	// recipes are the recipe Requests no pass of its own serves.
@@ -774,10 +766,8 @@ func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPla
 	}
 	key := fixKey(work, plan.executor, plan.issue)
 
-	// Not while the fix runs, nor while a follow-up or a plan does in the
-	// same sandbox.
-	if r.Factory.IsRunning(key) || r.Factory.IsRunning(sandboxReviseKey(plan.executor, name)) ||
-		r.Factory.IsRunning(planKey(work, plan.executor, plan.issue)) {
+	// Not while the fix runs, nor while a plan does in the same sandbox.
+	if r.Factory.IsRunning(key) || r.Factory.IsRunning(planKey(work, plan.executor, plan.issue)) {
 		return
 	}
 	annotations := map[string]string{}
@@ -894,8 +884,7 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 	if done && !reviewRerunRequested(sb) {
 		return
 	}
-	// Nor while an Update review rewrites it.
-	if r.Factory.IsRunning(key) || r.Factory.IsRunning(sandboxReviseKey(plan.executor, name)) {
+	if r.Factory.IsRunning(key) {
 		return
 	}
 
@@ -960,8 +949,8 @@ func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan rev
 		}
 	}
 	// A run this controller did not see end (a restart's) is followed by
-	// its recorded name; a revise's, recorded under the same key, is not
-	// the review's.
+	// its recorded name; another run recorded under the same key (one
+	// named otherwise) is not the review's.
 	runName := r.resumableRun(key, annotations, factorycli.AnnotationReviewRun, reviewRunName(work.board.Name, plan.pr),
 		AnnotationReviewedAt, AnnotationReviewErrorAt, AnnotationReviewAbandoned, AnnotationRereviewRequested)
 	if !strings.HasPrefix(runName, reviewRunPrefix(work.board.Name, plan.pr)) {

@@ -16,9 +16,9 @@ limitations under the License.
 
 package api
 
-// Naming a conversation's notes: Save notes asks the recipe's notes revise
-// to write them into a draft (saveRecipeNotes), and the note's file name
-// is picked here.
+// Naming a conversation's notes: the agent writes them as the research
+// run's Notes, and Save to research/notes pushes them under a file name
+// picked here at the first save.
 
 import (
 	"context"

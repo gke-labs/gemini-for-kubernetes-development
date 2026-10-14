@@ -88,18 +88,18 @@ type WorkAuto struct {
 	Message string `json:"message,omitempty"`
 }
 
-// WorkAction is one action a draft's task output offers, or a revise its
-// run offers, as a session takes it: POST
-// /task-sessions/:sandbox/:task/draft/:verb {run, text}, or …/revise.
+// WorkAction is one action a draft's task output offers, or a recipe of
+// its session's group, as a session takes it: POST
+// /task-sessions/:sandbox/:task/draft/:verb {run, text}, or …/recipe.
 type WorkAction struct {
 	Verb   string `json:"verb"`
 	Run    string `json:"run,omitempty"`
-	Revise string `json:"revise,omitempty"` // the recipe revise a revise runs
+	Recipe string `json:"recipe,omitempty"` // the recipe a recipe action runs
 	Label  string `json:"label,omitempty"`
 	Field  string `json:"field,omitempty"`  // what an edit edits
 	Format string `json:"format,omitempty"` // yaml | markdown, for an edit
-	// Inputs are what a revise asks for before it can be filed
-	// (Iterate's instruction).
+	// Inputs are what a recipe asks for before it can be filed
+	// (care-iterate's instruction).
 	Inputs []string `json:"inputs,omitempty"`
 	// Enabled is false for an action the draft's state rules out just now
 	// (done already, or the agent is busy); Reason says why.
@@ -129,7 +129,7 @@ type WorkItem struct {
 	Fixes           []int        `json:"fixes,omitempty"`   // issue numbers this PR closes
 	Sandbox         *WorkSandbox `json:"sandbox,omitempty"`
 	UpdatedAt       string       `json:"updatedAt,omitempty"`
-	// Posting is whether a write or a revise filed on the row's runs still
+	// Posting is whether a write filed on the row's runs still
 	// stands: the controller does it in seconds, so the feed is kept fresh
 	// for seconds, and the UI polls faster, until it is done.
 	Posting bool `json:"posting,omitempty"`
@@ -175,9 +175,8 @@ type RowRecipe struct {
 	Instructions string `json:"instructions,omitempty"`
 }
 
-// RunSession is one recipe run on an item: its recipe, the session its
-// revises go into, its state, and its stored task output's applied
-// actions.
+// RunSession is one recipe run on an item: its recipe, its session, its
+// state, and its stored task output's applied actions.
 type RunSession struct {
 	Recipe string `json:"recipe,omitempty"`
 	// Session is the recipe's session tag: a group's runs are one
@@ -189,8 +188,8 @@ type RunSession struct {
 	// Engine is the agent the run's sandbox last ran (gemini, claude,
 	// antigravity): its chip's icon.
 	Engine string `json:"engine,omitempty"`
-	// Task is the run's agent session (a revise's is the one it revised
-	// in), for #/task-session/<sandbox>/<task>.
+	// Task is the run's agent session (one it continued, for a recipe of
+	// a session tag's), for #/task-session/<sandbox>/<task>.
 	Task string `json:"task"`
 	// Run is the annotation the run is recorded under.
 	Run   string `json:"run"`
@@ -207,10 +206,8 @@ type RunSession struct {
 	Output bool `json:"output,omitempty"`
 	// Applied is the actions applied to the output: action → RFC3339.
 	Applied map[string]string `json:"applied,omitempty"`
-	// Revises are the revise ids the run's recipe offers into its session.
-	Revises []string `json:"revises,omitempty"`
-	// Actions are what the output offers to do with its draft, but edit,
-	// reject and revise: the moves a ready run waits on.
+	// Actions are what the output offers to do with its draft, but edit
+	// and reject: the moves a ready run waits on.
 	Actions []RunAction `json:"actions,omitempty"`
 	// Preview is a glance at the output's draft, as plain text.
 	Preview string `json:"preview,omitempty"`

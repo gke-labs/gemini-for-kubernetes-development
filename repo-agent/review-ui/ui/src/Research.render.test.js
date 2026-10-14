@@ -1053,54 +1053,47 @@ describe('ResearchConversation on a task session', () => {
     });
 
     test('a session\'s group runs its recipes here, and its leader in a new conversation', async () => {
-        const care = { verb: 'recipe', revise: 'care', label: 'Care', enabled: true };
-        const ci = { verb: 'recipe', revise: 'care-ci', label: 'Fix CI', enabled: true };
-        await render({ sessionId: task.task, repo: 'granule', revises: [care, ci] });
+        const care = { verb: 'recipe', recipe: 'care', label: 'Care', enabled: true };
+        const ci = { verb: 'recipe', recipe: 'care-ci', label: 'Fix CI', enabled: true };
+        await render({ sessionId: task.task, repo: 'granule', recipes: [care, ci] });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
         global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST'
             ? reply(202, { request: 'r' })
-            : reply(200, { sessionId: task.task, revises: [care, ci] })));
+            : reply(200, { sessionId: task.task, recipes: [care, ci] })));
         await act(async () => { [...container.querySelectorAll('button')].find(b => b.textContent === 'Fix CI').click(); });
         expect(global.fetch).toHaveBeenCalledWith(
-            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise',
-            expect.objectContaining({ method: 'POST', body: JSON.stringify({ revise: 'care-ci' }) }));
+            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/recipe',
+            expect.objectContaining({ method: 'POST', body: JSON.stringify({ recipe: 'care-ci' }) }));
         await flush();
 
         window.confirm = jest.fn(() => true);
         await act(async () => { container.querySelector('[aria-label="More actions"]').click(); });
         await act(async () => { [...container.querySelectorAll('[role=menuitem]')].find(b => b.textContent === 'New conversation').click(); });
         expect(global.fetch).toHaveBeenCalledWith(
-            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise',
-            expect.objectContaining({ method: 'POST', body: JSON.stringify({ revise: 'care', newSession: true }) }));
+            '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/recipe',
+            expect.objectContaining({ method: 'POST', body: JSON.stringify({ recipe: 'care', newSession: true }) }));
     });
 
-    test('the recipe\'s revises are buttons that file the revise on the session, and follow it', async () => {
-        const offered = { verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true };
-        await render({ sessionId: task.task, repo: 'granule', revises: [offered] });
+    test('a recipe of the session is followed while it runs, and says when it is done', async () => {
+        const offered = { verb: 'recipe', recipe: 'care-ci', label: 'Fix CI', enabled: true };
+        await render({ sessionId: task.task, repo: 'granule', recipes: [offered] });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        const button = () => [...container.querySelectorAll('button')].find(b => b.textContent.startsWith('Update plan'));
+        const button = () => [...container.querySelectorAll('button')].find(b => b.textContent.startsWith('Fix CI'));
         expect(button().disabled).toBe(false);
 
-        let status = { ...offered, enabled: false, reason: 'revising' };
+        let status = { ...offered, enabled: false, reason: 'running' };
         global.fetch = jest.fn((url, opts) => (opts && opts.method === 'POST'
             ? reply(202, { request: 'r' })
-            : reply(200, { sessionId: task.task, revises: [status] })));
+            : reply(200, { sessionId: task.task, recipes: [status] })));
         jest.useFakeTimers();
         try {
             await act(async () => { button().click(); });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-            // The session, not the board row: the server picks where it is
-            // filed.
-            expect(global.fetch).toHaveBeenCalledWith(
-                '/api/task-sessions/fix-granule-42/recipe-plan-20261004-120000-ab12/revise', expect.objectContaining({
-                    method: 'POST',
-                    body: JSON.stringify({ revise: 'plan' }),
-                }));
-            expect(button().textContent).toBe('Update plan…');
+            expect(button().textContent).toBe('Fix CI…');
             expect(button().disabled).toBe(true);
 
             status = offered;
@@ -1110,35 +1103,55 @@ describe('ResearchConversation on a task session', () => {
             jest.useRealTimers();
         }
         expect(button().disabled).toBe(false);
-        expect(container.textContent).toContain('Update plan: done');
+        expect(container.textContent).toContain('Fix CI: done');
     });
 
-    test('a revise that failed says why', async () => {
+    test('a recipe that failed says why', async () => {
         await render({
-            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true, error: 'the session is busy' }],
+            sessionId: task.task, repo: 'granule',
+            recipes: [{ verb: 'recipe', recipe: 'care-ci', label: 'Fix CI', enabled: true, error: 'the session is busy' }],
         });
-        expect(container.textContent).toContain('Update plan failed: the session is busy');
+        expect(container.textContent).toContain('Fix CI failed: the session is busy');
     });
 
-    test('a revise waits for the turn in flight, and for a running task', async () => {
+    test('a recipe waits for the turn in flight, and for a running task', async () => {
         await render({
-            sessionId: task.task, repo: 'granule', board: 'granule', number: 42,
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan' }],
+            sessionId: task.task, repo: 'granule',
+            recipes: [{ verb: 'recipe', recipe: 'care-ci', label: 'Fix CI', enabled: true }],
         });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: true, held: true, task: task.task, offset: 0 } });
         });
-        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Update plan');
+        const button = [...container.querySelectorAll('button')].find(b => b.textContent === 'Fix CI');
         expect(button.disabled).toBe(true);
     });
 
-    test('a session whose recipe offers no revise has no revise button', async () => {
+    test('a session in no group has no recipe buttons', async () => {
         await render({ sessionId: task.task, repo: 'granule' });
         await act(async () => {
             FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
         });
-        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Update plan')).toBe(false);
+        expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Fix CI' || b.textContent === 'Update plan')).toBe(false);
+    });
+
+    test('a turn that ends reads the session again, for the draft the agent wrote', async () => {
+        await render({ sessionId: task.task, repo: 'granule' });
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, task: task.task, offset: 0 } });
+        });
+        global.fetch = jest.fn(() => reply(200, {
+            sessionId: task.task, repo: 'granule',
+            draft: { kind: 'Plan', markdown: '## Summary\nRewritten.', actions: [] },
+        }));
+        await act(async () => {
+            ws.deliver({ type: 'event', offset: 20, event: { seq: 1, kind: 'user_prompt', data: { text: 'save the plan' } } });
+        });
+        await act(async () => {
+            ws.deliver({ type: 'event', offset: 40, event: { seq: 2, kind: 'turn_end', data: { stopReason: 'end_turn' } } });
+        });
+        await flush();
+        expect(container.textContent).toContain('Plan draft');
     });
 
     test('an older image falls back to the terminal', async () => {
@@ -1149,11 +1162,9 @@ describe('ResearchConversation on a task session', () => {
     });
 });
 
-describe('ResearchConversation revises and draft', () => {
-    // One view for every recipe: a research conversation's Save notes and
-    // its notes draft come from the same fields a plan's Update plan and
-    // plan draft do.
-    const saveNotes = { verb: 'revise', revise: 'notes', label: 'Save notes', enabled: true };
+describe('ResearchConversation notes and draft', () => {
+    // One view for every recipe: a research conversation's notes draft
+    // comes from the same field a plan's draft does.
     const notesDraft = {
         kind: 'Notes', markdown: '# Findings\n\nthe backoff is linear', note: 'backoff', draftedAt: '2026-10-05T10:00:00Z',
         actions: [
@@ -1184,17 +1195,27 @@ describe('ResearchConversation revises and draft', () => {
         await flush();
     };
 
-    test('Save notes is the recipe\'s revise, before any draft exists', async () => {
-        const calls = await open({ revises: [saveNotes] });
-        expect(container.textContent).not.toContain('💾');
+    test('Save notes asks the agent for them, as a turn, before any draft exists', async () => {
+        const calls = await open({});
         expect(container.textContent).not.toContain('draft');
         await click(button('Save notes'));
-        expect(calls).toEqual([{ url: `${at}/revise`, method: 'POST', body: JSON.stringify({ revise: 'notes' }) }]);
+        expect(calls).toEqual([{ url: `${at}/prompt`, method: 'POST', body: JSON.stringify({ text: 'Save notes.' }) }]);
+    });
+
+    test('a session that is no research conversation has no Save notes', async () => {
+        const plan = { sandbox: 'fix-granule-42', task: 'recipe-plan-1' };
+        global.fetch = jest.fn(() => reply(200, { sessionId: plan.task, repo: 'granule' }));
+        await act(async () => { root.render(<ResearchConversation task={plan} />); });
+        await flush();
+        await act(async () => {
+            FakeSocket.instances[0].deliver({ type: 'open', session: { busy: false, task: plan.task, offset: 0 } });
+        });
+        expect(button('Save notes')).toBeUndefined();
     });
 
     test('the draft is shown, and its actions are its own buttons', async () => {
         window.confirm = jest.fn(() => true);
-        const calls = await open({ revises: [saveNotes], draft: notesDraft });
+        const calls = await open({ draft: notesDraft });
         expect(container.textContent).toContain('Notes draft');
         expect(container.textContent).toContain('backoff.md');
         // Folded to its line until asked for.
@@ -1222,11 +1243,10 @@ describe('ResearchConversation revises and draft', () => {
 
     test('a plan session gets the same panel, with the plan\'s actions', async () => {
         await open({
-            revises: [{ verb: 'revise', revise: 'plan', label: 'Update plan', enabled: true }],
             draft: { kind: 'Plan', markdown: '## Summary', actions: [{ verb: 'comment', label: 'Post plan', enabled: true }] },
         });
         expect(container.textContent).toContain('Plan draft');
-        expect(button('Update plan')).toBeTruthy();
+        expect(button('Update plan')).toBeUndefined();
         expect(button('Post plan')).toBeTruthy();
     });
 
@@ -1238,7 +1258,7 @@ describe('ResearchConversation revises and draft', () => {
     });
 
     test('no pending review, no link', async () => {
-        await open({ revises: [saveNotes] });
+        await open({});
         expect(container.textContent).not.toContain('pending on GitHub');
     });
 
@@ -1264,20 +1284,20 @@ describe('ResearchConversation revises and draft', () => {
 
     test('what is running and what failed is said, and what waits says why', async () => {
         await open({
-            revises: [{ ...saveNotes, enabled: false, reason: 'revising' }],
+            recipes: [{ verb: 'recipe', recipe: 'care-ci', label: 'Fix CI', enabled: false, reason: 'running' }],
             draft: {
                 ...notesDraft,
                 actions: [
-                    { verb: 'push-notes', label: 'Save to research/notes', enabled: false, reason: 'the notes are being rewritten', error: 'push refused' },
+                    { verb: 'push-notes', label: 'Save to research/notes', enabled: false, reason: 'the run is running', error: 'push refused' },
                     { verb: 'reject', enabled: true },
                 ],
             },
         });
         expect(container.textContent).toContain('Save to research/notes failed: push refused');
-        expect(container.textContent).toContain('Save notes: running in this conversation');
-        expect(button('Save notes…').disabled).toBe(true);
+        expect(container.textContent).toContain('Fix CI: running in this conversation');
+        expect(button('Fix CI…').disabled).toBe(true);
         const push = button('Save to research/notes');
         expect(push.disabled).toBe(true);
-        expect(push.title).toBe('Not now: the notes are being rewritten');
+        expect(push.title).toBe('Not now: the run is running');
     });
 });

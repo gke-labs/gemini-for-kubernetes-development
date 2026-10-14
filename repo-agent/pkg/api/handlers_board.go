@@ -848,21 +848,18 @@ func recordedRunSessions(sb *unstructured.Unstructured, catalog []boardv1alpha1.
 			session.Actions = runActions(run.Kind, doc)
 			session.Preview = factorycli.Preview(run.Kind, doc)
 		}
-		for _, rv := range run.Revises {
-			session.Revises = append(session.Revises, rv.ID)
-		}
 		sessions = append(sessions, session)
 	}
 	return sessions
 }
 
 // runActions are the actions a run's output offers but the draft verbs
-// and revises (models.RunSession.Actions).
+// (models.RunSession.Actions).
 func runActions(kind, doc string) []models.RunAction {
 	var out []models.RunAction
 	for _, a := range factorycli.OfferedActions(kind, doc) {
 		switch a.Verb {
-		case "edit", "reject", "revise":
+		case "edit", "reject":
 			continue
 		}
 		out = append(out, models.RunAction{Verb: a.Verb, Label: a.Label})

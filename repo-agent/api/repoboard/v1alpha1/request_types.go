@@ -84,15 +84,6 @@ const (
 	// is stored on when the write happens, so an edit made before the
 	// click is the one written.
 	VerbApply = "apply"
-	// VerbRevise rewrites a plan draft from the conversation a member
-	// continued in the plan's agent session: factory recipe revise, into
-	// that session, harvested into the draft as a plan is. It posts
-	// nothing. With Sandbox set it is a revise of that sandbox's
-	// session: a research conversation's Save notes (a Notes draft onto
-	// the sandbox), a review's Update review, or a fix's follow-up
-	// (Iterate, Address comments, Fix CI), which pushes to the PR and
-	// posts its replies.
-	VerbRevise = "revise"
 	// VerbWatch is a PR's auto: while it stands, factory pr watch
 	// follows the pull request (Item pr, Number) up as Member — care on
 	// new review comments and failed checks — relaunched as each watch
@@ -224,7 +215,7 @@ type RequestSpec struct {
 	Board string `json:"board"`
 
 	// Verb is what was clicked.
-	// +kubebuilder:validation:Enum=recipe;run;research;apply;revise;watch
+	// +kubebuilder:validation:Enum=recipe;run;research;apply;watch
 	Verb string `json:"verb"`
 
 	// Recipe is the recipe to launch, for verb=recipe: a name factory
@@ -251,20 +242,19 @@ type RequestSpec struct {
 	// +kubebuilder:validation:Optional
 	Number int `json:"number,omitempty"`
 
-	// Sandbox is the sandbox a revise or apply acts on, whichever
-	// recipe's: a revise runs in the session of the run there that offers
-	// it, an apply applies a run's draft there. It is the member's, or
-	// for an apply, the board's (auto-triage's). An issue's sandbox's
-	// revise or apply names the issue too (Number), for its row.
+	// Sandbox is the sandbox an apply acts on, whichever recipe's: it
+	// applies a run's draft there. It is the member's, or the board's
+	// (auto-triage's). An issue's sandbox's apply names the issue too
+	// (Number), for its row.
 	// It becomes an argument to the factory CLI.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63
 	Sandbox string `json:"sandbox,omitempty"`
 
-	// Inputs are a launch's or a revise's inputs, by name, as its recipe
-	// asks for them: the Iterate box, as the fix's iterate revise's
-	// instruction. They become factory --input arguments.
+	// Inputs are a launch's inputs, by name, as its recipe asks for
+	// them: care-iterate's instruction, a review's instructions. They
+	// become factory --input arguments.
 	// +kubebuilder:validation:Optional
 	Inputs map[string]string `json:"inputs,omitempty"`
 
@@ -285,13 +275,6 @@ type RequestSpec struct {
 	// Apply is set for verb=apply.
 	// +kubebuilder:validation:Optional
 	Apply *ApplyRequest `json:"apply,omitempty"`
-
-	// Revise is the recipe revise to run, for verb=revise: the id of one
-	// of the revise actions the draft's task output offers ("plan"). It
-	// becomes an argument to the factory CLI.
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
-	Revise string `json:"revise,omitempty"`
 }
 
 // RequestStatus is what came of the click.
@@ -384,8 +367,6 @@ func (s RequestSpec) Subject() string {
 			return ""
 		}
 		return s.target() + "/" + s.Apply.Run + "/" + s.Apply.Action
-	case VerbRevise:
-		return s.target() + "/" + s.Revise
 	case VerbWatch:
 		return s.Item + "-" + strconv.Itoa(s.Number)
 	case VerbRecipe:
@@ -396,8 +377,8 @@ func (s RequestSpec) Subject() string {
 	}
 }
 
-// target is what a revise or apply acts on: its sandbox, for a
-// repository's, else its issue.
+// target is what an apply acts on: its sandbox, for a repository's,
+// else its issue.
 func (s RequestSpec) target() string {
 	if s.Sandbox != "" {
 		return s.Sandbox

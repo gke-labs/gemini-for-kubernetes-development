@@ -99,9 +99,6 @@ spec:
                 required:
                 - sessionId
                 type: object
-              revise:
-                pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
-                type: string
               run:
                 properties:
                   intent:
@@ -137,7 +134,6 @@ spec:
                 - run
                 - research
                 - apply
-                - revise
                 - watch
                 type: string
             required:

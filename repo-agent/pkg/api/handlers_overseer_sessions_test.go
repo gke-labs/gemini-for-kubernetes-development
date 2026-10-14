@@ -32,7 +32,6 @@ import (
 func overseerSandbox(name string, paused bool) *unstructured.Unstructured {
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "fix-42-head-1", Task: "recipe-fix-1", StartedAt: time.Unix(1_000_000, 0), Kind: "Change", State: "Completed",
-		Revises: []factorycli.RecordedRevise{{ID: "iterate", Label: "Iterate", Inputs: []string{"instruction"}}},
 	})
 	replicas := int64(1)
 	if paused {
@@ -214,7 +213,7 @@ func TestOverseerListIsTheOnesYouMaySee(t *testing.T) {
 }
 
 // An overseer's run opens in the slide-over from overseer-kcc: no
-// revises, and its output to read, without actions (its CLI applied it;
+// recipes to run, and its output to read, without actions (its CLI applied it;
 // it is on no board to file one on).
 func TestAnOverseerSessionIsReadOnly(t *testing.T) {
 	r := overseerSessionServer(t, &fakeSessions{})
@@ -224,7 +223,7 @@ func TestAnOverseerSessionIsReadOnly(t *testing.T) {
 	}
 	var got struct {
 		Namespace string            `json:"namespace"`
-		Revises   []json.RawMessage `json:"revises"`
+		Recipes   []json.RawMessage `json:"recipes"`
 		Draft     *struct {
 			Kind    string            `json:"kind"`
 			Actions []json.RawMessage `json:"actions"`
@@ -233,7 +232,7 @@ func TestAnOverseerSessionIsReadOnly(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Namespace != "overseer-kcc" || len(got.Revises) != 0 || got.Draft == nil || got.Draft.Kind != "Change" || got.Draft.Actions == nil || len(got.Draft.Actions) != 0 {
+	if got.Namespace != "overseer-kcc" || len(got.Recipes) != 0 || got.Draft == nil || got.Draft.Kind != "Change" || got.Draft.Actions == nil || len(got.Draft.Actions) != 0 {
 		t.Errorf("session = %s", w.Body.String())
 	}
 }
@@ -293,7 +292,7 @@ func TestOverseerSessionRoutesAreRegistered(t *testing.T) {
 		"DELETE /api/overseers/:name/sandboxes/:sandboxName",
 		"POST /api/overseers/:name/sandboxes/:sandboxName/pause",
 		"GET /api/overseers/:name/chores",
-		"POST /api/overseers/:name/task-sessions/:sandbox/:task/revise",
+		"POST /api/overseers/:name/task-sessions/:sandbox/:task/recipe",
 		"POST /api/overseers/:name/task-sessions/:sandbox/:task/draft/:verb",
 	} {
 		if have[gone] {

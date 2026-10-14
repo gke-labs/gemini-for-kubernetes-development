@@ -62,8 +62,7 @@ func (r *Reconciler) ensurePlan(ctx context.Context, work *workState, req planRe
 	if !needFresh && !needRefine {
 		return
 	}
-	// Nor while a revise rewrites the draft.
-	if r.Factory.IsRunning(key) || (sb != nil && r.Factory.IsRunning(sandboxReviseKey(req.member, sb.GetName()))) {
+	if r.Factory.IsRunning(key) {
 		return
 	}
 
@@ -199,3 +198,8 @@ func (r *Reconciler) resumePlans(ctx context.Context, work *workState) {
 // AnnotationPlanRejected tombstones a rejected plan draft, as
 // AnnotationTriageRejected does a triage's.
 var AnnotationPlanRejected = factorycli.RejectedAnnotation(factorycli.AnnotationPlanRun)
+
+// planKey is the runner key of an issue's plans.
+func planKey(work *workState, member string, issue int) string {
+	return fmt.Sprintf("%s/plan-%s-%d", member, work.repo, issue)
+}
