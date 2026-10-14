@@ -219,9 +219,13 @@ spec:
                       items:
                         type: string
                       type: array
+                    onFinish:
+                      type: string
                     session:
                       type: string
                     taskType:
+                      type: string
+                    timeout:
                       type: string
                   required:
                   - label
