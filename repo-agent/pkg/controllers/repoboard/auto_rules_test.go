@@ -2,7 +2,10 @@ package repoboard
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -152,3 +155,48 @@ func TestAutoRuleForAnyRecipeWithADailyCap(t *testing.T) {
 	g.Expect(got.Status.AutoFiled).To(gomega.HaveLen(1), "yesterday's filing dropped, today's recorded")
 	g.Expect(got.Status.AutoRuleErrors).To(gomega.BeEmpty())
 }
+
+// Discovery lists only what the board's recency can make eligible: open
+// issues updated since the cutoff (GitHub's since), and open PRs newest
+// updated first, stopping at the first one older than it.
+func TestAutoListingStopsAtTheRecencyCutoff(t *testing.T) {
+	fresh := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	stale := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	var issueQuery url.Values
+	pages := 0
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := "[]"
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/issues"):
+			issueQuery = req.URL.Query()
+		case strings.HasSuffix(req.URL.Path, "/pulls"):
+			pages++
+			body = fmt.Sprintf(`[{"number": 1, "updated_at": %q}, {"number": 2, "updated_at": %q}]`, fresh, stale)
+		}
+		header := http.Header{"Content-Type": []string{"application/json"}}
+		if strings.HasSuffix(req.URL.Path, "/pulls") {
+			// Claim a next page: the listing must stop at the stale PR anyway.
+			header.Set("Link", `<https://api.github.com/repos/test/repo/pulls?page=2>; rel="next"`)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: header, Request: req}, nil
+	})})
+	r := newTestReconciler(newFakeLauncher(), ghClient, testBoard(nil), githubSecret())
+	work := &workState{board: testBoard(nil), owner: "test", repo: "repo"}
+	prs, err := r.listAutoItems(context.Background(), ghClient, work, "pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 || prs[0].number != 1 || pages != 1 {
+		t.Errorf("PRs = %+v over %d pages, want #1 alone from one page", prs, pages)
+	}
+	if _, err := r.listAutoItems(context.Background(), ghClient, work, "issue"); err != nil {
+		t.Fatal(err)
+	}
+	if issueQuery.Get("since") == "" {
+		t.Errorf("issues listed without since: %v", issueQuery)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

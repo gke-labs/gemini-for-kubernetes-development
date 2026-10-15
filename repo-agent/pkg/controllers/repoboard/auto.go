@@ -169,26 +169,36 @@ func (r *Reconciler) discoverAuto(ctx context.Context, ghClient *github.Client, 
 	return wanted
 }
 
-// listAutoItems lists the repository's open issues (not PRs) or PRs.
+// listAutoItems lists the repository's open issues (not PRs) or PRs
+// updated within the board's recency (autoRecency): nothing older is
+// eligible, so it is not listed, and a large repository costs a page or
+// two a pass rather than all its open items.
 func (r *Reconciler) listAutoItems(ctx context.Context, ghClient *github.Client, work *workState, on string) ([]autoItem, error) {
 	var items []autoItem
+	cutoff := time.Now().Add(-autoRecency(work.board))
 	if on == "pr" {
-		opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+		// PRs have no since: newest updated first, stopping at the cutoff.
+		opts := &github.PullRequestListOptions{State: "open", Sort: "updated", Direction: "desc", ListOptions: github.ListOptions{PerPage: 100}}
 		for {
 			prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
 			if err != nil {
 				return items, err
 			}
+			older := false
 			for _, pr := range prs {
+				if updated := pr.GetUpdatedAt(); !updated.IsZero() && updated.Before(cutoff) {
+					older = true
+					break
+				}
 				items = append(items, autoItem{number: pr.GetNumber(), labels: pr.Labels, assignees: pr.Assignees, reviewers: pr.RequestedReviewers, updatedAt: pr.GetUpdatedAt()})
 			}
-			if resp.NextPage == 0 {
+			if older || resp.NextPage == 0 {
 				return items, nil
 			}
 			opts.Page = resp.NextPage
 		}
 	}
-	opts := &github.IssueListByRepoOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+	opts := &github.IssueListByRepoOptions{State: "open", Since: cutoff, ListOptions: github.ListOptions{PerPage: 100}}
 	for {
 		issues, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
 		if err != nil {
