@@ -131,8 +131,7 @@ spec:
     approvals: 1
     requiredChecks: true
 
-  policy:
-    draftPR: true               # fixes open as draft PRs until promoted
+  policy:                       # fixes always open as draft PRs until promoted
     autoIterate: true           # factory pr watch may push iteration commits
                                 #   to the author's own PR branch
     disclose: false             # add an "assisted-by" note to agent-drafted
@@ -294,7 +293,7 @@ Notes on the tiers:
 - **Auto-fix consent is two-key** because a third party's assignment causes
   work executed as the assignee (their token, their quota, a PR in their
   name). The board enables the capability; each member opts in per board.
-- **Auto-fix safety rails:** draft PR forced regardless of `policy.draftPR`;
+- **Auto-fix safety rails:** fixes always open as draft PRs;
   one attempt then park as *needs attention* (re-fix is a human click);
   `no-agent` veto label; `maxActivePerUser`; the board badges
   "auto-started for you" so members learn from the board, not from a GitHub

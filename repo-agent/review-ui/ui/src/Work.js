@@ -1687,10 +1687,6 @@ function Work({ onBack, namespace, active = true }) {
                 <input type="checkbox" checked={!!spec.autoIterate} onChange={e => setSpec({ ...spec, autoIterate: e.target.checked })} style={{ marginRight: '6px' }} />
                 Auto on PRs a fix opens
               </label>
-              <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Agent-created PRs open as drafts; you promote them.">
-                <input type="checkbox" checked={!!spec.draftPR} onChange={e => setSpec({ ...spec, draftPR: e.target.checked })} style={{ marginRight: '6px' }} />
-                Open agent PRs as drafts
-              </label>
               <label style={{ cursor: 'pointer', fontSize: 'small' }} title="Let the agent say it is an agent: the generated-by line in PR descriptions, and the footer on its comments and CI reports. Off, it posts none of them.">
                 <input type="checkbox" checked={!!spec.disclose} onChange={e => setSpec({ ...spec, disclose: e.target.checked })} style={{ marginRight: '6px' }} />
                 Disclose agent assistance in PRs

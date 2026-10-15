@@ -179,13 +179,10 @@ type ReadySpec struct {
 	RequiredChecks *bool `json:"requiredChecks,omitempty"`
 }
 
-// PolicySpec shapes attributed writes.
+// PolicySpec shapes attributed writes. A board's fixes always open as
+// draft PRs (fix's draft input, default true), until a human promotes
+// them.
 type PolicySpec struct {
-	// DraftPR opens fixes as draft PRs until a human promotes them.
-	// Forced true for auto-fix launches regardless of this field.
-	// +kubebuilder:default=true
-	DraftPR *bool `json:"draftPR,omitempty"`
-
 	// AutoIterate lets the PR follow-up loop push iteration commits to the
 	// author's own PR branch without a per-push click.
 	// +kubebuilder:default=true

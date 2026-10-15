@@ -1556,7 +1556,6 @@ type boardSpecView struct {
 	IdleMinutes       int64        `json:"idleMinutes"`
 	Engine            string       `json:"engine"`
 	AutoIterate       bool         `json:"autoIterate"`
-	DraftPR           bool         `json:"draftPR"`
 	Disclose          bool         `json:"disclose"`
 }
 
@@ -1609,7 +1608,6 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 		view.IdleMinutes = 60
 	}
 	view.AutoIterate, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "autoIterate")
-	view.DraftPR, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "draftPR")
 	view.Disclose, _, _ = unstructured.NestedBool(board.Object, "spec", "policy", "disclose")
 	c.JSON(http.StatusOK, view)
 }
@@ -1676,7 +1674,6 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 			set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
 			set(engineOrDefault(payload.Engine), "spec", "sandbox", "engine") &&
 			set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
-			set(payload.DraftPR, "spec", "policy", "draftPR") &&
 			set(payload.Disclose, "spec", "policy", "disclose")
 	}
 	if !apply(board) {
