@@ -6,6 +6,10 @@ LOCAL_PORT ?= 13380
 CLUSTER_NAME ?= $(shell kubectl config view --minify --output 'jsonpath={.clusters[0].name}')
 INSTALL_ENVOY ?= $(if $(filter kind%,$(CLUSTER_NAME)),yes,no)
 GW_CLASS ?= $(if $(filter kind%,$(CLUSTER_NAME)),repo-agent-gatewayclass,gke-l7-regional-external-managed)
+# GW_CERT names a Certificate Manager certificate for the HTTPS listener (e.g. a Google-managed
+# one for the cluster's hostname). Empty keeps the self-signed repo-agent-tls secret.
+GW_CERT ?=
+GW_TLS = {mode: Terminate, options: {networking.gke.io/cert-manager-certs: $(GW_CERT)}}
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -229,6 +233,7 @@ install-repo-agent-latest:
 	--image-tag=$(IMAGE_TAG) \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
+	$(if $(GW_CERT),--replace '.spec.listeners[].tls=$(GW_TLS)') \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
