@@ -6,6 +6,7 @@ import { ENGINE_ICON, EngineIcon, SessionMark, RUN_STYLE, READY_STYLE, ageOf } f
 import SessionSlideOver from './SessionSlideOver';
 import SandboxCard from './SandboxCard';
 import BoardPicker from './BoardPicker';
+import AutoRules from './AutoRules';
 
 // Work: the RepoBoard work queue (docs/design/repoboard.md §8).
 // One high-density table per board: rows are issues/PRs merged with agent
@@ -1590,32 +1591,11 @@ function Work({ onBack, namespace, active = true }) {
               </label>
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '4px 0' }} />
               <div style={{ fontSize: 'small', fontWeight: 600 }}>
-                Automation <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(what runs without a click — everything is draft-shaped and recency-bounded)</span>
+                Automation <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(what runs without a click, as you: one run per item a rule matches, recency-bounded)</span>
               </div>
+              <AutoRules rules={spec.autoRules || []} recipes={spec.recipes || []} errors={spec.autoRuleErrors || []}
+                onChange={autoRules => setSpec({ ...spec, autoRules })} />
               <div style={{ display: 'flex', gap: '12px', fontSize: 'small', flexWrap: 'wrap' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Triage drafts for recent issues: unclaimed = no assignees; all = assignment doesn't imply triaged.">
-                  Auto-triage
-                  <select value={spec.autoTriage || 'off'} onChange={e => setSpec({ ...spec, autoTriage: e.target.value })}>
-                    <option value="off">off</option>
-                    <option value="unclaimed">unclaimed issues</option>
-                    <option value="all">all issues</option>
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Draft-PR fixes for recent issues assigned to you, run as you.">
-                  Auto-fix
-                  <select value={spec.autoFix || 'off'} onChange={e => setSpec({ ...spec, autoFix: e.target.value })}>
-                    <option value="off">off</option>
-                    <option value="assigned">assigned to me</option>
-                  </select>
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Reviews run as you and park pending reviews on GitHub, visible only to you until you submit.">
-                  Auto-review
-                  <select value={spec.autoReview || 'off'} onChange={e => setSpec({ ...spec, autoReview: e.target.value })}>
-                    <option value="off">off</option>
-                    <option value="requested">requesting my review</option>
-                    <option value="all">all open PRs</option>
-                  </select>
-                </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} title="Automation only touches items updated within this window — enabling auto on an old repo processes the live edge, not the archive.">
                   Recency window
                   <select value={String(spec.recencyDays || 7)} onChange={e => setSpec({ ...spec, recencyDays: parseInt(e.target.value, 10) || 7 })}>

@@ -43,25 +43,27 @@ type ViewSpec struct {
 // AutoSpec is everything that launches without a click — the deliberate,
 // rarely-touched half of the board. What the member LOOKS at (view scopes,
 // filters) is fluid per-user UI state and never lives on this CR: changing
-// a view must never change what runs. Every verb is an enum whose value
-// names its scope, every verb is bounded by the recency window, and all
-// writes stay draft-shaped (triage drafts on the board, draft PRs, pending
-// reviews visible only to the owner).
+// a view must never change what runs. Each rule names a recipe and the
+// items it runs on, every rule is bounded by the recency window and the
+// shared label filters, and runs as the board's owner.
 type AutoSpec struct {
-	// Triage prepares triage drafts for recent issues: "unclaimed" (no
-	// assignees) or "all" (assignment does not imply triaged).
+	// Rules are the recipes automation runs, each on the open items its
+	// conditions match: one recipe Request per item, as the board's owner.
+	// +kubebuilder:validation:Optional
+	Rules []AutoRule `json:"rules,omitempty"`
+
+	// Triage is deprecated: the controller converts it into a rule
+	// (LegacyRules) and sets it off.
 	// +kubebuilder:default=off
 	// +kubebuilder:validation:Enum=off;unclaimed;all
 	Triage string `json:"triage,omitempty"`
 
-	// Fix starts draft-PR fixes for recent issues: "assigned" (assigned
-	// to the owner — the only scope where running as the owner is safe).
+	// Fix is deprecated: converted into a rule, as Triage.
 	// +kubebuilder:default=off
 	// +kubebuilder:validation:Enum=off;assigned
 	Fix string `json:"fix,omitempty"`
 
-	// Review runs reviews as the owner (parked as pending reviews) for
-	// recent PRs: "requested" (asking for the owner's review) or "all".
+	// Review is deprecated: converted into a rule, as Triage.
 	// +kubebuilder:default=off
 	// +kubebuilder:validation:Enum=off;requested;all
 	Review string `json:"review,omitempty"`
@@ -82,6 +84,88 @@ type AutoSpec struct {
 	// +kubebuilder:default=7
 	// +kubebuilder:validation:Minimum=1
 	RecencyDays int `json:"recencyDays,omitempty"`
+}
+
+// AutoRule runs a recipe on the open items of one type its conditions
+// match. The recipe must start on that type: a my-pr recipe cannot be
+// automated on others' PRs.
+type AutoRule struct {
+	// Recipe is a recipe of the board's catalog.
+	Recipe string `json:"recipe"`
+	// On is the item type: issue or pr.
+	// +kubebuilder:validation:Enum=issue;pr
+	On string `json:"on"`
+	// When are the conditions an item must meet, all of the ones set.
+	// None set is every open item of the type.
+	// +kubebuilder:validation:Optional
+	When AutoWhen `json:"when,omitempty"`
+	// MaxPerDay caps how many Requests the rule's recipe is filed in a
+	// day by automation. Unset or 0, no cap.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=0
+	MaxPerDay int `json:"maxPerDay,omitempty"`
+}
+
+// AutoWhen is an AutoRule's conditions: a closed set.
+type AutoWhen struct {
+	// Unclaimed is an item with no assignees.
+	// +kubebuilder:validation:Optional
+	Unclaimed bool `json:"unclaimed,omitempty"`
+	// AssignedToOwner is an item assigned to the board's owner.
+	// +kubebuilder:validation:Optional
+	AssignedToOwner bool `json:"assignedToOwner,omitempty"`
+	// ReviewRequestedFromOwner is a PR requesting the owner's review.
+	// +kubebuilder:validation:Optional
+	ReviewRequestedFromOwner bool `json:"reviewRequestedFromOwner,omitempty"`
+	// Labels is an item carrying any of these labels.
+	// +kubebuilder:validation:Optional
+	Labels []string `json:"labels,omitempty"`
+}
+
+// LegacyRules are the rules the deprecated Triage, Fix and Review settings
+// mean, in that order.
+func (a AutoSpec) LegacyRules() []AutoRule {
+	var rules []AutoRule
+	switch a.Triage {
+	case "unclaimed":
+		rules = append(rules, AutoRule{Recipe: "triage", On: "issue", When: AutoWhen{Unclaimed: true}})
+	case "all":
+		rules = append(rules, AutoRule{Recipe: "triage", On: "issue"})
+	}
+	if a.Fix == "assigned" {
+		rules = append(rules, AutoRule{Recipe: "fix", On: "issue", When: AutoWhen{AssignedToOwner: true}})
+	}
+	switch a.Review {
+	case "requested":
+		rules = append(rules, AutoRule{Recipe: "review", On: "pr", When: AutoWhen{ReviewRequestedFromOwner: true}})
+	case "all":
+		rules = append(rules, AutoRule{Recipe: "review", On: "pr"})
+	}
+	return rules
+}
+
+// EffectiveRules are the rules automation runs: Rules, or else what the
+// deprecated settings mean, until the controller has converted them.
+func (a AutoSpec) EffectiveRules() []AutoRule {
+	if len(a.Rules) > 0 {
+		return a.Rules
+	}
+	return a.LegacyRules()
+}
+
+// ConvertLegacy moves the deprecated settings into Rules and sets them
+// off, reporting whether it changed anything. Rules already set win: the
+// deprecated settings are only set off.
+func (a *AutoSpec) ConvertLegacy() bool {
+	legacy := a.LegacyRules()
+	if len(legacy) == 0 {
+		return false
+	}
+	if len(a.Rules) == 0 {
+		a.Rules = legacy
+	}
+	a.Triage, a.Fix, a.Review = "off", "off", "off"
+	return true
 }
 
 // ReadySpec defines when a PR row lights up "ready to merge" on the board.
@@ -196,6 +280,22 @@ type RepoBoardStatus struct {
 	// A new built-in shows up with the image that ships it.
 	// +kubebuilder:validation:Optional
 	Recipes []BoardRecipe `json:"recipes,omitempty"`
+
+	// AutoRuleErrors are the rules automation skips, and why: a recipe
+	// the catalog does not have, or an item type it does not start on.
+	// +kubebuilder:validation:Optional
+	AutoRuleErrors []string `json:"autoRuleErrors,omitempty"`
+
+	// AutoFiled are the recipe Requests automation filed in the last day,
+	// which rules' MaxPerDay count.
+	// +kubebuilder:validation:Optional
+	AutoFiled []AutoFiling `json:"autoFiled,omitempty"`
+}
+
+// AutoFiling is one recipe Request automation filed.
+type AutoFiling struct {
+	Recipe string      `json:"recipe"`
+	At     metav1.Time `json:"at"`
 }
 
 // BoardRecipe is one recipe as factory recipe list -o json describes it.

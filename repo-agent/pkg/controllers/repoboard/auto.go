@@ -19,71 +19,202 @@ package repoboard
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v39/github"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
 	"github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/pkg/factorycli"
 )
 
-// Automation (spec.auto) is board policy: auto.triage, auto.fix and
-// auto.review find their items on GitHub and file a recipe Request for
-// each, as the board's owner (its namespace), the way a member's click
-// files one. From there a run is a click's: ensureRecipes launches it,
-// settleRecipe settles it, and its draft, failure and chip are any run's
-// (generic-board-recipes.md).
+// Automation (spec.auto) is board policy: each rule names a recipe and
+// the open items of one type it runs on, and discovery files a recipe
+// Request for each item a rule matches, as the board's owner (its
+// namespace), the way a member's click files one. From there a run is a
+// click's: ensureRecipes launches it, settleRecipe settles it, and its
+// draft, failure and chip are any run's (generic-board-recipes.md).
 //
-// An item gets one Request, ever: not while one for the recipe stands or
-// was settled lately, nor once the recipe has a run recorded on the
-// item's sandbox, whoever ran it and however it ended (a failed run is
-// not retried; a member clicks), nor once its draft was rejected (the
-// tombstone every reject writes). A review is not filed over the owner's
-// own review on GitHub, pending or submitted.
+// An item gets one Request per recipe, ever: not while one for the
+// recipe stands or was settled lately, nor once the recipe has a run
+// recorded on the item's sandbox, whoever ran it and however it ended (a
+// failed run is not retried; a member clicks), nor once its draft was
+// rejected (the tombstone every reject writes). A Review recipe is not
+// filed over the owner's own review on GitHub, pending or submitted.
 
-// autoRequest is one recipe automation wants run on an item.
+// autoRequest is one recipe automation wants run on an item, under a
+// rule's daily cap (0: none).
 type autoRequest struct {
-	recipe string
-	item   string
-	number int
+	recipe    string
+	item      string
+	number    int
+	maxPerDay int
 }
 
-// discoverAuto is what the board's automation wants run, from GitHub.
+// autoItem is an open issue or PR as the rules' conditions read it.
+type autoItem struct {
+	number    int
+	labels    []*github.Label
+	assignees []*github.User
+	reviewers []*github.User
+	updatedAt time.Time
+}
+
+// validRules are the board's rules automation can run, and why each other
+// is skipped: a recipe the catalog does not have, an item type it does not
+// run on (a my-pr recipe does not: a rule's PRs are anyone's), or a
+// condition the type does not have.
+func validRules(rules []boardv1alpha1.AutoRule, catalog []boardv1alpha1.BoardRecipe) ([]boardv1alpha1.AutoRule, []string) {
+	var valid []boardv1alpha1.AutoRule
+	var errs []string
+	for _, rule := range rules {
+		rec, ok := findRecipe(catalog, rule.Recipe)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s on %s: no recipe %q", rule.Recipe, rule.On, rule.Recipe))
+		case rule.On != "issue" && rule.On != "pr":
+			errs = append(errs, fmt.Sprintf("%s on %s: rules run on issues or PRs", rule.Recipe, rule.On))
+		case len(rec.On) > 0 && !slices.Contains(rec.On, rule.On):
+			// Stricter than startsOn: a my-pr recipe starts on a PR when
+			// it is the member's, and a rule's PRs are anyone's.
+			errs = append(errs, fmt.Sprintf("%s on %s: %s does not run on every %s", rule.Recipe, rule.On, rule.Recipe, rule.On))
+		case rule.On == "issue" && rule.When.ReviewRequestedFromOwner:
+			errs = append(errs, fmt.Sprintf("%s on issue: an issue has no review requests", rule.Recipe))
+		default:
+			valid = append(valid, rule)
+		}
+	}
+	return valid, errs
+}
+
+// matches reports whether item meets every condition rule sets; none set
+// is every item.
+func (rule autoRuleMatch) matches(item autoItem) bool {
+	when := rule.When
+	if when.Unclaimed && len(item.assignees) > 0 {
+		return false
+	}
+	if when.AssignedToOwner && !hasLogin(item.assignees, rule.owner) {
+		return false
+	}
+	if when.ReviewRequestedFromOwner && !hasLogin(item.reviewers, rule.owner) {
+		return false
+	}
+	if len(when.Labels) > 0 && !hasAnyGithubLabel(item.labels, when.Labels) {
+		return false
+	}
+	return true
+}
+
+// autoRuleMatch is a rule with the owner its conditions name.
+type autoRuleMatch struct {
+	boardv1alpha1.AutoRule
+	owner string
+}
+
+func hasLogin(users []*github.User, login string) bool {
+	for _, u := range users {
+		if strings.EqualFold(u.GetLogin(), login) {
+			return true
+		}
+	}
+	return false
+}
+
+// discoverAuto is what the board's rules want run: the open issues and
+// PRs, listed once each when a rule runs on that type, within the shared
+// filters (autoEligible), each matched against the rules of its type.
+// The rules it skips are reported on the board's status.
 func (r *Reconciler) discoverAuto(ctx context.Context, ghClient *github.Client, work *workState) []autoRequest {
 	logger := log.FromContext(ctx)
 	board := work.board
+	rules := board.Spec.Auto.EffectiveRules()
+	if len(rules) == 0 {
+		board.Status.AutoRuleErrors = nil
+		return nil
+	}
+	catalog := r.recipeCatalog(ctx)
+	if catalog == nil {
+		return nil // the catalog is read again next pass
+	}
+	valid, errs := validRules(rules, catalog)
+	board.Status.AutoRuleErrors = errs
+	byType := map[string][]autoRuleMatch{}
+	for _, rule := range valid {
+		byType[rule.On] = append(byType[rule.On], autoRuleMatch{AutoRule: rule, owner: board.Namespace})
+	}
 	var wanted []autoRequest
-	add := func(found []autoRequest, err error, what string) {
-		if err != nil {
-			logger.Error(err, what+" discovery failed")
+	for _, on := range []string{"issue", "pr"} {
+		if len(byType[on]) == 0 {
+			continue
 		}
-		wanted = append(wanted, found...)
-	}
-	switch board.Spec.Auto.Review {
-	case "all":
-		found, err := r.discoverAllPRs(ctx, ghClient, work)
-		add(found, err, "auto-review")
-	case "requested":
-		found, err := r.discoverRequestedReviews(ctx, ghClient, work)
-		add(found, err, "requested-review")
-	}
-	if board.Spec.Auto.Triage == "unclaimed" || board.Spec.Auto.Triage == "all" {
-		found, err := r.discoverTriage(ctx, ghClient, work)
-		add(found, err, "triage")
-	}
-	if board.Spec.Auto.Fix == "assigned" {
-		found, err := r.discoverAssigned(ctx, ghClient, work)
-		add(found, err, "assigned-issue")
+		items, err := r.listAutoItems(ctx, ghClient, work, on)
+		if err != nil {
+			logger.Error(err, "auto discovery failed", "on", on)
+		}
+		for _, item := range items {
+			if !autoEligible(board, item.labels, item.updatedAt) {
+				continue
+			}
+			for _, rule := range byType[on] {
+				if rule.matches(item) {
+					wanted = append(wanted, autoRequest{recipe: rule.Recipe, item: on, number: item.number, maxPerDay: rule.MaxPerDay})
+				}
+			}
+		}
 	}
 	return wanted
 }
 
+// listAutoItems lists the repository's open issues (not PRs) or PRs.
+func (r *Reconciler) listAutoItems(ctx context.Context, ghClient *github.Client, work *workState, on string) ([]autoItem, error) {
+	var items []autoItem
+	if on == "pr" {
+		opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+		for {
+			prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
+			if err != nil {
+				return items, err
+			}
+			for _, pr := range prs {
+				items = append(items, autoItem{number: pr.GetNumber(), labels: pr.Labels, assignees: pr.Assignees, reviewers: pr.RequestedReviewers, updatedAt: pr.GetUpdatedAt()})
+			}
+			if resp.NextPage == 0 {
+				return items, nil
+			}
+			opts.Page = resp.NextPage
+		}
+	}
+	opts := &github.IssueListByRepoOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		issues, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
+		if err != nil {
+			return items, err
+		}
+		for _, issue := range issues {
+			if issue.IsPullRequest() {
+				continue
+			}
+			items = append(items, autoItem{number: issue.GetNumber(), labels: issue.Labels, assignees: issue.Assignees, updatedAt: issue.GetUpdatedAt()})
+		}
+		if resp.NextPage == 0 {
+			return items, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
 // fileAutoRequests files a recipe Request, as the board's owner, for each
-// item automation wants run that is owed one (autoOwed). The owner's
-// reviews are read under the discovery identity, the owner's: pending
-// reviews are visible only to their author.
+// item automation wants run that is owed one (autoOwed), while the rule's
+// recipe is under its daily cap. The owner's reviews are read under the
+// discovery identity, the owner's: pending reviews are visible only to
+// their author. What it files is recorded on the board's status
+// (AutoFiled, the last day's), for the caps.
 func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, wanted []autoRequest) {
+	work.board.Status.AutoFiled = lastDay(work.board.Status.AutoFiled, time.Now())
 	if len(wanted) == 0 {
 		return
 	}
@@ -93,14 +224,22 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 		return
 	}
 	owner := work.board.Namespace
-	seen := map[autoRequest]bool{}
+	type key struct {
+		recipe, item string
+		number       int
+	}
+	seen := map[key]bool{}
 	for _, want := range wanted {
-		if seen[want] {
+		k := key{want.recipe, want.item, want.number}
+		if seen[k] {
 			continue
 		}
-		seen[want] = true
+		seen[k] = true
 		rec, ok := findRecipe(catalog, want.recipe)
 		if !ok || !startsOn(rec, want.item) {
+			continue
+		}
+		if want.maxPerDay > 0 && filedFor(work.board.Status.AutoFiled, want.recipe) >= want.maxPerDay {
 			continue
 		}
 		spec := boardv1alpha1.RequestSpec{
@@ -128,8 +267,31 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 			logger.Error(err, "unable to file an automation's recipe Request", "recipe", want.recipe, "item", want.item, "number", want.number)
 			continue
 		}
+		work.board.Status.AutoFiled = append(work.board.Status.AutoFiled, boardv1alpha1.AutoFiling{Recipe: want.recipe, At: metav1.Now()})
 		logger.Info("automation filed a recipe Request", "recipe", want.recipe, "item", want.item, "number", want.number, "member", owner)
 	}
+}
+
+// lastDay are the filings of the day before now.
+func lastDay(filed []boardv1alpha1.AutoFiling, now time.Time) []boardv1alpha1.AutoFiling {
+	var kept []boardv1alpha1.AutoFiling
+	for _, f := range filed {
+		if now.Sub(f.At.Time) < 24*time.Hour {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
+// filedFor counts the filings of recipe.
+func filedFor(filed []boardv1alpha1.AutoFiling, recipe string) int {
+	n := 0
+	for _, f := range filed {
+		if f.Recipe == recipe {
+			n++
+		}
+	}
+	return n
 }
 
 // autoOwed reports whether automation still owes spec's item a run of
@@ -152,97 +314,6 @@ func (w *workState) autoOwed(rec boardv1alpha1.BoardRecipe, spec boardv1alpha1.R
 		return false
 	}
 	return annotations[factorycli.RejectedAnnotation(runKey)] == ""
-}
-
-// discoverTriage finds the issues auto-triage wants triaged: not PRs,
-// eligible under the universal auto filters (recency, labels, veto), and
-// — for the "unclaimed" scope — carrying no assignees (anyone's
-// assignment is a claim; "all" is for repos where assignment does not
-// imply triaged).
-func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client, work *workState) ([]autoRequest, error) {
-	unclaimedOnly := work.board.Spec.Auto.Triage != "all"
-	var wanted []autoRequest
-	opts := &github.IssueListByRepoOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return wanted, err
-		}
-		for _, item := range items {
-			if item.IsPullRequest() || (unclaimedOnly && len(item.Assignees) > 0) || !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
-				continue
-			}
-			wanted = append(wanted, autoRequest{recipe: "triage", item: "issue", number: item.GetNumber()})
-		}
-		if resp.NextPage == 0 {
-			return wanted, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// discoverAllPRs finds every eligible open PR for auto-review ("all"):
-// enabling the verb was the owner's consent to review as them.
-func (r *Reconciler) discoverAllPRs(ctx context.Context, ghClient *github.Client, work *workState) ([]autoRequest, error) {
-	return r.discoverPRs(ctx, ghClient, work, func(*github.PullRequest) bool { return true })
-}
-
-// discoverRequestedReviews finds the open PRs that request the owner's
-// review (auto-review "requested").
-func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *github.Client, work *workState) ([]autoRequest, error) {
-	owner := work.board.Namespace
-	return r.discoverPRs(ctx, ghClient, work, func(pr *github.PullRequest) bool {
-		for _, reviewer := range pr.RequestedReviewers {
-			if strings.EqualFold(reviewer.GetLogin(), owner) {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-// discoverPRs finds the eligible open PRs that want a review.
-func (r *Reconciler) discoverPRs(ctx context.Context, ghClient *github.Client, work *workState, wants func(*github.PullRequest) bool) ([]autoRequest, error) {
-	var wanted []autoRequest
-	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return wanted, err
-		}
-		for _, pr := range prs {
-			if autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) && wants(pr) {
-				wanted = append(wanted, autoRequest{recipe: "review", item: "pr", number: pr.GetNumber()})
-			}
-		}
-		if resp.NextPage == 0 {
-			return wanted, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// discoverAssigned finds the open issues assigned to the board's owner
-// (auto-fix "assigned").
-func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Client, work *workState) ([]autoRequest, error) {
-	var wanted []autoRequest
-	opts := &github.IssueListByRepoOptions{State: "open", Assignee: work.board.Namespace, ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return wanted, err
-		}
-		for _, item := range items {
-			if item.IsPullRequest() || !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
-				continue
-			}
-			wanted = append(wanted, autoRequest{recipe: "fix", item: "issue", number: item.GetNumber()})
-		}
-		if resp.NextPage == 0 {
-			return wanted, nil
-		}
-		opts.Page = resp.NextPage
-	}
 }
 
 // requestPrefix names a Request the controller files after what it is

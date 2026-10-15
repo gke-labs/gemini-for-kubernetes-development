@@ -63,6 +63,37 @@ spec:
                     - requested
                     - all
                     type: string
+                  rules:
+                    items:
+                      properties:
+                        maxPerDay:
+                          minimum: 0
+                          type: integer
+                        "on":
+                          enum:
+                          - issue
+                          - pr
+                          type: string
+                        recipe:
+                          type: string
+                        when:
+                          properties:
+                            assignedToOwner:
+                              type: boolean
+                            labels:
+                              items:
+                                type: string
+                              type: array
+                            reviewRequestedFromOwner:
+                              type: boolean
+                            unclaimed:
+                              type: boolean
+                          type: object
+                      required:
+                      - "on"
+                      - recipe
+                      type: object
+                    type: array
                   triage:
                     default: "off"
                     enum:
@@ -133,6 +164,23 @@ spec:
             type: object
           status:
             properties:
+              autoFiled:
+                items:
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    recipe:
+                      type: string
+                  required:
+                  - at
+                  - recipe
+                  type: object
+                type: array
+              autoRuleErrors:
+                items:
+                  type: string
+                type: array
               conditions:
                 items:
                   properties:

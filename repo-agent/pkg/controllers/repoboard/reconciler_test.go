@@ -226,8 +226,8 @@ func jsonResp(body string) func() *http.Response {
 
 func testGithubClient(issuesJSON string) *github.Client {
 	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
-		"https://api.github.com/user": jsonResp(`{"login": "alice", "email": "alice@example.com"}`),
-		"https://api.github.com/repos/test/repo/issues?assignee=alice&per_page=100&state=open": jsonResp(issuesJSON),
+		"https://api.github.com/user":                                           jsonResp(`{"login": "alice", "email": "alice@example.com"}`),
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(issuesJSON),
 	}}})
 }
 
