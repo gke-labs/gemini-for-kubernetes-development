@@ -10,7 +10,6 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/constants"
 	githubv39 "github.com/google/go-github/v39/github"
-	"golang.org/x/oauth2"
 )
 
 // GetGithubToken retrieves the GitHub token from environment variables or the gh CLI.
@@ -41,24 +40,19 @@ func GetGithubToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-// NewClient creates a new GitHub client using the token retrieved by GetGithubToken.
+// NewClient creates a new GitHub client using the token retrieved by
+// GetGithubToken. Its GETs are cached per token (cachedHTTPClient).
 func NewClient(ctx context.Context) (*githubv39.Client, error) {
 	token, err := GetGithubToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	return githubv39.NewClient(tc), nil
+	return NewClientWithToken(ctx, token), nil
 }
 
-// NewClientWithToken creates a new GitHub client using an explicit access token.
+// NewClientWithToken creates a new GitHub client using an explicit access
+// token. Its GETs are cached per token (cachedHTTPClient), so a repeated
+// read is a conditional request.
 func NewClientWithToken(ctx context.Context, token string) *githubv39.Client {
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	return githubv39.NewClient(tc)
+	return githubv39.NewClient(cachedHTTPClient(ctx, token))
 }
