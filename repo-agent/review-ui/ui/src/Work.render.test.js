@@ -117,8 +117,8 @@ describe('TryPanel polling', () => {
     });
 });
 
-test('the feed polls every ten seconds while a write stands', () => {
-    expect(POSTING_POLL_EVERY).toBe(10000);
+test('the feed polls every five seconds while a write stands', () => {
+    expect(POSTING_POLL_EVERY).toBe(5000);
 });
 
 describe('TryPanel standing clicks', () => {

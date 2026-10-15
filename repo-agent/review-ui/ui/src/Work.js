@@ -287,9 +287,10 @@ function prRunChip(run) {
 
 // A draft's write is the controller's (factory apply), taken in the
 // draft's session.
-// POSTING_POLL_EVERY is the feed's cadence while a write stands: a
-// rebuild costs a GraphQL query, so ten seconds, not every few.
-export const POSTING_POLL_EVERY = 10000;
+// POSTING_POLL_EVERY is the feed's cadence while a write stands: the
+// server rebuilds such a feed from Kubernetes alone, over its last GitHub
+// snapshot, so polling every five seconds costs no GraphQL.
+export const POSTING_POLL_EVERY = 5000;
 
 // taskSessionHref is a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
@@ -1275,7 +1276,7 @@ function Work({ onBack, namespace, active = true }) {
 
   // A write the controller is doing (a row reading "posting") is done in
   // seconds; at the twenty-second cadence the button would keep saying
-  // posting long after it was. The server keeps such a feed fresh for ten
+  // posting long after it was. The server keeps such a feed fresh for five
   // seconds too, so polling faster while one stands shows it done soon.
   const posting = anyPosting(work);
   useEffect(() => {
