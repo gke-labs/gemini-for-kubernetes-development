@@ -12,7 +12,7 @@ jest.mock('remark-gfm', () => 'gfm-plugin-stub');
 jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} onData() {} loadAddon() {} } }));
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
-const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting, matchesSearch, withoutSelfReview } = require('./Work');
+const { TryPanel, WorkRow, SessionSlideOver, prRunName, anyPosting, matchesSearch, withoutSelfReview, POSTING_POLL_EVERY } = require('./Work');
 const Work = require('./Work').default;
 
 const act = React.act || domAct;
@@ -69,6 +69,56 @@ const clickReply = (pending) => () => Promise.resolve({
     json: () => Promise.resolve({
         repoShort: 'orl', gcpProject: 'p', sandboxes: [], instances: [], pending,
     }),
+});
+
+// The runbook panel reads GitHub per run: it polls like the board's Runs
+// state, every two minutes, and not while the tab is hidden or an
+// unfocused window has sat untouched; it reads at once on coming back.
+describe('TryPanel polling', () => {
+    const setHidden = (hidden) => Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    afterEach(() => { setHidden(false); jest.restoreAllMocks(); });
+
+    test('every two minutes, not every ten seconds', async () => {
+        jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+        global.fetch = jest.fn(clickReply([]));
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        await act(async () => { jest.advanceTimersByTime(60 * 1000); });
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        await act(async () => { jest.advanceTimersByTime(60 * 1000); });
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    test('not while hidden, and at once on coming back', async () => {
+        jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+        global.fetch = jest.fn(clickReply([]));
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+        setHidden(true);
+        await act(async () => { jest.advanceTimersByTime(4 * 60 * 1000); });
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        setHidden(false);
+        await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    test('not once an unfocused window has sat untouched', async () => {
+        jest.spyOn(document, 'hasFocus').mockReturnValue(false);
+        global.fetch = jest.fn(clickReply([]));
+        await act(async () => { root.render(<TryPanel boardName="myboard" />); });
+        await flush();
+        await act(async () => { jest.advanceTimersByTime(20 * 60 * 1000); });
+        // Polls until five quiet minutes have passed, then stops.
+        const calls = global.fetch.mock.calls.length;
+        await act(async () => { jest.advanceTimersByTime(20 * 60 * 1000); });
+        expect(global.fetch.mock.calls.length).toBe(calls);
+        expect(calls).toBeLessThanOrEqual(4);
+    });
+});
+
+test('the feed polls every ten seconds while a write stands', () => {
+    expect(POSTING_POLL_EVERY).toBe(10000);
 });
 
 describe('TryPanel standing clicks', () => {

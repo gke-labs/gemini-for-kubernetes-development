@@ -364,8 +364,9 @@ const (
 	// ("posting") stays fresh. The controller does the write, in another
 	// process, and says so only on the sandbox: nothing here hears of it,
 	// so a minute's freshness kept a done write reading "posting" for as
-	// long. A write takes seconds; so does this, while one stands.
-	workFeedPostingFreshFor = 3 * time.Second
+	// long. A write takes seconds; this is ten, while one stands: each
+	// rebuild is a GraphQL query (github-load.md).
+	workFeedPostingFreshFor = 10 * time.Second
 )
 
 // workFeedGet returns cached items when usable; needsRefresh asks the

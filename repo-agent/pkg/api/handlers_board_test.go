@@ -1848,6 +1848,11 @@ func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 	key := "alice/posting"
 	workFeedPut(key, []models.WorkItem{{Number: 1, Posting: true}})
 	defer invalidateWorkFeed("alice", "posting")
+	// Ten seconds, not three: each rebuild is a GraphQL query.
+	ageFeedEntry(t, key, 5*time.Second, time.Time{})
+	if _, ok, needsRefresh := workFeedGet(key); !ok || needsRefresh {
+		t.Fatalf("a feed with a write standing is fresh for %v, rebuilt at 5s: ok=%v needsRefresh=%v", workFeedPostingFreshFor, ok, needsRefresh)
+	}
 	ageFeedEntry(t, key, workFeedPostingFreshFor+time.Second, time.Time{})
 	if _, ok, needsRefresh := workFeedGet(key); !ok || !needsRefresh {
 		t.Fatalf("a feed with a write standing must rebuild after %v, got ok=%v needsRefresh=%v", workFeedPostingFreshFor, ok, needsRefresh)
