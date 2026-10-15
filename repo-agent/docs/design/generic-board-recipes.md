@@ -221,8 +221,8 @@ how many run at once, not how many a day; a per-rule daily cap
 7. **Auto rules,** after step 6: the CRD's `auto.rules`, one discovery,
    the conversion of the existing settings, and the settings panel.
 
-## Open question
+## Resolved
 
-`policy.draftPR` is shown and edited on the board but read by nothing:
-open-pr always opens a draft. Wire it (open-pr's `draft` input from the
-board) or delete it?
+`policy.draftPR` was shown and edited on the board but read by nothing:
+open-pr always opens a draft. It is deleted: a board's fixes open as
+drafts, until a requirement says otherwise.

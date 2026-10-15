@@ -116,9 +116,6 @@ spec:
                   disclose:
                     default: false
                     type: boolean
-                  draftPR:
-                    default: true
-                    type: boolean
                 type: object
               ready:
                 properties:
