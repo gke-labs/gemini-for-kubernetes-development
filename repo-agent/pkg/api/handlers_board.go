@@ -852,23 +852,10 @@ func runActions(kind, doc string) []models.RunAction {
 	return out
 }
 
-// runStatus is a run's status on the row (models.RunSession.Status).
+// runStatus is a run's status on the row (models.RunSession.Status), as
+// the board's counts see it (factorycli.RunStatus).
 func runStatus(s models.RunSession) string {
-	switch s.State {
-	case "Running":
-		return "running"
-	case "Failed":
-		return "failed"
-	}
-	if !s.Output {
-		return "done"
-	}
-	for action := range s.Applied {
-		if action != "edit" {
-			return "done"
-		}
-	}
-	return "ready"
+	return factorycli.RunStatus(s.State, s.Output, s.Applied)
 }
 
 // sandboxItems are the items keys of the issue and the PR sb is for.

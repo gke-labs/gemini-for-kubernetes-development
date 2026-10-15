@@ -110,6 +110,32 @@ func Runs(annotations map[string]string) []RecordedRun {
 	return runs
 }
 
+// RunStatus is where a run stands for whoever it is for: "running",
+// "failed", "ready" (a draft waiting on someone: an output nothing but an
+// edit has been applied to) or "done". A ready or failed run needs them.
+func RunStatus(state string, hasOutput bool, applied map[string]string) string {
+	switch state {
+	case "Running":
+		return "running"
+	case "Failed":
+		return "failed"
+	}
+	if !hasOutput {
+		return "done"
+	}
+	for action := range applied {
+		if action != "edit" {
+			return "done"
+		}
+	}
+	return "ready"
+}
+
+// Status is the run's RunStatus on the sandbox annotated annotations.
+func (r RecordedRun) Status(annotations map[string]string) string {
+	return RunStatus(r.State, annotations[OutputAnnotation(r.Key)] != "", Applied(annotations, AppliedAnnotation(r.Key)))
+}
+
 // SessionRun is the recorded run whose agent session is session: what a
 // session view offers comes from it, whichever recipe it is.
 func SessionRun(annotations map[string]string, session string) (RecordedRun, bool) {
