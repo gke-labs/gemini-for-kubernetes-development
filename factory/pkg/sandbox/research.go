@@ -263,7 +263,7 @@ func EnsureResearchSandbox(ctx context.Context, kubeClient *clients.KubernetesCl
 		// this command does after here is written to be re-run, so
 		// finishing someone else's setup is the same code as doing our
 		// own.
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
 		return name, nil
 	case err == nil:
 		// Old and unfinished. Nothing is coming to complete it — a launch

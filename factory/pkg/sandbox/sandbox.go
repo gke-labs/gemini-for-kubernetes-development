@@ -150,7 +150,7 @@ func EnsureRunSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 			return "", werr
 		}
 	case err == nil:
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
 		return name, nil
 	case !strings.Contains(err.Error(), "not found"):
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -349,7 +349,7 @@ func ensureFixSandbox(ctx context.Context, kubeClient *clients.KubernetesClient,
 		if current := sb.GetAnnotations()[AnnotationTitle]; title.title != "" && (current == "" || title.replace) {
 			reuseAnnotations = map[string]string{AnnotationTitle: title.title}
 		}
-		prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, reuseLabels, reuseAnnotations)
+		prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, image, reuseLabels, reuseAnnotations)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -426,7 +426,7 @@ func EnsureAgentSandbox(ctx context.Context, kubeClient *clients.KubernetesClien
 			return "", werr
 		}
 	} else if err == nil {
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
 		return name, nil
 	} else if !strings.Contains(err.Error(), "not found") {
 		return "", fmt.Errorf("checking sandbox existence: %w", err)
@@ -497,19 +497,33 @@ func AliasSandboxToPR(ctx context.Context, kubeClient *clients.KubernetesClient,
 }
 
 // prepareReusedSandbox readies an existing sandbox an Ensure* function is
-// handing back: it records the user, and wakes the sandbox if the idle
-// suspender scaled it to zero, stamping unpaused-at. k8s.SandboxPod also
-// wakes a suspended sandbox, but without the stamp the suspender, counting
-// from the last task hours ago, scaled it straight back to zero and the
-// connect timed out waiting for the pod.
-func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string) {
-	prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, nil, nil)
+// handing back: it records the user, moves it to image (repinImage), and
+// wakes the sandbox if the idle suspender scaled it to zero, stamping
+// unpaused-at. k8s.SandboxPod also wakes a suspended sandbox, but without
+// the stamp the suspender, counting from the last task hours ago, scaled
+// it straight back to zero and the connect timed out waiting for the pod.
+func prepareReusedSandbox(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user, image string) {
+	prepareReusedSandboxLabels(ctx, kubeClient, namespace, sb, user, image, nil, nil)
 }
 
 // prepareReusedSandboxLabels is prepareReusedSandbox, also adding labels
 // a sandbox made before they were stamped lacks, and setting annotations.
-func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user string, extra, extraAnnotations map[string]string) {
+func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.KubernetesClient, namespace string, sb *unstructured.Unstructured, user, image string, extra, extraAnnotations map[string]string) {
 	changed := false
+	// The task about to be handed over runs on the factory this caller was
+	// configured with (an overseer pins it to its own build), not the one
+	// the sandbox was made with: a recipe this factory writes is parsed by
+	// the sandbox's. Only when no task is in flight there, and never the
+	// sandbox this process runs in: a pod replaced under a task kills it.
+	replacePod := false
+	if image != "" && !taskInFlight(sb) && !IsCurrentSandbox(ctx, kubeClient, sb, namespace) && repinImage(sb, image) {
+		replicas, found, _ := unstructured.NestedInt64(sb.Object, "spec", "replicas")
+		// agent-sandbox makes a pod from the spec but does not change one
+		// that is up: an awake sandbox's pod is replaced below.
+		replacePod = !found || replicas > 0
+		fmt.Printf("Moving sandbox '%s' to %s\n", sb.GetName(), image)
+		changed = true
+	}
 	if len(extraAnnotations) > 0 {
 		annotations := sb.GetAnnotations()
 		if annotations == nil {
@@ -558,6 +572,24 @@ func prepareReusedSandboxLabels(ctx context.Context, kubeClient *clients.Kuberne
 	}
 	if _, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Update(ctx, sb, metav1.UpdateOptions{}); err != nil {
 		klog.Warningf("Failed to update reused sandbox %s: %v", sb.GetName(), err)
+		return
+	}
+	if replacePod {
+		// Its controller makes the next pod from the updated spec, and
+		// waiting for the sandbox's pod (k8s.SandboxPod) passes over the
+		// terminating one.
+		// One by one: deleting pods is what callers' roles grant, not
+		// deletecollection.
+		pods, err := kubeClient.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox=" + sb.GetName()})
+		if err != nil {
+			klog.Warningf("Failed to find sandbox %s's pod to replace for its new image: %v", sb.GetName(), err)
+			return
+		}
+		for _, pod := range pods.Items {
+			if err := kubeClient.Clientset.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				klog.Warningf("Failed to replace sandbox %s's pod %s for its new image: %v", sb.GetName(), pod.Name, err)
+			}
+		}
 	}
 }
 
@@ -944,6 +976,64 @@ func SuspendSandboxIfIdle(ctx context.Context, kubeClient *clients.KubernetesCli
 // A sandbox that is already scaled to zero, or whose annotations say a task is
 // still running, is never considered idle: the first has nothing left to
 // suspend and the second is busy regardless of how old its timestamps look.
+// taskInFlight reports whether a task is in flight in sb: its
+// last-task-state, or a side task's state (SideTaskStateAnnotation), is
+// neither Completed nor Failed.
+func taskInFlight(sb *unstructured.Unstructured) bool {
+	for key, state := range sb.GetAnnotations() {
+		if strings.HasPrefix(key, "sandbox.gemini.google.com/") && strings.HasSuffix(key, "task-state") &&
+			state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
+			return true
+		}
+	}
+	return false
+}
+
+// repinImage sets every container of sb's pod template that runs image's
+// repository at another tag or digest to image, and reports whether it
+// changed one. Another image is left: a sandbox made from something else
+// is not this factory's to move.
+func repinImage(sb *unstructured.Unstructured, image string) bool {
+	repo := imageRepository(image)
+	changed := false
+	for _, field := range []string{"containers", "initContainers"} {
+		containers, found, _ := unstructured.NestedSlice(sb.Object, "spec", "podTemplate", "spec", field)
+		if !found {
+			continue
+		}
+		fieldChanged := false
+		for i, raw := range containers {
+			ctr, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			current, _ := ctr["image"].(string)
+			if current == image || imageRepository(current) != repo {
+				continue
+			}
+			ctr["image"] = image
+			containers[i] = ctr
+			fieldChanged = true
+		}
+		if fieldChanged {
+			_ = unstructured.SetNestedSlice(sb.Object, containers, "spec", "podTemplate", "spec", field)
+			changed = true
+		}
+	}
+	return changed
+}
+
+// imageRepository is ref without its tag or digest.
+func imageRepository(ref string) string {
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		ref = ref[:i]
+	}
+	return ref
+}
+
 func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now time.Time) (time.Time, bool) {
 	replicas, found, err := unstructured.NestedInt64(item.Object, "spec", "replicas")
 	if err == nil && found && replicas == 0 {
@@ -953,14 +1043,10 @@ func idleSince(item *unstructured.Unstructured, idleTimeout time.Duration, now t
 	// Last activity is the most recent of the creation time and any of the
 	// timestamps a task run leaves behind.
 	lastActivity := item.GetCreationTimestamp().Time
+	if taskInFlight(item) {
+		return time.Time{}, false
+	}
 	if annotations := item.GetAnnotations(); annotations != nil {
-		// last-task-state, and a side task's state (SideTaskStateAnnotation).
-		for key, state := range annotations {
-			if strings.HasPrefix(key, "sandbox.gemini.google.com/") && strings.HasSuffix(key, "task-state") &&
-				state != "" && !strings.EqualFold(state, "Completed") && !strings.EqualFold(state, "Failed") {
-				return time.Time{}, false
-			}
-		}
 		for _, key := range []string{
 			"sandbox.gemini.google.com/completion-time",
 			"sandbox.gemini.google.com/last-task-time",

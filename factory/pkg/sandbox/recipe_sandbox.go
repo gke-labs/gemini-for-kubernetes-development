@@ -34,7 +34,7 @@ func ensureTaskSandbox(ctx context.Context, kubeClient *clients.KubernetesClient
 
 	sb, err := kubeClient.DynamicClient.Resource(k8s.SandboxGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
-		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user)
+		prepareReusedSandbox(ctx, kubeClient, namespace, sb, user, image)
 		return name, nil
 	}
 	if !strings.Contains(err.Error(), "not found") {

@@ -186,3 +186,39 @@ func TestBuildSandboxManifest_WarmWorkspace(t *testing.T) {
 		}
 	})
 }
+
+// The sandboxes run the factory the overseer was built with: this
+// project's factory image at :latest, untagged or unset is pinned to the
+// overseer's own tag; anything else is left as given.
+func TestFactoryImageIsPinnedToTheOverseersBuild(t *testing.T) {
+	const sha = "8e847a75fd7382f65514dd85334c17eae7963656"
+	overseer := "ghcr.io/gke-labs/gemini-for-kubernetes-development/overseer:" + sha
+	for _, tc := range []struct{ spec, overseer, want string }{
+		{factoryRepo + ":latest", overseer, factoryRepo + ":" + sha},
+		{factoryRepo, overseer, factoryRepo + ":" + sha},
+		{"", overseer, factoryRepo + ":" + sha},
+		{factoryRepo + ":abc123", overseer, factoryRepo + ":abc123"},
+		{"registry.example/my-factory:latest", overseer, "registry.example/my-factory:latest"},
+		{factoryRepo + "@sha256:deadbeef", overseer, factoryRepo + "@sha256:deadbeef"},
+		// An unpinned overseer pins nothing.
+		{factoryRepo + ":latest", "ghcr.io/gke-labs/gemini-for-kubernetes-development/overseer:latest", factoryRepo + ":latest"},
+		{"", "", ""},
+		{"", "localhost:5000/overseer", ""},
+	} {
+		if got := factoryImage(tc.spec, tc.overseer); got != tc.want {
+			t.Errorf("factoryImage(%q, %q) = %q, want %q", tc.spec, tc.overseer, got, tc.want)
+		}
+	}
+}
+
+// The manifest carries the pinned image as FACTORY_IMAGE, from the
+// controller's OVERSEER_IMAGE.
+func TestBuildSandboxManifest_FactoryImage(t *testing.T) {
+	t.Setenv("OVERSEER_IMAGE", "ghcr.io/gke-labs/gemini-for-kubernetes-development/overseer:abc")
+	env := overseerEnv(t, &overseerv1alpha1.Overseer{
+		Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo", Image: factoryRepo + ":latest"},
+	})
+	if got := env["FACTORY_IMAGE"]; got != factoryRepo+":abc" {
+		t.Errorf("FACTORY_IMAGE = %v, want %s:abc", got, factoryRepo)
+	}
+}
