@@ -623,13 +623,17 @@ function ciLogExcerpt {
     # Go's test output: what a failed test printed comes before its
     # --- FAIL line. Error-ish words alone match every log line of a
     # chatty test, so they are only the fallback.
-    if printf '%s\n' "${section}" | grep -q -e '--- FAIL'; then
-        printf '%s\n' "${section}" | grep -B25 -A2 -e '--- FAIL' | head -n 200
+    # No reader here stops early: under pipefail, head or grep -q leaving
+    # a pipe SIGPIPEs its writer (exit 141) once the log outgrows the pipe
+    # buffer, failing the step; so grep reads a here-string, and sed reads
+    # to the end. A grep that matches nothing is not a failure.
+    if grep -q -e '--- FAIL' <<< "${section}"; then
+        { grep -B25 -A2 -e '--- FAIL' <<< "${section}" || true; } | sed -n '1,200p'
     else
-        printf '%s\n' "${section}" | grep -E -B5 -A40 -e 'ERROR|Error:|FAIL|panic:' | head -n 200
+        { grep -E -B5 -A40 -e 'ERROR|Error:|FAIL|panic:' <<< "${section}" || true; } | sed -n '1,200p'
     fi
     echo "[…]"
-    printf '%s\n' "${section}" | tail -n 10
+    tail -n 10 <<< "${section}"
 }
 
 # fetchCIJobLogs REPO DIR reads "<job id> <job name>" lines, saves each
