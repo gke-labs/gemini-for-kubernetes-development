@@ -26,6 +26,7 @@ limitations under the License.
 package ghquota
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -41,16 +42,55 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// conditionalCache holds bodies and their ETags. GitHub answers an
-// unchanged resource with 304, which costs ZERO quota — the difference
-// between polling being a quota problem and being nearly free at steady
-// state. Responses carry Vary: Authorization, so entries key per token
-// and never leak across members.
+// The conditional-request caches hold bodies and their ETags. GitHub
+// answers an unchanged resource with 304, which costs ZERO quota — the
+// difference between polling being a quota problem and being nearly free
+// at steady state.
 //
-// In memory, so a restart starts cold. Persisting it (redis is already in
-// the namespace, and httpcache ships an adapter) is the next move if
-// restarts turn out to cost a window.
-var conditionalCache = &stickyCache{Cache: httpcache.NewMemoryCache()}
+// One cache per token. httpcache keys an entry by URL alone and checks
+// Vary: Authorization only when it reads one, so in a shared cache two
+// members reading the same URL (two boards on one repository) overwrite
+// each other's entry: neither ever finds its own ETag, and every read
+// goes out unconditional, a paid 200. Per token, a member's boards share
+// their entries and members never evict each other. Vary still guards
+// against serving one member's body to another.
+//
+// Bounded: tokenCacheBytes per token, least recently used entries first,
+// and maxTokenCaches tokens, least recently used token first, so a
+// long-running process does not grow with every URL and member it meets.
+//
+// In memory, so a restart starts cold, and each process (the API, the
+// controller) has its own. Persisting it (redis is already in the
+// namespace, and httpcache ships an adapter) is the next move if restarts
+// turn out to cost a window.
+var (
+	tokenCacheBytes = 8 << 20
+	maxTokenCaches  = 32
+)
+
+var caches = struct {
+	sync.Mutex
+	order   *list.List // of *stickyCache, front: most recently used
+	byToken map[string]*list.Element
+}{order: list.New(), byToken: map[string]*list.Element{}}
+
+// cacheFor is the token's conditional-request cache, by its bucket.
+func cacheFor(bucket string) *stickyCache {
+	caches.Lock()
+	defer caches.Unlock()
+	if el, ok := caches.byToken[bucket]; ok {
+		caches.order.MoveToFront(el)
+		return el.Value.(*stickyCache)
+	}
+	c := &stickyCache{bucket: bucket, Cache: newLRUCache(tokenCacheBytes)}
+	caches.byToken[bucket] = caches.order.PushFront(c)
+	for caches.order.Len() > maxTokenCaches {
+		oldest := caches.order.Back()
+		caches.order.Remove(oldest)
+		delete(caches.byToken, oldest.Value.(*stickyCache).bucket)
+	}
+	return c
+}
 
 // HTTPClient returns the http.Client for a token: the gate on the wire,
 // the conditional-request cache over it, oauth2 on top.
@@ -63,8 +103,9 @@ var conditionalCache = &stickyCache{Cache: httpcache.NewMemoryCache()}
 // whether to forget an entry based on that answer, and it must already
 // know the budget is gone when it decides.
 func HTTPClient(token string) *http.Client {
-	cached := httpcache.NewTransport(conditionalCache)
-	cached.Transport = &gate{bucket: bucketKey(token), base: http.DefaultTransport}
+	bucket := bucketKey(token)
+	cached := httpcache.NewTransport(cacheFor(bucket))
+	cached.Transport = &gate{bucket: bucket, base: http.DefaultTransport}
 	return &http.Client{Transport: &oauth2.Transport{
 		Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
 		Base:   cached,
@@ -146,23 +187,6 @@ func blocked(bucket string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return until, true
-}
-
-// anyBlocked reports whether any token is out of budget. The cache has no
-// way back from a URL key to the token that fetched it, so it asks the
-// coarse question; the cost of one member's exhaustion freezing another's
-// entries for a while is entries that live too long and bodies that go
-// uncached — never a wrong answer served.
-func anyBlocked() bool {
-	buckets.Lock()
-	defer buckets.Unlock()
-	now := time.Now()
-	for _, until := range buckets.until {
-		if now.Before(until) {
-			return true
-		}
-	}
-	return false
 }
 
 func hold(bucket string, until time.Time, why string) {
@@ -249,19 +273,23 @@ func resetFromHeader(resp *http.Response) time.Time {
 // pays for every body again, and spends the new window the same way: a
 // ratchet, not a bad hour. Ordinary eviction (a 404 for a PR that is
 // gone) is untouched — this only holds while GitHub is saying no.
+//
+// The cache is its token's, so it freezes while its own token is held:
+// one member's exhaustion leaves another's entries alone.
 type stickyCache struct {
 	httpcache.Cache
+	bucket string
 }
 
 func (c *stickyCache) Delete(key string) {
-	if anyBlocked() {
+	if _, held := blocked(c.bucket); held {
 		return
 	}
 	c.Cache.Delete(key)
 }
 
 func (c *stickyCache) Set(key string, responseBytes []byte) {
-	if anyBlocked() {
+	if _, held := blocked(c.bucket); held {
 		return
 	}
 	c.Cache.Set(key, responseBytes)
