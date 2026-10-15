@@ -1,6 +1,7 @@
 package ghquota
 
 import (
+	"container/list"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,10 @@ func fresh(t *testing.T) {
 		buckets.Lock()
 		buckets.until = map[string]time.Time{}
 		buckets.Unlock()
+		caches.Lock()
+		caches.order = list.New()
+		caches.byToken = map[string]*list.Element{}
+		caches.Unlock()
 	}
 	reset()
 	t.Cleanup(reset)
@@ -215,10 +220,11 @@ func TestExhaustionDoesNotThrowAwayTheEtag(t *testing.T) {
 }
 
 // Ordinary eviction is untouched: a resource that is gone must not be
-// remembered just because somewhere a token is out of budget.
+// remembered just because a token is out of budget. The freeze is the
+// cache's own token's: another member's exhaustion leaves it alone.
 func TestNormalEvictionSurvivesTheChange(t *testing.T) {
 	fresh(t)
-	cache := &stickyCache{Cache: memory{}}
+	cache := &stickyCache{Cache: memory{}, bucket: "some-bucket"}
 	cache.Set("k", []byte("v"))
 	cache.Delete("k")
 	if _, ok := cache.Get("k"); ok {
@@ -226,10 +232,17 @@ func TestNormalEvictionSurvivesTheChange(t *testing.T) {
 	}
 
 	cache.Set("k", []byte("v"))
+	hold("another-bucket", time.Now().Add(time.Hour), "test")
+	cache.Delete("k")
+	if _, ok := cache.Get("k"); ok {
+		t.Fatal("another token's exhaustion must not freeze this token's cache")
+	}
+
+	cache.Set("k", []byte("v"))
 	hold("some-bucket", time.Now().Add(time.Hour), "test")
 	cache.Delete("k")
 	if _, ok := cache.Get("k"); !ok {
-		t.Fatal("while the budget is gone, the cache must refuse to forget")
+		t.Fatal("while its token's budget is gone, the cache must refuse to forget")
 	}
 }
 
@@ -238,3 +251,93 @@ type memory map[string][]byte
 func (m memory) Get(key string) ([]byte, bool) { v, ok := m[key]; return v, ok }
 func (m memory) Set(key string, v []byte)      { m[key] = v }
 func (m memory) Delete(key string)             { delete(m, key) }
+
+// Two members' boards on one repository read the same URLs. Each must
+// keep its own ETag: a member's repeat read revalidates (304) however
+// the other's reads interleave with it. Keyed by URL alone, each fetch
+// overwrote the other's entry, Vary: Authorization then failed to match,
+// and every read went out unconditional — a paid 200 each time.
+func TestTwoTokensOnOneURLEachKeepTheirETag(t *testing.T) {
+	fresh(t)
+	srv := &server{}
+	srv.remaining.Store(100)
+	url := srv.start(t).URL + "/repos/o/r/issues"
+
+	for i := 0; i < 3; i++ {
+		for _, token := range []string{"tok-thrash-alice", "tok-thrash-bob"} {
+			if _, err := get(t, token, url); err != nil {
+				t.Fatalf("%s, round %d: %v", token, i, err)
+			}
+		}
+	}
+	if srv.full.Load() != 2 || srv.conditional.Load() != 4 {
+		t.Fatalf("want 2 paid (one each) + 4 conditional, got %d paid / %d conditional", srv.full.Load(), srv.conditional.Load())
+	}
+}
+
+// One member's clients share their cache: a second client for the same
+// token (a second board, a later request) revalidates what the first
+// fetched.
+func TestOneTokenSharesItsCacheAcrossClients(t *testing.T) {
+	fresh(t)
+	srv := &server{}
+	srv.remaining.Store(100)
+	url := srv.start(t).URL + "/repos/o/r/issues"
+
+	for i := 0; i < 2; i++ {
+		resp, err := HTTPClient("tok-shared").Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}
+	if srv.full.Load() != 1 || srv.conditional.Load() != 1 {
+		t.Fatalf("want 1 paid + 1 conditional, got %d paid / %d conditional", srv.full.Load(), srv.conditional.Load())
+	}
+}
+
+// A token's cache holds at most its bound, forgetting the least recently
+// used entries first; an entry bigger than the bound is not kept.
+func TestTokenCacheIsBounded(t *testing.T) {
+	c := newLRUCache(10)
+	c.Set("a", []byte("1234"))
+	c.Set("b", []byte("1234"))
+	c.Get("a") // a is now the most recent
+	c.Set("c", []byte("1234"))
+	if _, ok := c.Get("b"); ok {
+		t.Error("b, the least recently used, was kept past the bound")
+	}
+	for _, k := range []string{"a", "c"} {
+		if _, ok := c.Get(k); !ok {
+			t.Errorf("%s was forgotten", k)
+		}
+	}
+	c.Set("a", []byte("12")) // replacing an entry re-counts it
+	if c.bytes != 6 {
+		t.Errorf("bytes = %d after replacing a, want 6", c.bytes)
+	}
+	c.Set("huge", []byte("12345678901"))
+	if _, ok := c.Get("huge"); ok || c.bytes != 6 {
+		t.Errorf("an entry over the bound was kept (bytes %d)", c.bytes)
+	}
+}
+
+// The process keeps at most maxTokenCaches token caches, dropping the
+// least recently used token's first.
+func TestTokenCachesAreBounded(t *testing.T) {
+	fresh(t)
+	defer func(n int) { maxTokenCaches = n }(maxTokenCaches)
+	maxTokenCaches = 2
+	a, b := cacheFor("a"), cacheFor("b")
+	if cacheFor("a") != a {
+		t.Fatal("a token's cache was not reused")
+	}
+	cacheFor("c") // b is the least recently used
+	if cacheFor("a") != a {
+		t.Error("a, recently used, was dropped")
+	}
+	if cacheFor("b") == b {
+		t.Error("b, the least recently used, was kept past the bound")
+	}
+}
