@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -257,5 +258,71 @@ func TestFixSandboxTitle(t *testing.T) {
 	}
 	if got := title("fix-open-rl-13"); got != "docs: typo" {
 		t.Errorf("a PR's own sandbox: title %q", got)
+	}
+}
+
+// A reused sandbox moves to the image its caller was configured with (an
+// overseer pins it to its own build) before a task is handed to it: a
+// suspended one wakes on it; an awake, idle one has its pod replaced,
+// since agent-sandbox does not change a pod that is up. One with a task in
+// flight, or made from another image, is left as it is.
+func TestReusedSandboxMovesToTheCallersImage(t *testing.T) {
+	const (
+		ns   = "u"
+		name = "fix-open-rl-7"
+		repo = "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang"
+	)
+	sb := func(image string, replicas int64, state string) *unstructured.Unstructured {
+		o := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "agents.x-k8s.io/v1alpha1",
+			"kind":       "Sandbox",
+			"metadata":   map[string]interface{}{"name": name, "namespace": ns},
+			"spec": map[string]interface{}{"replicas": replicas, "podTemplate": map[string]interface{}{"spec": map[string]interface{}{
+				"containers": []interface{}{map[string]interface{}{"name": "sandbox", "image": image}},
+			}}},
+		}}
+		if state != "" {
+			o.SetAnnotations(map[string]string{"sandbox.gemini.google.com/last-task-state": state})
+		}
+		return o
+	}
+	for _, c := range []struct {
+		desc, image, state, configured, wantImage string
+		replicas                                  int64
+		wantPodGone                               bool
+	}{
+		{"suspended wakes on the new image", repo + ":old", "Completed", repo + ":new", repo + ":new", 0, false},
+		{"awake and idle: pod replaced", repo + ":latest", "Completed", repo + ":new", repo + ":new", 1, true},
+		{"a task in flight: left", repo + ":old", "Running", repo + ":new", repo + ":old", 1, false},
+		{"another image: left", "registry.example/mine:1", "Completed", repo + ":new", "registry.example/mine:1", 1, false},
+		{"already on it: left", repo + ":new", "Completed", repo + ":new", repo + ":new", 1, false},
+		{"no configured image: left", repo + ":old", "Completed", "", repo + ":old", 1, false},
+	} {
+		t.Run(c.desc, func(t *testing.T) {
+			kc := fakeKube(t, ns, sb(c.image, c.replicas, c.state))
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: ns, Labels: map[string]string{"sandbox": name}}}
+			if c.replicas > 0 {
+				if _, err := kc.Clientset.CoreV1().Pods(ns).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := EnsureFixSandbox(context.Background(), kc, ns, "open-rl", "7", "", "", "", c.configured, "", "", "", nil, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := kc.DynamicClient.Resource(k8s.SandboxGVR).Namespace(ns).Get(context.Background(), name, metav1.GetOptions{})
+			containers, _, _ := unstructured.NestedSlice(got.Object, "spec", "podTemplate", "spec", "containers")
+			if image := containers[0].(map[string]interface{})["image"]; image != c.wantImage {
+				t.Errorf("image = %v, want %s", image, c.wantImage)
+			}
+			if replicas, _, _ := unstructured.NestedInt64(got.Object, "spec", "replicas"); replicas != 1 {
+				t.Errorf("replicas = %d, want 1 (woken)", replicas)
+			}
+			if c.replicas > 0 {
+				_, err := kc.Clientset.CoreV1().Pods(ns).Get(context.Background(), pod.Name, metav1.GetOptions{})
+				if gone := err != nil; gone != c.wantPodGone {
+					t.Errorf("pod gone = %v, want %v", gone, c.wantPodGone)
+				}
+			}
+		})
 	}
 }
