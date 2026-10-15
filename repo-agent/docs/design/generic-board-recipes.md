@@ -155,6 +155,72 @@ and keys, which keep their shapes.
 6. **Counts** (`updateCounts`, the board's needs-you) from run states:
    a ready draft or a failed run, for any recipe.
 
+## Addendum: auto for any recipe
+
+After step 5, automation is recipe-agnostic except for discovery.
+Filing (`fileAutoRequests`), dedupe (`autoOwed`: no recorded run of the
+recipe on the item, no rejected draft, no Request standing or recently
+settled) and the guard (a Review recipe skips a PR with the owner's own
+review) know no recipe by name, and a filed Request runs as a click's
+does. What still names recipes is three discovery functions:
+`discoverTriage` (triage on unclaimed or all issues), `discoverAssigned`
+(fix on issues assigned to the owner), `discoverRequestedReviews` and
+`discoverAllPRs` (review on PRs requesting the owner, or all).
+
+**Auto rules.** `spec.auto` becomes a list of rules, one per recipe, with
+the shared filters beside them:
+
+```yaml
+auto:
+  rules:
+    - recipe: triage
+      on: issue
+      when: {unclaimed: true}
+    - recipe: fix
+      on: issue
+      when: {assignedToOwner: true}
+    - recipe: review
+      on: pr
+      when: {reviewRequestedFromOwner: true}
+    - recipe: summarize
+      on: issue
+      when: {labels: [needs-summary]}
+  labels: []          # the shared filters, as now
+  excludeLabels: []
+  recencyDays: 7
+```
+
+- **Predicates** are a closed set, the ones discovery has now plus labels:
+  `unclaimed` (no assignees), `assignedToOwner`,
+  `reviewRequestedFromOwner`, `labels` (any of). No predicate is every
+  open item of the rule's type, as `auto.triage: all` and
+  `auto.review: all` are today.
+- **One discovery** lists the board's open issues and PRs once per pass,
+  checks each rule against each item, and files through
+  `fileAutoRequests`. The three discovery functions go.
+- **Validation:** a rule names a recipe in the catalog, and an `on` it
+  starts on (`startsOn`): a my-pr recipe cannot be automated on others'
+  PRs. A rule for a recipe the catalog no longer has is skipped and
+  reported on the board's status.
+- **The existing settings** (`auto.triage`, `auto.fix`, `auto.review`)
+  are converted once, by the controller, into the equivalent rules:
+  boards are live objects, so they are not dropped.
+- **The board's settings panel** lists the rules, built from the catalog:
+  a recipe, the item type and a condition, instead of three fixed selects.
+  A rule for a recipe with an `onFinish` says so ("posts a pending review
+  when it finishes"): automating a recipe that writes to GitHub on
+  finish is allowed, as auto-fix and auto-review do now, but shown.
+
+**Cost.** Every rule spends tokens as the owner. `limits.maxActive` caps
+how many run at once, not how many a day; a per-rule daily cap
+(`maxPerDay`) is part of the rule, unset meaning no cap.
+
+**Not now:** the overseer launches recipes on labels too
+(`applicable-when`). The two could share the predicate vocabulary later.
+
+7. **Auto rules,** after step 6: the CRD's `auto.rules`, one discovery,
+   the conversion of the existing settings, and the settings panel.
+
 ## Open question
 
 `policy.draftPR` is shown and edited on the board but read by nothing:
