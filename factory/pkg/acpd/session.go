@@ -242,6 +242,10 @@ type Session struct {
 	nextReq   int64
 	busy      bool
 	finished  bool
+	// closing is set by Close before it kills the engine: the exit that
+	// follows is the close, not the engine failing, and is not recorded
+	// as an error.
+	closing bool
 	// retry is the last model call the engine logged retrying, until it
 	// is heard from again; parseRetry recognises those lines, and retries
 	// counts them all, written to RetriesFile in dir.
@@ -377,8 +381,9 @@ func (s *Session) spawn(ctx context.Context, engine Engine, cfg SessionConfig) e
 		err := cmd.Wait()
 		s.mu.Lock()
 		s.finished = true
+		closing := s.closing
 		s.mu.Unlock()
-		if err != nil {
+		if err != nil && !closing {
 			klog.FromContext(ctx).Error(err, "engine exited", "session", s.ID)
 			_ = s.transcript.AppendValue(KindError, map[string]string{
 				"message": fmt.Sprintf("engine exited: %v", err),
@@ -913,6 +918,9 @@ func (s *Session) Transcript() *Transcript { return s.transcript }
 
 // Close ends the engine process and releases followers.
 func (s *Session) Close() error {
+	s.mu.Lock()
+	s.closing = true
+	s.mu.Unlock()
 	s.cancel()
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
