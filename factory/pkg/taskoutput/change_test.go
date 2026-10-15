@@ -565,3 +565,126 @@ func TestPostRepliesReruns(t *testing.T) {
 		}
 	})
 }
+
+// fakePRText is GitHub for a PR's title and body: o/r#12, opened by
+// author, as title/body; the applying account is me. Edits are recorded,
+// and an issue comment (the report) records when it came.
+type fakePRText struct {
+	author, me, title, body string
+	edits                   []map[string]any
+	order                   []string
+}
+
+func (f *fakePRText) client(t *testing.T) *githubv39.Client {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/pulls/12", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.edits = append(f.edits, req)
+			f.order = append(f.order, "edit")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 12, "title": f.title, "body": f.body, "user": map[string]any{"login": f.author}})
+	})
+	mux.HandleFunc("/user", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"login":%q}`, f.me)
+	})
+	mux.HandleFunc("/repos/o/r/issues/12/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			f.order = append(f.order, "report")
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		fmt.Fprint(w, `[]`)
+	})
+	return serve(t, mux)
+}
+
+// care-ci on KCC PR 14003 (2026-10-15): the fix was the PR description's
+// release-note block. The agent wrote the new body; post-replies posted
+// only its report, saying the description was updated, and the PR kept
+// the old one. A rewrite now reaches the PR, before the report.
+func TestPostRepliesRewritesThePR(t *testing.T) {
+	ctx := context.Background()
+	const (
+		startBody = "Fixes #13935\n\n<!-- factory:task-output kind=Change task=recipe-fix-1 -->"
+		newBody   = "Fixes #13935\n\n```release-note\nNONE\n```"
+		answers   = "change:\n  body: |\n    Fixes #13935\n\n    ```release-note\n    NONE\n    ```\n  report: Added the release-note block.\n"
+	)
+	care := func(t *testing.T) *Document {
+		t.Helper()
+		doc, err := Wrap("Change", answers, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "care-1", Recipe: "care-ci"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := doc.KeepTitle("fix: align", startBody); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+
+	t.Run("the body, keeping the factory marker, before the report", func(t *testing.T) {
+		doc := care(t)
+		if c, _ := doc.ChangeSpec(); len(c.Rewrites) != 1 || c.Rewrites[0] != "body" || c.Title != "fix: align" {
+			t.Fatalf("change = %+v", c)
+		}
+		f := &fakePRText{author: "bot", me: "bot", title: "fix: align", body: startBody}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.edits) != 1 || f.edits[0]["body"] != newBody+"\n\n<!-- factory:task-output kind=Change task=recipe-fix-1 -->" || f.edits[0]["title"] != nil {
+			t.Fatalf("edits = %v\n%s", f.edits, out.String())
+		}
+		if strings.Join(f.order, ",") != "edit,report" {
+			t.Errorf("order = %v, want the rewrite before the report", f.order)
+		}
+	})
+
+	t.Run("dry run edits nothing", func(t *testing.T) {
+		f := &fakePRText{author: "bot", me: "bot", title: "fix: align", body: startBody}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), care(t), "post-replies", true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.edits) != 0 || !strings.Contains(out.String(), "Would rewrite the body") {
+			t.Errorf("edits = %v\n%s", f.edits, out.String())
+		}
+	})
+
+	t.Run("left alone", func(t *testing.T) {
+		for name, f := range map[string]*fakePRText{
+			"edited since the task started": {author: "bot", me: "bot", title: "fix: align", body: "Fixes #13935\n\nA human added this."},
+			"somebody else's PR":            {author: "rev", me: "bot", title: "fix: align", body: startBody},
+		} {
+			var out bytes.Buffer
+			if err := ApplyAction(ctx, f.client(t), care(t), "post-replies", false, &out); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.edits) != 0 || !strings.Contains(out.String(), "Not rewriting") || strings.Join(f.order, ",") != "report" {
+				t.Errorf("%s: edits = %v, order = %v\n%s", name, f.edits, f.order, out.String())
+			}
+		}
+	})
+
+	t.Run("only what the agent rewrote", func(t *testing.T) {
+		for raw, want := range map[string]string{
+			"change:\n  report: x\n":                                                 "",
+			"change:\n  body: |\n    Fixes #13935\n  report: x\n":                    "", // the same text, its marker aside
+			"change:\n  title: 'fix: align CertificateManager'\n  report: x\n":       "title",
+			"change:\n  title: 'fix: align'\n  body: Fixes #1 and #2\n  report: x\n": "body",
+		} {
+			doc, err := Wrap("Change", raw, Target{URL: "https://github.com/o/r/pull/12"}, Source{Task: "care-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := doc.KeepTitle("fix: align", startBody); err != nil {
+				t.Fatal(err)
+			}
+			c, _ := doc.ChangeSpec()
+			if got := strings.Join(c.Rewrites, ","); got != want {
+				t.Errorf("%q: rewrites = %q, want %q", raw, got, want)
+			}
+		}
+	})
+}

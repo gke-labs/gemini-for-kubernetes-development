@@ -2,6 +2,8 @@ package taskoutput
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,7 +47,27 @@ type Change struct {
 	// flake, an outage) to run again, as post-replies applies them: the
 	// agent never reruns anything itself.
 	Rerun []Rerun `yaml:"rerun,omitempty"`
+	// Rewrites is what of an open PR's title and body the agent rewrote
+	// ("title", "body"), which post-replies puts on the PR; KeepTitle
+	// fills the rest from the PR, so Title and Body alone do not say.
+	Rewrites []string `yaml:"rewrites,omitempty"`
+	// Was is a hash of the title and body the PR had when the task
+	// started (prTextHash): post-replies rewrites neither if the PR's have
+	// changed since, rather than overwrite someone's edit with text written
+	// against the old ones.
+	Was string `yaml:"was,omitempty"`
 }
+
+// prTextHash is a PR's title and body, as compared across a task: trimmed,
+// with the factory's markers out of the body.
+func prTextHash(title, body string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(title) + "\x00" + strings.TrimSpace(factoryMarkerRE.ReplaceAllString(body, ""))))
+	return hex.EncodeToString(sum[:])
+}
+
+// factoryMarkerRE is the factory's HTML-comment markers in a PR body
+// (open-pr's, an adoption's).
+var factoryMarkerRE = regexp.MustCompile(`<!-- factory:[^>]*-->`)
 
 // Rerun is one check to run again: a GitHub Actions run, whose failed
 // jobs are rerun, or a Prow command commented on the PR.
@@ -102,18 +124,26 @@ func (d *Document) changeSpec() (*Change, error) {
 
 // KeepTitle gives a Change the title and body the PR had, each where the
 // agent wrote none: an agent on a PR (care's) writes them only to change
-// them.
+// them. What it did write, and differently, is a rewrite (Rewrites), and
+// Was records the PR's text it was written against.
 func (d *Document) KeepTitle(title, body string) error {
 	c, err := d.changeSpec()
 	if err != nil {
 		return err
 	}
+	title, body = strings.TrimSpace(title), strings.TrimSpace(body)
+	c.Rewrites = nil
 	if c.Title == "" {
-		c.Title = strings.TrimSpace(title)
+		c.Title = title
+	} else if c.Title != title {
+		c.Rewrites = append(c.Rewrites, "title")
 	}
 	if c.Body == "" {
-		c.Body = strings.TrimSpace(body)
+		c.Body = body
+	} else if strings.TrimSpace(factoryMarkerRE.ReplaceAllString(c.Body, "")) != strings.TrimSpace(factoryMarkerRE.ReplaceAllString(body, "")) {
+		c.Rewrites = append(c.Rewrites, "body")
 	}
+	c.Was = prTextHash(title, body)
 	return d.setSpec(c)
 }
 
@@ -296,6 +326,62 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 	return markAdopted(ctx, gh, c, pr.GetHTMLURL(), out)
 }
 
+// rewritePR puts the title and body the agent rewrote (Rewrites) on PR
+// owner/repo#num: only a PR the applying account opened, and only if its
+// title and body are still the ones the task started from (Was). The
+// body keeps the factory's markers the PR's had.
+func rewritePR(ctx context.Context, gh *githubv39.Client, c *Change, owner, repo string, num int, dryRun bool, out io.Writer) error {
+	if len(c.Rewrites) == 0 {
+		return nil
+	}
+	pr, _, err := gh.PullRequests.Get(ctx, owner, repo, num)
+	if err != nil {
+		return fmt.Errorf("reading PR %s/%s#%d to rewrite it: %w", owner, repo, num, err)
+	}
+	me, _, err := gh.Users.Get(ctx, "")
+	if err != nil {
+		return fmt.Errorf("reading who applies: %w", err)
+	}
+	if !strings.EqualFold(me.GetLogin(), pr.GetUser().GetLogin()) {
+		fmt.Fprintf(out, "Not rewriting %s/%s#%d: it is %s's, not %s's\n", owner, repo, num, pr.GetUser().GetLogin(), me.GetLogin())
+		return nil
+	}
+	if c.Was != "" && prTextHash(pr.GetTitle(), pr.GetBody()) != c.Was {
+		fmt.Fprintf(out, "Not rewriting %s/%s#%d: its title or description changed since the task started\n", owner, repo, num)
+		return nil
+	}
+	edit := &githubv39.PullRequest{}
+	for _, what := range c.Rewrites {
+		switch what {
+		case "title":
+			if c.Title != "" && c.Title != pr.GetTitle() {
+				edit.Title = githubv39.String(c.Title)
+			}
+		case "body":
+			body := c.Body
+			for _, m := range factoryMarkerRE.FindAllString(pr.GetBody(), -1) {
+				if !strings.Contains(body, m) {
+					body += "\n\n" + m
+				}
+			}
+			if body != pr.GetBody() {
+				edit.Body = githubv39.String(body)
+			}
+		}
+	}
+	if edit.Title == nil && edit.Body == nil {
+		return nil
+	}
+	fmt.Fprintf(out, "%s the %s of %s/%s#%d\n", doing(dryRun, "Rewriting", "rewrite"), strings.Join(c.Rewrites, " and "), owner, repo, num)
+	if dryRun {
+		return nil
+	}
+	if _, _, err := gh.PullRequests.Edit(ctx, owner, repo, num, edit); err != nil {
+		return fmt.Errorf("rewriting PR %s/%s#%d: %w", owner, repo, num, err)
+	}
+	return nil
+}
+
 // adoptedMarker ends the comment markAdopted leaves on an adopted PR, so
 // that applying again leaves no second.
 func adoptedMarker(prURL string) string {
@@ -381,13 +467,18 @@ func applyPostReplies(ctx context.Context, gh *githubv39.Client, doc *Document, 
 	if err != nil {
 		return err
 	}
-	if len(c.Replies) == 0 && c.Report == "" && len(c.Rerun) == 0 {
-		fmt.Fprintln(out, "The Change has no replies, report or reruns; nothing to post")
+	if len(c.Replies) == 0 && c.Report == "" && len(c.Rerun) == 0 && len(c.Rewrites) == 0 {
+		fmt.Fprintln(out, "The Change has no replies, report, reruns or rewrites; nothing to post")
 		return nil
 	}
 	owner, repo, num, err := prTarget(doc)
 	if err != nil {
 		return fmt.Errorf("%w: open the PR first (open-pr)", err)
+	}
+	// First, so the report is true when it is posted and a rerun check
+	// (a release note's) sees the new description.
+	if err := rewritePR(ctx, gh, c, owner, repo, num, dryRun, out); err != nil {
+		return err
 	}
 	for _, r := range c.Replies {
 		if err := postReply(ctx, gh, doc, owner, repo, num, r, dryRun, out); err != nil {
