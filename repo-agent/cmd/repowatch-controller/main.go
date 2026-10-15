@@ -22,6 +22,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	"k8s.io/klog/v2"
 
@@ -107,6 +108,9 @@ func main() {
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
 		Factory: newRunnerWithProber(),
+		// A Request's status writes wake the board many times a minute:
+		// list GitHub for it at most once a minute (github-load.md).
+		DiscoveryEvery: time.Minute,
 	}).SetupWithManager(mgr, concurrentReconciles); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RepoBoard")
 		os.Exit(1)

@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
 	boardv1alpha1 "github.com/gke-labs/gemini-for-kubernetes-development/repo-agent/api/repoboard/v1alpha1"
@@ -472,6 +473,8 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 
+	s.stampViewed(ctx, board, time.Now())
+
 	key := board.GetNamespace() + "/" + board.GetName()
 	if items, ok, needsRefresh := workFeedGet(key); ok {
 		if needsRefresh {
@@ -505,6 +508,36 @@ func (s *Server) getBoardWork(c *gin.Context) {
 	}
 	workFeedPut(key, items)
 	c.JSON(http.StatusOK, items)
+}
+
+// AnnotationViewedAt is when someone last read a board's feed: the
+// controller reconciles a board fast while it is viewed, and slowly
+// otherwise (github-load.md). The UI polls the feed only while its tab is
+// visible, active and not idle, so a fresh stamp means someone is looking.
+const AnnotationViewedAt = "board.gemini.google.com/viewed-at"
+
+// viewedStampEvery is how stale the stamp may get before a feed read
+// stamps it again: often enough that the controller sees a viewer within
+// its viewed window, rarely enough that a polling tab is one patch every
+// two minutes.
+const viewedStampEvery = 2 * time.Minute
+
+// stampViewed merge-patches the board's viewed-at when it is missing or
+// older than viewedStampEvery, read from the board already fetched. A
+// merge patch, not an update: it cannot conflict with a settings save.
+// Best-effort: a failed stamp only leaves the board on the slow cadence.
+// The patch wakes the board's reconcile, so opening a board refreshes it.
+func (s *Server) stampViewed(ctx context.Context, board *unstructured.Unstructured, now time.Time) {
+	if at, err := time.Parse(time.RFC3339, board.GetAnnotations()[AnnotationViewedAt]); err == nil && now.Sub(at) < viewedStampEvery {
+		return
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{AnnotationViewedAt: now.UTC().Format(time.RFC3339)}}})
+	if err != nil {
+		return
+	}
+	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Patch(ctx, board.GetName(), types.MergePatchType, patch, v1.PatchOptions{}); err != nil {
+		klog.FromContext(ctx).Info("stamping the board viewed failed", "board", board.GetName(), "err", err)
+	}
 }
 
 // buildBoardWork assembles the feed universe from one GraphQL request
@@ -1527,8 +1560,9 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
+	var target *unstructured.Unstructured
 	set := func(value interface{}, fields ...string) bool {
-		if err := unstructured.SetNestedField(board.Object, value, fields...); err != nil {
+		if err := unstructured.SetNestedField(target.Object, value, fields...); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set field", "details": err.Error()})
 			return false
 		}
@@ -1557,24 +1591,39 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		return
 	}
 	// The rules replace the deprecated settings, which are set off.
-	ok := set(cleanLabels(payload.ViewLabels), "spec", "view", "labels") &&
-		set(rules, "spec", "auto", "rules") &&
-		set("off", "spec", "auto", "triage") &&
-		set("off", "spec", "auto", "fix") &&
-		set("off", "spec", "auto", "review") &&
-		set(cleanLabels(payload.AutoLabels), "spec", "auto", "labels") &&
-		set(cleanLabels(payload.AutoExcludeLabels), "spec", "auto", "excludeLabels") &&
-		set(recency, "spec", "auto", "recencyDays") &&
-		set(payload.MaxActive, "spec", "limits", "maxActive") &&
-		set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
-		set(engineOrDefault(payload.Engine), "spec", "sandbox", "engine") &&
-		set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
-		set(payload.DraftPR, "spec", "policy", "draftPR") &&
-		set(payload.Disclose, "spec", "policy", "disclose")
-	if !ok {
+	apply := func(b *unstructured.Unstructured) bool {
+		target = b
+		return set(cleanLabels(payload.ViewLabels), "spec", "view", "labels") &&
+			set(rules, "spec", "auto", "rules") &&
+			set("off", "spec", "auto", "triage") &&
+			set("off", "spec", "auto", "fix") &&
+			set("off", "spec", "auto", "review") &&
+			set(cleanLabels(payload.AutoLabels), "spec", "auto", "labels") &&
+			set(cleanLabels(payload.AutoExcludeLabels), "spec", "auto", "excludeLabels") &&
+			set(recency, "spec", "auto", "recencyDays") &&
+			set(payload.MaxActive, "spec", "limits", "maxActive") &&
+			set(idleMinutes, "spec", "sandbox", "idleMinutes") &&
+			set(engineOrDefault(payload.Engine), "spec", "sandbox", "engine") &&
+			set(payload.AutoIterate, "spec", "policy", "autoIterate") &&
+			set(payload.DraftPR, "spec", "policy", "draftPR") &&
+			set(payload.Disclose, "spec", "policy", "disclose")
+	}
+	if !apply(board) {
 		return
 	}
-	if _, err := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace()).Update(ctx, board, v1.UpdateOptions{}); err != nil {
+	boards := s.K8sManager.Client.Resource(repoBoardGVR).Namespace(board.GetNamespace())
+	_, err = boards.Update(ctx, board, v1.UpdateOptions{})
+	if apierrors.IsConflict(err) {
+		// The board moved since it was read — the controller's status, or
+		// a feed read stamping it viewed: save onto the fresh one, once.
+		if board, err = s.getBoard(ctx, board.GetNamespace(), board.GetName()); err == nil {
+			if !apply(board) {
+				return
+			}
+			_, err = boards.Update(ctx, board, v1.UpdateOptions{})
+		}
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save board settings", "details": err.Error()})
 		return
 	}
