@@ -49,6 +49,7 @@ jobs:
           SKIP_PREQS: 'true'
           CLUSTER_NAME: ${{ vars.GKE_STAGING_CLUSTER }}
           GW_CLASS: 'gke-l7-regional-external-managed'
+          GW_CERT: 'repoagent-dev' # Google-managed *.repoagent.dev
 
       - name: Deploy Overseer to Staging
         run: |
