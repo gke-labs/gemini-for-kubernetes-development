@@ -3,6 +3,7 @@ package recipe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1994,3 +1995,112 @@ func TestBuiltinResultsAreWrittenFiles(t *testing.T) {
 		}
 	}
 }
+
+// fullSession is a conversation too long to take another turn, as gemini
+// answers one: the turn stops for max_tokens with nothing written.
+type fullSession struct {
+	fakeSession
+	reply  string
+	output int64
+}
+
+func (s *fullSession) Ask(_ context.Context, prompt string) (string, error) {
+	s.prompts = append(s.prompts, prompt)
+	return s.reply, &StopError{Reason: "max_tokens"}
+}
+
+func (s *fullSession) TurnUsage() []acpd.ModelUsage {
+	return []acpd.ModelUsage{{Model: "gemini-3.7-flash", Output: s.output}}
+}
+
+// A run continuing a conversation too long to take another turn (KCC PR
+// 14000's care, 2026-10-15: six care-ci runs stopped for max_tokens with
+// no tokens used) goes on in one of its own, sent the recipe's context
+// as a first run is, and says so. Only at its first ask, once, and only
+// for a turn that wrote nothing: a reply that ran out is not a full
+// conversation.
+func TestRunnerLeavesAFullConversation(t *testing.T) {
+	rec, err := Parse([]byte(`
+name: demo
+context: RULES
+start:
+  steps:
+    - ask: "fix CI"
+    - ask: "write the result"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := func(t *testing.T, full *fullSession, continues bool) (*Runner, *fakeSession, *int) {
+		r, _, _, _ := newTestRunner(t)
+		fresh, rotations := &fakeSession{}, 0
+		r.StartSession = func(context.Context) (Session, error) { return full, nil }
+		r.Continues = continues
+		r.NewSession = func(context.Context) (Session, error) { return fresh, nil }
+		r.Rotated = func() error { rotations++; return nil }
+		return r, fresh, &rotations
+	}
+
+	t.Run("left at the first ask, the context sent again", func(t *testing.T) {
+		full := &fullSession{}
+		r, fresh, rotations := setup(t, full, true)
+		if err := r.Run(context.Background(), rec); err != nil {
+			t.Fatal(err)
+		}
+		if *rotations != 1 || !full.closed {
+			t.Errorf("rotations = %d, closed = %v", *rotations, full.closed)
+		}
+		if len(fresh.prompts) != 2 || fresh.prompts[0] != "RULES\n\n---\n\nfix CI" || fresh.prompts[1] != "write the result" {
+			t.Errorf("new conversation's prompts = %q", fresh.prompts)
+		}
+	})
+
+	for name, tc := range map[string]struct {
+		full      *fullSession
+		continues bool
+	}{
+		"a reply that ran out":       {&fullSession{reply: "Halfway thro", output: 65536}, true},
+		"output tokens, no text":     {&fullSession{output: 12}, true},
+		"the run's own conversation": {&fullSession{}, false},
+	} {
+		t.Run(name+" fails the run", func(t *testing.T) {
+			r, fresh, rotations := setup(t, tc.full, tc.continues)
+			err := r.Run(context.Background(), rec)
+			var stop *StopError
+			if !errors.As(err, &stop) || stop.Reason != "max_tokens" || *rotations != 0 || len(fresh.prompts) != 0 {
+				t.Errorf("err = %v, rotations = %d, new conversation's prompts = %q", err, *rotations, fresh.prompts)
+			}
+		})
+	}
+
+	t.Run("not again when the new one is full too", func(t *testing.T) {
+		r, _, rotations := setup(t, &fullSession{}, true)
+		r.NewSession = func(context.Context) (Session, error) { return &fullSession{}, nil }
+		if err := r.Run(context.Background(), rec); err == nil || *rotations != 1 {
+			t.Errorf("err = %v, rotations = %d", err, *rotations)
+		}
+	})
+
+	t.Run("not at a later ask", func(t *testing.T) {
+		calls := 0
+		sess := &askThenFull{fakeSession: &calls}
+		r, fresh, rotations := setup(t, &fullSession{}, true)
+		r.StartSession = func(context.Context) (Session, error) { return sess, nil }
+		if err := r.Run(context.Background(), rec); err == nil || *rotations != 0 || len(fresh.prompts) != 0 {
+			t.Errorf("err = %v, rotations = %d", err, *rotations)
+		}
+	})
+}
+
+// askThenFull answers its first turn and is full at the second: the run's
+// own work is in the conversation, which a new one would lose.
+type askThenFull struct{ fakeSession *int }
+
+func (s *askThenFull) Ask(context.Context, string) (string, error) {
+	*s.fakeSession++
+	if *s.fakeSession == 1 {
+		return "fixed", nil
+	}
+	return "", &StopError{Reason: "max_tokens"}
+}
+func (s *askThenFull) Close() error { return nil }

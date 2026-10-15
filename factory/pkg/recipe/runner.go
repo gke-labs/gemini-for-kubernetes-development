@@ -3,6 +3,7 @@ package recipe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -65,6 +66,20 @@ type Runner struct {
 	// StartSession opens the conversation. Called at the first ask, so a
 	// recipe whose prepare steps fail never starts an engine.
 	StartSession func(ctx context.Context) (Session, error)
+	// Continues is whether StartSession opens a conversation an earlier
+	// run left, a recipe's in a session (session: care), rather than one
+	// of this run's own.
+	Continues bool
+	// NewSession opens a conversation of this run's own, as a run that
+	// continues none does. With Continues, a conversation too long to take
+	// another turn (full) is left for it at the run's first ask: the
+	// conversation does not shrink, so every later run in it would fail
+	// the same way. Unset, a full conversation fails the run.
+	NewSession func(ctx context.Context) (Session, error)
+	// Rotated records that the run left the conversation it continued for
+	// one of its own (NewSession), so the next run in the session
+	// continues that one.
+	Rotated func() error
 	// TaskDir is where step logs and captured replies are written.
 	TaskDir string
 	Inputs  map[string]string
@@ -89,6 +104,10 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 		}
 	}()
 	contextSent := false
+	// asks is how many asks the run has sent; a full conversation is left
+	// at the first only, when it holds nothing of this run's.
+	asks := 0
+	rotated := false
 
 	for i, step := range steps {
 		label := step.Label(i)
@@ -147,18 +166,39 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 					contextSent = false
 				}
 			}
+			ask := prompt
 			if !contextSent && rec.Context != "" {
 				prompt = rec.Context + "\n\n---\n\n" + prompt
 			}
 			contextSent = true
+			asks++
 			res.Reply, err = session.Ask(ctx, prompt)
-			if u, ok := session.(UsageSession); ok {
-				// What the turn used goes beside the task's other usage,
-				// for the harvest (usagereport): a turn that failed used
-				// tokens too.
-				if uerr := AddUsage(r.TaskDir, u.TurnUsage()); uerr != nil {
-					fmt.Fprintf(r.Log, "::warning recording %s's token usage: %v\n", label, uerr)
+			r.addUsage(label, session)
+			if asks == 1 && r.Continues && !rotated && r.NewSession != nil && conversationFull(err, res.Reply, session) {
+				// The conversation the run continued is too long for the
+				// engine to take another turn: it refused without the model
+				// writing a word. Leave it for one of the run's own, sent
+				// the recipe's context as a first run is; the run takes the
+				// PR as it is now, so nothing it needs is lost.
+				fmt.Fprintf(r.Log, "::warning %s: the conversation it continues is full (%v); continuing in a new one\n", label, err)
+				_ = session.Close()
+				rotated = true
+				if session, err = r.NewSession(ctx); err != nil {
+					session = nil
+					err = fmt.Errorf("starting a new agent session: %w", err)
+					break
 				}
+				if r.Rotated != nil {
+					if rerr := r.Rotated(); rerr != nil {
+						fmt.Fprintf(r.Log, "::warning recording the new conversation: %v\n", rerr)
+					}
+				}
+				prompt = ask
+				if rec.Context != "" {
+					prompt = rec.Context + "\n\n---\n\n" + ask
+				}
+				res.Reply, err = session.Ask(ctx, prompt)
+				r.addUsage(label, session)
 			}
 			if err == nil && step.Capture != "" {
 				err = os.WriteFile(filepath.Join(r.TaskDir, step.Capture), []byte(res.Reply), 0o644)
@@ -180,6 +220,36 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 	return nil
 }
 
+// addUsage records what session's last turn used beside the task's other
+// usage, for the harvest (usagereport): a turn that failed used tokens too.
+func (r *Runner) addUsage(label string, session Session) {
+	if u, ok := session.(UsageSession); ok {
+		if uerr := AddUsage(r.TaskDir, u.TurnUsage()); uerr != nil {
+			fmt.Fprintf(r.Log, "::warning recording %s's token usage: %v\n", label, uerr)
+		}
+	}
+}
+
+// conversationFull reports whether a turn ended as one sent to a
+// conversation too long to take it does: stopped for max_tokens with
+// nothing written, no reply and no output tokens. A turn that wrote and
+// then ran out of tokens is a reply too long, which a new conversation
+// would not mend.
+func conversationFull(err error, reply string, session Session) bool {
+	var stop *StopError
+	if !errors.As(err, &stop) || stop.Reason != "max_tokens" || strings.TrimSpace(reply) != "" {
+		return false
+	}
+	if u, ok := session.(UsageSession); ok {
+		for _, m := range u.TurnUsage() {
+			if m.Output > 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // expect checks that the agent wrote the file an ask told it to, asking
 // once more if it did not.
 func (r *Runner) expect(ctx context.Context, session Session, label, name string) error {
@@ -189,11 +259,7 @@ func (r *Runner) expect(ctx context.Context, session Session, label, name string
 	}
 	fmt.Fprintf(r.Log, "::warning %s: the agent wrote no %s; asking again\n", label, name)
 	_, err := session.Ask(ctx, fmt.Sprintf("You have not written %s. Write it now, whole, as asked, then say in a line that it is written.", path))
-	if u, ok := session.(UsageSession); ok {
-		if uerr := AddUsage(r.TaskDir, u.TurnUsage()); uerr != nil {
-			fmt.Fprintf(r.Log, "::warning recording %s's token usage: %v\n", label, uerr)
-		}
-	}
+	r.addUsage(label, session)
 	if err != nil {
 		return err
 	}

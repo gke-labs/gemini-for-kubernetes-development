@@ -434,13 +434,14 @@ func TestPRPushInputs(t *testing.T) {
 // is in, the one that run opened or continued, while it is the
 // sandbox's; otherwise it opens one.
 func TestContinuedSession(t *testing.T) {
-	entries := []spool.Entry{{Task: spool.Task{ID: "care-2"}}, {Task: spool.Task{ID: "care-1"}}}
+	entries := []spool.Entry{{Task: spool.Task{ID: "care-3", Session: "care-1", Rotated: true}}, {Task: spool.Task{ID: "care-2"}}, {Task: spool.Task{ID: "care-1"}}}
 	for _, tc := range []struct {
 		why, recorded, want string
 	}{
 		{"none recorded", "", ""},
 		{"the run opened it", `{"task":"care-1"}`, "care-1"},
 		{"the run continued it", `{"task":"care-2","session":"care-1"}`, "care-1"},
+		{"the run left it, full, for its own", `{"task":"care-3","session":"care-1"}`, "care-3"},
 		{"the sandbox was recreated", `{"task":"care-0"}`, ""},
 		{"unreadable", "{", ""},
 	} {
@@ -548,5 +549,26 @@ func TestResolveRepoRecipe(t *testing.T) {
 	}
 	if _, err := parseRepoRecipe("fix", []byte(files[".agents/recipes/fix.yaml"])); err == nil || !strings.Contains(err.Error(), "built-in recipe's name") {
 		t.Errorf("a repository fix: %v", err)
+	}
+}
+
+// A run that left a full conversation marks its task.json rotated and
+// keeps everything else in it, the session it continued included.
+func TestMarkSpoolRotated(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, spool.TaskFile)
+	if err := os.WriteFile(path, []byte(`{"id":"care-3","recipe":"care-ci","session":"care-1","output":{"kind":"Change"},"future":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := markSpoolRotated(dir); err != nil {
+		t.Fatal(err)
+	}
+	task := readSpoolTask(dir)
+	if !task.Rotated || task.Session != "care-1" || task.ID != "care-3" || task.Output == nil {
+		t.Errorf("task = %+v", task)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `"future":1`) {
+		t.Errorf("a field factory does not know was dropped: %s", data)
 	}
 }

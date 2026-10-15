@@ -65,6 +65,11 @@ type Task struct {
 	// Session is the task whose agent session the task continues (a
 	// recipe in a session): the task that started the conversation.
 	Session string `json:"session,omitempty"`
+	// Rotated is set by the run itself when the conversation it continued
+	// (Session) was too long to take another turn and it went on in one of
+	// its own: the next run in the session continues the run's, not
+	// Session.
+	Rotated bool `json:"rotated,omitempty"`
 	// TaskType is the recipe's task-type, when it is its sandbox's main
 	// task; unset, the task's kind is recipe-<Recipe>.
 	TaskType    string    `json:"task_type,omitempty"`

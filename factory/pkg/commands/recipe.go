@@ -659,6 +659,11 @@ func continuedSession(recorded string, entries []spool.Entry) string {
 	if session == "" {
 		session = run.Task
 	}
+	// A run that left the conversation it continued, full, for one of its
+	// own says so in its task.json (Rotated): the next run continues that.
+	if e, err := spool.Find(entries, run.Task, ""); err == nil && e.Rotated {
+		session = run.Task
+	}
 	if _, err := spool.Find(entries, session, ""); err != nil {
 		return ""
 	}
@@ -1315,6 +1320,16 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 	}
 
 	task := readSpoolTask(taskDir)
+	// fresh opens a conversation of this run's own: on the daemon's task
+	// server when it hosts sessions, else in this process.
+	fresh := func(ctx context.Context, env map[string]string) (recipe.Session, error) {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if token := os.Getenv(taskapi.EnvTaskToken); token != "" {
+			base := fmt.Sprintf("http://127.0.0.1:%d/v1", taskapi.Port)
+			return recipe.StartDaemonSession(ctx, base, token, engine, model, apiKey, repoDir, taskDir, env)
+		}
+		return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
+	}
 	r := &recipe.Runner{
 		Exec: &recipe.SandboxExecutor{
 			StepScript:  stepScript,
@@ -1346,6 +1361,18 @@ func runRecipeExec(ctx context.Context, recipePath, inputsPath, taskDir string) 
 			}
 			return recipe.StartACPSession(ctx, engine, model, apiKey, repoDir, taskDir, env)
 		},
+		Continues: task.Session != "",
+		NewSession: func(ctx context.Context) (recipe.Session, error) {
+			env, err := rec.RenderAgentEnv(inputs)
+			if err != nil {
+				return nil, err
+			}
+			return fresh(ctx, env)
+		},
+		// The run's conversation is its task's now: task.json says so,
+		// which is what the next run in the session reads
+		// (continuedSession).
+		Rotated: func() error { return markSpoolRotated(taskDir) },
 		TaskDir: taskDir,
 		Inputs:  inputs,
 		Log:     os.Stdout,
@@ -1380,6 +1407,31 @@ func takeSecrets(taskDir string) ([]string, error) {
 		out = append(out, k+"="+m[k])
 	}
 	return out, nil
+}
+
+// markSpoolRotated sets rotated in the task's task.json (spool.Task.Rotated),
+// leaving the rest as it is: the conversation the next run in the session
+// continues is this task's own.
+func markSpoolRotated(taskDir string) error {
+	path := filepath.Join(taskDir, spool.TaskFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var task map[string]any
+	if err := json.Unmarshal(data, &task); err != nil {
+		return err
+	}
+	task["rotated"] = true
+	out, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // readSpoolTask is the task's task.json, empty for a task started without
