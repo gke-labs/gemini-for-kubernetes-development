@@ -208,8 +208,21 @@ type mockRoundTripper struct {
 	responses map[string]func() *http.Response
 }
 
+// RoundTrip answers a request by its URL, or by its URL without the
+// listing's narrowing (since, sort, direction), which the fixtures leave
+// out.
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if fn, ok := m.responses[req.URL.String()]; ok {
+	fn, ok := m.responses[req.URL.String()]
+	if !ok {
+		u := *req.URL
+		q := u.Query()
+		for _, k := range []string{"since", "sort", "direction"} {
+			q.Del(k)
+		}
+		u.RawQuery = q.Encode()
+		fn, ok = m.responses[u.String()]
+	}
+	if ok {
 		resp := fn()
 		resp.Header = http.Header{"Content-Type": []string{"application/json"}}
 		resp.Request = req
