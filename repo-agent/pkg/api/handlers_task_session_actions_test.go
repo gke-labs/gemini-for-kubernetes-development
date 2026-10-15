@@ -171,9 +171,9 @@ func TestRejectingASessionDraftTombstonesIt(t *testing.T) {
 const reviewSessionAt = "/api/task-sessions/review-repo-42/recipe-review-1"
 
 // reviewSessionServer is the board test server with PR 42's review
-// sandbox, in state (the review's last-task-state) with reviewState, and
-// the extra annotations.
-func reviewSessionServer(t *testing.T, state, reviewState string, extra ...map[string]interface{}) (*gin.Engine, *fake.FakeDynamicClient) {
+// sandbox, in state (the review's last-task-state), with the extra
+// annotations.
+func reviewSessionServer(t *testing.T, state string, extra ...map[string]interface{}) (*gin.Engine, *fake.FakeDynamicClient) {
 	t.Helper()
 	run, _ := json.Marshal(factorycli.RecordedRun{
 		Name: "review/myboard/42/1", Task: "recipe-review-1", StartedAt: time.Unix(1_000_000, 0),
@@ -185,8 +185,7 @@ func reviewSessionServer(t *testing.T, state, reviewState string, extra ...map[s
 		annoBoard: "myboard",
 		"sandbox.gemini.google.com/last-task-type":  "recipe-review",
 		"sandbox.gemini.google.com/last-task-state": state,
-		"reviewState":                  reviewState,
-		factorycli.AnnotationReviewRun: string(run),
+		factorycli.AnnotationReviewRun:              string(run),
 	}
 	for _, e := range extra {
 		maps.Copy(annotations, e)
@@ -262,7 +261,7 @@ func applyFiled(t *testing.T, dyn *fake.FakeDynamicClient) boardv1alpha1.Request
 // A review's kept Review is its session's draft: posted, its post-review
 // waits for an edit, which makes it a draft to post again.
 func TestAReviewSessionsDraftIsItsKeptReview(t *testing.T) {
-	r, dyn := reviewSessionServer(t, "Completed", "pending", map[string]interface{}{
+	r, dyn := reviewSessionServer(t, "Completed", map[string]interface{}{
 		factorycli.OutputAnnotation(factorycli.AnnotationReviewRun): "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Review\n" +
 			"source:\n  task: recipe-review-1\nspec:\n  body: Looks good.\n",
 		factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun): `{"post-review":"2026-10-06T00:00:00Z"}`,
@@ -552,24 +551,25 @@ func TestACareSessionOpensANewConversation(t *testing.T) {
 	}
 }
 
-// A review session links its pending review on GitHub, to finalize it
-// there; nothing pending, no link.
+// A review session links the pending review its run posted on GitHub, to
+// finalize it there; nothing posted, no link.
 func TestAReviewSessionLinksItsPendingReview(t *testing.T) {
-	sb := func(name, state string) *unstructured.Unstructured {
+	sb := func(name, applied string) *unstructured.Unstructured {
 		u := &unstructured.Unstructured{}
 		u.SetName(name)
-		u.SetAnnotations(map[string]string{"repo": "repo", "reviewState": state, "htmlURL": "https://github.com/o/repo/pull/42"})
+		u.SetAnnotations(map[string]string{"repo": "repo", "htmlURL": "https://github.com/o/repo/pull/42",
+			factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun): applied})
 		return u
 	}
+	posted := `{"post-review":"2026-10-06T00:00:00Z"}`
 	for _, tc := range []struct {
-		name, sandbox, state, want string
+		name, sandbox, applied, want string
 	}{
-		{"pending", "review-repo-42", "pending", "https://github.com/o/repo/pull/42/files"},
-		{"submitted", "review-repo-42", "submitted", ""},
+		{"posted", "review-repo-42", posted, "https://github.com/o/repo/pull/42/files"},
 		{"not posted", "review-repo-42", "", ""},
-		{"not a review sandbox", "fix-repo-42", "pending", ""},
+		{"not a review sandbox", "fix-repo-42", posted, ""},
 	} {
-		if got := pendingReviewURL(sb(tc.sandbox, tc.state)); got != tc.want {
+		if got := pendingReviewURL(sb(tc.sandbox, tc.applied)); got != tc.want {
 			t.Errorf("%s: pendingReviewURL = %q, want %q", tc.name, got, tc.want)
 		}
 	}

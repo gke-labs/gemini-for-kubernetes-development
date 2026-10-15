@@ -83,8 +83,9 @@ func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-77"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/recipe-fix-repo-issue-77"))
 	g.Expect(launches[0].FixOpts).NotTo(gomega.BeNil())
+	g.Expect(launches[0].FixOpts.SandboxName).To(gomega.Equal("fix-repo-77"))
 }
 
 // A finished fix and a running triage share the issue's sandbox: idle
@@ -131,7 +132,7 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("bob/triage-repo-40"))
+	g.Expect(launches[0].Key).To(gomega.Equal("bob/recipe-triage-repo-issue-40"))
 	g.Expect(launches[0].TriageOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].TriageOpts.Namespace).To(gomega.Equal("bob"))
 	g.Expect(launches[0].TriageOpts.SandboxName).To(gomega.Equal("fix-repo-40"))
@@ -139,13 +140,10 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 	g.Expect(launches[0].TriageOpts.RunName).To(gomega.Equal("request/uid-40"))
 }
 
-// A click's triage is recorded under its Request; auto-triage under the
-// board, the issue and the launch, so that a failed one is retried.
+// Auto-triage is recorded under the board, the issue and the launch, so
+// that a failed one is retried. (A click's is its Request's.)
 func TestTriageRunName(t *testing.T) {
-	if got := triageRunName("b", 5, triageClick{issue: 5, member: "bob", request: "uid-1"}); got != "request/uid-1" {
-		t.Errorf("click: %q", got)
-	}
-	if got := triageRunName("b", 5, triageClick{}); !strings.HasPrefix(got, "auto/b/5/") {
+	if got := triageRunName("b", 5); !strings.HasPrefix(got, "auto/b/5/") {
 		t.Errorf("auto: %q", got)
 	}
 }

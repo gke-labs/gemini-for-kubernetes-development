@@ -35,12 +35,12 @@ import (
 // with their own clicks.
 //
 // It runs in the issue's sandbox, the one plan and fix use
-// (factorycli.IssueSandbox): a clicked triage in the clicker's namespace,
-// as a clicked plan or fix runs, under their token; auto-triage, which has
-// no clicker, in the board owner's, under the discovery identity. It
-// records its state in its own annotation and its task output in
-// factorycli.AnnotationTriageOutput so that neither reads as the plan's,
-// fix's or a review's.
+// (factorycli.IssueSandbox). A Triage click is a recipe Request like any
+// other (ensureRecipes), in the clicker's namespace under their token;
+// this is auto-triage, which has no clicker, in the board owner's, under
+// the discovery identity. A triage records its state in its own
+// annotation and its task output in factorycli.AnnotationTriageOutput so
+// that neither reads as the plan's, fix's or a review's.
 
 // AnnotationTriagedAt marks a stored triage draft.
 const AnnotationTriagedAt = "board.gemini.google.com/triaged-at"
@@ -82,9 +82,10 @@ func (r *Reconciler) discoverTriage(ctx context.Context, ghClient *github.Client
 	}
 }
 
-// ensureTriage drives one issue's triage state machine in namespace:
-// harvest a finished run's stdout report, or launch one within limits.
-func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, runName string, clicked bool, since time.Time, inputs map[string]string) {
+// ensureTriage drives one issue's auto-triage in namespace: harvest a
+// finished run's stdout report, or launch one within limits. A Triage
+// click is a recipe Request (ensureRecipes).
+func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *github.Issue, namespace, runName string) {
 	logger := log.FromContext(ctx)
 	sb := work.triageSandbox(namespace, issue.GetNumber())
 	if sb == nil {
@@ -101,20 +102,20 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 	if sb != nil && sb.GetAnnotations() != nil {
 		annotations = sb.GetAnnotations()
 	}
-	// Triaged, unless clicked again since.
-	if annotations[AnnotationTriagedAt] != "" && !clickedSince(annotations[AnnotationTriagedAt], since) {
+	// Triaged already, by automation or by a member's click.
+	if annotations[AnnotationTriagedAt] != "" || memberRun(annotations, factorycli.AnnotationTriageRun, autoTriagePrefix) {
 		return
 	}
-	if !clicked && annotations[AnnotationTriageRejected] != "" {
+	if annotations[AnnotationTriageRejected] != "" {
 		// A human rejected the last draft: automation does not redo
-		// thrown-away work. A fresh Triage click re-arms.
+		// thrown-away work. A Triage click runs it again.
 		return
 	}
 	if r.Factory.IsRunning(key) {
 		return
 	}
 
-	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) && !since.After(res.FinishedAt) {
+	if res, ok := r.Factory.LastResult(key); ok && !resultStaleSince(annotations[AnnotationTriageRejected], res.FinishedAt) {
 		if res.Err == nil && sb != nil {
 			if doc := factorycli.HarvestedOutput("Triage", res.Output); doc != "" {
 				annotations[factorycli.AnnotationTriageOutput] = doc
@@ -144,28 +145,24 @@ func (r *Reconciler) ensureTriage(ctx context.Context, work *workState, issue *g
 			return
 		}
 	}
-	if !clicked {
-		runName = r.resumableRun(key, annotations, factorycli.AnnotationTriageRun, runName, AnnotationTriageRejected)
-	}
+	runName = r.resumableRun(key, annotations, factorycli.AnnotationTriageRun, runName, AnnotationTriageRejected)
 	r.stampUnpaused(ctx, sb)
 	r.stampEngine(ctx, sb, boardEngine(work.board))
 	opts := r.recipeOptions(work, "triage", namespace, name, issue.GetHTMLURL(), token, runName)
 	// The triage shares the issue's sandbox and makes it as the fix
 	// would: on factory's default image and disk.
 	opts.Image, opts.WorkspaceDiskSize = "", ""
-	opts.Inputs = inputs
 	if r.Factory.StartRecipe(key, opts) {
 		logger.Info("launched factory recipe triage", "issue", issue.GetNumber(), "board", work.board.Name)
 	}
 }
 
-// resumeTriages re-drives triages whose suggestions have not been
-// harvested: a clicked triage's Request settles when the sandbox
-// appears, minutes before the run completes, and a restarted controller
-// has no invocation waiting on the run at all. ensureTriage picks the
-// sandbox's recorded run up by name, so its result is stored rather than
-// the triage run again. Only sandboxes a triage has touched count: an
-// issue's sandbox that only planned or fixed is not one to triage.
+// resumeTriages re-drives auto-triages whose suggestions have not been
+// harvested: a restarted controller has no invocation waiting on the run
+// at all. ensureTriage picks the sandbox's recorded run up by name, so its
+// result is stored rather than the triage run again. Only sandboxes a
+// triage has touched count: an issue's sandbox that only planned or fixed
+// is not one to triage. A member's triage is its Request's to follow.
 func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 	seen := map[string]bool{}
 	for _, sb := range work.sandboxes {
@@ -174,7 +171,7 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 			continue
 		}
 		n, ok := factorycli.IssueOf(sb, work.repo)
-		if !ok || !factorycli.HasTriage(sb) {
+		if !ok || !factorycli.HasTriage(sb) || memberRun(annotations, factorycli.AnnotationTriageRun, autoTriagePrefix) {
 			continue
 		}
 		k := fmt.Sprintf("%s/%d", sb.GetNamespace(), n)
@@ -187,39 +184,27 @@ func (r *Reconciler) resumeTriages(ctx context.Context, work *workState) {
 		if u := annotations["htmlURL"]; strings.Contains(u, "/issues/") {
 			url = u
 		}
-		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageRunName(work.board.Name, n, triageClick{}), false, time.Time{}, nil)
+		r.ensureTriage(ctx, work, &github.Issue{Number: &num, HTMLURL: &url}, sb.GetNamespace(), triageRunName(work.board.Name, n))
 	}
 }
 
-// triageClick is a Triage click: the issue, the namespace of the member
-// who clicked, where it runs, and the UID of the click's Request.
-type triageClick struct {
-	issue   int
-	member  string
-	request string
-	since   time.Time
-	// inputs are the click's recipe inputs: its instructions.
-	inputs map[string]string
-}
+// autoTriagePrefix starts every auto-triage's run name (triageRunName).
+const autoTriagePrefix = "auto/"
 
-// triageRunName is what a triage's task is recorded under in the sandbox
-// (factory --run-name), to read its result by. factory runs a name
-// once — running it again returns that run — so it names one attempt:
-// one per click, by its Request; one per launch for auto-triage, so that
-// a failed run is retried rather than returned. A run this controller
-// did not start (a restart's) is resumed under its recorded name instead
-// (resumableRun). Identifiers only: anyone in the sandbox can read it.
-func triageRunName(board string, issue int, click triageClick) string {
-	if click.request != "" {
-		return "request/" + click.request
-	}
-	return fmt.Sprintf("auto/%s/%d/%d", board, issue, time.Now().Unix())
+// triageRunName is what an auto-triage's task is recorded under in the
+// sandbox (factory --run-name), to read its result by. factory runs a
+// name once — running it again returns that run — so it names one launch,
+// so that a failed run is retried rather than returned. A run this
+// controller did not start (a restart's) is resumed under its recorded
+// name instead (resumableRun). Identifiers only: anyone in the sandbox
+// can read it.
+func triageRunName(board string, issue int) string {
+	return fmt.Sprintf("%s%s/%d/%d", autoTriagePrefix, board, issue, time.Now().Unix())
 }
 
 // resultStaleSince reports whether a remembered invocation result predates
 // the given marker (RFC3339) and must be ignored: a rejected draft's old
-// result would otherwise resurrect it, or its backoff would block the
-// member's fresh click.
+// result would otherwise resurrect it.
 func resultStaleSince(marker string, finishedAt time.Time) bool {
 	at, err := time.Parse(time.RFC3339, marker)
 	return err == nil && finishedAt.Before(at)

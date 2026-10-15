@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -119,30 +118,16 @@ func (w *workState) activeRequests() []*boardv1alpha1.Request {
 	return out
 }
 
-// requestMailbox turns the standing Requests into the same plan slices
-// the annotation mailbox produced, so that every ensure pass downstream
-// is unchanged: it still receives a fixPlan, and does not care that the
-// click now has an object behind it.
+// requestMailbox sorts the standing Requests into the passes that serve
+// them. Every recipe Request, a Triage, Plan, Fix or Review click
+// included, is the generic path's (ensureRecipes).
 func (r *Reconciler) requestMailbox(work *workState) mailbox {
 	var box mailbox
 	for _, req := range work.activeRequests() {
 		spec := req.Spec
 		switch spec.Verb {
 		case boardv1alpha1.VerbRecipe:
-			// The recipes with passes of their own, on what they start
-			// on; settleHooked fails one on anything else.
-			switch {
-			case spec.Recipe == "fix" && spec.Item == "issue":
-				box.fixes = append(box.fixes, fixPlan{issue: spec.Number, executor: spec.Member, since: req.CreationTimestamp.Time, inputs: spec.Inputs})
-			case spec.Recipe == "review" && spec.Item == "pr":
-				box.reviews = append(box.reviews, reviewPlan{pr: spec.Number, executor: spec.Member, inputs: spec.Inputs})
-			case spec.Recipe == "triage" && spec.Item == "issue":
-				box.triages = append(box.triages, triageClick{issue: spec.Number, member: spec.Member, request: string(req.UID), since: req.CreationTimestamp.Time, inputs: spec.Inputs})
-			case spec.Recipe == "plan" && spec.Item == "issue":
-				box.plans = append(box.plans, planRequest{issue: spec.Number, member: spec.Member, since: req.CreationTimestamp.Time, inputs: spec.Inputs})
-			case !slices.Contains(hookedRecipes, spec.Recipe):
-				box.recipes = append(box.recipes, req)
-			}
+			box.recipes = append(box.recipes, req)
 		case boardv1alpha1.VerbRun:
 			if claim, ok := runClaimFrom(req); ok {
 				box.runbooks = append(box.runbooks, claim)
@@ -331,19 +316,12 @@ func (r *Reconciler) reapRequests(ctx context.Context, work *workState) error {
 }
 
 // settle reads one standing Request's world and says what phase it is
-// in. It writes nothing except the executor stamp a review consent owes
-// its sandbox, which has to happen before the Request stops being the
-// record of who consented.
+// in. It writes nothing.
 func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1alpha1.Request, now time.Time) requestOutcome {
 	spec := req.Spec
 	switch spec.Verb {
 	case boardv1alpha1.VerbRecipe:
-		if !slices.Contains(hookedRecipes, spec.Recipe) {
-			return r.settleRecipe(work, req, now)
-		}
-		if out, done := r.settleHooked(ctx, work, req); done {
-			return out
-		}
+		return r.settleRecipe(work, req, now)
 
 	case boardv1alpha1.VerbRun:
 		return r.settleRun(work, req, now)
@@ -392,88 +370,6 @@ func (r *Reconciler) settle(ctx context.Context, work *workState, req *boardv1al
 	// Nothing served it. Report what the launcher is doing, so that a
 	// click sitting there for minutes says which kind of waiting it is.
 	return pendingOutcome(req, now)
-}
-
-// settleHooked settles a recipe Request a pass of its own serves: true
-// with its outcome once there is one.
-func (r *Reconciler) settleHooked(ctx context.Context, work *workState, req *boardv1alpha1.Request) (requestOutcome, bool) {
-	spec := req.Spec
-	want := "issue"
-	if spec.Recipe == "review" {
-		want = "pr"
-	}
-	if spec.Item != want {
-		return requestOutcome{
-			phase:   boardv1alpha1.RequestFailed,
-			reason:  "NotLaunchable",
-			message: fmt.Sprintf("the board starts %s on an %s, not an %s", spec.Recipe, want, spec.Item),
-		}, true
-	}
-	switch spec.Recipe {
-	case "fix":
-		// The issue's sandbox may predate the click — a triage or plan made
-		// it, or a fix that ended, which the click runs again — so it is
-		// served by a fix in it since the click: running, or ended after.
-		key := fixKey(work, spec.Member, spec.Number)
-		res, ran := r.Factory.LastResult(key)
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil {
-			annotations := sb.GetAnnotations()
-			fixing := annotations[factorycli.AnnotationTaskType] == "fix" &&
-				(annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateRunning ||
-					!clickedSince(annotations[factorycli.AnnotationCompletionTime], req.CreationTimestamp.Time))
-			if fixing || r.Factory.IsRunning(key) || (ran && res.FinishedAt.After(req.CreationTimestamp.Time)) {
-				return served(sb.GetName()), true
-			}
-		}
-
-	case "review":
-		if sb := work.reviewSandbox(spec.Member, spec.Number); sb != nil {
-			// Persist the consenting executor on the sandbox before the
-			// Request stops being read: it is the durable record that
-			// this review was a member's click.
-			if sb.GetAnnotations()[AnnotationExecutor] != spec.Member {
-				annotations := sb.GetAnnotations()
-				if annotations == nil {
-					annotations = map[string]string{}
-				}
-				annotations[AnnotationExecutor] = spec.Member
-				sb.SetAnnotations(annotations)
-				if err := r.Update(ctx, sb); err != nil {
-					// Not settled: try again next reconcile rather than
-					// drop the consent on the floor.
-					log.FromContext(ctx).Error(err, "stamping executor", "sandbox", sb.GetName())
-					return stillPending, true
-				}
-			}
-			return served(sb.GetName()), true
-		}
-
-	case "triage":
-		// The click stands until a draft is stored: the sandbox may be a
-		// rejected leftover whose tombstone the click overrides.
-		member := spec.Member
-		if member == "" {
-			member = work.board.Namespace
-		}
-		if sb := work.triageSandbox(member, spec.Number); sb != nil && stampedSince(sb.GetAnnotations()[AnnotationTriagedAt], req) {
-			return served(sb.GetName()), true
-		}
-
-	case "plan":
-		// Likewise: the fix sandbox may predate the click, so its
-		// existence proves nothing. A draft stored since the click does.
-		if sb := work.issueSandbox(spec.Member, spec.Number); sb != nil && stampedSince(sb.GetAnnotations()[AnnotationPlannedAt], req) {
-			return served(sb.GetName()), true
-		}
-	}
-	return requestOutcome{}, false
-}
-
-// stampedSince reports whether a draft was stored at (RFC3339) since req
-// was clicked: an older one is the run the click runs again.
-func stampedSince(at string, req *boardv1alpha1.Request) bool {
-	stamped, err := time.Parse(time.RFC3339, at)
-	return err == nil && !stamped.Before(req.CreationTimestamp.Time.Truncate(time.Second))
 }
 
 // served is the ordinary happy ending: the thing the click asked for

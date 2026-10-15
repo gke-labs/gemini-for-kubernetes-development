@@ -72,7 +72,6 @@ const (
 	labelRepoWatch      = "review.gemini.google.com/repowatch"
 	annoTaskState       = "sandbox.gemini.google.com/last-task-state"
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
-	annoRereviewRequest = "review.gemini.google.com/rereview-requested-at"
 	annoReviewError     = "review.gemini.google.com/error"
 	annoFixError        = "board.gemini.google.com/fix-error"
 	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
@@ -1094,21 +1093,19 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	// The board's review runs in a sandbox of its own (the review
 	// recipe's); the PR's sandbox carries the fix and its follow-ups.
 	rsb := sandboxes[factorycli.ReviewSandboxName(repo, pr.GetNumber())]
-	reviewState := ""
 	reviewTaskState := ""
 	reviewError := ""
 	if rsb != nil {
 		annotations := rsb.GetAnnotations()
-		reviewState = annotations["reviewState"]
 		reviewTaskState = annotations[annoTaskState]
 		reviewError = annotations[annoReviewError]
 	}
-	// The pending review is the member's to finalize on GitHub: the
-	// sandbox's breadcrumb, or GitHub itself, which needs no sandbox. A
+	// The pending review is the member's to finalize on GitHub, as GitHub
+	// says (the board query reads the member's review states). A
 	// submitted one is a receipt until someone asks for another review
 	// (submitting clears the request; a re-request re-adds it).
-	reviewPending := (reviewState == "pending" || pendingOnGitHub) && reviewTaskState != "Running"
-	reviewed := (reviewState == "submitted" || reviewedOnGitHub) && !reviewRequested && !reviewPending
+	reviewPending := pendingOnGitHub && reviewTaskState != "Running"
+	reviewed := reviewedOnGitHub && !reviewRequested && !reviewPending
 
 	// Every pull request is a row of the PRs group; what the member may
 	// do on it follows from whether it is theirs (mine) and whether they
@@ -1121,12 +1118,13 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
-	// Why the last run failed: the review's, parked with nothing posted
-	// (a failure before the task, too, which stamps no state), or the
-	// fix's or a follow-up's.
+	// Why the last auto run failed: the review's, parked with nothing
+	// posted (a failure before the task, too, which stamps no state), or
+	// the fix's or a follow-up's. A click's failure is its Request's
+	// (markFailedRecipes).
 	itemError := ""
 	switch {
-	case reviewError != "" && reviewState == "" && reviewTaskState != "Running":
+	case reviewError != "" && !reviewPending && reviewTaskState != "Running":
 		itemError = friendlyReviewError(reviewError)
 	case sb != nil && sb.GetAnnotations()[annoTaskState] == "Failed" && sb.GetAnnotations()[annoLastTaskType] == "fix":
 		itemError = sb.GetAnnotations()[annoFixError]
@@ -1278,17 +1276,6 @@ func (s *Server) kickoff(c *gin.Context, item, recipe string, inputs map[string]
 		} else {
 			if _, _, err := gh.PullRequests.RequestReviewers(ctx, owner, repo, number, github.ReviewersRequest{Reviewers: []string{member}}); err != nil {
 				log.Info("best-effort self review-request failed", "pr", number, "err", err)
-			}
-		}
-	}
-
-	// A fresh review consent also stamps the re-review marker on the PR's
-	// review sandbox, if there is one, so a previously finished (or
-	// abandoned) review relaunches instead of staying terminal.
-	if recipe == "review" {
-		for _, ns := range []string{namespace, board.GetNamespace()} {
-			if sb := s.reviewSandbox(ctx, ns, owner, repo, number); sb != nil {
-				_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoRereviewRequest, nowRFC3339())
 			}
 		}
 	}
@@ -1447,15 +1434,14 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 	// states from GitHub as part of the board query, so a discarded review
 	// stops being announced as soon as the feed refreshes.
 
-	// Clear the sandbox's review state so the row returns to its plain
+	// Clear the sandbox's stored Review so the row returns to its plain
 	// stage; the abandoned-at marker stops the controller from re-marking
-	// the stale invocation result as pending.
+	// a stale auto-review result as pending.
 	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
 		sb := s.reviewSandbox(ctx, ns, owner, repo, number)
 		if sb == nil {
 			continue
 		}
-		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), "reviewState", "")
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.OutputAnnotation(factorycli.AnnotationReviewRun), "")
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun), "")

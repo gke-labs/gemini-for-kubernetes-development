@@ -468,45 +468,15 @@ func reviewSandboxFixture(annotations map[string]interface{}) *unstructured.Unst
 	}}
 }
 
-// A finished review run posted the pending review on GitHub (the runner
-// applies post-review as its harvest): the sandbox records it.
-func TestMailboxReviewPendingOnGithub(t *testing.T) {
-	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
-
-	fake := newFakeLauncher()
-	fake.results["alice/review-repo-42"] = factorycli.Result{Output: "posted\n"}
-	// A standing review click, so ensureReview runs for PR 42.
-	req := launch("review", 42)
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(nil), req)
-
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	updated := &unstructured.Unstructured{}
-	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
-	g.Expect(updated.GetAnnotations()[AnnotationReviewedAt]).NotTo(gomega.BeEmpty())
-
-	// No launch happened (completion short-circuits), and the click is
-	// settled because the sandbox exists — after persisting the executor.
-	g.Expect(fake.launches()).To(gomega.BeEmpty())
-	g.Expect(updated.GetAnnotations()[AnnotationExecutor]).To(gomega.Equal("alice"))
-	status := requestStatus(t, r, req)
-	g.Expect(status.Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
-	g.Expect(status.Sandbox).To(gomega.Equal("review-repo-42"))
-	g.Expect(status.CompletedAt).NotTo(gomega.BeNil())
-}
-
-// A clicked review's Request settles when its sandbox exists, long before
-// the run ends: the resume pass reads the result.
+// A finished auto-review posted the pending review on GitHub (the runner
+// applies post-review as its harvest): the resume pass reads the result
+// and the sandbox records it.
 func TestResumeReviewMarksPending(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Output: "posted\n"}
+	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Output: "================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Review\nspec:\n  body: b\n================================================\nposted\n"}
 	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(nil))
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
@@ -515,14 +485,16 @@ func TestResumeReviewMarksPending(t *testing.T) {
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(sandboxGVK)
 	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("pending"))
+	g.Expect(updated.GetAnnotations()[AnnotationReviewedAt]).NotTo(gomega.BeEmpty())
+	g.Expect(factorycli.IsApplied(updated.GetAnnotations(), factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun), "post-review")).To(gomega.BeTrue())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
 // A controller that restarted mid-review has no result in memory: it
-// invokes the recipe again with the review run recorded on the sandbox,
-// which follows that run instead of starting another. A revise's run,
-// recorded under the same annotation, is not followed.
+// invokes the recipe again with the auto-review run recorded on the
+// sandbox, which follows that run instead of starting another. A member's
+// run, recorded under the same annotation, is its Request's: automation
+// neither follows it nor reviews again.
 func TestResumeReviewByRecordedRun(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
@@ -541,40 +513,45 @@ func TestResumeReviewByRecordedRun(t *testing.T) {
 	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.Equal("review/test-board/42/1700000000"))
 
 	fake2 := newFakeLauncher()
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(recorded("revise/test-board/review-repo-42/review/1700000000")))
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), reviewSandboxFixture(recorded("request/uid-42")))
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	launches = fake2.launches()
-	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.HavePrefix("review/test-board/42/"))
-	g.Expect(launches[0].ReviewOpts.RunName).NotTo(gomega.Equal("review/test-board/42/1700000000"))
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
 }
 
-// A review click runs the review recipe in the clicker's namespace under
-// their identity (the pending review must be authored by them to be
-// visible to them), in their review sandbox, under a fresh run name.
+// A review click is a recipe Request like any other: it runs the review
+// recipe in the clicker's namespace under their identity (the pending
+// review must be authored by them to be visible to them), in their review
+// sandbox, under its Request's run name, posting the pending review when
+// the run ends as the catalog says.
 func TestRequestReviewLaunchAsExecutor(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
+	req := launch("review", 42)
+	req.UID = "uid-42"
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), req)
 
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-42"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/recipe-review-repo-pr-42"))
 	g.Expect(launches[0].ReviewOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].ReviewOpts.Namespace).To(gomega.Equal("alice"))
 	g.Expect(launches[0].ReviewOpts.SandboxName).To(gomega.Equal("review-repo-42"))
 	g.Expect(launches[0].ReviewOpts.URL).To(gomega.Equal("https://github.com/test/repo/pull/42"))
-	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.HavePrefix("review/test-board/42/"))
+	g.Expect(launches[0].ReviewOpts.RunName).To(gomega.Equal("request/uid-42"))
 	g.Expect(launches[0].ReviewOpts.GithubToken).To(gomega.Equal("gho_alice"))
+	g.Expect(launches[0].ReviewOpts.Apply).To(gomega.Equal("post-review"))
+	g.Expect(launches[0].ReviewOpts.Timeout).To(gomega.Equal(45 * time.Minute))
 }
 
-// Fix Requests launch and stay pending until the sandbox exists.
+// A Fix click is a recipe Request like any other: it launches the fix in
+// the issue's sandbox, opening the draft PR when the run ends as the
+// catalog says, and stands until its output is stored.
 func TestRequestFix(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
@@ -587,10 +564,13 @@ func TestRequestFix(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/fix-repo-77"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/recipe-fix-repo-issue-77"))
 	g.Expect(launches[0].FixOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/77"))
+	g.Expect(launches[0].FixOpts.SandboxName).To(gomega.Equal("fix-repo-77"))
+	g.Expect(launches[0].FixOpts.Apply).To(gomega.Equal("open-pr"))
+	g.Expect(launches[0].FixOpts.Timeout).To(gomega.Equal(3 * time.Hour))
 
-	// No sandbox yet: the click stays standing for the next reconcile.
+	// No output yet: the click stays standing for the next reconcile.
 	g.Expect(requestStatus(t, r, req).Phase).To(gomega.BeEmpty())
 }
 
@@ -791,53 +771,24 @@ func TestReviewLaunchesWithoutLimitsBlock(t *testing.T) {
 
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/review-repo-1163"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/recipe-review-repo-pr-1163"))
 }
 
-// A run that failed before its sandbox existed backs off rather than
-// hot-looping the agent.
+// An auto-review that failed before its sandbox existed backs off rather
+// than hot-looping the agent.
 func TestReviewFailureWithoutSandboxBacksOff(t *testing.T) {
 	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
 	fake.results["alice/review-repo-42"] = factorycli.Result{FinishedAt: time.Now(), Err: fmt.Errorf("exit status 1")}
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
+	r := newTestReconciler(fake, autoReviewClient(42), autoReviewBoard(), githubSecret())
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
-// Once the member submits their pending review on GitHub, the row settles:
-// reviewState flips pending -> submitted and stops demanding attention.
-func TestSettleSubmittedReview(t *testing.T) {
-	g := gomega.NewWithT(t)
-
-	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
-		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
-	}}})
-	reviewsClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
-		"https://api.github.com/repos/test/repo/pulls/42/reviews?per_page=100": jsonResp(`[
-			{"id": 1, "state": "COMMENTED", "user": {"login": "alice"}}
-		]`),
-	}}})
-	sandbox := reviewSandboxFixture(map[string]interface{}{"reviewState": "pending"})
-
-	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), sandbox)
-	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client { return reviewsClient }
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	updated := &unstructured.Unstructured{}
-	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r.Get(context.Background(), types.NamespacedName{Name: "review-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
-	g.Expect(updated.GetAnnotations()[AnnotationReviewState]).To(gomega.Equal("submitted"))
-	g.Expect(fake.launches()).To(gomega.BeEmpty())
-}
-
-// A clicked triage's Request settles at sandbox creation, minutes
-// before completion — the resume pass must harvest the finished result.
+// An auto-triage the controller lost sight of (a restart) is harvested by
+// the resume pass when it finishes.
 func TestResumeTriageHarvest(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
@@ -914,12 +865,11 @@ func TestResumeTriageSkipsOtherLaunchers(t *testing.T) {
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 }
 
-// A failed review invocation parks the review: the error lands on the
-// sandbox and no relaunch happens until a member's re-review click is
-// newer than the recorded failure. Auto-retrying re-runs the whole agent
-// against failures (org OAuth restrictions, dead tokens) that only a
-// human can clear.
-func TestReviewErrorParksUntilRetryClick(t *testing.T) {
+// A failed auto-review parks the review: the error lands on the sandbox
+// and automation does not relaunch it. Auto-retrying re-runs the whole
+// agent against failures (org OAuth restrictions, dead tokens) that only
+// a human can clear; a member clicks Review, a recipe Request.
+func TestReviewErrorParks(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
@@ -946,18 +896,6 @@ func TestReviewErrorParksUntilRetryClick(t *testing.T) {
 	_, err = r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
-
-	// A fresh Review click (re-review marker newer than the failure)
-	// re-arms it.
-	annotations := updated.GetAnnotations()
-	annotations[AnnotationRereviewRequested] = time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
-	updated.SetAnnotations(annotations)
-	g.Expect(r.Update(context.Background(), updated)).To(gomega.Succeed())
-
-	_, err = r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(fake.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
 }
 
 func TestReviewErrorLine(t *testing.T) {
@@ -970,16 +908,15 @@ func TestReviewErrorLine(t *testing.T) {
 	g.Expect(reviewErrorLine(factorycli.Result{})).To(gomega.Equal("review failed"))
 }
 
-// A pending review already parked on GitHub blocks a new launch for the
+// A pending review already parked on GitHub blocks an auto-review of the
 // same PR/executor: GitHub allows one pending review per author, so the
 // duplicate run would burn tokens and 422 at the post step. This is also
 // how a clean-slate cluster avoids re-reviewing saved work.
 func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g := gomega.NewWithT(t)
-	ghClient := testGithubClient(`[]`)
 
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("review", 42))
+	r := newTestReconciler(fake, autoReviewClient(42), autoReviewBoard(), githubSecret())
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
 			suffix: "/reviews",
@@ -991,13 +928,12 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake.launches()).To(gomega.BeEmpty())
 
-	// Someone else's pending review is invisible anyway, but a submitted
-	// one by the executor must not block, nor a pending one factory
-	// posted (post-review replaces it).
+	// A pending one factory posted does not block (post-review replaces
+	// it).
 	newGithubClientFromToken = func(_ context.Context, _ string) *github.Client {
 		return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &suffixRoundTripper{
 			suffix: "/reviews",
-			body:   `[{"id": 7, "state": "COMMENTED", "user": {"login": "alice"}}]`,
+			body:   `[{"id": 7, "state": "PENDING", "user": {"login": "alice"}, "body": "x\n<!-- factory:task-output kind=Review task=t -->"}]`,
 		}})
 	}
 	_, err = r.Reconcile(context.Background(), boardRequest())
@@ -1006,30 +942,48 @@ func TestPendingReviewOnGitHubBlocksLaunch(t *testing.T) {
 	g.Expect(fake.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
 }
 
-// The plan loop, controller side: a Plan click launches `factory recipe plan` in
-// the member's fix sandbox; the finished run's banner output is stored as
-// the draft; feedback newer than the draft re-launches with --feedback;
-// approval makes the eventual fix run --with-plan.
-func TestPlanLifecycle(t *testing.T) {
+// autoReviewBoard reviews every open PR (auto.review all), and fixes
+// nothing.
+func autoReviewBoard() *boardv1alpha1.RepoBoard {
+	b := testBoard(nil)
+	b.Spec.Auto.Fix = "off"
+	b.Spec.Auto.Review = "all"
+	return b
+}
+
+// autoReviewClient lists one open PR, n, for auto-review to find.
+func autoReviewClient(n int) *github.Client {
+	fresh := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	return clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user":                                          jsonResp(`{"login": "alice"}`),
+		"https://api.github.com/repos/test/repo/pulls?per_page=100&state=open": jsonResp(fmt.Sprintf(`[{"number": %d, "title": "pr", "updated_at": %q, "labels": []}]`, n, fresh)),
+	}}})
+}
+
+// A Plan click is a recipe Request like any other: it launches `factory
+// recipe plan` in the member's issue sandbox under its Request's run name;
+// the finished run's task output is stored as the run's draft, and the
+// click settles.
+func TestPlanClickIsARecipe(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ghClient := testGithubClient(`[]`)
 
-	// 1. Click: a plan Request for 42, no sandbox yet -> fresh plan launch.
 	fake := newFakeLauncher()
-	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), launch("plan", 42))
+	req := launch("plan", 42)
+	req.UID = "uid-42"
+	r := newTestReconciler(fake, ghClient, testBoard(nil), githubSecret(), req)
 	_, err := r.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	launches := fake.launches()
 	g.Expect(launches).To(gomega.HaveLen(1))
-	g.Expect(launches[0].Key).To(gomega.Equal("alice/plan-repo-42"))
+	g.Expect(launches[0].Key).To(gomega.Equal("alice/recipe-plan-repo-issue-42"))
 	g.Expect(launches[0].PlanOpts).NotTo(gomega.BeNil())
 	g.Expect(launches[0].PlanOpts.Namespace).To(gomega.Equal("alice"))
+	g.Expect(launches[0].PlanOpts.SandboxName).To(gomega.Equal("fix-repo-42"))
 	g.Expect(launches[0].PlanOpts.URL).To(gomega.Equal("https://github.com/test/repo/issues/42"))
-	g.Expect(launches[0].PlanOpts.Inputs["feedback"]).To(gomega.BeEmpty())
-	g.Expect(launches[0].PlanOpts.RunName).To(gomega.HavePrefix("plan/test-board/42/"))
+	g.Expect(launches[0].PlanOpts.RunName).To(gomega.Equal("request/uid-42"))
+	g.Expect(launches[0].PlanOpts.Apply).To(gomega.BeEmpty())
 
-	// 2. Harvest: finished run + fix sandbox -> draft stored, the click
-	// stands until it is, then settles.
 	fixSandbox := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "agents.x-k8s.io/v1alpha1",
 		"kind":       "Sandbox",
@@ -1041,38 +995,26 @@ func TestPlanLifecycle(t *testing.T) {
 				"htmlURL": "https://github.com/test/repo/issues/42",
 				"sandbox.gemini.google.com/last-task-type":  "plan",
 				"sandbox.gemini.google.com/last-task-state": "Completed",
-				// The last plan was posted; this one is not.
-				factorycli.AnnotationPlanApplied: `{"comment":"2026-10-01T00:00:00Z"}`,
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
 	}}
 	fake2 := newFakeLauncher()
-	fake2.results["alice/plan-repo-42"] = factorycli.Result{
-		FinishedAt: time.Now(),
+	fake2.results["alice/recipe-plan-repo-issue-42"] = factorycli.Result{
+		FinishedAt: time.Now().Add(time.Minute),
 		Output:     "banner\n================== TASK OUTPUT =================\napiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\nactions:\n  - verb: comment\nspec:\n  markdown: |-\n    ## Summary\n    Do the thing.\n================================================\n",
 	}
-	planReq := launch("plan", 42)
-	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, planReq)
+	r2 := newTestReconciler(fake2, ghClient, testBoard(nil), githubSecret(), fixSandbox, req)
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.BeEmpty())
-
-	updated := &unstructured.Unstructured{}
-	updated.SetGroupVersionKind(sandboxGVK)
-	g.Expect(r2.Get(context.Background(), types.NamespacedName{Name: "fix-repo-42", Namespace: "alice"}, updated)).To(gomega.Succeed())
+	updated := getSandbox(t, r2, "fix-repo-42")
 	g.Expect(factorycli.PlanDraft(updated.GetAnnotations())).To(gomega.ContainSubstring("Do the thing."))
-	g.Expect(updated.GetAnnotations()[AnnotationPlannedAt]).NotTo(gomega.BeEmpty())
-	// The task output is kept whole: the draft is its spec.
-	g.Expect(updated.GetAnnotations()[factorycli.AnnotationPlanOutput]).To(gomega.ContainSubstring("verb: comment"))
-	g.Expect(updated.GetAnnotations()).NotTo(gomega.HaveKey(factorycli.AnnotationPlanApplied))
 
-	// Draft stored: the click is settled and the next reconcile does not
-	// relaunch.
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.BeEmpty())
-	g.Expect(requestStatus(t, r2, planReq).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
+	g.Expect(requestStatus(t, r2, req).Phase).To(gomega.Equal(boardv1alpha1.RequestSucceeded))
 }
 
 // The plan a fix follows is the click's: a plan's run: fix files the fix
@@ -1093,7 +1035,6 @@ func TestFixTakesTheClicksPlan(t *testing.T) {
 				"annotations": map[string]interface{}{
 					"htmlURL":                        "https://github.com/test/repo/issues/7",
 					factorycli.AnnotationPlanOutput:  storedOutput("Plan", "## Summary\nplanned"),
-					AnnotationPlannedAt:              time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 					factorycli.AnnotationPlanApplied: `{"run":"` + time.Now().UTC().Format(time.RFC3339) + `"}`,
 					// The plan's completion stamps, not a fix's: the fix
 					// has not run.
@@ -1130,19 +1071,6 @@ func TestFixTakesTheClicksPlan(t *testing.T) {
 	for _, l := range fake.launches() {
 		g.Expect(l.FixOpts).To(gomega.BeNil())
 	}
-}
-
-// A rejected plan's stale invocation result must not resurrect the draft.
-func TestPlanResultStale(t *testing.T) {
-	g := gomega.NewWithT(t)
-	now := time.Now()
-	g.Expect(planResultStale(map[string]string{
-		AnnotationPlanRejected: now.UTC().Format(time.RFC3339),
-	}, now.Add(-time.Minute))).To(gomega.BeTrue())
-	g.Expect(planResultStale(map[string]string{}, now)).To(gomega.BeFalse())
-	g.Expect(planResultStale(map[string]string{
-		AnnotationPlanRejected: now.Add(-time.Hour).UTC().Format(time.RFC3339),
-	}, now)).To(gomega.BeFalse())
 }
 
 // Automation defers to a review the executor already submitted (GitHub is
@@ -1187,7 +1115,7 @@ func TestAutoReviewDefersToSubmitted(t *testing.T) {
 	_, err = r2.Reconcile(context.Background(), boardRequest())
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(fake2.launches()).To(gomega.HaveLen(1))
-	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/review-repo-42"))
+	g.Expect(fake2.launches()[0].Key).To(gomega.Equal("alice/recipe-review-repo-pr-42"))
 }
 
 // Relaunching into a paused sandbox stamps unpaused-at so pauseFinished
@@ -1248,7 +1176,6 @@ func TestResumeReviewsSkipsPRSandboxes(t *testing.T) {
 			"annotations": map[string]interface{}{
 				"htmlURL":                     "https://github.com/test/repo/pull/88",
 				factorycli.AnnotationTaskType: "review",
-				AnnotationRereviewRequested:   time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 		"spec": map[string]interface{}{"replicas": int64(1)},
@@ -1300,29 +1227,73 @@ func TestResumeTriageByRecordedRun(t *testing.T) {
 // retries fresh), nor when it started before a marker.
 func TestResumableRun(t *testing.T) {
 	start := time.Date(2026, 10, 4, 12, 0, 0, 500, time.UTC)
-	recorded := `{"name":"plan/b/5/1","task":"recipe-plan-1","startedAt":"` + start.Format(time.RFC3339Nano) + `"}`
+	recorded := `{"name":"auto/b/5/1","task":"recipe-triage-1","startedAt":"` + start.Format(time.RFC3339Nano) + `"}`
 	for name, tc := range map[string]struct {
 		annotations map[string]string
 		result      bool
 		want        string
 	}{
-		"recorded":          {map[string]string{factorycli.AnnotationPlanRun: recorded}, false, "plan/b/5/1"},
+		"recorded":          {map[string]string{factorycli.AnnotationTriageRun: recorded}, false, "auto/b/5/1"},
 		"none recorded":     {map[string]string{}, false, "fresh"},
-		"result in memory":  {map[string]string{factorycli.AnnotationPlanRun: recorded}, true, "fresh"},
-		"after the reject":  {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(-time.Minute).Format(time.RFC3339)}, false, "plan/b/5/1"},
-		"before the reject": {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlanRejected: start.Add(time.Minute).Format(time.RFC3339)}, false, "fresh"},
-		"same second":       {map[string]string{factorycli.AnnotationPlanRun: recorded, AnnotationPlannedAt: start.Format(time.RFC3339)}, false, "fresh"},
-		"unreadable":        {map[string]string{factorycli.AnnotationPlanRun: "{"}, false, "fresh"},
+		"result in memory":  {map[string]string{factorycli.AnnotationTriageRun: recorded}, true, "fresh"},
+		"after the reject":  {map[string]string{factorycli.AnnotationTriageRun: recorded, AnnotationTriageRejected: start.Add(-time.Minute).Format(time.RFC3339)}, false, "auto/b/5/1"},
+		"before the reject": {map[string]string{factorycli.AnnotationTriageRun: recorded, AnnotationTriageRejected: start.Add(time.Minute).Format(time.RFC3339)}, false, "fresh"},
+		"same second":       {map[string]string{factorycli.AnnotationTriageRun: recorded, AnnotationTriagedAt: start.Format(time.RFC3339)}, false, "fresh"},
+		"unreadable":        {map[string]string{factorycli.AnnotationTriageRun: "{"}, false, "fresh"},
 	} {
 		fake := newFakeLauncher()
 		if tc.result {
-			fake.results["alice/plan-repo-5"] = factorycli.Result{FinishedAt: time.Now()}
+			fake.results["alice/triage-repo-5"] = factorycli.Result{FinishedAt: time.Now()}
 		}
 		r := &Reconciler{Factory: fake}
-		got := r.resumableRun("alice/plan-repo-5", tc.annotations, factorycli.AnnotationPlanRun, "fresh",
-			AnnotationPlannedAt, AnnotationPlanRejected)
+		got := r.resumableRun("alice/triage-repo-5", tc.annotations, factorycli.AnnotationTriageRun, "fresh",
+			AnnotationTriagedAt, AnnotationTriageRejected)
 		if got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
 	}
+}
+
+// Automation leaves an item a member ran the recipe on: their run is
+// recorded under a name automation does not give (their Request's), so
+// auto-triage does not triage the issue again, nor auto-review review the
+// PR again.
+func TestAutomationLeavesAMembersRun(t *testing.T) {
+	g := gomega.NewWithT(t)
+	memberRun := func(task string) string {
+		return `{"name":"request/uid-1","task":"` + task + `","startedAt":"` + time.Now().UTC().Format(time.RFC3339Nano) + `"}`
+	}
+
+	triaged := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "agents.x-k8s.io/v1alpha1",
+		"kind":       "Sandbox",
+		"metadata": map[string]interface{}{
+			"name": "fix-repo-30", "namespace": "alice",
+			"labels": map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+			"annotations": map[string]interface{}{
+				"htmlURL": "https://github.com/test/repo/issues/30",
+				"sandbox.gemini.google.com/recipe-triage-task-state": "Completed",
+				factorycli.AnnotationTriageRun:                       memberRun("recipe-triage-1"),
+			},
+		},
+		"spec": map[string]interface{}{"replicas": int64(1)},
+	}}
+	ghClient := clients.NewGitHubClientFromHTTP(&http.Client{Transport: &mockRoundTripper{responses: map[string]func() *http.Response{
+		"https://api.github.com/user": jsonResp(`{"login": "alice"}`),
+		"https://api.github.com/repos/test/repo/issues?per_page=100&state=open": jsonResp(`[
+			{"number": 30, "title": "triaged by a member", "html_url": "https://github.com/test/repo/issues/30", "labels": []}
+		]`),
+	}}})
+	fake := newFakeLauncher()
+	r := newTestReconciler(fake, ghClient, testBoardWithTriage(), githubSecret(), triaged)
+	_, err := r.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake.launches()).To(gomega.BeEmpty())
+
+	reviewed := reviewSandboxFixture(map[string]interface{}{factorycli.AnnotationReviewRun: memberRun("recipe-review-1")})
+	fake2 := newFakeLauncher()
+	r2 := newTestReconciler(fake2, autoReviewClient(42), autoReviewBoard(), githubSecret(), reviewed)
+	_, err = r2.Reconcile(context.Background(), boardRequest())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(fake2.launches()).To(gomega.BeEmpty())
 }

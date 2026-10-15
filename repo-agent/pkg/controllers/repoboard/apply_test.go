@@ -75,7 +75,6 @@ func draftSandbox(annotations map[string]interface{}) *unstructured.Unstructured
 func TestApplyPlanComment(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := draftSandbox(map[string]interface{}{
-		AnnotationPlannedAt: "2026-10-01T00:00:00Z",
 		factorycli.AnnotationPlanOutput: "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Plan\n" +
 			"target:\n  url: https://github.com/test/repo/issues/42\nsource:\n  task: recipe-plan-1\n" +
 			"spec:\n  markdown: |-\n    ## Summary\n    Edited plan.\n",
