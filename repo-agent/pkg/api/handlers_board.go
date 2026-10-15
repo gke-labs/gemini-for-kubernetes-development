@@ -72,10 +72,7 @@ const (
 	labelRepoWatch      = "review.gemini.google.com/repowatch"
 	annoTaskState       = "sandbox.gemini.google.com/last-task-state"
 	annoCompletionTime  = "sandbox.gemini.google.com/completion-time"
-	annoReviewError     = "review.gemini.google.com/error"
-	annoFixError        = "board.gemini.google.com/fix-error"
 	annoLastTaskType    = "sandbox.gemini.google.com/last-task-type"
-	annoReviewAbandoned = "review.gemini.google.com/abandoned-at"
 	// annoBoard is the board whose controller stored the sandbox's draft.
 	annoBoard = "board.gemini.google.com/board"
 )
@@ -940,15 +937,10 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 	}
 
 	sb := factorycli.IssueSandbox(maps.Values(sandboxes), repo, issue.GetNumber())
-	// The issue's fix sandbox, kept apart from sb, which a triage-only
-	// sandbox is taken off the row as.
-	planSB := sb
-	state := ""
 	prURL := ""
 	taskType := ""
 	if sb != nil {
 		annotations := sb.GetAnnotations()
-		state = annotations[annoTaskState]
 		taskType = annotations[annoLastTaskType]
 		if u := annotations["htmlURL"]; strings.Contains(u, "/pull/") {
 			prURL = u
@@ -995,9 +987,6 @@ func (s *Server) mergeIssueRow(items map[string]*models.WorkItem, sandboxes map[
 		Sandbox:   workSandbox(sb),
 		UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
 	}
-	if planSB != nil && state == "Failed" && taskType == "fix" {
-		items[key].Error = planSB.GetAnnotations()[annoFixError]
-	}
 	if ws := items[key].Sandbox; ws != nil && sb == triageSB && ws.TaskState == "" {
 		ws.TaskState = triageState
 	}
@@ -1040,17 +1029,14 @@ func closingRefs(body string) []int {
 // mergePRRow adds a PR row when it involves the member (authored,
 // review-requested, trigger-labeled, or has a factory sandbox); force
 // includes it regardless (used for PRs that address an issue on the board).
-// friendlyReviewError rewrites known agent-run failures into an
-// instruction the member can act on; anything unrecognized passes through
-// verbatim. Empty stays empty — old sandboxes predate the error annotation.
-func friendlyReviewError(msg string) string {
+// friendlyRunError rewrites known run failures into an instruction the
+// member can act on; anything unrecognized passes through verbatim.
+func friendlyRunError(msg string) string {
 	switch {
-	case msg == "":
-		return ""
 	case strings.Contains(msg, "OAuth App access restrictions"):
-		return "This organization blocks OAuth app tokens. Add a personal access token (manual_pat key in your github-pat secret), then click Review again. Agent said: " + msg
+		return "This organization blocks OAuth app tokens. Add a personal access token (manual_pat key in your github-pat secret), then run it again. Agent said: " + msg
 	case strings.Contains(msg, "Bad credentials"):
-		return "GitHub rejected your token — sign in again or add a personal access token (manual_pat), then click Review again. Agent said: " + msg
+		return "GitHub rejected your token — sign in again or add a personal access token (manual_pat), then run it again. Agent said: " + msg
 	default:
 		return msg
 	}
@@ -1094,11 +1080,8 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	// recipe's); the PR's sandbox carries the fix and its follow-ups.
 	rsb := sandboxes[factorycli.ReviewSandboxName(repo, pr.GetNumber())]
 	reviewTaskState := ""
-	reviewError := ""
 	if rsb != nil {
-		annotations := rsb.GetAnnotations()
-		reviewTaskState = annotations[annoTaskState]
-		reviewError = annotations[annoReviewError]
+		reviewTaskState = rsb.GetAnnotations()[annoTaskState]
 	}
 	// The pending review is the member's to finalize on GitHub, as GitHub
 	// says (the board query reads the member's review states). A
@@ -1118,17 +1101,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 	}
 
 	key := fmt.Sprintf("pr-%d", pr.GetNumber())
-	// Why the last auto run failed: the review's, parked with nothing
-	// posted (a failure before the task, too, which stamps no state), or
-	// the fix's or a follow-up's. A click's failure is its Request's
-	// (markFailedRecipes).
-	itemError := ""
-	switch {
-	case reviewError != "" && !reviewPending && reviewTaskState != "Running":
-		itemError = friendlyReviewError(reviewError)
-	case sb != nil && sb.GetAnnotations()[annoTaskState] == "Failed" && sb.GetAnnotations()[annoLastTaskType] == "fix":
-		itemError = sb.GetAnnotations()[annoFixError]
-	}
 	items[key] = &models.WorkItem{
 		Type:            "pr",
 		Group:           "prs",
@@ -1140,7 +1112,6 @@ func (s *Server) mergePRRow(items map[string]*models.WorkItem, sandboxes map[str
 		Labels:          prLabels,
 		ReviewRequested: reviewRequested,
 		HTMLURL:         pr.GetHTMLURL(),
-		Error:           itemError,
 		ReviewPending:   reviewPending,
 		Reviewed:        reviewed,
 		PRURL:           pr.GetHTMLURL(),
@@ -1435,14 +1406,13 @@ func (s *Server) abandonBoardReview(c *gin.Context) {
 	// stops being announced as soon as the feed refreshes.
 
 	// Clear the sandbox's stored Review so the row returns to its plain
-	// stage; the abandoned-at marker stops the controller from re-marking
-	// a stale auto-review result as pending.
+	// stage. Its run stays recorded, so automation does not review the PR
+	// again.
 	for _, ns := range []string{s.Auth.GetNamespaceFromContext(c), board.GetNamespace()} {
 		sb := s.reviewSandbox(ctx, ns, owner, repo, number)
 		if sb == nil {
 			continue
 		}
-		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), annoReviewAbandoned, nowRFC3339())
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.OutputAnnotation(factorycli.AnnotationReviewRun), "")
 		_ = s.K8sManager.UpdateSandboxAnnotation(ctx, ns, sb.GetName(), factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun), "")
 		_ = s.K8sManager.ScaledownSandboxByName(ctx, ns, sb.GetName())

@@ -47,14 +47,6 @@ func storedOutput(kind, draft string) string {
 	return doc
 }
 
-// triageResult is a triage run's output with a Triage task output whose
-// spec is spec's lines.
-func triageResult(spec string) string {
-	return "...\n================== TASK OUTPUT =================\n" +
-		"apiVersion: factory.gemini.google.com/v1alpha1\nkind: Triage\nsource:\n  task: recipe-triage-1\nspec:\n" + spec +
-		"================================================\n"
-}
-
 func draftSandbox(annotations map[string]interface{}) *unstructured.Unstructured {
 	annotations["htmlURL"] = "https://github.com/test/repo/issues/42"
 	return &unstructured.Unstructured{Object: map[string]interface{}{
@@ -121,7 +113,6 @@ func TestApplyFailure(t *testing.T) {
 	g := gomega.NewWithT(t)
 	sb := draftSandbox(map[string]interface{}{
 		factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]\n  assessment: A crash."),
-		AnnotationTriagedAt:               "2026-10-01T00:00:00Z",
 	})
 	req := applyClick(42, "recipe-triage", "label")
 	fake := newFakeLauncher()
@@ -148,7 +139,6 @@ func TestApplyTriageCommentWithoutTask(t *testing.T) {
 	sb := draftSandbox(map[string]interface{}{
 		factorycli.AnnotationTriageOutput: storedOutput("Triage", "triage:\n  labels: [bug]\n  duplicates: ['#7']\n  assessment: A crash."),
 		factorycli.AnnotationTriageRun:    `{"name":"triage/b/42/1","task":"recipe-triage-9","startedAt":"2026-10-01T00:00:00Z","kind":"Triage"}`,
-		AnnotationTriagedAt:               "2026-10-01T00:00:00Z",
 	})
 	req := applyClick(42, "recipe-triage", "comment")
 	fake := newFakeLauncher()

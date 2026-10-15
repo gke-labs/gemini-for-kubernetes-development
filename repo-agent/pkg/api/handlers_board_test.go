@@ -538,7 +538,8 @@ func TestGetBoardWork(t *testing.T) {
 
 // The PR a fix opened carries the fix's session, and its row follows the
 // fix's run, one continuing its session included: working while it runs, needs you
-// with the reason when it failed, waiting on others once it is done.
+// when it failed (the reason is its Request's, markFailedRecipes), waiting on
+// others once it is done.
 func TestPRRowFromTheFixRun(t *testing.T) {
 	for _, tc := range []struct{ state, status, attention string }{
 		{"Running", "running", "working"},
@@ -559,7 +560,6 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 				"sandbox.gemini.google.com/last-task-type":  "fix",
 				"sandbox.gemini.google.com/last-task-state": tc.state,
 				factorycli.AnnotationFixRun:                 run,
-				annoFixError:                                "push: the branch moved",
 			}, 1)
 		_, r, _ := boardTestServer(t, ghResponses, boardCR(), sb)
 		req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -580,9 +580,6 @@ func TestPRRowFromTheFixRun(t *testing.T) {
 		}
 		if len(row.Sessions) != 1 || row.Sessions[0].Status != tc.status || row.Attention != tc.attention {
 			t.Errorf("%s: sessions %+v, attention %q; want %s, %s", tc.state, row.Sessions, row.Attention, tc.status, tc.attention)
-		}
-		if failed := tc.state == "Failed"; failed != (row.Error != "") {
-			t.Errorf("%s: error %q", tc.state, row.Error)
 		}
 	}
 }
@@ -1231,19 +1228,16 @@ func TestFeedIncludesUninvolvedPRs(t *testing.T) {
 	t.Fatalf("uninvolved PR should be in the universe: %s", w.Body.String())
 }
 
-func TestFriendlyReviewError(t *testing.T) {
-	if got := friendlyReviewError(""); got != "" {
-		t.Errorf("empty error must stay empty, got %q", got)
-	}
-	got := friendlyReviewError("failed to create review on GitHub: 403 the `kubernetes-sigs` organization has enabled OAuth App access restrictions")
+func TestFriendlyRunError(t *testing.T) {
+	got := friendlyRunError("failed to create review on GitHub: 403 the `kubernetes-sigs` organization has enabled OAuth App access restrictions")
 	if !strings.Contains(got, "manual_pat") {
 		t.Errorf("OAuth-restriction error should point at manual_pat, got %q", got)
 	}
-	got = friendlyReviewError("HTTP 401: Bad credentials (https://api.github.com/graphql)")
+	got = friendlyRunError("HTTP 401: Bad credentials (https://api.github.com/graphql)")
 	if !strings.Contains(got, "sign in again") && !strings.Contains(got, "personal access token") {
 		t.Errorf("bad-credentials error should point at re-auth, got %q", got)
 	}
-	if got := friendlyReviewError("some novel failure"); got != "some novel failure" {
+	if got := friendlyRunError("some novel failure"); got != "some novel failure" {
 		t.Errorf("unknown errors must pass through, got %q", got)
 	}
 }
@@ -1557,9 +1551,10 @@ func TestRejectATriage(t *testing.T) {
 	t.Fatalf("issue-20 missing: %s", w.Body.String())
 }
 
-// A pre-task launch failure (sandbox-ready timeout) stamps the review
-// error but never a task state: the row must say why, need the member,
-// and offer Review again, not sit on "starting" forever.
+// A launch that failed before its task (a sandbox-ready timeout) fails
+// its Request with the reason and stamps no task state: the row says why,
+// needs the member, and offers Review again rather than sitting on
+// "starting" forever. An automation's run fails the same way.
 func TestPrelaunchFailureRendersFailed(t *testing.T) {
 	fresh := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
 	ghResponses := map[string]string{
@@ -1568,13 +1563,11 @@ func TestPrelaunchFailureRendersFailed(t *testing.T) {
 			 "user": {"login": "carol"}, "requested_reviewers": [{"login": "alice"}]}
 		]`,
 	}
-	stuck := sandboxCR("review-repo-55",
-		map[string]interface{}{"factory.gemini.google.com/managed": "true", "sandbox.gemini.google.com/type": "recipe"},
-		map[string]interface{}{
-			"htmlURL":                           "https://github.com/test/repo/pull/55",
-			"review.gemini.google.com/error":    "connecting to sandbox: timed out waiting for sandbox pod",
-			"review.gemini.google.com/error-at": fresh,
-		}, 1)
+	stuck := requestCR(boardv1alpha1.RequestSpec{Verb: boardv1alpha1.VerbRecipe, Recipe: "review", Item: "pr", Number: 55})
+	_ = unstructured.SetNestedField(stuck.Object, boardv1alpha1.RequestFailed, "status", "phase")
+	_ = unstructured.SetNestedField(stuck.Object, "RunFailed", "status", "reason")
+	_ = unstructured.SetNestedField(stuck.Object, "connecting to sandbox: timed out waiting for sandbox pod", "status", "message")
+	_ = unstructured.SetNestedField(stuck.Object, fresh, "status", "completedAt")
 
 	_, r, _ := boardTestServer(t, ghResponses, boardCR(), stuck)
 	req, _ := http.NewRequest("GET", "/board/myboard/work", nil)
@@ -2014,12 +2007,8 @@ func TestAbandonFindsTheReviewSandbox(t *testing.T) {
 		t.Fatalf("abandon: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	a := annotations("review-repo-42")
-	if a[annoReviewAbandoned] == "" || a[factorycli.OutputAnnotation(factorycli.AnnotationReviewRun)] != "" ||
-		a[factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun)] != "" {
-		t.Errorf("abandon did not park the review sandbox: %v", a)
-	}
-	if annotations("factory-pr-repo-42")[annoReviewAbandoned] != "" {
-		t.Error("abandon stamped the PR's follow-up sandbox")
+	if a[factorycli.OutputAnnotation(factorycli.AnnotationReviewRun)] != "" || a[factorycli.AppliedAnnotation(factorycli.AnnotationReviewRun)] != "" {
+		t.Errorf("abandon did not clear the review sandbox's draft: %v", a)
 	}
 }
 

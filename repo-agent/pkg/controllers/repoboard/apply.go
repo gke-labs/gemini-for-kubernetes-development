@@ -87,8 +87,8 @@ func applyMalformed(spec boardv1alpha1.RequestSpec) string {
 
 // applyDraft is the sandbox an apply names, its run there and the output
 // stored for it, when that output offers the action; nil when there is
-// none. The sandbox is the member's, or the board's: auto-triage's, which
-// shares its name.
+// none. The sandbox is the member's, or the board's: an automation run's,
+// which shares its name.
 func applyDraft(work *workState, spec boardv1alpha1.RequestSpec) (*unstructured.Unstructured, factorycli.RecordedRun, string) {
 	runKey := factorycli.RunAnnotation(spec.Apply.Run)
 	for _, ns := range []string{spec.Member, work.board.Namespace} {

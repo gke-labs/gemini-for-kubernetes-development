@@ -192,7 +192,7 @@ func markFailedRecipes(items map[string]*models.WorkItem, catalog []boardv1alpha
 		if item == nil || item.Error != "" || runSince(item, recipeGroup(catalog, req.Spec.Recipe), req.Status.CompletedAt.Time) {
 			continue
 		}
-		item.Error = fmt.Sprintf("%s failed: %s", recipeLabel(catalog, req.Spec.Recipe), cmp.Or(req.Status.Message, req.Status.Reason))
+		item.Error = fmt.Sprintf("%s failed: %s", recipeLabel(catalog, req.Spec.Recipe), friendlyRunError(cmp.Or(req.Status.Message, req.Status.Reason)))
 	}
 }
 

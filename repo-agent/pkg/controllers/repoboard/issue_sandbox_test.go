@@ -2,7 +2,6 @@ package repoboard
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -44,28 +43,6 @@ func getSandbox(t *testing.T, r *Reconciler, name string) *unstructured.Unstruct
 	return sb
 }
 
-// A triage that ran in the issue's sandbox leaves its draft there under its
-// own key.
-func TestTriageHarvestIntoIssueSandbox(t *testing.T) {
-	g := gomega.NewWithT(t)
-	sb := issueSandbox("repo-30", "30", map[string]interface{}{
-		factorycli.AnnotationRecipeTriageTaskState: "Completed",
-	})
-	fake := newFakeLauncher()
-	fake.results["alice/triage-repo-30"] = factorycli.Result{
-		FinishedAt: time.Now(),
-		Output:     triageResult("  labels: [bug]\n"),
-	}
-	r := newTestReconciler(fake, testGithubClient(`[]`), testBoard(nil), githubSecret(), sb)
-	_, err := r.Reconcile(context.Background(), boardRequest())
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-
-	a := getSandbox(t, r, "repo-30").GetAnnotations()
-	g.Expect(a[factorycli.AnnotationTriageOutput]).To(gomega.ContainSubstring("labels: [bug]"))
-	g.Expect(a[AnnotationTriagedAt]).NotTo(gomega.BeEmpty())
-	g.Expect(fake.launches()).To(gomega.BeEmpty())
-}
-
 // A Fix click on an issue whose sandbox has only been triaged in launches
 // the fix: the sandbox existing is not the fix having started.
 func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
@@ -73,7 +50,6 @@ func TestFixClickOnTriagedIssueLaunches(t *testing.T) {
 	sb := issueSandbox("fix-repo-77", "77", map[string]interface{}{
 		factorycli.AnnotationRecipeTriageTaskState: "Completed",
 		factorycli.AnnotationTriageOutput:          storedOutput("Triage", "triage:\n  assessment: x"),
-		AnnotationTriagedAt:                        time.Now().UTC().Format(time.RFC3339),
 	})
 	fake := newFakeLauncher()
 	req := launch("fix", 77)
@@ -138,12 +114,4 @@ func TestTriageClickRunsInClickersNamespace(t *testing.T) {
 	g.Expect(launches[0].TriageOpts.SandboxName).To(gomega.Equal("fix-repo-40"))
 	g.Expect(launches[0].TriageOpts.GithubToken).To(gomega.Equal("gho_bob"))
 	g.Expect(launches[0].TriageOpts.RunName).To(gomega.Equal("request/uid-40"))
-}
-
-// Auto-triage is recorded under the board, the issue and the launch, so
-// that a failed one is retried. (A click's is its Request's.)
-func TestTriageRunName(t *testing.T) {
-	if got := triageRunName("b", 5); !strings.HasPrefix(got, "auto/b/5/") {
-		t.Errorf("auto: %q", got)
-	}
 }
