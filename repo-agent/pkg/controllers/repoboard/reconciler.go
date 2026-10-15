@@ -47,34 +47,13 @@ import (
 )
 
 const (
-	// Review and sandbox annotations; the review names are the PR-review
-	// flow's wire contract, kept so the API/UI read one shape.
-	AnnotationReviewedAt       = "review.gemini.google.com/reviewed-at"
+	// Sandbox annotations.
 	AnnotationPreventAutoPause = "sandbox.gemini.google.com/prevent-auto-shutdown"
 	AnnotationUnpausedAt       = "sandbox.gemini.google.com/unpaused-at"
 	AnnotationBoard            = "board.gemini.google.com/board"
 	// AnnotationExecutor records which member a run on the sandbox ran
-	// as (keepRecipeOutput), so a resumed fix keeps the executor identity
-	// even when the sandbox lives in the board namespace (personal
-	// boards).
+	// as (keepRecipeOutput).
 	AnnotationExecutor = "board.gemini.google.com/executor"
-	// AnnotationReviewAbandoned is stamped by the API when the member
-	// deletes their pending review on GitHub; invocation results older
-	// than this must not be re-recorded as pending.
-	AnnotationReviewAbandoned = "review.gemini.google.com/abandoned-at"
-	// AnnotationReviewError parks a failed auto-review: the message
-	// renders on the board, and automation does not try again. Retrying
-	// re-runs the whole agent, and failures that need a human (org blocks
-	// the token, bad PAT) never fix themselves; a member clicks Review.
-	AnnotationReviewError   = "review.gemini.google.com/error"
-	AnnotationReviewErrorAt = "review.gemini.google.com/error-at"
-	// AnnotationFixHarvestedAt is when the controller last read a fix
-	// run's result (the PR it opened, or why it failed): a fix run
-	// recorded after it has not been read yet, and a restarted controller
-	// follows it by its run name to open its PR. AnnotationFixError is
-	// why the last one failed, until one succeeds.
-	AnnotationFixHarvestedAt = "board.gemini.google.com/fix-harvested-at"
-	AnnotationFixError       = "board.gemini.google.com/fix-error"
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
@@ -126,15 +105,6 @@ type Reconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 //+kubebuilder:rbac:groups="",resources=pods/portforward,verbs=create
 
-// fixPlan is one auto-fix to ensure (spec.auto.fix): the executor is the
-// member whose identity and namespace run the task. A Fix click is a
-// recipe Request (ensureRecipes).
-type fixPlan struct {
-	issue    int
-	issueURL string
-	executor string
-}
-
 // maxActive mirrors the CRD default for specs that omit the limits block
 // entirely (API-server defaulting only fires when the parent object
 // exists, so a UI-created board carries no limits at all — zero must mean
@@ -144,16 +114,6 @@ func maxActive(board *boardv1alpha1.RepoBoard) int {
 		return 5
 	}
 	return board.Spec.Limits.MaxActive
-}
-
-// reviewPlan is one auto-review to ensure (spec.auto.review). Reviews are
-// always attributed: the executor is the board's owner, the run happens in
-// their namespace under their identity, and the pending review lands on
-// GitHub visible only to them. Plans without an executor never run. A
-// Review click is a recipe Request (ensureRecipes).
-type reviewPlan struct {
-	pr       int
-	executor string
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -182,68 +142,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
 
-	// Build the work plan: standing automation (spec.auto — deliberate,
-	// recency-bounded, verb scopes named by their values) plus the
-	// standing Requests (clicks, every one of them a recipe's, an apply,
-	// a watch, a run or a research session). Nothing else launches
-	// anything; what the member VIEWS is client-side state the controller
-	// never reads.
-	var fixes []fixPlan
-	var reviews []reviewPlan
-	switch board.Spec.Auto.Review {
-	case "all":
-		rv, err := r.discoverAllPRs(ctx, ghClient, work)
-		if err != nil {
-			logger.Error(err, "auto-review discovery failed")
-		}
-		reviews = append(reviews, rv...)
-	case "requested":
-		rv, err := r.discoverRequestedReviews(ctx, ghClient, work)
-		if err != nil {
-			logger.Error(err, "requested-review discovery failed")
-		}
-		reviews = append(reviews, rv...)
-	}
-	var triageCandidates []*github.Issue
-	if board.Spec.Auto.Triage == "unclaimed" || board.Spec.Auto.Triage == "all" {
-		tc, err := r.discoverTriage(ctx, ghClient, work)
-		if err != nil {
-			logger.Error(err, "triage discovery failed")
-		}
-		triageCandidates = tc
-	}
-	if board.Spec.Auto.Fix == "assigned" {
-		f, err := r.discoverAssigned(ctx, ghClient, work)
-		if err != nil {
-			logger.Error(err, "assigned-issue discovery failed")
-		}
-		fixes = append(fixes, f...)
-	}
-	// The clicks. Requests are objects in this namespace, so a failure to
-	// list them is a failure to reconcile: carrying on would read as
-	// "nobody clicked anything" and quietly settle nothing.
+	// The work: standing automation (spec.auto — deliberate,
+	// recency-bounded, verb scopes named by their values), which files
+	// recipe Requests as the board's owner, and the standing Requests
+	// (clicks and automation's alike: a recipe's, an apply, a watch, a
+	// run or a research session). Nothing else launches anything; what
+	// the member VIEWS is client-side state the controller never reads.
+	wanted := r.discoverAuto(ctx, ghClient, work)
+	// Requests are objects in this namespace, so a failure to list them
+	// is a failure to reconcile: carrying on would read as "nobody
+	// clicked anything" and quietly settle nothing.
 	if err := r.loadRequests(ctx, work); err != nil {
 		return ctrl.Result{}, err
 	}
 	mail := r.requestMailbox(work)
 
-	// Drop plans whose executor never onboarded (no namespace/token — we
-	// could not execute as them anyway).
-	fixes = r.filterOnboarded(ctx, logger, fixes)
-
-	// Aggregate sandboxes across every involved namespace: the board's own,
-	// plus each planned executor's. (Sandboxes of past executors surface as
-	// long as their claim — the GitHub assignment — stands.)
+	// Aggregate sandboxes across every involved namespace: the board's
+	// own, plus each Request's member's. A research claim is served by
+	// its sandbox existing, so the member's namespace has to be one the
+	// sandbox load covers, or the claim would be relaunched on every
+	// reconcile.
 	namespaces := map[string]bool{board.Namespace: true}
-	for _, plan := range fixes {
-		namespaces[plan.executor] = true
-	}
-	// A research claim is served by its sandbox existing, so the
-	// member's namespace has to be one the sandbox load covers. Boards
-	// are personal today, which makes that the board's own namespace —
-	// listed already. This is here for the same reason the fix plans
-	// above list theirs: a claim from elsewhere would otherwise be
-	// relaunched on every reconcile.
 	for _, claim := range mail.research {
 		namespaces[claim.member] = true
 	}
@@ -256,43 +175,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, req := range mail.watches {
 		namespaces[req.Spec.Member] = true
 	}
-	for _, plan := range reviews {
-		if plan.executor != "" {
-			namespaces[plan.executor] = true
-		}
-	}
 	if err := r.loadSandboxes(ctx, work, namespaces); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// One pass per fix.
-	seenFix := map[string]bool{}
-	for _, plan := range append(fixes, r.resumeFixes(work)...) {
-		k := fmt.Sprintf("%s/%d", plan.executor, plan.issue)
-		if seenFix[k] {
-			continue
-		}
-		seenFix[k] = true
-		r.ensureFix(ctx, work, plan)
-	}
-	for _, plan := range dedupeReviews(reviews) {
-		r.ensureReview(ctx, work, plan)
-	}
-	// Auto-triage, which has no clicker, runs in the board owner's
-	// namespace.
-	for _, issue := range triageCandidates {
-		r.ensureTriage(ctx, work, issue, board.Namespace, triageRunName(board.Name, issue.GetNumber()))
-	}
+	// What automation is owed is filed now and launched as the Requests
+	// it files wake the board, like a click's.
+	r.fileAutoRequests(ctx, work, wanted)
 	r.ensureApplies(ctx, work, mail.applies)
 	r.ensureRecipes(ctx, work, mail.recipes)
 	r.ensureWatches(ctx, work, mail.watches)
 	r.ensureRunbookClaims(ctx, work, mail.runbooks)
 	r.ensureResearchClaims(ctx, work, mail.research)
-
-	// Resume in-flight auto-reviews and auto-triages: harvest finished
-	// results and reattach after controller restarts.
-	r.resumeReviews(ctx, work)
-	r.resumeTriages(ctx, work)
 
 	// Settle every standing click against what the passes above left
 	// behind, and collect the ones that have been settled long enough.
@@ -332,20 +226,10 @@ type workState struct {
 	requests []*boardv1alpha1.Request
 }
 
-func (w *workState) fixSandboxName(issue int) string {
-	return factorycli.FixSandboxName(w.repo, issue)
-}
-
 // issueSandbox is issue's sandbox in namespace (factorycli.IssueSandbox),
 // whatever factory named it.
 func (w *workState) issueSandbox(namespace string, issue int) *unstructured.Unstructured {
 	return factorycli.IssueSandbox(w.sandboxesIn(namespace), w.repo, issue)
-}
-
-// triageSandbox is the sandbox in namespace holding issue's triage
-// (factorycli.TriageSandbox).
-func (w *workState) triageSandbox(namespace string, issue int) *unstructured.Unstructured {
-	return factorycli.TriageSandbox(w.sandboxesIn(namespace), w.repo, issue)
 }
 
 func (w *workState) sandboxesIn(namespace string) iter.Seq[*unstructured.Unstructured] {
@@ -365,12 +249,6 @@ func (w *workState) findSandbox(namespace, name string) *unstructured.Unstructur
 		}
 	}
 	return nil
-}
-
-// reviewSandbox is the member's sandbox of pr's review
-// (factorycli.ReviewSandboxName), or nil.
-func (w *workState) reviewSandbox(namespace string, pr int) *unstructured.Unstructured {
-	return w.findSandbox(namespace, factorycli.ReviewSandboxName(w.repo, pr))
 }
 
 // discoveryClient resolves the owner's identity: boards are personal, so
@@ -446,82 +324,6 @@ func hasAnyGithubLabel(labels []*github.Label, names []string) bool {
 	return false
 }
 
-// discoverAllPRs plans auto reviews for every eligible open PR (auto.review
-// "all"). Reviews run as the owner — enabling the verb was their consent.
-func (r *Reconciler) discoverAllPRs(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
-	var reviews []reviewPlan
-	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return reviews, err
-		}
-		for _, pr := range prs {
-			if !autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) {
-				continue
-			}
-			reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: work.board.Namespace})
-		}
-		if resp.NextPage == 0 {
-			return reviews, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// discoverRequestedReviews plans reviews for open PRs that explicitly
-// request the owner's review (the standing auto-review opt-in tier).
-func (r *Reconciler) discoverRequestedReviews(ctx context.Context, ghClient *github.Client, work *workState) ([]reviewPlan, error) {
-	var reviews []reviewPlan
-	owner := work.board.Namespace
-	opts := &github.PullRequestListOptions{State: "open", ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		prs, resp, err := ghClient.PullRequests.List(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return reviews, err
-		}
-		for _, pr := range prs {
-			if !autoEligible(work.board, pr.Labels, pr.GetUpdatedAt()) {
-				continue
-			}
-			for _, reviewer := range pr.RequestedReviewers {
-				if strings.EqualFold(reviewer.GetLogin(), owner) {
-					reviews = append(reviews, reviewPlan{pr: pr.GetNumber(), executor: owner})
-					break
-				}
-			}
-		}
-		if resp.NextPage == 0 {
-			return reviews, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-// discoverAssigned lists open issues assigned to the personal-board member
-// for the require=[assigned] auto tier.
-func (r *Reconciler) discoverAssigned(ctx context.Context, ghClient *github.Client, work *workState) ([]fixPlan, error) {
-	member := work.board.Namespace
-	var fixes []fixPlan
-	opts := &github.IssueListByRepoOptions{State: "open", Assignee: member, ListOptions: github.ListOptions{PerPage: 100}}
-	for {
-		items, resp, err := ghClient.Issues.ListByRepo(ctx, work.owner, work.repo, opts)
-		if err != nil {
-			return fixes, err
-		}
-		for _, item := range items {
-			if item.IsPullRequest() || !autoEligible(work.board, item.Labels, item.GetUpdatedAt()) {
-				continue
-			}
-			fixes = append(fixes, fixPlan{issue: item.GetNumber(), issueURL: item.GetHTMLURL(), executor: member})
-		}
-		if resp.NextPage == 0 {
-			return fixes, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
 // mailbox is the standing Requests, sorted into a slice per verb the UI
 // can click. A struct rather than a return list because there are seven
 // of them, and a reader had to count commas to tell which was which.
@@ -538,34 +340,6 @@ type mailbox struct {
 	watches []*boardv1alpha1.Request
 	// recipes are the recipe Requests: every click of a recipe.
 	recipes []*boardv1alpha1.Request
-}
-
-// dedupeReviews keeps one plan per PR: discovery may find a PR twice.
-func dedupeReviews(in []reviewPlan) []reviewPlan {
-	seen := map[int]bool{}
-	var out []reviewPlan
-	for _, plan := range in {
-		if !seen[plan.pr] {
-			seen[plan.pr] = true
-			out = append(out, plan)
-		}
-	}
-	return out
-}
-
-func (r *Reconciler) filterOnboarded(ctx context.Context, logger interface{ Info(string, ...interface{}) }, fixes []fixPlan) []fixPlan {
-	kept := fixes[:0]
-	for _, plan := range fixes {
-		if plan.executor == "" {
-			continue
-		}
-		if _, err := r.executorToken(ctx, plan.executor); err != nil {
-			logger.Info("skipping fix: executor not onboarded", "issue", plan.issue, "executor", plan.executor)
-			continue
-		}
-		kept = append(kept, plan)
-	}
-	return kept
 }
 
 func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespaces map[string]bool) error {
@@ -603,122 +377,6 @@ func (r *Reconciler) loadSandboxes(ctx context.Context, work *workState, namespa
 	return nil
 }
 
-// resumeFixes revisits the issue sandboxes whose auto-fix is owed
-// something: a fix run whose result the controller has not read, still
-// running when it restarted, or just ended. Its PR is opened from it. (A
-// Fix click's run is its Request's, which stands until its output is
-// stored.)
-//
-// The runner's single-flight and the run name make relaunching
-// idempotent.
-func (r *Reconciler) resumeFixes(work *workState) []fixPlan {
-	var out []fixPlan
-	for _, sb := range work.sandboxes {
-		n, ok := factorycli.IssueOf(sb, work.repo)
-		if !ok {
-			continue
-		}
-		annotations := sb.GetAnnotations()
-		_, unread := fixRunUnread(annotations, work.board.Name, n)
-		if !unread {
-			continue
-		}
-		executor := annotations[AnnotationExecutor]
-		if executor == "" {
-			executor = sb.GetNamespace()
-		}
-		out = append(out, fixPlan{issue: n, issueURL: annotations["htmlURL"], executor: executor})
-	}
-	return out
-}
-
-// fixLike reports whether a sandbox's last task type is a fix's. An
-// absent type is one: sandboxes from before type stamping only ever
-// carried fixes.
-func fixLike(taskType string) bool {
-	return taskType == "" || strings.HasPrefix(taskType, "fix")
-}
-
-// ensureFix launches an auto-fix as the plan's executor, in the
-// executor's namespace with the executor's identity, or follows one to
-// its end: `factory recipe fix` in the issue's sandbox, whose pushed
-// branch the runner opens as a draft PR once the run ends (StartRecipe,
-// Apply open-pr). The PR is GitHub's, and the sandbox is aliased to it.
-func (r *Reconciler) ensureFix(ctx context.Context, work *workState, plan fixPlan) {
-	logger := log.FromContext(ctx)
-	sb := work.issueSandbox(plan.executor, plan.issue)
-	name := work.fixSandboxName(plan.issue)
-	if sb != nil {
-		name = sb.GetName()
-	}
-	key := fixKey(work, plan.executor, plan.issue)
-
-	if r.Factory.IsRunning(key) {
-		return
-	}
-	annotations := map[string]string{}
-	if sb != nil {
-		r.recordFixResult(ctx, sb, key)
-		if sb.GetAnnotations() != nil {
-			annotations = sb.GetAnnotations()
-		}
-	}
-	state := annotations[factorycli.AnnotationTaskState]
-	// A fix run recorded and not read, by a controller that did not see
-	// it end: followed by its name, for the PR it pushed.
-	followed, follow := "", false
-	if _, ok := r.Factory.LastResult(key); !ok {
-		followed, follow = fixRunUnread(annotations, work.board.Name, plan.issue)
-	}
-	// Terminal means a fix ran to an end state, the automation's or a
-	// member's click: automation does not fix an issue again. The
-	// task-state stamps are per-sandbox, not per-type: a completed plan
-	// in the same sandbox must not masquerade as a finished fix.
-	terminal := (state == factorycli.TaskStateCompleted || state == factorycli.TaskStateFailed) &&
-		fixLike(annotations[factorycli.AnnotationTaskType])
-	if terminal && !follow {
-		return
-	}
-	// Something else is at work in the sandbox (a plan, a follow-up the
-	// watch runs): the fix waits for it rather than being refused.
-	if state == factorycli.TaskStateRunning && !follow {
-		return
-	}
-	if res, ok := r.Factory.LastResult(key); ok && res.Err != nil && time.Since(res.FinishedAt) < launchRetryBackoff {
-		return
-	}
-	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
-		log.FromContext(ctx).Info("fix deferred: board at maxActive", "issue", plan.issue, "limit", maxActive(work.board))
-		return
-	}
-	token, err := r.executorToken(ctx, plan.executor)
-	if err != nil {
-		logger.Error(err, "executor token unavailable", "executor", plan.executor)
-		return
-	}
-	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
-		logger.Error(err, "unable to sync executor factory-user secret", "executor", plan.executor)
-	}
-
-	issueURL := plan.issueURL
-	if issueURL == "" || strings.Contains(issueURL, "/pull/") {
-		// A fix sandbox's htmlURL is its PR's once it has one.
-		issueURL = fmt.Sprintf("https://github.com/%s/%s/issues/%d", work.owner, work.repo, plan.issue)
-	}
-	runName := fixRunName(work.board.Name, plan.issue)
-	if follow {
-		runName = followed
-	}
-	r.stampUnpaused(ctx, sb)
-	r.stampEngine(ctx, sb, boardEngine(work.board))
-	// The PR is always a draft: open-pr opens nothing else.
-	opts := r.recipeOptions(work, "fix", plan.executor, name, issueURL, token, runName)
-	opts.Timeout, opts.Apply = 3*time.Hour, "open-pr"
-	if r.Factory.StartRecipe(key, opts) {
-		logger.Info("launched factory recipe fix", "issue", plan.issue, "executor", plan.executor, "board", work.board.Name, "run", runName)
-	}
-}
-
 // recipeOptions are the board's options for a run of recipe on url, in
 // sandbox (empty: factory's for url), as member, named runName: the
 // board's sandbox image and disk, its engine and its disclosure.
@@ -737,216 +395,9 @@ func (r *Reconciler) recipeOptions(work *workState, recipe, member, sandbox, url
 	}
 }
 
-// ensureReview launches an auto-review, or reads what came of one:
-// `factory recipe review` in the executor's review sandbox, whose Review
-// the runner posts as the executor's pending review on the PR once the
-// run ends (StartRecipe, Apply post-review). The draft is GitHub's.
-func (r *Reconciler) ensureReview(ctx context.Context, work *workState, plan reviewPlan) {
-	logger := log.FromContext(ctx)
-
-	// Every review is attributed: it runs in the consenting member's
-	// namespace under their identity and posts a pending review on GitHub
-	// (visible only to them — saved work, not a public act). Plans without
-	// an executor never run; anonymous reviews are tokens spent on a
-	// review nobody asked for.
-	if plan.executor == "" {
-		return
-	}
-	key := reviewKey(work, plan.executor, plan.pr)
-	name := factorycli.ReviewSandboxName(work.repo, plan.pr)
-	sb := work.reviewSandbox(plan.executor, plan.pr)
-	annotations := map[string]string{}
-	if sb != nil && sb.GetAnnotations() != nil {
-		annotations = sb.GetAnnotations()
-	}
-	// Posted, abandoned and errored reviews are terminal for automation,
-	// and so is a review a member ran: a member clicks Review again.
-	if reviewDone(annotations, work.board.Name, plan.pr) {
-		return
-	}
-	if r.Factory.IsRunning(key) {
-		return
-	}
-
-	if res, ok := r.Factory.LastResult(key); ok && !resultSuperseded(sb, res) {
-		if res.Err == nil && sb != nil {
-			// The pending review is on GitHub; record that so the board
-			// points the member there.
-			if err := r.markReviewPending(ctx, sb, work.board.Name, res); err != nil {
-				logger.Error(err, "unable to mark review pending", "pr", plan.pr)
-			}
-			return
-		}
-		if res.Err != nil && sb != nil {
-			// A failed run parks the review: no auto-retry.
-			if err := r.markReviewError(ctx, sb, work.board.Name, reviewErrorLine(res)); err != nil {
-				logger.Error(err, "unable to record review error", "pr", plan.pr)
-			}
-			return
-		}
-		// A failure before the sandbox existed: back off rather than
-		// hot-looping the agent.
-		if time.Since(res.FinishedAt) < launchRetryBackoff {
-			return
-		}
-	}
-
-	if sb == nil && r.activeCount(work) >= maxActive(work.board) {
-		logger.Info("review deferred: board at maxActive", "pr", plan.pr, "limit", maxActive(work.board))
-		return
-	}
-	token, err := r.executorToken(ctx, plan.executor)
-	if err != nil {
-		logger.Error(err, "review executor has no token", "executor", plan.executor, "pr", plan.pr)
-		return
-	}
-	if err := r.ensureFactoryUserSecret(ctx, plan.executor, plan.executor, ""); err != nil {
-		logger.Error(err, "unable to sync factory-user secret", "namespace", plan.executor)
-		return
-	}
-	// GitHub allows one pending review per author per PR. factory's post
-	// replaces a pending review it posted, and refuses one the member
-	// wrote: a fresh launch must not race the member's own (the post
-	// would fail after burning a full run).
-	if sb == nil {
-		gh := newGithubClientFromToken(ctx, token)
-		pending, reviewed, err := executorReviewStates(ctx, gh, work.owner, work.repo, plan.pr, plan.executor)
-		if err != nil {
-			logger.Error(err, "unable to check for existing reviews; deferring launch", "pr", plan.pr)
-			return
-		}
-		if pending {
-			logger.Info("the member's own pending review is parked on GitHub; not launching", "pr", plan.pr, "executor", plan.executor)
-			return
-		}
-		if reviewed {
-			// GitHub already carries the executor's submitted review: done
-			// is done for automation (this survives lost sandbox
-			// breadcrumbs). Only a member's explicit click reviews again.
-			logger.Info("review already submitted on GitHub; automation defers", "pr", plan.pr, "executor", plan.executor)
-			return
-		}
-	}
-	// A run this controller did not see end (a restart's) is followed by
-	// its recorded name; another run recorded under the same key (one
-	// named otherwise) is not the review's.
-	runName := r.resumableRun(key, annotations, factorycli.AnnotationReviewRun, reviewRunName(work.board.Name, plan.pr),
-		AnnotationReviewedAt, AnnotationReviewErrorAt, AnnotationReviewAbandoned)
-	if !strings.HasPrefix(runName, reviewRunPrefix(work.board.Name, plan.pr)) {
-		runName = reviewRunName(work.board.Name, plan.pr)
-	}
-	r.stampUnpaused(ctx, sb)
-	r.stampEngine(ctx, sb, boardEngine(work.board))
-	opts := r.recipeOptions(work, "review", plan.executor, name, fmt.Sprintf("https://github.com/%s/%s/pull/%d", work.owner, work.repo, plan.pr), token, runName)
-	opts.Timeout, opts.Apply = 45*time.Minute, "post-review"
-	if r.Factory.StartRecipe(key, opts) {
-		logger.Info("launched factory recipe review", "pr", plan.pr, "board", work.board.Name, "executor", plan.executor)
-	}
-}
-
-// resumableRun is the run name to invoke factory with for key: the run
-// recorded on the sandbox under runKey, when this controller has no
-// result for key (it restarted, or another replica started the run) and
-// the run started after every marker — a run older than the last harvest
-// or reject is not the one wanted. Invoking factory with it
-// follows the run to its end, or reads its result if it has one; a run
-// that failed fails again at once, and the retry after the backoff, with
-// a result now in memory, gets fresh. Otherwise, fresh.
-func (r *Reconciler) resumableRun(key string, annotations map[string]string, runKey, fresh string, markers ...string) string {
-	if _, ok := r.Factory.LastResult(key); ok {
-		return fresh
-	}
-	var since time.Time
-	for _, m := range markers {
-		if at, err := time.Parse(time.RFC3339, annotations[m]); err == nil && at.After(since) {
-			since = at
-		}
-	}
-	if name, ok := factorycli.RecordedRunName(annotations, runKey, since); ok {
-		return name
-	}
-	return fresh
-}
-
-// reviewKey is the runner key of a PR's reviews.
-func reviewKey(work *workState, member string, pr int) string {
-	return fmt.Sprintf("%s/review-%s-%d", member, work.repo, pr)
-}
-
-// reviewRunName is what an auto-review's task is recorded under in its
-// sandbox, to read its result by. factory runs a name once, so it names
-// one launch.
-func reviewRunName(board string, pr int) string {
-	return fmt.Sprintf("%s%d", reviewRunPrefix(board, pr), time.Now().Unix())
-}
-
-func reviewRunPrefix(board string, pr int) string {
-	return fmt.Sprintf("review/%s/%d/", board, pr)
-}
-
-// reviewDone reports whether automation is done with a PR's review
-// sandbox: a review was posted, abandoned or failed there, or a member ran
-// one (a click's run, recorded under any name but an auto-review's).
-func reviewDone(annotations map[string]string, board string, pr int) bool {
-	return annotations[AnnotationReviewedAt] != "" || annotations[AnnotationReviewAbandoned] != "" ||
-		annotations[AnnotationReviewError] != "" || memberRun(annotations, factorycli.AnnotationReviewRun, reviewRunPrefix(board, pr))
-}
-
-// memberRun reports whether the run recorded under runKey is a member's:
-// named otherwise than automation names its runs (autoPrefix). A click's
-// run is its Request's (request/<uid>).
-func memberRun(annotations map[string]string, runKey, autoPrefix string) bool {
-	run, ok := factorycli.RecordedRunAt(annotations, runKey)
-	return ok && run.Name != "" && !strings.HasPrefix(run.Name, autoPrefix)
-}
-
-// resumeReviews revisits the review sandboxes whose auto-review has not
-// ended: following a run a restart lost sight of, by its recorded name.
-func (r *Reconciler) resumeReviews(ctx context.Context, work *workState) {
-	for _, sb := range work.sandboxes {
-		pr, ok := factorycli.ReviewPROf(sb, work.repo)
-		if !ok || reviewDone(sb.GetAnnotations(), work.board.Name, pr) {
-			continue
-		}
-		// The sandbox is in its executor's namespace.
-		r.ensureReview(ctx, work, reviewPlan{pr: pr, executor: sb.GetNamespace()})
-	}
-}
-
-// markReviewPending records that the auto-review was posted as a pending
-// review on GitHub under the executor's identity — the member finalizes it
-// there — and keeps the Review it posted (res's) as its run's output.
-func (r *Reconciler) markReviewPending(ctx context.Context, sb *unstructured.Unstructured, boardName string, res factorycli.Result) error {
-	annotations := sb.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	factorycli.KeepOutput(annotations, factorycli.AnnotationReviewRun, factorycli.HarvestedTaskOutput(res.Output), res.FinishedAt, "post-review")
-	annotations[AnnotationReviewedAt] = time.Now().UTC().Format(time.RFC3339)
-	annotations[AnnotationBoard] = boardName
-	delete(annotations, AnnotationReviewError)
-	delete(annotations, AnnotationReviewErrorAt)
-	sb.SetAnnotations(annotations)
-	return r.Update(ctx, sb)
-}
-
-// markReviewError parks a failed auto-review on the sandbox: the message
-// renders on the board, and automation does not try again.
-func (r *Reconciler) markReviewError(ctx context.Context, sb *unstructured.Unstructured, boardName, msg string) error {
-	annotations := sb.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[AnnotationReviewError] = msg
-	annotations[AnnotationReviewErrorAt] = time.Now().UTC().Format(time.RFC3339)
-	annotations[AnnotationBoard] = boardName
-	sb.SetAnnotations(annotations)
-	return r.Update(ctx, sb)
-}
-
-// reviewErrorLine digs the most useful line out of a failed invocation's
-// output — factory prints "Error: ..." on its way out.
-func reviewErrorLine(res factorycli.Result) string {
+// runErrorLine digs the most useful line out of a failed run's output:
+// factory prints "Error: ..." on its way out.
+func runErrorLine(res factorycli.Result) string {
 	lines := strings.Split(strings.TrimSpace(res.Output), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -957,7 +408,7 @@ func reviewErrorLine(res factorycli.Result) string {
 	if res.Err != nil {
 		return clipMessage(res.Err.Error(), 300)
 	}
-	return "review failed"
+	return "the run failed"
 }
 
 func clipMessage(s string, n int) string {
@@ -1220,16 +671,6 @@ func executorReviewStates(ctx context.Context, gh *github.Client, owner, repo st
 		}
 	}
 	return pending, reviewed, nil
-}
-
-// resultSuperseded reports whether a remembered invocation result predates
-// the member abandoning the review and must not be re-recorded.
-func resultSuperseded(sb *unstructured.Unstructured, res factorycli.Result) bool {
-	if sb == nil {
-		return false
-	}
-	at, err := time.Parse(time.RFC3339, sb.GetAnnotations()[AnnotationReviewAbandoned])
-	return err == nil && res.FinishedAt.Before(at)
 }
 
 // stampUnpaused marks a paused sandbox we are about to relaunch into.

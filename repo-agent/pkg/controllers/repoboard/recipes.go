@@ -35,8 +35,8 @@ import (
 // Request's inputs, finished as the catalog says (onFinish, timeout), and
 // its task output, if it declares one, stored on the sandbox as its run's
 // (factorycli.KeepOutput), where the board's drafts and applies find it.
-// A Triage, Plan, Fix or Review click is one like any other; only their
-// automation (spec.auto) still has passes of its own.
+// Every recipe runs this one way, a click's and automation's alike
+// (auto.go files automation's Requests).
 
 // recipeCatalog is the recipes the controller's factory runs, read once
 // per process (the binary does not change under it), and retried on the
@@ -283,7 +283,7 @@ func (r *Reconciler) settleRecipe(work *workState, req *boardv1alpha1.Request, n
 	}
 	if res.Err != nil {
 		return requestOutcome{phase: boardv1alpha1.RequestFailed, reason: "RunFailed", sandbox: name,
-			message: res.Err.Error()}
+			message: runErrorLine(res)}
 	}
 	if rec.Kind == "" {
 		return served(name)

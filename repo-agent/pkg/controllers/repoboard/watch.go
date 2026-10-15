@@ -191,22 +191,27 @@ func (w *workState) watching(member string, pr int) bool {
 }
 
 // fileWatch files member's watch Request of pr, as the board's API files
-// a click: owned by the board, which it wakes.
+// a click.
 func (r *Reconciler) fileWatch(ctx context.Context, work *workState, member string, pr int) error {
-	spec := boardv1alpha1.RequestSpec{
+	return r.fileRequest(ctx, work, boardv1alpha1.RequestSpec{
 		Board:  work.board.Name,
 		Verb:   boardv1alpha1.VerbWatch,
 		Item:   "pr",
 		Number: pr,
 		Member: member,
-	}
+	})
+}
+
+// fileRequest files spec as a Request, as the board's API files a click:
+// owned by the board, which it wakes.
+func (r *Reconciler) fileRequest(ctx context.Context, work *workState, spec boardv1alpha1.RequestSpec) error {
 	req := &boardv1alpha1.Request{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("watch-pr-%d-", pr),
+			GenerateName: requestPrefix(spec),
 			Namespace:    work.board.Namespace,
 			Labels: map[string]string{
 				boardv1alpha1.LabelBoard: work.board.Name,
-				boardv1alpha1.LabelVerb:  boardv1alpha1.VerbWatch,
+				boardv1alpha1.LabelVerb:  spec.Verb,
 			},
 			Annotations: map[string]string{boardv1alpha1.AnnotationSubject: spec.Subject()},
 			OwnerReferences: []metav1.OwnerReference{{
