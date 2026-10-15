@@ -124,6 +124,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// The deprecated auto.triage, auto.fix and auto.review become rules,
+	// once (generic-board-recipes.md, "Auto for any recipe").
+	if board.Spec.Auto.ConvertLegacy() {
+		if err := r.Update(ctx, board); err != nil {
+			return ctrl.Result{}, err
+		}
+		logger.Info("converted the board's auto settings into rules", "rules", len(board.Spec.Auto.Rules))
+	}
+
 	owner, repo, err := parseRepoURL(board.Spec.RepoURL)
 	if err != nil {
 		r.setCondition(ctx, board, "Config", metav1.ConditionFalse, "InvalidRepoURL", err.Error())

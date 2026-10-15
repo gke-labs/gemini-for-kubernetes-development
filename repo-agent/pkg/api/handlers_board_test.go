@@ -778,19 +778,26 @@ func TestOtherNamespaceBoardInvisible(t *testing.T) {
 	}
 }
 
-// The gear edits the auto block on the spec: verbs are scope enums,
-// invalid values fall back to off, recency defaults sensibly.
+// The gear edits the auto block on the spec: its rules, which replace the
+// deprecated settings (set off), the shared filters, and a recency that
+// defaults sensibly. A rule the CRD would refuse is refused.
 func TestBoardSpecAuto(t *testing.T) {
 	server, r, dyn := boardTestServer(t, map[string]string{}, boardCR())
 	r.GET("/board/:board/spec", server.getBoardSpec)
 	r.PUT("/board/:board/spec", server.putBoardSpec)
+	put := func(body string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
 
-	body := `{"autoTriage": "unclaimed", "autoFix": "assigned", "autoReview": "requested",
+	body := `{"autoRules": [
+			{"recipe": "triage", "on": "issue", "when": {"unclaimed": true}},
+			{"recipe": "summarize", "on": "issue", "when": {"labels": [" needs-summary ", ""]}, "maxPerDay": 3}
+		],
 		"autoLabels": ["bug"], "autoExcludeLabels": ["wontfix"], "recencyDays": 30, "maxActive": 5, "idleMinutes": 15}`
-	req, _ := http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
+	if w := put(body); w.Code != http.StatusOK {
 		t.Fatalf("put: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
@@ -802,31 +809,53 @@ func TestBoardSpecAuto(t *testing.T) {
 	if idle != 15 {
 		t.Errorf("idleMinutes not stored: %d", idle)
 	}
+	rules, _, _ := unstructured.NestedSlice(board.Object, "spec", "auto", "rules")
 	triage, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage")
-	review, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review")
 	recency, _, _ := unstructured.NestedInt64(board.Object, "spec", "auto", "recencyDays")
-	if triage != "unclaimed" || review != "requested" || recency != 30 {
-		t.Errorf("auto block not stored: triage=%q review=%q recency=%d", triage, review, recency)
+	if len(rules) != 2 || triage != "off" || recency != 30 {
+		t.Errorf("auto block not stored: rules=%v triage=%q recency=%d", rules, triage, recency)
 	}
 
-	req, _ = http.NewRequest("GET", "/board/myboard/spec", nil)
-	w = httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/board/myboard/spec", nil)
+	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	for _, want := range []string{`"autoTriage":"unclaimed"`, `"autoReview":"requested"`, `"recencyDays":30`} {
+	for _, want := range []string{`"recipe":"triage"`, `"unclaimed":true`, `"labels":["needs-summary"]`, `"maxPerDay":3`, `"recencyDays":30`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("spec view missing %s: %s", want, w.Body.String())
 		}
 	}
 
-	// Junk enum values degrade to off, never to a launch.
-	req, _ = http.NewRequest("PUT", "/board/myboard/spec", strings.NewReader(`{"autoReview": "everything", "recencyDays": 0}`))
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	for _, bad := range []string{
+		`{"autoRules": [{"recipe": "", "on": "issue"}]}`,
+		`{"autoRules": [{"recipe": "fix", "on": "repo"}]}`,
+		`{"autoRules": [{"recipe": "fix", "on": "issue", "maxPerDay": -1}]}`,
+	} {
+		if w := put(bad); w.Code != http.StatusBadRequest {
+			t.Errorf("put %s: %d, want 400", bad, w.Code)
+		}
+	}
+	if w := put(`{"recencyDays": 0}`); w.Code != http.StatusOK {
+		t.Fatalf("put: %d", w.Code)
+	}
 	board, _ = dyn.Resource(repoBoardGVR).Namespace("alice").Get(context.Background(), "myboard", v1.GetOptions{})
-	review, _, _ = unstructured.NestedString(board.Object, "spec", "auto", "review")
+	rules, _, _ = unstructured.NestedSlice(board.Object, "spec", "auto", "rules")
 	recency, _, _ = unstructured.NestedInt64(board.Object, "spec", "auto", "recencyDays")
-	if review != "off" || recency != 7 {
-		t.Errorf("expected off/7 fallback, got %q/%d", review, recency)
+	if len(rules) != 0 || recency != 7 {
+		t.Errorf("expected no rules and a recency of 7, got %v/%d", rules, recency)
+	}
+}
+
+// A board not yet converted shows its deprecated settings as rules.
+func TestBoardSpecShowsLegacyAutoAsRules(t *testing.T) {
+	cr := boardCR()
+	_ = unstructured.SetNestedField(cr.Object, "requested", "spec", "auto", "review")
+	server, r, _ := boardTestServer(t, map[string]string{}, cr)
+	r.GET("/board/:board/spec", server.getBoardSpec)
+	req, _ := http.NewRequest("GET", "/board/myboard/spec", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if !strings.Contains(w.Body.String(), `"recipe":"review","on":"pr","when":{"reviewRequestedFromOwner":true}`) {
+		t.Errorf("spec view = %s", w.Body.String())
 	}
 }
 

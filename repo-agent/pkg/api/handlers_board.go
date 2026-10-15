@@ -38,6 +38,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
 
@@ -1435,20 +1436,33 @@ var markPRReadyForReview = func(ctx context.Context, token, nodeID string) error
 // gear panel. Access/prepIdentity/sandbox stay kubectl-only (owner-level
 // governance and operator concerns).
 type boardSpecView struct {
-	Editable          bool     `json:"editable"`
-	ViewLabels        []string `json:"viewLabels"`
-	AutoTriage        string   `json:"autoTriage"`
-	AutoFix           string   `json:"autoFix"`
-	AutoReview        string   `json:"autoReview"`
-	AutoLabels        []string `json:"autoLabels"`
-	AutoExcludeLabels []string `json:"autoExcludeLabels"`
-	RecencyDays       int64    `json:"recencyDays"`
-	MaxActive         int64    `json:"maxActive"`
-	IdleMinutes       int64    `json:"idleMinutes"`
-	Engine            string   `json:"engine"`
-	AutoIterate       bool     `json:"autoIterate"`
-	DraftPR           bool     `json:"draftPR"`
-	Disclose          bool     `json:"disclose"`
+	Editable   bool     `json:"editable"`
+	ViewLabels []string `json:"viewLabels"`
+	// AutoRules are the board's automation rules (spec.auto.rules, or
+	// what the deprecated settings mean until the controller converts
+	// them), and AutoRuleErrors the ones it skips and why (read-only).
+	AutoRules      []boardv1alpha1.AutoRule `json:"autoRules"`
+	AutoRuleErrors []string                 `json:"autoRuleErrors,omitempty"`
+	// Recipes are the catalog a rule picks from (read-only).
+	Recipes           []specRecipe `json:"recipes"`
+	AutoLabels        []string     `json:"autoLabels"`
+	AutoExcludeLabels []string     `json:"autoExcludeLabels"`
+	RecencyDays       int64        `json:"recencyDays"`
+	MaxActive         int64        `json:"maxActive"`
+	IdleMinutes       int64        `json:"idleMinutes"`
+	Engine            string       `json:"engine"`
+	AutoIterate       bool         `json:"autoIterate"`
+	DraftPR           bool         `json:"draftPR"`
+	Disclose          bool         `json:"disclose"`
+}
+
+// specRecipe is a catalog recipe as the gear's rules offer it: what it
+// runs on, and what it applies when it finishes.
+type specRecipe struct {
+	Name     string   `json:"name"`
+	Label    string   `json:"label"`
+	On       []string `json:"on,omitempty"`
+	OnFinish string   `json:"onFinish,omitempty"`
 }
 
 func (s *Server) getBoardSpec(c *gin.Context) {
@@ -1461,16 +1475,20 @@ func (s *Server) getBoardSpec(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Board not accessible", "details": err.Error()})
 		return
 	}
-	view := boardSpecView{Editable: true, AutoTriage: "off", AutoFix: "off", AutoReview: "off", RecencyDays: 7}
+	view := boardSpecView{Editable: true, AutoRules: []boardv1alpha1.AutoRule{}, RecencyDays: 7}
 	view.ViewLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "view", "labels")
-	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "triage"); v != "" {
-		view.AutoTriage = v
+	var typed boardv1alpha1.RepoBoard
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(board.Object, &typed); err == nil {
+		if rules := typed.Spec.Auto.EffectiveRules(); len(rules) > 0 {
+			view.AutoRules = rules
+		}
+		view.AutoRuleErrors = typed.Status.AutoRuleErrors
 	}
-	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "fix"); v != "" {
-		view.AutoFix = v
-	}
-	if v, _, _ := unstructured.NestedString(board.Object, "spec", "auto", "review"); v != "" {
-		view.AutoReview = v
+	view.Recipes = []specRecipe{}
+	if catalog, err := boardRecipes(board); err == nil {
+		for _, rec := range catalog {
+			view.Recipes = append(view.Recipes, specRecipe{Name: rec.Name, Label: rec.Label, On: rec.On, OnFinish: rec.OnFinish})
+		}
 	}
 	view.AutoLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "auto", "labels")
 	view.AutoExcludeLabels, _, _ = unstructured.NestedStringSlice(board.Object, "spec", "auto", "excludeLabels")
@@ -1525,14 +1543,6 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		}
 		return out
 	}
-	enum := func(v string, allowed ...string) string {
-		for _, a := range allowed {
-			if v == a {
-				return v
-			}
-		}
-		return "off"
-	}
 	recency := payload.RecencyDays
 	if recency <= 0 {
 		recency = 7
@@ -1541,10 +1551,17 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 	if idleMinutes <= 0 {
 		idleMinutes = 60
 	}
+	rules, err := autoRulesField(payload.AutoRules)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// The rules replace the deprecated settings, which are set off.
 	ok := set(cleanLabels(payload.ViewLabels), "spec", "view", "labels") &&
-		set(enum(payload.AutoTriage, "off", "unclaimed", "all"), "spec", "auto", "triage") &&
-		set(enum(payload.AutoFix, "off", "assigned"), "spec", "auto", "fix") &&
-		set(enum(payload.AutoReview, "off", "requested", "all"), "spec", "auto", "review") &&
+		set(rules, "spec", "auto", "rules") &&
+		set("off", "spec", "auto", "triage") &&
+		set("off", "spec", "auto", "fix") &&
+		set("off", "spec", "auto", "review") &&
 		set(cleanLabels(payload.AutoLabels), "spec", "auto", "labels") &&
 		set(cleanLabels(payload.AutoExcludeLabels), "spec", "auto", "excludeLabels") &&
 		set(recency, "spec", "auto", "recencyDays") &&
@@ -1562,6 +1579,38 @@ func (s *Server) putBoardSpec(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusOK)
+}
+
+// autoRulesField is rules as the board's unstructured spec holds them,
+// each checked for what the CRD would refuse: a recipe, an item type of
+// issue or pr, no negative cap. Whether the catalog runs it is the
+// controller's to say (status.autoRuleErrors).
+func autoRulesField(rules []boardv1alpha1.AutoRule) ([]interface{}, error) {
+	out := make([]interface{}, 0, len(rules))
+	for i, rule := range rules {
+		rule.Recipe = strings.TrimSpace(rule.Recipe)
+		switch {
+		case rule.Recipe == "":
+			return nil, fmt.Errorf("rule %d names no recipe", i+1)
+		case rule.On != "issue" && rule.On != "pr":
+			return nil, fmt.Errorf("rule %d (%s) runs on %q, not issue or pr", i+1, rule.Recipe, rule.On)
+		case rule.MaxPerDay < 0:
+			return nil, fmt.Errorf("rule %d (%s) has a negative daily cap", i+1, rule.Recipe)
+		}
+		var labels []string
+		for _, l := range rule.When.Labels {
+			if l = strings.TrimSpace(l); l != "" {
+				labels = append(labels, l)
+			}
+		}
+		rule.When.Labels = labels
+		m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&rule)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 // autoBoardPR turns a PR of the member's auto on or off: {"on": bool}.
