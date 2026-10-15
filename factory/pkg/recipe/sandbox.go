@@ -243,7 +243,7 @@ func (t *turn) event(line []byte) (reply string, done bool, err error) {
 		_ = json.Unmarshal(ev.Data, &e)
 		t.usage = e.Usage
 		if e.StopReason != "end_turn" {
-			return t.reply.String(), true, fmt.Errorf("turn stopped: %s", e.StopReason)
+			return t.reply.String(), true, &StopError{Reason: e.StopReason}
 		}
 		return strings.TrimSpace(t.reply.String()), true, nil
 	}
@@ -252,3 +252,11 @@ func (t *turn) event(line []byte) (reply string, done bool, err error) {
 
 // Close ends the engine.
 func (a *ACPSession) Close() error { return a.s.Close() }
+
+// StopError is a turn that ended otherwise than with the agent's answer:
+// its ACP stop reason (max_tokens, refusal, cancelled, …).
+type StopError struct {
+	Reason string
+}
+
+func (e *StopError) Error() string { return "turn stopped: " + e.Reason }
