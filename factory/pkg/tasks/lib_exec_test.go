@@ -818,6 +818,50 @@ printf '<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> other\n' > f && git add f && c mark
 	})
 }
 
+// TestCILogExcerptOfABigLog: a failed job's log far longer than the
+// excerpt, with hundreds of matches, or none, still gives an excerpt.
+// Under pipefail, a reader that stops early (head, grep -q) SIGPIPEs the
+// writer (exit 141), and a grep that matches nothing exits 1: either
+// failed the ci-logs step (KCC's e2e fixture jobs, 2026-10-14).
+func TestCILogExcerptOfABigLog(t *testing.T) {
+	setup := `log="$HOME/job.log"
+{
+  echo "##[group]Run make e2e"
+  for i in $(seq 1 3000); do
+    echo "    fixture_test.go:42: step $i of a chatty fixture, with enough words to fill the pipe"
+    echo "--- FAIL: TestFixture/case-$i (0.01s)"
+  done
+  echo "##[error]Process completed with exit code 1."
+} > "$log"
+quiet="$HOME/quiet.log"
+{
+  echo "##[group]Run make e2e"
+  for i in $(seq 1 3000); do echo "    step $i went fine, padded so the section is well over a pipe buffer"; done
+  echo "##[error]Process completed with exit code 2."
+} > "$quiet"
+`
+	for name, body := range map[string]string{
+		"hundreds of --- FAIL": `ciLogExcerpt "$log" > "$HOME/out"; echo "STATUS=$?"; echo "LINES=$(wc -l < "$HOME/out" | tr -d " ")"; grep -c -e '--- FAIL' "$HOME/out" | sed 's/^/FAILS=/'; tail -n 1 "$HOME/out"`,
+		"no error words":       `ciLogExcerpt "$quiet" > "$HOME/out"; echo "STATUS=$?"; echo "LINES=$(wc -l < "$HOME/out" | tr -d " ")"; tail -n 1 "$HOME/out"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, _, err := runLib(t, nil, setup, body)
+			if err != nil {
+				t.Fatalf("ciLogExcerpt failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "STATUS=0") {
+				t.Fatalf("status:\n%s", out)
+			}
+			if !strings.Contains(out, "##[error]Process completed") {
+				t.Errorf("the excerpt does not end with the log's last lines:\n%s", out)
+			}
+			if name == "hundreds of --- FAIL" && (!strings.Contains(out, "LINES=211") || strings.Contains(out, "FAILS=0")) {
+				t.Errorf("not the first 200 matching lines, then […] and the last 10:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestFetchPRCILogs pins the ci-logs step: the logs of the jobs that
 // failed on the PR's head are fetched per job (GitHub serves one as soon
 // as its job ends), with the token on curl's stdin and not in xtrace,
