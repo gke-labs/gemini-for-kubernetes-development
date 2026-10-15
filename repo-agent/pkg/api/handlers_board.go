@@ -364,9 +364,58 @@ const (
 	// ("posting") stays fresh. The controller does the write, in another
 	// process, and says so only on the sandbox: nothing here hears of it,
 	// so a minute's freshness kept a done write reading "posting" for as
-	// long. A write takes seconds; so does this, while one stands.
-	workFeedPostingFreshFor = 3 * time.Second
+	// long. A write takes seconds. What changes meanwhile is Kubernetes
+	// state (the apply Request, the run's applied stamp), so these
+	// rebuilds read Kubernetes only, over the board's last GitHub
+	// snapshot (boardSnapshotCache): no GraphQL while a write stands.
+	workFeedPostingFreshFor = 5 * time.Second
 )
+
+// boardSnapshotCache keeps the GitHub half of each board's last feed
+// build, per member (the snapshot carries the member's own reviews), for
+// a rebuild while a write stands to reuse: it re-reads Kubernetes and
+// takes GitHub from here while the snapshot is younger than
+// workFeedFreshFor. Invalidation drops it with the feed entry: a click
+// may itself have changed GitHub (an assignment, a promoted PR, a
+// discarded pending review), so the build after a click reads GitHub
+// once, and the posting rebuilds behind it reuse that.
+var boardSnapshotCache = struct {
+	sync.Mutex
+	entries map[string]boardSnapshotEntry
+}{entries: map[string]boardSnapshotEntry{}}
+
+type boardSnapshotEntry struct {
+	snap *boardSnapshot
+	at   time.Time
+}
+
+func boardSnapshotKey(key, member string) string { return key + "/" + member }
+
+// cachedBoardSnapshot is the board's snapshot for member when one younger
+// than workFeedFreshFor is held.
+func cachedBoardSnapshot(key, member string) (*boardSnapshot, bool) {
+	boardSnapshotCache.Lock()
+	defer boardSnapshotCache.Unlock()
+	e, ok := boardSnapshotCache.entries[boardSnapshotKey(key, member)]
+	if !ok || time.Since(e.at) > workFeedFreshFor {
+		return nil, false
+	}
+	return e.snap, true
+}
+
+func putBoardSnapshot(key, member string, snap *boardSnapshot) {
+	boardSnapshotCache.Lock()
+	boardSnapshotCache.entries[boardSnapshotKey(key, member)] = boardSnapshotEntry{snap: snap, at: time.Now()}
+	boardSnapshotCache.Unlock()
+}
+
+// workFeedPosting reports whether the board's held feed has a write
+// standing: its rebuild may reuse the GitHub snapshot.
+func workFeedPosting(key string) bool {
+	workFeedCache.Lock()
+	defer workFeedCache.Unlock()
+	return workFeedCache.entries[key].posting
+}
 
 // workFeedGet returns cached items when usable; needsRefresh asks the
 // caller to kick a background rebuild (claimed here, under the lock, so
@@ -438,9 +487,17 @@ func workFeedBlock(key string, until time.Time) {
 }
 
 func invalidateWorkFeed(namespace, boardName string) {
+	key := namespace + "/" + boardName
 	workFeedCache.Lock()
-	delete(workFeedCache.entries, namespace+"/"+boardName)
+	delete(workFeedCache.entries, key)
 	workFeedCache.Unlock()
+	boardSnapshotCache.Lock()
+	for k := range boardSnapshotCache.entries {
+		if strings.HasPrefix(k, key+"/") {
+			delete(boardSnapshotCache.entries, k)
+		}
+	}
+	boardSnapshotCache.Unlock()
 }
 
 func (s *Server) refreshWorkFeed(ctx context.Context, key string, board *unstructured.Unstructured, member, namespace string) {
@@ -451,7 +508,9 @@ func (s *Server) refreshWorkFeed(ctx context.Context, key string, board *unstruc
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	items, err := s.buildBoardWork(ctx, board, member, namespace)
+	// A write standing: only Kubernetes moves, so GitHub comes from the
+	// last snapshot (workFeedPostingFreshFor).
+	items, err := s.buildBoardWork(ctx, board, member, namespace, workFeedPosting(key))
 	if err != nil {
 		klog.FromContext(ctx).Info("background feed refresh failed", "board", key, "err", err)
 		if until, ok := ghquota.ResetAt(err); ok {
@@ -486,10 +545,10 @@ func (s *Server) getBoardWork(c *gin.Context) {
 		return
 	}
 
-	items, err := s.buildBoardWork(ctx, board, member, namespace)
+	items, err := s.buildBoardWork(ctx, board, member, namespace, false)
 	if isUnauthorized(err) {
 		// That token is now skipped: build again with the next one.
-		items, err = s.buildBoardWork(ctx, board, member, namespace)
+		items, err = s.buildBoardWork(ctx, board, member, namespace, false)
 	}
 	if err != nil {
 		// Nothing cached and no budget to build with: say so. An empty
@@ -544,7 +603,11 @@ func (s *Server) stampViewed(ctx context.Context, board *unstructured.Unstructur
 // (board_graphql.go), capped at 100 per surface and newest first: the
 // board is a work queue, not an archive — on huge repos the tail belongs
 // on GitHub search, not in every poll.
-func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstructured, member, namespace string) ([]models.WorkItem, error) {
+//
+// With reuseSnapshot (a rebuild while a write stands), GitHub comes from
+// the board's last snapshot when it is younger than workFeedFreshFor
+// (boardSnapshotCache), and only Kubernetes is read.
+func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstructured, member, namespace string, reuseSnapshot bool) ([]models.WorkItem, error) {
 	log := klog.FromContext(ctx)
 
 	repoURL, _, _ := unstructured.NestedString(board.Object, "spec", "repoURL")
@@ -605,15 +668,23 @@ func (s *Server) buildBoardWork(ctx context.Context, board *unstructured.Unstruc
 	// fewer rows than exist — "nothing needs you" is the one wrong answer
 	// a work queue must not give — so anything short of a complete answer
 	// fails the rebuild and the previous feed keeps standing.
-	snap, err := fetchBoardSnapshot(ctx, githubHTTPForToken(token), owner, repo, member)
-	if err != nil {
-		if ghquota.IsRateLimited(err) {
-			return nil, fmt.Errorf("github budget spent while building the feed: %w", err)
+	key := board.GetNamespace() + "/" + board.GetName()
+	snap, cached := (*boardSnapshot)(nil), false
+	if reuseSnapshot {
+		snap, cached = cachedBoardSnapshot(key, member)
+	}
+	if !cached {
+		snap, err = fetchBoardSnapshot(ctx, githubHTTPForToken(token), owner, repo, member)
+		if err != nil {
+			if ghquota.IsRateLimited(err) {
+				return nil, fmt.Errorf("github budget spent while building the feed: %w", err)
+			}
+			if isUnauthorized(err) {
+				markTokenRejected(token)
+			}
+			return nil, fmt.Errorf("failed to read the board from github: %w", err)
 		}
-		if isUnauthorized(err) {
-			markTokenRejected(token)
-		}
-		return nil, fmt.Errorf("failed to read the board from github: %w", err)
+		putBoardSnapshot(key, member, snap)
 	}
 	assigned, created, allIssues, prs := snap.assigned, snap.created, snap.triage, snap.prs
 	// Load claimed executors' namespaces before merging rows so their

@@ -52,6 +52,9 @@ type autoRequest struct {
 	item      string
 	number    int
 	maxPerDay int
+	// updatedAt is when the item last changed, as listed: a PR the owner
+	// reviewed is not asked about again until it changes (reviewedPRs).
+	updatedAt time.Time
 }
 
 // autoItem is an open issue or PR as the rules' conditions read it.
@@ -161,7 +164,7 @@ func (r *Reconciler) discoverAuto(ctx context.Context, ghClient *github.Client, 
 			}
 			for _, rule := range byType[on] {
 				if rule.matches(item) {
-					wanted = append(wanted, autoRequest{recipe: rule.Recipe, item: on, number: item.number, maxPerDay: rule.MaxPerDay})
+					wanted = append(wanted, autoRequest{recipe: rule.Recipe, item: on, number: item.number, maxPerDay: rule.MaxPerDay, updatedAt: item.updatedAt})
 				}
 			}
 		}
@@ -234,6 +237,7 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 		return
 	}
 	owner := work.board.Namespace
+	defer r.pruneReviewedPRs(work, wanted)
 	type key struct {
 		recipe, item string
 		number       int
@@ -264,12 +268,16 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 			continue
 		}
 		if rec.Kind == "Review" {
+			if r.ownerReviewed(work, want) {
+				continue
+			}
 			pending, reviewed, err := executorReviewStates(ctx, newGithubClientFromToken(ctx, work.discToken), work.owner, work.repo, want.number, owner)
 			if err != nil {
 				logger.Error(err, "unable to check the owner's reviews; not filing", "pr", want.number)
 				continue
 			}
 			if pending || reviewed {
+				r.rememberOwnerReviewed(work, want)
 				continue
 			}
 		}
@@ -280,6 +288,45 @@ func (r *Reconciler) fileAutoRequests(ctx context.Context, work *workState, want
 		work.board.Status.AutoFiled = append(work.board.Status.AutoFiled, boardv1alpha1.AutoFiling{Recipe: want.recipe, At: metav1.Now()})
 		logger.Info("automation filed a recipe Request", "recipe", want.recipe, "item", want.item, "number", want.number, "member", owner)
 	}
+}
+
+// reviewedKey names a PR of a board in reviewedPRs.
+func reviewedKey(work *workState, pr int) string {
+	return fmt.Sprintf("%s/%s#%d", work.board.Namespace, work.board.Name, pr)
+}
+
+// ownerReviewed reports whether the owner was found to have reviewed the
+// PR as it is now (unchanged since: the same updated_at), so GitHub need
+// not be asked again.
+func (r *Reconciler) ownerReviewed(work *workState, want autoRequest) bool {
+	at, ok := r.reviewedPRs.Load(reviewedKey(work, want.number))
+	return ok && !want.updatedAt.IsZero() && at.(time.Time).Equal(want.updatedAt)
+}
+
+// rememberOwnerReviewed records that the owner has reviewed the PR as it
+// is now.
+func (r *Reconciler) rememberOwnerReviewed(work *workState, want autoRequest) {
+	if !want.updatedAt.IsZero() {
+		r.reviewedPRs.Store(reviewedKey(work, want.number), want.updatedAt)
+	}
+}
+
+// pruneReviewedPRs forgets the board's PRs discovery no longer lists, so
+// the memo holds at most what discovery does.
+func (r *Reconciler) pruneReviewedPRs(work *workState, wanted []autoRequest) {
+	listed := map[string]bool{}
+	for _, want := range wanted {
+		if want.item == "pr" {
+			listed[reviewedKey(work, want.number)] = true
+		}
+	}
+	prefix := fmt.Sprintf("%s/%s#", work.board.Namespace, work.board.Name)
+	r.reviewedPRs.Range(func(k, _ any) bool {
+		if key := k.(string); strings.HasPrefix(key, prefix) && !listed[key] {
+			r.reviewedPRs.Delete(key)
+		}
+		return true
+	})
 }
 
 // lastDay are the filings of the day before now.

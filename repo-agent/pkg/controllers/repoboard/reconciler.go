@@ -25,6 +25,8 @@ package repoboard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"iter"
 	"strings"
@@ -102,6 +104,29 @@ type Reconciler struct {
 	// discoveredAt is when each board (namespace/name) was last
 	// discovered.
 	discoveredAt sync.Map
+	// identities are the logins GET /user answered, by token hash
+	// (cachedIdentity), for identityTTL: a token's owner does not change
+	// between discoveries.
+	identities sync.Map
+	// reviewedPRs are the PRs a Review rule found the owner had reviewed,
+	// by board and PR, with the PR's updated_at then: not asked again until
+	// it changes (ownerReviewed).
+	reviewedPRs sync.Map
+}
+
+// identityTTL is how long a token's login is taken as known.
+const identityTTL = 15 * time.Minute
+
+// cachedIdentity is a token's login and email, and when GitHub said so.
+type cachedIdentity struct {
+	login, email string
+	at           time.Time
+}
+
+// tokenKey names a token without holding it.
+func tokenKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
 }
 
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
@@ -328,8 +353,11 @@ func (r *Reconciler) discoveryClient(ctx context.Context, work *workState) (*git
 	}
 	work.discToken = token
 	var login, email string
-	if user, _, userErr := ghClient.Users.Get(ctx, ""); userErr == nil {
+	if id, ok := r.identities.Load(tokenKey(token)); ok && time.Since(id.(cachedIdentity).at) < identityTTL {
+		login, email = id.(cachedIdentity).login, id.(cachedIdentity).email
+	} else if user, _, userErr := ghClient.Users.Get(ctx, ""); userErr == nil {
 		login, email = user.GetLogin(), user.GetEmail()
+		r.identities.Store(tokenKey(token), cachedIdentity{login: login, email: email, at: time.Now()})
 	} else if fbLogin, fbEmail, ok := r.identityFromSecret(ctx, work.board.Namespace); ok {
 		// Tokens that cannot answer GET /user (e.g. CI installation
 		// tokens) fall back to the identity recorded alongside the PAT.

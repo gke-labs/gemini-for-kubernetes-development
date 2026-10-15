@@ -56,6 +56,8 @@ type boardMockRT struct {
 	// deleting the wrong file and deleting nothing look the same from
 	// the response alone.
 	writes []string
+	// graphqlCalls counts the feed's GraphQL queries.
+	graphqlCalls int
 }
 
 func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -67,6 +69,9 @@ func (m *boardMockRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	// a wrong json tag on either side fails a test instead of cancelling
 	// itself out.
 	if body, ok := m.graphqlAnswer(req); ok {
+		m.mu.Lock()
+		m.graphqlCalls++
+		m.mu.Unlock()
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -280,6 +285,9 @@ func boardTestServerWithRT(t *testing.T, ghResponses map[string]string, objs ...
 	rejectedTokens.Lock()
 	rejectedTokens.until = map[[32]byte]time.Time{}
 	rejectedTokens.Unlock()
+	boardSnapshotCache.Lock()
+	boardSnapshotCache.entries = map[string]boardSnapshotEntry{}
+	boardSnapshotCache.Unlock()
 	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
 	dynamicClient := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrSandbox:   "SandboxList",
@@ -1848,6 +1856,10 @@ func TestAFeedWithAWriteStandingGoesStaleInSeconds(t *testing.T) {
 	key := "alice/posting"
 	workFeedPut(key, []models.WorkItem{{Number: 1, Posting: true}})
 	defer invalidateWorkFeed("alice", "posting")
+	ageFeedEntry(t, key, workFeedPostingFreshFor-time.Second, time.Time{})
+	if _, ok, needsRefresh := workFeedGet(key); !ok || needsRefresh {
+		t.Fatalf("a feed with a write standing is fresh for %v: ok=%v needsRefresh=%v", workFeedPostingFreshFor, ok, needsRefresh)
+	}
 	ageFeedEntry(t, key, workFeedPostingFreshFor+time.Second, time.Time{})
 	if _, ok, needsRefresh := workFeedGet(key); !ok || !needsRefresh {
 		t.Fatalf("a feed with a write standing must rebuild after %v, got ok=%v needsRefresh=%v", workFeedPostingFreshFor, ok, needsRefresh)
@@ -2063,5 +2075,83 @@ func TestHeadOnMemberFork(t *testing.T) {
 		if got := headOnMemberFork(tc.pr, "alice"); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// While a write stands, a rebuild reads Kubernetes only: GitHub comes from
+// the board's last snapshot while it is younger than workFeedFreshFor, so
+// the rebuilds that watch the write land cost no GraphQL. An older
+// snapshot, a rebuild with no write standing, and a click's invalidation
+// all read GitHub again.
+func TestAPostingRebuildReadsKubernetesOnly(t *testing.T) {
+	ghResponses := map[string]string{
+		"https://api.github.com/repos/test/repo/issues?assignee=alice&direction=desc&per_page=100&sort=updated&state=open": `[
+			{"number": 10, "title": "fixing", "html_url": "https://github.com/test/repo/issues/10", "updated_at": "2026-09-16T10:00:00Z",
+			 "assignees": [{"login": "alice"}]}
+		]`,
+	}
+	run := func(state string) string {
+		return `{"name":"fix/myboard/10/1","task":"recipe-fix-1","recipe":"fix","state":"` + state + `","startedAt":"2026-09-16T10:00:00Z"}`
+	}
+	fixSandbox := sandboxCR("fix-repo-10",
+		map[string]interface{}{"factory.gemini.google.com/managed": "true"},
+		map[string]interface{}{"htmlURL": "https://github.com/test/repo/issues/10", factorycli.AnnotationFixRun: run("Running")}, 1)
+	server, _, dyn, rt := boardTestServerWithRT(t, ghResponses, boardCR(), fixSandbox)
+	ctx := context.Background()
+	board := boardCR()
+	key := board.GetNamespace() + "/" + board.GetName()
+	gvrSandbox := schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1alpha1", Resource: "sandboxes"}
+	status := func(items []models.WorkItem) string {
+		for _, item := range items {
+			if item.Number == 10 && len(item.Sessions) == 1 {
+				return item.Sessions[0].Status
+			}
+		}
+		return ""
+	}
+	calls := func() int {
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		return rt.graphqlCalls
+	}
+
+	items, err := server.buildBoardWork(ctx, board, "alice", "alice", false)
+	if err != nil || status(items) != "running" || calls() != 1 {
+		t.Fatalf("first build: status %q, %d GraphQL calls, err %v", status(items), calls(), err)
+	}
+	// The run ends, on the sandbox: Kubernetes moves, GitHub does not.
+	sb, err := dyn.Resource(gvrSandbox).Namespace("alice").Get(ctx, "fix-repo-10", v1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := sb.GetAnnotations()
+	a[factorycli.AnnotationFixRun] = run("Failed")
+	sb.SetAnnotations(a)
+	if _, err := dyn.Resource(gvrSandbox).Namespace("alice").Update(ctx, sb, v1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	items, err = server.buildBoardWork(ctx, board, "alice", "alice", true)
+	if err != nil || status(items) != "failed" || calls() != 1 {
+		t.Fatalf("posting rebuild: status %q, %d GraphQL calls, err %v; want failed from Kubernetes, still one call", status(items), calls(), err)
+	}
+
+	// An older snapshot is read again.
+	boardSnapshotCache.Lock()
+	e := boardSnapshotCache.entries[boardSnapshotKey(key, "alice")]
+	e.at = time.Now().Add(-workFeedFreshFor - time.Second)
+	boardSnapshotCache.entries[boardSnapshotKey(key, "alice")] = e
+	boardSnapshotCache.Unlock()
+	if _, err := server.buildBoardWork(ctx, board, "alice", "alice", true); err != nil || calls() != 2 {
+		t.Fatalf("posting rebuild over a stale snapshot: %d GraphQL calls, err %v; want a second", calls(), err)
+	}
+	// No write standing: GitHub every time, as before.
+	if _, err := server.buildBoardWork(ctx, board, "alice", "alice", false); err != nil || calls() != 3 {
+		t.Fatalf("plain rebuild: %d GraphQL calls, err %v; want a third", calls(), err)
+	}
+	// A click invalidates the snapshot with the feed: it may have changed
+	// GitHub itself.
+	invalidateWorkFeed(board.GetNamespace(), board.GetName())
+	if _, ok := cachedBoardSnapshot(key, "alice"); ok {
+		t.Error("the snapshot survived the click's invalidation")
 	}
 }

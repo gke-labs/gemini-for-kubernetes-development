@@ -129,6 +129,47 @@ const IDLE_AFTER = 5 * 60 * 1000;
 // on the scale of a plan, which is minutes.
 const RUN_STATE_EVERY = 2 * 60 * 1000;
 
+// usePolling calls fn now and every `every` ms while active, as the feed
+// polls: not while the tab is hidden, nor once an unfocused window has
+// sat untouched for IDLE_AFTER; and at once on coming back to it.
+export function usePolling(fn, every, active) {
+  useEffect(() => {
+    if (!active) return undefined;
+    let lastActiveAt = Date.now();
+    let idle = false;
+    fn();
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      if (!document.hasFocus() && Date.now() - lastActiveAt > IDLE_AFTER) {
+        idle = true;
+        return;
+      }
+      fn();
+    }, every);
+    const onReturn = () => {
+      lastActiveAt = Date.now();
+      idle = false;
+      if (!document.hidden) fn();
+    };
+    const onActivity = () => {
+      lastActiveAt = Date.now();
+      if (!idle) return;
+      idle = false;
+      fn();
+    };
+    const activity = ['pointerdown', 'keydown'];
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    activity.forEach(e => document.addEventListener(e, onActivity, { passive: true }));
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+      activity.forEach(e => document.removeEventListener(e, onActivity));
+    };
+  }, [fn, every, active]);
+}
+
 // The board's one list of issues and pull requests: what needs you or is
 // running first, then what finished lately, the rest after, narrowed by
 // the filters above it.
@@ -246,8 +287,10 @@ function prRunChip(run) {
 
 // A draft's write is the controller's (factory apply), taken in the
 // draft's session.
-// POSTING_POLL_EVERY is the feed's cadence while a write stands.
-const POSTING_POLL_EVERY = 3000;
+// POSTING_POLL_EVERY is the feed's cadence while a write stands: the
+// server rebuilds such a feed from Kubernetes alone, over its last GitHub
+// snapshot, so polling every five seconds costs no GraphQL.
+export const POSTING_POLL_EVERY = 5000;
 
 // taskSessionHref is a task's agent session (plan, triage) in its own
 // tab: watched while the task runs, continued after.
@@ -779,12 +822,8 @@ function TryPanel({ boardName, onOpenSandbox, active = true }) {
       .then(data => setState(data))
       .catch(() => {});
   }, [boardName]);
-  useEffect(() => {
-    if (!active) return undefined;
-    load();
-    const t = setInterval(load, 10000);
-    return () => clearInterval(t);
-  }, [load, active]);
+  // Reading it costs a GitHub call per run: polled like the Runs state.
+  usePolling(load, RUN_STATE_EVERY, active);
 
   const sandboxes = (state && state.sandboxes) || [];
   const pending = (state && state.pending) || [];
@@ -1237,8 +1276,8 @@ function Work({ onBack, namespace, active = true }) {
 
   // A write the controller is doing (a row reading "posting") is done in
   // seconds; at the twenty-second cadence the button would keep saying
-  // posting long after it was. The server keeps such a feed fresh for
-  // seconds too, so polling faster while one stands shows it done.
+  // posting long after it was. The server keeps such a feed fresh for five
+  // seconds too, so polling faster while one stands shows it done soon.
   const posting = anyPosting(work);
   useEffect(() => {
     if (!posting) return undefined;
