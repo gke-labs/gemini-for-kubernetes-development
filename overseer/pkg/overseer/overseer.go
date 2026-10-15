@@ -114,6 +114,50 @@ func ReconcileOverseer(ctx context.Context, c client.Client, o *overseerv1alpha1
 	return nil
 }
 
+// factoryRepo is this project's sandbox image, built and tagged with each
+// commit's SHA alongside the overseer's (.github/workflows/build-images.yaml).
+const factoryRepo = "ghcr.io/gke-labs/gemini-for-kubernetes-development/factory-golang"
+
+// factoryImage is the image the overseer's task sandboxes run: spec.image,
+// pinned to the overseer's own build (the tag of overseerImage, the
+// controller's OVERSEER_IMAGE) when it names this project's factory image
+// at :latest or untagged, or names none. The factory in the sandboxes then
+// is the one the overseer was built with: on :latest it moved ahead of a
+// pinned overseer, and a breaking change between them (#1938 dropped
+// revise:) failed every task. Another image, or a pinned tag, is left as
+// given, and so is everything when the overseer itself is unpinned.
+func factoryImage(specImage, overseerImage string) string {
+	tag := imageTag(overseerImage)
+	if tag == "" || tag == "latest" {
+		return specImage
+	}
+	if specImage == "" {
+		return factoryRepo + ":" + tag
+	}
+	if strings.Contains(specImage, "@") {
+		return specImage
+	}
+	repo, specTag := specImage, ""
+	if i := strings.LastIndex(specImage, ":"); i > strings.LastIndex(specImage, "/") {
+		repo, specTag = specImage[:i], specImage[i+1:]
+	}
+	if repo == factoryRepo && (specTag == "" || specTag == "latest") {
+		return factoryRepo + ":" + tag
+	}
+	return specImage
+}
+
+// imageTag is ref's tag, "" for none or a digest reference.
+func imageTag(ref string) string {
+	if strings.Contains(ref, "@") {
+		return ""
+	}
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		return ref[i+1:]
+	}
+	return ""
+}
+
 func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespace string, hasTokenScript bool) *unstructured.Unstructured {
 	image := os.Getenv("OVERSEER_IMAGE")
 
@@ -307,10 +351,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.WorkspaceStorageClassName,
 		})
 	}
-	if o.Spec.Image != "" {
+	if img := factoryImage(o.Spec.Image, image); img != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "FACTORY_IMAGE",
-			"value": o.Spec.Image,
+			"value": img,
 		})
 	}
 	if len(o.Spec.Secrets) > 0 {
