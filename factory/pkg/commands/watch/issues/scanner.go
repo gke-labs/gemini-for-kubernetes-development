@@ -16,6 +16,7 @@ package issues
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	githubv39 "github.com/google/go-github/v39/github"
@@ -39,6 +40,11 @@ const (
 	DefaultSweepInterval = 10 * time.Minute
 	// defaultScanLimit bounds the fast queries when no limit is configured.
 	defaultScanLimit = 30
+	// failedCooldown holds back a task whose last run failed, in place of
+	// the workflow's declared cooldown: so a failure isn't retried in a spam
+	// loop, but doesn't cost the workflow's full cooldown either (a run that
+	// failed in two seconds once held an issue back for two hours).
+	failedCooldown = 20 * time.Minute
 )
 
 // Queue is the subset of the task queue the Scanner needs: it adds issue tasks,
@@ -61,6 +67,9 @@ type Queue interface {
 	GetProcessedTask(filename string) *api.QueueTask
 	// ListProcessedTasks returns every finished task, keyed by task file name.
 	ListProcessedTasks() map[string]*api.QueueTask
+	// NoteCooldown records a task held back by its cooldown, for the queue's
+	// readers, and reports whether it is news (logged once per window).
+	NoteCooldown(c api.Cooldown) bool
 }
 
 // Entities is the shared view of what the scanners have observed. The Scanner
@@ -351,7 +360,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 
-	if s.inCooldown(ctx, filename, workflowPath) {
+	if s.inCooldown(ctx, issue, filename, workflowPath, workflowName) {
 		return
 	}
 
@@ -470,8 +479,12 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 
 // inCooldown reports whether the same task completed recently enough that it
 // must not be queued again yet. The cooldown is declared by the workflow
-// definition; a standard fix uses the default.
-func (s *Scanner) inCooldown(ctx context.Context, filename, workflowPath string) bool {
+// definition, and a standard fix uses the default; a task whose last run
+// failed waits failedCooldown instead. A task held back is noted on the
+// queue, where the overseer's work view shows it, and logged once per
+// cooldown window (the first scan that holds it back until that time),
+// not on every scan.
+func (s *Scanner) inCooldown(ctx context.Context, issue *githubv39.Issue, filename, workflowPath, workflowName string) bool {
 	last := s.queue.GetProcessedTask(filename)
 	if last == nil {
 		return false
@@ -482,7 +495,32 @@ func (s *Scanner) inCooldown(ctx context.Context, filename, workflowPath string)
 	if last.CompletedAt.IsZero() {
 		return false
 	}
-	return time.Since(last.CompletedAt) < common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+	cooldown := failedCooldown
+	if last.Status != api.StatusFailed {
+		cooldown = common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+	}
+	until := last.CompletedAt.Add(cooldown)
+	if !time.Now().Before(until) {
+		return false
+	}
+	held := api.Cooldown{
+		FileName:        filename,
+		Number:          issue.GetNumber(),
+		URL:             issue.GetHTMLURL(),
+		Workflow:        workflowName,
+		Until:           until,
+		LastStatus:      last.Status,
+		LastCompletedAt: last.CompletedAt,
+	}
+	if s.queue.NoteCooldown(held) {
+		what := "fix"
+		if workflowName != "" {
+			what = "workflow " + workflowName
+		}
+		klog.Infof("Skipping issue #%d: %s in cooldown until %s (last run %s at %s)",
+			held.Number, what, until.UTC().Format(time.RFC3339), strings.ToLower(string(last.Status)), last.CompletedAt.UTC().Format(time.RFC3339))
+	}
+	return true
 }
 
 // applyTriggerLabel adopts an issue that was picked up by assignment rather

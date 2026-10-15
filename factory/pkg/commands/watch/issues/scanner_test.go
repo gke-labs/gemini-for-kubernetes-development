@@ -26,6 +26,8 @@ type fakeQueue struct {
 	enqueued  map[string]*api.QueueTask
 	processed map[string]*api.QueueTask
 	removed   []int
+	// cooldowns are the tasks noted as held back, by file name.
+	cooldowns map[string]api.Cooldown
 }
 
 func newFakeQueue() *fakeQueue {
@@ -71,6 +73,19 @@ func (q *fakeQueue) ListProcessedTasks() map[string]*api.QueueTask {
 		snapshot[fn] = t
 	}
 	return snapshot
+}
+
+func (q *fakeQueue) NoteCooldown(c api.Cooldown) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.cooldowns == nil {
+		q.cooldowns = map[string]api.Cooldown{}
+	}
+	if held, ok := q.cooldowns[c.FileName]; ok && held.Until.Equal(c.Until) {
+		return false
+	}
+	q.cooldowns[c.FileName] = c
+	return true
 }
 
 // finish records a task as completed, as the real queue does when a task ends.
@@ -535,5 +550,61 @@ func TestRun_StopsOnContextCancellation(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not return within 5s of cancellation")
+	}
+}
+
+// A task in its cooldown is held back and noted on the queue, once per
+// window. A succeeded run waits the workflow's declared cooldown; a failed
+// one waits failedCooldown (20 minutes) instead, shorter or longer.
+func TestInCooldown_FailedRunsWaitTwentyMinutes(t *testing.T) {
+	workflow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("---\nname: slow\ncooldown: 2h\n---\nDo the thing.\n"))
+	}))
+	t.Cleanup(workflow.Close)
+
+	issue := &githubv39.Issue{Number: githubv39.Int(13996), HTMLURL: githubv39.String("https://github.com/o/r/issues/13996")}
+	const file = "task-workflow-slow-issue-13996.yaml"
+	for _, tc := range []struct {
+		name     string
+		status   api.TaskStatus
+		ago      time.Duration
+		path     string
+		held     bool
+		until    time.Duration // after completion, when held
+		workflow string
+	}{
+		{"succeeded, within the declared 2h", api.StatusCompleted, 30 * time.Minute, workflow.URL, true, 2 * time.Hour, "slow"},
+		{"failed, past 20m though within the declared 2h", api.StatusFailed, 30 * time.Minute, workflow.URL, false, 0, "slow"},
+		{"failed, within 20m", api.StatusFailed, 5 * time.Minute, workflow.URL, true, failedCooldown, "slow"},
+		{"failed fix, within 20m though past the 10m default", api.StatusFailed, 15 * time.Minute, "", true, failedCooldown, ""},
+		{"succeeded fix, past the 10m default", api.StatusCompleted, 15 * time.Minute, "", false, 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, queue, _ := newScanner(t, Config{}, Deps{})
+			completed := time.Now().Add(-tc.ago)
+			queue.finish(file, &api.QueueTask{Status: tc.status, CompletedAt: completed})
+
+			if got := s.inCooldown(context.Background(), issue, file, tc.path, tc.workflow); got != tc.held {
+				t.Fatalf("inCooldown = %v, want %v", got, tc.held)
+			}
+			held, noted := queue.cooldowns[file]
+			if noted != tc.held {
+				t.Fatalf("noted on the queue = %v, want %v", noted, tc.held)
+			}
+			if !tc.held {
+				return
+			}
+			if !held.Until.Equal(completed.Add(tc.until)) || held.Number != 13996 || held.LastStatus != tc.status || held.Workflow != tc.workflow {
+				t.Errorf("cooldown = %+v, want until %v", held, completed.Add(tc.until))
+			}
+			// The next scan holds it back again, but it is no longer news:
+			// the skip is logged once per window.
+			if !s.inCooldown(context.Background(), issue, file, tc.path, tc.workflow) {
+				t.Fatal("the second scan let the task through")
+			}
+			if queue.NoteCooldown(held) {
+				t.Error("the same window was news twice")
+			}
+		})
 	}
 }
