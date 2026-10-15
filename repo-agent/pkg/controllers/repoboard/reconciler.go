@@ -57,8 +57,17 @@ const (
 	// AnnotationEngine records which agent engine launched into this
 	// sandbox — sessions are engine-private, so the chat terminal must
 	// resume with the same CLI that ran the task.
-	AnnotationEngine        = "board.gemini.google.com/engine"
+	AnnotationEngine = "board.gemini.google.com/engine"
+	// AnnotationViewedAt is when someone last read the board's feed (the
+	// API stamps it, at most every two minutes, while a tab polls it).
+	AnnotationViewedAt = "board.gemini.google.com/viewed-at"
+	// defaultRequeue paces a board someone is looking at (viewed within
+	// viewedWithin) or one with work standing; idleRequeue every other
+	// board: its automation picks new items up within ten minutes, and
+	// GitHub is listed a tenth as often (github-load.md).
 	defaultRequeue          = time.Minute
+	idleRequeue             = 10 * time.Minute
+	viewedWithin            = 5 * time.Minute
 	applyRequeue            = 5 * time.Second
 	launchRetryBackoff      = 30 * time.Minute
 	prWatchRelaunchInterval = 10 * time.Minute
@@ -83,6 +92,16 @@ type Reconciler struct {
 	// refusals are the recipe Requests ensureRecipe refused to launch, by
 	// UID, with why: settleRecipe fails them with it (refuseRecipe).
 	refusals sync.Map
+
+	// DiscoveryEvery is the least time between two GitHub discoveries of
+	// one board (the owner's identity and automation's listings): a
+	// Request's every status write wakes the board, and those reconciles
+	// settle and launch without listing GitHub again. Zero discovers on
+	// every reconcile.
+	DiscoveryEvery time.Duration
+	// discoveredAt is when each board (namespace/name) was last
+	// discovered.
+	discoveredAt sync.Map
 }
 
 //+kubebuilder:rbac:groups=board.gemini.google.com,resources=repoboards,verbs=get;list;watch;update;patch
@@ -144,20 +163,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// board reads with the prep identity. Discovery only reads GitHub —
 	// attributed writes always use the executor member's token.
 	work := &workState{board: board, owner: owner, repo: repo}
-	ghClient, err := r.discoveryClient(ctx, work)
-	if err != nil {
-		r.setCondition(ctx, board, "Auth", metav1.ConditionFalse, "DiscoveryIdentityUnavailable", err.Error())
-		return ctrl.Result{RequeueAfter: defaultRequeue}, nil
+	var wanted []autoRequest
+	if r.discoveryDue(req.NamespacedName.String(), time.Now()) {
+		ghClient, err := r.discoveryClient(ctx, work)
+		if err != nil {
+			r.setCondition(ctx, board, "Auth", metav1.ConditionFalse, "DiscoveryIdentityUnavailable", err.Error())
+			return ctrl.Result{RequeueAfter: defaultRequeue}, nil
+		}
+		r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
+		// The work: standing automation (spec.auto — deliberate,
+		// recency-bounded), which files recipe Requests as the board's
+		// owner.
+		wanted = r.discoverAuto(ctx, ghClient, work)
 	}
-	r.setCondition(ctx, board, "Auth", metav1.ConditionTrue, "Authenticated", "GitHub discovery identity available")
 
-	// The work: standing automation (spec.auto — deliberate,
-	// recency-bounded, verb scopes named by their values), which files
-	// recipe Requests as the board's owner, and the standing Requests
-	// (clicks and automation's alike: a recipe's, an apply, a watch, a
-	// run or a research session). Nothing else launches anything; what
-	// the member VIEWS is client-side state the controller never reads.
-	wanted := r.discoverAuto(ctx, ghClient, work)
+	// Then the standing Requests (clicks and automation's alike: a
+	// recipe's, an apply, a watch, a run or a research session). Nothing
+	// else launches anything; that a member is viewing the board only
+	// paces the reconcile (requeueAfter).
 	// Requests are objects in this namespace, so a failure to list them
 	// is a failure to reconcile: carrying on would read as "nobody
 	// clicked anything" and quietly settle nothing.
@@ -220,7 +243,35 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if len(mail.applies) > 0 {
 		return ctrl.Result{RequeueAfter: applyRequeue}, nil
 	}
-	return ctrl.Result{RequeueAfter: defaultRequeue}, nil
+	busy := len(mail.recipes)+len(mail.runbooks)+len(mail.research) > 0
+	return ctrl.Result{RequeueAfter: requeueAfter(board, busy, time.Now())}, nil
+}
+
+// requeueAfter paces a board: every minute while someone is viewing it or
+// while work stands (a recipe, run or research Request), which nothing
+// else wakes it to settle — a run's end is the runner's, not an event —
+// and every ten minutes otherwise.
+func requeueAfter(board *boardv1alpha1.RepoBoard, busy bool, now time.Time) time.Duration {
+	if busy {
+		return defaultRequeue
+	}
+	if at, err := time.Parse(time.RFC3339, board.GetAnnotations()[AnnotationViewedAt]); err == nil && now.Sub(at) < viewedWithin {
+		return defaultRequeue
+	}
+	return idleRequeue
+}
+
+// discoveryDue reports whether board is due a GitHub discovery, and if so
+// records it as discovered now.
+func (r *Reconciler) discoveryDue(board string, now time.Time) bool {
+	if r.DiscoveryEvery <= 0 {
+		return true
+	}
+	if at, ok := r.discoveredAt.Load(board); ok && now.Sub(at.(time.Time)) < r.DiscoveryEvery {
+		return false
+	}
+	r.discoveredAt.Store(board, now)
+	return true
 }
 
 type workState struct {
