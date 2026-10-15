@@ -131,6 +131,21 @@ type QueueResponse struct {
 	Incoming   []QueueTaskItem `json:"incoming"`
 	Processing []QueueTaskItem `json:"processing"`
 	Processed  []QueueTaskItem `json:"processed"`
+	// Cooldowns are the tasks the watch's issue scanner holds back because
+	// the same task finished too recently. An older watch serves none.
+	Cooldowns []QueueCooldownItem `json:"cooldowns,omitempty"`
+}
+
+// QueueCooldownItem is a task held back by its cooldown, as the watch
+// serves it.
+type QueueCooldownItem struct {
+	FileName        string `json:"fileName"`
+	Number          int    `json:"number"`
+	URL             string `json:"url,omitempty"`
+	Workflow        string `json:"workflow,omitempty"`
+	Until           string `json:"until"`
+	LastStatus      string `json:"lastStatus,omitempty"`
+	LastCompletedAt string `json:"lastCompletedAt,omitempty"`
 }
 
 func (s *Server) getOverseerQueue(c *gin.Context) {

@@ -59,6 +59,9 @@ type OverseerWorkItem struct {
 	Sessions []models.RunSession `json:"sessions"`
 	// Queued is the row's work in the watch's queue.
 	Queued []OverseerQueuedTask `json:"queued,omitempty"`
+	// Cooldown is the row's task the watch holds back until its cooldown
+	// ends, when it does: the row's "cooldown until" label.
+	Cooldown *OverseerCooldown `json:"cooldown,omitempty"`
 	// UpdatedAt is the latest a run of the row started or ended.
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
@@ -88,6 +91,15 @@ type OverseerQueuedTask struct {
 	Priority   string `json:"priority,omitempty"`
 	Assignee   string `json:"assignee,omitempty"`
 	EnqueuedAt string `json:"enqueuedAt,omitempty"`
+}
+
+// OverseerCooldown is a row's task held back by its cooldown: a workflow's
+// declared one after a run, or 20 minutes after a failed run.
+type OverseerCooldown struct {
+	Until           string `json:"until"`
+	Workflow        string `json:"workflow,omitempty"`
+	LastStatus      string `json:"lastStatus,omitempty"`
+	LastCompletedAt string `json:"lastCompletedAt,omitempty"`
 }
 
 // queueRecipes is the recipe each queue task type runs.
@@ -407,6 +419,24 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 			}
 		}
 	}
+	if q != nil {
+		for _, c := range q.Cooldowns {
+			issue := c.Number
+			if kind, n := itemNumber(c.URL); kind == "issue" {
+				issue = n
+			}
+			if issue == 0 {
+				continue
+			}
+			r := row(issue, 0, "")
+			if r.HTMLURL == "" {
+				r.HTMLURL = c.URL
+			}
+			if r.Cooldown == nil || c.Until > r.Cooldown.Until {
+				r.Cooldown = &OverseerCooldown{Until: c.Until, Workflow: c.Workflow, LastStatus: c.LastStatus, LastCompletedAt: c.LastCompletedAt}
+			}
+		}
+	}
 	items := make([]OverseerWorkItem, 0, len(rows))
 	for _, r := range rows {
 		slices.SortStableFunc(r.Sessions, func(a, b models.RunSession) int { return strings.Compare(b.StartedAt, a.StartedAt) })
@@ -453,7 +483,8 @@ func workSection(r *OverseerWorkItem) (string, string) {
 			return "working", ""
 		}
 	}
-	if len(r.Queued) > 0 {
+	// A task held back by its cooldown is waiting to be queued.
+	if len(r.Queued) > 0 || r.Cooldown != nil {
 		return "queued", ""
 	}
 	return "idle", ""

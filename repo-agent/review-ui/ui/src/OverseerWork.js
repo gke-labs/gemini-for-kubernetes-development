@@ -100,6 +100,17 @@ const userChip = (u) => (
   </span>
 );
 
+// cooldownTitle explains a row's cooldown label: when its task may be
+// queued again, and the run it waits out (a failed run waits 20 minutes,
+// any other the workflow's cooldown).
+export function cooldownTitle(c) {
+  const at = (s) => new Date(s).toLocaleString();
+  const what = c.workflow ? `workflow ${c.workflow}` : 'fix';
+  const last = c.lastCompletedAt ? `last run ${(c.lastStatus || 'ended').toLowerCase()} at ${at(c.lastCompletedAt)}` : '';
+  const why = c.lastStatus === 'Failed' ? 'a failed run waits 20 minutes' : `${what}'s cooldown`;
+  return [`Not queued again before ${at(c.until)}`, last, why].filter(Boolean).join('; ');
+}
+
 export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
   const chips = rowChips(item);
   const users = [...new Set((item.sandboxes || []).map(s => s.user).filter(Boolean))];
@@ -164,6 +175,12 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
             </span>
           );
         })}
+        {item.cooldown && (
+          <span style={{ marginLeft: '4px', whiteSpace: 'nowrap' }} title={cooldownTitle(item.cooldown)}>
+            <Chip text={`cooldown until ${new Date(item.cooldown.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
+              color={RUN_STYLE.queued.color} bg={RUN_STYLE.queued.bg} />
+          </span>
+        )}
         {podTrouble && !failedChip && (
           <span style={{ marginLeft: '4px' }} title={item.reason}>
             <Chip text={`${podTrouble.pod} !`} color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
