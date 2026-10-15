@@ -188,3 +188,35 @@ func TestOverseerWorkWithoutTheQueue(t *testing.T) {
 		t.Errorf("work = %s", w.Body.String())
 	}
 }
+
+// A task the watch holds back by its cooldown is its issue's "cooldown
+// until" label: on the issue's row (a workflow's sandbox's, or a row of its
+// own when it has none), which waits in queued. An older watch, serving no
+// cooldowns, leaves the rows without one.
+func TestOverseerWorkCarriesCooldowns(t *testing.T) {
+	sandboxes := []unstructured.Unstructured{
+		overseerWorkSandbox("wf-issue-13996", nil, map[string]string{"htmlURL": kccURL + "/issues/13996", annoLastTaskType: "agent", annoTaskState: "Completed"}, 0),
+	}
+	q := &QueueResponse{Cooldowns: []QueueCooldownItem{
+		{FileName: "task-workflow-slow-issue-13996.yaml", Number: 13996, URL: kccURL + "/issues/13996", Workflow: "slow",
+			Until: "2026-10-15T19:16:02Z", LastStatus: "Failed", LastCompletedAt: "2026-10-15T18:56:02Z"},
+		{FileName: "task-issue-14020.yaml", Number: 14020, URL: kccURL + "/issues/14020", Until: "2026-10-15T19:30:00Z", LastStatus: "Completed"},
+	}}
+	rows := rowsByKey(buildOverseerWork("overseer-kcc", sandboxes, nil, q))
+
+	wf := rows["issue-13996"]
+	if wf.Cooldown == nil || wf.Cooldown.Until != "2026-10-15T19:16:02Z" || wf.Cooldown.LastStatus != "Failed" || wf.Cooldown.Workflow != "slow" {
+		t.Errorf("issue-13996 cooldown = %+v", wf.Cooldown)
+	}
+	if wf.Section != "queued" || len(wf.Sandboxes) != 1 {
+		t.Errorf("issue-13996 = section %q, %d sandboxes; want queued, its workflow's sandbox", wf.Section, len(wf.Sandboxes))
+	}
+	if fix := rows["issue-14020"]; fix.Cooldown == nil || fix.Section != "queued" || fix.HTMLURL != kccURL+"/issues/14020" {
+		t.Errorf("issue-14020 = %+v", fix)
+	}
+
+	old := rowsByKey(buildOverseerWork("overseer-kcc", sandboxes, nil, &QueueResponse{}))
+	if old["issue-13996"].Cooldown != nil {
+		t.Error("a cooldown with none served")
+	}
+}

@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const OverseerWork = require('./OverseerWork').default;
-const { matchesWork, rowChips, groupOf } = require('./OverseerWork');
+const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle } = require('./OverseerWork');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -189,5 +189,41 @@ describe('rowChips', () => {
         expect(groupOf('care-rebase')).toEqual({ group: 'care', label: 'Care' });
         expect(groupOf('fanout')).toEqual({ group: 'fanout', label: 'Fan out' });
         expect(groupOf('summarize')).toEqual({ group: 'summarize', label: 'Summarize' });
+    });
+});
+
+describe('a cooldown', () => {
+    const cooldown = { until: '2026-10-15T19:16:02Z', workflow: 'kcc-greenfield', lastStatus: 'Failed', lastCompletedAt: '2026-10-15T18:56:02Z' };
+
+    test('is a "cooldown until" label on its row, explained on hover', async () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        const root = createRoot(el);
+        await act(async () => {
+            root.render(<table><tbody><WorkRow item={{ key: 'issue-13996', kind: 'issue', number: 13996, workflow: true, cooldown, sandboxes: [], sessions: [] }}
+                onOpenSession={() => {}} onOpenSandbox={() => {}} /></tbody></table>);
+        });
+        const label = Array.from(el.querySelectorAll('span[title]')).find(s => s.textContent.startsWith('cooldown until'));
+        expect(label).toBeDefined();
+        expect(label.getAttribute('title')).toContain('a failed run waits 20 minutes');
+        await act(async () => { root.unmount(); });
+        el.remove();
+    });
+
+    test('says what it waits out', () => {
+        expect(cooldownTitle(cooldown)).toMatch(/^Not queued again before .*; last run failed at .*; a failed run waits 20 minutes$/);
+        expect(cooldownTitle({ ...cooldown, lastStatus: 'Completed' })).toContain("workflow kcc-greenfield's cooldown");
+        expect(cooldownTitle({ until: cooldown.until })).toContain("fix's cooldown");
+    });
+
+    test('is absent without one', async () => {
+        const el = document.createElement('div');
+        const root = createRoot(el);
+        await act(async () => {
+            root.render(<table><tbody><WorkRow item={{ key: 'issue-1', kind: 'issue', number: 1, sandboxes: [], sessions: [] }}
+                onOpenSession={() => {}} onOpenSandbox={() => {}} /></tbody></table>);
+        });
+        expect(el.textContent).not.toContain('cooldown');
+        await act(async () => { root.unmount(); });
     });
 });

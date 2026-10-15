@@ -41,6 +41,10 @@ type TaskQueueManager struct {
 	processedLogDir  string
 	queueDir         string
 	dryRun           bool
+
+	// cooldowns are the tasks the issue scanner is holding back, by task
+	// file name (NoteCooldown), served with the queue until they expire.
+	cooldowns map[string]api.Cooldown
 }
 
 // NewTaskQueueManager creates a new TaskQueueManager instance with configured directories.
@@ -718,4 +722,28 @@ func moveTaskFile(srcDir, dstDir, filename string, task *api.QueueTask) error {
 		_ = writeTaskAtomically(dstDir, filename, task)
 	}
 	return nil
+}
+
+// NoteCooldown records that the issue scanner is holding c's task back
+// until c.Until, for the queue's readers (the overseer's work view), and
+// drops the cooldowns that have expired. It reports whether this is news:
+// the first time the task is held back until that time, which is when the
+// scanner says so in its log.
+func (m *TaskQueueManager) NoteCooldown(c api.Cooldown) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for fn, held := range m.cooldowns {
+		if !held.Until.After(now) {
+			delete(m.cooldowns, fn)
+		}
+	}
+	if m.cooldowns == nil {
+		m.cooldowns = map[string]api.Cooldown{}
+	}
+	if held, ok := m.cooldowns[c.FileName]; ok && held.Until.Equal(c.Until) {
+		return false
+	}
+	m.cooldowns[c.FileName] = c
+	return true
 }

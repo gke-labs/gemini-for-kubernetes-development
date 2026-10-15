@@ -150,6 +150,15 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 		byType[item.Type]++
 	}
 
+	var cooldowns []api.QueueCooldown
+	now := time.Now()
+	for _, c := range m.cooldowns {
+		if c.Until.After(now) {
+			cooldowns = append(cooldowns, c.Item())
+		}
+	}
+	sort.Slice(cooldowns, func(i, j int) bool { return cooldowns[i].FileName < cooldowns[j].FileName })
+
 	return api.QueueResponse{
 		Summary: api.QueueSummary{
 			TotalPending:    len(incoming),
@@ -161,5 +170,6 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 		Incoming:   incoming,
 		Processing: processing,
 		Processed:  processed,
+		Cooldowns:  cooldowns,
 	}
 }

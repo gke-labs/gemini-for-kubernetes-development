@@ -476,3 +476,45 @@ func newTestQueueManager(queueDir string) *TaskQueueManager {
 	_ = mgr.LoadFromDisk()
 	return mgr
 }
+
+// A task the issue scanner holds back is served with the queue until its
+// cooldown ends; noting the same window again is not news, a new window is,
+// and expired cooldowns are dropped.
+func TestCooldownsAreServedUntilTheyEnd(t *testing.T) {
+	m := NewTaskQueueManager(TaskQueueManagerConfig{QueueDir: t.TempDir()})
+	failedAt := time.Now().Add(-5 * time.Minute)
+	held := api.Cooldown{
+		FileName: "task-workflow-slow-issue-13996.yaml", Number: 13996, Workflow: "slow",
+		Until: failedAt.Add(20 * time.Minute), LastStatus: api.StatusFailed, LastCompletedAt: failedAt,
+	}
+	if !m.NoteCooldown(held) {
+		t.Fatal("a new cooldown was not news")
+	}
+	if m.NoteCooldown(held) {
+		t.Error("the same window was news twice")
+	}
+	expired := api.Cooldown{FileName: "task-issue-7.yaml", Number: 7, Until: time.Now().Add(-time.Second)}
+	m.NoteCooldown(expired)
+
+	resp := m.GetQueueResponse()
+	if len(resp.Cooldowns) != 1 {
+		t.Fatalf("cooldowns = %+v, want the one still running", resp.Cooldowns)
+	}
+	c := resp.Cooldowns[0]
+	if c.Number != 13996 || c.Workflow != "slow" || c.LastStatus != api.StatusFailed || c.Until != held.Until.UTC().Format(time.RFC3339) || c.LastCompletedAt == "" {
+		t.Errorf("served %+v", c)
+	}
+
+	later := held
+	later.Until = held.Until.Add(time.Hour)
+	if !m.NoteCooldown(later) {
+		t.Error("a new window was not news")
+	}
+	// Noting anything prunes what has expired.
+	m.mu.RLock()
+	_, stale := m.cooldowns[expired.FileName]
+	m.mu.RUnlock()
+	if stale {
+		t.Error("an expired cooldown was kept")
+	}
+}
