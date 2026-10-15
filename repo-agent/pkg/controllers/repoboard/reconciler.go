@@ -618,30 +618,43 @@ func (r *Reconciler) activeCount(work *workState) int {
 }
 
 func (r *Reconciler) updateCounts(ctx context.Context, work *workState) {
-	needsHuman := 0
-	for _, sb := range work.sandboxes {
-		annotations := sb.GetAnnotations()
-		if annotations[factorycli.AnnotationTriageOutput] != "" && !factorycli.IsApplied(annotations, factorycli.AnnotationTriageApplied, "comment") {
-			needsHuman++
-			continue
-		}
-		_, isIssueSB := factorycli.IssueOf(sb, work.repo)
-		if annotations[factorycli.AnnotationTaskState] == factorycli.TaskStateCompleted &&
-			strings.Contains(annotations["htmlURL"], "/pull/") && isIssueSB {
-			needsHuman++
-		}
-	}
+	catalog := r.recipeCatalog(ctx)
 	work.board.Status.Counts = boardv1alpha1.BoardCounts{
-		NeedsHuman: needsHuman,
+		NeedsHuman: needsHuman(work.sandboxes, catalog),
 		Active:     r.activeCount(work),
 	}
 	// What the board's rows offer to launch, for the API to read.
-	if catalog := r.recipeCatalog(ctx); catalog != nil {
+	if catalog != nil {
 		work.board.Status.Recipes = catalog
 	}
 	if err := r.Status().Update(ctx, work.board); err != nil {
 		log.FromContext(ctx).Error(err, "unable to update board status")
 	}
+}
+
+// needsHuman counts the runs waiting on someone, whichever recipe: per
+// sandbox, the newest run of each group (a session's recipes are one, as
+// a row shows them) when it is ready (a draft to judge) or failed.
+func needsHuman(sandboxes []*unstructured.Unstructured, catalog []boardv1alpha1.BoardRecipe) int {
+	n := 0
+	for _, sb := range sandboxes {
+		annotations := sb.GetAnnotations()
+		seen := map[string]bool{}
+		for _, run := range factorycli.Runs(annotations) { // newest first
+			group := run.Recipe
+			if rec, ok := findRecipe(catalog, run.Recipe); ok && rec.Session != "" {
+				group = rec.Session
+			}
+			if seen[group] {
+				continue
+			}
+			seen[group] = true
+			if status := run.Status(annotations); status == "ready" || status == "failed" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // factoryReviewMarker opens the marker factory ends a review it posts
