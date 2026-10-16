@@ -41,24 +41,28 @@ kubectl exec -n "$NAMESPACE" "$POD_NAME" -- touch /workspaces/.do_not_process ||
 
 echo ""
 echo "[Step 2] Waiting for existing sandboxes with pending tasks to complete..."
-ELAPSED=0
 INTERVAL=10
+# Wall-clock time: a pass of the loop takes far longer than INTERVAL on a
+# namespace with many sandboxes, so counting passes undercounts.
+START=$(date +%s)
 
 while true; do
+    ELAPSED=$(( $(date +%s) - START ))
     ACTIVE_COUNT=0
     ACTIVE_NAMES=""
-    
-    # Check running sandboxes in the namespace (ignoring the overseer pod itself)
-    SB_NAMES=$(kubectl get sandboxes.agents.x-k8s.io -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -v "^overseer-" || true)
-    
-    for sb in $SB_NAMES; do
-        STATE=$(kubectl get sandbox.agents.x-k8s.io "$sb" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.sandbox\.gemini\.google\.com/last-task-state}' 2>/dev/null || true)
-        REPLICAS=$(kubectl get sandbox.agents.x-k8s.io "$sb" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
-        if [ "$STATE" = "Running" ] && [ "${REPLICAS:-0}" -gt 0 ]; then
+
+    # One call for every sandbox's name, last task state and replicas
+    # (ignoring the overseer's own): a get per sandbox is hundreds of calls
+    # a pass in a namespace like overseer-kcc's.
+    while read -r sb state replicas; do
+        [ -n "$sb" ] || continue
+        case "$sb" in overseer-*) continue ;; esac
+        if [ "$state" = "Running" ] && [ "${replicas:-0}" -gt 0 ] 2>/dev/null; then
             ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
             ACTIVE_NAMES="${ACTIVE_NAMES} ${sb}"
         fi
-    done
+    done < <(kubectl get sandboxes.agents.x-k8s.io -n "$NAMESPACE" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.sandbox\.gemini\.google\.com/last-task-state}{" "}{.spec.replicas}{"\n"}{end}' 2>/dev/null || true)
 
     if [ "$ACTIVE_COUNT" -eq 0 ]; then
         echo "--> All pending tasks have completed (0 active task sandboxes running)."
@@ -78,7 +82,6 @@ while true; do
 
     echo "[+${ELAPSED}s] Waiting... (${ACTIVE_COUNT} active task sandbox(es) still running:${ACTIVE_NAMES})"
     sleep "$INTERVAL"
-    ELAPSED=$((ELAPSED + INTERVAL))
 done
 
 echo ""
