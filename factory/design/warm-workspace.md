@@ -146,7 +146,9 @@ start:
           printf '%s\n' "$INPUT_SCRIPT" > "$TASK_DIR/warm.sh"
           bash -euo pipefail "$TASK_DIR/warm.sh"
         fi
-        test -z "$(git status --porcelain)"   # a dirty tree would be in every fix
+        # a dirty tree would be in every fix: reset it to the commit, with a
+        # warning naming what the script left, rather than lose the snapshot
+        [ -z "$(git status --porcelain)" ] || { git status --short; git reset -q --hard HEAD; git clean -q -fd; }
     - run: |
         rm -rf /workspaces/.tmp /workspaces/spool
         # set -e ignores a command negated with !, hence the || exit 1
