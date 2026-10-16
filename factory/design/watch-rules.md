@@ -203,6 +203,29 @@ PRs, six bots), a quiet pass goes from hundreds of calls, most of them
 details for every candidate PR, to a few dozen, mostly 304s, and a busy
 pass costs about what changed.
 
+**Risks of the scan:**
+
+- **A lost snapshot must not fire everything.** A missing or reset
+  snapshot (a new branch, a corrupt file) would make every item look
+  `opened` or `labeled`. A missing snapshot is a baseline, not events:
+  the first pass after a loss is a sweep, on state alone.
+- **The overseer's own writes are subtracted, not looked up.** A listing
+  shows a new label, not who added it, and asking the timeline per item
+  would undo the savings. The engine records the changes it makes
+  (labels, assignees it expects to see) and takes them out of the diff.
+- **`since` has edges:** an item updated during a scan, or clock skew,
+  could slip past. The cursor is the last scan's start, less a margin;
+  an item seen twice is harmless (dedupe, preconditions).
+- **A diff misses what comes and goes between passes** (a label added
+  and removed). Rules decide on state, with events as hints, so a missed
+  event delays an action until the sweep rather than losing it.
+- **GraphQL has its own limits:** no ETags, its own hourly budget, a cap
+  on nodes per query. Only the PRs an event touched are batched, beside
+  the open PRs' check rollup, and conditional REST is the fallback.
+- **Preconditions are calls too** (`head`, `no-linked-pr`): they reuse
+  the current pass's snapshot when it is recent, and fetch only when it
+  is not.
+
 ### Predicates
 
 A closed set, each a named Go function, so a rule cannot reach anything
@@ -458,34 +481,112 @@ keep the guarantee. Where it can do better than today is cost and the
 counters, which today's restart cycle undoes, and it adds a risk today
 does not have: rules a repository writes.
 
-## Steps
+## Moving without regressing
 
-0. **Fix what the read turned up:** wire or remove `--poll-interval`,
-   `--labels`, `reviewMode`, `chores.include`/`exclude` and the `dryrun`
-   mode; name `pollInterval` for what it is (the run's lifetime) or make
-   it the poll interval it claims to be; one definition of a bot review;
-   the dispatcher's comment says what its ordering is.
-1. **Preconditions in today's watch:** PR tasks record their head, issue
-   tasks that no PR is linked; the dispatcher drops a task whose facts
-   changed, with the reason, and a drop is not an attempt.
-2. **One scan, persisted:** the scanners share one set of listings
-   (deduplicated, incremental with `since`), and the cursor, the
-   per-item memory and the HTTP cache survive the restart; PR details
-   from one GraphQL query.
-3. **`attempts` and the give-up policy** from the processed tasks,
-   replacing the comment counting, seeded from it once.
-4. **Rules in Go, proven:** the scanners become rule structs and an
-   engine with today's behaviour exactly; replay tests against the
-   scanners, then shadow mode on staging, before the engine acts.
-5. **Rules as data:** the built-in rules as embedded files, one per
-   rule, and `factory watch rules`.
-6. **The repository's rules:** `.agents/rules/*.yaml` replacing, turning
-   off or adding to the built-ins, within the global gates and floors,
-   and `.agents/watch.yaml` for its settings.
-7. **The board** shares the predicates for its auto rules.
+The overseer on KCC must not do less, or worse, at any point of the
+move. Both paths stay, and the move is per rule, each step undone by one
+setting.
 
-Steps 0–3 are worth doing for today's watch whether or not the rest
-follows.
+**Why both can run at once.** Task names are deterministic
+(`task-issue-N`, `task-pr-N-ci`, …) and a second enqueue of a name is a
+no-op. The scanners and the engine write into the same queue, and the
+dispatcher, the preconditions, the leases and the identity are shared:
+a task both decide runs once.
+
+**Modes,** on the Overseer:
+
+```yaml
+spec:
+  rules:
+    engine: shadow          # off | shadow | on; off (the default) is today's watch
+    use:                    # per rule, once the engine is not off
+      conflict: engine
+      ci: engine
+      comments: legacy
+    canaryLabel: overseer/engine   # optional: the engine takes a rule only on items with this label
+```
+
+- **`off`:** the scanners only, as today; the engine's code ships and
+  does nothing.
+- **`shadow`:** the scanners act; the engine is given the data the
+  scanners fetched (no calls of its own), decides, and acts on nothing.
+  Each decision is recorded beside the scanner's, and disagreements per
+  rule are shown in the journal and the overseer's view.
+- **`use: {<rule>: engine}`:** the rule's tasks come from the engine and
+  the scanner skips that task type; everything after the queue is
+  unchanged. Back is the same setting; the engine's state (snapshots,
+  cursor, attempts) only adds to what is there, so nothing migrates.
+- **`canaryLabel`:** a rule the engine has taken applies only to items
+  with the label, so a few chosen issues and PRs go first while the rest
+  stay on the scanners.
+
+**What says it works:** every task records `decidedBy: legacy|engine`;
+the overseer's view counts, per rule, tasks queued, dropped by a
+precondition, given up, and shadow disagreements; a rule's outcomes (runs,
+PRs opened, give-ups) are compared over a week before and after it moves.
+
+**Not partial by loop:** issues on one path and PRs on the other is too
+coarse, since PR care is rules of very different risk.
+
+## Plan
+
+Each phase ships behind its own setting, defaulting to today's
+behaviour, and goes to the smaller overseers (`overseer-repo-agent`,
+`overseer-agent-sandbox`) before staging `overseer-kcc`, then
+production.
+
+**Phase 0, fixes in today's watch** (no decision changes; each a small
+PR, each verified on staging `overseer-kcc`):
+
+| PR | what | done when |
+|---|---|---|
+| 0a | the knobs: wire `reviewMode`, `chores.include`/`exclude`, the `dryrun` mode; remove `--poll-interval` and `--labels`; name `pollInterval` the run's lifetime | the Overseer's settings do what they say |
+| 0b | one definition of a bot review; the dispatcher's comment says its ordering | — |
+| 0c | preconditions: PR tasks record their head, issue tasks that no PR is linked; the dispatcher drops a stale task with a reason, not counted as an attempt (setting `preconditions`) | on KCC, drops are visible and no wasted CI run follows a comments run's push |
+| 0d | the HTTP cache on the overseer's volume, surviving the restart | the first pass after a restart is mostly 304s |
+| 0e | `attempts` from the processed tasks, seeded from the comment counts, replacing the comment counting (setting `attempts`) | the give-ups happen at the same counts as before |
+
+**Phase 1, one scan** (behind `scan: shared`): the scanners read one set
+of listings (deduplicated, incremental with `since`), the cursor and
+snapshots persisted, PR details from one GraphQL query. The scanners'
+decisions are unchanged; only where their data comes from. Done when, on
+KCC, calls per pass drop and the tasks enqueued match a week before.
+
+**Phase 2, the engine in shadow:**
+
+- 2a: the engine, the built-in rules in Go, the predicates and groups;
+  replay tests on recorded KCC snapshots (captured read-only from
+  staging), comparing what the scanners and the engine enqueue.
+- 2b: `engine: shadow` on the smaller overseers, then on KCC staging;
+  disagreements shown per rule.
+- Done when every built-in rule has a week on KCC staging with no
+  disagreement that is not understood and fixed.
+
+**Phase 3, rule by rule** (`use: {<rule>: engine}`, the canary label
+first, then all items; staging, then production), cheapest to get wrong
+first:
+
+1. `conflict`: rare, and a rebase is easy to check.
+2. `ci`, then `review`: replies and pending reviews.
+3. `comments`.
+4. `ready`, adoption, label inheritance, inactivity: writes people see.
+5. `fix`, `workflow`: they open PRs and spend the most.
+
+Each rule moves when its shadow week is clean, and moves back on any
+regression. Done when every rule is on the engine.
+
+**Phase 4, delete:** a rule's scanner code goes once the rule has run on
+the engine in production for two weeks without moving back; the
+scanners go with their last rule.
+
+**Phase 5, rules as data:** the built-in rules as embedded files, one
+per rule, `factory watch rules`; then the repository's
+`.agents/rules/*.yaml` within the global gates and floors; then the
+board's auto rules on the same predicates.
+
+Phase 0 is worth doing whether or not the rest follows: it fixes what
+the read turned up, saves quota and wasted runs, and makes today's
+give-ups sturdier.
 
 ## Open questions
 
