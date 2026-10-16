@@ -45,6 +45,9 @@ type SandboxService interface {
 	ResolveTaskName(ctx context.Context, task *api.QueueTask) string
 	// IsTaskRunning reports whether the sandbox is currently executing a task.
 	IsTaskRunning(ctx context.Context, sandboxName string) (bool, error)
+	// RequiresHuman is why the sandbox needs a person before anything runs
+	// in it again, or "".
+	RequiresHuman(ctx context.Context, sandboxName string) (string, error)
 	// CountRunningTasks returns the number of sandboxes currently executing a task.
 	CountRunningTasks(ctx context.Context) (int, error)
 	// Delete force deletes a sandbox, e.g. after a task times out.
@@ -342,6 +345,16 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 	// Validate GitHub status (stop label or closed)
 	if cancel, reason := d.coordinator.ShouldCancelTask(ctx, task); cancel {
 		klog.Infof("Skipping task %s and removing from incoming because %s", filename, reason)
+		_ = d.queue.RemoveTask(filename)
+		return false, false
+	}
+
+	// A sandbox whose last run failed in a way a rerun would repeat waits
+	// for a person, whatever the task.
+	if reason, err := d.sandboxes.RequiresHuman(ctx, sandboxName); err != nil {
+		klog.Warningf("Failed to check whether sandbox %s needs a person: %v", sandboxName, err)
+	} else if reason != "" {
+		klog.Infof("Skipping task %s and removing from incoming because sandbox %s needs a person: %s", filename, sandboxName, reason)
 		_ = d.queue.RemoveTask(filename)
 		return false, false
 	}

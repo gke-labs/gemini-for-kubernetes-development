@@ -120,6 +120,12 @@ func (e *fakeEntities) SetOpenIssueNumbers(nums []int) { e.openIssues = nums }
 // fakeSandboxes reports the sandboxes that are mid-run.
 type fakeSandboxes struct {
 	running map[string]bool
+	// requiresHuman is why a sandbox needs a person, by name.
+	requiresHuman map[string]string
+}
+
+func (s fakeSandboxes) RequiresHuman(_ context.Context, name string) (string, error) {
+	return s.requiresHuman[name], nil
 }
 
 func (s fakeSandboxes) IsTaskRunning(_ context.Context, name string) (bool, error) {
@@ -530,6 +536,35 @@ func TestScanOnce_SkipsIssueWithRunningSandbox(t *testing.T) {
 
 	if len(queue.enqueued) != 0 {
 		t.Errorf("queued %d tasks for an issue with an in-flight sandbox, want 0", len(queue.enqueued))
+	}
+}
+
+// An issue whose fix sandbox needs a person (its last run failed in a way
+// a rerun would repeat) is not queued again, cooldown over or not.
+func TestScanOnce_SkipsIssueWhoseSandboxNeedsAPerson(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]*githubv39.Timeline{})
+	}))
+	defer server.Close()
+
+	gh := githubv39.NewClient(nil)
+	gh.BaseURL, _ = url.Parse(server.URL + "/")
+
+	updated := time.Now()
+	s, queue, _ := newScanner(t, Config{}, Deps{
+		GitHub:    github.ForRepo(gh, "test-owner", "test-repo"),
+		Sandboxes: fakeSandboxes{requiresHuman: map[string]string{"fix-test-repo-9": "step 8:ask: over the token limit"}},
+	})
+
+	s.queueTasks(context.Background(), []*githubv39.Issue{{
+		Number:    githubv39.Int(9),
+		UpdatedAt: &updated,
+		Labels:    []*githubv39.Label{{Name: githubv39.String("factory")}},
+	}}, nil)
+
+	if len(queue.enqueued) != 0 {
+		t.Errorf("queued %d tasks for an issue whose sandbox needs a person, want 0", len(queue.enqueued))
 	}
 }
 

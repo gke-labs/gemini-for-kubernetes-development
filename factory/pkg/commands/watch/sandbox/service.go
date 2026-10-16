@@ -217,6 +217,23 @@ func (s *Service) Exists(ctx context.Context, name string) (bool, error) {
 	return true, nil
 }
 
+// RequiresHuman is why the named sandbox needs a person before anything
+// runs in it again (factorysandbox.AnnotationRequiresHuman), or "": also
+// for a sandbox that does not exist.
+func (s *Service) RequiresHuman(ctx context.Context, name string) (string, error) {
+	if s.kube == nil {
+		return "", nil
+	}
+	sb, err := s.kube.DynamicClient.Resource(k8s.SandboxGVR).Namespace(s.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return factorysandbox.RequiresHuman(sb.GetAnnotations()), nil
+}
+
 // IsTaskRunning reports whether the named sandbox is currently executing a task.
 //
 // It is authoritative rather than advisory: when the recorded annotation still

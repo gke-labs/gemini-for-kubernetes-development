@@ -30,6 +30,8 @@ type fakeSandboxService struct {
 	countErr     error
 	deleted      []string
 	suspended    []string
+	// requiresHuman is why a sandbox needs a person, by name.
+	requiresHuman map[string]string
 }
 
 func newFakeSandboxService() *fakeSandboxService {
@@ -43,6 +45,12 @@ func (f *fakeSandboxService) ResolveTaskName(_ context.Context, task *api.QueueT
 		return f.resolve(task)
 	}
 	return "sandbox"
+}
+
+func (f *fakeSandboxService) RequiresHuman(_ context.Context, sandboxName string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requiresHuman[sandboxName], nil
 }
 
 func (f *fakeSandboxService) IsTaskRunning(_ context.Context, sandboxName string) (bool, error) {
@@ -361,6 +369,25 @@ func TestDispatchOnce_RemovesCancelledTask(t *testing.T) {
 
 	if len(runner.invocations()) != 0 {
 		t.Errorf("expected no task execution for a cancelled task")
+	}
+	waitForCounts(t, queue, 0, 0, 0)
+}
+
+// A sandbox marked as needing a person (its last run failed in a way a
+// rerun would repeat) runs nothing until someone clears it: its task is
+// dropped from the queue, not dispatched.
+func TestDispatchOnce_RemovesTaskForASandboxThatNeedsAPerson(t *testing.T) {
+	tempDir := t.TempDir()
+	d, queue, sandboxes, _, runner := testDispatcher(t, tempDir, nil)
+	sandboxes.requiresHuman = map[string]string{"sandbox": "step 8:ask: over the token limit"}
+
+	enqueueTestTask(t, queue, "task-issue-4.yaml", 4)
+
+	d.DispatchOnce(context.Background())
+	d.Wait()
+
+	if len(runner.invocations()) != 0 {
+		t.Errorf("expected no task execution for a sandbox that needs a person")
 	}
 	waitForCounts(t, queue, 0, 0, 0)
 }

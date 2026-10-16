@@ -92,6 +92,9 @@ type Entities interface {
 // second task would fight over.
 type Sandboxes interface {
 	IsTaskRunning(ctx context.Context, name string) (bool, error)
+	// RequiresHuman is why the sandbox needs a person before anything runs
+	// in it again, or "".
+	RequiresHuman(ctx context.Context, name string) (string, error)
 }
 
 // UserSelector picks the bot account a task should run as. Role configuration
@@ -406,6 +409,14 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	sandboxName := fmt.Sprintf("fix-%s-%d", s.gh.Repo(), num)
 	if workflowName != "" {
 		sandboxName = fmt.Sprintf("wf-issue-%d", num)
+	}
+
+	if reason, err := s.sandboxes.RequiresHuman(ctx, sandboxName); err != nil {
+		klog.Errorf("Failed to check whether sandbox %s needs a person: %v", sandboxName, err)
+		return
+	} else if reason != "" {
+		klog.Infof("Skipping issue #%d because sandbox %s needs a person: %s", num, sandboxName, reason)
+		return
 	}
 
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)

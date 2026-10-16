@@ -213,6 +213,9 @@ func (r *Runner) Run(ctx context.Context, rec *Recipe) (err error) {
 		}
 		if err != nil {
 			fmt.Fprintf(r.Log, "::failed %s: %v\n", label, err)
+			if reason := requiresHuman(err); reason != "" {
+				r.markRequiresHuman(label, reason)
+			}
 			return fmt.Errorf("step %s: %w", label, err)
 		}
 	}

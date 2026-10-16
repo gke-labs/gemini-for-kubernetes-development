@@ -46,6 +46,7 @@ For PRs written by its bot pool that carry the trigger label or are assigned to 
 - **Task timeout**: a task that runs longer than `taskTimeout` (default 24h) is marked failed and its sandbox is deleted.
 - **Restart recovery**: tasks run detached inside their sandboxes. On startup, every task still in `processing` is checked. Tasks still running are adopted and supervised to completion. Finished tasks are recorded. Tasks whose sandbox is gone are requeued.
 - **Stop label**: `overseer/stop` (or `<trigger>/stop`) on an issue or PR freezes all activity on it.
+- **Requires human**: a run that fails in a way a rerun would repeat (today: the agent's input going over the model's token limit, e.g. a command printing megabytes) marks its sandbox with the annotation `factory.gemini.google.com/requires-human: <why>`. The watch then queues and dispatches nothing for that sandbox's issue or PR until the annotation is removed, from the dashboard or with `kubectl annotate sandbox <name> factory.gemini.google.com/requires-human- -n overseer-<name>`.
 - **Drain mode**: a `.drain` or `.do_not_process` marker file, or the matching environment variable, stops new tasks from starting. Running tasks finish normally.
 
 ### Identities and credentials
