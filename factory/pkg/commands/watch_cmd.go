@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -18,11 +19,11 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch a GitHub repo for test failures and assigned issues to automatically fix and review",
-		Example: `  # Watch for unassigned issues with specific labels
-  factory watch --repo owner/repo --assignee "" --labels "bug,help wanted"
+		Example: `  # Watch issues and PRs assigned to factory-bot, and those with the trigger label
+  factory watch --repo owner/repo --assignee "factory-bot"
 
-  # Watch for assigned issues with labels
-  factory watch --repo owner/repo --assignee "factory-bot" --labels "p0,urgent"`,
+  # Report what would be done with PRs without doing it
+  factory watch --repo owner/repo --pr-mode dryrun --once`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := ResolveRootFlags(cmd)
 			if err != nil {
@@ -55,6 +56,11 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.ChoresMode == "" {
 				flags.ChoresMode = "enabled"
 			}
+			for _, m := range []struct{ name, value string }{{"issue-mode", flags.IssueMode}, {"pr-mode", flags.PRMode}, {"chores-mode", flags.ChoresMode}} {
+				if !validMode(m.value) {
+					return fmt.Errorf("--%s %q: want enabled, disabled or dryrun", m.name, m.value)
+				}
+			}
 
 			watcher := watch.NewWatcher(rootFlags, flags)
 			watcher.ProposeFanout = proposeFanout
@@ -65,9 +71,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().Var(&flags.Repo, "repo", "GitHub repository (e.g. owner/repo)")
 	_ = cmd.MarkFlagRequired("repo")
-	cmd.Flags().DurationVar(&flags.PollInterval, "poll-interval", 2*time.Minute, "Polling interval")
 	cmd.Flags().StringVar(&flags.Assignee, "assignee", "factory-bot", "GitHub username to watch for assigned issues (use empty string for unassigned issues)")
-	cmd.Flags().StringSliceVar(&flags.Labels, "labels", nil, "Comma-separated list of labels to filter issues by")
 	cmd.Flags().BoolVar(&flags.DryRun, "dryrun", false, "Print actions without creating sandboxes or executing tasks")
 	cmd.Flags().DurationVar(&flags.WatchTimeout, "watch-timeout", 0, "Timeout for watching (default forever)")
 	cmd.Flags().IntVar(&flags.MaxActions, "max-actions", 40, "Maximum number of actions to take in a single watch loop")
@@ -75,9 +79,9 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Mode, "mode", "all", "Watch mode: all (scan & run), scan (only scan & queue), run (only process queue)")
 	cmd.Flags().StringVar(&flags.QueueDir, "queue-dir", "/workspaces/queues", "Directory path for the task queues")
 	cmd.Flags().BoolVar(&flags.Once, "once", false, "Run watch once and exit (waits for active tasks to complete)")
-	cmd.Flags().StringVar(&flags.IssueMode, "issue-mode", "", "Issue mode: enabled or disabled (defaults to ISSUE_MODE env or enabled)")
-	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled or disabled (defaults to PR_MODE env or enabled)")
-	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled or disabled (defaults to CHORES_MODE env or enabled)")
+	cmd.Flags().StringVar(&flags.IssueMode, "issue-mode", "", "Issue mode: enabled, disabled, or dryrun (scan and log, change nothing) (defaults to ISSUE_MODE env or enabled)")
+	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled, disabled, or dryrun (scan and log, change nothing) (defaults to PR_MODE env or enabled)")
+	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled, disabled, or dryrun (log what is due, queue nothing) (defaults to CHORES_MODE env or enabled)")
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", common.GetEnvDuration("TASK_TIMEOUT", 24*time.Hour), "Timeout for each task execution, after which the task is failed and its sandbox deleted (e.g. '3h', '24h')")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
@@ -89,6 +93,11 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.AddCommand(newWatchFanoutCommand(ctx))
 
 	return cmd
+}
+
+// validMode reports whether m is a watch loop mode.
+func validMode(m string) bool {
+	return m == "enabled" || m == "disabled" || m == "dryrun"
 }
 
 // envBool is the environment variable key as a boolean; unset or not a

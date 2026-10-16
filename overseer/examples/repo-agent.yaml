@@ -33,4 +33,3 @@ spec:
   repo:
     issueMode: enabled
     prMode: enabled
-    reviewMode: enabled

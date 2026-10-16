@@ -548,7 +548,7 @@ PR, each verified on staging `overseer-kcc`):
 
 | PR | what | done when |
 |---|---|---|
-| 0a | the knobs: wire `reviewMode`, `chores.include`/`exclude`, the `dryrun` mode; remove `--poll-interval` and `--labels`; name `pollInterval` the run's lifetime | the Overseer's settings do what they say |
+| 0a | the knobs: remove `--poll-interval`, `--labels`, the Overseer's `repo.reviewMode` (reviews follow the `*/review` label) and `chores.include`/`exclude`; honour the `dryrun` mode; name `pollInterval` the run's lifetime | the Overseer's settings do what they say, or are gone |
 | 0b | one definition of a bot review; the dispatcher's comment says its ordering | — |
 | 0c | preconditions: PR tasks record their head, issue tasks that no PR is linked; the dispatcher drops a stale task with a reason, not counted as an attempt (setting `preconditions`) | on KCC, drops are visible and no wasted CI run follows a comments run's push |
 | 0d | the HTTP cache on the overseer's volume, surviving the restart | the first pass after a restart is mostly 304s |

@@ -22,37 +22,25 @@ import (
 
 // ChoresSpec defines the configuration for Overseer chores.
 type ChoresSpec struct {
-	// Mode defines the mode for chores.
+	// Mode is whether scheduled chores run: enabled, disabled, or dryrun
+	// (log which chores are due, queue none).
 	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
 	Mode string `json:"mode,omitempty"`
-
-	// Include specifies a list of chore names to include.
-	// If present, only chores in this list will be started.
-	// +kubebuilder:validation:Optional
-	Include []string `json:"include,omitempty"`
-
-	// Exclude specifies a list of chore names to exclude.
-	// +kubebuilder:validation:Optional
-	Exclude []string `json:"exclude,omitempty"`
 }
 
 // RepoSpec defines the configuration for Overseer repo (issue and PR handling).
 type RepoSpec struct {
-	// ReviewMode defines the mode for handling PR reviews.
-	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
-	// +kubebuilder:default=enabled
-	// +kubebuilder:validation:Optional
-	ReviewMode string `json:"reviewMode,omitempty"`
-
-	// PRMode defines the mode for handling PRs.
+	// PRMode is whether PRs are worked on: enabled, disabled, or dryrun
+	// (evaluate and log what would be queued or written, change nothing).
 	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
 	PRMode string `json:"prMode,omitempty"`
 
-	// IssueMode defines the mode for handling issues.
+	// IssueMode is whether issues are worked on, fan-out included: enabled,
+	// disabled, or dryrun (evaluate and log, change nothing).
 	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
@@ -156,7 +144,12 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	GeminiAPIKeySecretName string `json:"geminiAPIKeySecretName,omitempty"`
 
-	// PollInterval is the interval at which the overseer polls for updates.
+	// PollInterval is how long each run of factory watch lasts before the
+	// overseer commits the queue state to git and starts it again (run.sh's
+	// --watch-timeout). It is not a polling interval: within a run, each
+	// loop polls GitHub on its own fixed cadence (2m for new work, 10m for
+	// full sweeps). In-memory state (which PRs changed, backoffs) resets on
+	// every restart.
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="30m"
 	PollInterval string `json:"pollInterval,omitempty"`

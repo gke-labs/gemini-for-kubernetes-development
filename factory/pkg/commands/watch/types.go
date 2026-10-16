@@ -51,10 +51,8 @@ func (r *RepoFlag) Type() string {
 
 type Flags struct {
 	Repo                RepoFlag
-	PollInterval        time.Duration
 	Assignee            string
 	AssigneeChanged     bool
-	Labels              []string
 	DryRun              bool
 	WatchTimeout        time.Duration
 	MaxActions          int

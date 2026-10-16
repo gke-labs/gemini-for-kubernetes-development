@@ -305,12 +305,6 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	}
 
 	if o.Spec.Repo != nil {
-		if o.Spec.Repo.ReviewMode != "" {
-			env = append(env, map[string]interface{}{
-				"name":  "REVIEW_MODE",
-				"value": o.Spec.Repo.ReviewMode,
-			})
-		}
 		if o.Spec.Repo.PRMode != "" {
 			env = append(env, map[string]interface{}{
 				"name":  "PR_MODE",

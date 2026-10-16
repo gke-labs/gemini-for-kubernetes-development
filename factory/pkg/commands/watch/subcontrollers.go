@@ -98,7 +98,7 @@ func (w *Watcher) newFanoutController() *fanouts.Controller {
 		TriggerLabel: w.triggerLabel,
 		GitHubLogin:  w.githubLogin,
 		MinNumber:    w.minIssueNumber(),
-		DryRun:       w.DryRun,
+		DryRun:       w.loopDryRun(w.IssueMode),
 	}, fanouts.Deps{
 		GitHub:   w.repoClient,
 		Paused:   w.draining,
@@ -169,18 +169,29 @@ func (w *Watcher) belowMaxPending(ctx context.Context) bool {
 // goroutine so that a scheduled agent is queued within one evaluation interval
 // of coming due, instead of waiting for the slow PR scan that used to carry it.
 func (w *Watcher) newChoreScheduler() *chores.Scheduler {
-	return chores.New(chores.Config{
+	return chores.New(w.choresConfig(), chores.Deps{
+		Queue:  w.queueMgr,
+		Source: w.repoClient,
+		Paused: w.draining,
+	})
+}
+
+// choresConfig is the chore scheduler's configuration.
+func (w *Watcher) choresConfig() chores.Config {
+	return chores.Config{
 		Interval:        chores.DefaultInterval,
 		RefreshInterval: chores.DefaultRefreshInterval,
 		StateDir:        w.QueueDir,
 		Owner:           w.Repo.Owner,
 		Repo:            w.Repo.Repo,
-		DryRun:          w.DryRun,
-	}, chores.Deps{
-		Queue:  w.queueMgr,
-		Source: w.repoClient,
-		Paused: w.draining,
-	})
+		DryRun:          w.loopDryRun(w.ChoresMode),
+	}
+}
+
+// loopDryRun reports whether a loop running in mode only reports what it
+// would do: the watcher's --dryrun, or the loop's own "dryrun" mode.
+func (w *Watcher) loopDryRun(mode string) bool {
+	return w.DryRun || mode == "dryrun"
 }
 
 // newIssueScanner constructs the issue scanner, which runs as its own goroutine
@@ -211,7 +222,7 @@ func (w *Watcher) issueScannerConfig() issues.Config {
 		ScanLimit:      w.ScanLimit,
 		MinNumber:      w.minIssueNumber(),
 		PrimeOpenPRs:   !w.prsEnabled(),
-		DryRun:         w.DryRun,
+		DryRun:         w.loopDryRun(w.IssueMode),
 	}
 }
 
@@ -219,7 +230,18 @@ func (w *Watcher) issueScannerConfig() issues.Config {
 // goroutine. It was the slowest thing in the watcher - a dozen GitHub requests
 // per pull request - and everything else used to wait behind it; now nothing does.
 func (w *Watcher) newPRScanner() *prs.Scanner {
-	return prs.New(prs.Config{
+	return prs.New(w.prScannerConfig(), prs.Deps{
+		GitHub:    w.repoClient,
+		Queue:     w.queueMgr,
+		Entities:  w.entityCache,
+		Sandboxes: w.sandboxes,
+		Paused:    w.draining,
+	})
+}
+
+// prScannerConfig is the pull request scanner's configuration.
+func (w *Watcher) prScannerConfig() prs.Config {
+	return prs.Config{
 		Interval:          prs.DefaultInterval,
 		SweepInterval:     prs.DefaultSweepInterval,
 		TriggerLabel:      w.triggerLabel,
@@ -231,15 +253,9 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		ScanLimit:         w.ScanLimit,
 		MinNumber:         w.minIssueNumber(),
 		InactivityTimeout: w.PRInactivityTimeout,
-		DryRun:            w.DryRun,
+		DryRun:            w.loopDryRun(w.PRMode),
 		Attempts:          w.Attempts,
-	}, prs.Deps{
-		GitHub:    w.repoClient,
-		Queue:     w.queueMgr,
-		Entities:  w.entityCache,
-		Sandboxes: w.sandboxes,
-		Paused:    w.draining,
-	})
+	}
 }
 
 // minIssueNumber is the issue number below which the repository's history is

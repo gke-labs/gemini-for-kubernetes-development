@@ -136,15 +136,11 @@ function constructPrompt {
         if [ "$PR_MODE" != "disabled" ]; then
             cat /workspaces/prompt/03-pr-handling.txt >> "$PROMPT_FILE"
         fi
-        if [ "$REVIEW_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
-        fi
+        cat /workspaces/prompt/03a-pr-review-handling.txt >> "$PROMPT_FILE"
         if [ "$PR_MODE" != "disabled" ]; then
             cat /workspaces/prompt/06a-examples-prs.txt >> "$PROMPT_FILE"
         fi
-        if [ "$REVIEW_MODE" != "disabled" ]; then
-            cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
-        fi
+        cat /workspaces/prompt/06b-examples-prs-review.txt >> "$PROMPT_FILE"
         cat /workspaces/prompt/08-footer.txt >> "$PROMPT_FILE"
         
         BOT_NAME="${GITHUB_USER_ID:-codebot-robot}"
