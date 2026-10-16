@@ -172,6 +172,14 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	AllowlistedUsers []string `json:"allowlistedUsers,omitempty"`
 
+	// SessionURL links the overseer's PR descriptions and follow-up comments
+	// to the agent conversation that wrote them: a URL with {sandbox} and
+	// {task} in it, e.g. a dashboard's session page. Unset, nothing is
+	// linked.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Pattern=`^https://`
+	SessionURL string `json:"sessionURL,omitempty"`
+
 	// WarmWorkspace keeps a snapshot of a workspace disk with the repository
 	// checked out and its caches filled; new sandboxes for the repository
 	// start from it (factory/design/warm-workspace.md). Unset, no warming.

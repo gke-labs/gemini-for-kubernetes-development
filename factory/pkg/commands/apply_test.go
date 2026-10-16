@@ -186,3 +186,36 @@ func TestFillChange(t *testing.T) {
 		t.Errorf("care start filled %+v, target %+v", c, started.Target)
 	}
 }
+
+// The link to a run's conversation: the session it continued, else its
+// own task, in the sandbox the apply names, else the document's.
+func TestSessionLink(t *testing.T) {
+	const tmpl = "https://board.example/#/overseers/kcc/task-session/{sandbox}/{task}"
+	doc := func(sandbox, task, session string) *taskoutput.Document {
+		return &taskoutput.Document{Source: taskoutput.Source{Sandbox: sandbox, Task: task, Session: session}}
+	}
+	disclose := rootFlags.Disclose
+	t.Cleanup(func() { rootFlags.Disclose = disclose })
+	rootFlags.Disclose = true
+	for name, tc := range map[string]struct {
+		tmpl    string
+		doc     *taskoutput.Document
+		sandbox string
+		want    string
+	}{
+		"its own task":             {tmpl, doc("", "recipe-fix-1", ""), "fix-r-7", "https://board.example/#/overseers/kcc/task-session/fix-r-7/recipe-fix-1"},
+		"the session it continued": {tmpl, doc("", "care-2", "care-1"), "fix-r-7", "https://board.example/#/overseers/kcc/task-session/fix-r-7/care-1"},
+		"the document's sandbox":   {tmpl, doc("fix-r-8", "recipe-fix-1", ""), "", "https://board.example/#/overseers/kcc/task-session/fix-r-8/recipe-fix-1"},
+		"no template":              {"", doc("", "recipe-fix-1", ""), "fix-r-7", ""},
+		"no sandbox":               {tmpl, doc("", "recipe-fix-1", ""), "", ""},
+		"no task":                  {tmpl, doc("", "", ""), "fix-r-7", ""},
+	} {
+		if got := sessionLink(tc.tmpl, tc.doc, tc.sandbox); got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+	rootFlags.Disclose = false
+	if got := sessionLink(tmpl, doc("", "recipe-fix-1", ""), "fix-r-7"); got != "" {
+		t.Errorf("--disclose=false: %q, want no link", got)
+	}
+}

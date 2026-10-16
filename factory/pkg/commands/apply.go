@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/clients"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
@@ -136,6 +138,7 @@ func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Docu
 	// What an apply labels with (post-spec): the configured trigger
 	// label, or, with none configured, overseer/.
 	ctx = taskoutput.WithTriggerLabel(ctx, configuredTriggerLabel())
+	ctx = taskoutput.WithSessionLink(ctx, sessionLink(configuredSessionURL(), d, sandboxName))
 	var err error
 	if verb == "" {
 		err = taskoutput.Apply(ctx, gh, d, dryRun, os.Stdout)
@@ -162,6 +165,35 @@ func applyDocument(ctx context.Context, gh *githubv39.Client, d *taskoutput.Docu
 	}
 	fmt.Printf("Sandbox %s is %s's\n", sandboxName, d.Target.URL)
 	return nil
+}
+
+// sessionLink is the link to the conversation that wrote d, from tmpl,
+// the factory config's sessionURL: {sandbox} is sandboxName, else the one
+// d names, and {task} the task whose conversation it is, the one d's task
+// continued, else its own. None without a template, a sandbox or a task,
+// or with --disclose=false, since the link says an agent wrote it.
+func sessionLink(tmpl string, d *taskoutput.Document, sandboxName string) string {
+	if tmpl == "" || !rootFlags.Disclose {
+		return ""
+	}
+	if sandboxName == "" {
+		sandboxName = d.Source.Sandbox
+	}
+	task := d.Source.Session
+	if task == "" {
+		task = d.Source.Task
+	}
+	if sandboxName == "" || task == "" {
+		return ""
+	}
+	return strings.NewReplacer("{sandbox}", url.PathEscape(sandboxName), "{task}", url.PathEscape(task)).Replace(tmpl)
+}
+
+func configuredSessionURL() string {
+	if cfg, err := config.LoadConfig(); err == nil && cfg != nil {
+		return cfg.SessionURL
+	}
+	return ""
 }
 
 // findSandbox and aliasSandbox are applyDocument's Kubernetes calls.

@@ -33,6 +33,7 @@ Every sandbox setting can be overridden per command by the matching flag (shown 
 * **`additionalLabels`** (array of strings): Additional labels automatically applied to pull requests created by the AI Factory.
 * **`allowlistedBots`** (array of strings): GitHub usernames of bots whose issues, PRs, or comments are allowed to trigger automatic workflows.
 * **`allowlistedUsers`** (array of strings): GitHub logins whose comments and reviews are trusted even though GitHub does not report them as `OWNER`, `MEMBER` or `COLLABORATOR` (typically organization members with private membership). Feedback from any other account without write access is neither acted on by `factory watch` nor placed in an agent prompt. The `allowlistedBots` and the `reviewer` role accounts are trusted the same way.
+* **`sessionURL`** (string): links what `factory` posts on a PR (the description `open-pr` writes or a care run rewrites, replies, reports) to the agent conversation that wrote it, with a small hint at the bottom. A URL with `{sandbox}` and `{task}` in it, e.g. `https://staging.repoagent.dev/#/overseers/kcc/task-session/{sandbox}/{task}`; `{task}` is the conversation's task (the session a care run continued, else the run's own). Unset, or with `--disclose=false`, nothing is linked.
 
 ### Chores Configuration
 * **`chores`** (object): Configures the automated repository maintenance routines.

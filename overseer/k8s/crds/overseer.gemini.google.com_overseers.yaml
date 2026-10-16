@@ -141,6 +141,9 @@ spec:
                   - name
                   type: object
                 type: array
+              sessionURL:
+                pattern: ^https://
+                type: string
               taskTimeout:
                 type: string
               warmWorkspace:
