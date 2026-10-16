@@ -1,6 +1,7 @@
 package concurrency
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,7 +50,19 @@ type TaskQueueManager struct {
 	// (DropTask), newest last, the last maxDrops of them, served with the
 	// queue.
 	drops []api.Drop
+
+	// runs are the start times of the runs that ended (journalled Completed
+	// or Failed), by task ID, the last runsKeptFor of them: what RunsSince
+	// counts. Loaded from journal.jsonl on first use and kept up to date as
+	// runs end, under runsMu (not mu: the journal is written with mu held).
+	runsMu     sync.Mutex
+	runs       map[string][]time.Time
+	runsLoaded bool
 }
+
+// runsKeptFor is how far back RunsSince can count: the give-up it serves
+// resets on a commit or a human comment, which come long before this.
+const runsKeptFor = 30 * 24 * time.Hour
 
 // maxDrops bounds the drops the queue remembers for its readers.
 const maxDrops = 50
@@ -644,6 +657,9 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 	if m.dryRun || m.queueDir == "" {
 		return
 	}
+	if event == string(api.StatusCompleted) || event == string(api.StatusFailed) {
+		m.noteRun(strings.TrimSuffix(taskFilename, ".yaml"), runStart(task.StartedAt, time.Now()))
+	}
 	journalPath := filepath.Join(m.queueDir, "journal.jsonl")
 	f, err := os.OpenFile(journalPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -784,4 +800,76 @@ func (m *TaskQueueManager) NoteCooldown(c api.Cooldown) bool {
 	}
 	m.cooldowns[c.FileName] = c
 	return true
+}
+
+// RunsSince counts the runs of the task named filename that ended (Completed
+// or Failed, in the journal) and started after since: how many attempts a rule
+// has made on an item since something reset its patience. A task dropped
+// before it started (DropTask) never ran and does not count, and neither does
+// one still queued or running.
+func (m *TaskQueueManager) RunsSince(filename string, since time.Time) int {
+	m.runsMu.Lock()
+	defer m.runsMu.Unlock()
+	m.loadRunsLocked()
+	n := 0
+	for _, t := range m.runs[strings.TrimSuffix(filename, ".yaml")] {
+		if t.After(since) {
+			n++
+		}
+	}
+	return n
+}
+
+// noteRun records a run of taskID that ended, once the journal has been read
+// (until then, reading it will find this run there).
+func (m *TaskQueueManager) noteRun(taskID string, started time.Time) {
+	m.runsMu.Lock()
+	defer m.runsMu.Unlock()
+	if m.runsLoaded {
+		m.runs[taskID] = append(m.runs[taskID], started)
+	}
+}
+
+// loadRunsLocked reads the ended runs from journal.jsonl, once. A journal that
+// cannot be read, or a line that does not parse, is skipped: the count is then
+// low, never high, and the comment count the give-up also takes stands.
+func (m *TaskQueueManager) loadRunsLocked() {
+	if m.runsLoaded {
+		return
+	}
+	m.runsLoaded = true
+	m.runs = map[string][]time.Time{}
+	if m.queueDir == "" {
+		return
+	}
+	f, err := os.Open(filepath.Join(m.queueDir, "journal.jsonl"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	cutoff := time.Now().Add(-runsKeptFor)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var je api.JournalEvent
+		if json.Unmarshal(scanner.Bytes(), &je) != nil {
+			continue
+		}
+		if je.Event != string(api.StatusCompleted) && je.Event != string(api.StatusFailed) {
+			continue
+		}
+		started := runStart(je.StartedAt, je.Timestamp)
+		if started.Before(cutoff) {
+			continue
+		}
+		m.runs[je.TaskID] = append(m.runs[je.TaskID], started)
+	}
+}
+
+// runStart is when a run started, or else when its end was recorded.
+func runStart(startedAt, fallback time.Time) time.Time {
+	if startedAt.IsZero() {
+		return fallback
+	}
+	return startedAt
 }

@@ -73,6 +73,9 @@ type Flags struct {
 	// Preconditions drops a queued task before it starts when a fact it
 	// was decided on no longer holds (api.QueueTask.Expect).
 	Preconditions bool
+	// Attempts counts a give-up's attempts from the queue's journal of runs
+	// rather than from the watcher's comments (prs.Config.Attempts).
+	Attempts bool
 }
 
 type Watcher struct {

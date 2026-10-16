@@ -232,6 +232,7 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		MinNumber:         w.minIssueNumber(),
 		InactivityTimeout: w.PRInactivityTimeout,
 		DryRun:            w.DryRun,
+		Attempts:          w.Attempts,
 	}, prs.Deps{
 		GitHub:    w.repoClient,
 		Queue:     w.queueMgr,

@@ -66,6 +66,9 @@ type Queue interface {
 	GetProcessedTask(filename string) *api.QueueTask
 	// ListProcessedTasks returns every finished task, keyed by task file name.
 	ListProcessedTasks() map[string]*api.QueueTask
+	// RunsSince counts the runs of the task named filename that ended and
+	// started after since.
+	RunsSince(filename string, since time.Time) int
 }
 
 // Entities is the shared view of what the scanners have observed. The Scanner
@@ -119,6 +122,10 @@ type Config struct {
 	InactivityTimeout time.Duration
 	// DryRun reports what would be queued without touching the queue or GitHub.
 	DryRun bool
+	// Attempts counts the CI give-up's attempts from the runs in the queue's
+	// journal rather than from the watcher's comments alone
+	// (investigationAttempts).
+	Attempts bool
 }
 
 // Deps holds the collaborators of a Scanner.

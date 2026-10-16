@@ -137,6 +137,13 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Preconditions bool `json:"preconditions,omitempty"`
 
+	// Attempts makes the watcher count a give-up's attempts (CI
+	// investigations of a PR) from its queue's journal of runs, which
+	// survives its restarts and does not count a dropped task, rather than
+	// from its own comments alone.
+	// +kubebuilder:validation:Optional
+	Attempts bool `json:"attempts,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`
