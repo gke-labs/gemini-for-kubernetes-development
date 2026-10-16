@@ -203,6 +203,31 @@ describe('ResearchConversation', () => {
         expect(pane.querySelector('.term-agent').className).toContain('term-rendered');
     });
 
+    test('thinking starts open, a tool call as its one line', async () => {
+        global.fetch = jest.fn(() => reply(200, { sessionId: 's1', repo: 'repo-agent' }));
+        await act(async () => { root.render(<ResearchConversation sessionId="s1" task={taskOf('s1')} />); });
+        await flush();
+        const ws = FakeSocket.instances[0];
+        await act(async () => {
+            ws.deliver({ type: 'open', session: { busy: false, offset: 0 } });
+            ws.deliver({ type: 'event', offset: 20, event: { seq: 1, kind: 'agent_thought_chunk', data: { content: { type: 'text', text: 'Checking E2E tests' } } } });
+            ws.deliver({ type: 'event', offset: 30, event: { seq: 2, kind: 'usage_update', data: { used: 1000 } } });
+            ws.deliver({ type: 'event', offset: 40, event: { seq: 3, kind: 'tool_call', data: { toolCallId: 't1', title: './dev/tasks/run-e2e -h', kind: 'execute', status: 'completed', rawInput: { command: './dev/tasks/run-e2e -h' } } } });
+        });
+        const pane = container.querySelector('.research-terminal');
+        expect(pane.textContent).toContain('▾ thinking');
+        expect(pane.textContent).toContain('Checking E2E tests');
+        expect(pane.textContent).not.toContain('usage_update');
+        expect(pane.textContent).toContain('./dev/tasks/run-e2e -h [completed]');
+        // The tool's input is behind its line until clicked.
+        expect(pane.textContent).not.toContain('"command"');
+
+        const thinking = [...pane.querySelectorAll('.term-dim')].find(e => e.textContent.startsWith('▾ thinking'));
+        await act(async () => { thinking.click(); });
+        expect(pane.textContent).toContain('▸ thinking');
+        expect(pane.textContent).not.toContain('Checking E2E tests');
+    });
+
     test('the prompt sigil does not borrow the spacing that separates turns', async () => {
         // It is the same mark as a user turn's and wants the same
         // colour, which is how it came to wear .term-user — but that
