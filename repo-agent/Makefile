@@ -7,9 +7,10 @@ CLUSTER_NAME ?= $(shell kubectl config view --minify --output 'jsonpath={.cluste
 INSTALL_ENVOY ?= $(if $(filter kind%,$(CLUSTER_NAME)),yes,no)
 GW_CLASS ?= $(if $(filter kind%,$(CLUSTER_NAME)),repo-agent-gatewayclass,gke-l7-regional-external-managed)
 # GW_CERT names a Certificate Manager certificate for the HTTPS listener (e.g. a Google-managed
-# one for the cluster's hostname). Empty keeps the self-signed repo-agent-tls secret.
+# one for the cluster's hostname) and drops the plain-HTTP listener. Empty keeps the self-signed
+# repo-agent-tls secret and HTTP on :80 (kind's port-forward uses it).
 GW_CERT ?=
-GW_TLS = {mode: Terminate, options: {networking.gke.io/cert-manager-certs: $(GW_CERT)}}
+GW_LISTENERS = [{name: https, protocol: HTTPS, port: 443, tls: {mode: Terminate, options: {networking.gke.io/cert-manager-certs: $(GW_CERT)}}, allowedRoutes: {namespaces: {from: All}}}]
 
 # if REGISTRY is kind.local/, then we are deploying to kind
 ifeq ($(REGISTRY), kind.local/)
@@ -233,7 +234,7 @@ install-repo-agent-latest:
 	--image-tag=$(IMAGE_TAG) \
 	--replace .spec.installationName=${CLUSTER_NAME} \
 	--replace .spec.gatewayClassName=${GW_CLASS} \
-	$(if $(GW_CERT),--replace '.spec.listeners[].tls=$(GW_TLS)') \
+	$(if $(GW_CERT),--replace '.spec.listeners=$(GW_LISTENERS)') \
 	--working-dir . --output-file=bin/repo-agent-manifest.yaml
 	kubectl apply -f bin/repo-agent-manifest.yaml
 
