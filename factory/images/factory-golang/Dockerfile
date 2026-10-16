@@ -83,13 +83,19 @@ RUN ln -sf /usr/local/go/bin/go /usr/local/bin/go
 
 RUN apt-get install -y vim less 
 
-# Install setup-envtest and download assets
+# Install setup-envtest and the envtest binaries (etcd, kube-apiserver),
+# at one pinned version linked to a fixed path, so that 'go test' finds them
+# through KUBEBUILDER_ASSETS. Unpinned, "setup-envtest use" fetched whatever
+# was newest at build time while KUBEBUILDER_ASSETS named an older version,
+# and every envtest test failed with "etcd: no such file or directory".
+# A repository that wants another version sets KUBEBUILDER_ASSETS itself
+# (the overseer's env), e.g. to what its warm-workspace script set up.
+ARG ENVTEST_K8S_VERSION=1.37.0
 RUN go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.22 && \
-    $(go env GOPATH)/bin/setup-envtest use
-
-# (Optional) Export KUBEBUILDER_ASSETS so it's available for 'go test' automatically.
-# The path below is the default location setup-envtest extracts the binaries to.
-ENV KUBEBUILDER_ASSETS=/root/.local/share/kubebuilder-envtest/k8s/1.36.0-linux-amd64
+    mkdir -p /usr/local/kubebuilder && \
+    ln -sfn "$($(go env GOPATH)/bin/setup-envtest use -p path ${ENVTEST_K8S_VERSION})" /usr/local/kubebuilder/bin && \
+    test -x /usr/local/kubebuilder/bin/etcd && test -x /usr/local/kubebuilder/bin/kube-apiserver
+ENV KUBEBUILDER_ASSETS=/usr/local/kubebuilder/bin
 
 WORKDIR /workspaces
 ENTRYPOINT ["/usr/local/bin/factory", "daemon"]
