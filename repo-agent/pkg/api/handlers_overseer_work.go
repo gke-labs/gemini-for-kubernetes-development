@@ -77,7 +77,15 @@ type OverseerWorkSandbox struct {
 	TaskType  string `json:"taskType,omitempty"`
 	TaskState string `json:"taskState,omitempty"`
 	Engine    string `json:"engine,omitempty"`
+	// RequiresHuman is why the sandbox's last run failed in a way a rerun
+	// would repeat (annoRequiresHuman): the watch dispatches nothing to it
+	// until someone clears it.
+	RequiresHuman string `json:"requiresHuman,omitempty"`
 }
+
+// annoRequiresHuman is factory's mark on a sandbox that needs a person
+// before anything runs in it again (factory/pkg/sandbox).
+const annoRequiresHuman = "factory.gemini.google.com/requires-human"
 
 // OverseerQueuedTask is a row's task in the watch's queue.
 type OverseerQueuedTask struct {
@@ -389,7 +397,7 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 		r.Sandboxes = append(r.Sandboxes, OverseerWorkSandbox{
 			Name: sb.GetName(), Type: sType, User: labels[labelFactoryUser], Replicas: replicas,
 			Pod: podState(sb, pods), TaskType: a[annoLastTaskType], TaskState: a[annoTaskState],
-			Engine: sandboxEngine(a, "gemini"),
+			Engine: sandboxEngine(a, "gemini"), RequiresHuman: a[annoRequiresHuman],
 		})
 		for _, session := range runSessions(sb) {
 			if w.workflow && session.Recipe == "agent" {
@@ -457,10 +465,16 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 }
 
 // workSection is where a row goes, and why when it needs attention: a
-// recipe's latest run failed, or a sandbox's pod was evicted or failed.
+// sandbox needs a person, a recipe's latest run failed, or a sandbox's pod
+// was evicted or failed.
 func workSection(r *OverseerWorkItem) (string, string) {
 	if r.Kind == "agent" {
 		return "agents", ""
+	}
+	for _, sb := range r.Sandboxes {
+		if sb.RequiresHuman != "" {
+			return "attention", "requires human: " + sb.RequiresHuman
+		}
 	}
 	for _, sb := range r.Sandboxes {
 		if sb.Pod == "evicted" || sb.Pod == "failed" {

@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -128,6 +130,19 @@ func (m *Manager) UpdateSandboxAnnotation(ctx context.Context, namespace, sandbo
 		return fmt.Errorf("failed to update sandbox annotation: %w", err)
 	}
 
+	return nil
+}
+
+// RemoveSandboxAnnotation removes key from the sandbox's annotations, if
+// it has it.
+func (m *Manager) RemoveSandboxAnnotation(ctx context.Context, namespace, sandboxName, key string) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]any{key: nil}}})
+	if err != nil {
+		return err
+	}
+	if _, err := m.Client.Resource(SandboxGVR).Namespace(namespace).Patch(ctx, sandboxName, types.MergePatchType, patch, v1.PatchOptions{}); err != nil {
+		return fmt.Errorf("failed to remove sandbox annotation %s: %w", key, err)
+	}
 	return nil
 }
 
