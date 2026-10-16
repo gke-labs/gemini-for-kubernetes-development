@@ -304,7 +304,9 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) {
 			return
 		}
 
-		// Pop next fair-share candidate
+		// Pop the next candidate: strictly by priority label, then phase,
+		// then when it was enqueued (concurrency.IsLessTask). There is no
+		// fairness between items, users or task types.
 		filename, task, err := d.queue.ClaimNextCandidate()
 		if err != nil {
 			klog.Errorf("Failed to claim next candidate task: %v", err)

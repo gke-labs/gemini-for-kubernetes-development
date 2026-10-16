@@ -181,18 +181,6 @@ func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastComm
 	return false
 }
 
-// hasBotReviewAfterLastCommit reports whether the current head has already been
-// reviewed by a bot, which is what stops a second review being queued for the
-// same revision.
-func hasBotReviewAfterLastCommit(reviews []*githubv39.PullRequestReview, lastCommitTime time.Time, headSHA, githubLogin string, bots []string) bool {
-	for _, r := range reviews {
-		if conventions.IsBotReply(r.GetUser(), githubLogin, bots) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
-			return true
-		}
-	}
-	return false
-}
-
 // getInvestigationCount counts how many times the watcher has investigated CI
 // failures since the last thing that ought to reset its patience.
 //
