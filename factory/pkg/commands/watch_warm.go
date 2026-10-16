@@ -29,13 +29,25 @@ var warmScriptClient = &http.Client{Timeout: time.Minute}
 // that old would cost more than it saves.
 const warmSnapshotTTLIntervals = 3
 
+// warmRetryAfter is how long after a failed warm run the next one starts,
+// when that is sooner than the interval: most failures pass (a flaky
+// download, a node lost mid-run), and waiting a whole day for the next
+// try lets the last good snapshot run out (warmSnapshotTTLIntervals).
+const warmRetryAfter = 6 * time.Hour
+
+// warmRetryDue reports whether a warm run that failed at failed may start
+// again at now: after warmRetryAfter, or the interval if that is shorter.
+func warmRetryDue(failed, now time.Time, interval time.Duration) bool {
+	return now.Sub(failed) >= min(interval, warmRetryAfter)
+}
+
 // warmWorkspace moves repoURL's warm cycle (design/warm-workspace.md) on
 // by one step, from the state its warm sandbox records:
 //
 //   - a snapshot made: once it is ready, keep the newest cfg.Keep and
 //     delete the sandbox;
-//   - a run failed: once an interval has passed, delete the sandbox and
-//     start again;
+//   - a run failed: once warmRetryAfter (or the interval, if shorter)
+//     has passed, delete the sandbox and start again;
 //   - otherwise: run the warm recipe in the sandbox, creating it if need
 //     be, or follow the run already there, and snapshot its disk once
 //     the run succeeds.
@@ -72,7 +84,7 @@ func warmWorkspace(ctx context.Context, repoURL, user string, cfg config.WarmWor
 			return err
 		case a[factorysandbox.AnnotationWarmFailed] != "":
 			failed, _ := time.Parse(time.RFC3339, a[factorysandbox.AnnotationWarmFailed])
-			if time.Since(failed) < interval {
+			if !warmRetryDue(failed, time.Now(), interval) {
 				return nil
 			}
 			fmt.Printf("Warm workspace: the last warm failed at %s; starting again.\n", failed.Format(time.RFC3339))
