@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/gregjones/httpcache"
@@ -25,18 +27,27 @@ const maxCachedResponses = 2000
 // URL alone.
 var (
 	tokenCachesMu sync.Mutex
-	tokenCaches   = map[string]*lruCache{}
+	tokenCaches   = map[string]httpcache.Cache{}
 )
 
-// cacheFor is token's cache, made on first use.
-func cacheFor(token string) *lruCache {
+// cacheFor is token's cache, made on first use: in memory, and, with
+// EnvCacheDir set, on disk too, in a directory of the token's own (by
+// its hash, never the token). A directory that cannot be made leaves the
+// cache in memory.
+func cacheFor(token string) httpcache.Cache {
 	sum := sha256.Sum256([]byte(token))
 	key := hex.EncodeToString(sum[:])
 	tokenCachesMu.Lock()
 	defer tokenCachesMu.Unlock()
 	c, ok := tokenCaches[key]
 	if !ok {
-		c = newLRUCache(maxCachedResponses)
+		mem := newLRUCache(maxCachedResponses)
+		c = mem
+		if dir := os.Getenv(EnvCacheDir); dir != "" {
+			if disk, err := newDiskCache(filepath.Join(dir, key[:32]), diskCacheBytes()); err == nil {
+				c = tieredCache{mem: mem, disk: disk}
+			}
+		}
 		tokenCaches[key] = c
 	}
 	return c

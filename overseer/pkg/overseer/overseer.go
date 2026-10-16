@@ -231,6 +231,15 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "HOME",
 			"value": "/workspaces/.home",
 		},
+		// factory's GitHub response cache, on the volume so that it
+		// outlives run.sh's restart of factory watch every poll interval
+		// and is shared by the factory processes it starts. Not under the
+		// repository's clone: run.sh pushes the queue directory to the
+		// repository, and the cache holds response bodies.
+		map[string]interface{}{
+			"name":  "FACTORY_GITHUB_CACHE_DIR",
+			"value": "/workspaces/.cache/factory-github",
+		},
 
 		map[string]interface{}{
 			"name":  "POLL_INTERVAL",
