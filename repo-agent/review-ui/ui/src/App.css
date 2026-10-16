@@ -87,6 +87,67 @@ body.dark-mode {
   --group-mine-issue: #8b949e;
 }
 
+/* Grain: the warm, Plane-like look of the grain UI (its ui/src/style.css
+   tokens): warm off-white neutrals, the bronze grain accent, a cool slate
+   for information, a system font and 6px corners. The same variables as
+   Light and Dark, its values; the rules below it are the shape. */
+body.theme-grain {
+  --bg-color: #f7f6f3;
+  --bg-card: #ffffff;
+  --bg-header: #ffffff;
+  --bg-input: #ffffff;
+  --bg-secondary: #f1efea;
+  --bg-hover: #ebe8e1;
+  --bg-active: #8a6a2e;
+  --bg-sidebar: #ffffff;
+  --bg-review-display: #faf9f6;
+  --bg-review-section: #faf9f6;
+  --bg-comment-card: #f1efea;
+  --bg-diff-header: #f6f4ef;
+  --bg-diff-widget: #ffffff;
+
+  --text-primary: #24221d;
+  --text-secondary: #6e6a60;
+  --text-muted: #9a9588;
+  --text-inverse: #ffffff;
+  --text-link: #8a6a2e;
+  --text-placeholder: #b5b0a3;
+
+  --border-color: #e6e3dc;
+  --border-color-input: #d5d1c7;
+
+  --shadow-card: 0 1px 2px rgba(26, 24, 19, 0.06);
+
+  --status-green: #1a9c53;
+  --status-yellow: #c2820b;
+  --status-grey: #9a9588;
+
+  --bg-sidebar-selected: #f6eeda;
+  --border-sidebar-selected: #8a6a2e;
+
+  --text-danger: #d0453a;
+  --border-danger: #d0453a;
+  --bg-danger-light: #fbebe9;
+
+  --group-review: #3f6b8a;
+  --group-fix: #1a9c53;
+  --group-triage: #a8621c;
+  --group-mine-pr: #8250df;
+  --group-mine-issue: #6e6a60;
+}
+
+body.theme-grain .App {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+body.theme-grain .btn,
+body.theme-grain .work-card,
+body.theme-grain input,
+body.theme-grain select,
+body.theme-grain textarea {
+  border-radius: 6px;
+}
+
 .App {
   text-align: center;
   font-family: 'Roboto', sans-serif;
