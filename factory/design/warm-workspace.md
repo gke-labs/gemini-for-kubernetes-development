@@ -120,7 +120,7 @@ The hook `commands.warmWorkspace`, set on the watcher next to `ProposeFanout`, d
    - record it on the sandbox (`warm-snapshot`).
 
    A later cycle waits for `readyToUse`, deletes all but the newest `keep`, and deletes the sandbox.
-4. **On failure.** The sandbox stays, suspended and annotated `warm-failed: <time>`, so its task logs can be read (`factory sandbox task logs warm-<repo>`). The pass tries again one `interval` after the failure, on a new sandbox.
+4. **On failure.** The sandbox stays, suspended and annotated `warm-failed: <time>`, so its task logs can be read (`factory sandbox task logs warm-<repo>`). The pass tries again 6 hours after the failure (or one `interval`, if shorter), on a new sandbox: most failures pass, and a day's wait could let the last good snapshot expire.
 
 ### 4. The recipe
 
@@ -272,7 +272,7 @@ Measured by hand on staging (`barney-s`) on KCC `7106e14276`, which includes [#1
 - **The pass** (`pkg/commands/watch/warmworkspace`) runs in `--mode all|run`, every 5 minutes, unless draining. `sandbox.WarmDue` says whether there is anything to do: a warm sandbox exists, or no ready snapshot is younger than `interval`. One `Warm` at a time; it runs in the background and may block for the whole recipe run.
 - **The hook** (`commands.warmWorkspace`, set as `Watcher.WarmWorkspace`) moves the cycle one step from the warm sandbox's annotations:
   - `warm-snapshot`: `FinishWarm` waits for `readyToUse`, deletes all but the newest `keep`, then deletes the sandbox. A failed snapshot is deleted along with the sandbox.
-  - `warm-failed`: wait one `interval`, then delete the sandbox and start again.
+  - `warm-failed`: wait 6 hours (`warmRetryAfter`, or the `interval` if shorter), then delete the sandbox and start again.
   - otherwise: `EnsureWarmSandbox`, then `runRecipe("warm", …, run name from warm-run)` with abort-on-cancel off. On success, `SnapshotWarmSandbox` suspends the sandbox, waits for its pod to go, creates `warm-<repo>-<yyyymmdd-hhmm>` (class `warm-workspace`) and records it.
   - It clones as `selectUserForTask(issue-fix)`.
 - **runRecipe** routes the `warm` recipe on a repository to `EnsureWarmSandbox`, and skips `MarkResearchReady` for it. `recipe list` (the board's catalog) leaves `warm` out; `factory recipe warm --url <repo>` still runs it by hand.
@@ -312,6 +312,6 @@ The `overseer` Overseer on autopush (`repo-agent-1`; sandboxes in `overseer-over
 **Follow-ups:**
 
 - **`warm-image` is the tag** (`factory-golang:latest`), as step 2 chose. A rebuilt image restores the old snapshot until the next warm. Go's cache keys on the toolchain, so it misses rather than breaks. The pod's resolved image ID would fix that.
-- **A failed warm keeps its backoff** for an `interval` even after the script is fixed. Keying the failure on a hash of the warm config would restart it at once.
+- **A failed warm keeps its backoff** for 6 hours (or the `interval`) even after the script is fixed; deleting the warm sandbox starts it at once. Keying the failure on a hash of the warm config would restart it at once.
 - **Changing `spec.warmWorkspace` does not reach a running overseer.** The controller updates the Sandbox's template, but the pod keeps its env until the sandbox is recreated. The controller also does not recreate a deleted overseer Sandbox until the Overseer changes (`recreate-timestamp`). Both apply to every Overseer field, not just this one.
 - **Not measured here:** the agent's build and test times on the restored disk against a cold one. Step 5 measures that on the KCC fan-out, where the builds are long.
