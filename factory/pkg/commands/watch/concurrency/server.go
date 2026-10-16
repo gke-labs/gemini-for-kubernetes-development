@@ -159,6 +159,11 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 	}
 	sort.Slice(cooldowns, func(i, j int) bool { return cooldowns[i].FileName < cooldowns[j].FileName })
 
+	drops := make([]api.QueueDrop, 0, len(m.drops))
+	for i := len(m.drops) - 1; i >= 0; i-- {
+		drops = append(drops, m.drops[i].Item())
+	}
+
 	return api.QueueResponse{
 		Summary: api.QueueSummary{
 			TotalPending:    len(incoming),
@@ -171,5 +176,6 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 		Processing: processing,
 		Processed:  processed,
 		Cooldowns:  cooldowns,
+		Drops:      drops,
 	}
 }

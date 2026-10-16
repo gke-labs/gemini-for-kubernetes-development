@@ -41,6 +41,21 @@ type QueueResponse struct {
 	// Cooldowns are the tasks the issue scanner is holding back because
 	// the same task finished too recently (Cooldown).
 	Cooldowns []QueueCooldown `json:"cooldowns,omitempty"`
+	// Drops are the tasks the dispatcher dropped recently, newest first,
+	// because a fact they were decided on no longer held (Drop).
+	Drops []QueueDrop `json:"drops,omitempty"`
+}
+
+// QueueDrop is a task dropped before it started, as the HTTP API serves
+// it.
+type QueueDrop struct {
+	FileName string   `json:"fileName"`
+	Number   int      `json:"number"`
+	URL      string   `json:"url,omitempty"`
+	Type     TaskType `json:"type"`
+	// Reason is the fact that no longer held, e.g. "head moved abc1234→def5678".
+	Reason string `json:"reason"`
+	At     string `json:"at"`
 }
 
 // QueueCooldown is a task held back by its cooldown, as the HTTP API

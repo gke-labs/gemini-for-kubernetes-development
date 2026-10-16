@@ -64,6 +64,10 @@ type TaskCoordinator interface {
 	// (e.g. the target issue/PR was closed or carries a stop label) along with
 	// a human readable reason.
 	ShouldCancelTask(ctx context.Context, task *api.QueueTask) (bool, string)
+	// StaleTask reports whether a fact the task was decided on
+	// (task.Expect) no longer holds, and which. A fact that cannot be
+	// read is taken to hold: the task runs, as it would without the check.
+	StaleTask(ctx context.Context, task *api.QueueTask) (bool, string)
 	// SelectUser returns the GitHub user the task should be executed as.
 	SelectUser(ctx context.Context, task *api.QueueTask) (string, error)
 	// NotifyTaskStarted reports that execution of the task has begun.
@@ -88,6 +92,10 @@ type Config struct {
 	ShutdownGracePeriod time.Duration
 	// DryRun reports what would be dispatched without executing anything.
 	DryRun bool
+	// Preconditions drops a task, before it starts, whose recorded facts
+	// (QueueTask.Expect) no longer hold, rather than running it on what it
+	// was decided against.
+	Preconditions bool
 }
 
 // Deps holds the collaborators of a Dispatcher.
@@ -347,6 +355,18 @@ func (d *Dispatcher) dispatchTask(ctx context.Context, filename string, task *ap
 		klog.Infof("Skipping task %s and removing from incoming because %s", filename, reason)
 		_ = d.queue.RemoveTask(filename)
 		return false, false
+	}
+
+	// A task decided on facts that have since changed (a PR whose head
+	// moved, an issue that got a PR) is dropped, not run: a run on them
+	// would be wasted and counted as an attempt. Only before a first start:
+	// a recovered task was running, and is followed by its run name.
+	if d.cfg.Preconditions && !task.Recovered && len(task.Expect) > 0 {
+		if stale, reason := d.coordinator.StaleTask(ctx, task); stale {
+			klog.Infof("Dropping task %s before it starts: %s", filename, reason)
+			_ = d.queue.DropTask(filename, task, reason)
+			return false, false
+		}
 	}
 
 	// A sandbox whose last run failed in a way a rerun would repeat waits

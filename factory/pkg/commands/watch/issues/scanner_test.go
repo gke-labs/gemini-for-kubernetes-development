@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -244,8 +245,14 @@ func TestQueueTasks_ReadsFinishedWorkFromQueue(t *testing.T) {
 			issue(7, time.Now().Add(-3*time.Hour)),
 		}, map[int]bool{})
 
-		if _, ok := queue.enqueued["task-issue-7.yaml"]; !ok {
+		task, ok := queue.enqueued["task-issue-7.yaml"]
+		if !ok {
 			t.Fatalf("issue 7 was not queued; queued: %v", queue.enqueued)
+		}
+		// The fix was decided on the issue having no linked PR, which the
+		// dispatcher checks again before starting it.
+		if !slices.Equal(task.Expect, []string{api.ExpectNoLinkedPR}) {
+			t.Errorf("fix records %v, want [%s]", task.Expect, api.ExpectNoLinkedPR)
 		}
 	})
 

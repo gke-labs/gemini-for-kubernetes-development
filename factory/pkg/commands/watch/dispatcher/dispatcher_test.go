@@ -100,6 +100,8 @@ type fakeCoordinator struct {
 	mu sync.Mutex
 
 	cancel   func(task *api.QueueTask) (bool, string)
+	stale    func(task *api.QueueTask) (bool, string)
+	staleAsk int
 	user     string
 	userErr  error
 	started  []int
@@ -109,6 +111,16 @@ type fakeCoordinator struct {
 func (f *fakeCoordinator) ShouldCancelTask(_ context.Context, task *api.QueueTask) (bool, string) {
 	if f.cancel != nil {
 		return f.cancel(task)
+	}
+	return false, ""
+}
+
+func (f *fakeCoordinator) StaleTask(_ context.Context, task *api.QueueTask) (bool, string) {
+	f.mu.Lock()
+	f.staleAsk++
+	f.mu.Unlock()
+	if f.stale != nil {
+		return f.stale(task)
 	}
 	return false, ""
 }
