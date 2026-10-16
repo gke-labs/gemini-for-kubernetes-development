@@ -37,7 +37,7 @@ For PRs written by its bot pool that carry the trigger label or are assigned to 
 
 ### Workflows and chores
 - **Workflow issues**: an issue whose description points to a workflow definition (for example a file under `.agents/` or `.gemini/`) runs that workflow instead of a standard fix. When an issue or PR linked to a running workflow closes, Overseer queues the workflow's next run straight away, without waiting for its cooldown.
-- **Chores** (`agent-chore`): agent definitions under `.agents/` in the watched repository are run on the cron schedule in their frontmatter. `never` or `paused` turns a chore off. `spec.chores` enables or disables chores, or runs them in dry-run mode, and can include or exclude chores by name. Last-run state survives restarts.
+- **Chores** (`agent-chore`): agent definitions under `.agents/` in the watched repository are run on the cron schedule in their frontmatter. `never` or `paused` turns a chore off. `spec.chores` enables or disables chores, or runs them in dry-run mode. Last-run state survives restarts.
 
 ### Housekeeping and resilience
 - **Garbage collection**: sandboxes are deleted once their issue or PR closes. Linked workflows are nudged first.
@@ -102,8 +102,8 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | `allowlistedUsers` | GitHub logins trusted as feedback authors although GitHub does not report them as owner, member or collaborator (e.g. private org members). |
 | `sessionURL` | Links PR descriptions and follow-up comments to the agent conversation that wrote them: a URL with `{sandbox}` and `{task}`, e.g. a dashboard's session page. Unset, nothing is linked. |
 | `robotAccount`, `geminiAPIKeySecretName` | Secrets (in `overseer-system`) that hold the default GitHub identity and the Gemini key. |
-| `repo.issueMode` / `repo.prMode` / `repo.reviewMode` | Issue intake (fan-out included), PR care, and automated reviews: `enabled`, `disabled`, or `dryrun` (evaluate and log what would be done, change nothing). With `reviewMode: enabled`, reviews run on PRs with the `overseer/review` label; `disabled` queues none, and readiness then does not wait for one. |
-| `chores.mode` / `include` / `exclude` | Chore scheduling: `mode` as above; `include` (only these) and `exclude` (not these, wins) match a chore's name, file name or path under `.agents/`, globs allowed. |
+| `repo.issueMode` / `repo.prMode` | Issue intake (fan-out included) and PR care: `enabled`, `disabled`, or `dryrun` (evaluate and log what would be done, change nothing). Automated reviews run on PRs with the `overseer/review` label. |
+| `chores.mode` | Chore scheduling: `enabled`, `disabled`, or `dryrun`, as above. |
 | `image` | Worker sandbox image, overriding the repository's devcontainer image. |
 | `workspaceDiskSize`, `workspaceStorageClassName`, `ephemeralStorage` | Storage for the Overseer and its sandboxes. |
 | `sandboxCPURequest/Limit`, `sandboxMemoryRequest/Limit` | Worker sandbox resources. |

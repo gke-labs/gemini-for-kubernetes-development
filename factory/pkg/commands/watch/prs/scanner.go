@@ -126,11 +126,6 @@ type Config struct {
 	// journal rather than from the watcher's comments alone
 	// (investigationAttempts).
 	Attempts bool
-	// ReviewMode gates automated reviews: "disabled" queues none, "dryrun"
-	// logs the reviews it would queue, anything else ("enabled") follows
-	// the review labels. Neither "disabled" nor "dryrun" makes readiness
-	// wait for a review: none will come.
-	ReviewMode string
 }
 
 // Deps holds the collaborators of a Scanner.
@@ -470,7 +465,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
-		if s.reviewsQueued() != reviewsOff && !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !hasUnresolvedComments && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
+		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !hasUnresolvedComments && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
 			canReview = s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime) == nil
 		}
 	}
@@ -519,10 +514,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	case canInvestigate:
 		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments)
 
-	case canReview && s.reviewsQueued() == reviewsDryRun:
-		fmt.Printf("[DRYRUN] Would queue an automated review of PR #%d at %s (review mode dryrun)\n", num, headSHA)
-		completed = true
-
 	case canReview:
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
@@ -536,27 +527,6 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// request next cycle. Every path that returns before this point left
 	// something unresolved and must be looked at again.
 	s.recordEvaluation(prIssue, pr, checkAnalysis)
-}
-
-// reviewState is what ReviewMode makes of automated reviews.
-type reviewState int
-
-const (
-	reviewsOn reviewState = iota
-	reviewsOff
-	reviewsDryRun
-)
-
-// reviewsQueued is the scanner's review mode: off when disabled, logged
-// only in dryrun, else on.
-func (s *Scanner) reviewsQueued() reviewState {
-	switch s.cfg.ReviewMode {
-	case "disabled":
-		return reviewsOff
-	case "dryrun":
-		return reviewsDryRun
-	}
-	return reviewsOn
 }
 
 // recordEvaluation notes what the evaluation that just finished saw, which is
@@ -594,8 +564,7 @@ func (s *Scanner) reconcileReadiness(
 ) {
 	num := pc.prIssue.GetNumber()
 
-	// A review that will never be queued is not waited for.
-	isReviewRequired := s.reviewsQueued() == reviewsOn && s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
+	isReviewRequired := s.shouldAutoReviewPR(ctx, pc.prIssue, pc.refIssues)
 	hasBotReviewOnHead := s.hasCompletedBotReviewOnHead(history.reviews, pc.headSHA, history.lastCommitTime)
 	reviewSatisfied := !isReviewRequired || hasBotReviewOnHead
 

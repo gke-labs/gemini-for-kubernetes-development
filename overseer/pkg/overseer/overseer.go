@@ -303,28 +303,8 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": o.Spec.Chores.Mode,
 		})
 	}
-	// Chore names and globs contain no commas, so a comma-separated list
-	// is unambiguous; factory watch splits it (CHORES_INCLUDE/EXCLUDE).
-	if o.Spec.Chores != nil && len(o.Spec.Chores.Include) > 0 {
-		env = append(env, map[string]interface{}{
-			"name":  "CHORES_INCLUDE",
-			"value": strings.Join(o.Spec.Chores.Include, ","),
-		})
-	}
-	if o.Spec.Chores != nil && len(o.Spec.Chores.Exclude) > 0 {
-		env = append(env, map[string]interface{}{
-			"name":  "CHORES_EXCLUDE",
-			"value": strings.Join(o.Spec.Chores.Exclude, ","),
-		})
-	}
 
 	if o.Spec.Repo != nil {
-		if o.Spec.Repo.ReviewMode != "" {
-			env = append(env, map[string]interface{}{
-				"name":  "REVIEW_MODE",
-				"value": o.Spec.Repo.ReviewMode,
-			})
-		}
 		if o.Spec.Repo.PRMode != "" {
 			env = append(env, map[string]interface{}{
 				"name":  "PR_MODE",

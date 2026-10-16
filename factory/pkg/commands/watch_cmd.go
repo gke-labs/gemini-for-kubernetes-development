@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
@@ -47,13 +46,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 				flags.PRMode = "enabled"
 			}
 
-			if flags.ReviewMode == "" {
-				flags.ReviewMode = os.Getenv("REVIEW_MODE")
-			}
-			if flags.ReviewMode == "" {
-				flags.ReviewMode = "enabled"
-			}
-
 			if flags.ChoresMode == "" {
 				flags.ChoresMode = os.Getenv("CHORES_MODE")
 			}
@@ -64,13 +56,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 			if flags.ChoresMode == "" {
 				flags.ChoresMode = "enabled"
 			}
-			if len(flags.ChoresInclude) == 0 {
-				flags.ChoresInclude = envList("CHORES_INCLUDE")
-			}
-			if len(flags.ChoresExclude) == 0 {
-				flags.ChoresExclude = envList("CHORES_EXCLUDE")
-			}
-			for _, m := range []struct{ name, value string }{{"issue-mode", flags.IssueMode}, {"pr-mode", flags.PRMode}, {"review-mode", flags.ReviewMode}, {"chores-mode", flags.ChoresMode}} {
+			for _, m := range []struct{ name, value string }{{"issue-mode", flags.IssueMode}, {"pr-mode", flags.PRMode}, {"chores-mode", flags.ChoresMode}} {
 				if !validMode(m.value) {
 					return fmt.Errorf("--%s %q: want enabled, disabled or dryrun", m.name, m.value)
 				}
@@ -95,10 +81,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().BoolVar(&flags.Once, "once", false, "Run watch once and exit (waits for active tasks to complete)")
 	cmd.Flags().StringVar(&flags.IssueMode, "issue-mode", "", "Issue mode: enabled, disabled, or dryrun (scan and log, change nothing) (defaults to ISSUE_MODE env or enabled)")
 	cmd.Flags().StringVar(&flags.PRMode, "pr-mode", "", "PR mode: enabled, disabled, or dryrun (scan and log, change nothing) (defaults to PR_MODE env or enabled)")
-	cmd.Flags().StringVar(&flags.ReviewMode, "review-mode", "", "Automated review mode: enabled (follow the review labels), disabled (queue no reviews), or dryrun (log them) (defaults to REVIEW_MODE env or enabled)")
 	cmd.Flags().StringVar(&flags.ChoresMode, "chores-mode", "", "Chores mode: enabled, disabled, or dryrun (log what is due, queue nothing) (defaults to CHORES_MODE env or enabled)")
-	cmd.Flags().StringSliceVar(&flags.ChoresInclude, "chores-include", nil, "Schedule only these chores: names, file names or paths, globs allowed (defaults to the comma-separated CHORES_INCLUDE env)")
-	cmd.Flags().StringSliceVar(&flags.ChoresExclude, "chores-exclude", nil, "Do not schedule these chores, as --chores-include; wins over it (defaults to the comma-separated CHORES_EXCLUDE env)")
 	cmd.Flags().IntVar(&flags.ScanLimit, "scan-limit", 100, "Maximum number of issues/PRs to fetch from GitHub API in a scan cycle")
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", common.GetEnvDuration("TASK_TIMEOUT", 24*time.Hour), "Timeout for each task execution, after which the task is failed and its sandbox deleted (e.g. '3h', '24h')")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
@@ -115,18 +98,6 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 // validMode reports whether m is a watch loop mode.
 func validMode(m string) bool {
 	return m == "enabled" || m == "disabled" || m == "dryrun"
-}
-
-// envList is the comma-separated environment variable key, its entries
-// trimmed and empty ones dropped.
-func envList(key string) []string {
-	var out []string
-	for _, v := range strings.Split(os.Getenv(key), ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // envBool is the environment variable key as a boolean; unset or not a

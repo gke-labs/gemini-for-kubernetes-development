@@ -13,4 +13,3 @@ spec:
   repo:
     issueMode: disabled
     prMode: disabled
-    reviewMode: enabled

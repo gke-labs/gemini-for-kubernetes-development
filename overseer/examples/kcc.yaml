@@ -58,7 +58,6 @@ spec:
   repo:
     issueMode: enabled
     prMode: enabled
-    reviewMode: disabled
   roles:
     watcher:
       users:

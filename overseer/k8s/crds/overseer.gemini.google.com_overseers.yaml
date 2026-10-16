@@ -34,14 +34,6 @@ spec:
                 type: boolean
               chores:
                 properties:
-                  exclude:
-                    items:
-                      type: string
-                    type: array
-                  include:
-                    items:
-                      type: string
-                    type: array
                   mode:
                     default: enabled
                     enum:
@@ -92,13 +84,6 @@ spec:
                     - dryrun
                     type: string
                   prMode:
-                    default: enabled
-                    enum:
-                    - enabled
-                    - disabled
-                    - dryrun
-                    type: string
-                  reviewMode:
                     default: enabled
                     enum:
                     - enabled

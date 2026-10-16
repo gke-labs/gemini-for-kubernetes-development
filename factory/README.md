@@ -202,8 +202,8 @@ factory recipe run-deploy --url https://github.com/owner/repo --run deploy-pr-42
 # Watch a repository (what the Overseer runs)
 factory watch --repo owner/repo
 factory watch --repo owner/repo --dryrun --once
-# One loop in dry run, chores filtered (names, file names or paths; globs)
-factory watch --repo owner/repo --pr-mode dryrun --chores-exclude 'deps-*'
+# One loop in dry run
+factory watch --repo owner/repo --pr-mode dryrun
 ```
 
 Debugging a sandbox:

@@ -28,29 +28,10 @@ type ChoresSpec struct {
 	// +kubebuilder:default=enabled
 	// +kubebuilder:validation:Optional
 	Mode string `json:"mode,omitempty"`
-
-	// Include, if present, is the only chores scheduled: each entry matches a
-	// chore's name, its file name without extension, or its path under
-	// .agents/, and may be a glob (e.g. "release-*").
-	// +kubebuilder:validation:Optional
-	Include []string `json:"include,omitempty"`
-
-	// Exclude is chores not scheduled, matched as Include is; it wins over
-	// Include.
-	// +kubebuilder:validation:Optional
-	Exclude []string `json:"exclude,omitempty"`
 }
 
 // RepoSpec defines the configuration for Overseer repo (issue and PR handling).
 type RepoSpec struct {
-	// ReviewMode is whether automated reviews run: enabled (on PRs with the
-	// review label), disabled (queue none; readiness does not wait for a
-	// review), or dryrun (log the reviews it would queue, queue none).
-	// +kubebuilder:validation:Enum=enabled;disabled;dryrun
-	// +kubebuilder:default=enabled
-	// +kubebuilder:validation:Optional
-	ReviewMode string `json:"reviewMode,omitempty"`
-
 	// PRMode is whether PRs are worked on: enabled, disabled, or dryrun
 	// (evaluate and log what would be queued or written, change nothing).
 	// +kubebuilder:validation:Enum=enabled;disabled;dryrun

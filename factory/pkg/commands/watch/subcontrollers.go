@@ -185,8 +185,6 @@ func (w *Watcher) choresConfig() chores.Config {
 		Owner:           w.Repo.Owner,
 		Repo:            w.Repo.Repo,
 		DryRun:          w.loopDryRun(w.ChoresMode),
-		Include:         w.ChoresInclude,
-		Exclude:         w.ChoresExclude,
 	}
 }
 
@@ -256,7 +254,6 @@ func (w *Watcher) prScannerConfig() prs.Config {
 		MinNumber:         w.minIssueNumber(),
 		InactivityTimeout: w.PRInactivityTimeout,
 		DryRun:            w.loopDryRun(w.PRMode),
-		ReviewMode:        w.ReviewMode,
 		Attempts:          w.Attempts,
 	}
 }
