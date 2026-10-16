@@ -31,8 +31,17 @@ start:
           exit 1
         fi
         { go version 2>/dev/null || true; } > "$TASK_DIR/warm-go"
-        # a dirty tree would be in every fix
-        test -z "$(git status --porcelain)" || { git status --short >&2; exit 1; }
+        # a dirty tree would be in every fix: put it back to the commit,
+        # saying what the script left (a generator that does not reproduce
+        # the default branch, say), rather than lose the day's snapshot over
+        # it. clean -fd leaves ignored files (bin/, build output) alone.
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::warning the warm script left the tree dirty; resetting it to $(git rev-parse --short HEAD) before the snapshot:"
+          git status --short
+          git reset -q --hard HEAD
+          git clean -q -fd
+          test -z "$(git status --porcelain)"
+        fi
     - run: |
         rm -rf /workspaces/.tmp
         # set -e ignores a command negated with !, hence the || exit 1
