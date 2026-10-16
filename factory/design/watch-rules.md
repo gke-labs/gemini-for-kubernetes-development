@@ -26,12 +26,9 @@ recipes (design/repo-recipes.md).
 | warm workspace | 5m | the warm snapshot | the warm cycle |
 | dispatcher | 30s | the queue | what starts, as whom |
 
-The overseer runs `factory watch` for `pollInterval` (5m), then commits
-the queue directory to a branch and starts it again (`run.sh`). Every
-in-memory gate resets each cycle, so the 10-minute sweeps run every
-cycle in practice, and correctness rests on the queue files, GitHub
-(labels, reactions, the bot's own comments) and the sandboxes'
-annotations.
+Correctness rests on the queue files, GitHub (labels, reactions, the
+bot's own comments) and the sandboxes' annotations, since the process is
+restarted every few minutes (below).
 
 ### What it does, as rules
 
@@ -80,14 +77,24 @@ readiness is what holds when none applies.
   run as its author, who must be in the pool; an item is pinned to the
   bot whose sandbox it already has.
 
-### Knobs that do nothing
+### Worth fixing whether or not this goes anywhere
 
-`--poll-interval` and `--labels` are printed and unused; the Overseer's
-`reviewMode` never reaches the watcher (review is gated by labels
-alone); `chores.include`/`exclude` are not passed on; a `dryrun` mode is
-not honoured (only `disabled` is). The dispatcher calls its ordering
-fair share; it is strict priority. Readiness and "already reviewed" use
-two different sets of bot accounts.
+- **Settings that do nothing:** `--poll-interval` and `--labels` are only
+  printed; the Overseer's `reviewMode` never reaches the watcher, so
+  review is gated by labels alone; `chores.include`/`exclude` are not
+  passed on; a `dryrun` mode is not honoured (only `disabled` is).
+- **`pollInterval` is the process's lifetime,** not a poll interval:
+  `run.sh` runs `factory watch` for it (5m), pushes the queue to git and
+  starts it again. Every in-memory gate resets each time (the PR fast
+  pass's verdicts, the issue scanner's processed stamps, fan-out's
+  proposal backoff, sandbox leases), so the 10-minute sweeps run every
+  cycle.
+- **No fairness:** the dispatcher calls its ordering fair share; it is
+  strict priority, then phase, then first come.
+- **Two definitions of "a bot reviewed it":** whether to review counts a
+  review by any pool, allowlisted or ignored bot after the last commit;
+  readiness counts only the reviewer role's (`IsBotReply` against
+  `IsReviewerBot`).
 
 ## Proposal
 
@@ -210,24 +217,45 @@ action or a source of a new kind. The Overseer's settings (modes,
 `minNumber`, roles, the trigger) become the rule set's parameters, and
 a mode that disables issues disables the rules on issues.
 
-## What stays code
+## What doesn't fit simple rules
 
-- **Fan-out's controller**, as a plugin with its pure `Decide`. Only its
-  hand-off is a rule: a child labelled with the trigger is a fix.
-- **The warm cycle and the GC**, as plugins. GC's deletes are rules over
-  the `sandboxes` source, but its checks correct annotations and alias
-  sandboxes as they read, which a pure evaluator would not.
-- **The nudge**: an event (an issue closed) derived from the GC, not from
-  a listing. As a rule it needs a `closed` event source; until then it
-  stays with the GC.
-- **Recovery after a restart**, which is a property of the actions (a
-  run name factory follows), not a rule.
+- **Fan-out is a controller,** with a ramp: windows and groups that
+  double and halve, checkpoints that pause and resume, and its state in
+  a GitHub comment. In rules it can only ever be "a labelled child
+  becomes a fix". It stays a named plugin with its pure `Decide`.
+- **Give-up counters live in GitHub text.** The three-strikes count for
+  CI is the number of the bot's "started investigating" comments since
+  the last commit, trusted human comment or pause notice; the comments
+  rule carries its retry count on the queue's processed task. Reactions
+  carry meaning too: the watcher's 👀 means taken, 👍 done, 😕 failed,
+  and a human's 🚀 asks for it again. A rules engine needs these as
+  named predicates backed by a state store (`attempts: {rule: ci, since:
+  human, max: 3}`, `feedback: new-trusted`), not text matching. The
+  reactions can stay as what the engine writes for people to see, but
+  not as what it reads to decide.
+- **Workflows have no triggering event.** A workflow issue re-runs every
+  cooldown, on a timer; it is nudged early when an issue it links
+  closes, and that signal comes from the sandbox GC confirming the
+  closure before deleting a sandbox, not from a GitHub listing. As
+  rules: a timer (`schedule` or `cooldown` with no updated-since gate)
+  and a `closed` event source, which the engine does not have yet.
+- **GC and warm-up are driven by the cluster,** not by GitHub items.
+  They are rules over a different source (`sandboxes`), and some of
+  their checks have side effects: reading a sandbox's task state
+  corrects its annotation and deletes evicted pods, and resolving a
+  PR's sandbox aliases an issue's sandbox to the PR. A pure evaluator
+  would not reproduce those. They stay plugins.
+- **Restart recovery** is a property of the actions, not a rule: a task
+  left in `processing/` is queued again under the same run name, and
+  factory follows the run or applies its result (`--run-name`).
 
 ## Steps
 
-0. **Knobs:** wire or remove `--poll-interval`, `--labels`, `reviewMode`,
-   `chores.include`/`exclude` and the `dryrun` mode; one definition of a
-   bot review; fix the dispatcher's fair-share comment.
+0. **Fix what the read turned up:** wire or remove `--poll-interval`,
+   `--labels`, `reviewMode`, `chores.include`/`exclude` and the `dryrun`
+   mode; name `pollInterval` for what it is (the run's lifetime) or make
+   it the poll interval it claims to be; one definition of a bot review;
+   the dispatcher's comment says what its ordering is.
 1. **Rules in Go:** the issue and PR scanners become rule structs and an
    engine that evaluates them, with today's behaviour exactly; the
    existing scanner tests are the bar.
