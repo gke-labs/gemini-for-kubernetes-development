@@ -56,6 +56,11 @@ type FactoryConfig struct {
 	// repository, which new sandboxes start from (design/warm-workspace.md).
 	// Unset, no warming.
 	WarmWorkspace *WarmWorkspaceConfig `yaml:"warmWorkspace"`
+	// SessionURL links what applies post on a PR (its description, replies
+	// and reports) to the agent conversation that wrote it: a URL with
+	// {sandbox} and {task} in it, filled in with the run's sandbox and the
+	// task whose conversation it is. Unset, nothing is linked.
+	SessionURL string `yaml:"sessionURL"`
 }
 
 // WarmWorkspaceConfig is how often the workspace is warmed, how many

@@ -77,6 +77,12 @@ function writeFactoryConfig {
         done
     fi
     
+    # Session URL: links PR descriptions and follow-up comments to the agent
+    # conversation that wrote them ({sandbox} and {task} filled in by factory).
+    if [ -n "$SESSION_URL" ]; then
+        echo "sessionURL: \"$SESSION_URL\"" >> "$CFG_FILE"
+    fi
+
     if [ -n "$FACTORY_SECRETS" ]; then
         echo "secrets:" >> "$CFG_FILE"
         echo "$FACTORY_SECRETS" | jq -r '.[] | "  - name: \(.name)\n    mountPath: \(.mountPath)"' >> "$CFG_FILE"

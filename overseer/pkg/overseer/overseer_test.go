@@ -222,3 +222,19 @@ func TestBuildSandboxManifest_FactoryImage(t *testing.T) {
 		t.Errorf("FACTORY_IMAGE = %v, want %s:abc", got, factoryRepo)
 	}
 }
+
+func TestBuildSandboxManifest_SessionURL(t *testing.T) {
+	const tmpl = "https://board.example/#/overseers/kcc/task-session/{sandbox}/{task}"
+	env := overseerEnv(t, &overseerv1alpha1.Overseer{
+		Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"},
+	})
+	if v, ok := env["SESSION_URL"]; ok {
+		t.Errorf("unset: SESSION_URL = %v, want none", v)
+	}
+	env = overseerEnv(t, &overseerv1alpha1.Overseer{
+		Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo", SessionURL: tmpl},
+	})
+	if got := env["SESSION_URL"]; got != tmpl {
+		t.Errorf("SESSION_URL = %v, want %q", got, tmpl)
+	}
+}

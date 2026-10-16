@@ -99,6 +99,7 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | `repoURL` | Repository to watch (required). |
 | `roles` | Bot account pools: `watcher`, `coder`, `agent`, `reviewer`. |
 | `allowlistedUsers` | GitHub logins trusted as feedback authors although GitHub does not report them as owner, member or collaborator (e.g. private org members). |
+| `sessionURL` | Links PR descriptions and follow-up comments to the agent conversation that wrote them: a URL with `{sandbox}` and `{task}`, e.g. a dashboard's session page. Unset, nothing is linked. |
 | `robotAccount`, `geminiAPIKeySecretName` | Secrets (in `overseer-system`) that hold the default GitHub identity and the Gemini key. |
 | `repo.issueMode` / `repo.prMode` | Turn issue intake or PR care on or off. |
 | `chores.mode` / `include` / `exclude` | Chore scheduling. |

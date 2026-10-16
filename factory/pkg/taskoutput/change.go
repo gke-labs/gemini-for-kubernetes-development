@@ -59,9 +59,9 @@ type Change struct {
 }
 
 // prTextHash is a PR's title and body, as compared across a task: trimmed,
-// with the factory's markers out of the body.
+// with the factory's markers and session hint out of the body (prText).
 func prTextHash(title, body string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(title) + "\x00" + strings.TrimSpace(factoryMarkerRE.ReplaceAllString(body, ""))))
+	sum := sha256.Sum256([]byte(strings.TrimSpace(title) + "\x00" + prText(body)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -140,7 +140,7 @@ func (d *Document) KeepTitle(title, body string) error {
 	}
 	if c.Body == "" {
 		c.Body = body
-	} else if strings.TrimSpace(factoryMarkerRE.ReplaceAllString(c.Body, "")) != strings.TrimSpace(factoryMarkerRE.ReplaceAllString(body, "")) {
+	} else if prText(c.Body) != prText(body) {
 		c.Rewrites = append(c.Rewrites, "body")
 	}
 	c.Was = prTextHash(title, body)
@@ -313,7 +313,7 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 		Title:               githubv39.String(c.Title),
 		Head:                githubv39.String(head),
 		Base:                githubv39.String(base),
-		Body:                githubv39.String(c.Body + marker(doc)),
+		Body:                githubv39.String(withSessionHint(ctx, c.Body) + marker(doc)),
 		Draft:               githubv39.Bool(draft),
 		MaintainerCanModify: githubv39.Bool(true),
 	})
@@ -329,7 +329,8 @@ func applyOpenPR(ctx context.Context, gh *githubv39.Client, doc *Document, dryRu
 // rewritePR puts the title and body the agent rewrote (Rewrites) on PR
 // owner/repo#num: only a PR the applying account opened, and only if its
 // title and body are still the ones the task started from (Was). The
-// body keeps the factory's markers the PR's had.
+// body keeps the factory's markers the PR's had, and one session hint:
+// this apply's, else the one the PR's had.
 func rewritePR(ctx context.Context, gh *githubv39.Client, c *Change, owner, repo string, num int, dryRun bool, out io.Writer) error {
 	if len(c.Rewrites) == 0 {
 		return nil
@@ -358,7 +359,14 @@ func rewritePR(ctx context.Context, gh *githubv39.Client, c *Change, owner, repo
 				edit.Title = githubv39.String(c.Title)
 			}
 		case "body":
-			body := c.Body
+			hint := sessionHint(ctx)
+			if hint == "" {
+				hint = strings.TrimSpace(sessionHintRE.FindString(pr.GetBody()))
+			}
+			body := strings.TrimRight(sessionHintRE.ReplaceAllString(c.Body, ""), "\n")
+			if hint != "" {
+				body += "\n\n" + hint
+			}
 			for _, m := range factoryMarkerRE.FindAllString(pr.GetBody(), -1) {
 				if !strings.Contains(body, m) {
 					body += "\n\n" + m
@@ -509,7 +517,7 @@ func postReport(ctx context.Context, gh *githubv39.Client, doc *Document, owner,
 	if dryRun {
 		return nil
 	}
-	body := report + marker(doc)
+	body := withSessionHint(ctx, report) + marker(doc)
 	if _, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body}); err != nil {
 		return fmt.Errorf("commenting the report on #%d: %w", num, err)
 	}
@@ -629,7 +637,7 @@ func postReply(ctx context.Context, gh *githubv39.Client, doc *Document, owner, 
 		if dryRun {
 			return nil
 		}
-		_, _, err := gh.PullRequests.CreateCommentInReplyTo(ctx, owner, repo, num, r.Body+mark, r.InReplyTo)
+		_, _, err := gh.PullRequests.CreateCommentInReplyTo(ctx, owner, repo, num, withSessionHint(ctx, r.Body)+mark, r.InReplyTo)
 		return err
 	case resp == nil || resp.StatusCode != http.StatusNotFound:
 		return err
@@ -655,7 +663,7 @@ func postReply(ctx context.Context, gh *githubv39.Client, doc *Document, owner, 
 	if dryRun {
 		return nil
 	}
-	body := quoteComment(ic) + r.Body + mark
+	body := quoteComment(ic) + withSessionHint(ctx, r.Body) + mark
 	_, _, err = gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body})
 	return err
 }

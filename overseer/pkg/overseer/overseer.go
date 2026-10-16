@@ -281,6 +281,13 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 		})
 	}
 
+	if o.Spec.SessionURL != "" {
+		env = append(env, map[string]interface{}{
+			"name":  "SESSION_URL",
+			"value": o.Spec.SessionURL,
+		})
+	}
+
 	if o.Spec.Chores != nil && o.Spec.Chores.Mode != "" {
 		env = append(env, map[string]interface{}{
 			"name":  "CHORES_MODE",
