@@ -179,11 +179,15 @@ The engine scans once:
   a few points for what is 4–6 REST calls per PR today); an issue's
   timeline (is a PR linked) when a fix rule would fire. An item that did
   not change costs its listing row.
-- **The cursor, the snapshots and the HTTP cache are persisted** in the
-  queue directory, which `run.sh` already pushes to git. Today the
-  overseer restarts `factory watch` every five minutes and the ETag
+- **The cursor, the snapshots and the HTTP cache are persisted.** Today
+  the overseer restarts `factory watch` every five minutes and the ETag
   cache (#1961) is in memory, so every first pass after a restart pays
-  for everything; persisted, a restart continues where it stopped.
+  for everything; persisted, a restart continues where it stopped. The
+  cursor and snapshots (labels, assignees, states, SHAs) may go with the
+  queue directory, which `run.sh` pushes to a branch of the repository;
+  the HTTP cache may not, since it holds response bodies, private
+  repositories' included: it goes on the overseer's volume, never to
+  git.
 - **A full sweep stays, as a safety net,** every so often: what a diff
   missed (a lost snapshot, a skipped pass) is found there, and today's
   split between a fast pass and a sweep becomes this.
