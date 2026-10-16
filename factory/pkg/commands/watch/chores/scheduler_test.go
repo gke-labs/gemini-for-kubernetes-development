@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -390,5 +391,40 @@ func TestRunSchedulesImmediatelyAndStopsOnCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after its context was cancelled")
+	}
+}
+
+// Include and exclude select the chores scheduled, by name, file name or
+// path, with globs; exclude wins.
+func TestScheduleOnceFollowsIncludeAndExclude(t *testing.T) {
+	files := map[string]string{
+		".agents/triage.md":         agentFile("Nightly Triage", "@daily"),
+		".agents/deps-update.md":    agentFile("Deps Update", "@daily"),
+		".agents/release-notes.md":  agentFile("Release Notes", "@daily"),
+		".agents/cleanup-branch.md": agentFile("Cleanup", "@daily"),
+	}
+	for _, tc := range []struct {
+		name             string
+		include, exclude []string
+		want             []string
+	}{
+		{"neither", nil, nil, []string{"cleanup", "deps-update", "nightly-triage", "release-notes"}},
+		{"include by name and glob", []string{"Nightly Triage", "release-*"}, nil, []string{"nightly-triage", "release-notes"}},
+		{"exclude by path", nil, []string{".agents/deps-update.md"}, []string{"cleanup", "nightly-triage", "release-notes"}},
+		{"exclude wins", []string{"*"}, []string{"cleanup-*"}, []string{"deps-update", "nightly-triage", "release-notes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, queue := newTestScheduler(t, files)
+			s.cfg.Include, s.cfg.Exclude = tc.include, tc.exclude
+			s.ScheduleOnce(context.Background())
+			var got []string
+			for name := range queue.tasks() {
+				got = append(got, strings.TrimSuffix(strings.TrimPrefix(name, "task-chore-"), ".yaml"))
+			}
+			sort.Strings(got)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("scheduled %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

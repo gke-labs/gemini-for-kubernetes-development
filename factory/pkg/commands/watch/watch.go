@@ -211,7 +211,7 @@ func (w *Watcher) init(ctx context.Context) error {
 		go startQueueHTTPServer(ctx, w.queueMgr, ":13338")
 	}
 
-	fmt.Printf("Starting watch for repository %s/%s (mode: %s, queueDir: %s, poll interval: %s, assignee: '%s', labels: %v, dryRun: %v, watchTimeout: %s)...\n", w.Repo.Owner, w.Repo.Repo, w.Mode, w.QueueDir, w.PollInterval, w.targetAssignee, w.Labels, w.DryRun, w.WatchTimeout)
+	fmt.Printf("Starting watch for repository %s/%s (mode: %s, issues: %s, PRs: %s, reviews: %s, chores: %s, queueDir: %s, assignee: '%s', dryRun: %v, watchTimeout: %s)...\n", w.Repo.Owner, w.Repo.Repo, w.Mode, w.IssueMode, w.PRMode, w.ReviewMode, w.ChoresMode, w.QueueDir, w.targetAssignee, w.DryRun, w.WatchTimeout)
 
 	if w.WatchTimeout > 0 {
 		w.timeoutChan = time.After(w.WatchTimeout)

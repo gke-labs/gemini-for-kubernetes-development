@@ -50,21 +50,26 @@ func (r *RepoFlag) Type() string {
 }
 
 type Flags struct {
-	Repo                RepoFlag
-	PollInterval        time.Duration
-	Assignee            string
-	AssigneeChanged     bool
-	Labels              []string
-	DryRun              bool
-	WatchTimeout        time.Duration
-	MaxActions          int
-	MaxPending          int
-	Mode                string
-	QueueDir            string
-	Once                bool
-	IssueMode           string
-	PRMode              string
-	ChoresMode          string
+	Repo            RepoFlag
+	Assignee        string
+	AssigneeChanged bool
+	DryRun          bool
+	WatchTimeout    time.Duration
+	MaxActions      int
+	MaxPending      int
+	Mode            string
+	QueueDir        string
+	Once            bool
+	IssueMode       string
+	PRMode          string
+	ChoresMode      string
+	// ReviewMode gates automated reviews: "disabled" queues none, "dryrun"
+	// logs them, anything else follows the review labels.
+	ReviewMode string
+	// ChoresInclude and ChoresExclude select the scheduled chores, by name,
+	// file name or path, globs allowed; exclude wins.
+	ChoresInclude       []string
+	ChoresExclude       []string
 	ScanLimit           int
 	TaskTimeout         time.Duration
 	SandboxEvictionAge  string

@@ -238,3 +238,25 @@ func TestBuildSandboxManifest_SessionURL(t *testing.T) {
 		t.Errorf("SESSION_URL = %v, want %q", got, tmpl)
 	}
 }
+
+func TestBuildSandboxManifest_ChoreLists(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{
+		Spec: overseerv1alpha1.OverseerSpec{
+			RepoURL: "https://github.com/test/repo",
+			Chores:  &overseerv1alpha1.ChoresSpec{Mode: "enabled", Include: []string{"triage", "release-*"}, Exclude: []string{"deps-update"}},
+		},
+	}
+	env := overseerEnv(t, o)
+	if got := env["CHORES_INCLUDE"]; got != "triage,release-*" {
+		t.Errorf("CHORES_INCLUDE = %q, want %q", got, "triage,release-*")
+	}
+	if got := env["CHORES_EXCLUDE"]; got != "deps-update" {
+		t.Errorf("CHORES_EXCLUDE = %q, want %q", got, "deps-update")
+	}
+
+	o.Spec.Chores = &overseerv1alpha1.ChoresSpec{Mode: "enabled"}
+	env = overseerEnv(t, o)
+	if _, ok := env["CHORES_INCLUDE"]; ok {
+		t.Error("CHORES_INCLUDE is set with no include list")
+	}
+}

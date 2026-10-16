@@ -13,6 +13,8 @@ package chores
 import (
 	"context"
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -84,6 +86,12 @@ type Config struct {
 	Repo string
 	// DryRun reports what would be queued without touching the queue or the run state.
 	DryRun bool
+	// Include, when not empty, is the only chores scheduled: each entry
+	// matches a chore's name, its file name without extension, or its path,
+	// and may be a glob (path.Match). Exclude drops chores the same way,
+	// and wins over Include.
+	Include []string
+	Exclude []string
 }
 
 // Deps holds the collaborators of a Scheduler.
@@ -299,6 +307,10 @@ func (s *Scheduler) fetchDefinitions(ctx context.Context) ([]Definition, error) 
 		if agentDef.Schedule == "" {
 			continue
 		}
+		if !s.selected(agentDef.Name, path) {
+			klog.V(2).Infof("Chore %s (%s) is not selected by the include/exclude lists; not scheduling it.", agentDef.Name, path)
+			continue
+		}
 		defs = append(defs, Definition{
 			Name:     agentDef.Name,
 			Schedule: agentDef.Schedule,
@@ -306,6 +318,33 @@ func (s *Scheduler) fetchDefinitions(ctx context.Context) ([]Definition, error) 
 		})
 	}
 	return defs, nil
+}
+
+// selected reports whether the chore named name, declared in file p, is
+// scheduled under the include and exclude lists.
+func (s *Scheduler) selected(name, p string) bool {
+	if matchesAny(s.cfg.Exclude, name, p) {
+		return false
+	}
+	return len(s.cfg.Include) == 0 || matchesAny(s.cfg.Include, name, p)
+}
+
+// matchesAny reports whether a pattern matches the chore's name, its file
+// name without extension, or its path.
+func matchesAny(patterns []string, name, p string) bool {
+	base := strings.TrimSuffix(path.Base(p), path.Ext(p))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		for _, candidate := range []string{name, base, p} {
+			if ok, _ := path.Match(pattern, candidate); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // taskFileName returns the queue file name of a chore agent's task. It is

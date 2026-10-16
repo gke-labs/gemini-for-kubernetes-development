@@ -87,7 +87,7 @@ namespace overseer-<name>
              └─ dispatcher → one sandbox per issue/PR/chore, running the coding agent
 ```
 
-- The controller turns the CR into environment variables, and `bootstrap.sh`/`run.sh` write them to `/workspaces/.factory.cfg`. The pod clones the repository, sets up a fork, and runs `factory watch` for `pollInterval` (default `30m`). When the timeout expires, the watch drains its running tasks and exits. `run.sh` then pushes the queue state and starts the next cycle 10 seconds later.
+- The controller turns the CR into environment variables, and `bootstrap.sh`/`run.sh` write them to `/workspaces/.factory.cfg`. The pod clones the repository, sets up a fork, and runs `factory watch` for `pollInterval` (default `30m`): despite its name, that is how long each run lasts, not how often GitHub is polled (the watch's loops poll on their own fixed cadence, 2m for new work and 10m for full sweeps, and their in-memory state resets each run). When the timeout expires, the watch drains its running tasks and exits. `run.sh` then pushes the queue state and starts the next cycle 10 seconds later.
 - The task queue (`incoming/`, `processing/`, `processed/`) lives in `overseer/queues` in the clone on the PVC. After each cycle it is committed to a state branch named after the trigger label and force-pushed to the fork.
 - `enableGeminiOrchestrator: true` adds an optional, non-deterministic `gemini --yolo` pass after each watch cycle. It is off by default.
 
@@ -102,14 +102,14 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | `allowlistedUsers` | GitHub logins trusted as feedback authors although GitHub does not report them as owner, member or collaborator (e.g. private org members). |
 | `sessionURL` | Links PR descriptions and follow-up comments to the agent conversation that wrote them: a URL with `{sandbox}` and `{task}`, e.g. a dashboard's session page. Unset, nothing is linked. |
 | `robotAccount`, `geminiAPIKeySecretName` | Secrets (in `overseer-system`) that hold the default GitHub identity and the Gemini key. |
-| `repo.issueMode` / `repo.prMode` | Turn issue intake or PR care on or off. |
-| `chores.mode` / `include` / `exclude` | Chore scheduling. |
+| `repo.issueMode` / `repo.prMode` / `repo.reviewMode` | Issue intake (fan-out included), PR care, and automated reviews: `enabled`, `disabled`, or `dryrun` (evaluate and log what would be done, change nothing). With `reviewMode: enabled`, reviews run on PRs with the `overseer/review` label; `disabled` queues none, and readiness then does not wait for one. |
+| `chores.mode` / `include` / `exclude` | Chore scheduling: `mode` as above; `include` (only these) and `exclude` (not these, wins) match a chore's name, file name or path under `.agents/`, globs allowed. |
 | `image` | Worker sandbox image, overriding the repository's devcontainer image. |
 | `workspaceDiskSize`, `workspaceStorageClassName`, `ephemeralStorage` | Storage for the Overseer and its sandboxes. |
 | `sandboxCPURequest/Limit`, `sandboxMemoryRequest/Limit` | Worker sandbox resources. |
 | `warmWorkspace` | `interval`, `keep` (default 2) and exactly one of `script`, `scriptURL` (https) or `scriptPath` (in the repository): warm a workspace disk on a schedule and start new sandboxes from its snapshot. Needs the VolumeSnapshotClass `warm-workspace` ([design](../factory/design/warm-workspace.md)). |
 | `secrets`, `env` | Extra secrets and variables for every sandbox, such as cloud credentials for tests. |
-| `minNumber`, `pollInterval`, `taskTimeout`, `sandboxIdleTimeout`, `sandboxEvictionAge`, `prInactivityTimeout` | Scope and timing. |
+| `minNumber`, `pollInterval` (how long each watch run lasts), `taskTimeout`, `sandboxIdleTimeout`, `sandboxEvictionAge`, `prInactivityTimeout` | Scope and timing. |
 | `enableGeminiOrchestrator` | Optional LLM orchestration pass (default `false`). |
 
 The trigger label is `overseer` in the Overseer image. The CR does not set it.
