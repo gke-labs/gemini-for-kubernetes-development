@@ -71,6 +71,21 @@ function TerminalPage({ route }) {
   );
 }
 
+// THEMES are the looks ☰ › Theme offers, each a class on <body> that
+// App.css gives its own values for the colour variables: Light (:root),
+// Dark and Grain, the warm look of the grain UI (bronze accent, warm
+// greys, a system font, 6px corners).
+export const THEMES = [
+  { key: 'light', label: 'Light', className: '' },
+  { key: 'dark', label: 'Dark', className: 'dark-mode' },
+  { key: 'grain', label: 'Grain', className: 'theme-grain' },
+];
+
+// themeOf is a stored theme if it is one of THEMES, else Light.
+export function themeOf(stored) {
+  return THEMES.find(t => t.key === stored) || THEMES[0];
+}
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
@@ -101,7 +116,8 @@ function App() {
   const [providersError, setProvidersError] = useState(false);
   const [isGeminiKeySet, setIsGeminiKeySet] = useState(true); // Default to true to avoid flash of warning
   const hasRedirectedMissingKey = useRef(false);
-  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+  const [theme, setTheme] = useState(themeOf(localStorage.getItem('theme')).key);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   // Feedback modal
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
@@ -111,7 +127,7 @@ function App() {
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   useEffect(() => {
-    document.body.className = theme === 'dark' ? 'dark-mode' : '';
+    document.body.className = themeOf(theme).className;
     localStorage.setItem('theme', theme);
   }, [theme]);
 
@@ -206,8 +222,9 @@ function App() {
     return 'green';
   };
 
+  // The login page's switch: dark or not.
   const toggleTheme = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light');
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   const handleFeedbackClick = async () => {
@@ -366,12 +383,31 @@ function App() {
                       color: 'var(--text-primary)', fontSize: '14px',
                     }}>{mi.label}</button>
                 ))}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderTop: '1px solid var(--border-color)', marginTop: '4px' }}>
-                  <span style={{ fontSize: '14px' }}>Dark mode</span>
-                  <label className="theme-switch" htmlFor="checkbox">
-                    <input type="checkbox" id="checkbox" onChange={toggleTheme} checked={theme === 'dark'} />
-                    <div className="slider round"></div>
-                  </label>
+                <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '4px', paddingTop: '4px' }}>
+                  <button aria-expanded={themeMenuOpen} onClick={() => setThemeMenuOpen(v => !v)}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '8px 10px',
+                      background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px',
+                      color: 'var(--text-primary)', fontSize: '14px',
+                    }}>
+                    <span>Theme</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{themeOf(theme).label} {themeMenuOpen ? '▾' : '▸'}</span>
+                  </button>
+                  {themeMenuOpen && (
+                    <div role="menu" aria-label="Theme" style={{ paddingLeft: '10px' }}>
+                      {THEMES.map(t => (
+                        <button key={t.key} role="menuitemradio" aria-checked={theme === t.key}
+                          onClick={() => setTheme(t.key)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
+                            background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px',
+                            color: 'var(--text-primary)', fontSize: '14px',
+                          }}>
+                          <span style={{ display: 'inline-block', width: '18px' }}>{theme === t.key ? '✓' : ''}</span>{t.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => { setMenuOpen(false); handleLogout(); }}

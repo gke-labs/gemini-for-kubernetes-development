@@ -166,11 +166,48 @@ describe('the Work | Sessions toggle', () => {
     test('the menu no longer lists Work or Sessions', async () => {
         await render();
         await act(async () => { container.querySelector('button[title="Menu"]').click(); });
-        const menu = Array.from(container.querySelectorAll('div')).find(d => d.textContent.startsWith('Hi, alice') && d.textContent.includes('Dark mode'));
+        const menu = Array.from(container.querySelectorAll('div')).find(d => d.textContent.startsWith('Hi, alice') && d.textContent.includes('Theme'));
         const items = Array.from(menu.querySelectorAll('button')).map(b => b.textContent);
         expect(items).toContain('Usage');
         expect(items).not.toContain('Work');
         expect(items).not.toContain('Sessions');
         expect(items).not.toContain('Overseer');
+    });
+});
+
+describe('the theme', () => {
+    const { themeOf } = require('./App');
+    const menu = () => Array.from(container.querySelectorAll('button')).find(b => b.textContent === '☰');
+    const button = (text) => Array.from(container.querySelectorAll('button')).find(b => b.textContent.trim().endsWith(text));
+
+    afterEach(() => { localStorage.removeItem('theme'); document.body.className = ''; });
+
+    test('☰ › Theme offers Light, Dark and Grain, and the choice sticks', async () => {
+        await render();
+        await act(async () => { menu().click(); });
+        const theme = Array.from(container.querySelectorAll('button[aria-expanded]')).find(b => b.textContent.startsWith('Theme'));
+        expect(theme.textContent).toContain('Light');
+        await act(async () => { theme.click(); });
+        const items = Array.from(container.querySelectorAll('[role="menu"][aria-label="Theme"] [role="menuitemradio"]'));
+        expect(items.map(i => i.textContent.replace('✓', ''))).toEqual(['Light', 'Dark', 'Grain']);
+        expect(items[0].getAttribute('aria-checked')).toBe('true');
+
+        await act(async () => { button('Grain').click(); });
+        expect(document.body.className).toBe('theme-grain');
+        expect(localStorage.getItem('theme')).toBe('grain');
+        expect(button('Grain').getAttribute('aria-checked')).toBe('true');
+
+        await act(async () => { button('Dark').click(); });
+        expect(document.body.className).toBe('dark-mode');
+        expect(localStorage.getItem('theme')).toBe('dark');
+    });
+
+    test('a stored theme opens the app in it; anything else is Light', async () => {
+        localStorage.setItem('theme', 'grain');
+        await render();
+        expect(document.body.className).toBe('theme-grain');
+        expect(themeOf('dark').className).toBe('dark-mode');
+        expect(themeOf('solarized').key).toBe('light');
+        expect(themeOf(null).key).toBe('light');
     });
 });
