@@ -98,59 +98,57 @@ readiness is what holds when none applies.
 
 ## Proposal
 
-### Sources, rules, groups, plugins
+### Rules, groups, sources, plugins
 
 The engine has four kinds of thing.
 
-**Sources** say what is listed and how often: a GitHub query, its pages,
-its order and its cadence, or the cluster's sandboxes, or the
-repository's `.agents/`. Today's fast scans and sweeps are two sources
-feeding the same rules: the fast one cheap and fresh, the sweep complete.
+**Rules** are a condition and an action, on one kind of item, one rule
+per file (see Where rules live):
 
 ```yaml
-sources:
-  issues-assigned: {github: "is:issue is:open assignee:{{pool}}", pages: 1, sort: updated, every: 2m}
-  issues-labelled: {github: "is:issue is:open label:{{trigger}}", pages: all, every: 10m}
-  prs-assigned:    {github: "is:pr is:open assignee:{{pool}}", pages: 1, every: 2m, changed-only: true}
-  prs-candidates:  {github: "is:pr is:open author:{{pool}}", pages: all, every: 10m}
-  agents:          {repo: ".agents/*.md", every: 5m}
-  sandboxes:       {cluster: sandboxes, every: 5m}
+# .agents/rules/fix.yaml
+name: fix
+on: issue
+when:
+  labels: {any: ["{{trigger}}"]}
+  linked-pr: none
+  workflow: none
+  updated-since-run: true
+run: {recipe: fix, apply: open-pr, inputs: {draft: "false"}}
+as: {role: coder}
+policy: {cooldown: {success: 10m, failure: 20m}, phase: 3}
 ```
 
-**Rules** are a condition and an action, on one kind of item:
+**Groups** make rules on one item ordered and exclusive: of the rules
+in a group, the first whose condition holds is taken, none while a task
+of the item runs, and the rule ordered `last` holds when none other
+does. A rule says its place itself, as a GitHub Actions workflow names
+its `concurrency` group. PR care is one group:
 
 ```yaml
-rules:
-  - name: fix
-    on: issue
-    from: [issues-assigned, issues-labelled]
-    when:
-      labels: {any: ["{{trigger}}"]}
-      linked-pr: none
-      workflow: none
-      updated-since-run: true
-    run: {recipe: fix, apply: open-pr, inputs: {draft: "false"}}
-    as: {role: coder}
-    policy: {cooldown: {success: 10m, failure: 20m}, phase: 3}
+# .agents/rules/ci.yaml
+name: ci
+on: pr
+group: {name: pr-care, order: 30}      # comments 10, conflict 20, ci 30, review 40, ready last
+when: {checks: failing}
+run: {recipe: care-ci, apply: post-replies}
+as: {role: author}
+policy: {dedupe: head, give-up: {attempts: 3, since: human, then: stop}}
 ```
 
-**Groups** are ordered, exclusive sets of rules on one item: the first
-whose condition holds is taken, none while a task of the item runs, and
-a `then` rule when none holds. PR care is one:
-
-```yaml
-groups:
-  - name: pr-care
-    on: pr
-    exclusive: true
-    rules: [comments, conflict, ci, review]
-    then: ready
-```
+**Sources** are what is listed and how often. A rule does not name one:
+the engine derives the listings from the rules' `on` and `when` (a rule
+on issues with the trigger label lists those; one on PRs assigned to
+the pool lists those), and keeps today's split between a cheap, fresh
+fast pass (one page, newest updated, only what changed) and a complete
+sweep as an engine setting. The cluster's sandboxes and the
+repository's `.agents/` are sources of their own, for the plugins and
+the chores.
 
 **Plugins** are the controllers that are not condition and action:
 fan-out (a ramp of windows and groups, checkpoints, its state in a
 comment), the warm workspace, and the sandbox GC. They keep their code;
-the rules turn them on and give them their settings.
+the settings turn them on and configure them.
 
 ### Predicates
 
@@ -208,14 +206,99 @@ The global ones stay global: drain, the stop label, `minNumber`, trust,
 
 ### Where rules live
 
-The built-in rules, those above, are embedded in factory as a rule set,
-as the built-in recipes are. A repository adds or overrides rules in
-`.agents/watch.yaml`, read from its default branch only, as repository
-recipes are. A repository's rule can run only recipes (its own or
-built-in) and the closed set of actions; it cannot add a predicate, an
-action or a source of a new kind. The Overseer's settings (modes,
-`minNumber`, roles, the trigger) become the rule set's parameters, and
-a mode that disables issues disables the rules on issues.
+**One rule per file, in `.agents/rules/<name>.yaml`,** beside the
+repository's recipes:
+
+```
+.agents/
+  recipes/<name>.yaml    what to do                         (exists)
+  rules/<name>.yaml      when the overseer does it: a trigger, the recipe, its policy, its group
+  watch.yaml             optional: the repository's settings, and no rules
+```
+
+- **The built-in rules** ship the same way, embedded in factory one file
+  per rule, as the built-in recipes are.
+- **A repository's rule replaces the built-in of its name**
+  (`.agents/rules/ci.yaml` with a different give-up), or turns it off
+  (`enabled: false`), or adds a rule of a new name. Rules are read from
+  the default branch only, as repository recipes are.
+- **A repository's rule can run** only recipes (its own or built-in) and
+  the closed set of actions; it cannot add a predicate, an action or a
+  source of a new kind.
+- **The settings** (the trigger label, the bot pool and its roles,
+  `minNumber`, the modes, the concurrency limits, the policy defaults)
+  are the Overseer's, as now, and a repository's `watch.yaml` may narrow
+  them. A mode that disables issues disables the rules on issues.
+- **The whole picture** is a command, not a file: `factory watch rules
+  --url <repo>` prints the effective rules (built-ins merged with the
+  repository's), where each comes from, and each group in order, as
+  `factory recipe list --url` does for recipes.
+
+**Why not one file.** The alternative is a single `.agents/watch.yaml`
+holding the settings, the sources, the groups and every rule. The same
+five rules, both ways:
+
+```
+ single file: .agents/watch.yaml          │ one file per rule: .agents/rules/*.yaml
+──────────────────────────────────────────┼──────────────────────────────────────────
+ sources:                                 │ # sources: derived from each rule's on/when
+   prs-assigned:                          │
+     github: "is:pr assignee:{{pool}}"    │
+     every: 2m                            │
+ groups:                                  │ # groups: each rule says its place
+   - name: pr-care                        │
+     rules: [comments, conflict, ci,      │
+             review]                      │
+     then: ready                          │
+ rules:                                   │ # rules/fix.yaml
+   - name: fix                            │ name: fix
+     on: issue                            │ on: issue
+     when: {labels: {any: [overseer]},    │ when: {labels: {any: [overseer]},
+            linked-pr: none}              │        linked-pr: none}
+     run: {recipe: fix, apply: open-pr}   │ run: {recipe: fix, apply: open-pr}
+   - name: comments                       │ # rules/comments.yaml
+     on: pr                               │ name: comments
+     from: [prs-assigned]                 │ on: pr
+     when: {feedback: new-trusted}        │ group: {name: pr-care, order: 10}
+     run: {recipe: care-comments}         │ when: {feedback: new-trusted}
+   - name: ci                             │ run: {recipe: care-comments}
+     on: pr                               │ # rules/ci.yaml
+     when: {checks: failing}              │ name: ci
+     run: {recipe: care-ci}               │ on: pr
+     policy: {give-up: {attempts: 3}}     │ group: {name: pr-care, order: 30}
+   - name: review                         │ when: {checks: failing}
+     on: pr                               │ run: {recipe: care-ci}
+     when: {checks: green,                │ policy: {give-up: {attempts: 3}}
+            labels: {any: ["*/review"]}}  │ # rules/review.yaml, rules/ready.yaml: likewise
+     run: {recipe: review}                │
+──────────────────────────────────────────┼──────────────────────────────────────────
+ CI give-up to 5: edit the shared file,   │ add rules/ci.yaml (replaces the built-in)
+   restate the ci entry                   │
+ a nightly stale summary: edit the file   │ add rules/stale-summary.yaml
+ auto-review off: remove review from the  │ rules/review.yaml with enabled: false
+   rules and from the group               │
+```
+
+| | one file | one file per rule |
+|---|---|---|
+| familiar from | Kubernetes manifests, CI config | GitHub Actions (`.github/workflows/*`), `.agents/recipes/*` |
+| everything at once | by reading it | `factory watch rules --url` |
+| order between rules | one list per group | each rule's `group: {name, order}` |
+| sources | declared, tunable | derived; cadence is the engine's |
+| add or remove a behaviour | edit a shared file | add or delete a file |
+| override one built-in | restate or patch an entry, which drifts | a file of the same name |
+| conflicts and ownership | one file for everyone; CODEOWNERS all or nothing | a file each; CODEOWNERS per rule |
+
+One file's strength, everything in one place, a command gives; its cost,
+every change an edit to a shared file that drifts from the built-ins, is
+structural. One file per rule costs the order of a group spread across
+files as numbers, and only groups have an order (PR care, today): the
+command prints each group in order, and loading refuses two rules of a
+group with the same order.
+
+A trigger inside the recipe (an `auto:` beside its `on:`) is rejected:
+the same recipe is triggered differently by the overseer, a board's
+auto rules and a click, so a trigger is the runner's, not the recipe's.
 
 ## What doesn't fit simple rules
 
@@ -261,13 +344,19 @@ a mode that disables issues disables the rules on issues.
    existing scanner tests are the bar.
 2. **`attempts` and the give-up policy** from the processed tasks,
    replacing the comment counting.
-3. **Rules as data:** the built-in set as an embedded file, the engine
-   reading it.
-4. **The repository's rules:** `.agents/watch.yaml`, with sources and
-   plugins as the engine offers them.
+3. **Rules as data:** the built-in rules as embedded files, one per rule,
+   the engine reading them, and `factory watch rules`.
+4. **The repository's rules:** `.agents/rules/*.yaml` replacing, turning
+   off or adding to the built-ins, and `.agents/watch.yaml` for its
+   settings.
 5. **The board** shares the predicates for its auto rules.
 
 ## Open questions
+
+- **Replacing a built-in:** a repository's recipe may not take a
+  built-in's name; a repository's rule may, above, because changing the
+  overseer's behaviour per repository is the point. Should replacing be
+  allowed outright, or only `enabled: false` plus a rule of a new name?
 
 - **A repository's rules and the bot pool:** a rule runs as a role of
   the overseer's bots. Does a repository get to say which, or only the
