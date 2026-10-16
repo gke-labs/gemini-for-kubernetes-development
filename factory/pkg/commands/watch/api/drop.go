@@ -1,0 +1,28 @@
+package api
+
+import "time"
+
+// Drop is a queued task the dispatcher dropped before starting it,
+// because a fact it was decided on no longer held (QueueTask.Expect). A
+// drop is not a run: it leaves no processed task, so it counts toward
+// no cooldown, retry or give-up.
+type Drop struct {
+	FileName string
+	Number   int
+	URL      string
+	Type     TaskType
+	Reason   string
+	At       time.Time
+}
+
+// Item is the drop as the HTTP API serves it.
+func (d Drop) Item() QueueDrop {
+	return QueueDrop{
+		FileName: d.FileName,
+		Number:   d.Number,
+		URL:      d.URL,
+		Type:     d.Type,
+		Reason:   d.Reason,
+		At:       d.At.UTC().Format(time.RFC3339),
+	}
+}

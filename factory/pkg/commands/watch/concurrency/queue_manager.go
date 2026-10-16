@@ -45,7 +45,14 @@ type TaskQueueManager struct {
 	// cooldowns are the tasks the issue scanner is holding back, by task
 	// file name (NoteCooldown), served with the queue until they expire.
 	cooldowns map[string]api.Cooldown
+	// drops are the tasks the dispatcher dropped before starting them
+	// (DropTask), newest last, the last maxDrops of them, served with the
+	// queue.
+	drops []api.Drop
 }
+
+// maxDrops bounds the drops the queue remembers for its readers.
+const maxDrops = 50
 
 // NewTaskQueueManager creates a new TaskQueueManager instance with configured directories.
 func NewTaskQueueManager(cfg TaskQueueManagerConfig) *TaskQueueManager {
@@ -720,6 +727,37 @@ func moveTaskFile(srcDir, dstDir, filename string, task *api.QueueTask) error {
 		_ = os.Remove(srcPath)
 	} else {
 		_ = writeTaskAtomically(dstDir, filename, task)
+	}
+	return nil
+}
+
+// DropTask removes a queued task the dispatcher will not start because a
+// fact it was decided on no longer holds (reason, e.g. "head moved
+// abc1234→def5678"). Unlike a failure it leaves no processed task, so the
+// drop counts toward no cooldown, retry or give-up, and the task's name is
+// free for the next scan to queue it again if it still applies. It is
+// journalled as Dropped and remembered for the queue's readers.
+func (m *TaskQueueManager) DropTask(filename string, task *api.QueueTask, reason string) error {
+	filename = filepath.Base(filename)
+	if err := m.RemoveTask(filename); err != nil {
+		return err
+	}
+	dropped := task.DeepCopy()
+	dropped.Error = reason
+	m.writeJournalEvent(filename, dropped, "Dropped", 0)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.drops = append(m.drops, api.Drop{
+		FileName: filename,
+		Number:   task.Number,
+		URL:      task.URL,
+		Type:     task.Type,
+		Reason:   reason,
+		At:       time.Now(),
+	})
+	if len(m.drops) > maxDrops {
+		m.drops = m.drops[len(m.drops)-maxDrops:]
 	}
 	return nil
 }

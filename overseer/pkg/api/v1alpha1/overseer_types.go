@@ -130,6 +130,13 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	TaskTimeout *metav1.Duration `json:"taskTimeout,omitempty"`
 
+	// Preconditions makes the watcher drop a queued task, before it starts,
+	// when a fact it was decided on no longer holds: a PR task whose head
+	// moved, a fix whose issue got a linked PR. A drop is not a run: it
+	// counts toward no cooldown, retry or give-up.
+	// +kubebuilder:validation:Optional
+	Preconditions bool `json:"preconditions,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

@@ -57,5 +57,22 @@ func (s *Scanner) newTask(opts taskOptions) *api.QueueTask {
 		CommitSHA:        opts.CommitSHA,
 		RetryCount:       opts.RetryCount,
 		Instructions:     opts.Instructions,
+		Expect:           expectFor(opts.Type, opts.CommitSHA),
 	}
+}
+
+// expectFor is what a PR task of type t is decided on, beyond the PR being
+// open and not stopped (checked for every task): a rebase, an investigation
+// or a review is of the head it was decided at, and a PR that moved on
+// since is not what it was decided on. Feedback is not addressed by a new
+// commit, so a comments task holds across one.
+func expectFor(t api.TaskType, commitSHA string) []string {
+	if commitSHA == "" {
+		return nil
+	}
+	switch t {
+	case api.TypePRIterate, api.TypePRInvestigate, api.TypePRReview:
+		return []string{api.ExpectHead}
+	}
+	return nil
 }

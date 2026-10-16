@@ -70,6 +70,9 @@ type Flags struct {
 	SandboxEvictionAge  string
 	SandboxIdleTimeout  time.Duration
 	PRInactivityTimeout time.Duration
+	// Preconditions drops a queued task before it starts when a fact it
+	// was decided on no longer holds (api.QueueTask.Expect).
+	Preconditions bool
 }
 
 type Watcher struct {

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
@@ -81,9 +82,17 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.TaskTimeout, "task-timeout", common.GetEnvDuration("TASK_TIMEOUT", 24*time.Hour), "Timeout for each task execution, after which the task is failed and its sandbox deleted (e.g. '3h', '24h')")
 	cmd.Flags().StringVar(&flags.SandboxEvictionAge, "sandbox-eviction-age", "7d", "Age threshold for idle sandbox eviction (e.g. '7d', '24h')")
 	cmd.Flags().DurationVar(&flags.SandboxIdleTimeout, "sandbox-idle-timeout", common.GetEnvDuration("SANDBOX_IDLE_TIMEOUT", 0), "Idle timeout after which a sandbox that has not run any task is suspended by setting replicas to 0 (e.g. '30m', '1h')")
+	cmd.Flags().BoolVar(&flags.Preconditions, "preconditions", envBool("WATCH_PRECONDITIONS"), "Drop a queued task before it starts when a fact it was decided on no longer holds: a PR task whose head moved, a fix whose issue got a linked PR (defaults to the WATCH_PRECONDITIONS env)")
 	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
 	cmd.AddCommand(newWatchFanoutCommand(ctx))
 
 	return cmd
+}
+
+// envBool is the environment variable key as a boolean; unset or not a
+// boolean is false.
+func envBool(key string) bool {
+	v, err := strconv.ParseBool(os.Getenv(key))
+	return err == nil && v
 }
