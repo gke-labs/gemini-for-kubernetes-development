@@ -6,6 +6,24 @@ RUN GOBIN=/bin go install github.com/cli/cli/v2/cmd/gh@v2.82.1
 
 # --------------------------------
 
+# Build gemini-cli: v0.64.0 with google-gemini/gemini-cli#29778, which makes
+# ACP mode (acpd's sessions) truncate tool output as -p and interactive
+# mode do, instead of sending a huge shell output to the model whole. The
+# same tarball npm would publish (npm pack of the bundle), installed below
+# in place of @google/gemini-cli. Pinned by commit; back to the npm package,
+# pinned, once a release has the fix.
+FROM node:20-bookworm AS build-gemini-cli
+ARG GEMINI_CLI_REPO=https://github.com/barney-s/gemini-cli.git
+ARG GEMINI_CLI_COMMIT=1fe45046ee2487f5e002fdf58f6cd8cde2ef8ede
+RUN git clone --filter=blob:none "${GEMINI_CLI_REPO}" /src && \
+    cd /src && git checkout --detach "${GEMINI_CLI_COMMIT}" && \
+    npm ci --ignore-scripts --no-audit --no-fund && \
+    npm run bundle && \
+    npm pack --ignore-scripts && \
+    mv google-gemini-cli-*.tgz /gemini-cli.tgz
+
+# --------------------------------
+
 # Build factory binary
 FROM golang:1.26.3 AS build-factory
 WORKDIR /app/factory
@@ -30,7 +48,8 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
     curl -fsSL --retry 5 --retry-connrefused --retry-delay 3 https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     apt-get update && apt-get install -y google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin kubectl
 
-RUN npm install -g @google/gemini-cli @anthropic-ai/claude-code
+COPY --from=build-gemini-cli /gemini-cli.tgz /tmp/gemini-cli.tgz
+RUN npm install -g /tmp/gemini-cli.tgz @anthropic-ai/claude-code && rm /tmp/gemini-cli.tgz && gemini --version
 
 # Antigravity CLI (agy) is a Go binary, not an npm package. It self-updates
 # in the background unless this is exactly "true" — the image pins it.
