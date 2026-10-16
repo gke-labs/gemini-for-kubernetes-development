@@ -13,7 +13,9 @@ import { SessionMark, RUN_STYLE, ageOf } from './WorkBits';
 // (one per session group, coloured by status, the engine's mark) and the
 // same sandbox icon. A chip opens the board's session slide-over, a
 // sandbox its sandbox card, both on the overseer's routes (apiBase). The
-// rail is empty: the page is read-only beyond the conversation.
+// rail holds one write: Clear & retry on a row whose sandbox factory marked
+// as needing a person (requires human), which the watch otherwise leaves
+// alone.
 
 // SECTIONS are the feed's sections, in the page's order.
 export const SECTIONS = [
@@ -111,12 +113,24 @@ export function cooldownTitle(c) {
   return [`Not queued again before ${at(c.until)}`, last, why].filter(Boolean).join('; ');
 }
 
-export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
+// requiresHuman is the row's sandbox that needs a person, if any.
+export function requiresHuman(item) {
+  return (item.sandboxes || []).find(s => s.requiresHuman);
+}
+
+// byNeed puts rows that need a person first, keeping the feed's order
+// otherwise.
+export function byNeed(rows) {
+  return [...rows.filter(r => requiresHuman(r)), ...rows.filter(r => !requiresHuman(r))];
+}
+
+export function WorkRow({ item, onOpenSession, onOpenSandbox, onRetry }) {
   const chips = rowChips(item);
   const users = [...new Set((item.sandboxes || []).map(s => s.user).filter(Boolean))];
   const podTrouble = (item.sandboxes || []).find(s => s.pod === 'evicted' || s.pod === 'failed');
   const failedChip = chips.some(c => c.status === 'failed');
   const isAgent = item.kind === 'agent';
+  const needsHuman = requiresHuman(item);
   const titleText = item.title || (isAgent ? ((item.sandboxes || [])[0] || {}).name : '') || (item.kind === 'pr' ? `PR #${item.number}` : `Issue #${item.number}`);
   return (
     <tr data-testid={`row-${item.key}`}>
@@ -138,6 +152,12 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
         ) : null}
         {item.workflow && (
           <span style={{ marginLeft: '6px' }}><Chip text="workflow" color="var(--text-secondary)" bg="var(--bg-secondary)" title="A workflow works on this issue" /></span>
+        )}
+        {needsHuman && (
+          <span style={{ marginLeft: '6px', fontWeight: 600 }}>
+            <Chip text="🙋 requires human" color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg}
+              title={`${needsHuman.requiresHuman}\n\nThe overseer won't try this again until you clear it (Clear & retry).`} />
+          </span>
         )}
       </td>
       <td style={{ padding: '6px 8px' }}>
@@ -187,7 +207,15 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox }) {
           </span>
         )}
       </td>
-      <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }} />
+      <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {needsHuman && onRetry && (
+          <button type="button" className="btn btn-sm btn-secondary"
+            title={`Clear the requires-human mark on ${needsHuman.name}: the overseer queues this again`}
+            onClick={() => {
+              if (window.confirm(`Clear the requires-human mark on ${needsHuman.name}?\n\n${needsHuman.requiresHuman}\n\nThe overseer will try this again.`)) onRetry(needsHuman.name);
+            }}>Clear &amp; retry</button>
+        )}
+      </td>
     </tr>
   );
 }
@@ -218,6 +246,11 @@ const OverseerWork = ({ overseer }) => {
 
   const items = useMemo(() => ((work && work.items) || []).filter(it => matchesWork(it, { type, state, q })), [work, type, state, q]);
   const toggle = (key, def) => setOpen(o => ({ ...o, [key]: !(key in o ? o[key] : def) }));
+  const retry = (sandbox) => fetch(`${apiBase}/sandbox-card/${encodeURIComponent(sandbox)}/lifecycle`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retry' }),
+  })
+    .then(res => (res.ok ? load() : res.text().then(t => Promise.reject(new Error(t || `HTTP ${res.status}`)))))
+    .catch(err => setError(`Clear & retry ${sandbox}: ${err.message || err}`));
 
   return (
     <div style={{ textAlign: 'left' }}>
@@ -253,7 +286,7 @@ const OverseerWork = ({ overseer }) => {
               <tr><td colSpan="5" style={{ padding: '24px 8px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Loading {overseer}…</td></tr>
             )}
             {work && SECTIONS.map(sec => {
-              const rows = items.filter(it => it.section === sec.key);
+              const rows = byNeed(items.filter(it => it.section === sec.key));
               if (!rows.length) return null;
               const isOpen = sec.key in open ? open[sec.key] : !sec.collapsed;
               return (
@@ -264,7 +297,7 @@ const OverseerWork = ({ overseer }) => {
                     </td>
                   </tr>
                   {isOpen && rows.map(it => (
-                    <WorkRow key={it.key} item={it} onOpenSession={setSession} onOpenSandbox={setCardSandbox} />
+                    <WorkRow key={it.key} item={it} onOpenSession={setSession} onOpenSandbox={setCardSandbox} onRetry={retry} />
                   ))}
                 </React.Fragment>
               );

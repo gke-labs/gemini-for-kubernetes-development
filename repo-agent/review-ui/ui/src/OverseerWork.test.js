@@ -192,6 +192,55 @@ describe('rowChips', () => {
     });
 });
 
+describe('requires human', () => {
+    const NEEDS = {
+        key: 'issue-14014', kind: 'issue', number: 14014, htmlUrl: `${KCC}/issues/14014`,
+        section: 'attention', reason: 'requires human: step 8:ask: over the token limit',
+        sandboxes: [{ name: 'fix-kcc-14014', pod: 'running', requiresHuman: 'step 8:ask: over the token limit' }],
+        sessions: [{ recipe: 'fix', sandbox: 'fix-kcc-14014', task: 'recipe-fix-1', status: 'failed', run: 'r1' }],
+    };
+
+    test('is a flair on its row, first in attention, cleared by Clear & retry', async () => {
+        FEED.items.push(NEEDS);
+        window.confirm = jest.fn(() => true);
+        try {
+            await render();
+            const attention = Array.from(container.querySelectorAll('tr[data-testid]')).map(r => r.getAttribute('data-testid'));
+            expect(attention.slice(0, 2)).toEqual(['row-issue-14014', 'row-issue-13870']);
+            const row = container.querySelector('[data-testid="row-issue-14014"]');
+            const flair = Array.from(row.querySelectorAll('span[title]')).find(e => e.textContent.includes('requires human'));
+            expect(flair.getAttribute('title')).toContain('step 8:ask: over the token limit');
+            // Rows that need no person have no button.
+            expect(container.querySelector('[data-testid="row-issue-13870"]').textContent).not.toContain('Clear & retry');
+
+            global.fetch.mockClear();
+            await act(async () => { Array.from(row.querySelectorAll('button')).find(b => b.textContent === 'Clear & retry').click(); });
+            await flush();
+            const post = global.fetch.mock.calls.find(c => c[0] === '/api/overseers/kcc/sandbox-card/fix-kcc-14014/lifecycle');
+            expect(post[1].method).toBe('POST');
+            expect(JSON.parse(post[1].body)).toEqual({ action: 'retry' });
+        } finally {
+            FEED.items.pop();
+            delete window.confirm;
+        }
+    });
+
+    test('nothing is posted when the confirm is declined', async () => {
+        FEED.items.push(NEEDS);
+        window.confirm = jest.fn(() => false);
+        try {
+            await render();
+            global.fetch.mockClear();
+            const row = container.querySelector('[data-testid="row-issue-14014"]');
+            await act(async () => { Array.from(row.querySelectorAll('button')).find(b => b.textContent === 'Clear & retry').click(); });
+            expect(global.fetch).not.toHaveBeenCalled();
+        } finally {
+            FEED.items.pop();
+            delete window.confirm;
+        }
+    });
+});
+
 describe('a cooldown', () => {
     const cooldown = { until: '2026-10-15T19:16:02Z', workflow: 'kcc-greenfield', lastStatus: 'Failed', lastCompletedAt: '2026-10-15T18:56:02Z' };
 

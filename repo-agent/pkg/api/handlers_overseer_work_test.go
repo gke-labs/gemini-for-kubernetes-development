@@ -220,3 +220,23 @@ func TestOverseerWorkCarriesCooldowns(t *testing.T) {
 		t.Error("a cooldown with none served")
 	}
 }
+
+// A sandbox factory marked as needing a person puts its row first in
+// attention, saying why, ahead of the failed run that marked it.
+func TestOverseerWorkRequiresHuman(t *testing.T) {
+	const why = "step 8:ask: the agent's input went over the model's token limit"
+	items := buildOverseerWork("overseer-kcc", []unstructured.Unstructured{
+		overseerWorkSandbox("fix-k8s-config-connector-14014", map[string]string{factorycli.LabelIssue: "14014"}, map[string]string{
+			"htmlURL":                   kccURL + "/issues/14014",
+			factorycli.AnnotationFixRun: runAnno("fix", "recipe-fix-1", "Failed", "2026-10-16T00:37:37Z"),
+			annoRequiresHuman:           why,
+		}, 1),
+	}, nil, nil)
+	row, ok := rowsByKey(items)["issue-14014"]
+	if !ok {
+		t.Fatalf("rows = %+v", items)
+	}
+	if row.Section != "attention" || row.Reason != "requires human: "+why || row.Sandboxes[0].RequiresHuman != why {
+		t.Errorf("row = %+v", row)
+	}
+}

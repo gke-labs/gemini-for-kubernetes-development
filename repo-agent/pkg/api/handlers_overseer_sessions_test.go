@@ -144,6 +144,7 @@ func overseerSessionServer(t *testing.T, daemon *fakeSessions) *gin.Engine {
 	scoped.GET("/task-sessions/:sandbox/:task", server.getTaskSession)
 	scoped.POST("/task-sessions/:sandbox/:task/prompt", server.promptTaskSession)
 	scoped.GET("/sandbox-card/:sandbox", server.getSandboxCard)
+	scoped.POST("/sandbox-card/:sandbox/lifecycle", server.sandboxLifecycle)
 	return r
 }
 
@@ -341,5 +342,17 @@ func TestAnOverseerSessionReadsItsRunsResult(t *testing.T) {
 	w = doAs(t, r, "root", http.MethodGet, runAt, "")
 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"draft"`) {
 		t.Errorf("no result: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Clear & retry on the Overseer page: the lifecycle's retry clears
+// factory's requires-human mark, for whoever may use the overseer.
+func TestAnOverseerSandboxRetry(t *testing.T) {
+	r := overseerSessionServer(t, &fakeSessions{})
+	if w := doAs(t, r, "alice", http.MethodPost, "/api/overseers/kcc/sandbox-card/fix-repo-43/lifecycle", `{"action":"retry"}`); w.Code != http.StatusForbidden {
+		t.Errorf("alice: %d, want 403", w.Code)
+	}
+	if w := doAs(t, r, "root", http.MethodPost, "/api/overseers/kcc/sandbox-card/fix-repo-43/lifecycle", `{"action":"retry"}`); w.Code != http.StatusOK {
+		t.Errorf("retry: %d %s", w.Code, w.Body.String())
 	}
 }

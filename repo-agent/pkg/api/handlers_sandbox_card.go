@@ -252,8 +252,15 @@ func (s *Server) sandboxLifecycle(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed", "details": err.Error()})
 			return
 		}
+	case "retry":
+		// Clears factory's requires-human mark: the watch queues and
+		// dispatches the sandbox's work again.
+		if err := s.K8sManager.RemoveSandboxAnnotation(ctx, namespace, name, annoRequiresHuman); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "retry failed", "details": err.Error()})
+			return
+		}
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|pause|delete)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown action (wake|pause|delete|retry)"})
 		return
 	}
 	c.Status(http.StatusOK)
