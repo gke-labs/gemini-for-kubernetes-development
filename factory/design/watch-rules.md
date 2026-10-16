@@ -137,11 +137,8 @@ policy: {dedupe: head, give-up: {attempts: 3, since: human, then: stop}}
 ```
 
 **Sources** are what is listed and how often. A rule does not name one:
-the engine derives the listings from the rules' `on` and `when` (a rule
-on issues with the trigger label lists those; one on PRs assigned to
-the pool lists those), and keeps today's split between a cheap, fresh
-fast pass (one page, newest updated, only what changed) and a complete
-sweep as an engine setting. The cluster's sandboxes and the
+the engine derives the listings from the rules' `on` and `when` (see
+One scan, events from diffs). The cluster's sandboxes and the
 repository's `.agents/` are sources of their own, for the plugins and
 the chores.
 
@@ -149,6 +146,58 @@ the chores.
 fan-out (a ramp of windows and groups, checkpoints, its state in a
 comment), the warm workspace, and the sandbox GC. They keep their code;
 the settings turn them on and configure them.
+
+### One scan, events from diffs
+
+Today each loop lists for itself, and the same queries run twice: the
+issue scanner lists `issues?assignee=<bot>` per bot and
+`issues?labels=<trigger>` and drops the PRs in them (the issues API
+returns both); the PR scanner lists the same per-bot assignee queries
+again and keeps the PRs, and its sweep lists the assigned and labelled
+items once more, besides `pulls?state=open`. Fan-out lists its own
+label.
+
+The engine scans once:
+
+- **The listings are the union of the rules' needs,** each distinct
+  query once per pass: the trigger label (issues and PRs together), the
+  assignee per bot, the open PRs (for head SHAs), the fan-out label.
+  That roughly halves the listing calls.
+- **They are incremental:** `since=<last scan>`, sorted by `updated`,
+  returns what changed, usually a page or nothing, and a conditional
+  request for an unchanged answer is a 304, which costs no quota.
+- **Each item becomes a snapshot**: its labels, assignees, state,
+  `updated_at` and, for a PR, its head SHA.
+- **A diff against the last snapshot gives events:** `opened`,
+  `closed`, `labeled`, `unlabeled`, `assigned`, `head-changed`,
+  `updated`. Rules match events and state, so a rule may say `on: {pr:
+  [head-changed]}` or `on: {issue: [labeled]}`, as a GitHub Actions
+  workflow does, without webhooks or a GitHub App.
+- **Details are fetched on demand,** for the items an event touched and
+  a rule needs them for: a PR's checks, mergeability, review decision
+  and recent comments in one GraphQL query for many PRs (its own budget,
+  a few points for what is 4–6 REST calls per PR today); an issue's
+  timeline (is a PR linked) when a fix rule would fire. An item that did
+  not change costs its listing row.
+- **The cursor, the snapshots and the HTTP cache are persisted** in the
+  queue directory, which `run.sh` already pushes to git. Today the
+  overseer restarts `factory watch` every five minutes and the ETag
+  cache (#1961) is in memory, so every first pass after a restart pays
+  for everything; persisted, a restart continues where it stopped.
+- **A full sweep stays, as a safety net,** every so often: what a diff
+  missed (a lost snapshot, a skipped pass) is found there, and today's
+  split between a fast pass and a sweep becomes this.
+
+Not everything bumps `updated_at`. A reaction does not (a human's 🚀 asking
+for a redo), and neither does a change of a PR's check status. Checks
+come from the GraphQL rollup of the open PRs each pass, which is cheap;
+a signal carried only by a reaction is read by the sweep, or moves to a
+label.
+
+On a repository the size of KCC's (some 300 open labelled issues and
+PRs, six bots), a quiet pass goes from hundreds of calls, most of them
+details for every candidate PR, to a few dozen, mostly 304s, and a busy
+pass costs about what changed.
 
 ### Predicates
 
@@ -203,6 +252,52 @@ policy:
 
 The global ones stay global: drain, the stop label, `minNumber`, trust,
 `--max-pending`, one task per sandbox.
+
+### The queue
+
+Rules enqueue tasks; the dispatcher starts them, one per sandbox, under
+a lease, as now. Two tasks on one PR (feedback and a failing check at
+once) do not run together: the second waits for the sandbox. What goes
+wrong is staleness: both were decided against head `A`; the first
+pushes `B`, which may also fix the check; the second then investigates
+`A`'s failure against `B`, a wasted run that also counts as one of its
+three attempts. Today `HasActivePRTask` avoids it by enqueuing nothing
+for a PR while a task of it is queued or running, and evaluating again
+at the new head once it ends.
+
+**Preconditions.** A task records the facts it was decided on, and the
+dispatcher checks them before it starts it, as it already checks the
+stop label and whether the item is closed (one call, nearly free with
+the HTTP cache):
+
+```yaml
+# rules/ci.yaml
+expect: [head]          # recorded when queued, checked before start
+```
+
+| rule | expect | why |
+|---|---|---|
+| ci, conflict, review | `head` | the failure, conflict or diff was of that commit |
+| comments | `open` | a commit does not address feedback; reactions track that |
+| fix, workflow | `open`, `no-linked-pr` | someone opened a PR by hand while it waited |
+| chores | — | no item |
+
+- **A failed check drops the task,** with the reason in the journal
+  (`Dropped: head moved A→B`) and in the overseer's view, as the
+  cooldown label is; the task's name is free again, and the next pass
+  decides anew at the current state.
+- **A dropped task is not an attempt:** it does not count toward give-up
+  or start a cooldown.
+- **Only before the start:** a task already running when the process
+  restarts is followed by its run name, never dropped.
+- **An item evaluated again while its task is queued** (dedupe keeps it
+  to one) refreshes the task's recorded facts, so it is not dropped for
+  a change it already reflects.
+
+Pushes are already safe (the push step leases against the head it last
+pushed); preconditions save the wasted run. With them, one task per
+group per item stays as today's guard against queuing work that the
+first task's push will obsolete.
 
 ### Where rules live
 
@@ -332,6 +427,33 @@ auto rules and a click, so a trigger is the runner's, not the recipe's.
   left in `processing/` is queued again under the same run name, and
   factory follows the run or applies its result (`--run-name`).
 
+## Compared to today: what a naive engine breaks
+
+"List the items, check every rule's `when`, enqueue what matches" loses
+what today's watch does by hand, case by case. The engine keeps each as
+its own feature, not each rule's:
+
+| risk | today | the engine |
+|---|---|---|
+| **its own writes trigger it** (labels, the start assignment, comments, reactions bump `updated_at`; inheritance changes a PR mid-evaluation) | a fix's "updated since" counts from the task's completion; PR rules key on the head; feedback is tracked by reactions; the stop label is re-checked after inheritance | events from the diff ignore the overseer's own writes (by actor); PR rules key on the head; an item is evaluated against one snapshot |
+| **stale work on one item** (decided at head `A`, run after `B`) | `HasActivePRTask`: nothing enqueued while a task of the PR is queued or running | one task per group per item, and preconditions checked at dispatch (The queue) |
+| **readiness while work is pending** | readiness checks its own conditions and no active task | `ready` evaluates its conditions, never "no rule matched", and none while a task is queued |
+| **counters reset on restart** (the process restarts every 5 minutes) | survives crudely: CI's three strikes are read from the bot's comments, comments' retries and the SHAs from `processed/` | `attempts` from the processed tasks, persisted with the queue; seeded once from the comment counts, so a PR mid-count is not given three more |
+| **a failed read decides** | fails closed: no issue scan without the open-PR cache, no GC pass without its caches, no PR evaluation on a history or checks error | predicates are true, false or unknown; unknown skips the item |
+| **GitHub cost** | cheap checks first, and the fast pass re-checks only what changed, but the restart resets "what changed", so every pass is in effect a sweep with details for every candidate | predicates ordered by cost; one scan, events from diffs, details on demand, all persisted (One scan); a rule must have a predicate a listing can narrow on |
+| **a repository's rule spends on anyone's issue** (`when: {}`), or drops a give-up | not configurable | the trigger label, trusted authors and pool-authored PRs are global and cannot be overridden; floors on attempts and cooldown |
+| **per-rule quirks flattened** (workflows skip "updated since"; a failed fix is not stamped; comments' retry path; conflict re-evaluated each pass; CI's "explicitly assigned" bypass) | inline, some implicit | each built-in rule spells its policy out; replay tests prove it |
+| **identity** (a PR task as a bot that cannot push to the author's fork; a fix as another bot than the sandbox's) | pinned to the sandbox's user, then the assignee; PR tasks as their author | pinning and author-runs are the engine's |
+| **side effects inside checks** (reading task state fixes stale annotations and deletes evicted pods; resolving a PR's sandbox aliases it) | inline, and what keeps it working | explicit reconcile steps, not hidden in predicates |
+| **behaviour changing quietly in the move** | — | replay tests (recorded GitHub snapshots through the scanners and the engine, comparing what each enqueues), then shadow mode on staging (the engine logs, the scanners act) |
+| **chores and nudges** | their own loops (cron, GC) | a schedule source and a `closed` event; until then, plugins |
+| **fairness** | none: strict priority, then phase, then first come | optional, an addition rather than a regression |
+
+Where today's watch is safe and a naive engine is not, the engine must
+keep the guarantee. Where it can do better than today is cost and the
+counters, which today's restart cycle undoes, and it adds a risk today
+does not have: rules a repository writes.
+
 ## Steps
 
 0. **Fix what the read turned up:** wire or remove `--poll-interval`,
@@ -339,17 +461,27 @@ auto rules and a click, so a trigger is the runner's, not the recipe's.
    mode; name `pollInterval` for what it is (the run's lifetime) or make
    it the poll interval it claims to be; one definition of a bot review;
    the dispatcher's comment says what its ordering is.
-1. **Rules in Go:** the issue and PR scanners become rule structs and an
-   engine that evaluates them, with today's behaviour exactly; the
-   existing scanner tests are the bar.
-2. **`attempts` and the give-up policy** from the processed tasks,
-   replacing the comment counting.
-3. **Rules as data:** the built-in rules as embedded files, one per rule,
-   the engine reading them, and `factory watch rules`.
-4. **The repository's rules:** `.agents/rules/*.yaml` replacing, turning
-   off or adding to the built-ins, and `.agents/watch.yaml` for its
-   settings.
-5. **The board** shares the predicates for its auto rules.
+1. **Preconditions in today's watch:** PR tasks record their head, issue
+   tasks that no PR is linked; the dispatcher drops a task whose facts
+   changed, with the reason, and a drop is not an attempt.
+2. **One scan, persisted:** the scanners share one set of listings
+   (deduplicated, incremental with `since`), and the cursor, the
+   per-item memory and the HTTP cache survive the restart; PR details
+   from one GraphQL query.
+3. **`attempts` and the give-up policy** from the processed tasks,
+   replacing the comment counting, seeded from it once.
+4. **Rules in Go, proven:** the scanners become rule structs and an
+   engine with today's behaviour exactly; replay tests against the
+   scanners, then shadow mode on staging, before the engine acts.
+5. **Rules as data:** the built-in rules as embedded files, one per
+   rule, and `factory watch rules`.
+6. **The repository's rules:** `.agents/rules/*.yaml` replacing, turning
+   off or adding to the built-ins, within the global gates and floors,
+   and `.agents/watch.yaml` for its settings.
+7. **The board** shares the predicates for its auto rules.
+
+Steps 0–3 are worth doing for today's watch whether or not the rest
+follows.
 
 ## Open questions
 
