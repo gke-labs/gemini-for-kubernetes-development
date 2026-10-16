@@ -22,6 +22,17 @@ func (s *Scanner) scanCandidates(ctx context.Context) ([]*githubv39.Issue, error
 	var all []*githubv39.Issue
 	var firstErr error
 
+	if s.listings != nil {
+		// The shared snapshot is these listings, kept up to date; on a failed
+		// refresh it is the last good one.
+		err := s.listings.Refresh(ctx)
+		for _, botUser := range s.cfg.BotUsers {
+			all = append(all, prsOnly(s.listings.Assigned(botUser))...)
+		}
+		all = append(all, prsOnly(s.listings.Labelled())...)
+		return dedupe(all), err
+	}
+
 	for _, botUser := range s.cfg.BotUsers {
 		opts := &githubv39.IssueListByRepoOptions{
 			Assignee:    botUser,
@@ -89,6 +100,16 @@ func (s *Scanner) scanAssigned(ctx context.Context) ([]*githubv39.Issue, error) 
 	var all []*githubv39.Issue
 	var firstErr error
 
+	if s.listings != nil {
+		// Each bot's first page, as the listing below makes it, read out of
+		// the shared snapshot.
+		err := s.listings.Refresh(ctx)
+		for _, botUser := range s.cfg.BotUsers {
+			all = append(all, prsOnly(s.listings.AssignedFirst(botUser, s.cfg.ScanLimit))...)
+		}
+		return dedupe(all), err
+	}
+
 	for _, botUser := range s.cfg.BotUsers {
 		page, _, err := s.gh.ListIssues(ctx, &githubv39.IssueListByRepoOptions{
 			Assignee:    botUser,
@@ -112,6 +133,17 @@ func (s *Scanner) scanAssigned(ctx context.Context) ([]*githubv39.Issue, error) 
 	}
 
 	return dedupe(all), firstErr
+}
+
+// prsOnly drops the issues from a listing.
+func prsOnly(items []*githubv39.Issue) []*githubv39.Issue {
+	var out []*githubv39.Issue
+	for _, item := range items {
+		if item.PullRequestLinks != nil {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // dedupe collapses the overlapping listings into one entry per pull request.

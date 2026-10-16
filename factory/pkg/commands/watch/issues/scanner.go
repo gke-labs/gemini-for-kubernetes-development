@@ -97,6 +97,24 @@ type Sandboxes interface {
 	RequiresHuman(ctx context.Context, name string) (string, error)
 }
 
+// Listings is the shared scan (package scan): the listings the issue and
+// pull request scanners both read, refreshed incrementally and kept across
+// restarts. A Scanner given one reads its lists out of it instead of listing
+// for itself; what it decides is unchanged.
+type Listings interface {
+	// Refresh brings the shared snapshot up to date; on error the views
+	// serve the last good one.
+	Refresh(ctx context.Context) error
+	// Labelled is every open item carrying the trigger label.
+	Labelled() []*githubv39.Issue
+	// AssignedFirst is the first n open items assigned to user, newest
+	// updated first.
+	AssignedFirst(user string, n int) []*githubv39.Issue
+	// CreatedFirst is the first n open items opened by login, newest
+	// updated first.
+	CreatedFirst(login string, n int) []*githubv39.Issue
+}
+
 // UserSelector picks the bot account a task should run as. Role configuration
 // and sandbox pinning live with the watcher, so the Scanner asks rather than
 // deciding.
@@ -147,6 +165,9 @@ type Deps struct {
 	Sandboxes Sandboxes
 	// Users resolves the bot account a queued task runs as.
 	Users UserSelector
+	// Listings, when set, is the shared scan the scanner reads its lists
+	// from; nil lists for itself, as before.
+	Listings Listings
 	// Paused reports whether scanning must be held off, which is how the
 	// watcher propagates drain mode. It is deliberately a plain read-only
 	// signal: the scanner can observe that the queue is draining but has no way
@@ -171,6 +192,7 @@ type Scanner struct {
 	entities  Entities
 	sandboxes Sandboxes
 	users     UserSelector
+	listings  Listings
 	paused    func() bool
 
 	// processed records when each issue was last queued or completed, read from
@@ -198,6 +220,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		entities:  deps.Entities,
 		sandboxes: deps.Sandboxes,
 		users:     deps.Users,
+		listings:  deps.Listings,
 		paused:    deps.Paused,
 	}
 }

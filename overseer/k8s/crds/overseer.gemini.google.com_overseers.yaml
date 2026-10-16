@@ -133,6 +133,8 @@ spec:
               sessionURL:
                 pattern: ^https://
                 type: string
+              sharedScan:
+                type: boolean
               taskTimeout:
                 type: string
               warmWorkspace:

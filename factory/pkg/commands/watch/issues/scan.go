@@ -20,6 +20,13 @@ import (
 // Pull requests are dropped: GitHub's issue endpoints return them alongside
 // issues, and they belong to the pull request scanner.
 func (s *Scanner) scanLabelled(ctx context.Context) ([]*githubv39.Issue, error) {
+	if s.listings != nil {
+		// The shared snapshot is the label listing, kept up to date; on a
+		// failed refresh it is the last good one, returned with the error so
+		// the caller does not publish it as the complete open set.
+		err := s.listings.Refresh(ctx)
+		return issuesOnly(s.listings.Labelled()), err
+	}
 	var labelled []*githubv39.Issue
 	opts := &githubv39.IssueListByRepoOptions{
 		Labels:      []string{s.cfg.TriggerLabel},
@@ -56,6 +63,23 @@ func (s *Scanner) scanLabelled(ctx context.Context) ([]*githubv39.Issue, error) 
 func (s *Scanner) scanAssigned(ctx context.Context) ([]*githubv39.Issue, error) {
 	var allItems []*githubv39.Issue
 
+	if s.listings != nil {
+		if err := s.listings.Refresh(ctx); err != nil {
+			klog.Errorf("Failed to refresh the shared scan; scanning its last snapshot: %v", err)
+		}
+		for _, botUser := range s.cfg.BotUsers {
+			assigned := s.listings.AssignedFirst(botUser, s.cfg.ScanLimit)
+			klog.Infof("Fetched %d issues assigned to %s from the shared scan", len(assigned), botUser)
+			allItems = append(allItems, assigned...)
+		}
+		if s.cfg.GitHubLogin != "" {
+			created := s.listings.CreatedFirst(s.cfg.GitHubLogin, s.cfg.ScanLimit)
+			klog.Infof("Fetched %d issues created by %s from the shared scan", len(created), s.cfg.GitHubLogin)
+			allItems = append(allItems, s.adoptCreatedIssues(ctx, created)...)
+		}
+		return uniqueIssues(allItems), nil
+	}
+
 	for _, botUser := range s.cfg.BotUsers {
 		assigned, _, err := s.gh.ListIssues(ctx, &githubv39.IssueListByRepoOptions{
 			Assignee:    botUser,
@@ -88,6 +112,13 @@ func (s *Scanner) scanAssigned(ctx context.Context) ([]*githubv39.Issue, error) 
 		}
 	}
 
+	return uniqueIssues(allItems), nil
+}
+
+// uniqueIssues is one entry per issue, the later of duplicates winning (an
+// adopted copy of an issue also assigned to a bot carries the label just
+// added), pull requests dropped.
+func uniqueIssues(allItems []*githubv39.Issue) []*githubv39.Issue {
 	unique := make(map[int]*githubv39.Issue)
 	for _, item := range allItems {
 		unique[item.GetNumber()] = item
@@ -102,7 +133,18 @@ func (s *Scanner) scanAssigned(ctx context.Context) ([]*githubv39.Issue, error) 
 			issues = append(issues, item)
 		}
 	}
-	return issues, nil
+	return issues
+}
+
+// issuesOnly drops the pull requests from a listing.
+func issuesOnly(items []*githubv39.Issue) []*githubv39.Issue {
+	var out []*githubv39.Issue
+	for _, item := range items {
+		if item.PullRequestLinks == nil {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // adoptCreatedIssues labels and assigns the issues the operator filed, so that

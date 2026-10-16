@@ -17,6 +17,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
@@ -74,6 +75,10 @@ type Flags struct {
 	// Attempts counts a give-up's attempts from the queue's journal of runs
 	// rather than from the watcher's comments (prs.Config.Attempts).
 	Attempts bool
+	// SharedScan makes the issue and pull request scanners read one shared,
+	// incremental set of listings, persisted in the queue directory
+	// (package scan), instead of each listing for itself.
+	SharedScan bool
 }
 
 type Watcher struct {
@@ -109,15 +114,17 @@ type Watcher struct {
 	queueMgr         *concurrency.TaskQueueManager
 	sandboxLocks     *concurrency.SandboxLockRegistry
 	entityCache      *concurrency.EntityStateCache
-	sandboxes        *sandbox.Service
-	dispatcher       *dispatcher.Dispatcher
-	reconciler       *sandbox.Reconciler
-	chores           *chores.Scheduler
-	issueScanner     *issues.Scanner
-	prScanner        *prs.Scanner
-	fanouts          *fanouts.Controller
-	warmWorkspace    *warmworkspace.Controller
-	timeoutChan      <-chan time.Time
+	// sharedScan is the listings both scanners read when SharedScan is on.
+	sharedScan    *scan.Store
+	sandboxes     *sandbox.Service
+	dispatcher    *dispatcher.Dispatcher
+	reconciler    *sandbox.Reconciler
+	chores        *chores.Scheduler
+	issueScanner  *issues.Scanner
+	prScanner     *prs.Scanner
+	fanouts       *fanouts.Controller
+	warmWorkspace *warmworkspace.Controller
+	timeoutChan   <-chan time.Time
 }
 
 // initComponents builds the in-memory primitives and subcontrollers of the
@@ -161,6 +168,7 @@ func (w *Watcher) initComponents() {
 	w.warmWorkspace = w.newWarmWorkspaceController()
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
+	w.sharedScan = w.newSharedScan()
 	w.issueScanner = w.newIssueScanner()
 	w.prScanner = w.newPRScanner()
 }
