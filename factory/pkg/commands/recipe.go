@@ -906,7 +906,8 @@ func recipeTaskType(rec *recipe.Recipe, it githubItem) (string, bool) {
 }
 
 // settleRun records the end of e, a recipe task found ended by a run that
-// did not start it, on the run its sandbox recorded for it.
+// did not start it, on the run its sandbox recorded for it, and marks the
+// sandbox as needing a person when the task says it does.
 func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e spool.Entry) {
 	it, err := parseRecipeTarget(e.URL)
 	if err != nil {
@@ -916,12 +917,27 @@ func settleRun(ctx context.Context, rec *recipe.Recipe, sandboxName string, e sp
 	if err != nil {
 		return
 	}
+	if e.RequiresHuman != "" && e.ExitCode != "0" {
+		if err := factorysandbox.MarkRequiresHuman(ctx, kubeClient, rootFlags.Namespace, sandboxName, e.RequiresHuman); err != nil {
+			fmt.Printf("::warning %v\n", err)
+		} else {
+			fmt.Printf("Sandbox %s needs a person: %s\n", sandboxName, e.RequiresHuman)
+		}
+	}
 	state := "Completed"
 	if e.ExitCode != "0" {
 		state = "Failed"
 	}
 	taskType, side := recipeTaskType(rec, it)
 	_ = factorysandbox.SettleRecordedRun(ctx, kubeClient, rootFlags.Namespace, sandboxName, taskType, side, e.ID, state)
+}
+
+// needsAPerson is what a failed task's error adds when it needs a person.
+func needsAPerson(e spool.Entry) string {
+	if e.RequiresHuman == "" {
+		return ""
+	}
+	return " and needs a person: " + e.RequiresHuman
 }
 
 // startRecipeTask records the task on its sandbox and hands it over.
@@ -1110,7 +1126,7 @@ func resumeNamedRun(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Clien
 	}
 	settleRun(ctx, rec, sandboxName, e)
 	if e.ExitCode != "0" {
-		return fmt.Errorf("task %s failed (exit %s); a run name is one run's, so retry under a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
+		return fmt.Errorf("task %s failed (exit %s)%s; a run name is one run's, so retry under a new one. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, needsAPerson(e), sandboxName, rootFlags.Namespace, e.ID)
 	}
 	if rootFlags.Detached {
 		fmt.Printf("Task %s has finished.\n", e.ID)
@@ -1208,7 +1224,7 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 		settleRun(ctx, rec, sandboxName, e)
 	}
 	if e.ExitCode != "0" {
-		return fmt.Errorf("task %s failed (exit %s); nothing applied. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, sandboxName, rootFlags.Namespace, e.ID)
+		return fmt.Errorf("task %s failed (exit %s)%s; nothing applied. Its log: factory sandbox task logs %s -n %s --task %s", e.ID, e.ExitCode, needsAPerson(e), sandboxName, rootFlags.Namespace, e.ID)
 	}
 	data, err := readTaskOutput(ctx, sb, e)
 	if err != nil {

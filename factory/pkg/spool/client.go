@@ -43,6 +43,9 @@ type Entry struct {
 	// EngineRetries are the model calls its engine retried, from the
 	// agent session's engine log, as it runs.
 	EngineRetries *EngineRetries `json:"engine_retries,omitempty"`
+	// RequiresHuman is why the task failed in a way running it again would
+	// repeat (RequiresHumanFile), when it did.
+	RequiresHuman string `json:"requires_human,omitempty"`
 }
 
 // taskName splits a task directory name into its kind and the time in it.
