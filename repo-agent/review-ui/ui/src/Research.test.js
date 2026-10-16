@@ -300,6 +300,11 @@ describe('applyResearchEvent', () => {
         expect(t.items[0].kind).toBe('available_commands_update');
     });
 
+    test('a usage update is not a line in the transcript', () => {
+        const before = buildResearchTranscript([textChunk(1, 'agent_message_chunk', 'one')]);
+        expect(applyResearchEvent(before, ev(2, 'usage_update', { used: 1000, size: 1048576 }))).toBe(before);
+    });
+
     test('a malformed event changes nothing', () => {
         expect(applyResearchEvent(emptyTranscript, null)).toBe(emptyTranscript);
         expect(applyResearchEvent(emptyTranscript, {})).toBe(emptyTranscript);

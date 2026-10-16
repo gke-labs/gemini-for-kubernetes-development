@@ -134,6 +134,12 @@ export function applyResearchEvent(state, event) {
     case 'agent_thought_chunk':
       return appendText('thought', chunkText(data.content));
 
+    // The engine's token count after each model call: accounting, not
+    // something said, and one of them follows nearly every step. acpd
+    // records usage per turn itself; the transcript leaves it out.
+    case 'usage_update':
+      return state;
+
     case 'tool_call':
       return push({
         role: 'tool',
@@ -469,7 +475,10 @@ export const markdownComponents = {
 // output, not markdown, and a JSON blob with an asterisk in it should
 // not come back italic.
 function TerminalItem({ item, onResolve, resolving, rendered }) {
-  const [open, setOpen] = useState(false);
+  // Thinking starts open: it is how the agent got from one step to the
+  // next, which is what someone reading along wants. Tool calls and the
+  // rest start as their one line.
+  const [open, setOpen] = useState(item.role === 'thought');
 
   switch (item.role) {
     case 'user':
