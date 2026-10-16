@@ -30,6 +30,8 @@ spec:
                 items:
                   type: string
                 type: array
+              attempts:
+                type: boolean
               chores:
                 properties:
                   exclude:

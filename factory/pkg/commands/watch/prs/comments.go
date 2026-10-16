@@ -181,24 +181,17 @@ func (s *Scanner) ignoreFeedback(pr *githubv39.PullRequest, f feedback, lastComm
 	return false
 }
 
-// getInvestigationCount counts how many times the watcher has investigated CI
-// failures since the last thing that ought to reset its patience.
+// investigationResetTime is when the watcher's patience with CI failures last
+// reset: the last commit, or a later trusted human comment or pause notice.
 //
 // The counter resets on a new commit or on any trusted human comment, because
 // either one changes the situation the previous attempts failed against.
 // Without the reset a pull request a human has just given a hint on would stay
 // stuck at the retry limit. An untrusted comment does not reset it.
-func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) int {
+func investigationResetTime(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) time.Time {
 	lastResetTime := lastCommitTime
 	for _, c := range comments {
-		isPoolBot := false
-		for _, bot := range allBotUsers {
-			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-				isPoolBot = true
-				break
-			}
-		}
-		isHuman := !isPoolBot && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots) &&
+		isHuman := !isPoolBot(c.GetUser(), allBotUsers) && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots) &&
 			conventions.IsTrustedAuthor(c.GetUser(), c.GetAuthorAssociation(), trustedLogins)
 		if isHuman && conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) {
 			isHuman = false
@@ -207,23 +200,33 @@ func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime ti
 			lastResetTime = c.GetCreatedAt()
 		}
 	}
+	return lastResetTime
+}
 
+// getInvestigationCount counts the watcher's "started investigating" comments
+// since its patience last reset (investigationResetTime): how many times it
+// has investigated CI failures, as told by what it posted.
+func getInvestigationCount(comments []*githubv39.IssueComment, lastCommitTime time.Time, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) int {
+	lastResetTime := investigationResetTime(comments, lastCommitTime, allBotUsers, githubLogin, bots, trustedLogins, triggerLabel)
 	investigationCount := 0
 	for _, c := range comments {
-		isPoolBot := false
-		for _, bot := range allBotUsers {
-			if strings.EqualFold(c.GetUser().GetLogin(), bot) {
-				isPoolBot = true
-				break
-			}
-		}
-		if isPoolBot &&
+		if isPoolBot(c.GetUser(), allBotUsers) &&
 			strings.Contains(c.GetBody(), "started investigating CI check failures") &&
 			c.GetCreatedAt().After(lastResetTime) {
 			investigationCount++
 		}
 	}
 	return investigationCount
+}
+
+// isPoolBot reports whether u is one of the bot pool's accounts.
+func isPoolBot(u *githubv39.User, allBotUsers []string) bool {
+	for _, bot := range allBotUsers {
+		if strings.EqualFold(u.GetLogin(), bot) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasCommentPauseAfter reports whether the watcher has posted a comment pausing

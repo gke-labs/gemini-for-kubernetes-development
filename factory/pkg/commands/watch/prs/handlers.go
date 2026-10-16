@@ -135,13 +135,34 @@ func (s *Scanner) canInvestigatePR(
 	if s.queue.TaskExists(filename) {
 		return false
 	}
-	if getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel) >= maxInvestigations {
+	if s.investigationAttempts(num, comments, lastCommitTime) >= maxInvestigations {
 		return true
 	}
 	return state.lastInvestigatedSHA != headSHA ||
 		s.lastInvestigationFailed(filename) ||
 		isExplicitlyAssigned ||
 		time.Since(state.lastInvestigatedTime) > investigationRetryAfter
+}
+
+// investigationAttempts is how many times the watcher has investigated the
+// pull request's CI failures since its patience last reset
+// (investigationResetTime), which decides when it gives up.
+//
+// Without the attempts setting it is the count of its "started investigating"
+// comments, as it has always been. With it, it is the runs of the task that
+// ended since then, from the queue's journal (RunsSince), which survives the
+// watcher's restarts and counts neither a task dropped before it started nor
+// a comment that failed to post. For the move, the higher of the two counts:
+// a pull request part way through today's count is not given three more
+// tries. Once every pull request's count has reset since the setting was
+// turned on, the comment count can go.
+func (s *Scanner) investigationAttempts(num int, comments []*githubv39.IssueComment, lastCommitTime time.Time) int {
+	byComments := getInvestigationCount(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	if !s.cfg.Attempts {
+		return byComments
+	}
+	since := investigationResetTime(comments, lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	return max(byComments, s.queue.RunsSince(fmt.Sprintf("task-pr-%d-investigate.yaml", num), since))
 }
 
 // lastInvestigationFailed reports whether the previous investigation task ended
@@ -171,7 +192,7 @@ func (s *Scanner) handlePRInvestigate(
 		return true
 	}
 
-	investigationCount := getInvestigationCount(comments, pc.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	investigationCount := s.investigationAttempts(num, comments, pc.lastCommitTime)
 	if investigationCount >= maxInvestigations {
 		stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
 		if !s.cfg.DryRun {
