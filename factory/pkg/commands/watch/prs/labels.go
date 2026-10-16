@@ -199,25 +199,42 @@ func hasReadyForHumanLabel(labels []*githubv39.Label, triggerLabel string) bool 
 	return false
 }
 
-// hasCompletedBotReviewOnHead reports whether an automated review of the
-// current head has finished without asking for changes.
+// automatedReviewOfHead is the latest automated review of the current head
+// (submitted after its last commit, or of its commit), or nil: the one
+// definition of "a bot reviewed it", which decides both whether to queue a
+// review and whether review lets the pull request be ready.
 //
-// Only the most recent qualifying review counts: a reviewer that asked for
-// changes and then approved after a fixup has been satisfied, and treating the
-// earlier verdict as still standing would hold the pull request back forever.
-func (s *Scanner) hasCompletedBotReviewOnHead(reviews []*githubv39.PullRequestReview, headSHA string, lastCommitTime time.Time) bool {
-	var latestReview *githubv39.PullRequestReview
+// An automated review is one by the accounts pr-review tasks run as: the
+// reviewer role, or the watcher's own account when no reviewer role is
+// configured (the task then runs as the default user), and the 'reviewbot'
+// name fallback of IsReviewerBot. Another bot's review (a code-assist app's,
+// say) is not ours, and neither stops our review nor stands in for it.
+//
+// Only the most recent counts: a reviewer that asked for changes and then
+// approved after a fixup has been satisfied, and treating the earlier verdict
+// as still standing would hold the pull request back forever.
+func (s *Scanner) automatedReviewOfHead(reviews []*githubv39.PullRequestReview, headSHA string, lastCommitTime time.Time) *githubv39.PullRequestReview {
+	reviewers := s.cfg.ReviewerLogins
+	if len(reviewers) == 0 {
+		reviewers = []string{s.cfg.GitHubLogin}
+	}
+	var latest *githubv39.PullRequestReview
 	for _, r := range reviews {
-		if conventions.IsReviewerBot(r.GetUser(), s.cfg.ReviewerLogins) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
-			if latestReview == nil || r.GetSubmittedAt().After(latestReview.GetSubmittedAt()) {
-				latestReview = r
+		if conventions.IsReviewerBot(r.GetUser(), reviewers) && (r.GetSubmittedAt().After(lastCommitTime) || r.GetCommitID() == headSHA) {
+			if latest == nil || r.GetSubmittedAt().After(latest.GetSubmittedAt()) {
+				latest = r
 			}
 		}
 	}
-	if latestReview == nil {
-		return false
-	}
-	return latestReview.GetState() != "CHANGES_REQUESTED"
+	return latest
+}
+
+// hasCompletedBotReviewOnHead reports whether the automated review of the
+// current head (automatedReviewOfHead) has finished without asking for
+// changes.
+func (s *Scanner) hasCompletedBotReviewOnHead(reviews []*githubv39.PullRequestReview, headSHA string, lastCommitTime time.Time) bool {
+	r := s.automatedReviewOfHead(reviews, headSHA, lastCommitTime)
+	return r != nil && r.GetState() != "CHANGES_REQUESTED"
 }
 
 // isHumanUser reports whether u is a human account rather than one of the

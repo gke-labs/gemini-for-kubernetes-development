@@ -459,7 +459,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
 		if !checkAnalysis.hasFailure && !checkAnalysis.hasPending && !hasUnresolvedComments && !isApproved && state.lastReviewedSHA != headSHA && s.shouldAutoReviewPR(ctx, prIssue, refs) {
-			canReview = !hasBotReviewAfterLastCommit(history.reviews, history.lastCommitTime, headSHA, s.cfg.GitHubLogin, s.cfg.AllowlistedBots)
+			canReview = s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime) == nil
 		}
 	}
 

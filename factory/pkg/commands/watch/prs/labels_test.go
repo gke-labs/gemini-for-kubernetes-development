@@ -617,3 +617,43 @@ func TestGetMissingHumanAssigneesForPR(t *testing.T) {
 		}
 	}
 }
+
+// One definition of "a bot reviewed it" decides both whether a review is
+// queued and whether review lets the pull request be ready: the reviewer
+// role's review of the head (the watcher's own account when no reviewer role
+// is configured). Another bot's review is neither ours nor a reason to skip
+// ours.
+func TestAutomatedReviewOfHead(t *testing.T) {
+	now := time.Now()
+	commitTime := now.Add(-10 * time.Minute)
+	head := "abc1234"
+	review := func(login, state string) *githubv39.PullRequestReview {
+		at := now.Add(-5 * time.Minute)
+		return &githubv39.PullRequestReview{User: &githubv39.User{Login: stringPtr(login)}, CommitID: stringPtr(head), SubmittedAt: &at, State: stringPtr(state)}
+	}
+	withRole := &Scanner{cfg: Config{ReviewerLogins: []string{"reviewbot-robot"}, GitHubLogin: "argus-watcher-bot", AllowlistedBots: []string{"reviewbot-robot"}}}
+	noRole := &Scanner{cfg: Config{GitHubLogin: "argus-watcher-bot"}}
+
+	for _, tc := range []struct {
+		name       string
+		s          *Scanner
+		reviews    []*githubv39.PullRequestReview
+		wantReview bool // a review is queued when false
+		wantReady  bool
+	}{
+		{"reviewer role reviewed head", withRole, []*githubv39.PullRequestReview{review("reviewbot-robot", "COMMENTED")}, true, true},
+		{"reviewer role asked for changes", withRole, []*githubv39.PullRequestReview{review("reviewbot-robot", "CHANGES_REQUESTED")}, true, false},
+		{"another bot reviewed head", withRole, []*githubv39.PullRequestReview{review("gemini-code-assist[bot]", "COMMENTED")}, false, false},
+		{"the watcher reviewed head, with a reviewer role", withRole, []*githubv39.PullRequestReview{review("argus-watcher-bot", "COMMENTED")}, false, false},
+		{"no reviewer role: the watcher's review is ours", noRole, []*githubv39.PullRequestReview{review("argus-watcher-bot", "COMMENTED")}, true, true},
+		{"no review", withRole, nil, false, false},
+	} {
+		got := tc.s.automatedReviewOfHead(tc.reviews, head, commitTime) != nil
+		if got != tc.wantReview {
+			t.Errorf("%s: automated review found = %v, want %v", tc.name, got, tc.wantReview)
+		}
+		if ready := tc.s.hasCompletedBotReviewOnHead(tc.reviews, head, commitTime); ready != tc.wantReady {
+			t.Errorf("%s: review satisfied = %v, want %v", tc.name, ready, tc.wantReady)
+		}
+	}
+}
