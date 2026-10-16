@@ -338,8 +338,16 @@ repository's recipes:
   watch.yaml             optional: the repository's settings, and no rules
 ```
 
-- **The built-in rules** ship the same way, embedded in factory one file
-  per rule, as the built-in recipes are.
+- **The built-in rules are factory's,** prebaked: one file per rule in
+  `factory/pkg/watch/rules/<name>.yaml`, embedded in the binary as the
+  built-in recipes are (`factory/pkg/recipe/recipes/`), versioned and
+  shipped with the factory image, and tested as code (each one parses,
+  names a built-in recipe, and the replay tests run them). They are the
+  overseer's behaviour out of the box: an Overseer with no rules of its
+  own runs them all, as today's watch does.
+- **An Overseer picks among them** by name instead of today's modes:
+  `spec.rules.disabled: [review]`, or `enabled: [fix, ci, comments]`;
+  `issueMode: disabled` becomes turning off the rules on issues.
 - **A repository's rule replaces the built-in of its name**
   (`.agents/rules/ci.yaml` with a different give-up), or turns it off
   (`enabled: false`), or adds a rule of a new name. Rules are read from
@@ -554,9 +562,12 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 
 **Phase 2, the engine in shadow:**
 
-- 2a: the engine, the built-in rules in Go, the predicates and groups;
-  replay tests on recorded KCC snapshots (captured read-only from
-  staging), comparing what the scanners and the engine enqueue.
+- 2a: the engine, the predicates and groups, and the built-in rules as
+  prebaked files (`factory/pkg/watch/rules/*.yaml`, embedded), read
+  from the start, so there is no rules-in-Go stage to move off later;
+  `factory watch rules` lists them; replay tests on recorded KCC
+  snapshots (captured read-only from staging), comparing what the
+  scanners and the engine enqueue.
 - 2b: `engine: shadow` on the smaller overseers, then on KCC staging;
   disagreements shown per rule.
 - Done when every built-in rule has a week on KCC staging with no
@@ -579,10 +590,10 @@ regression. Done when every rule is on the engine.
 the engine in production for two weeks without moving back; the
 scanners go with their last rule.
 
-**Phase 5, rules as data:** the built-in rules as embedded files, one
-per rule, `factory watch rules`; then the repository's
-`.agents/rules/*.yaml` within the global gates and floors; then the
-board's auto rules on the same predicates.
+**Phase 5, the repository's rules:** `.agents/rules/*.yaml` replacing,
+turning off or adding to the prebaked rules, within the global gates and
+floors, and `.agents/watch.yaml` for its settings; then the board's auto
+rules on the same predicates.
 
 Phase 0 is worth doing whether or not the rest follows: it fixes what
 the read turned up, saves quota and wasted runs, and makes today's
