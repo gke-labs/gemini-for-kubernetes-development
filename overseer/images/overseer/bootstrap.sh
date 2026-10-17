@@ -5,6 +5,7 @@ mkdir -p /workspaces/prompt
 cp -rf /app/prompt/* /workspaces/prompt/
 cp -f /app/summarize.sh /workspaces/summarize.sh
 cp -f /app/run.sh /workspaces/run.sh
+cp -f /app/queue-state.sh /workspaces/queue-state.sh
 chmod +x /workspaces/run.sh /workspaces/summarize.sh
 
 # Clean up any lingering DO NOT PROCESS / drain marker files from previous instances before starting
