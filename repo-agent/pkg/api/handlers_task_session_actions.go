@@ -62,8 +62,11 @@ type taskSessionDraft struct {
 	// ApplyFailed is why an overseer's CLI could not apply the run's
 	// result, from the mark it leaves beside it instead; a later apply
 	// that succeeds clears it.
-	ApplyFailed *taskApplyFailure   `json:"applyFailed,omitempty"`
-	Actions     []models.WorkAction `json:"actions"`
+	ApplyFailed *taskApplyFailure `json:"applyFailed,omitempty"`
+	// Unapplied is an overseer's run that completed with a result to apply
+	// that its CLI neither applied nor failed to (unapplied).
+	Unapplied bool                `json:"unapplied,omitempty"`
+	Actions   []models.WorkAction `json:"actions"`
 
 	// runKey is the run the draft is the output of; board and number are
 	// where its writes are filed (a research conversation's: its board,

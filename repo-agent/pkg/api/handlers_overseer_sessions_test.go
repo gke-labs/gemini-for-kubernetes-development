@@ -363,6 +363,18 @@ func TestAnOverseerSessionReadsItsRunsResult(t *testing.T) {
 		t.Errorf("cleared mark still shown: %s", w.Body.String())
 	}
 
+	// Neither applied nor failed, its run long over: nobody applied it
+	// (the overseer task that started it stopped waiting for it).
+	if strings.Contains(w.Body.String(), `"unapplied"`) {
+		t.Errorf("an applied result is unapplied: %s", w.Body.String())
+	}
+	delete(daemon.files, "recipe-care-ci-9/task-output.applied")
+	delete(daemon.files, "recipe-care-ci-9/task-output.apply-failed")
+	w = doAs(t, r, "root", http.MethodGet, runAt, "")
+	if !strings.Contains(w.Body.String(), `"unapplied":true`) {
+		t.Errorf("a result nobody applied is not unapplied: %s", w.Body.String())
+	}
+
 	// A run that left none: no draft.
 	daemon.files = nil
 	w = doAs(t, r, "root", http.MethodGet, runAt, "")
@@ -380,5 +392,33 @@ func TestAnOverseerSandboxRetry(t *testing.T) {
 	}
 	if w := doAs(t, r, "root", http.MethodPost, "/api/overseers/kcc/sandbox-card/fix-repo-43/lifecycle", `{"action":"retry"}`); w.Code != http.StatusOK {
 		t.Errorf("retry: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A run's result is unapplied only once its run completed a while ago,
+// with an action to apply, and neither mark beside it.
+func TestUnapplied(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	recent, old := now.Add(-time.Minute), now.Add(-time.Hour)
+	change := "apiVersion: factory.gemini.google.com/v1alpha1\nkind: Change\nspec:\n  title: x\n"
+	draftOnly := change + "actions:\n  - verb: edit\n    field: spec\n  - verb: reject\n"
+	for _, tc := range []struct {
+		name  string
+		run   factorycli.RecordedRun
+		doc   string
+		draft taskSessionDraft
+		want  bool
+	}{
+		{"nobody applied it", factorycli.RecordedRun{State: "Completed", EndedAt: &old}, change, taskSessionDraft{}, true},
+		{"just ended", factorycli.RecordedRun{State: "Completed", EndedAt: &recent}, change, taskSessionDraft{}, false},
+		{"applied", factorycli.RecordedRun{State: "Completed", EndedAt: &old}, change, taskSessionDraft{AppliedAt: "x"}, false},
+		{"apply failed", factorycli.RecordedRun{State: "Completed", EndedAt: &old}, change, taskSessionDraft{ApplyFailed: &taskApplyFailure{Error: "e"}}, false},
+		{"run failed", factorycli.RecordedRun{State: "Failed", EndedAt: &old}, change, taskSessionDraft{}, false},
+		{"running", factorycli.RecordedRun{State: "Running"}, change, taskSessionDraft{}, false},
+		{"nothing to apply", factorycli.RecordedRun{State: "Completed", EndedAt: &old}, draftOnly, taskSessionDraft{}, false},
+	} {
+		if got := unapplied(tc.run, "Change", tc.doc, &tc.draft, now); got != tc.want {
+			t.Errorf("%s: unapplied = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

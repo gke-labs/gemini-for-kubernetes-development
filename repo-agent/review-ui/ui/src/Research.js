@@ -84,6 +84,10 @@ export function applyFailedTitle(f) {
   return `The run succeeded; ${what} failed${when}:\n${f.error || ''}`;
 }
 
+// UNAPPLIED_TITLE explains a run's "not applied" chip.
+export const UNAPPLIED_TITLE = 'The run completed, but the overseer neither applied its result nor tried to: '
+  + 'the overseer task that started it stopped waiting for it (e.g. the overseer restarted).';
+
 export function shortSession(sessionID) {
   return String(sessionID || '').slice(0, 8);
 }
@@ -1817,6 +1821,10 @@ export function ResearchConversation({
               {sessionDraft.applyFailed && (
                 <Chip text={applyFailedText(sessionDraft.applyFailed)} title={applyFailedTitle(sessionDraft.applyFailed)}
                   color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
+              )}
+              {sessionDraft.unapplied && (
+                <Chip text="not applied" title={UNAPPLIED_TITLE}
+                  color={RUN_STYLE.queued.color} bg={RUN_STYLE.queued.bg} />
               )}
               <span style={{ flex: 1 }} />
               {draftEdit === null ? (

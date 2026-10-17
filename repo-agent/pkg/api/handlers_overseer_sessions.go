@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -129,7 +130,27 @@ func overseerRunDraft(ctx context.Context, conn *taskSessionConn) *taskSessionDr
 	if mark, err := conn.client.ReadTaskFile(ctx, run.Task, taskApplyFailedFile); err == nil {
 		draft.ApplyFailed = parseApplyFailure(mark)
 	}
+	draft.Unapplied = unapplied(run, kind, doc, draft, time.Now())
 	return draft
+}
+
+// unappliedAfter is how long after its run ended an overseer's run's
+// result may stand neither applied nor failed: the overseer's CLI applies
+// it as soon as it sees the run end.
+const unappliedAfter = 10 * time.Minute
+
+// unapplied is whether an overseer's run completed with a result to apply
+// that nobody applied, or tried to: the overseer task that started it
+// stopped waiting for it (a restarted overseer picks up the run its task
+// names, which may be an older one).
+func unapplied(run factorycli.RecordedRun, kind, doc string, draft *taskSessionDraft, now time.Time) bool {
+	if draft.AppliedAt != "" || draft.ApplyFailed != nil || run.State != factorycli.TaskStateCompleted {
+		return false
+	}
+	if run.EndedAt != nil && now.Sub(*run.EndedAt) < unappliedAfter {
+		return false
+	}
+	return slices.ContainsFunc(factorycli.OfferedActions(kind, doc), func(a factorycli.Action) bool { return factorycli.IsApplyVerb(a.Verb) })
 }
 
 // parseApplyFailure reads the mark factory leaves when applying a run's

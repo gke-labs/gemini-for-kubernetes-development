@@ -122,3 +122,24 @@ test('an overseer run whose apply failed says so', async () => {
     expect(chip.title).toContain('applying post-replies failed');
     expect(chip.title).toContain('neither a review comment nor a comment');
 });
+
+// A result nobody applied says so.
+test('an overseer run nobody applied says so', async () => {
+    global.fetch = jest.fn((url) => {
+        if (url === '/api/overseers/kcc/task-sessions/fix-r-5/recipe-fix-4') {
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+                sessionId: 'recipe-fix-4', task: 'recipe-fix-4', sandbox: 'fix-r-5', namespace: 'overseer-kcc', live: false,
+                draft: { kind: 'Change', markdown: '', spec: 'title: x', actions: [], unapplied: true },
+            }) });
+        }
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+    });
+    await act(async () => {
+        root.render(<SessionSlideOver session={{ sandbox: 'fix-r-5', task: 'recipe-fix-4' }} onClose={() => {}} apiBase="/api/overseers/kcc" />);
+    });
+    await flush();
+    await flush();
+    const chip = Array.from(container.querySelectorAll('span[title]')).find(s => s.textContent === 'not applied');
+    expect(chip).toBeTruthy();
+    expect(chip.title).toContain('neither applied its result nor tried to');
+});
