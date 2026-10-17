@@ -212,6 +212,108 @@ GEMINI_CONTINUE_SESSION=true runEngine plan-output.txt`
 	}
 }
 
+// TestRunEngineAbortsOnQuotaError tests that when a model hits terminal quota
+// exhaustion (attempt >= 3 with 429), runEngine immediately kills the hanging
+// model attempt and falls back to the next model without waiting for slow backoffs.
+func TestRunEngineAbortsOnQuotaError(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash required")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 required")
+	}
+	lib, err := scriptsFS.ReadFile("lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	taskDir := filepath.Join(home, "task")
+	for _, d := range []string{bin, taskDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stub gemini: when badmodel is called, emit attempt 1, 2, then attempt 3 quota failure
+	// and sleep 30s. If monitorEngineStderr aborts it, it will not sleep 30s.
+	geminiStub := `#!/bin/bash
+cat > /dev/null
+case "$*" in
+  *badmodel*)
+    echo "Attempt 1 failed with status 429. Retrying with backoff..." >&2
+    echo "Attempt 2 failed with status 429. Retrying with backoff..." >&2
+    echo 'Attempt 3 failed with status 429. Retrying with backoff... _ApiError: {"error":{"message":"You exceeded your current quota, please check your plan and billing details."}}' >&2
+    sleep 30
+    exit 1
+    ;;
+  *goodmodel*)
+    echo '{"response":"GOOD RESPONSE","stats":{"models":{"goodmodel":{"api":{"totalRequests":1},"tokens":{"input":10,"output":5,"total":15}}}}}'
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "gemini"), []byte(geminiStub), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	libPath := filepath.Join(home, "lib.sh")
+	if err := os.WriteFile(libPath, lib, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	promptPath := filepath.Join(taskDir, "agent-prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("prompt"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	repoDir := filepath.Join(home, "workspaces", "repo-under-test")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	harness := `set -e
+set -o pipefail
+source "$LIB"
+cd() { :; } # the repo checkout does not exist in the test sandbox
+runEngine plan-output.txt`
+
+	cmd := exec.Command(bash, "-c", harness)
+	cmd.Env = []string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"USER_HOME=" + home,
+		"LIB=" + libPath,
+		"PROMPT_FILE=" + promptPath,
+		"REPO_NAME=repo-under-test",
+		"MODELS=badmodel goodmodel",
+		"ENGINE=gemini",
+		"GEMINI_API_KEY=test-key",
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("runEngine failed: %v\n%s", err, out)
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "Quota limit reached for model badmodel; aborting model attempt to fail fast...") {
+		t.Errorf("expected quota limit abort message in output:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "Engine execution failed with model: badmodel. Retrying with next model...") {
+		t.Errorf("expected retry with next model message in output:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "Engine execution successful with model: goodmodel") {
+		t.Errorf("expected goodmodel execution success in output:\n%s", outStr)
+	}
+
+	text, err := os.ReadFile(filepath.Join(taskDir, "plan-output.txt"))
+	if err != nil || strings.TrimSpace(string(text)) != "GOOD RESPONSE" {
+		t.Errorf("extracted output = %q, %v; want \"GOOD RESPONSE\"", strings.TrimSpace(string(text)), err)
+	}
+}
+
 // TestSetGitHubURLRewrite pins the fix for sandboxes shared by several
 // identities: HOME is on the PVC, a review task runs as the reviewer bot,
 // then an iterate task runs as the PR's coder bot. Before the fix both
