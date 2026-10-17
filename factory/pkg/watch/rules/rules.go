@@ -1,9 +1,10 @@
 // Package rules is the model of the watch loop's rules
 // (factory/design/watch-rules.md): a GitHub condition and the action taken
 // on it, one rule per file. The prebaked rules, factory's own, are embedded
-// here, one file each, and describe what today's watch does. Nothing here
-// evaluates a rule or acts on one yet: the engine that does is
-// factory/design/watch-rules.md's Phase 2a-2.
+// here, one file each, and describe what today's watch does. Set.Decide
+// evaluates them for one item from facts its caller gathered, and acts on
+// nothing: wiring it beside today's scanners (replay tests, then shadow
+// mode) is factory/design/watch-rules.md's 2a-3 and 2b.
 //
 // Fan-out, the warm workspace and the sandbox GC are not rules: they stay
 // plugins of the watch, as in the design.
@@ -191,8 +192,8 @@ type When struct {
 	Stopped         *bool     `yaml:"stopped,omitempty" json:"stopped,omitempty"`
 	UpdatedSinceRun *bool     `yaml:"updated-since-run,omitempty" json:"updated-since-run,omitempty"`
 	Attempts        *Attempts `yaml:"attempts,omitempty" json:"attempts,omitempty"`
-	// LastRun is the outcome of the rule's last run on the item (on its
-	// head, for a rule deduped by head): failed.
+	// LastRun is the outcome of the rule's last run on the item, and on a
+	// PR on its current head: failed.
 	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
 
 	// Issues.

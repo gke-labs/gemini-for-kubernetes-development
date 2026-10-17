@@ -1,9 +1,10 @@
 # Mirrors prs/handlers.go handlePRComments: new feedback from a trusted
 # human on the PR, or a last comments run on this head that failed, is
 # answered by its author and the replies posted (care-comments --apply
-# --action post-replies, api/recipe.go). After 3 runs on a head it gives
-# up: the stop label and a pause comment. First in the pr-care group
-# (prs/scanner.go evaluate).
+# --action post-replies, api/recipe.go), as often as new feedback comes:
+# one queued task at a time, not once per head. After 3 runs on a head it
+# gives up: the stop label and a pause comment. First in the pr-care
+# group (prs/scanner.go evaluate).
 name: comments
 description: Answer new trusted feedback on the PR
 on: pr
@@ -19,7 +20,7 @@ run:
   apply: post-replies
 as: author
 policy:
-  dedupe: head
+  dedupe: item
   give-up:
     attempts: 3
     since: head
