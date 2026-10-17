@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const OverseerWork = require('./OverseerWork').default;
-const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle } = require('./OverseerWork');
+const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle, failureText, failureTitle } = require('./OverseerWork');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -274,5 +274,32 @@ describe('a cooldown', () => {
         });
         expect(el.textContent).not.toContain('cooldown');
         await act(async () => { root.unmount(); });
+    });
+});
+
+describe('a failed task', () => {
+    const failure = { type: 'pr-comments', recipe: 'care-comments', failedAt: 'apply', at: '2026-10-17T00:04:55Z',
+        error: 'exit status 1: applying the Change for https://github.com/o/r/pull/12155: replying to comment 5554069132: it is neither a review comment nor a comment' };
+
+    test('is a red label on its row: where it failed and why, all of it on hover', async () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        const root = createRoot(el);
+        await act(async () => {
+            root.render(<table><tbody><WorkRow item={{ key: 'pr-12155', kind: 'pr', number: 12155, failure, sandboxes: [], sessions: [] }}
+                onOpenSession={() => {}} onOpenSandbox={() => {}} /></tbody></table>);
+        });
+        const label = Array.from(el.querySelectorAll('span[title]')).find(s => s.textContent.startsWith('apply failed:'));
+        expect(label).toBeTruthy();
+        expect(label.textContent.length).toBeLessThan(70);
+        expect(label.getAttribute('title')).toContain('applying the result failed');
+        expect(label.getAttribute('title')).toContain('replying to comment 5554069132');
+        await act(async () => { root.unmount(); });
+        el.remove();
+    });
+
+    test('says run failed when the run itself failed, and drops the exit status', () => {
+        expect(failureText({ ...failure, failedAt: 'run', error: 'exit status 1: running recipe: task failed' })).toBe('run failed: running recipe: task failed');
+        expect(failureTitle({ ...failure, failedAt: 'run' })).toContain('its run failed');
     });
 });
