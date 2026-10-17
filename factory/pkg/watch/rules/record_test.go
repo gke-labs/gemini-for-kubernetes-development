@@ -11,7 +11,7 @@ import (
 
 func TestRecorderAppendsAndRollsOver(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "decisions.jsonl")
-	r := NewRecorder(path, 400)
+	r := NewRecorder(path, 400, nil)
 	for i := range 5 {
 		rc := r.Start("issues", testEnv, Item{Kind: OnIssue, Number: i})
 		rc.Decided("fix", OutcomeRun)
@@ -37,7 +37,7 @@ func TestRecorderAppendsAndRollsOver(t *testing.T) {
 	rc.Gated("x")
 	rc.Fill(func(*Item) {})
 	rc.Finish()
-	if NewRecorder("", 0) != nil {
+	if NewRecorder("", 0, nil) != nil {
 		t.Error("a recorder with no file")
 	}
 }
@@ -94,7 +94,7 @@ func TestReplayListsDifferences(t *testing.T) {
 // one whose facts or decision changed is written.
 func TestRecorderLeavesOutRepeats(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "decisions.jsonl")
-	r := NewRecorder(path, 0)
+	r := NewRecorder(path, 0, nil)
 	write := func(at time.Time, mod func(*Item), decided ...string) {
 		env := testEnv
 		env.Now = at

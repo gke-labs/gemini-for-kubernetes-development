@@ -369,6 +369,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "true",
 		})
 	}
+	if o.Spec.Rules != nil && o.Spec.Rules.Engine != "" && o.Spec.Rules.Engine != "off" {
+		env = append(env, map[string]interface{}{
+			"name":  "WATCH_RULES_ENGINE",
+			"value": o.Spec.Rules.Engine,
+		})
+	}
 	if o.Spec.RulesRecord {
 		// Beside the scan's snapshot, on the volume: it outlives restarts
 		// and stays out of the queue directory run.sh pushes.

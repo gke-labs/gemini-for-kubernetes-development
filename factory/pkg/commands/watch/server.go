@@ -14,9 +14,19 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/geminitokens"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
-func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueManager, addr string) {
+// queueResponse is GET /api/v1/queue: the queue's, and the watch rules'
+// tally beside the scanners when they run in shadow (decisions compared,
+// agreeing and differing, by rule). Here rather than in package api, which
+// package rules depends on.
+type queueResponse struct {
+	api.QueueResponse
+	Shadow *rules.ShadowSummary `json:"shadow,omitempty"`
+}
+
+func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueManager, addr string, shadow *rules.Shadow) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/v1/queue", func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +35,11 @@ func startQueueHTTPServer(ctx context.Context, queueMgr *concurrency.TaskQueueMa
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		resp := queueMgr.GetQueueResponse()
+		resp := queueResponse{QueueResponse: queueMgr.GetQueueResponse()}
+		if shadow != nil {
+			sum := shadow.Summary()
+			resp.Shadow = &sum
+		}
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 

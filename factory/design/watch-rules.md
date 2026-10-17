@@ -625,7 +625,10 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
   `factory watch rules` lists them; replay tests on recorded KCC
   snapshots (captured read-only from staging), comparing what the
   scanners and the engine enqueue.
-- 2b: `engine: shadow` on the smaller overseers, then on KCC staging;
+- 2b: `engine: shadow` on the smaller overseers, then on KCC staging
+  (the Overseer's `spec.rules.engine: shadow`: every recorded decision is
+  compared live, the tally served on the queue API as `shadow`; then the
+  overseer's view shows it);
   disagreements shown per rule.
 - Done when every built-in rule has a week on KCC staging with no
   disagreement that is not understood and fixed.

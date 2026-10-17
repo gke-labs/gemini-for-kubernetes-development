@@ -47,6 +47,17 @@ type RepoSpec struct {
 	IssueMode string `json:"issueMode,omitempty"`
 }
 
+// OverseerRules is how the watch rules run beside the watcher's scanners.
+type OverseerRules struct {
+	// Engine is off (the default: the scanners alone, as before) or shadow:
+	// the rules decide on every decision the scanners make and the watcher
+	// counts where they differ, by rule, on its queue API. Either way, only
+	// the scanners act.
+	// +kubebuilder:validation:Enum=off;shadow
+	// +kubebuilder:validation:Optional
+	Engine string `json:"engine,omitempty"`
+}
+
 // OverseerSpec defines the desired state of Overseer
 type OverseerSpec struct {
 	// The full URL of the GitHub repository to watch.
@@ -131,6 +142,11 @@ type OverseerSpec struct {
 	// from its own comments alone.
 	// +kubebuilder:validation:Optional
 	Attempts bool `json:"attempts,omitempty"`
+
+	// Rules is how the watch rules (factory/docs/watch-rules.md) run beside
+	// the watcher's scanners.
+	// +kubebuilder:validation:Optional
+	Rules *OverseerRules `json:"rules,omitempty"`
 
 	// RulesRecord makes the watcher's issue and PR scanners record each
 	// decision with the facts it was made on, on the overseer's volume
