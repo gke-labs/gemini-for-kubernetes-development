@@ -140,6 +140,14 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	SharedScan bool `json:"sharedScan,omitempty"`
 
+	// GraphQLPRDetails makes the watcher's PR scanner read what it decides
+	// on about each pull request - the pull request, its merge queue entry,
+	// commits, comments, reviews and their inline comments - in one GraphQL
+	// query per batch of pull requests rather than six REST calls each.
+	// What it decides is unchanged; CI is still read over REST.
+	// +kubebuilder:validation:Optional
+	GraphQLPRDetails bool `json:"graphqlPRDetails,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

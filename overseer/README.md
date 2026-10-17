@@ -109,7 +109,7 @@ The full schema is in [`pkg/api/v1alpha1/overseer_types.go`](pkg/api/v1alpha1/ov
 | `sandboxCPURequest/Limit`, `sandboxMemoryRequest/Limit` | Worker sandbox resources. |
 | `warmWorkspace` | `interval`, `keep` (default 2) and exactly one of `script`, `scriptURL` (https) or `scriptPath` (in the repository): warm a workspace disk on a schedule and start new sandboxes from its snapshot. Needs the VolumeSnapshotClass `warm-workspace` ([design](../factory/design/warm-workspace.md)). |
 | `secrets`, `env` | Extra secrets and variables for every sandbox, such as cloud credentials for tests. |
-| `preconditions`, `attempts`, `sharedScan` | Watch behaviour, each off by default ([design](../factory/design/watch-rules.md)): drop a queued task whose facts changed before it starts; count CI give-ups from the queue's journal of runs; have the issue and PR scanners read one shared, incremental set of GitHub listings kept across restarts (fewer GitHub calls, same decisions). |
+| `preconditions`, `attempts`, `sharedScan`, `graphqlPRDetails` | Watch behaviour, each off by default ([design](../factory/design/watch-rules.md)): drop a queued task whose facts changed before it starts; count CI give-ups from the queue's journal of runs; have the issue and PR scanners read one shared, incremental set of GitHub listings kept across restarts; read the pull requests the PR scanner evaluates in GraphQL batches instead of six REST calls each (fewer GitHub calls, same decisions). |
 | `minNumber`, `pollInterval` (how long each watch run lasts), `taskTimeout`, `sandboxIdleTimeout`, `sandboxEvictionAge`, `prInactivityTimeout` | Scope and timing. |
 | `enableGeminiOrchestrator` | Optional LLM orchestration pass (default `false`). |
 
