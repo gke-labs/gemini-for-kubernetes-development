@@ -1,0 +1,26 @@
+# Mirrors prs/scanner.go reconcileReadiness: an open PR, not a draft,
+# that merges, is green, has no pending feedback, no task and no review
+# asking for changes is handed to the humans: */ready-for-human added,
+# */review dropped, the closing issues' human assignees assigned and the
+# bot unassigned. Last in the pr-care group: it holds when no care rule
+# does (prs/scanner.go evaluate).
+#
+# Not captured: "no pending feedback" and "no review asking for changes"
+# have no predicate of their own; the group's exclusivity (comments
+# first) covers the first, approved does not cover the second. Readiness
+# is also taken back when a PR stops being ready; the model has no undo.
+name: ready
+description: Hand a ready PR to the humans
+on: pr
+group: {name: pr-care, last: true}
+when:
+  labels: {any: ["{{trigger}}"]}
+  draft: false
+  mergeable: true
+  checks: green
+run:
+  label: ["*/ready-for-human"]
+  unlabel: ["*/review"]
+  assign: "{{issue-assignees}}"
+  unassign: "{{bot}}"
+as: watcher

@@ -1,0 +1,18 @@
+# Mirrors chores/scheduler.go scheduleChore / newTask and chores/schedule.go
+# shouldRunAt: an .agents/<name>.md that is not a workflow and whose
+# schedule: is due runs on the repository as `factory agent create --agent
+# <definition>` (the agent recipe), the last run kept in
+# chores_state.json.
+#
+# Not captured: which definitions, and when each is due, are the files'
+# own; the engine lists them, the rule says what to do with one.
+name: chore
+description: Run a scheduled agent on the repository
+on: schedule
+when:
+  due: true
+run:
+  recipe: agent
+as: agent
+policy:
+  dedupe: item

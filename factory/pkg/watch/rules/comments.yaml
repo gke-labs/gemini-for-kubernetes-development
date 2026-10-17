@@ -1,0 +1,30 @@
+# Mirrors prs/handlers.go handlePRComments: new feedback from a trusted
+# human on the PR (or the last comments run on this head failed) is
+# answered by its author, the replies posted (care-comments --apply
+# --action post-replies, api/recipe.go). After 3 runs on a head it gives
+# up: the stop label and a pause comment. First in the pr-care group
+# (prs/scanner.go evaluate).
+#
+# Not captured: "the last run on this head failed" is the retry half of
+# the condition; the engine's attempts on the head stand for it.
+name: comments
+description: Answer new trusted feedback on the PR
+on: pr
+group: {name: pr-care, order: 10}
+when:
+  labels: {any: ["{{trigger}}"]}
+  feedback: new-trusted
+  attempts: {since: head, max: 3}
+run:
+  recipe: care-comments
+  apply: post-replies
+as: author
+policy:
+  dedupe: head
+  give-up:
+    attempts: 3
+    since: head
+    then: stop
+    comment: Pausing after 3 attempts to address the feedback on this commit.
+  phase: 1
+expect: [open, head]

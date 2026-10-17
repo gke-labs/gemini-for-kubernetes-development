@@ -1,0 +1,18 @@
+# Mirrors prs/history.go pauseIfInactive: a PR with no trusted human
+# activity for the overseer's prInactivityTimeout is paused, once: a
+# comment and the stop label.
+#
+# Off, as today: prInactivityTimeout defaults to 0 (never). The timeout
+# is the overseer's setting; 168h stands for it here.
+name: inactive
+description: Pause a PR nobody has looked at
+on: pr
+enabled: false
+when:
+  labels: {any: ["{{trigger}}"]}
+  inactive-for: 168h
+  stopped: false
+run:
+  stop:
+    comment: Pausing this PR after a period without activity.
+as: watcher

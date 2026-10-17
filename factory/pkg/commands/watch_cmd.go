@@ -94,6 +94,7 @@ func NewWatchCommand(ctx context.Context) *cobra.Command {
 	cmd.Flags().DurationVar(&flags.PRInactivityTimeout, "pr-inactivity-timeout", common.GetEnvDuration("PR_INACTIVITY_TIMEOUT", 0), "Time of inactivity with no human comments before pausing automated processing on a PR (e.g. '24h', '168h')")
 
 	cmd.AddCommand(newWatchFanoutCommand(ctx))
+	cmd.AddCommand(newWatchRulesCommand())
 
 	return cmd
 }
