@@ -40,7 +40,7 @@ func TestQueueTasks_RecordsDecisionsTheRulesReplay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "decisions.jsonl")
 	s, queue, _ := newScanner(t, Config{TargetAssignee: "bot1", BotUsers: []string{"bot1"}}, Deps{
 		GitHub:    github.ForRepo(gh, "test-owner", "test-repo"),
-		Recorder:  rules.NewRecorder(path, 0),
+		Recorder:  rules.NewRecorder(path, 0, nil),
 		Sandboxes: fakeSandboxes{running: map[string]bool{"fix-test-repo-9": true}},
 	})
 	labelled := func(num int, updated time.Time) *githubv39.Issue {

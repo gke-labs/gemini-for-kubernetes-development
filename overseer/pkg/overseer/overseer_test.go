@@ -251,6 +251,22 @@ func TestBuildSandboxManifest_SharedScan(t *testing.T) {
 	}
 }
 
+// spec.rules.engine reaches the watcher as WATCH_RULES_ENGINE, and only
+// when it is not off.
+func TestBuildSandboxManifest_RulesEngine(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	for _, engine := range []string{"", "off"} {
+		o.Spec.Rules = &overseerv1alpha1.OverseerRules{Engine: engine}
+		if _, ok := overseerEnv(t, o)["WATCH_RULES_ENGINE"]; ok {
+			t.Errorf("WATCH_RULES_ENGINE is set with engine %q", engine)
+		}
+	}
+	o.Spec.Rules = &overseerv1alpha1.OverseerRules{Engine: "shadow"}
+	if got := overseerEnv(t, o)["WATCH_RULES_ENGINE"]; got != "shadow" {
+		t.Errorf("WATCH_RULES_ENGINE = %v, want shadow", got)
+	}
+}
+
 // spec.rulesRecord reaches the watcher as WATCH_RULES_RECORD, a file on
 // the overseer's volume, and only when set.
 func TestBuildSandboxManifest_RulesRecord(t *testing.T) {

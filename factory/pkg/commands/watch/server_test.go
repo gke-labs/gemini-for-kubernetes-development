@@ -14,6 +14,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/concurrency"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 func TestStartQueueHTTPServer(t *testing.T) {
@@ -46,7 +47,7 @@ func TestStartQueueHTTPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go startQueueHTTPServer(ctx, mgr, addr)
+	go startQueueHTTPServer(ctx, mgr, addr, nil)
 
 	// Wait for server to start
 	time.Sleep(100 * time.Millisecond)
@@ -104,5 +105,58 @@ func TestStartQueueHTTPServer(t *testing.T) {
 
 	if _, err := os.Stat(taskFile); !os.IsNotExist(err) {
 		t.Errorf("expected task-1.yaml to be deleted")
+	}
+}
+
+// With the rules in shadow, GET /api/v1/queue serves their tally beside the
+// queue; without, it serves none.
+func TestQueueHTTPServerServesTheShadow(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadow := rules.NewShadow(set)
+	shadow.Observe(rules.Record{
+		At:      time.Now(),
+		Env:     rules.Env{Trigger: "overseer", Prefixes: []string{"overseer"}, Now: time.Now()},
+		Item:    rules.Item{Kind: rules.OnIssue, Number: 7, Labels: []string{"overseer"}, UpdatedAt: time.Now()},
+		Decided: []string{"fix run"},
+	})
+	for _, tc := range []struct {
+		name   string
+		shadow *rules.Shadow
+		want   bool
+	}{{"shadow", shadow, true}, {"off", nil, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := listener.Addr().String()
+			_ = listener.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			mgr := concurrency.NewTaskQueueManager(concurrency.TaskQueueManagerConfig{QueueDir: t.TempDir()})
+			go startQueueHTTPServer(ctx, mgr, addr, tc.shadow)
+			time.Sleep(100 * time.Millisecond)
+			resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/queue", addr))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var got struct {
+				Summary api.QueueSummary     `json:"summary"`
+				Shadow  *rules.ShadowSummary `json:"shadow"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Shadow != nil) != tc.want {
+				t.Fatalf("shadow = %+v, want served %v", got.Shadow, tc.want)
+			}
+			if tc.want && (got.Shadow.Compared != 1 || got.Shadow.Agree != 1 || got.Shadow.ByRule["fix"].Decided != 1) {
+				t.Errorf("shadow = %+v", got.Shadow)
+			}
+		})
 	}
 }

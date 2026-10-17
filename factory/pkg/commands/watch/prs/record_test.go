@@ -32,7 +32,7 @@ func TestEvaluate_RecordsDecisionsTheRulesReplay(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "decisions.jsonl")
 			s, _ := newTestScanner(t, t.TempDir(), testOpts{
 				GitHub: tc.f.start(t), BotUsers: []string{"bot1"}, GitHubLogin: "bot1", TriggerLabel: "factory",
-				Recorder: rules.NewRecorder(path, 0),
+				Recorder: rules.NewRecorder(path, 0, nil),
 			})
 			tc.f.mu.Lock()
 			listed := tc.f.listingIssueLocked()

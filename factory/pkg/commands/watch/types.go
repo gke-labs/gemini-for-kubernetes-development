@@ -23,6 +23,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 	githubv39 "github.com/google/go-github/v39/github"
+	"k8s.io/klog/v2"
 )
 
 type RepoFlag struct {
@@ -88,6 +89,11 @@ type Flags struct {
 	// GraphQLPRDetails makes the PR scanner read the details of the pull
 	// requests it evaluates in GraphQL batches (prs.Config.GraphQLPRDetails).
 	GraphQLPRDetails bool
+	// RulesEngine is how the watch rules run beside the scanners: "" or
+	// "off", not at all; "shadow", deciding on every decision the scanners
+	// make and counting where they differ, served on the queue API. They
+	// act on nothing either way.
+	RulesEngine string
 	// RulesRecord is the file the issue and PR scanners record each
 	// decision in, with the facts it was made on, for the watch rules'
 	// replay (`factory watch rules replay`); empty records nothing. What
@@ -130,8 +136,10 @@ type Watcher struct {
 	entityCache      *concurrency.EntityStateCache
 	// sharedScan is the listings both scanners read when SharedScan is on.
 	sharedScan *scan.Store
-	// rulesRecorder records the scanners' decisions when RulesRecord is set.
+	// rulesRecorder records the scanners' decisions when RulesRecord is
+	// set, and hands them to rulesShadow when the rules run in shadow.
 	rulesRecorder *rules.Recorder
+	rulesShadow   *rules.Shadow
 	sandboxes     *sandbox.Service
 	dispatcher    *dispatcher.Dispatcher
 	reconciler    *sandbox.Reconciler
@@ -185,7 +193,8 @@ func (w *Watcher) initComponents() {
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.sharedScan = w.newSharedScan()
-	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes)
+	w.rulesShadow = w.newRulesShadow()
+	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesShadow)
 	w.issueScanner = w.newIssueScanner()
 	w.prScanner = w.newPRScanner()
 }
@@ -204,4 +213,26 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	}
 	w.initComponents()
 	return w
+}
+
+// newRulesShadow is the rules in shadow, when RulesEngine says so: the
+// prebaked rules, compared with every decision the scanners make. A
+// RulesEngine it does not know, or rules that do not load, leave shadow
+// off with a warning rather than stop the watch.
+func (w *Watcher) newRulesShadow() *rules.Shadow {
+	switch w.RulesEngine {
+	case "", "off":
+		return nil
+	case "shadow":
+	default:
+		klog.Warningf("Rules engine %q is not off or shadow; running without the rules", w.RulesEngine)
+		return nil
+	}
+	set, err := rules.Builtin()
+	if err != nil {
+		klog.Warningf("Loading the watch rules for shadow mode: %v; running without them", err)
+		return nil
+	}
+	klog.Infof("Watch rules in shadow: %d rules decide beside the scanners and act on nothing", len(set))
+	return rules.NewShadow(set)
 }

@@ -43,6 +43,8 @@ type Record struct {
 type Recorder struct {
 	path     string
 	maxBytes int64
+	// shadow, when set, compares every record with the rules' decision.
+	shadow *Shadow
 
 	mu sync.Mutex
 	// last is each item's last record written: its fingerprint and when.
@@ -62,15 +64,16 @@ const RecordRepeatEvery = 30 * time.Minute
 // DefaultRecordBytes is where a record file rolls over.
 const DefaultRecordBytes = 32 << 20
 
-// NewRecorder records to path, or is nil when path is "".
-func NewRecorder(path string, maxBytes int64) *Recorder {
-	if path == "" {
+// NewRecorder records to path, and hands each record to shadow; with
+// neither (path "" and shadow nil) it is nil and records nothing.
+func NewRecorder(path string, maxBytes int64, shadow *Shadow) *Recorder {
+	if path == "" && shadow == nil {
 		return nil
 	}
 	if maxBytes <= 0 {
 		maxBytes = DefaultRecordBytes
 	}
-	return &Recorder{path: path, maxBytes: maxBytes, last: map[string]lastRecord{}}
+	return &Recorder{path: path, maxBytes: maxBytes, shadow: shadow, last: map[string]lastRecord{}}
 }
 
 // repeat reports whether rec is the same as its item's last record, but
@@ -105,6 +108,10 @@ func (r *Recorder) Write(rec Record) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.repeat(rec) {
+		return
+	}
+	r.shadow.Observe(rec)
+	if r.path == "" {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
@@ -245,18 +252,8 @@ func (s Set) Replay(in io.Reader) (ReplayResult, error) {
 			continue
 		}
 		res.Compared++
-		env := rec.Env
-		if env.Now.IsZero() {
-			env.Now = rec.At
-		}
-		var engine []string
-		for _, d := range s.Decide(rec.Item, env) {
-			engine = append(engine, d.Rule+" "+d.Outcome)
-		}
-		scanner := append([]string(nil), rec.Decided...)
-		sort.Strings(engine)
-		sort.Strings(scanner)
-		if strings.Join(engine, ",") == strings.Join(scanner, ",") {
+		engine, scanner, same := compare(s, rec)
+		if same {
 			continue
 		}
 		res.Diffs = append(res.Diffs, ReplayDiff{Record: rec, Engine: engine, Scanner: scanner})

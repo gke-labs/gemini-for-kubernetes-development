@@ -106,6 +106,14 @@ spec:
                       type: array
                   type: object
                 type: object
+              rules:
+                properties:
+                  engine:
+                    enum:
+                    - "off"
+                    - shadow
+                    type: string
+                type: object
               rulesRecord:
                 type: boolean
               sandboxCPULimit:
