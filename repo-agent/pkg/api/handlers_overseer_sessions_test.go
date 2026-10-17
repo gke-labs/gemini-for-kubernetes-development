@@ -337,6 +337,32 @@ func TestAnOverseerSessionReadsItsRunsResult(t *testing.T) {
 		t.Errorf("the result was not read from the task: %v", daemon.calls)
 	}
 
+	// Its apply failed: why, beside the draft; emptied by a later apply
+	// that succeeds, it is gone.
+	daemon.files["recipe-care-ci-9/task-output.apply-failed"] = `{"action":"post-replies","at":"2026-10-12T12:40:00Z","error":"replying to comment 7: neither a review comment nor a comment"}`
+	w = doAs(t, r, "root", http.MethodGet, runAt, "")
+	var failed struct {
+		Draft *struct {
+			ApplyFailed *struct {
+				Action string `json:"action"`
+				At     string `json:"at"`
+				Error  string `json:"error"`
+			} `json:"applyFailed"`
+		} `json:"draft"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &failed); err != nil {
+		t.Fatal(err)
+	}
+	if f := failed.Draft; f == nil || f.ApplyFailed == nil || f.ApplyFailed.Action != "post-replies" ||
+		f.ApplyFailed.At != "2026-10-12T12:40:00Z" || !strings.Contains(f.ApplyFailed.Error, "neither a review comment") {
+		t.Errorf("failed apply: %s", w.Body.String())
+	}
+	daemon.files["recipe-care-ci-9/task-output.apply-failed"] = ""
+	w = doAs(t, r, "root", http.MethodGet, runAt, "")
+	if strings.Contains(w.Body.String(), `"applyFailed"`) {
+		t.Errorf("cleared mark still shown: %s", w.Body.String())
+	}
+
 	// A run that left none: no draft.
 	daemon.files = nil
 	w = doAs(t, r, "root", http.MethodGet, runAt, "")

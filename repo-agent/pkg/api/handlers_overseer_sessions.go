@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -83,11 +84,12 @@ func sessionKeySecret(c *gin.Context, sb *unstructured.Unstructured) string {
 
 const labelFactoryUser = "factory.gemini.google.com/user"
 
-// Files a run leaves in its task directory (factory's taskoutput.File and
-// taskoutput.AppliedFile).
+// Files a run leaves in its task directory (factory's taskoutput.File,
+// taskoutput.AppliedFile and taskoutput.ApplyFailedFile).
 const (
-	taskOutputFile  = "task-output.yaml"
-	taskAppliedFile = "task-output.applied"
+	taskOutputFile      = "task-output.yaml"
+	taskAppliedFile     = "task-output.applied"
+	taskApplyFailedFile = "task-output.apply-failed"
 )
 
 // overseerRunDraft is an overseer's run's result, to read: the board's
@@ -124,5 +126,19 @@ func overseerRunDraft(ctx context.Context, conn *taskSessionConn) *taskSessionDr
 			draft.AppliedAt = t.UTC().Format(time.RFC3339)
 		}
 	}
+	if mark, err := conn.client.ReadTaskFile(ctx, run.Task, taskApplyFailedFile); err == nil {
+		draft.ApplyFailed = parseApplyFailure(mark)
+	}
 	return draft
+}
+
+// parseApplyFailure reads the mark factory leaves when applying a run's
+// result failed (its taskoutput.ApplyFailure); nil when it is empty (a
+// later apply succeeded) or says nothing.
+func parseApplyFailure(data []byte) *taskApplyFailure {
+	var f taskApplyFailure
+	if json.Unmarshal(data, &f) != nil || f.Error == "" {
+		return nil
+	}
+	return &f
 }

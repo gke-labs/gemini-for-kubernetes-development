@@ -99,3 +99,26 @@ test('an overseer run\'s result shows when it was applied', async () => {
     expect(container.textContent).toContain('applied ');
     expect(Array.from(container.querySelectorAll('button')).map(b => b.textContent)).not.toContain('Post replies');
 });
+
+// A failed apply shows beside the draft, red, with why on hover.
+test('an overseer run whose apply failed says so', async () => {
+    global.fetch = jest.fn((url) => {
+        if (url === '/api/overseers/kcc/task-sessions/fix-r-5/recipe-care-comments-3') {
+            return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+                sessionId: 'recipe-care-comments-3', task: 'recipe-care-comments-3', sandbox: 'fix-r-5', namespace: 'overseer-kcc', live: false,
+                draft: { kind: 'Change', markdown: '', spec: 'replies: []', actions: [],
+                    applyFailed: { action: 'post-replies', at: '2026-10-12T12:40:00Z', error: 'replying to comment 7: neither a review comment nor a comment' } },
+            }) });
+        }
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve('') });
+    });
+    await act(async () => {
+        root.render(<SessionSlideOver session={{ sandbox: 'fix-r-5', task: 'recipe-care-comments-3' }} onClose={() => {}} apiBase="/api/overseers/kcc" />);
+    });
+    await flush();
+    await flush();
+    expect(container.textContent).toContain('apply failed: replying to comment 7');
+    const chip = Array.from(container.querySelectorAll('span[title]')).find(s => s.textContent.startsWith('apply failed'));
+    expect(chip.title).toContain('applying post-replies failed');
+    expect(chip.title).toContain('neither a review comment nor a comment');
+});

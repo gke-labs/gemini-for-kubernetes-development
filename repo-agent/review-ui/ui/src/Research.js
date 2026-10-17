@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 // above all — and without this a table parses as one paragraph, its
 // newlines collapsing to spaces into a wall of pipes.
 import remarkGfm from 'remark-gfm';
+import Chip from './Chip';
+import { RUN_STYLE } from './WorkBits';
 
 // Research: conversation-based deep research, the third mode alongside
 // doc-based Explore and deploy-based Runs.
@@ -69,6 +71,19 @@ export function permissionTone(kind) {
 // never fit anywhere useful; the sandbox name is built from a digest
 // prefix of the same id, so eight characters is already the granularity
 // the rest of the system reads at.
+// applyFailedText is a draft's failed apply, cut short; applyFailedTitle
+// is all of it, on hover: the run succeeded, applying its result did not.
+export function applyFailedText(f) {
+  const why = f.error || '';
+  return `apply failed${why ? `: ${why.length > 48 ? `${why.slice(0, 47)}…` : why}` : ''}`;
+}
+
+export function applyFailedTitle(f) {
+  const what = f.action ? `applying ${f.action}` : 'applying the result';
+  const when = f.at ? ` at ${new Date(f.at).toLocaleString()}` : '';
+  return `The run succeeded; ${what} failed${when}:\n${f.error || ''}`;
+}
+
 export function shortSession(sessionID) {
   return String(sessionID || '').slice(0, 8);
 }
@@ -1799,6 +1814,10 @@ export function ResearchConversation({
                   : sessionDraft.savedAt ? `saved ${new Date(sessionDraft.savedAt).toLocaleString()}`
                   : sessionDraft.draftedAt ? `drafted ${new Date(sessionDraft.draftedAt).toLocaleString()}` : ''}
               </span>
+              {sessionDraft.applyFailed && (
+                <Chip text={applyFailedText(sessionDraft.applyFailed)} title={applyFailedTitle(sessionDraft.applyFailed)}
+                  color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
+              )}
               <span style={{ flex: 1 }} />
               {draftEdit === null ? (
                 <>

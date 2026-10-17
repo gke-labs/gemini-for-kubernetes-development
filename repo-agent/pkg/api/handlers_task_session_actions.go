@@ -58,8 +58,12 @@ type taskSessionDraft struct {
 	Note    string `json:"note,omitempty"`
 	// AppliedAt is when an overseer's CLI applied the run's result, from
 	// the mark it leaves beside it (overseerRunDraft).
-	AppliedAt string              `json:"appliedAt,omitempty"`
-	Actions   []models.WorkAction `json:"actions"`
+	AppliedAt string `json:"appliedAt,omitempty"`
+	// ApplyFailed is why an overseer's CLI could not apply the run's
+	// result, from the mark it leaves beside it instead; a later apply
+	// that succeeds clears it.
+	ApplyFailed *taskApplyFailure   `json:"applyFailed,omitempty"`
+	Actions     []models.WorkAction `json:"actions"`
 
 	// runKey is the run the draft is the output of; board and number are
 	// where its writes are filed (a research conversation's: its board,
@@ -68,6 +72,14 @@ type taskSessionDraft struct {
 	board  *unstructured.Unstructured
 	item   string
 	number int
+}
+
+// taskApplyFailure is factory's taskoutput.ApplyFailure: the action that
+// failed (none: the whole result), when, and its error.
+type taskApplyFailure struct {
+	Action string `json:"action,omitempty"`
+	At     string `json:"at,omitempty"`
+	Error  string `json:"error"`
 }
 
 // appliedReason is a write's reason once it was applied to the draft.
