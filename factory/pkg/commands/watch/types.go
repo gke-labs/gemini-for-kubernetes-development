@@ -91,9 +91,21 @@ type Flags struct {
 	GraphQLPRDetails bool
 	// RulesEngine is how the watch rules run beside the scanners: "" or
 	// "off", not at all; "shadow", deciding on every decision the scanners
-	// make and counting where they differ, served on the queue API. They
-	// act on nothing either way.
+	// make and counting where they differ, served on the queue API; "on",
+	// shadow plus the rules RulesUse hands to the engine deciding for the
+	// scanners.
 	RulesEngine string
+	// RulesUse hands rules to the engine with RulesEngine on:
+	// "conflict=engine,ci=engine" (legacy, the default, is the scanners').
+	RulesUse string
+	// RulesCanaryLabel, when set, has the engine decide the rules it was
+	// handed only on items carrying this label; the rest stay the
+	// scanners'.
+	RulesCanaryLabel string
+	// RulesDisabled are rules the watch does not act on at all, through
+	// the scanners or the engine: the operator's emergency switch
+	// ("review,ci").
+	RulesDisabled string
 	// RulesRecord is the file the issue and PR scanners record each
 	// decision in, with the facts it was made on, for the watch rules'
 	// replay (`factory watch rules replay`); empty records nothing. What
@@ -140,6 +152,10 @@ type Watcher struct {
 	// set, and hands them to rulesShadow when the rules run in shadow.
 	rulesRecorder *rules.Recorder
 	rulesShadow   *rules.Shadow
+	// rulesControl is the operator's say over the rules (RulesEngine,
+	// RulesUse, RulesCanaryLabel, RulesDisabled); nil is the scanners
+	// alone, every rule on.
+	rulesControl  *rules.Control
 	sandboxes     *sandbox.Service
 	dispatcher    *dispatcher.Dispatcher
 	reconciler    *sandbox.Reconciler
@@ -193,6 +209,7 @@ func (w *Watcher) initComponents() {
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.sharedScan = w.newSharedScan()
+	w.rulesControl = w.newRulesControl()
 	w.rulesShadow = w.newRulesShadow()
 	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes, w.rulesShadow)
 	w.issueScanner = w.newIssueScanner()
@@ -215,24 +232,38 @@ func NewWatcher(rootFlags common.RootFlags, flags Flags) *Watcher {
 	return w
 }
 
-// newRulesShadow is the rules in shadow, when RulesEngine says so: the
-// prebaked rules, compared with every decision the scanners make. A
-// RulesEngine it does not know, or rules that do not load, leave shadow
-// off with a warning rather than stop the watch.
-func (w *Watcher) newRulesShadow() *rules.Shadow {
-	switch w.RulesEngine {
-	case "", "off":
-		return nil
-	case "shadow":
-	default:
-		klog.Warningf("Rules engine %q is not off or shadow; running without the rules", w.RulesEngine)
+// newRulesControl is the operator's say over the rules, from the flags.
+// Settings that do not check out (an engine it does not know, a rule that
+// is not one) leave the rules off with a warning rather than stop the
+// watch: the scanners alone, every rule on.
+func (w *Watcher) newRulesControl() *rules.Control {
+	if w.RulesEngine == "" && w.RulesUse == "" && w.RulesCanaryLabel == "" && w.RulesDisabled == "" {
 		return nil
 	}
 	set, err := rules.Builtin()
 	if err != nil {
-		klog.Warningf("Loading the watch rules for shadow mode: %v; running without them", err)
+		klog.Warningf("Loading the watch rules: %v; running without them", err)
 		return nil
 	}
-	klog.Infof("Watch rules in shadow: %d rules decide beside the scanners and act on nothing", len(set))
-	return rules.NewShadow(set)
+	use, err := rules.ParseUse(w.RulesUse)
+	if err == nil {
+		var c *rules.Control
+		if c, err = rules.NewControl(w.RulesEngine, use, w.RulesCanaryLabel, rules.ParseList(w.RulesDisabled), set); err == nil {
+			klog.Infof("Watch %s", c)
+			return c
+		}
+	}
+	klog.Warningf("Watch rules settings: %v; running without the rules", err)
+	return nil
+}
+
+// newRulesShadow is the rules in shadow, when the engine is shadow or on:
+// the rules the engine decides with, compared with every decision the
+// scanners make.
+func (w *Watcher) newRulesShadow() *rules.Shadow {
+	if !w.rulesControl.Shadows() {
+		return nil
+	}
+	klog.Infof("Watch rules in shadow: %d rules decide beside the scanners", len(w.rulesControl.Set()))
+	return rules.NewShadow(w.rulesControl.Set())
 }

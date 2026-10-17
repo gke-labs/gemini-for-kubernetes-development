@@ -49,13 +49,30 @@ type RepoSpec struct {
 
 // OverseerRules is how the watch rules run beside the watcher's scanners.
 type OverseerRules struct {
-	// Engine is off (the default: the scanners alone, as before) or shadow:
+	// Engine is off (the default: the scanners alone, as before); shadow:
 	// the rules decide on every decision the scanners make and the watcher
-	// counts where they differ, by rule, on its queue API. Either way, only
-	// the scanners act.
-	// +kubebuilder:validation:Enum=off;shadow
+	// counts where they differ, by rule, on its queue API, acting on
+	// nothing; or on: shadow, plus the rules Use hands to the engine
+	// deciding for the scanners.
+	// +kubebuilder:validation:Enum=off;shadow;on
 	// +kubebuilder:validation:Optional
 	Engine string `json:"engine,omitempty"`
+
+	// Use hands rules to the engine, with Engine on: {conflict: engine}.
+	// A rule not named, or named legacy, stays the scanners'.
+	// +kubebuilder:validation:Optional
+	Use map[string]string `json:"use,omitempty"`
+
+	// CanaryLabel, when set, has the engine decide the rules Use hands it
+	// only on issues and PRs carrying this label; the rest stay the
+	// scanners'.
+	// +kubebuilder:validation:Optional
+	CanaryLabel string `json:"canaryLabel,omitempty"`
+
+	// Disabled are rules the watcher does not act on at all, through its
+	// scanners or the engine: the operator's emergency switch.
+	// +kubebuilder:validation:Optional
+	Disabled []string `json:"disabled,omitempty"`
 }
 
 // OverseerSpec defines the desired state of Overseer

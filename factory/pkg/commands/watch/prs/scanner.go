@@ -180,6 +180,10 @@ type Deps struct {
 	// facts they were made on, for the watch rules' replay
 	// (rules.Record); nil records nothing.
 	Recorder *rules.Recorder
+	// Rules is the operator's say over the rules: those disabled, which
+	// the scanner does not act on, and those the engine decides for it.
+	// nil: the scanner alone, every rule on.
+	Rules *rules.Control
 }
 
 // Scanner evaluates open pull requests and queues the work they need.
@@ -192,9 +196,13 @@ type Scanner struct {
 	listings  Listings
 	paused    func() bool
 	recorder  *rules.Recorder
+	rules     *rules.Control
 	// rec is the record of the pull request evaluate is deciding about,
 	// nil when not recording. Evaluations run one at a time.
 	rec *rules.Recording
+	// engineCare is the engine's decisions on that pull request when it
+	// decides one of the pr-care rules for the scanner.
+	engineCare []rules.Decision
 
 	// reactions reads the acknowledgement state the watcher records on
 	// comments. It is bound once to this scanner's identity and bot allowlist,
@@ -230,6 +238,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		listings:  deps.Listings,
 		paused:    deps.Paused,
 		recorder:  deps.Recorder,
+		rules:     deps.Rules,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
 	}
@@ -530,7 +539,9 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
-	s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
+	if s.decides("inherit-labels", prIssue, true) {
+		s.syncReferencedIssueLabels(ctx, pr, prIssue, refs)
+	}
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d after label sync because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		_ = s.queue.RemovePendingTasksForNumber(num)
@@ -566,7 +577,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	state := s.state.get(num)
 	s.recordHistory(pr, history, headSHA)
 
-	if s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
+	if s.decides("inactive", prIssue, true) && s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
 		return
 	}
 
@@ -635,13 +646,20 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		refIssues:            refs,
 	}
 
-	// Top level case statement for handling each type of PR task
+	// Top level case statement for handling each type of PR task. A rule
+	// the engine decides for the scanner (rules.Control.Takes) takes its
+	// case on the engine's decision instead of the condition above; a
+	// disabled rule takes none.
+	s.engineCare = nil
+	if s.rules.TakesAny(labelNames(prIssue.Labels), prCareRules...) {
+		s.engineCare = s.engineDecide()
+	}
 	completed := true
 	switch {
-	case shouldAddressComments:
+	case s.picks("comments", prIssue, shouldAddressComments):
 		completed = s.handlePRComments(ctx, pc, commentAnalysis, history.comments)
 
-	case isConflicting:
+	case s.picks("conflict", prIssue, isConflicting):
 		// Returns without recording the evaluation, so a conflicted pull
 		// request is re-evaluated every cycle: whether the conflict is gone is
 		// answered by GetPullRequest, and nothing about resolving it upstream
@@ -649,14 +667,16 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		s.handlePRIterate(ctx, pc)
 		return
 
-	case canInvestigate:
+	case s.picks("ci", prIssue, canInvestigate):
 		completed = s.handlePRInvestigate(ctx, pc, checkAnalysis, history.comments)
 
-	case canReview:
+	case s.picks("review", prIssue, canReview):
 		completed = s.handlePRReview(ctx, pc, checkAnalysis.checkRuns)
 	}
 
-	s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
+	if s.picksReadiness(prIssue) {
+		s.reconcileReadiness(ctx, pc, checkAnalysis, hasUnresolvedComments, history, isConflicting, assignedBot)
+	}
 	if !completed {
 		return
 	}

@@ -212,6 +212,7 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 		Listings:  w.issueListings(),
 		Paused:    w.draining,
 		Recorder:  w.rulesRecorder,
+		Rules:     w.rulesControl,
 	})
 }
 
@@ -300,6 +301,7 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		Listings:  w.prListings(),
 		Paused:    w.draining,
 		Recorder:  w.rulesRecorder,
+		Rules:     w.rulesControl,
 	})
 }
 

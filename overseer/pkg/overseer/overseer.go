@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -369,12 +370,7 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "true",
 		})
 	}
-	if o.Spec.Rules != nil && o.Spec.Rules.Engine != "" && o.Spec.Rules.Engine != "off" {
-		env = append(env, map[string]interface{}{
-			"name":  "WATCH_RULES_ENGINE",
-			"value": o.Spec.Rules.Engine,
-		})
-	}
+	env = append(env, rulesEnv(o.Spec.Rules)...)
 	if o.Spec.RulesRecord {
 		// Beside the scan's snapshot, on the volume: it outlives restarts
 		// and stays out of the queue directory run.sh pushes.
@@ -616,4 +612,31 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 	}
 
 	return u
+}
+
+// rulesEnv is spec.rules for the watcher: WATCH_RULES_ENGINE (when not
+// off), WATCH_RULES_USE (rule=engine,...), WATCH_RULES_CANARY_LABEL and
+// WATCH_RULES_DISABLED, each only when set.
+func rulesEnv(r *overseerv1alpha1.OverseerRules) []interface{} {
+	if r == nil {
+		return nil
+	}
+	var env []interface{}
+	add := func(name, value string) {
+		if value != "" {
+			env = append(env, map[string]interface{}{"name": name, "value": value})
+		}
+	}
+	if r.Engine != "off" {
+		add("WATCH_RULES_ENGINE", r.Engine)
+	}
+	use := make([]string, 0, len(r.Use))
+	for rule, by := range r.Use {
+		use = append(use, rule+"="+by)
+	}
+	sort.Strings(use)
+	add("WATCH_RULES_USE", strings.Join(use, ","))
+	add("WATCH_RULES_CANARY_LABEL", r.CanaryLabel)
+	add("WATCH_RULES_DISABLED", strings.Join(r.Disabled, ","))
+	return env
 }
