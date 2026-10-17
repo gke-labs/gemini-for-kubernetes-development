@@ -53,30 +53,53 @@ func (c *Client) ListIssueTimeline(ctx context.Context, issueNum int) ([]*github
 	return all, false, nil
 }
 
-// TimelineHasOpenLinkedPR reports whether the timeline contains a connected pull request that is still open.
-func TimelineHasOpenLinkedPR(timeline []*githubv39.Timeline) bool {
+// TimelineHasOpenLinkedPR reports whether the timeline of issue issueNum
+// in owner/repo shows a pull request that is still open and will close it:
+// one connected to it (GitHub's sidebar link), or one that cross-references
+// it from the same repository with a closing reference in its title or
+// body ("Fixes #N"). A PR opened with "Fixes #N" leaves only a
+// cross-reference on the issue, never a connected event - which is how
+// every PR factory opens links its issue.
+func TimelineHasOpenLinkedPR(timeline []*githubv39.Timeline, owner, repo string, issueNum int) bool {
 	linkedPRs := make(map[int]bool)
 	for _, event := range timeline {
 		if event.Source == nil || event.Source.Issue == nil {
 			continue
 		}
-		if event.Source.Issue.PullRequestLinks == nil {
+		src := event.Source.Issue
+		if src.PullRequestLinks == nil {
 			continue
 		}
-		prNum := event.Source.Issue.GetNumber()
+		prNum := src.GetNumber()
 		if prNum == 0 {
 			continue
 		}
 		switch event.GetEvent() {
 		case "connected":
-			if event.Source.Issue.GetState() == "open" {
+			if src.GetState() == "open" {
 				linkedPRs[prNum] = true
 			}
 		case "disconnected":
 			delete(linkedPRs, prNum)
+		case "cross-referenced":
+			if src.GetState() == "open" && inRepo(src, owner, repo) && issueIsClosingPR(src, issueNum) {
+				linkedPRs[prNum] = true
+			}
 		}
 	}
 	return len(linkedPRs) > 0
+}
+
+// inRepo is whether a cross-referencing issue or PR is in owner/repo: its
+// "#N" means the issue only there. One that does not say is taken to be.
+func inRepo(issue *githubv39.Issue, owner, repo string) bool {
+	full := issue.GetRepository().GetFullName()
+	if full == "" {
+		if u := issue.GetRepositoryURL(); u != "" {
+			_, full, _ = strings.Cut(u, "/repos/")
+		}
+	}
+	return full == "" || strings.EqualFold(full, owner+"/"+repo)
 }
 
 var (
@@ -204,7 +227,7 @@ func (c *Client) HasLinkedPR(ctx context.Context, issueNum int) (bool, error) {
 	// 1. Try timeline check (quick and standard)
 	timeline, complete, err := c.ListIssueTimeline(ctx, issueNum)
 	if err == nil {
-		if TimelineHasOpenLinkedPR(timeline) {
+		if TimelineHasOpenLinkedPR(timeline, c.owner, c.repo, issueNum) {
 			return true, nil
 		}
 		if complete {
@@ -224,7 +247,7 @@ func (c *Client) HasLinkedPR(ctx context.Context, issueNum int) (bool, error) {
 // so we fall back to fetching it (and the Search API) ourselves.
 func (c *Client) HasLinkedPRWithTimeline(ctx context.Context, issueNum int, timeline []*githubv39.Timeline) (bool, error) {
 	if timeline != nil {
-		return TimelineHasOpenLinkedPR(timeline), nil
+		return TimelineHasOpenLinkedPR(timeline, c.owner, c.repo, issueNum), nil
 	}
 	return c.HasLinkedPR(ctx, issueNum)
 }
