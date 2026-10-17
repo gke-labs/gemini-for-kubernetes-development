@@ -351,3 +351,31 @@ func TestPostKeepsTheRecipeSource(t *testing.T) {
 		t.Errorf("a task posted without a source has one: %v", err)
 	}
 }
+
+// A woken sandbox's task server refuses its port until factory daemon
+// listens: the connect asks again, over a new forward each time, until it
+// answers; one that never does fails with its last error once the time is
+// up.
+func TestAwaitServerAsksAgainUntilItAnswers(t *testing.T) {
+	ctx := context.Background()
+	calls, reopens := 0, 0
+	v, err := awaitServer(ctx, time.Second, time.Millisecond,
+		func(context.Context) (Version, error) {
+			calls++
+			if calls < 4 {
+				return Version{}, errors.New("connection refused")
+			}
+			return Version{API: APIVersion}, nil
+		},
+		func(context.Context) error { reopens++; return nil })
+	if err != nil || v.API != APIVersion || calls != 4 || reopens != 3 {
+		t.Fatalf("version %+v, err %v, calls %d, reopens %d", v, err, calls, reopens)
+	}
+
+	_, err = awaitServer(ctx, 20*time.Millisecond, 5*time.Millisecond,
+		func(context.Context) (Version, error) { return Version{}, errors.New("EOF") },
+		func(context.Context) error { return nil })
+	if err == nil || err.Error() != "EOF" {
+		t.Fatalf("err = %v, want the last error", err)
+	}
+}
