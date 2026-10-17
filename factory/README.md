@@ -230,7 +230,8 @@ factory sandbox chat factory-issue-917 -r latest  # resume the Gemini session
 | `recipe fanout` | Write a fan-out spec for an issue; `--apply` posts it and adds the fan-out and stop labels |
 | `recipe research` | Start a research conversation in a sandbox; its notes are written when asked |
 | `watch fanout` | One fan-out pass over a parent issue: create, rewrite and label children in a slow start |
-| `watch rules` | List the watch's prebaked rules (what each looks at, runs, and as whom; `-o yaml\|json` for the whole rules); nothing evaluates them yet, see [design/watch-rules.md](design/watch-rules.md) |
+| `watch rules` | List the watch's prebaked rules (what each looks at, runs, and as whom; `-o yaml\|json` for the whole rules; `--dir` lays a checkout's `.agents/rules/` over them); see [design/watch-rules.md](design/watch-rules.md) |
+| `watch rules replay <decisions.jsonl>` | Replay what the scanners recorded (`watch --rules-record`, the Overseer's `spec.rulesRecord`) through the rules and list where they decide differently |
 | `apply` | Apply a task output (`factory sandbox task output`) to GitHub |
 | `recipe care-ci` | Fix the CI failures of a PR of yours; `--apply --action post-replies` posts the report and reruns flakes |
 | `recipe care-comments` | Answer the review feedback on a PR of yours (trusted authors' only); `--apply --action post-replies` posts the replies |

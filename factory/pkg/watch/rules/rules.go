@@ -210,12 +210,15 @@ type When struct {
 	Mergeable *bool  `yaml:"mergeable,omitempty" json:"mergeable,omitempty"`
 	Feedback  string `yaml:"feedback,omitempty" json:"feedback,omitempty"` // new-trusted | none
 	// Closes matches the issues the PR closes, between them.
-	Closes         *Closes  `yaml:"closes,omitempty" json:"closes,omitempty"`
-	ReviewedAtHead *bool    `yaml:"reviewed-at-head,omitempty" json:"reviewed-at-head,omitempty"`
-	Approved       *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
-	Draft          *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
-	MergeQueue     *bool    `yaml:"merge-queue,omitempty" json:"merge-queue,omitempty"`
-	InactiveFor    Duration `yaml:"inactive-for,omitempty" json:"inactive-for,omitzero"`
+	Closes         *Closes `yaml:"closes,omitempty" json:"closes,omitempty"`
+	ReviewedAtHead *bool   `yaml:"reviewed-at-head,omitempty" json:"reviewed-at-head,omitempty"`
+	// ChangesRequested is whether the automated review of the head asked
+	// for changes.
+	ChangesRequested *bool    `yaml:"changes-requested,omitempty" json:"changes-requested,omitempty"`
+	Approved         *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
+	Draft            *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
+	MergeQueue       *bool    `yaml:"merge-queue,omitempty" json:"merge-queue,omitempty"`
+	InactiveFor      Duration `yaml:"inactive-for,omitempty" json:"inactive-for,omitzero"`
 
 	// Schedules: the agent definition's schedule is due.
 	Due *bool `yaml:"due,omitempty" json:"due,omitempty"`
@@ -384,7 +387,7 @@ func Parse(data []byte) (*Rule, error) {
 var predicates = map[string][]string{
 	"*":        {"any-of", "labels", "assignee", "author", "stopped", "updated-since-run", "attempts", "last-run"},
 	OnIssue:    {"linked-pr", "workflow", "opened-by", "fanout", "fanout-held"},
-	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "approved", "draft", "merge-queue", "inactive-for"},
+	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "merge-queue", "inactive-for"},
 	OnSchedule: {"due"},
 	OnEvent:    {"event"},
 }
@@ -415,6 +418,7 @@ func (w When) set() []string {
 	add("feedback", w.Feedback != "")
 	add("closes", w.Closes != nil)
 	add("reviewed-at-head", w.ReviewedAtHead != nil)
+	add("changes-requested", w.ChangesRequested != nil)
 	add("approved", w.Approved != nil)
 	add("draft", w.Draft != nil)
 	add("merge-queue", w.MergeQueue != nil)

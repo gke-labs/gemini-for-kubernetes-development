@@ -1,22 +1,25 @@
 # Mirrors prs/scanner.go reconcileReadiness (with prs/labels.go
-# shouldAutoReviewPR): an open PR, not a draft, not stopped, that merges,
-# is green, has no pending trusted feedback and whose review is satisfied
-# is handed to the humans: */ready-for-human added, */review dropped, the
-# closing issues' human assignees assigned and the pool's bot unassigned.
-# The review is satisfied when the automated reviewer reviewed the head,
-# or no review is wanted: */review on neither the PR nor an issue it
-# closes, or the PR already ready-for-human without */review of its own.
-# Last in the pr-care group: it holds when no care rule does, and a task
-# of the PR running holds it back (prs/scanner.go evaluate).
+# shouldAutoReviewPR): an open PR of the pool's, not yet ready-for-human,
+# not a draft, not stopped, that merges, is green, has no pending trusted
+# feedback and whose review is satisfied is handed to the humans:
+# */ready-for-human added, */review dropped, the closing issues' human
+# assignees assigned and the pool's bot unassigned. The review is
+# satisfied when the automated reviewer reviewed the head without asking
+# for changes, or no review is wanted (*/review on neither the PR nor an
+# issue it closes). After the care rules in the pr-care group: it holds
+# when none does, and a task of the PR running holds it back
+# (prs/scanner.go evaluate).
 #
 # Readiness is never taken back: a ready PR that stops being ready keeps
 # the label (prs/labels_test.go, "Not ready with label never removes").
 name: ready
 description: Hand a ready PR to the humans
 on: pr
-group: {name: pr-care, last: true}
 from: [labelled, assigned]
+group: {name: pr-care, order: 50}
 when:
+  author: pool
+  labels: {none: ["*/ready-for-human"]}
   draft: false
   stopped: false
   mergeable: true
@@ -24,9 +27,9 @@ when:
   feedback: none
   any-of:
     - reviewed-at-head: true
+      changes-requested: false
     - labels: {none: ["*/review"]}
       closes: {labels: {none: ["*/review"]}}
-    - labels: {all: ["*/ready-for-human"], none: ["*/review"]}
 run:
   label: ["*/ready-for-human"]
   unlabel: ["*/review"]

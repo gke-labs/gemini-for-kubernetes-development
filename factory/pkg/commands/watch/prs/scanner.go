@@ -22,6 +22,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 const (
@@ -175,6 +176,10 @@ type Deps struct {
 	// Run is what stops the scanner, and unlike this signal it also aborts a
 	// cycle that has already started.
 	Paused func() bool
+	// Recorder, when set, records each evaluation's decisions with the
+	// facts they were made on, for the watch rules' replay
+	// (rules.Record); nil records nothing.
+	Recorder *rules.Recorder
 }
 
 // Scanner evaluates open pull requests and queues the work they need.
@@ -186,6 +191,10 @@ type Scanner struct {
 	sandboxes Sandboxes
 	listings  Listings
 	paused    func() bool
+	recorder  *rules.Recorder
+	// rec is the record of the pull request evaluate is deciding about,
+	// nil when not recording. Evaluations run one at a time.
+	rec *rules.Recording
 
 	// reactions reads the acknowledgement state the watcher records on
 	// comments. It is bound once to this scanner's identity and bot allowlist,
@@ -220,6 +229,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		sandboxes: deps.Sandboxes,
 		listings:  deps.Listings,
 		paused:    deps.Paused,
+		recorder:  deps.Recorder,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),
 	}
@@ -456,6 +466,8 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// return below leaves the pull request unrecorded for the next fast pass,
 	// even when updated_at has not moved since a prior completed evaluation.
 	s.state.clearEvaluation(num)
+	s.rec = s.startRecording(prIssue)
+	defer func() { s.rec.Finish(); s.rec = nil }()
 
 	if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping PR #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
@@ -468,9 +480,13 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	if details != nil {
 		pr = details.PR
 	} else if pr, err = s.gh.GetPullRequest(ctx, num); err != nil {
+		s.rec.Gated("reading the PR failed")
 		klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 		return
 	}
+	s.rec.Fill(func(it *rules.Item) {
+		it.Author, it.Head, it.Draft, it.Mergeable = pr.GetUser().GetLogin(), pr.GetHead().GetSHA(), pr.GetDraft(), pr.Mergeable
+	})
 
 	// A pull request in the merge queue is out of the watcher's hands: pushing
 	// to it now would only knock it back out.
@@ -481,8 +497,10 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		inMergeQueue, err = s.gh.IsInMergeQueue(ctx, num)
 	}
 	if err != nil {
+		s.rec.Gated("checking the merge queue failed")
 		klog.Errorf("Failed to check if PR #%d is in merge queue: %v", num, err)
 	} else if inMergeQueue {
+		s.rec.Fill(func(it *rules.Item) { it.MergeQueue = true })
 		klog.Infof("Skipping PR #%d because it is in the merge queue", num)
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return
@@ -508,6 +526,7 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// shared fetcher is what stops the same issue being fetched three times in
 	// the course of a single evaluation.
 	refs := newRefIssues(s.gh, pr)
+	s.recordCloses(ctx, refs)
 
 	// Sync labels from referenced parent issues to the PR, then re-check: the
 	// stop label may have been inherited by the sync we just performed.
@@ -524,7 +543,9 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	// task can be queued and the pull request cannot be ready for a human.
 	// Recording the evaluation with lastEvaluationHadTask set lets the fast
 	// pass skip the pull request until the task finishes.
+	s.recordRuns(num)
 	if s.queue.HasActivePRTask(num) {
+		s.rec.Fill(func(it *rules.Item) { it.TaskActive = true })
 		klog.V(2).Infof("Skipping PR #%d evaluation because a task is already active in the queue", num)
 		s.recordEvaluation(prIssue, pr, prCheckAnalysis{})
 		return
@@ -537,11 +558,13 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		history, err = s.fetchHistory(ctx, num)
 	}
 	if err != nil {
+		s.rec.Gated("reading the PR's history failed")
 		klog.Errorf("Failed to fetch history for PR #%d: %v", num, err)
 		return
 	}
 
 	state := s.state.get(num)
+	s.recordHistory(pr, history, headSHA)
 
 	if s.pauseIfInactive(ctx, pr, prIssue, history, headSHA) {
 		return
@@ -554,16 +577,29 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 	var canReview bool
 
 	commentAnalysis := s.evaluateComments(ctx, pr, history, history.lastCommitTime, state.lastCommentAddressedTime)
+	s.rec.Fill(func(it *rules.Item) { it.NewTrustedFeedback = commentAnalysis.hasNewComments })
 	shouldAddressComments := commentAnalysis.hasNewComments || s.shouldRetryComments(num, headSHA)
 	hasUnresolvedComments := shouldAddressComments || s.hasFailedCommentsOnHead(num, headSHA)
 
 	if !isConflicting {
 		checkAnalysis, err = s.evaluateChecks(ctx, headSHA)
 		if err != nil {
+			s.rec.Gated("reading the checks failed")
 			klog.Errorf("Failed to evaluate checks for PR #%d: %v", num, err)
 			return
 		}
 		isApproved := isPRApprovedOrLGTM(pr, prIssue, history.reviews)
+		s.rec.Fill(func(it *rules.Item) {
+			it.Approved = isApproved
+			switch {
+			case checkAnalysis.hasFailure:
+				it.Checks = "failing"
+			case checkAnalysis.hasPending:
+				it.Checks = "pending"
+			default:
+				it.Checks = "green"
+			}
+		})
 		if isApproved {
 			klog.V(2).Infof("PR #%d is approved / LGTM'd", num)
 		}
@@ -692,9 +728,13 @@ func (s *Scanner) reconcileReadiness(
 		// re-adds overseer/review to bot-authored PRs carrying no
 		// trigger label), and returning here left it on the PR
 		// forever, re-arming bot reviews on work a human already owns.
+		if len(getReviewLabels(pc.prIssue.Labels, s.cfg.TriggerLabel)) > 0 {
+			s.rec.Decided("ready-unreview", rules.OutcomeRun)
+		}
 		s.removeReviewLabels(ctx, pc, num)
 		return
 	}
+	s.rec.Decided("ready", rules.OutcomeRun)
 	readyLabel := readyForHumanLabel(s.cfg.TriggerLabel)
 	// Add ready label
 	if s.cfg.DryRun {

@@ -256,3 +256,39 @@ func TestDecideOffRulesAndSettings(t *testing.T) {
 		t.Errorf("decisions = %v", ds)
 	}
 }
+
+// A PR already handed to the humans that carries */review again loses it,
+// once the automated reviewer reviewed the head without asking for
+// changes; nothing else is written.
+func TestDecideReadyUnreview(t *testing.T) {
+	ready := func(mod func(*Item)) Item {
+		return pr(func(it *Item) {
+			it.Labels = []string{"overseer", "overseer/ready-for-human", "overseer/review"}
+			if mod != nil {
+				mod(it)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		it   Item
+		want string
+	}{
+		{"reviewed at head", ready(func(it *Item) { it.ReviewedAtHead = true }), "ready-unreview run"},
+		{"not reviewed yet: review", ready(nil), "review run"},
+		{"review asked for changes", ready(func(it *Item) { it.ReviewedAtHead, it.ChangesRequested = true, true }), ""},
+		{"ready without */review", pr(func(it *Item) { it.Labels = []string{"overseer", "overseer/ready-for-human"} }), ""},
+		{"not ready, reviewed but changes asked", pr(func(it *Item) {
+			it.Labels = []string{"overseer", "overseer/review"}
+			it.ReviewedAtHead, it.ChangesRequested = true, true
+		}), ""},
+		{"in the merge queue", pr(func(it *Item) { it.MergeQueue = true }), ""},
+		{"opened by someone outside the pool", pr(func(it *Item) { it.Author = "contributor" }), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(decisions(t, tc.it, testEnv), ", "); got != tc.want {
+				t.Errorf("decisions = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

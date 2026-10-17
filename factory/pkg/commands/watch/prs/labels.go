@@ -9,6 +9,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // syncReferencedIssueLabels copies the labels of the issues a pull request
@@ -24,6 +25,7 @@ func (s *Scanner) syncReferencedIssueLabels(ctx context.Context, pr *githubv39.P
 
 	if len(allMissingLabels) > 0 {
 		klog.Infof("Adding inherited labels %v to PR #%d", allMissingLabels, pr.GetNumber())
+		s.rec.Decided("inherit-labels", rules.OutcomeRun)
 		if err := s.gh.AddLabels(ctx, pr.GetNumber(), allMissingLabels); err != nil {
 			klog.Errorf("Failed to add labels %v to PR #%d: %v", allMissingLabels, pr.GetNumber(), err)
 		} else {

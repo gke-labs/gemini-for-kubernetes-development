@@ -132,6 +132,13 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Attempts bool `json:"attempts,omitempty"`
 
+	// RulesRecord makes the watcher's issue and PR scanners record each
+	// decision with the facts it was made on, on the overseer's volume
+	// (/workspaces/.cache/factory-watch/decisions.jsonl), for the watch
+	// rules' replay. What they decide is unchanged.
+	// +kubebuilder:validation:Optional
+	RulesRecord bool `json:"rulesRecord,omitempty"`
+
 	// SharedScan makes the watcher's issue and PR scanners read one shared
 	// set of GitHub listings, refreshed with what changed since the last
 	// pass and kept in its queue directory across restarts, instead of each

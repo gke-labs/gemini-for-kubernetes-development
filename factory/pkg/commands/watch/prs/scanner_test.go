@@ -26,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/k8s"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // TestEvaluate_Filters covers the two reasons a candidate is dropped before any
@@ -1223,6 +1224,8 @@ type testOpts struct {
 	AllowlistedUsers []string
 	// MinNumber skips pull requests numbered below it.
 	MinNumber int
+	// Recorder records the evaluations for the rules' replay.
+	Recorder *rules.Recorder
 }
 
 // newTestScanner builds a Scanner over a real queue manager rooted at tempDir,
@@ -1272,6 +1275,7 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 		Queue:     queue,
 		Entities:  concurrency.NewEntityStateCache(),
 		Sandboxes: sandboxes,
+		Recorder:  opts.Recorder,
 	})
 
 	return scanner, queue

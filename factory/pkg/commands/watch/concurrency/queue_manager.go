@@ -869,6 +869,18 @@ func (m *TaskQueueManager) RunsSince(filename string, since time.Time) int {
 	return n
 }
 
+// RunStarts are the start times of the runs of the task named filename
+// that ended, oldest first, as far back as RunsSince counts: the rules
+// record's history of an item.
+func (m *TaskQueueManager) RunStarts(filename string) []time.Time {
+	m.runsMu.Lock()
+	defer m.runsMu.Unlock()
+	m.loadRunsLocked()
+	out := slices.Clone(m.runs[strings.TrimSuffix(filename, ".yaml")])
+	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
+	return out
+}
+
 // noteRun records a run of taskID that ended, once the journal has been read
 // (until then, reading it will find this run there).
 func (m *TaskQueueManager) noteRun(taskID string, started time.Time) {

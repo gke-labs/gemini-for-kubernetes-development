@@ -11,6 +11,7 @@ import (
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // prHistory is everything said and done on a pull request, fetched once per
@@ -123,6 +124,7 @@ func (s *Scanner) pauseIfInactive(ctx context.Context, pr *githubv39.PullRequest
 	}
 
 	stopLabel := conventions.StopLabel(s.cfg.TriggerLabel)
+	s.rec.Decided("inactive", rules.OutcomeRun)
 	if s.cfg.DryRun {
 		fmt.Printf("[DRYRUN] Would pause automated processing on PR #%d and apply label '%s' due to inactivity since %v\n", num, stopLabel, lastActivity)
 		return true

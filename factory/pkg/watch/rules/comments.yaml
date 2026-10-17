@@ -11,6 +11,7 @@ on: pr
 group: {name: pr-care, order: 10}
 from: [labelled, assigned]
 when:
+  author: pool
   any-of:
     - feedback: new-trusted
     - last-run: failed
