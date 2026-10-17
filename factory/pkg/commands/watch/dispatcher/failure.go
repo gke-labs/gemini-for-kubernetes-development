@@ -7,21 +7,13 @@ import (
 	"strings"
 )
 
-// Where a task's child failed: in its run, or after it, applying the
-// run's result (a reply posted, a PR opened). A run that succeeded in its
-// sandbox and failed to apply is still a failed task.
-const (
-	FailedAtRun   = "run"
-	FailedAtApply = "apply"
-)
-
 // RunError is a child factory process that exited non-zero, with what its
-// log says went wrong: the last error it printed, and whether that was in
-// the run or applying its result.
+// log says went wrong: the last error it printed. Where a recipe's apply
+// failed is the run's to say, in its task directory
+// (task-output.apply-failed).
 type RunError struct {
-	Err      error
-	Reason   string
-	FailedAt string
+	Err    error
+	Reason string
 }
 
 func (e *RunError) Error() string {
@@ -42,14 +34,12 @@ const maxReason = 300
 const logTail = 256 << 10
 
 // failureFromLog is what a failed child's log says: the last line it
-// printed as "Error: …" (factory prints its error that way, often twice),
-// and whether it failed applying its result ("Applying the result of task"
-// came first) or in its run. An unreadable log, or one with no error line,
-// gives no reason.
-func failureFromLog(path string) (reason, failedAt string) {
+// printed as "Error: …" (factory prints its error that way, often twice).
+// An unreadable log, or one with no error line, gives no reason.
+func failureFromLog(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	defer f.Close()
 	if info, err := f.Stat(); err == nil && info.Size() > logTail {
@@ -57,30 +47,18 @@ func failureFromLog(path string) (reason, failedAt string) {
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return "", ""
+		return ""
 	}
-	text := string(data)
-	lines := strings.Split(text, "\n")
-	errAt := -1
+	reason := ""
+	lines := strings.Split(string(data), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); strings.HasPrefix(line, "Error: ") {
 			reason = strings.TrimSpace(strings.TrimPrefix(line, "Error: "))
-			errAt = i
 			break
 		}
-	}
-	if reason == "" {
-		return "", ""
 	}
 	if len(reason) > maxReason {
 		reason = reason[:maxReason] + "…"
 	}
-	failedAt = FailedAtRun
-	for i := errAt; i >= 0; i-- {
-		if strings.Contains(lines[i], "Applying the result of task") {
-			failedAt = FailedAtApply
-			break
-		}
-	}
-	return reason, failedAt
+	return reason
 }

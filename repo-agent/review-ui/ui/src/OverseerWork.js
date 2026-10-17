@@ -120,19 +120,17 @@ export function failureReason(f) {
   return (f.error || '').replace(/^exit status \d+:\s*/, '');
 }
 
-// failureText is a row's failed-task label: where it failed and why, cut
-// short; failureTitle is all of it, on hover.
+// failureText is a row's failed-task label: which task and why, cut short;
+// failureTitle is all of it, on hover. Whether a run's apply failed is the
+// run's to say (its session's "apply failed" chip).
 export function failureText(f) {
   const why = failureReason(f);
   const short = why.length > 48 ? `${why.slice(0, 47)}…` : why;
-  return `${f.failedAt || 'task'} failed${short ? `: ${short}` : ''}`;
+  return `${f.recipe || f.type} failed${short ? `: ${short}` : ''}`;
 }
 
 export function failureTitle(f) {
-  const where = f.failedAt === 'apply'
-    ? 'its run succeeded; applying the result failed'
-    : f.failedAt === 'run' ? 'its run failed' : 'it failed';
-  return [`${f.recipe || f.type} task at ${new Date(f.at).toLocaleString()}: ${where}`, failureReason(f) || f.error].filter(Boolean).join('\n');
+  return [`${f.recipe || f.type} task failed at ${new Date(f.at).toLocaleString()}`, failureReason(f) || f.error].filter(Boolean).join('\n');
 }
 
 // requiresHuman is the row's sandbox that needs a person, if any.

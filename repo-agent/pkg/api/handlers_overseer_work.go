@@ -117,11 +117,10 @@ type OverseerCooldown struct {
 
 // OverseerFailure is a row's failed task, as the watch recorded it.
 type OverseerFailure struct {
-	Type     string `json:"type"`
-	Recipe   string `json:"recipe,omitempty"`
-	Error    string `json:"error"`
-	FailedAt string `json:"failedAt,omitempty"`
-	At       string `json:"at"`
+	Type   string `json:"type"`
+	Recipe string `json:"recipe,omitempty"`
+	Error  string `json:"error"`
+	At     string `json:"at"`
 }
 
 // queueRecipes is the recipe each queue task type runs.
@@ -476,7 +475,7 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 				r.HTMLURL = f.URL
 			}
 			if r.Failure == nil || f.At > r.Failure.At {
-				r.Failure = &OverseerFailure{Type: f.Type, Recipe: queueRecipes[f.Type], Error: f.Error, FailedAt: f.FailedAt, At: f.At}
+				r.Failure = &OverseerFailure{Type: f.Type, Recipe: queueRecipes[f.Type], Error: f.Error, At: f.At}
 			}
 		}
 	}
@@ -522,9 +521,6 @@ func workSection(r *OverseerWorkItem) (string, string) {
 		what := f.Recipe
 		if what == "" {
 			what = f.Type
-		}
-		if f.FailedAt != "" {
-			what += " " + f.FailedAt
 		}
 		return "attention", what + " failed"
 	}

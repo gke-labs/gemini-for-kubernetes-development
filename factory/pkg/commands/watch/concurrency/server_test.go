@@ -534,14 +534,13 @@ func TestFailuresAreServedUntilTheTaskSucceeds(t *testing.T) {
 		if err := m.StartTask(fn, task); err != nil {
 			t.Fatal(err)
 		}
-		task.FailedAt = "apply"
 		if err := m.FailTask(fn, task, "exit status 1: applying the Change: nope"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	got := m.GetQueueResponse().Failures
-	if len(got) != 2 || got[0].Number != 2 || got[0].FailedAt != "apply" || got[0].Error != "exit status 1: applying the Change: nope" {
-		t.Fatalf("failures = %+v, want #2 then #1, applying", got)
+	if len(got) != 2 || got[0].Number != 2 || got[0].Error != "exit status 1: applying the Change: nope" {
+		t.Fatalf("failures = %+v, want #2 then #1", got)
 	}
 
 	restarted := newTestQueueManager(dir)

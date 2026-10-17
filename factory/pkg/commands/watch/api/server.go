@@ -58,10 +58,7 @@ type QueueFailure struct {
 	// Error is what the task's child printed as its error, after its exit
 	// status, e.g. "exit status 1: applying the Change for …".
 	Error string `json:"error"`
-	// FailedAt is "run", or "apply" when the run succeeded and applying
-	// its result failed; empty when the log said neither.
-	FailedAt string `json:"failedAt,omitempty"`
-	At       string `json:"at"`
+	At    string `json:"at"`
 }
 
 // QueueDrop is a task dropped before it started, as the HTTP API serves

@@ -156,8 +156,7 @@ func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.Queu
 	// What the child printed as its error, rather than its exit status
 	// alone: a run that succeeded in its sandbox and failed applying its
 	// result says so only in its log.
-	reason, failedAt := failureFromLog(logPath)
-	return &RunError{Err: err, Reason: reason, FailedAt: failedAt}
+	return &RunError{Err: err, Reason: failureFromLog(logPath)}
 }
 
 // openLogFile creates the log file that a running task streams its output into.

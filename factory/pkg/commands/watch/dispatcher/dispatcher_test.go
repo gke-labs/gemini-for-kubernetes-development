@@ -515,13 +515,13 @@ func TestDispatchOnce_FailedTaskIsMarkedFailed(t *testing.T) {
 	}
 }
 
-// A task whose child failed applying its result is recorded with the
-// child's error and where it failed, not its exit status alone.
+// A task whose child failed is recorded with the child's error, not its
+// exit status alone.
 func TestDispatchOnce_FailedTaskRecordsTheChildsError(t *testing.T) {
 	tempDir := t.TempDir()
 	d, queue, _, _, runner := testDispatcher(t, tempDir, nil)
 	runner.run = func(context.Context, string, *api.QueueTask, string) error {
-		return &RunError{Err: errors.New("exit status 1"), Reason: "applying the Change: replying to comment 1: nope", FailedAt: FailedAtApply}
+		return &RunError{Err: errors.New("exit status 1"), Reason: "applying the Change: replying to comment 1: nope"}
 	}
 
 	enqueueTestTask(t, queue, "task-issue-8.yaml", 8)
@@ -531,8 +531,8 @@ func TestDispatchOnce_FailedTaskRecordsTheChildsError(t *testing.T) {
 
 	waitForCounts(t, queue, 0, 0, 1)
 	failed := queue.GetProcessedTask("task-issue-8.yaml")
-	if failed == nil || failed.Error != "exit status 1: applying the Change: replying to comment 1: nope" || failed.FailedAt != FailedAtApply {
-		t.Errorf("processed task = %+v, want the child's error, failed at apply", failed)
+	if failed == nil || failed.Error != "exit status 1: applying the Change: replying to comment 1: nope" {
+		t.Errorf("processed task = %+v, want the child's error", failed)
 	}
 }
 
