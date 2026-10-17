@@ -254,6 +254,7 @@ Global flags (`--engine`, `--user`, `--namespace`, `--timeout`, `--disclose`, re
 
 - [Overseer and factory architecture](../overseer/docs/architecture-overseer-factory.md)
 - [Configuration guide (`.factory.cfg`)](docs/configuration.md)
+- [Watch rules guide](docs/watch-rules.md): the rule files' fields, and how the watch's rules decide
 - Watch internals: [design note](design/watch-design-note.md), [subcontroller architecture](design/watch-subcontrollers-architecture.md)
 - [Resilient and reconnectable task execution](design/resilient-task-execution.md)
 - [Multi-engine sandboxes](design/multi-engine.md)
