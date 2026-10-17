@@ -256,6 +256,47 @@ func TestHasLinkedPRWithTimeline_ReusesSuppliedTimeline(t *testing.T) {
 	}
 }
 
+// A PR opened with "Fixes #N" leaves only a cross-reference on the issue
+// (KCC 13173: PR 14055 opened by factory, then a second fix queued because
+// the timeline showed no connected PR). It counts when it is open, in the
+// issue's repository and closes the issue; a mention does not.
+func TestTimelineHasOpenLinkedPR_ClosingCrossReference(t *testing.T) {
+	ref := func(state, repo, body string) *githubv39.Timeline {
+		src := &githubv39.Issue{
+			Number:           githubv39.Int(14055),
+			State:            githubv39.String(state),
+			Title:            githubv39.String("Greenfield: ConfigDeployment"),
+			Body:             githubv39.String(body),
+			PullRequestLinks: &githubv39.PullRequestLinks{URL: githubv39.String("https://api.github.com/repos/" + repo + "/pulls/14055")},
+		}
+		if repo != "" {
+			src.Repository = &githubv39.Repository{FullName: githubv39.String(repo)}
+		}
+		return &githubv39.Timeline{Event: githubv39.String("cross-referenced"), Source: &githubv39.Source{Issue: src}}
+	}
+	for _, tc := range []struct {
+		name string
+		ev   *githubv39.Timeline
+		want bool
+	}{
+		{"open, closes it", ref("open", "o/r", "Implements it.\n\nFixes #13173\n"), true},
+		{"open, closes it, no repository given", ref("open", "", "Fixes #13173"), true},
+		{"open, repository by URL", func() *githubv39.Timeline {
+			e := ref("open", "", "Closes #13173")
+			e.Source.Issue.RepositoryURL = githubv39.String("https://api.github.com/repos/O/R")
+			return e
+		}(), true},
+		{"closed", ref("closed", "o/r", "Fixes #13173"), false},
+		{"another repository's #13173", ref("open", "fork/r", "Fixes #13173"), false},
+		{"mentions it only", ref("open", "o/r", "Related to #13173"), false},
+		{"closes another issue", ref("open", "o/r", "Fixes #13174"), false},
+	} {
+		if got := TimelineHasOpenLinkedPR([]*githubv39.Timeline{tc.ev}, "o", "r", 13173); got != tc.want {
+			t.Errorf("%s: TimelineHasOpenLinkedPR = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestGetClosingIssues(t *testing.T) {
 	tests := []struct {
 		name     string
