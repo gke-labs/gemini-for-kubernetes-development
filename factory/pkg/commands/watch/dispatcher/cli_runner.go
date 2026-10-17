@@ -139,15 +139,25 @@ func (r *CLIRunner) Run(ctx context.Context, taskFilename string, task *api.Queu
 
 	cmd := r.execCommand(ctx, executable, args...)
 
+	logPath := ""
 	if logFile, err := r.openLogFile(taskFilename); err != nil {
 		klog.Errorf("Failed to create log file: %v", err)
 	} else {
 		defer logFile.Close()
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
+		logPath = logFile.Name()
 	}
 
-	return cmd.Run()
+	err = cmd.Run()
+	if err == nil || logPath == "" {
+		return err
+	}
+	// What the child printed as its error, rather than its exit status
+	// alone: a run that succeeded in its sandbox and failed applying its
+	// result says so only in its log.
+	reason, failedAt := failureFromLog(logPath)
+	return &RunError{Err: err, Reason: reason, FailedAt: failedAt}
 }
 
 // openLogFile creates the log file that a running task streams its output into.

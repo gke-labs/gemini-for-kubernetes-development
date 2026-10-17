@@ -221,6 +221,51 @@ func TestOverseerWorkCarriesCooldowns(t *testing.T) {
 	}
 }
 
+// A task the watch ran that failed is its row's failure, saying why and
+// where, in attention, even when its run succeeded in its sandbox (the
+// apply failed); none once the watch serves no failure for it (a later run
+// succeeded), and none from an older watch.
+func TestOverseerWorkCarriesFailures(t *testing.T) {
+	sandboxes := []unstructured.Unstructured{
+		overseerWorkSandbox("fix-k8s-config-connector-12155", map[string]string{factorycli.LabelIssue: "12155", factorycli.LabelPR: "12155"}, map[string]string{
+			"htmlURL": kccURL + "/pull/12155",
+		}, 0),
+	}
+	const why = "exit status 1: applying the Change for " + kccURL + "/pull/12155: replying to comment 5554069132: it is neither a review comment nor a comment"
+	q := &QueueResponse{Failures: []QueueFailureItem{
+		{FileName: "task-pr-12155-comments.yaml", Number: 12155, URL: kccURL + "/pull/12155", Type: "pr-comments", Error: why, FailedAt: "apply", At: "2026-10-17T00:04:55Z"},
+	}}
+	items := buildOverseerWork("overseer-kcc", sandboxes, nil, q)
+	var row *OverseerWorkItem
+	for i := range items {
+		if items[i].Failure != nil {
+			row = &items[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("no row carries the failure: %+v", items)
+	}
+	if row.Failure.Error != why || row.Failure.FailedAt != "apply" || row.Failure.Recipe != "care-comments" {
+		t.Errorf("failure = %+v", row.Failure)
+	}
+	if row.Section != "attention" || row.Reason != "care-comments apply failed" {
+		t.Errorf("row = section %q, reason %q; want attention, care-comments apply failed", row.Section, row.Reason)
+	}
+
+	queuedAgain := *q
+	queuedAgain.Incoming = []QueueTaskItem{{FileName: "task-pr-12155-comments.yaml", Type: "pr-comments", URL: kccURL + "/pull/12155", Rank: 1}}
+	for _, it := range buildOverseerWork("overseer-kcc", sandboxes, nil, &queuedAgain) {
+		if it.Failure != nil && it.Section == "attention" {
+			t.Errorf("a failed task queued again is still in attention: %+v", it)
+		}
+	}
+	for _, it := range buildOverseerWork("overseer-kcc", sandboxes, nil, &QueueResponse{}) {
+		if it.Failure != nil {
+			t.Errorf("a failure with none served: %+v", it)
+		}
+	}
+}
+
 // A sandbox factory marked as needing a person puts its row first in
 // attention, saying why, ahead of the failed run that marked it.
 func TestOverseerWorkRequiresHuman(t *testing.T) {

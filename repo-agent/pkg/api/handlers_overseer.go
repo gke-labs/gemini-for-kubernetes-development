@@ -134,6 +134,23 @@ type QueueResponse struct {
 	// Cooldowns are the tasks the watch's issue scanner holds back because
 	// the same task finished too recently. An older watch serves none.
 	Cooldowns []QueueCooldownItem `json:"cooldowns,omitempty"`
+	// Failures are the tasks that failed and have not succeeded since,
+	// with what their child said went wrong. An older watch serves none.
+	Failures []QueueFailureItem `json:"failures,omitempty"`
+}
+
+// QueueFailureItem is a task that failed, as the watch serves it.
+type QueueFailureItem struct {
+	FileName string `json:"fileName"`
+	Number   int    `json:"number"`
+	URL      string `json:"url,omitempty"`
+	Type     string `json:"type"`
+	// Error is the child's exit status and the error it printed.
+	Error string `json:"error"`
+	// FailedAt is "run", or "apply" when the run succeeded and applying
+	// its result failed; empty when the watch could not tell.
+	FailedAt string `json:"failedAt,omitempty"`
+	At       string `json:"at"`
 }
 
 // QueueCooldownItem is a task held back by its cooldown, as the watch

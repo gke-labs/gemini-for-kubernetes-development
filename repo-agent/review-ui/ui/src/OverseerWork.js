@@ -113,6 +113,28 @@ export function cooldownTitle(c) {
   return [`Not queued again before ${at(c.until)}`, last, why].filter(Boolean).join('; ');
 }
 
+// failureReason is a failed task's error without its exit status: what
+// the child printed ("exit status 1: applying the Change …" → "applying
+// the Change …").
+export function failureReason(f) {
+  return (f.error || '').replace(/^exit status \d+:\s*/, '');
+}
+
+// failureText is a row's failed-task label: where it failed and why, cut
+// short; failureTitle is all of it, on hover.
+export function failureText(f) {
+  const why = failureReason(f);
+  const short = why.length > 48 ? `${why.slice(0, 47)}…` : why;
+  return `${f.failedAt || 'task'} failed${short ? `: ${short}` : ''}`;
+}
+
+export function failureTitle(f) {
+  const where = f.failedAt === 'apply'
+    ? 'its run succeeded; applying the result failed'
+    : f.failedAt === 'run' ? 'its run failed' : 'it failed';
+  return [`${f.recipe || f.type} task at ${new Date(f.at).toLocaleString()}: ${where}`, failureReason(f) || f.error].filter(Boolean).join('\n');
+}
+
 // requiresHuman is the row's sandbox that needs a person, if any.
 export function requiresHuman(item) {
   return (item.sandboxes || []).find(s => s.requiresHuman);
@@ -199,6 +221,11 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox, onRetry }) {
           <span style={{ marginLeft: '4px', whiteSpace: 'nowrap' }} title={cooldownTitle(item.cooldown)}>
             <Chip text={`cooldown until ${new Date(item.cooldown.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
               color={RUN_STYLE.queued.color} bg={RUN_STYLE.queued.bg} />
+          </span>
+        )}
+        {item.failure && (
+          <span style={{ marginLeft: '4px', whiteSpace: 'nowrap' }} title={failureTitle(item.failure)}>
+            <Chip text={failureText(item.failure)} color={RUN_STYLE.failed.color} bg={RUN_STYLE.failed.bg} />
           </span>
         )}
         {podTrouble && !failedChip && (

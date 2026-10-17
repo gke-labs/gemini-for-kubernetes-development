@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,10 @@ type TaskQueueManager struct {
 	// queue.
 	drops []api.Drop
 
+	// failures are the tasks that failed and have not succeeded since,
+	// newest last, the last maxFailures of them, served with the queue.
+	failures []api.Failure
+
 	// runs are the start times of the runs that ended (journalled Completed
 	// or Failed), by task ID, the last runsKeptFor of them: what RunsSince
 	// counts. Loaded from journal.jsonl on first use and kept up to date as
@@ -66,6 +71,9 @@ const runsKeptFor = 30 * 24 * time.Hour
 
 // maxDrops bounds the drops the queue remembers for its readers.
 const maxDrops = 50
+
+// maxFailures bounds the failures the queue remembers for its readers.
+const maxFailures = 50
 
 // NewTaskQueueManager creates a new TaskQueueManager instance with configured directories.
 func NewTaskQueueManager(cfg TaskQueueManagerConfig) *TaskQueueManager {
@@ -227,6 +235,19 @@ func (m *TaskQueueManager) LoadFromDisk() error {
 		m.processed[fn] = t
 	}); err != nil {
 		return fmt.Errorf("loading processed queue: %w", err)
+	}
+
+	// The failures served with the queue, from the processed tasks that
+	// failed last, so that a restart does not hide them.
+	m.failures = nil
+	for fn, t := range m.processed {
+		if t.Status == api.StatusFailed {
+			m.failures = append(m.failures, api.Failure{FileName: fn, Number: t.Number, URL: t.URL, Type: t.Type, Error: t.Error, FailedAt: t.FailedAt, At: t.CompletedAt})
+		}
+	}
+	slices.SortFunc(m.failures, func(a, b api.Failure) int { return a.At.Compare(b.At) })
+	if len(m.failures) > maxFailures {
+		m.failures = m.failures[len(m.failures)-maxFailures:]
 	}
 
 	return nil
@@ -481,6 +502,7 @@ func (m *TaskQueueManager) finishTask(filename string, task *api.QueueTask, stat
 	// would leave it able to edit finished state after the fact, which is the
 	// same leak the read accessors guard against.
 	m.processed[filename] = t.DeepCopy()
+	m.noteOutcome(filename, t, status)
 
 	m.writeJournalEvent(filename, t, string(status), duration)
 	return nil
@@ -686,6 +708,7 @@ func (m *TaskQueueManager) writeJournalEvent(taskFilename string, task *api.Queu
 		StartedAt:        task.StartedAt,
 		CompletedAt:      task.CompletedAt,
 		Error:            task.Error,
+		FailedAt:         task.FailedAt,
 	}
 	if dur > 0 {
 		je.DurationSecond = dur.Seconds()
@@ -745,6 +768,34 @@ func moveTaskFile(srcDir, dstDir, filename string, task *api.QueueTask) error {
 		_ = writeTaskAtomically(dstDir, filename, task)
 	}
 	return nil
+}
+
+// noteOutcome keeps the failures list: a failed task replaces any earlier
+// failure of the same task, a completed one clears it. Called with m.mu
+// held.
+func (m *TaskQueueManager) noteOutcome(filename string, t *api.QueueTask, status api.TaskStatus) {
+	kept := m.failures[:0]
+	for _, f := range m.failures {
+		if f.FileName != filename {
+			kept = append(kept, f)
+		}
+	}
+	m.failures = kept
+	if status != api.StatusFailed {
+		return
+	}
+	m.failures = append(m.failures, api.Failure{
+		FileName: filename,
+		Number:   t.Number,
+		URL:      t.URL,
+		Type:     t.Type,
+		Error:    t.Error,
+		FailedAt: t.FailedAt,
+		At:       t.CompletedAt,
+	})
+	if len(m.failures) > maxFailures {
+		m.failures = m.failures[len(m.failures)-maxFailures:]
+	}
 }
 
 // DropTask removes a queued task the dispatcher will not start because a

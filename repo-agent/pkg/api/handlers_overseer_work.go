@@ -62,6 +62,11 @@ type OverseerWorkItem struct {
 	// Cooldown is the row's task the watch holds back until its cooldown
 	// ends, when it does: the row's "cooldown until" label.
 	Cooldown *OverseerCooldown `json:"cooldown,omitempty"`
+	// Failure is the row's latest task the watch ran that failed and has
+	// not succeeded since, with why: a run can succeed in its sandbox and
+	// its task still fail applying the result (posting replies, opening
+	// the PR), which only the watch knows.
+	Failure *OverseerFailure `json:"failure,omitempty"`
 	// UpdatedAt is the latest a run of the row started or ended.
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
@@ -108,6 +113,15 @@ type OverseerCooldown struct {
 	Workflow        string `json:"workflow,omitempty"`
 	LastStatus      string `json:"lastStatus,omitempty"`
 	LastCompletedAt string `json:"lastCompletedAt,omitempty"`
+}
+
+// OverseerFailure is a row's failed task, as the watch recorded it.
+type OverseerFailure struct {
+	Type     string `json:"type"`
+	Recipe   string `json:"recipe,omitempty"`
+	Error    string `json:"error"`
+	FailedAt string `json:"failedAt,omitempty"`
+	At       string `json:"at"`
 }
 
 // queueRecipes is the recipe each queue task type runs.
@@ -445,6 +459,27 @@ func buildOverseerWork(namespace string, sandboxes []unstructured.Unstructured, 
 			}
 		}
 	}
+	if q != nil {
+		for _, f := range q.Failures {
+			issue, pr := 0, 0
+			switch kind, n := itemNumber(f.URL); kind {
+			case "issue":
+				issue = n
+			case "pr":
+				pr = n
+			}
+			if issue == 0 && pr == 0 {
+				continue // a chore's failure: its agent row shows its sandbox's runs
+			}
+			r := row(issue, pr, "")
+			if r.HTMLURL == "" {
+				r.HTMLURL = f.URL
+			}
+			if r.Failure == nil || f.At > r.Failure.At {
+				r.Failure = &OverseerFailure{Type: f.Type, Recipe: queueRecipes[f.Type], Error: f.Error, FailedAt: f.FailedAt, At: f.At}
+			}
+		}
+	}
 	items := make([]OverseerWorkItem, 0, len(rows))
 	for _, r := range rows {
 		slices.SortStableFunc(r.Sessions, func(a, b models.RunSession) int { return strings.Compare(b.StartedAt, a.StartedAt) })
@@ -480,6 +515,18 @@ func workSection(r *OverseerWorkItem) (string, string) {
 		if sb.Pod == "evicted" || sb.Pod == "failed" {
 			return "attention", fmt.Sprintf("%s's pod %s", sb.Name, sb.Pod)
 		}
+	}
+	// A task the watch ran that failed, unless it is queued or running
+	// again: its run may have succeeded in its sandbox.
+	if f := r.Failure; f != nil && !slices.ContainsFunc(r.Queued, func(q OverseerQueuedTask) bool { return q.Type == f.Type }) {
+		what := f.Recipe
+		if what == "" {
+			what = f.Type
+		}
+		if f.FailedAt != "" {
+			what += " " + f.FailedAt
+		}
+		return "attention", what + " failed"
 	}
 	// Sessions are newest first: the first of each recipe is its latest.
 	seen := map[string]bool{}

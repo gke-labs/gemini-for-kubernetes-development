@@ -452,6 +452,10 @@ func (d *Dispatcher) executeTask(ctx context.Context, taskFilename string, task 
 		}
 
 		klog.Errorf("Task %s failed: %v", taskFilename, taskErr)
+		var runErr *RunError
+		if errors.As(taskErr, &runErr) && runErr.FailedAt != "" {
+			task.FailedAt = runErr.FailedAt
+		}
 		_ = d.queue.FailTask(taskFilename, task, taskErr.Error())
 		d.coordinator.NotifyTaskFinished(ctx, task, taskErr)
 

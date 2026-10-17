@@ -164,6 +164,11 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 		drops = append(drops, m.drops[i].Item())
 	}
 
+	failures := make([]api.QueueFailure, 0, len(m.failures))
+	for i := len(m.failures) - 1; i >= 0; i-- {
+		failures = append(failures, m.failures[i].Item())
+	}
+
 	return api.QueueResponse{
 		Summary: api.QueueSummary{
 			TotalPending:    len(incoming),
@@ -177,5 +182,6 @@ func (m *TaskQueueManager) GetQueueResponse() api.QueueResponse {
 		Processed:  processed,
 		Cooldowns:  cooldowns,
 		Drops:      drops,
+		Failures:   failures,
 	}
 }

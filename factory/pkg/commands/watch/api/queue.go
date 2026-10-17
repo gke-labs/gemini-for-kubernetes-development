@@ -108,7 +108,10 @@ type QueueTask struct {
 	Assignee    string     `yaml:"assignee,omitempty"`
 	Status      TaskStatus `yaml:"status"` // "Pending", "Running", "Completed", "Failed"
 	Error       string     `yaml:"error,omitempty"`
-	AgentFile   string     `yaml:"agentFile,omitempty"` // For chore tasks
+	// FailedAt is where a failed task's child failed: "run", or "apply"
+	// when its run succeeded and applying the result failed.
+	FailedAt  string `yaml:"failedAt,omitempty"`
+	AgentFile string `yaml:"agentFile,omitempty"` // For chore tasks
 	// AgentName is a scheduled chore's name, from its definition, which
 	// names its sandbox (ChoreSandboxName).
 	AgentName    string   `yaml:"agentName,omitempty"`
@@ -182,6 +185,7 @@ type JournalEvent struct {
 	StartedAt        time.Time     `json:"startedAt,omitempty"`
 	CompletedAt      time.Time     `json:"completedAt,omitempty"`
 	Error            string        `json:"error,omitempty"`
+	FailedAt         string        `json:"failedAt,omitempty"`
 	DurationSecond   float64       `json:"durationSeconds,omitempty"`
 }
 
