@@ -16,7 +16,9 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
-const greenfieldWorkflow = "https://raw.githubusercontent.com/test-owner/test-repo/refs/heads/master/.agents/workflows/kcc-greenfield.txt"
+// greenfieldWorkflow is a github.com URL so that the workflow's existence check
+// is served by the fake contents API below rather than going to the network.
+const greenfieldWorkflow = "https://github.com/test-owner/test-repo/blob/master/.agents/workflows/kcc-greenfield.txt"
 
 // fakeWorkflowSandboxes reports the workflow sandboxes that exist.
 type fakeWorkflowSandboxes map[string]bool
@@ -45,6 +47,13 @@ func newLinkedIssueGitHub(t *testing.T) *github.Client {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/test-owner/test-repo/contents/.agents/workflows/kcc-greenfield.txt" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type":    "file",
+				"content": "---\nname: kcc-greenfield\nmode: workflow\n---\nDo the greenfield.\n",
+			})
+			return
+		}
 		if r.URL.Path == "/repos/test-owner/test-repo/issues/65/timeline" {
 			_ = json.NewEncoder(w).Encode([]map[string]interface{}{
 				{"event": "cross-referenced", "source": map[string]interface{}{"issue": map[string]interface{}{"number": 54}}},
