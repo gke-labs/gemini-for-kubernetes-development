@@ -58,6 +58,7 @@ ENV FACTORY_LOGS=/workspaces/logs/factory/
 
 COPY --from=builder /app/factory/factory /usr/local/bin/factory
 COPY overseer/images/overseer/run.sh /app/run.sh
+COPY overseer/images/overseer/queue-state.sh /app/queue-state.sh
 COPY overseer/images/overseer/summarize.sh /app/summarize.sh
 COPY overseer/images/overseer/prompt/ /app/prompt/
 COPY overseer/images/overseer/bootstrap.sh /app/bootstrap.sh

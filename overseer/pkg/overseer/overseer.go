@@ -452,6 +452,10 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 
 	podSpec := map[string]interface{}{
 		"serviceAccountName": "overseer",
+		// run.sh's stop handler stops factory watch and pushes the queue
+		// state before the pod goes (stopOverseer, STOP_WAIT 60s): the
+		// default 30 seconds is too short for both.
+		"terminationGracePeriodSeconds": int64(120),
 		"containers": []interface{}{
 			map[string]interface{}{
 				"name":    "overseer",

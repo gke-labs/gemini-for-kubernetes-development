@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# carryQueueState, restoreQueueState, syncQueueState: the queue state outlives
+# a cycle that was cut short (queue-state.sh, beside this script).
+source "$(dirname "$0")/queue-state.sh"
+
 function writeFactoryConfig {
     echo "$(date): Generating /workspaces/.factory.cfg..."
     
@@ -283,6 +287,11 @@ function runWatchCycle {
     if git remote | grep -q "^upstream$"; then
         REMOTE_MAIN="upstream"
     fi
+    # The queue directory on disk may hold what a cut-short cycle wrote after
+    # the last push (the pod restarted, its disk did not): carry it past the
+    # reset below, and put it back on the state branch afterwards.
+    carryQueueState
+    git rebase --abort 2>/dev/null || true
     git reset --hard HEAD || true
     git clean -fd || true
     git checkout $DEFAULT_BRANCH -- || git checkout -b $DEFAULT_BRANCH
@@ -290,13 +299,15 @@ function runWatchCycle {
     git reset --hard $REMOTE_MAIN/$DEFAULT_BRANCH
     
     # 4. Switch to state tracking branch (named after TRIGGER_LABEL_VAL) and rebase onto default branch
-    STATE_BRANCH=${TRIGGER_LABEL_VAL:-overseer}
     git checkout $STATE_BRANCH -- || git checkout -b $STATE_BRANCH
     git rebase $DEFAULT_BRANCH || {
         echo "$(date): Rebase failed. Resetting state branch $STATE_BRANCH to $DEFAULT_BRANCH..."
         git rebase --abort || true
         git reset --hard $DEFAULT_BRANCH
     }
+    # Back on the state branch: the carried queue state goes back over it and
+    # is committed when it differs (always after the reset just above).
+    restoreQueueState "$STATE_BRANCH"
     
     # 5. Run Watch Daemon for POLL_INTERVAL duration (default 300s/5m)
     TIMEOUT_DURATION=${POLL_INTERVAL:-300s}
@@ -322,24 +333,16 @@ function runWatchCycle {
     fi
 
     # 7. Push queue and state changes back to fork/origin
-    if [ -d "./overseer/queues" ]; then
-        git add ./overseer/queues
-        if [ -f "./overseer/queues/journal.jsonl" ]; then
-            git add ./overseer/queues/journal.jsonl
-        fi
-        if [ -f "./overseer/queues/chores_state.json" ]; then
-            git add ./overseer/queues/chores_state.json
-        fi
-        
-        if ! git diff --cached --quiet; then
-            echo "$(date): Committing and pushing queue updates to branch $STATE_BRANCH..."
-            git commit -m "chore(watch): sync queue state at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin $STATE_BRANCH --force
-        else
-            echo "$(date): No queue changes to push."
-        fi
-    fi
+    syncQueueState "$STATE_BRANCH" "chore(watch): sync queue state at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
+
+# STATE_BRANCH is the branch the queue state is pushed to, named after the
+# trigger label: runWatchCycle checks it out, and the stop handler pushes it.
+STATE_BRANCH=${TRIGGER_LABEL_VAL:-overseer}
+
+# stopOverseer (queue-state.sh) runs on SIGTERM, a pod deletion, and SIGINT:
+# it stops factory watch and pushes the queue state before exiting.
+trap stopOverseer TERM INT
 
 # Loop
 # Create logs directory
@@ -375,13 +378,21 @@ while true; do
   # Refresh LLM token
   refreshLLMToken
 
-  set -o pipefail
-  {
-    echo "$(date): Running Overseer cycle..."
-    runWatchCycle
-    echo "$(date): Cycle complete."
-  } 2>&1 | tee -a "$LOG_FILE"
-  EXIT_CODE=$?
+  # In the background, waited for: bash runs the TERM trap only between
+  # commands, and wait is one it can interrupt, where a foreground pipeline
+  # would delay the trap until the whole cycle ended.
+  (
+    set -o pipefail
+    {
+      echo "$(date): Running Overseer cycle..."
+      runWatchCycle
+      echo "$(date): Cycle complete."
+    } 2>&1 | tee -a "$LOG_FILE"
+  ) &
+  CYCLE_PID=$!
+  EXIT_CODE=0
+  wait "$CYCLE_PID" || EXIT_CODE=$?
+  CYCLE_PID=""
   if [ $EXIT_CODE -ne 0 ]; then
     exit $EXIT_CODE
   fi
