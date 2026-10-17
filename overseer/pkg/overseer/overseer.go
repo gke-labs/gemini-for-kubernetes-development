@@ -361,6 +361,12 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "true",
 		})
 	}
+	if o.Spec.GraphQLPRDetails {
+		env = append(env, map[string]interface{}{
+			"name":  "WATCH_GRAPHQL_PR_DETAILS",
+			"value": "true",
+		})
+	}
 	if o.Spec.MinNumber != nil {
 		env = append(env, map[string]interface{}{
 			"name":  "MIN_NUMBER",

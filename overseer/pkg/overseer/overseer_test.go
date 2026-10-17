@@ -250,3 +250,16 @@ func TestBuildSandboxManifest_SharedScan(t *testing.T) {
 		t.Errorf("WATCH_SHARED_SCAN = %v, want true", got)
 	}
 }
+
+// spec.graphqlPRDetails reaches the watcher as WATCH_GRAPHQL_PR_DETAILS, and
+// only when set.
+func TestBuildSandboxManifest_GraphQLPRDetails(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["WATCH_GRAPHQL_PR_DETAILS"]; ok {
+		t.Error("WATCH_GRAPHQL_PR_DETAILS is set with graphqlPRDetails unset")
+	}
+	o.Spec.GraphQLPRDetails = true
+	if got := overseerEnv(t, o)["WATCH_GRAPHQL_PR_DETAILS"]; got != "true" {
+		t.Errorf("WATCH_GRAPHQL_PR_DETAILS = %v, want true", got)
+	}
+}

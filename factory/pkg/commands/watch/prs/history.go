@@ -10,6 +10,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 )
 
 // prHistory is everything said and done on a pull request, fetched once per
@@ -83,6 +84,24 @@ func (s *Scanner) fetchHistory(ctx context.Context, num int) (*prHistory, error)
 	}
 
 	return h, nil
+}
+
+// historyFromDetails is the history fetchHistory reads, from what the GraphQL
+// details query read instead: the same comments, reviews and inline comments,
+// the inline comments grouped by review the same way.
+func historyFromDetails(d *github.PRDetails) *prHistory {
+	h := &prHistory{
+		comments:       d.Comments,
+		reviews:        d.Reviews,
+		revCommentsMap: make(map[int64][]*githubv39.PullRequestComment),
+		lastCommitTime: d.LastCommitTime,
+	}
+	for _, rc := range d.ReviewComments {
+		if id := rc.GetPullRequestReviewID(); id != 0 {
+			h.revCommentsMap[id] = append(h.revCommentsMap[id], rc)
+		}
+	}
+	return h
 }
 
 // pauseIfInactive stops the watcher working a pull request that no human has

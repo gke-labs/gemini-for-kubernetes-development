@@ -290,6 +290,7 @@ func (w *Watcher) prScannerConfig() prs.Config {
 		InactivityTimeout: w.PRInactivityTimeout,
 		DryRun:            w.loopDryRun(w.PRMode),
 		Attempts:          w.Attempts,
+		GraphQLPRDetails:  w.GraphQLPRDetails,
 	}
 }
 

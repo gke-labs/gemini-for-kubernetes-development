@@ -143,6 +143,13 @@ type Config struct {
 	// journal rather than from the watcher's comments alone
 	// (investigationAttempts).
 	Attempts bool
+	// GraphQLPRDetails reads what an evaluation needs of each pull request -
+	// the pull request, its merge queue entry, commits, comments, reviews and
+	// their inline comments - in one GraphQL query per batch of pull
+	// requests (github.PullRequestDetails) rather than six REST calls each.
+	// A pull request the query could not read whole is read the REST way.
+	// CI stays REST (evaluateChecks).
+	GraphQLPRDetails bool
 }
 
 // Deps holds the collaborators of a Scanner.
@@ -189,6 +196,9 @@ type Scanner struct {
 	state *stateStore
 	// lastSweep is when the full sweep last ran.
 	lastSweep time.Time
+	// details are pull requests read ahead by evaluateAll's GraphQL batches
+	// (Config.GraphQLPRDetails), each used once by its evaluation.
+	details map[int]*github.PRDetails
 }
 
 // New constructs a Scanner from its configuration and dependencies.
@@ -364,14 +374,70 @@ func (s *Scanner) needsEvaluation(prIssue *githubv39.Issue) bool {
 
 // evaluateAll evaluates the candidates sequentially and returns once every one
 // of them has been handled.
+//
+// With Config.GraphQLPRDetails, the candidates are read ahead a batch at a
+// time, just before that batch is evaluated, so what an evaluation decides on
+// is no older than the batch's other evaluations.
 func (s *Scanner) evaluateAll(ctx context.Context, candidates []*githubv39.Issue) {
 	klog.Infof("evaluateAll called with %d PRs", len(candidates))
-	for _, prIssue := range candidates {
-		if ctx.Err() != nil {
-			return
-		}
-		s.evaluate(ctx, prIssue)
+	batch := len(candidates)
+	if s.cfg.GraphQLPRDetails {
+		batch = github.PRDetailsBatch
 	}
+	for start := 0; start < len(candidates); start += batch {
+		end := min(start+batch, len(candidates))
+		if s.cfg.GraphQLPRDetails {
+			s.readAhead(ctx, candidates[start:end])
+		}
+		for _, prIssue := range candidates[start:end] {
+			if ctx.Err() != nil {
+				s.details = nil
+				return
+			}
+			s.evaluate(ctx, prIssue)
+		}
+		s.details = nil
+	}
+}
+
+// readAhead reads the details of the pull requests about to be evaluated, the
+// ones evaluate will read at all (past the number floor and the stop label),
+// in one GraphQL query. Any it could not read whole, or at all, are left for
+// evaluate to read the REST way.
+func (s *Scanner) readAhead(ctx context.Context, candidates []*githubv39.Issue) {
+	var nums []int
+	for _, prIssue := range candidates {
+		num := prIssue.GetNumber()
+		if s.cfg.MinNumber > 0 && num < s.cfg.MinNumber {
+			continue
+		}
+		if conventions.HasStopLabel(prIssue.Labels, s.cfg.TriggerLabel) {
+			continue
+		}
+		nums = append(nums, num)
+	}
+	if len(nums) == 0 {
+		return
+	}
+	details, err := s.gh.PullRequestDetails(ctx, nums)
+	if err != nil {
+		klog.Warningf("Reading the details of %d PRs with GraphQL: %v; the PRs it did not read are read the REST way", len(nums), err)
+	}
+	s.details = make(map[int]*github.PRDetails, len(details))
+	for num, d := range details {
+		if !d.Complete {
+			klog.Infof("PR #%d has %s; reading it the REST way", num, d.Why)
+			continue
+		}
+		s.details[num] = d
+	}
+}
+
+// takeDetails returns the read-ahead details of a pull request, once.
+func (s *Scanner) takeDetails(num int) *github.PRDetails {
+	d := s.details[num]
+	delete(s.details, num)
+	return d
 }
 
 // evaluate decides what a single pull request needs and queues it.
@@ -396,15 +462,24 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		_ = s.queue.RemovePendingTasksForNumber(num)
 		return
 	}
-	pr, err := s.gh.GetPullRequest(ctx, num)
-	if err != nil {
+	details := s.takeDetails(num)
+	var pr *githubv39.PullRequest
+	var err error
+	if details != nil {
+		pr = details.PR
+	} else if pr, err = s.gh.GetPullRequest(ctx, num); err != nil {
 		klog.Errorf("Failed to fetch full PR #%d: %v", num, err)
 		return
 	}
 
 	// A pull request in the merge queue is out of the watcher's hands: pushing
 	// to it now would only knock it back out.
-	inMergeQueue, err := s.gh.IsInMergeQueue(ctx, num)
+	var inMergeQueue bool
+	if details != nil {
+		inMergeQueue = details.InMergeQueue
+	} else {
+		inMergeQueue, err = s.gh.IsInMergeQueue(ctx, num)
+	}
 	if err != nil {
 		klog.Errorf("Failed to check if PR #%d is in merge queue: %v", num, err)
 	} else if inMergeQueue {
@@ -455,7 +530,12 @@ func (s *Scanner) evaluate(ctx context.Context, prIssue *githubv39.Issue) {
 		return
 	}
 
-	history, err := s.fetchHistory(ctx, num)
+	var history *prHistory
+	if details != nil {
+		history = historyFromDetails(details)
+	} else {
+		history, err = s.fetchHistory(ctx, num)
+	}
 	if err != nil {
 		klog.Errorf("Failed to fetch history for PR #%d: %v", num, err)
 		return
