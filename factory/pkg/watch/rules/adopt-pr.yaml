@@ -7,9 +7,15 @@
 # another item; the closed set has no predicate on a linked issue's
 # labels, so the engine checks it as part of this rule's action. "Without
 # a pool assignee" is a negation the set does not have either.
+#
+# Off: a safety net for PRs opened without their labels (a watch killed
+# mid-task on the classic path); open-pr labels the PR it opens, and the
+# overseer-kcc logs show no adoption since 2026-10-16. Kept, to turn on
+# again if orphans show up; it may fold into inherit-labels.
 name: adopt-pr
 description: Adopt a bot's PR whose issue is the overseer's
 on: pr
+enabled: false
 when:
   author: pool
   labels: {none: ["{{trigger}}"]}
