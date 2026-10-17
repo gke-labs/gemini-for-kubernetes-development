@@ -76,9 +76,13 @@ func ConnectServer(ctx context.Context, namespace, name string) (*ServerSandbox,
 	if err := s.open(ctx, pod); err != nil {
 		return nil, err
 	}
-	vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	v, err := s.client().Version(vctx)
+	v, err := awaitServer(ctx, serverStartTimeout, serverRetryEvery,
+		func(ctx context.Context) (Version, error) {
+			vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return s.client().Version(vctx)
+		},
+		s.reconnect)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -89,6 +93,42 @@ func ConnectServer(ctx context.Context, namespace, name string) (*ServerSandbox,
 	}
 	s.secrets = v.Secrets >= SecretsVersion
 	return s, nil
+}
+
+// A pod is ready once its container runs, before factory daemon in it
+// listens: a sandbox just woken (or started) refuses its task server's
+// port for some seconds. ConnectServer asks again for serverStartTimeout,
+// every serverRetryEvery, before it says the sandbox has none.
+var (
+	serverStartTimeout = 90 * time.Second
+	serverRetryEvery   = 2 * time.Second
+)
+
+// awaitServer asks the task server its version until it answers or
+// timeout passes, opening a new forward (reopen) between tries: a forward
+// opened while nothing listened is not reused. The last error is returned.
+func awaitServer(ctx context.Context, timeout, every time.Duration, version func(context.Context) (Version, error), reopen func(context.Context) error) (Version, error) {
+	deadline := time.Now().Add(timeout)
+	for tries := 1; ; tries++ {
+		v, err := version(ctx)
+		if err == nil {
+			return v, nil
+		}
+		if ctx.Err() != nil || time.Now().Add(every).After(deadline) {
+			return Version{}, err
+		}
+		if tries == 1 {
+			fmt.Fprintf(os.Stderr, "Its task server does not answer yet (%v); asking again for up to %s...\n", err, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return Version{}, err
+		case <-time.After(every):
+		}
+		if rerr := reopen(ctx); rerr != nil {
+			klog.V(2).Infof("reopening the forward to the task server: %v", rerr)
+		}
+	}
 }
 
 // errNoSecrets is a sandbox whose image predates task secrets.
