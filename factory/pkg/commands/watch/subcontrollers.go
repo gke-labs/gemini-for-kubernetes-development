@@ -2,7 +2,9 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -213,7 +215,7 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 }
 
 // newSharedScan constructs the listings both scanners read when SharedScan
-// is on, persisted in the queue directory; nil when it is off.
+// is on, persisted at scanStatePath; nil when it is off.
 func (w *Watcher) newSharedScan() *scan.Store {
 	if !w.SharedScan {
 		return nil
@@ -223,8 +225,33 @@ func (w *Watcher) newSharedScan() *scan.Store {
 		TriggerLabel: w.triggerLabel,
 		BotUsers:     w.allBotUsers,
 		GitHubLogin:  w.githubLogin,
-		StatePath:    filepath.Join(w.QueueDir, "scan_state.json"),
+		StatePath:    w.scanStatePath(),
 	}, w.repoClient)
+}
+
+// scanStatePath is where the shared scan's snapshot persists: ScanState,
+// else scan_state.json in the queue directory. A snapshot left in the
+// queue directory from before ScanState moved it is moved along (or
+// dropped, when the new place already has one), so the queue directory,
+// which run.sh pushes to the repository, stops carrying it.
+func (w *Watcher) scanStatePath() string {
+	inQueue := filepath.Join(w.QueueDir, "scan_state.json")
+	if w.ScanState == "" || filepath.Clean(w.ScanState) == filepath.Clean(inQueue) {
+		return inQueue
+	}
+	if _, err := os.Stat(inQueue); err == nil {
+		if _, err := os.Stat(w.ScanState); errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Dir(w.ScanState), 0o755); err == nil {
+				if err := os.Rename(inQueue, w.ScanState); err != nil {
+					klog.Warningf("Moving the shared scan's snapshot to %s: %v", w.ScanState, err)
+				}
+			}
+		}
+		if err := os.Remove(inQueue); err != nil && !errors.Is(err, os.ErrNotExist) {
+			klog.Warningf("Removing the shared scan's old snapshot %s: %v", inQueue, err)
+		}
+	}
+	return w.ScanState
 }
 
 // issueListings and prListings are the shared scan as each scanner's
