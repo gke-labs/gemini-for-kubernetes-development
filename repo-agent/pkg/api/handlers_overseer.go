@@ -147,10 +147,7 @@ type QueueFailureItem struct {
 	Type     string `json:"type"`
 	// Error is the child's exit status and the error it printed.
 	Error string `json:"error"`
-	// FailedAt is "run", or "apply" when the run succeeded and applying
-	// its result failed; empty when the watch could not tell.
-	FailedAt string `json:"failedAt,omitempty"`
-	At       string `json:"at"`
+	At    string `json:"at"`
 }
 
 // QueueCooldownItem is a task held back by its cooldown, as the watch

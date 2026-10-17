@@ -224,3 +224,16 @@ func TestApplyPlan(t *testing.T) {
 		t.Error("a Plan was applied to a PR")
 	}
 }
+
+// An apply failure is read from its mark; an empty, unreadable or
+// error-less mark is none.
+func TestParseApplyFailure(t *testing.T) {
+	if f := ParseApplyFailure([]byte(`{"action":"submit-review","at":"2026-10-16T10:00:00Z","error":"boom"}`)); f == nil || f.Action != "submit-review" || f.Error != "boom" || f.At.IsZero() {
+		t.Errorf("mark: %+v", f)
+	}
+	for _, s := range []string{"", "\n", "{", `{"action":"x"}`} {
+		if f := ParseApplyFailure([]byte(s)); f != nil {
+			t.Errorf("ParseApplyFailure(%q) = %+v, want none", s, f)
+		}
+	}
+}

@@ -221,9 +221,9 @@ func TestOverseerWorkCarriesCooldowns(t *testing.T) {
 	}
 }
 
-// A task the watch ran that failed is its row's failure, saying why and
-// where, in attention, even when its run succeeded in its sandbox (the
-// apply failed); none once the watch serves no failure for it (a later run
+// A task the watch ran that failed is its row's failure, saying why, in
+// attention, even when its run succeeded in its sandbox (the apply
+// failed); none once the watch serves no failure for it (a later run
 // succeeded), and none from an older watch.
 func TestOverseerWorkCarriesFailures(t *testing.T) {
 	sandboxes := []unstructured.Unstructured{
@@ -233,7 +233,7 @@ func TestOverseerWorkCarriesFailures(t *testing.T) {
 	}
 	const why = "exit status 1: applying the Change for " + kccURL + "/pull/12155: replying to comment 5554069132: it is neither a review comment nor a comment"
 	q := &QueueResponse{Failures: []QueueFailureItem{
-		{FileName: "task-pr-12155-comments.yaml", Number: 12155, URL: kccURL + "/pull/12155", Type: "pr-comments", Error: why, FailedAt: "apply", At: "2026-10-17T00:04:55Z"},
+		{FileName: "task-pr-12155-comments.yaml", Number: 12155, URL: kccURL + "/pull/12155", Type: "pr-comments", Error: why, At: "2026-10-17T00:04:55Z"},
 	}}
 	items := buildOverseerWork("overseer-kcc", sandboxes, nil, q)
 	var row *OverseerWorkItem
@@ -245,11 +245,11 @@ func TestOverseerWorkCarriesFailures(t *testing.T) {
 	if row == nil {
 		t.Fatalf("no row carries the failure: %+v", items)
 	}
-	if row.Failure.Error != why || row.Failure.FailedAt != "apply" || row.Failure.Recipe != "care-comments" {
+	if row.Failure.Error != why || row.Failure.Recipe != "care-comments" {
 		t.Errorf("failure = %+v", row.Failure)
 	}
-	if row.Section != "attention" || row.Reason != "care-comments apply failed" {
-		t.Errorf("row = section %q, reason %q; want attention, care-comments apply failed", row.Section, row.Reason)
+	if row.Section != "attention" || row.Reason != "care-comments failed" {
+		t.Errorf("row = section %q, reason %q; want attention, care-comments failed", row.Section, row.Reason)
 	}
 
 	queuedAgain := *q

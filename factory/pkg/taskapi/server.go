@@ -430,7 +430,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 // writableFiles are the files a client may write in a task directory: the
 // mark that the task's result was applied, which the next run reads.
-var writableFiles = map[string]bool{taskoutput.AppliedFile: true}
+var writableFiles = map[string]bool{taskoutput.AppliedFile: true, taskoutput.ApplyFailedFile: true}
 
 func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	taskDir, ok := s.taskDir(w, r)

@@ -278,10 +278,10 @@ describe('a cooldown', () => {
 });
 
 describe('a failed task', () => {
-    const failure = { type: 'pr-comments', recipe: 'care-comments', failedAt: 'apply', at: '2026-10-17T00:04:55Z',
+    const failure = { type: 'pr-comments', recipe: 'care-comments', at: '2026-10-17T00:04:55Z',
         error: 'exit status 1: applying the Change for https://github.com/o/r/pull/12155: replying to comment 5554069132: it is neither a review comment nor a comment' };
 
-    test('is a red label on its row: where it failed and why, all of it on hover', async () => {
+    test('is a red label on its row: which task and why, all of it on hover', async () => {
         const el = document.createElement('div');
         document.body.appendChild(el);
         const root = createRoot(el);
@@ -289,17 +289,18 @@ describe('a failed task', () => {
             root.render(<table><tbody><WorkRow item={{ key: 'pr-12155', kind: 'pr', number: 12155, failure, sandboxes: [], sessions: [] }}
                 onOpenSession={() => {}} onOpenSandbox={() => {}} /></tbody></table>);
         });
-        const label = Array.from(el.querySelectorAll('span[title]')).find(s => s.textContent.startsWith('apply failed:'));
+        const label = Array.from(el.querySelectorAll('span[title]')).find(s => s.textContent.startsWith('care-comments failed:'));
         expect(label).toBeTruthy();
-        expect(label.textContent.length).toBeLessThan(70);
-        expect(label.getAttribute('title')).toContain('applying the result failed');
+        expect(label.textContent.length).toBeLessThan(80);
+        expect(label.getAttribute('title')).toContain('care-comments task failed at');
         expect(label.getAttribute('title')).toContain('replying to comment 5554069132');
         await act(async () => { root.unmount(); });
         el.remove();
     });
 
-    test('says run failed when the run itself failed, and drops the exit status', () => {
-        expect(failureText({ ...failure, failedAt: 'run', error: 'exit status 1: running recipe: task failed' })).toBe('run failed: running recipe: task failed');
-        expect(failureTitle({ ...failure, failedAt: 'run' })).toContain('its run failed');
+    test('drops the exit status, and names the task type when there is no recipe', () => {
+        expect(failureText({ ...failure, error: 'exit status 1: running recipe: task failed' })).toBe('care-comments failed: running recipe: task failed');
+        expect(failureText({ ...failure, recipe: '', error: '' })).toBe('pr-comments failed');
+        expect(failureTitle(failure)).toContain('replying to comment 5554069132');
     });
 });

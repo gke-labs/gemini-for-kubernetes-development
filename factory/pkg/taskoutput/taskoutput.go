@@ -9,6 +9,7 @@ package taskoutput
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -29,6 +31,11 @@ const (
 	// AppliedFile marks, in a task directory, that the task's result was
 	// applied: `factory recipe --apply` run again does not pick it up.
 	AppliedFile = "task-output.applied"
+	// ApplyFailedFile marks, in a task directory, that applying the task's
+	// result failed, and why (ApplyFailure): the task itself succeeded, its
+	// apply did not. A later apply that succeeds empties it, so an empty
+	// or missing file is no failure.
+	ApplyFailedFile = "task-output.apply-failed"
 	// FrameFile is a task's result without the result: what it is about,
 	// where it came from and what can be done with it. File is the result
 	// file wrapped in it, again whenever the agent writes the file after
@@ -344,4 +351,25 @@ func Refresh(taskDir, from string) (bool, error) {
 		return false, err
 	}
 	return true, os.Chtimes(path, result.ModTime(), result.ModTime())
+}
+
+// ApplyFailure is what ApplyFailedFile says: the action applied (empty for
+// all of the result's writes), when, and the error.
+type ApplyFailure struct {
+	Action string    `json:"action,omitempty"`
+	At     time.Time `json:"at"`
+	Error  string    `json:"error"`
+}
+
+// ParseApplyFailure reads ApplyFailedFile's content: nil when it is empty
+// (a later apply succeeded) or not one.
+func ParseApplyFailure(data []byte) *ApplyFailure {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	var f ApplyFailure
+	if err := json.Unmarshal(data, &f); err != nil || f.Error == "" {
+		return nil
+	}
+	return &f
 }
