@@ -137,6 +137,39 @@ type QueueResponse struct {
 	// Failures are the tasks that failed and have not succeeded since,
 	// with what their child said went wrong. An older watch serves none.
 	Failures []QueueFailureItem `json:"failures,omitempty"`
+	// Shadow is the watch rules' tally beside the scanners, when they run
+	// in shadow (the Overseer's spec.rules.engine); none otherwise.
+	Shadow *QueueShadow `json:"shadow,omitempty"`
+}
+
+// QueueShadow is the watch rules' tally in shadow, as the watch serves it
+// (factory's rules.ShadowSummary): decisions compared since the watch
+// started, how many the rules decided the same, how many a gate outside
+// the rules held back, and by rule how often each was decided and differed,
+// with the latest differences.
+type QueueShadow struct {
+	Since    string                     `json:"since"`
+	Compared int                        `json:"compared"`
+	Agree    int                        `json:"agree"`
+	Gated    int                        `json:"gated"`
+	ByRule   map[string]QueueShadowRule `json:"byRule"`
+	Recent   []QueueShadowDiff          `json:"recent,omitempty"`
+}
+
+// QueueShadowRule is one rule's tally in shadow.
+type QueueShadowRule struct {
+	Decided int `json:"decided"`
+	Differ  int `json:"differ"`
+}
+
+// QueueShadowDiff is one decision the rules made differently from the
+// scanner: each side's, as "<rule> <outcome>".
+type QueueShadowDiff struct {
+	At      string   `json:"at"`
+	Kind    string   `json:"kind"`
+	Number  int      `json:"number"`
+	Rules   []string `json:"rules,omitempty"`
+	Scanner []string `json:"scanner,omitempty"`
 }
 
 // QueueFailureItem is a task that failed, as the watch serves it.
