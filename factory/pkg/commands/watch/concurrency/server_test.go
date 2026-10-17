@@ -518,3 +518,48 @@ func TestCooldownsAreServedUntilTheyEnd(t *testing.T) {
 		t.Error("an expired cooldown was kept")
 	}
 }
+
+// A failed task is served with the queue with its error and where it
+// failed, newest first; a later success of the same task clears it, and a
+// restart serves the failures again from the processed tasks.
+func TestFailuresAreServedUntilTheTaskSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	m := newTestQueueManager(dir)
+	for _, n := range []int{1, 2} {
+		fn := fmt.Sprintf("task-pr-%d-comments.yaml", n)
+		task := &api.QueueTask{Type: api.TypePRComments, Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n)}
+		if err := m.Enqueue(fn, task); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.StartTask(fn, task); err != nil {
+			t.Fatal(err)
+		}
+		task.FailedAt = "apply"
+		if err := m.FailTask(fn, task, "exit status 1: applying the Change: nope"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := m.GetQueueResponse().Failures
+	if len(got) != 2 || got[0].Number != 2 || got[0].FailedAt != "apply" || got[0].Error != "exit status 1: applying the Change: nope" {
+		t.Fatalf("failures = %+v, want #2 then #1, applying", got)
+	}
+
+	restarted := newTestQueueManager(dir)
+	if got := restarted.GetQueueResponse().Failures; len(got) != 2 {
+		t.Errorf("after a restart, failures = %+v, want both", got)
+	}
+
+	task := &api.QueueTask{Type: api.TypePRComments, Number: 1}
+	if err := m.Enqueue("task-pr-1-comments.yaml", task); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartTask("task-pr-1-comments.yaml", task); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CompleteTask("task-pr-1-comments.yaml", task); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.GetQueueResponse().Failures; len(got) != 1 || got[0].Number != 2 {
+		t.Errorf("after #1 succeeded, failures = %+v, want #2 alone", got)
+	}
+}

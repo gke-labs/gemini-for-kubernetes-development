@@ -44,6 +44,24 @@ type QueueResponse struct {
 	// Drops are the tasks the dispatcher dropped recently, newest first,
 	// because a fact they were decided on no longer held (Drop).
 	Drops []QueueDrop `json:"drops,omitempty"`
+	// Failures are the tasks that failed recently and have not succeeded
+	// since, newest first, with their child's error (Failure).
+	Failures []QueueFailure `json:"failures,omitempty"`
+}
+
+// QueueFailure is a task that failed, as the HTTP API serves it.
+type QueueFailure struct {
+	FileName string   `json:"fileName"`
+	Number   int      `json:"number"`
+	URL      string   `json:"url,omitempty"`
+	Type     TaskType `json:"type"`
+	// Error is what the task's child printed as its error, after its exit
+	// status, e.g. "exit status 1: applying the Change for …".
+	Error string `json:"error"`
+	// FailedAt is "run", or "apply" when the run succeeded and applying
+	// its result failed; empty when the log said neither.
+	FailedAt string `json:"failedAt,omitempty"`
+	At       string `json:"at"`
 }
 
 // QueueDrop is a task dropped before it started, as the HTTP API serves
