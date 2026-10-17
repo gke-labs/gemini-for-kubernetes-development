@@ -8,7 +8,7 @@ jest.mock('xterm', () => ({ Terminal: class { open() {} write() {} dispose() {} 
 jest.mock('xterm-addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 const OverseerWork = require('./OverseerWork').default;
-const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle, failureText, failureTitle } = require('./OverseerWork');
+const { matchesWork, rowChips, groupOf, WorkRow, cooldownTitle, failureText, failureTitle, ShadowBar, shadowRules, shadowSide } = require('./OverseerWork');
 
 const act = React.act || domAct;
 global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -302,5 +302,46 @@ describe('a failed task', () => {
         expect(failureText({ ...failure, error: 'exit status 1: running recipe: task failed' })).toBe('care-comments failed: running recipe: task failed');
         expect(failureText({ ...failure, recipe: '', error: '' })).toBe('pr-comments failed');
         expect(failureTitle(failure)).toContain('replying to comment 5554069132');
+    });
+});
+
+describe('the rules in shadow', () => {
+    const shadow = {
+        since: '2026-10-17T18:30:00Z', compared: 120, agree: 118, gated: 3,
+        byRule: { workflow: { decided: 40, differ: 0 }, ci: { decided: 4, differ: 2 }, ready: { decided: 3, differ: 0 } },
+        recent: [{ at: '2026-10-17T18:40:00Z', kind: 'pr', number: 14055, rules: ['ci run'] }],
+    };
+
+    test('orders the rules that differ first', () => {
+        expect(shadowRules(shadow).map(([r]) => r)).toEqual(['ci', 'ready', 'workflow']);
+        expect(shadowSide([])).toBe('nothing');
+        expect(shadowSide(['ci run', 'inherit-labels run'])).toBe('ci run, inherit-labels run');
+    });
+
+    test('says how many agree and differ, by rule, and lists the differences, each filtering to its item', async () => {
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        const root = createRoot(el);
+        const shown = [];
+        await act(async () => { root.render(<ShadowBar shadow={shadow} onShowItem={n => shown.push(n)} />); });
+        expect(el.textContent).toContain('120 compared · 118 agree · 2 differ · 3 held back by gates');
+        expect(el.textContent).toContain('ci 2✗');
+        expect(el.textContent).toContain('workflow 40');
+        const toggle = Array.from(el.querySelectorAll('button')).find(b => b.textContent.startsWith('Differences'));
+        await act(async () => { toggle.click(); });
+        expect(el.textContent).toContain('rules: ci run, scanner: nothing');
+        const item = Array.from(el.querySelectorAll('button')).find(b => b.textContent === 'PR #14055');
+        await act(async () => { item.click(); });
+        expect(shown).toEqual([14055]);
+        await act(async () => { root.unmount(); });
+        el.remove();
+    });
+
+    test('is not drawn without a tally', async () => {
+        const el = document.createElement('div');
+        const root = createRoot(el);
+        await act(async () => { root.render(<ShadowBar shadow={null} />); });
+        expect(el.textContent).toBe('');
+        await act(async () => { root.unmount(); });
     });
 });

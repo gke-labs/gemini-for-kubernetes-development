@@ -245,6 +245,66 @@ export function WorkRow({ item, onOpenSession, onOpenSandbox, onRetry }) {
   );
 }
 
+// shadowRules are the shadow tally's rules, those that differ first (most
+// differences first), then the rest by name.
+export function shadowRules(shadow) {
+  return Object.entries((shadow && shadow.byRule) || {})
+    .sort(([a, ra], [b, rb]) => (rb.differ - ra.differ) || a.localeCompare(b));
+}
+
+// shadowSide is one side of a difference: its decisions, or "nothing".
+export function shadowSide(decided) {
+  return (decided && decided.length) ? decided.join(', ') : 'nothing';
+}
+
+// ShadowBar is the watch rules' tally beside the scanners, when the
+// overseer runs them in shadow (spec.rules.engine: shadow): how many of the
+// scanners' decisions the rules decided the same, by rule, and the latest
+// differences, each of which filters the rows to its item. The rules act on
+// nothing; this is how they are checked before they do.
+export function ShadowBar({ shadow, onShowItem }) {
+  const [open, setOpen] = useState(false);
+  if (!shadow) return null;
+  const differ = shadow.compared - shadow.agree;
+  const since = shadow.since ? new Date(shadow.since).toLocaleString() : '';
+  return (
+    <div className="shadow-bar" style={{ fontSize: 'small', marginBottom: '8px', color: 'var(--text-secondary)' }}>
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <span title={`The watch rules decide beside the scanners and act on nothing; counted since ${since}`}>
+          <strong style={{ color: 'var(--text-primary)' }}>Rules in shadow</strong>: {shadow.compared} compared · {shadow.agree} agree ·{' '}
+          <span style={{ color: differ ? RUN_STYLE.failed.color : undefined, fontWeight: differ ? 700 : undefined }}>{differ} differ</span>
+          {shadow.gated ? ` · ${shadow.gated} held back by gates` : ''}
+        </span>
+        {shadowRules(shadow).map(([rule, t]) => (
+          <span key={rule} title={`${rule}: decided ${t.decided}, differed ${t.differ}`}>
+            <Chip text={t.differ ? `${rule} ${t.differ}✗` : `${rule} ${t.decided}`}
+              color={t.differ ? RUN_STYLE.failed.color : RUN_STYLE.queued.color}
+              bg={t.differ ? RUN_STYLE.failed.bg : RUN_STYLE.queued.bg} />
+          </span>
+        ))}
+        {(shadow.recent || []).length > 0 && (
+          <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+            {open ? 'Hide differences' : `Differences (${shadow.recent.length})`}
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+          {shadow.recent.map((d, i) => (
+            <li key={`${d.kind}-${d.number}-${d.at}-${i}`}>
+              <button type="button" className="btn btn-link btn-sm" style={{ padding: 0 }} onClick={() => onShowItem && onShowItem(d.number)}>
+                {d.kind === 'pr' ? 'PR' : d.kind} #{d.number}
+              </button>{' '}
+              rules: <code>{shadowSide(d.rules)}</code>, scanner: <code>{shadowSide(d.scanner)}</code>
+              {d.at ? <span> · {new Date(d.at).toLocaleTimeString()}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const OverseerWork = ({ overseer }) => {
   const [work, setWork] = useState(null);
   const [error, setError] = useState('');
@@ -295,6 +355,7 @@ const OverseerWork = ({ overseer }) => {
       {work && work.queueError && (
         <div style={{ color: 'var(--text-secondary)', fontSize: 'small', marginBottom: '8px' }}>Queue not shown: {work.queueError}</div>
       )}
+      {work && <ShadowBar shadow={work.shadow} onShowItem={n => setQ(String(n))} />}
       <div className="work-card">
         <table className="work-table">
           <thead>

@@ -189,6 +189,43 @@ func TestOverseerWorkWithoutTheQueue(t *testing.T) {
 	}
 }
 
+// The watch's shadow tally, when it runs the rules in shadow, is the
+// feed's; a watch that serves none (shadow off, or an older watch) leaves
+// it out.
+func TestOverseerWorkCarriesTheShadow(t *testing.T) {
+	prev := fetchOverseerQueue
+	t.Cleanup(func() { fetchOverseerQueue = prev })
+	r := overseerSessionServer(t, &fakeSessions{})
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"shadow", `{"summary":{},"shadow":{"since":"2026-10-17T18:30:00Z","compared":120,"agree":118,"gated":3,` +
+			`"byRule":{"ci":{"decided":4,"differ":2}},"recent":[{"at":"2026-10-17T18:40:00Z","kind":"pr","number":14055,"rules":["ci run"]}]}}`, true},
+		{"off", `{"summary":{}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var q QueueResponse
+			if err := json.Unmarshal([]byte(tc.body), &q); err != nil {
+				t.Fatal(err)
+			}
+			fetchOverseerQueue = func(context.Context, *Server, string) (*QueueResponse, error) { return &q, nil }
+			w := doAs(t, r, "root", http.MethodGet, "/api/overseers/kcc/work", "")
+			var got OverseerWork
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Shadow != nil) != tc.want {
+				t.Fatalf("shadow = %+v, want served %v", got.Shadow, tc.want)
+			}
+			if tc.want && (got.Shadow.Compared != 120 || got.Shadow.ByRule["ci"].Differ != 2 || len(got.Shadow.Recent) != 1 || got.Shadow.Recent[0].Number != 14055) {
+				t.Errorf("shadow = %+v", got.Shadow)
+			}
+		})
+	}
+}
+
 // A task the watch holds back by its cooldown is its issue's "cooldown
 // until" label: on the issue's row (a workflow's sandbox's, or a row of its
 // own when it has none), which waits in queued. An older watch, serving no
