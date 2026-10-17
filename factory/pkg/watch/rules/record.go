@@ -2,6 +2,7 @@ package rules
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,13 +35,29 @@ type Record struct {
 }
 
 // Recorder appends Records to a JSON-lines file, rolling it over to
-// <file>.1 at maxBytes. A nil Recorder records nothing.
+// <file>.1 at maxBytes. A record the same as the item's last one but for
+// its time - the same facts, decided the same - is left out unless
+// RecordRepeatEvery has passed: the scanners look at every item every
+// pass, and on KCC that is some 260 records a minute, most of them the
+// last pass's again. A nil Recorder records nothing.
 type Recorder struct {
 	path     string
 	maxBytes int64
 
 	mu sync.Mutex
+	// last is each item's last record written: its fingerprint and when.
+	last map[string]lastRecord
 }
+
+type lastRecord struct {
+	sum [sha256.Size]byte
+	at  time.Time
+}
+
+// RecordRepeatEvery is how often a record the same as the item's last one
+// is written anyway: what keeps a decision that changes with time alone
+// (a cooldown running out) in the record.
+const RecordRepeatEvery = 30 * time.Minute
 
 // DefaultRecordBytes is where a record file rolls over.
 const DefaultRecordBytes = 32 << 20
@@ -53,7 +70,25 @@ func NewRecorder(path string, maxBytes int64) *Recorder {
 	if maxBytes <= 0 {
 		maxBytes = DefaultRecordBytes
 	}
-	return &Recorder{path: path, maxBytes: maxBytes}
+	return &Recorder{path: path, maxBytes: maxBytes, last: map[string]lastRecord{}}
+}
+
+// repeat reports whether rec is the same as its item's last record, but
+// for its time, and that was written less than RecordRepeatEvery ago; if
+// not, rec becomes the item's last record. Called with r.mu held.
+func (r *Recorder) repeat(rec Record) bool {
+	key := fmt.Sprintf("%s/%s/%d/%s", rec.Scanner, rec.Item.Kind, rec.Item.Number, rec.Item.Name)
+	rec.At, rec.Env.Now = time.Time{}, time.Time{}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return false
+	}
+	sum := sha256.Sum256(b)
+	if prev, ok := r.last[key]; ok && prev.sum == sum && rec.Item.Number != 0 && time.Since(prev.at) < RecordRepeatEvery {
+		return true
+	}
+	r.last[key] = lastRecord{sum: sum, at: time.Now()}
+	return false
 }
 
 // Write appends one record. Recording is best effort: an error is logged,
@@ -69,6 +104,9 @@ func (r *Recorder) Write(rec Record) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.repeat(rec) {
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
 		klog.Warningf("rules record: %v", err)
 		return

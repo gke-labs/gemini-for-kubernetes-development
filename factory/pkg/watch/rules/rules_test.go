@@ -58,9 +58,12 @@ func TestBuiltinDefaults(t *testing.T) {
 	if !fix.IsEnabled() || fix.Policy.Cooldown.Success.Duration != 10*time.Minute || fix.Policy.Cooldown.Failure.Duration != 20*time.Minute {
 		t.Errorf("fix = %+v", fix.Policy.Cooldown)
 	}
-	// Off as today: no inactivity timeout by default; stop is a global gate.
-	// Off for now: adopt-pr, a safety net open-pr made idle.
-	for _, name := range []string{"inactive", "stop", "adopt-pr"} {
+	// Off: stop is a global gate; adopt-pr, a safety net open-pr made idle.
+	// inactive is on, and a no-op without a timeout.
+	if !byName["inactive"].IsEnabled() {
+		t.Error("inactive is off")
+	}
+	for _, name := range []string{"stop", "adopt-pr"} {
 		if byName[name].IsEnabled() {
 			t.Errorf("%s is enabled", name)
 		}

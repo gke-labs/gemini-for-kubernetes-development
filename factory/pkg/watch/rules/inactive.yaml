@@ -2,11 +2,12 @@
 # activity for the overseer's prInactivityTimeout is paused, once: a
 # comment and the stop label.
 #
-# Off, as today: prInactivityTimeout defaults to 0 (never).
+# On, and a no-op until the overseer sets prInactivityTimeout (0, the
+# default, is never): inactive-for holds only for a timeout above 0. KCC
+# sets 14 days.
 name: inactive
 description: Pause a PR nobody has looked at
 on: pr
-enabled: false
 from: [labelled, assigned]
 when:
   author: pool
