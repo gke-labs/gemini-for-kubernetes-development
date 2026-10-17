@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/spool"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskapi"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/taskoutput"
 )
 
 func TestParseGitHubItemURL(t *testing.T) {
@@ -571,4 +573,47 @@ func TestMarkSpoolRotated(t *testing.T) {
 	if !strings.Contains(string(data), `"future":1`) {
 		t.Errorf("a field factory does not know was dropped: %s", data)
 	}
+}
+
+// writeSandbox keeps the task files written to it; failWrites refuses them.
+type writeSandbox struct {
+	fileSandbox
+	failWrites bool
+}
+
+func (w *writeSandbox) WriteFile(_ context.Context, id, name string, data []byte) error {
+	if w.failWrites {
+		return errors.New("refused")
+	}
+	w.files[id+"/"+name] = string(data)
+	return nil
+}
+
+// A failed apply is recorded in its task's directory, read back by task
+// status, and emptied by a later apply that succeeds; one that cannot be
+// recorded is only reported.
+func TestApplyFailedMark(t *testing.T) {
+	ctx := context.Background()
+	sb := &writeSandbox{fileSandbox: fileSandbox{files: map[string]string{}}}
+	if got := taskApplyFailure(ctx, sb, "t"); got != nil {
+		t.Errorf("no mark: %+v", got)
+	}
+	markApplyFailed(ctx, sb, "t", "post-replies", errors.New("replying to comment 7: not found"))
+	got := taskApplyFailure(ctx, sb, "t")
+	if got == nil || got.Action != "post-replies" || got.Error != "replying to comment 7: not found" || got.At.IsZero() {
+		t.Fatalf("after a failed apply: %+v", got)
+	}
+	clearApplyFailed(ctx, sb, "t")
+	if got := taskApplyFailure(ctx, sb, "t"); got != nil {
+		t.Errorf("after a successful apply: %+v", got)
+	}
+	if s, ok := sb.files["t/"+taskoutput.ApplyFailedFile]; !ok || s != "" {
+		t.Errorf("mark = %q, %v; want emptied", s, ok)
+	}
+	clearApplyFailed(ctx, sb, "u")
+	if _, ok := sb.files["u/"+taskoutput.ApplyFailedFile]; ok {
+		t.Errorf("a task with no mark got one")
+	}
+	sb.failWrites = true
+	markApplyFailed(ctx, sb, "v", "", errors.New("x")) // only reported
 }

@@ -1249,7 +1249,11 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	for _, d := range docs {
 		target := d.Target.URL
 		if err := applyDocument(ctx, gh, d, verb, sandboxName, dryRun); err != nil {
-			return fmt.Errorf("applying the %s for %s: %w", d.Kind, target, err)
+			err = fmt.Errorf("applying the %s for %s: %w", d.Kind, target, err)
+			if !dryRun {
+				markApplyFailed(ctx, sb, e.ID, verb, err)
+			}
+			return err
 		}
 	}
 	if dryRun {
@@ -1258,7 +1262,30 @@ func awaitAndApply(ctx context.Context, sb taskapi.Sandbox, gh *githubv39.Client
 	if err := sb.WriteFile(ctx, e.ID, taskoutput.AppliedFile, []byte(time.Now().UTC().Format(time.RFC3339)+"\n")); err != nil {
 		fmt.Fprintf(os.Stderr, "Applied, but could not mark task %s applied (%v): running this again applies it again, which posts nothing twice.\n", e.ID, err)
 	}
+	clearApplyFailed(ctx, sb, e.ID)
 	return nil
+}
+
+// clearApplyFailed empties a failure an earlier apply of task id recorded
+// (markApplyFailed): it is over once an apply succeeds.
+func clearApplyFailed(ctx context.Context, sb taskapi.Sandbox, id string) {
+	if out, _ := sb.ReadFile(ctx, id, taskoutput.ApplyFailedFile); len(out) > 0 {
+		_ = sb.WriteFile(ctx, id, taskoutput.ApplyFailedFile, nil)
+	}
+}
+
+// markApplyFailed records in task id's directory that applying its result
+// failed, and why (taskoutput.ApplyFailedFile), beside the result: the
+// task's own state says it succeeded. Best effort: the apply's error is
+// what the caller gets either way.
+func markApplyFailed(ctx context.Context, sb taskapi.Sandbox, id, verb string, applyErr error) {
+	data, err := json.Marshal(taskoutput.ApplyFailure{Action: verb, At: time.Now().UTC(), Error: applyErr.Error()})
+	if err == nil {
+		err = sb.WriteFile(ctx, id, taskoutput.ApplyFailedFile, data)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not record in task %s that its apply failed: %v\n", id, err)
+	}
 }
 
 // newRecipeExecCommand runs a recipe inside a sandbox: the sandbox's

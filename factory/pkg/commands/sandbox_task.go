@@ -231,10 +231,11 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			applyFailed := taskApplyFailure(ctx, sb, e.ID)
 			if output == "json" {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(e)
+				return enc.Encode(taskStatusView{Entry: e, ApplyFailed: applyFailed})
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintf(w, "Task:\t%s\n", e.ID)
@@ -251,12 +252,32 @@ func newTaskStatusCommand(ctx context.Context) *cobra.Command {
 			if e.EngineRetries != nil {
 				fmt.Fprintf(w, "Engine retries:\t%s\n", engineRetriesText(e.EngineRetries))
 			}
+			if applyFailed != nil {
+				fmt.Fprintf(w, "Apply failed:\t%s (%s)\n", applyFailed.Error, applyFailed.At.Local().Format("2006-01-02 15:04:05"))
+			}
 			return w.Flush()
 		},
 	}
 	sel.add(cmd)
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json")
 	return cmd
+}
+
+// taskStatusView is a task as `task status -o json` prints it: the spool's
+// entry, and whether applying its result failed.
+type taskStatusView struct {
+	spool.Entry
+	ApplyFailed *taskoutput.ApplyFailure `json:"applyFailed,omitempty"`
+}
+
+// taskApplyFailure is the apply failure recorded in task id's directory
+// (taskoutput.ApplyFailedFile), nil for none.
+func taskApplyFailure(ctx context.Context, sb taskapi.Sandbox, id string) *taskoutput.ApplyFailure {
+	data, err := sb.ReadFile(ctx, id, taskoutput.ApplyFailedFile)
+	if err != nil {
+		return nil
+	}
+	return taskoutput.ParseApplyFailure(data)
 }
 
 // outputFileName is a file directly in a task directory.

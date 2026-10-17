@@ -215,6 +215,12 @@ func TestFilesAreGuarded(t *testing.T) {
 	if data, err := c.ReadFile(ctx, id, taskoutput.AppliedFile); err != nil || string(data) != "ok" {
 		t.Errorf("applied mark = %q, %v", data, err)
 	}
+	if err := c.WriteFile(ctx, id, taskoutput.ApplyFailedFile, []byte(`{"error":"x"}`)); err != nil {
+		t.Errorf("writing the apply-failed mark: %v", err)
+	}
+	if err := c.WriteFile(ctx, id, taskoutput.ApplyFailedFile, nil); err != nil {
+		t.Errorf("emptying the apply-failed mark: %v", err)
+	}
 	if _, err := c.Get(ctx, "no-such-task"); !errors.As(err, &se) || se.Code != http.StatusNotFound {
 		t.Errorf("Get missing: %v, want 404", err)
 	}
