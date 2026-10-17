@@ -238,3 +238,15 @@ func TestBuildSandboxManifest_SessionURL(t *testing.T) {
 		t.Errorf("SESSION_URL = %v, want %q", got, tmpl)
 	}
 }
+
+// spec.sharedScan reaches the watcher as WATCH_SHARED_SCAN, and only when set.
+func TestBuildSandboxManifest_SharedScan(t *testing.T) {
+	o := &overseerv1alpha1.Overseer{Spec: overseerv1alpha1.OverseerSpec{RepoURL: "https://github.com/owner/repo"}}
+	if _, ok := overseerEnv(t, o)["WATCH_SHARED_SCAN"]; ok {
+		t.Error("WATCH_SHARED_SCAN is set with sharedScan unset")
+	}
+	o.Spec.SharedScan = true
+	if got := overseerEnv(t, o)["WATCH_SHARED_SCAN"]; got != "true" {
+		t.Errorf("WATCH_SHARED_SCAN = %v, want true", got)
+	}
+}

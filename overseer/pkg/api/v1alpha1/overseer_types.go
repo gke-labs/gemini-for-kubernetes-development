@@ -132,6 +132,14 @@ type OverseerSpec struct {
 	// +kubebuilder:validation:Optional
 	Attempts bool `json:"attempts,omitempty"`
 
+	// SharedScan makes the watcher's issue and PR scanners read one shared
+	// set of GitHub listings, refreshed with what changed since the last
+	// pass and kept in its queue directory across restarts, instead of each
+	// listing for itself. What they decide is unchanged; it costs fewer
+	// GitHub calls.
+	// +kubebuilder:validation:Optional
+	SharedScan bool `json:"sharedScan,omitempty"`
+
 	// MinNumber specifies the minimum PR/issue number to process.
 	// +kubebuilder:validation:Optional
 	MinNumber *int32 `json:"minNumber,omitempty"`

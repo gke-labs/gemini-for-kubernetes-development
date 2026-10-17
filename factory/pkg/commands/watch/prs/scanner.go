@@ -88,6 +88,23 @@ type Sandboxes interface {
 	IsTaskRunning(ctx context.Context, name string) (bool, error)
 }
 
+// Listings is the shared scan (package scan): the listings the issue and
+// pull request scanners both read, refreshed incrementally and kept across
+// restarts. A Scanner given one reads its candidates out of it instead of
+// listing for itself; what it decides is unchanged.
+type Listings interface {
+	// Refresh brings the shared snapshot up to date; on error the views
+	// serve the last good one.
+	Refresh(ctx context.Context) error
+	// Labelled is every open item carrying the trigger label.
+	Labelled() []*githubv39.Issue
+	// Assigned is every open item assigned to user.
+	Assigned(user string) []*githubv39.Issue
+	// AssignedFirst is the first n open items assigned to user, newest
+	// updated first.
+	AssignedFirst(user string, n int) []*githubv39.Issue
+}
+
 // Config holds the tuning knobs of a Scanner.
 type Config struct {
 	// Interval is the delay between fast cycles over assigned pull requests.
@@ -139,6 +156,9 @@ type Deps struct {
 	Entities Entities
 	// Sandboxes probes whether a sandbox is already running the work.
 	Sandboxes Sandboxes
+	// Listings, when set, is the shared scan the scanner reads its
+	// candidates from; nil lists for itself, as before.
+	Listings Listings
 	// Paused reports whether scanning must be held off, which is how the
 	// watcher propagates drain mode. It is deliberately a plain read-only
 	// signal: the scanner can observe that the queue is draining but has no way
@@ -157,6 +177,7 @@ type Scanner struct {
 	queue     Queue
 	entities  Entities
 	sandboxes Sandboxes
+	listings  Listings
 	paused    func() bool
 
 	// reactions reads the acknowledgement state the watcher records on
@@ -187,6 +208,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		queue:     deps.Queue,
 		entities:  deps.Entities,
 		sandboxes: deps.Sandboxes,
+		listings:  deps.Listings,
 		paused:    deps.Paused,
 		reactions: conventions.NewReactionInterpreter(deps.GitHub, cfg.GitHubLogin, cfg.AllowlistedBots),
 		state:     newStateStore(deps.Queue),

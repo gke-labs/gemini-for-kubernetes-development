@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/issues"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/prs"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/sandbox"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/scan"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
 	factorysandbox "github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/sandbox"
@@ -205,8 +207,40 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 		Entities:  w.entityCache,
 		Sandboxes: w.sandboxes,
 		Users:     watcherUserSelector{w: w},
+		Listings:  w.issueListings(),
 		Paused:    w.draining,
 	})
+}
+
+// newSharedScan constructs the listings both scanners read when SharedScan
+// is on, persisted in the queue directory; nil when it is off.
+func (w *Watcher) newSharedScan() *scan.Store {
+	if !w.SharedScan {
+		return nil
+	}
+	return scan.New(scan.Config{
+		Repo:         w.Repo.Owner + "/" + w.Repo.Repo,
+		TriggerLabel: w.triggerLabel,
+		BotUsers:     w.allBotUsers,
+		GitHubLogin:  w.githubLogin,
+		StatePath:    filepath.Join(w.QueueDir, "scan_state.json"),
+	}, w.repoClient)
+}
+
+// issueListings and prListings are the shared scan as each scanner's
+// Listings, or nil (not a nil *scan.Store in an interface) when it is off.
+func (w *Watcher) issueListings() issues.Listings {
+	if w.sharedScan == nil {
+		return nil
+	}
+	return w.sharedScan
+}
+
+func (w *Watcher) prListings() prs.Listings {
+	if w.sharedScan == nil {
+		return nil
+	}
+	return w.sharedScan
 }
 
 // issueScannerConfig is the issue scanner's configuration, which the nudger
@@ -235,6 +269,7 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		Queue:     w.queueMgr,
 		Entities:  w.entityCache,
 		Sandboxes: w.sandboxes,
+		Listings:  w.prListings(),
 		Paused:    w.draining,
 	})
 }
