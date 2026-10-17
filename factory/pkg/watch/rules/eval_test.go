@@ -16,7 +16,6 @@ var (
 		PRLabels: []string{"ai-generated"},
 		Now:      now,
 	}
-	yes = true
 )
 
 func ago(d time.Duration) time.Time { return now.Add(-d) }
@@ -234,26 +233,27 @@ func TestDecideScheduleAndEvent(t *testing.T) {
 	}
 }
 
-// The off rules decide nothing until something turns them on; turned on,
-// inactive pauses a PR nobody touched for the overseer's timeout.
-func TestDecideOffRulesAndSettings(t *testing.T) {
+// inactive is on but needs the overseer's timeout: without one it decides
+// nothing; with one, it pauses a PR nobody touched for that long. Turned
+// off by a repository, it decides nothing either way.
+func TestDecideInactive(t *testing.T) {
 	stale := pr(func(it *Item) { it.LastTrustedActivity = ago(200 * time.Hour); it.Checks = "pending" })
 	if got := decisions(t, stale, testEnv); len(got) != 0 {
-		t.Errorf("inactive is off, got %v", got)
+		t.Errorf("no timeout set: %v", got)
+	}
+	env := testEnv
+	env.PRInactivityTimeout = 168 * time.Hour
+	if got := strings.Join(decisions(t, stale, env), ","); got != "inactive run" {
+		t.Errorf("decisions = %v", got)
 	}
 	base, _ := Builtin()
-	set, err := Overlay(base, []*Rule{{Name: "inactive", Enabled: &yes}})
+	off := false
+	set, err := Overlay(base, []*Rule{{Name: "inactive", Enabled: &off}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := testEnv
 	if ds := set.Decide(stale, env); len(ds) != 0 {
-		t.Errorf("no timeout set: %v", ds)
-	}
-	env.PRInactivityTimeout = 168 * time.Hour
-	ds := set.Decide(stale, env)
-	if len(ds) != 1 || ds[0].Rule != "inactive" || !ds[0].Writes.Stop {
-		t.Errorf("decisions = %v", ds)
+		t.Errorf("turned off: %v", ds)
 	}
 }
 

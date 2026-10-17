@@ -89,3 +89,33 @@ func TestReplayListsDifferences(t *testing.T) {
 		t.Error("a bad line replayed")
 	}
 }
+
+// A record the same as the item's last one but for its time is left out;
+// one whose facts or decision changed is written.
+func TestRecorderLeavesOutRepeats(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions.jsonl")
+	r := NewRecorder(path, 0)
+	write := func(at time.Time, mod func(*Item), decided ...string) {
+		env := testEnv
+		env.Now = at
+		it := Item{Kind: OnPR, Number: 5, Checks: "green"}
+		if mod != nil {
+			mod(&it)
+		}
+		rc := r.Start("prs", env, it)
+		for _, d := range decided {
+			rule, outcome, _ := strings.Cut(d, " ")
+			rc.Decided(rule, outcome)
+		}
+		rc.Finish()
+	}
+	write(now, nil)
+	write(now.Add(2*time.Minute), nil)                                                // the same: left out
+	write(now.Add(4*time.Minute), func(it *Item) { it.Checks = "failing" })           // facts changed
+	write(now.Add(6*time.Minute), func(it *Item) { it.Checks = "failing" }, "ci run") // decision changed
+	write(now.Add(8*time.Minute), func(it *Item) { it.Checks = "failing" }, "ci run") // the same: left out
+	data, _ := os.ReadFile(path)
+	if n := strings.Count(string(data), "\n"); n != 3 {
+		t.Errorf("%d records written, want 3:\n%s", n, data)
+	}
+}
