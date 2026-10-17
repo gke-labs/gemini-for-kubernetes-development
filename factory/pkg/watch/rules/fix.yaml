@@ -1,0 +1,28 @@
+# Mirrors issues/scanner.go queueTask (with queueTasks): an open issue with
+# the trigger label, no closing or linked PR and no workflow named in its
+# body, updated since its last fix ended, is fixed and the PR opened ready
+# (the dispatcher's recipe table, api/recipe.go: fix --apply --action
+# open-pr --pr-labels --input draft=false). The 10m / 20m cooldowns are
+# the scanner's after a success / a failure.
+#
+# Not captured: --pr-labels (copy the issue's labels onto the PR) is a
+# flag of the fix recipe's command, not an input.
+name: fix
+description: Fix a labelled issue and open the PR
+on: issue
+when:
+  labels: {any: ["{{trigger}}"]}
+  linked-pr: none
+  workflow: none
+  updated-since-run: true
+run:
+  recipe: fix
+  apply: open-pr
+  inputs:
+    draft: "false"
+as: coder
+policy:
+  dedupe: item
+  cooldown: {success: 10m, failure: 20m}
+  phase: 3
+expect: [open, no-linked-pr]

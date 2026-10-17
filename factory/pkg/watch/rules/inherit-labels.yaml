@@ -1,0 +1,15 @@
+# Mirrors prs/labels.go syncReferencedIssueLabels: a candidate PR takes
+# the labels of the issues it closes, all but ready-for-human, on every
+# evaluation, before the pr-care group runs.
+#
+# Not captured: the labels to copy are another item's (the closing
+# issues'); {{issue-labels}} names them for the engine. "Every evaluation,
+# before the group" is an ordering the model has no field for.
+name: inherit-labels
+description: Copy the closing issues' labels onto the PR
+on: pr
+when:
+  labels: {any: ["{{trigger}}"], none: ["*/ready-for-human"]}
+run:
+  label: ["{{issue-labels}}"]
+as: watcher

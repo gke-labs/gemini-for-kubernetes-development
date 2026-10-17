@@ -1,0 +1,18 @@
+# Mirrors prs/adoption.go adoptOrphanedBotPRs / adoptOrphanedBotPR: a PR
+# a pool bot authored, without the trigger label or a pool assignee,
+# whose referenced issue has the trigger label, takes the issue's labels
+# and joins the overseer's PRs.
+#
+# Not captured: "the referenced issue has the trigger label" is a fact of
+# another item; the closed set has no predicate on a linked issue's
+# labels, so the engine checks it as part of this rule's action. "Without
+# a pool assignee" is a negation the set does not have either.
+name: adopt-pr
+description: Adopt a bot's PR whose issue is the overseer's
+on: pr
+when:
+  author: pool
+  labels: {none: ["{{trigger}}"]}
+run:
+  label: ["{{issue-labels}}"]
+as: watcher

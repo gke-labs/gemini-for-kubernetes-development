@@ -1,0 +1,26 @@
+# Mirrors issues/scanner.go queueTask (with queueTasks): an open issue with
+# the trigger label whose body names a workflow (an .agents/ definition
+# with mode: workflow) takes the workflow's next step, as `factory agent
+# create --agent <definition> --session-id issue-<n>` (the dispatcher's
+# agent-chore, dispatcher/cli_runner.go BuildArgs), which runs the
+# workflow recipe. There is no updated-since gate: a workflow steps every
+# cooldown while the issue is open.
+#
+# Not captured: the success cooldown is the workflow definition's own
+# (10m when it sets none), read from the file; this rule says the
+# default. The definition named in the body is a fact the engine reads,
+# not an input here.
+name: workflow
+description: Take a workflow's next step on the issue that names it
+on: issue
+when:
+  labels: {any: ["{{trigger}}"]}
+  workflow: any
+run:
+  recipe: workflow
+as: agent
+policy:
+  dedupe: item
+  cooldown: {success: 10m, failure: 20m}
+  phase: 4
+expect: [open]

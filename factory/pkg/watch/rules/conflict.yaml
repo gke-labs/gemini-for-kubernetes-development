@@ -1,0 +1,19 @@
+# Mirrors prs/handlers.go handlePRIterate: a PR that does not merge is
+# rebased by its author (care-rebase --apply --action post-replies,
+# api/recipe.go), once per head. Second in the pr-care group
+# (prs/scanner.go evaluate).
+name: conflict
+description: Rebase a PR that conflicts with its base
+on: pr
+group: {name: pr-care, order: 20}
+when:
+  labels: {any: ["{{trigger}}"]}
+  mergeable: false
+run:
+  recipe: care-rebase
+  apply: post-replies
+as: author
+policy:
+  dedupe: head
+  phase: 2
+expect: [open, head]
