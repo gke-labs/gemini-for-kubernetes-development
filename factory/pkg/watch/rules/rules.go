@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -37,6 +38,23 @@ const (
 	OnEvent = "event"
 )
 
+// The listings a rule's items come from (Rule.From).
+const (
+	// FromLabelled is the open items with the trigger label.
+	FromLabelled = "labelled"
+	// FromAssigned is the open items assigned to a bot of the pool.
+	FromAssigned = "assigned"
+	// FromOpenedByWatcher is the open issues the watcher's own login
+	// opened (a workflow's, a chore's, a fan-out's).
+	FromOpenedByWatcher = "opened-by-watcher"
+)
+
+// fromKinds are the listings each kind of rule may come from.
+var fromKinds = map[string][]string{
+	OnIssue: {FromLabelled, FromAssigned, FromOpenedByWatcher},
+	OnPR:    {FromLabelled, FromAssigned},
+}
+
 // Floors a rule's policy cannot go past: a repository's rule that drops its
 // give-up or its cooldown would loop (design: Compared to today).
 const (
@@ -57,6 +75,11 @@ type Rule struct {
 	// file sets it, and a repository's file of the same name with only a
 	// name and enabled turns factory's rule on or off (IsToggle, Overlay).
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// From are the listings the rule's items come from, any of them: the
+	// overseer's own ways of being pointed at an item (FromLabelled,
+	// FromAssigned, FromOpenedByWatcher). Unset, the rule's predicates must
+	// narrow the listing themselves.
+	From []string `yaml:"from,omitempty" json:"from,omitempty"`
 	// Group makes the rule one of an ordered, exclusive set on an item.
 	Group *Group `yaml:"group,omitempty" json:"group,omitempty"`
 	// When is the condition: every predicate set must hold.
@@ -101,35 +124,92 @@ type Labels struct {
 	None []string `yaml:"none,omitempty" json:"none,omitempty"`
 }
 
-// Attempts holds while the rule's runs on the item since Since (head: the
-// PR's head changed; human: a trusted human spoke) are fewer than Max.
+// Attempts holds while the rule's runs on the item since Since are fewer
+// than Max.
 type Attempts struct {
 	Rule  string `yaml:"rule,omitempty" json:"rule,omitempty"`
-	Since string `yaml:"since,omitempty" json:"since,omitempty"`
+	Since Since  `yaml:"since,omitempty" json:"since,omitempty"`
 	Max   int    `yaml:"max" json:"max"`
 }
 
+// Since is what resets a count: the latest of its events (head: the PR's
+// head changed; human: a trusted human commented; pause: the stop label
+// was taken off). One event or a list of them; none counts every run.
+type Since []string
+
+// UnmarshalYAML reads one event or a list.
+func (s *Since) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		var one string
+		if err := n.Decode(&one); err != nil {
+			return err
+		}
+		*s = nil
+		if one != "" {
+			*s = Since{one}
+		}
+		return nil
+	}
+	var many []string
+	if err := n.Decode(&many); err != nil {
+		return err
+	}
+	*s = many
+	return nil
+}
+
+// MarshalYAML writes one event as a scalar, more as a list.
+func (s Since) MarshalYAML() (interface{}, error) {
+	if len(s) == 1 {
+		return s[0], nil
+	}
+	return []string(s), nil
+}
+
+// String is the events, joined with +.
+func (s Since) String() string { return strings.Join(s, "+") }
+
+// Closes matches the issues a PR closes: Labels against the labels they
+// carry between them.
+type Closes struct {
+	Labels *Labels `yaml:"labels,omitempty" json:"labels,omitempty"`
+}
+
 // When is the closed set of predicates (design: Predicates). A nil or empty
-// field is not checked.
+// field is not checked; every field set must hold.
 type When struct {
+	// AnyOf holds when one of its predicate sets does, besides the rest:
+	// an item may come to a rule several ways (an issue labelled, assigned
+	// to the pool, or opened by the watcher). One level: a set in AnyOf
+	// has no AnyOf of its own.
+	AnyOf []When `yaml:"any-of,omitempty" json:"anyOf,omitempty"`
+
 	// Any item.
 	Labels          *Labels   `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Assignee        string    `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | none | owner
+	Assignee        string    `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | not-pool | none | owner
 	Author          string    `yaml:"author,omitempty" json:"author,omitempty"`     // pool | trusted
 	Stopped         *bool     `yaml:"stopped,omitempty" json:"stopped,omitempty"`
 	UpdatedSinceRun *bool     `yaml:"updated-since-run,omitempty" json:"updated-since-run,omitempty"`
 	Attempts        *Attempts `yaml:"attempts,omitempty" json:"attempts,omitempty"`
+	// LastRun is the outcome of the rule's last run on the item (on its
+	// head, for a rule deduped by head): failed.
+	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
 
 	// Issues.
 	LinkedPR string `yaml:"linked-pr,omitempty" json:"linked-pr,omitempty"` // none | open
 	Workflow string `yaml:"workflow,omitempty" json:"workflow,omitempty"`   // none | any
 	OpenedBy string `yaml:"opened-by,omitempty" json:"opened-by,omitempty"` // watcher
 	Fanout   string `yaml:"fanout,omitempty" json:"fanout,omitempty"`       // none | parent | child
+	// FanoutHeld is whether a fan-out holds the issue back: it is a
+	// fan-out's parent, or a child the fan-out has not labelled yet.
+	FanoutHeld *bool `yaml:"fanout-held,omitempty" json:"fanout-held,omitempty"`
 
 	// Pull requests.
-	Checks         string   `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
-	Mergeable      *bool    `yaml:"mergeable,omitempty" json:"mergeable,omitempty"`
-	Feedback       string   `yaml:"feedback,omitempty" json:"feedback,omitempty"` // new-trusted
+	Checks    string `yaml:"checks,omitempty" json:"checks,omitempty"` // failing | pending | green
+	Mergeable *bool  `yaml:"mergeable,omitempty" json:"mergeable,omitempty"`
+	Feedback  string `yaml:"feedback,omitempty" json:"feedback,omitempty"` // new-trusted | none
+	// Closes matches the issues the PR closes, between them.
+	Closes         *Closes  `yaml:"closes,omitempty" json:"closes,omitempty"`
 	ReviewedAtHead *bool    `yaml:"reviewed-at-head,omitempty" json:"reviewed-at-head,omitempty"`
 	Approved       *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
 	Draft          *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
@@ -159,6 +239,9 @@ type Run struct {
 	Unassign string   `yaml:"unassign,omitempty" json:"unassign,omitempty"`
 	// Stop adds the stop label, with a comment saying why.
 	Stop *Stop `yaml:"stop,omitempty" json:"stop,omitempty"`
+	// Drop drops the item's queued tasks, from the queue and again at
+	// dispatch.
+	Drop bool `yaml:"drop,omitempty" json:"drop,omitempty"`
 }
 
 // Stop is the give-up action: the stop label and a comment.
@@ -167,7 +250,7 @@ type Stop struct {
 }
 
 func (r Run) writes() bool {
-	return len(r.Label) > 0 || len(r.Unlabel) > 0 || r.Comment != "" || r.Assign != "" || r.Unassign != "" || r.Stop != nil
+	return len(r.Label) > 0 || len(r.Unlabel) > 0 || r.Comment != "" || r.Assign != "" || r.Unassign != "" || r.Stop != nil || r.Drop
 }
 
 // Policy is a rule's dedupe, cooldown, give-up and ordering.
@@ -182,6 +265,13 @@ type Policy struct {
 	// IdentityPin pins the run to the bot that owns the item's sandbox;
 	// unset is on.
 	IdentityPin *bool `yaml:"identity-pin,omitempty" json:"identity-pin,omitempty"`
+	// Before is a group the rule is evaluated ahead of on an item, every
+	// time: its writes are what the group's rules see (inherit-labels
+	// before pr-care).
+	Before string `yaml:"before,omitempty" json:"before,omitempty"`
+	// SkipCooldown queues the rule's task inside the cooldown of the rule
+	// whose task it is (nudge stepping a workflow at once).
+	SkipCooldown bool `yaml:"skip-cooldown,omitempty" json:"skip-cooldown,omitempty"`
 }
 
 // Cooldown is how long after a run, by its outcome, the rule waits before
@@ -189,28 +279,51 @@ type Policy struct {
 type Cooldown struct {
 	Success Duration `yaml:"success,omitempty" json:"success,omitzero"`
 	Failure Duration `yaml:"failure,omitempty" json:"failure,omitzero"`
+	// ResetOn ends the cooldown early: head, when the PR's head changes.
+	ResetOn []string `yaml:"reset-on,omitempty" json:"reset-on,omitempty"`
+	// SkipWhen is an item the cooldown does not hold back (a PR assigned
+	// to the pool explicitly): assignee only.
+	SkipWhen *When `yaml:"skip-when,omitempty" json:"skip-when,omitempty"`
 }
 
 // GiveUp stops the rule on an item after Attempts runs since Since, with
 // Then (stop: the stop label and a comment).
 type GiveUp struct {
 	Attempts int    `yaml:"attempts" json:"attempts"`
-	Since    string `yaml:"since,omitempty" json:"since,omitempty"`
+	Since    Since  `yaml:"since,omitempty" json:"since,omitempty"`
 	Then     string `yaml:"then,omitempty" json:"then,omitempty"`
 	Comment  string `yaml:"comment,omitempty" json:"comment,omitempty"`
 }
 
-// Duration is a time.Duration written as Go writes one ("10m", "2h").
-type Duration struct{ time.Duration }
+// Duration is a time.Duration written as Go writes one ("10m", "2h"), or
+// a reference to one the engine reads ({{pr-inactivity-timeout}}: the
+// overseer's setting; {{workflow-cooldown}}: the workflow definition's).
+type Duration struct {
+	time.Duration
+	Ref string
+}
 
-// UnmarshalYAML reads a duration string.
+// durationRefs are the durations a rule may name rather than state.
+var durationRefs = []string{"{{pr-inactivity-timeout}}", "{{workflow-cooldown}}"}
+
+// IsSet is whether the duration is stated or named.
+func (d Duration) IsSet() bool { return d.Duration != 0 || d.Ref != "" }
+
+// UnmarshalYAML reads a duration string, or a reference.
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	var s string
 	if err := n.Decode(&s); err != nil {
 		return err
 	}
+	d.Duration, d.Ref = 0, ""
 	if s == "" {
-		d.Duration = 0
+		return nil
+	}
+	if strings.HasPrefix(s, "{{") {
+		if !slices.Contains(durationRefs, s) {
+			return fmt.Errorf("line %d: %q is not a duration factory reads (%s)", n.Line, s, strings.Join(durationRefs, ", "))
+		}
+		d.Ref = s
 		return nil
 	}
 	v, err := time.ParseDuration(s)
@@ -221,8 +334,11 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// String writes 10m and 2h, not 10m0s and 2h0m0s.
+// String writes 10m and 2h, not 10m0s and 2h0m0s, or the reference.
 func (d Duration) String() string {
+	if d.Ref != "" {
+		return d.Ref
+	}
 	s := d.Duration.String()
 	if strings.HasSuffix(s, "m0s") {
 		s = strings.TrimSuffix(s, "0s")
@@ -235,14 +351,14 @@ func (d Duration) String() string {
 
 // MarshalYAML writes the duration string, nothing when zero.
 func (d Duration) MarshalYAML() (interface{}, error) {
-	if d.Duration == 0 {
+	if !d.IsSet() {
 		return nil, nil
 	}
 	return d.String(), nil
 }
 
 // IsZero lets omitempty leave a zero duration out.
-func (d Duration) IsZero() bool { return d.Duration == 0 }
+func (d Duration) IsZero() bool { return !d.IsSet() }
 
 // MarshalJSON writes the duration string.
 func (d Duration) MarshalJSON() ([]byte, error) {
@@ -265,9 +381,9 @@ func Parse(data []byte) (*Rule, error) {
 
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
-	"*":        {"labels", "assignee", "author", "stopped", "updated-since-run", "attempts"},
-	OnIssue:    {"linked-pr", "workflow", "opened-by", "fanout"},
-	OnPR:       {"checks", "mergeable", "feedback", "reviewed-at-head", "approved", "draft", "merge-queue", "inactive-for"},
+	"*":        {"any-of", "labels", "assignee", "author", "stopped", "updated-since-run", "attempts", "last-run"},
+	OnIssue:    {"linked-pr", "workflow", "opened-by", "fanout", "fanout-held"},
+	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "approved", "draft", "merge-queue", "inactive-for"},
 	OnSchedule: {"due"},
 	OnEvent:    {"event"},
 }
@@ -280,24 +396,28 @@ func (w When) set() []string {
 			out = append(out, name)
 		}
 	}
+	add("any-of", len(w.AnyOf) > 0)
 	add("labels", w.Labels != nil)
 	add("assignee", w.Assignee != "")
 	add("author", w.Author != "")
 	add("stopped", w.Stopped != nil)
 	add("updated-since-run", w.UpdatedSinceRun != nil)
 	add("attempts", w.Attempts != nil)
+	add("last-run", w.LastRun != "")
 	add("linked-pr", w.LinkedPR != "")
 	add("workflow", w.Workflow != "")
 	add("opened-by", w.OpenedBy != "")
 	add("fanout", w.Fanout != "")
+	add("fanout-held", w.FanoutHeld != nil)
 	add("checks", w.Checks != "")
 	add("mergeable", w.Mergeable != nil)
 	add("feedback", w.Feedback != "")
+	add("closes", w.Closes != nil)
 	add("reviewed-at-head", w.ReviewedAtHead != nil)
 	add("approved", w.Approved != nil)
 	add("draft", w.Draft != nil)
 	add("merge-queue", w.MergeQueue != nil)
-	add("inactive-for", w.InactiveFor.Duration != 0)
+	add("inactive-for", w.InactiveFor.IsSet())
 	add("due", w.Due != nil)
 	add("event", w.Event != "")
 	return out
@@ -305,18 +425,20 @@ func (w When) set() []string {
 
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
-	"assignee":  {"pool", "none", "owner"},
+	"assignee":  {"pool", "not-pool", "none", "owner"},
 	"author":    {"pool", "trusted"},
 	"linked-pr": {"none", "open"},
 	"workflow":  {"none", "any"},
 	"opened-by": {"watcher"},
 	"fanout":    {"none", "parent", "child"},
 	"checks":    {"failing", "pending", "green"},
-	"feedback":  {"new-trusted"},
+	"feedback":  {"new-trusted", "none"},
+	"last-run":  {"failed"},
+	"reset-on":  {"head"},
 	"event":     {"linked-issue-closed"},
 	"as":        {"coder", "agent", "reviewer", "author", "watcher"},
 	"dedupe":    {"item", "head"},
-	"since":     {"head", "human"},
+	"since":     {"head", "human", "pause"},
 	"then":      {"stop"},
 }
 
@@ -325,6 +447,148 @@ func checkEnum(field, value string) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %q is not one of %s", field, value, strings.Join(enums[field], ", "))
+}
+
+func checkSince(s Since) error {
+	for _, e := range s {
+		if err := checkEnum("since", e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validate checks a predicate set: each predicate one a rule on on may
+// set, its value one of the predicate's, and any-of one level deep. Errors
+// start with the field's path, for the caller to prefix.
+func (w When) validate(on string, nested bool) error {
+	allowed := append(slices.Clone(predicates["*"]), predicates[on]...)
+	for _, p := range w.set() {
+		if !slices.Contains(allowed, p) {
+			return fmt.Errorf(".%s is not a predicate of a rule on %s", p, on)
+		}
+	}
+	for field, value := range map[string]string{
+		"assignee": w.Assignee, "author": w.Author, "linked-pr": w.LinkedPR,
+		"workflow": w.Workflow, "opened-by": w.OpenedBy, "fanout": w.Fanout,
+		"checks": w.Checks, "feedback": w.Feedback, "event": w.Event, "last-run": w.LastRun,
+	} {
+		if err := checkEnum(field, value); err != nil {
+			return fmt.Errorf(".%v", err)
+		}
+	}
+	if a := w.Attempts; a != nil {
+		if a.Max < 1 || a.Max > MaxAttempts {
+			return fmt.Errorf(".attempts.max %d: want 1 to %d", a.Max, MaxAttempts)
+		}
+		if err := checkSince(a.Since); err != nil {
+			return fmt.Errorf(".attempts: %v", err)
+		}
+	}
+	if c := w.Closes; c != nil && c.Labels == nil {
+		return errors.New(".closes needs labels")
+	}
+	if len(w.AnyOf) > 0 {
+		if nested {
+			return errors.New(".any-of: a set in any-of has no any-of of its own")
+		}
+		if len(w.AnyOf) < 2 {
+			return errors.New(".any-of: give two sets or more (one is just its predicates)")
+		}
+		for i, alt := range w.AnyOf {
+			if len(alt.set()) == 0 {
+				return fmt.Errorf(".any-of[%d] is empty", i)
+			}
+			if err := alt.validate(on, true); err != nil {
+				return fmt.Errorf(".any-of[%d]%v", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+// narrows is whether a listing can find the items the predicates hold for
+// without listing every open item: a set narrows by itself, or every way
+// into it (any-of) does.
+func (w When) narrows() bool {
+	if w.Assignee == "pool" || w.Assignee == "owner" || w.Author != "" || w.OpenedBy != "" ||
+		(w.Labels != nil && (len(w.Labels.Any) > 0 || len(w.Labels.All) > 0)) {
+		return true
+	}
+	if len(w.AnyOf) == 0 {
+		return false
+	}
+	for _, alt := range w.AnyOf {
+		if !alt.narrows() {
+			return false
+		}
+	}
+	return true
+}
+
+// placeholderRe finds a {{name}} in a rule's strings.
+var placeholderRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
+
+// Placeholders are the names the engine fills in, by where a rule may use
+// them: labels (in when and in the label writes), assignees (assign and
+// unassign) and recipe inputs.
+var (
+	labelPlaceholders = map[string][]string{
+		"*":  {"{{trigger}}"},
+		OnPR: {"{{closing-issue-labels}}"},
+	}
+	assigneePlaceholders = map[string][]string{
+		"*":  {"{{watcher}}", "{{pool}}"},
+		OnPR: {"{{closing-issue-assignees}}"},
+	}
+	inputPlaceholders = map[string][]string{
+		"*":     {"{{trigger}}"},
+		OnIssue: {"{{pr-labels}}"},
+	}
+)
+
+// checkPlaceholders checks every {{name}} the rule uses is one the engine
+// fills in where it is used.
+func (r *Rule) checkPlaceholders() error {
+	check := func(where string, vocab map[string][]string, values ...string) error {
+		ok := append(slices.Clone(vocab["*"]), vocab[r.On]...)
+		for _, v := range values {
+			for _, p := range placeholderRe.FindAllString(v, -1) {
+				if !slices.Contains(ok, p) {
+					return fmt.Errorf("%s: %s is not one of %s", where, p, strings.Join(ok, ", "))
+				}
+			}
+		}
+		return nil
+	}
+	var labels []string
+	addLabels := func(l *Labels) {
+		if l != nil {
+			labels = append(labels, l.Any...)
+			labels = append(labels, l.All...)
+			labels = append(labels, l.None...)
+		}
+	}
+	for _, w := range append([]When{r.When}, r.When.AnyOf...) {
+		addLabels(w.Labels)
+		if w.Closes != nil {
+			addLabels(w.Closes.Labels)
+		}
+	}
+	if err := check("when labels", map[string][]string{"*": labelPlaceholders["*"]}, labels...); err != nil {
+		return err
+	}
+	if err := check("run.label", labelPlaceholders, append(slices.Clone(r.Run.Label), r.Run.Unlabel...)...); err != nil {
+		return err
+	}
+	if err := check("run.assign", assigneePlaceholders, r.Run.Assign, r.Run.Unassign); err != nil {
+		return err
+	}
+	inputs := make([]string, 0, len(r.Run.Inputs))
+	for _, v := range r.Run.Inputs {
+		inputs = append(inputs, v)
+	}
+	return check("run.inputs", inputPlaceholders, inputs...)
 }
 
 // Validate checks one rule on its own: its kind, its predicates for that
@@ -339,43 +603,31 @@ func (r *Rule) Validate() error {
 	if _, ok := predicates[r.On]; !ok || r.On == "*" {
 		return fail("on: %q is not one of %s, %s, %s, %s", r.On, OnIssue, OnPR, OnSchedule, OnEvent)
 	}
-	allowed := append(slices.Clone(predicates["*"]), predicates[r.On]...)
-	set := r.When.set()
-	for _, p := range set {
-		if !slices.Contains(allowed, p) {
-			return fail("when.%s is not a predicate of a rule on %s", p, r.On)
-		}
+	if err := r.When.validate(r.On, false); err != nil {
+		return fail("when%v", err)
 	}
-	for field, value := range map[string]string{
-		"assignee": r.When.Assignee, "author": r.When.Author, "linked-pr": r.When.LinkedPR,
-		"workflow": r.When.Workflow, "opened-by": r.When.OpenedBy, "fanout": r.When.Fanout,
-		"checks": r.When.Checks, "feedback": r.When.Feedback, "event": r.When.Event,
-		"as": r.As, "dedupe": r.Policy.Dedupe,
-	} {
+	for field, value := range map[string]string{"as": r.As, "dedupe": r.Policy.Dedupe} {
 		if err := checkEnum(field, value); err != nil {
 			return fail("%v", err)
 		}
 	}
 	// A rule on issues or PRs is listed from GitHub: it needs a predicate a
 	// listing narrows on, or it would list every open item (design: the
-	// GitHub cost and the repository's rules risks).
-	if r.On == OnIssue || r.On == OnPR {
-		narrows := r.When.Assignee == "pool" || r.When.Assignee == "owner" || r.When.Author != "" || r.When.OpenedBy != "" ||
-			(r.When.Labels != nil && (len(r.When.Labels.Any) > 0 || len(r.When.Labels.All) > 0))
-		if !narrows {
-			return fail("when needs a predicate a listing can narrow on: labels (any or all), assignee (pool or owner), author or opened-by")
+	// GitHub cost and the repository's rules risks). With any-of, every
+	// way in must narrow.
+	for _, f := range r.From {
+		if !slices.Contains(fromKinds[r.On], f) {
+			return fail("from: %q is not a listing of rules on %s (%s)", f, r.On, strings.Join(fromKinds[r.On], ", "))
 		}
+	}
+	if (r.On == OnIssue || r.On == OnPR) && len(r.From) == 0 && !r.When.narrows() {
+		return fail("give from, or a predicate a listing can narrow on: labels (any or all), assignee (pool or owner), author or opened-by - in every any-of set, if not beside them")
 	}
 	if r.On == OnEvent && r.When.Event == "" {
 		return fail("a rule on events needs when.event")
 	}
-	if a := r.When.Attempts; a != nil {
-		if a.Max < 1 || a.Max > MaxAttempts {
-			return fail("when.attempts.max %d: want 1 to %d", a.Max, MaxAttempts)
-		}
-		if err := checkEnum("since", a.Since); err != nil {
-			return fail("when.attempts: %v", err)
-		}
+	if err := r.checkPlaceholders(); err != nil {
+		return fail("%v", err)
 	}
 
 	switch {
@@ -400,12 +652,28 @@ func (r *Rule) Validate() error {
 				return fail("policy.cooldown %s is under the floor of %s", d, MinCooldown)
 			}
 		}
+		for _, e := range c.ResetOn {
+			if err := checkEnum("reset-on", e); err != nil {
+				return fail("policy.cooldown: %v", err)
+			}
+			if e == "head" && r.On != OnPR {
+				return fail("policy.cooldown.reset-on: head is a PR's")
+			}
+		}
+		if w := c.SkipWhen; w != nil {
+			if got := w.set(); len(got) != 1 || got[0] != "assignee" {
+				return fail("policy.cooldown.skip-when says assignee, and only that")
+			}
+			if err := checkEnum("assignee", w.Assignee); err != nil {
+				return fail("policy.cooldown.skip-when: %v", err)
+			}
+		}
 	}
 	if g := r.Policy.GiveUp; g != nil {
 		if g.Attempts < 1 || g.Attempts > MaxAttempts {
 			return fail("policy.give-up.attempts %d: want 1 to %d", g.Attempts, MaxAttempts)
 		}
-		if err := checkEnum("since", g.Since); err != nil {
+		if err := checkSince(g.Since); err != nil {
 			return fail("policy.give-up: %v", err)
 		}
 		if err := checkEnum("then", g.Then); err != nil {
@@ -473,6 +741,19 @@ func (s Set) Validate() error {
 			return fmt.Errorf("group %s: %s and %s share order %d", r.Group.Name, g.order[r.Group.Order], r.Name, r.Group.Order)
 		default:
 			g.order[r.Group.Order] = r.Name
+		}
+	}
+	for _, r := range s {
+		if b := r.Policy.Before; b != "" {
+			g := groups[b]
+			switch {
+			case g == nil:
+				return fmt.Errorf("rule %s: policy.before: there is no group %s", r.Name, b)
+			case g.on != r.On:
+				return fmt.Errorf("rule %s: policy.before: group %s holds rules on %s, not %s", r.Name, b, g.on, r.On)
+			case r.Group != nil:
+				return fmt.Errorf("rule %s: policy.before: a rule in a group is ordered by it", r.Name)
+			}
 		}
 	}
 	return nil

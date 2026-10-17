@@ -1,9 +1,8 @@
 # Mirrors issues/nudge.go NudgeLinkedWorkflows / nudge: when the sandbox
 # GC confirms an issue closed, the workflows on the issues that link it
-# take their next step at once, skipping their cooldown.
+# take their next step at once, inside the workflow rule's cooldown.
 #
-# Not captured: the event comes from the GC plugin, not a listing; the
-# cooldown skip is the event's, the model has no field for it.
+# The event comes from the GC plugin, not a listing.
 name: nudge
 description: Step a workflow when an issue it links closes
 on: event
@@ -12,3 +11,5 @@ when:
 run:
   recipe: workflow
 as: agent
+policy:
+  skip-cooldown: true

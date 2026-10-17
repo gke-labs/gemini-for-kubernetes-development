@@ -233,11 +233,33 @@ the engine does not offer. From today's rules:
 
 | on | predicates |
 |---|---|
-| any item | `labels: {any, all, none}`; `number: {min}`; `author: {in: pool, trusted}`; `assignee: {in: pool, none, owner}`; `updated-since-run`; `stopped` (the stop label) |
-| issue | `linked-pr: none\|open`; `workflow: none\|any\|<name>`; `opened-by: watcher`; `fanout: parent\|child` |
-| PR | `checks: failing\|pending\|green`; `mergeable: false\|true`; `feedback: new-trusted`; `reviewed-at-head`; `approved`; `draft`; `merge-queue`; `inactive-for: <duration>` |
+| any item | `labels: {any, all, none}`; `author: pool\|trusted`; `assignee: pool\|not-pool\|none\|owner`; `updated-since-run`; `stopped` (the stop label); `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
+| issue | `linked-pr: none\|open`; `workflow: none\|any`; `opened-by: watcher`; `fanout: none\|parent\|child`; `fanout-held` (a parent, or a child the fan-out has not labelled) |
+| PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `merge-queue`; `inactive-for: <duration>` |
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
-| any | `attempts: {rule, since: head\|human, max}` |
+| any | `attempts: {rule, since: [head, human, pause], max}`; `any-of: [<predicates>, …]` |
+
+**`from`** names the listings a rule's items come from, any of them:
+`labelled` (the trigger label), `assigned` (a bot of the pool) and, on
+issues, `opened-by-watcher`. They are the overseer's ways of being
+pointed at an item, and what the one scan lists; a rule without `from`
+must narrow the listing with a predicate (labels, a pool or owner
+assignee, an author). Adoption is not a rule: an issue the watcher
+opened is fix's third listing, and the label and assignee adoption wrote
+are fix's own (the label when queued, the coder at the claim).
+
+**`any-of`** holds when one of its predicate sets does, beside the rest:
+comments runs on new trusted feedback or a failed last run; ready's
+review is satisfied three ways. One level deep.
+
+**Placeholders** are a closed set the engine fills in, by where they
+appear: in labels `{{trigger}}` and, writing to a PR,
+`{{closing-issue-labels}}`; in assignees `{{watcher}}`, `{{pool}}` and,
+on a PR, `{{closing-issue-assignees}}`; in an issue recipe's inputs
+`{{pr-labels}}` (the trigger, the configuration's labels and the issue's,
+as `--pr-labels`). A duration may name the overseer's
+`{{pr-inactivity-timeout}}` or the workflow definition's
+`{{workflow-cooldown}}`. Any other name is an error when the rule loads.
 
 `attempts` replaces counting the bot's own comments: the engine records
 each run of a rule on an item (the queue's processed tasks already do),
@@ -254,7 +276,7 @@ generic-board-recipes.md, step 7) use the same vocabulary for their
   does for the board). `agent create` becomes the `agent` or `workflow`
   recipe, which it already picks.
 - **GitHub writes:** `label`, `unlabel`, `comment` (once, by marker),
-  `react`, `assign`, `unassign`. The adoption, inheritance, readiness,
+  `react`, `assign`, `unassign`. PR adoption, inheritance, readiness,
   inactivity and give-up rules are these alone.
 - **`stop`:** the stop label and a comment saying why, which is how
   every give-up ends today.
@@ -271,11 +293,20 @@ Every rule has defaults, overridable per rule:
 ```yaml
 policy:
   dedupe: item          # one task per item and rule; or head (once per head SHA)
-  cooldown: {success: 10m, failure: 20m}
-  give-up: {attempts: 3, since: head, then: stop}
+  cooldown:
+    success: 10m
+    failure: 20m
+    reset-on: [head]          # a new head ends it early (ci)
+    skip-when: {assignee: pool}   # not for a PR assigned to the pool explicitly (ci)
+  give-up: {attempts: 3, since: [head, human, pause], then: stop}
   phase: 3              # ordering after the priority label
   identity-pin: true
+  before: pr-care       # evaluated ahead of a group, every time (inherit-labels)
+  skip-cooldown: true   # queued inside its task's cooldown (nudge)
 ```
+
+`run: {drop: true}` drops an item's queued tasks; the stop label does it
+for every rule, as an engine gate rather than a rule.
 
 The global ones stay global: drain, the stop label, `minNumber`, trust,
 `--max-pending`, one task per sandbox.
@@ -581,7 +612,11 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 
 **Phase 2, the engine in shadow:**
 
-- 2a: the engine, the predicates and groups, and the built-in rules as
+- 2a: the model and the prebaked rules (2a-1, #1996); the model's gaps
+  closed and the files exact (2a-2a: `from`, `any-of`, `closes`,
+  `last-run`, `fanout-held`, resets, placeholders; adoption folded into
+  fix); the evaluator (2a-2b); replay tests (2a-3). In all:
+  the engine, the predicates and groups, and the built-in rules as
   prebaked files (`factory/pkg/watch/rules/*.yaml`, embedded), read
   from the start, so there is no rules-in-Go stage to move off later;
   `factory watch rules` lists them; replay tests on recorded KCC
@@ -599,7 +634,7 @@ first:
 1. `conflict`: rare, and a rebase is easy to check.
 2. `ci`, then `review`: replies and pending reviews.
 3. `comments`.
-4. `ready`, adoption, label inheritance, inactivity: writes people see.
+4. `ready`, PR adoption (shipped off), label inheritance, inactivity: writes people see.
 5. `fix`, `workflow`: they open PRs and spend the most.
 
 Each rule moves when its shadow week is clean, and moves back on any

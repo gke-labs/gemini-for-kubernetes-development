@@ -3,10 +3,10 @@
 # stop label drops the item's queued tasks, at scan and again at
 # dispatch.
 #
-# Not captured: dropping queued tasks is not an action of the model (run
-# is a recipe or GitHub writes); the stop label is a global gate of the
-# engine, and this rule only names it. It is here to be listed, and its
-# write (the label) is what give-up's then: stop adds.
+# Off as a rule: the stop label is a gate of the engine on every rule
+# (no rule runs on a stopped item, and its queued tasks drop), not one
+# rule among others; this file names it and what it does. Its label is
+# what give-up's then: stop adds.
 name: stop
 description: The stop label drops an item's queued tasks
 on: issue
@@ -14,5 +14,5 @@ enabled: false
 when:
   labels: {any: ["*/stop"]}
 run:
-  stop: {}
+  drop: true
 as: watcher

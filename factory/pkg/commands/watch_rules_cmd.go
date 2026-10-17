@@ -108,9 +108,9 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 		return fmt.Errorf("unknown output format %q (want yaml or json)", output)
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tON\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
+	fmt.Fprintln(w, "NAME\tON\tFROM\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
 	for _, r := range ordered {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, orDash(strings.Join(r.From, ",")), ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
 	}
 	return w.Flush()
 }
@@ -190,6 +190,7 @@ func ruleRun(r *rules.Rule) string {
 	add("assign", r.Run.Assign != "")
 	add("unassign", r.Run.Unassign != "")
 	add("stop", r.Run.Stop != nil)
+	add("drop", r.Run.Drop)
 	return strings.Join(writes, ",")
 }
 
@@ -201,17 +202,26 @@ func rulePolicy(r *rules.Rule) string {
 	}
 	if c := p.Cooldown; c != nil {
 		cd := "cooldown=" + c.Success.String()
-		if c.Failure.Duration != 0 {
+		if c.Failure.IsSet() {
 			cd += "/" + c.Failure.String()
+		}
+		if len(c.ResetOn) > 0 {
+			cd += "(reset:" + strings.Join(c.ResetOn, ",") + ")"
 		}
 		parts = append(parts, cd)
 	}
 	if g := p.GiveUp; g != nil {
 		gu := fmt.Sprintf("give-up=%d", g.Attempts)
-		if g.Since != "" {
-			gu += "/" + g.Since
+		if len(g.Since) > 0 {
+			gu += "/" + g.Since.String()
 		}
 		parts = append(parts, gu)
+	}
+	if p.Before != "" {
+		parts = append(parts, "before="+p.Before)
+	}
+	if p.SkipCooldown {
+		parts = append(parts, "skip-cooldown")
 	}
 	if p.Phase != 0 {
 		parts = append(parts, fmt.Sprintf("phase=%d", p.Phase))

@@ -1,17 +1,24 @@
-# Mirrors issues/scanner.go queueTask (with queueTasks): an open issue with
-# the trigger label, no closing or linked PR and no workflow named in its
-# body, updated since its last fix ended, is fixed and the PR opened ready
-# (the dispatcher's recipe table, api/recipe.go: fix --apply --action
-# open-pr --pr-labels --input draft=false). The 10m / 20m cooldowns are
-# the scanner's after a success / a failure.
+# Mirrors issues/scanner.go queueTask (with queueTasks) and issues/scan.go
+# scanAssigned / adoptCreatedIssues: an open issue the overseer is pointed
+# at - labelled with the trigger, assigned to the pool, or opened by the
+# watcher's own login - not held back by a fan-out, with no closing or
+# linked PR and no workflow named in its body, updated since its last fix
+# ended, is fixed and the PR opened ready (the dispatcher's recipe table,
+# api/recipe.go: fix --apply --action open-pr --pr-labels --input
+# draft=false). The 10m / 20m cooldowns are the scanner's after a success
+# / a failure.
 #
-# Not captured: --pr-labels (copy the issue's labels onto the PR) is a
-# flag of the fix recipe's command, not an input.
+# An issue without the trigger label gets it when its task is queued
+# (applyTriggerLabel), and the coder the dispatcher picks is assigned when
+# the task starts (the claim, which unassigns the watcher). Adoption wrote
+# the same two things earlier - the label, and the watcher as a parking
+# assignee - so it is this rule's third listing rather than a rule.
 name: fix
-description: Fix a labelled issue and open the PR
+description: Fix an issue the overseer is pointed at and open the PR
 on: issue
+from: [labelled, assigned, opened-by-watcher]
 when:
-  labels: {any: ["{{trigger}}"]}
+  fanout-held: false
   linked-pr: none
   workflow: none
   updated-since-run: true
@@ -20,6 +27,7 @@ run:
   apply: open-pr
   inputs:
     draft: "false"
+    labels: "{{pr-labels}}"
 as: coder
 policy:
   dedupe: item

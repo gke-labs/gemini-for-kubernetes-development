@@ -1,23 +1,26 @@
 # Mirrors prs/handlers.go handlePRReview, gated by prs/labels.go
-# shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR with no unresolved
-# feedback, not approved, labelled */review (on itself or an issue it
-# closes), whose head the automated reviewer has not reviewed, is reviewed
-# and the review submitted (review --apply --action submit-review,
+# shouldAutoReviewPR and isPRApprovedOrLGTM: a green PR with no pending
+# trusted feedback, not approved, whose head the automated reviewer has
+# not reviewed, and that wants a review - */review on itself, or, while
+# it is not ready-for-human, on an issue it closes - is reviewed and the
+# review submitted (review --apply --action submit-review,
 # api/recipe.go), once per head. Fourth in the pr-care group
-# (prs/scanner.go evaluate).
-#
-# Not captured: */review on a closing issue rather than the PR is a fact
-# of another item (inherit-labels usually copies it first); the review
-# instructions are the overseer's, passed by the engine.
+# (prs/scanner.go evaluate). The review instructions are the overseer's,
+# passed by the engine.
 name: review
-description: Review a green PR labelled for review
+description: Review a green PR that wants a review
 on: pr
 group: {name: pr-care, order: 40}
+from: [labelled, assigned]
 when:
-  labels: {all: ["*/review"]}
   checks: green
+  feedback: none
   approved: false
   reviewed-at-head: false
+  any-of:
+    - labels: {all: ["*/review"]}
+    - labels: {none: ["*/ready-for-human"]}
+      closes: {labels: {all: ["*/review"]}}
 run:
   recipe: review
   apply: submit-review
