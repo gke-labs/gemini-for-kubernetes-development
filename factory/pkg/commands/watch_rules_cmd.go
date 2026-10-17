@@ -2,8 +2,12 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -17,9 +21,9 @@ import (
 // newWatchRulesCommand lists the watch's rules: factory's prebaked ones,
 // what today's watch does written as rules (factory/design/watch-rules.md).
 func newWatchRulesCommand() *cobra.Command {
-	var repoURL, output string
+	var repoURL, dir, output string
 	cmd := &cobra.Command{
-		Use:   "rules [--url <repo>]",
+		Use:   "rules [--dir <checkout>] [--url <repo>]",
 		Short: "List the watch's rules: what each looks at, runs, and as whom",
 		Long: `List the watch's rules: factory's prebaked rules, one per file, each a
 condition on an issue, a PR, a schedule or an event, and the action taken
@@ -27,25 +31,61 @@ on it (a recipe run, or GitHub writes). A group's rules are ordered and
 exclusive on an item: the first that holds is taken, the last holds when
 no other does. See factory/design/watch-rules.md.
 
+A repository's rules, .agents/rules/<name>.yaml, lie over factory's: a
+file of a factory rule's name replaces it, or, with nothing but its name
+and enabled, turns it on or off:
+
+  name: review
+  enabled: false
+
+--dir lists factory's rules with a local checkout's laid over them, so a
+repository's owner sees what their files change (SOURCE: whose rule it
+is; ENABLED says "(repo)" when the repository's toggle set it).
+
 Nothing evaluates these rules yet: today's watch still runs its scanners.
---url is accepted for a repository's own rules (.agents/rules/), which
-come later; today it lists factory's.
+--url is accepted for a repository's own rules, which the watch reads
+later; today it lists factory's.
 
 Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 		Example: `  factory watch rules
-  factory watch rules -o yaml`,
+  factory watch rules -o yaml
+  factory watch rules --dir .`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			set, err := rules.Builtin()
 			if err != nil {
 				return err
 			}
+			if dir != "" {
+				if set, err = overlayRepoRules(set, dir); err != nil {
+					return err
+				}
+			}
 			return printWatchRules(c.OutOrStdout(), set, output)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
+	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
 	return cmd
+}
+
+// overlayRepoRules lays the rules in a checkout's .agents/rules/ over set.
+// A checkout without the directory has no rules of its own.
+func overlayRepoRules(set rules.Set, checkout string) (rules.Set, error) {
+	dir := filepath.Join(checkout, ".agents", "rules")
+	if info, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return set, nil
+	} else if err != nil {
+		return nil, err
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", dir)
+	}
+	repo, err := rules.Load(os.DirFS(dir))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", dir, err)
+	}
+	return rules.Overlay(set, repo)
 }
 
 // printWatchRules writes the rules as a table, or whole as YAML or JSON.
@@ -68,9 +108,9 @@ func printWatchRules(out io.Writer, set rules.Set, output string) error {
 		return fmt.Errorf("unknown output format %q (want yaml or json)", output)
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tON\tGROUP\tRUN\tAS\tPOLICY\tENABLED")
+	fmt.Fprintln(w, "NAME\tON\tGROUP\tRUN\tAS\tPOLICY\tSOURCE\tENABLED")
 	for _, r := range ordered {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%t\n", r.Name, r.On, ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), r.IsEnabled())
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.On, ruleGroup(r), ruleRun(r), orDash(r.As), rulePolicy(r), orDash(r.Source), ruleEnabled(r))
 	}
 	return w.Flush()
 }
@@ -109,6 +149,15 @@ func orderWatchRules(set rules.Set) []*rules.Rule {
 		return a.Group.Name < b.Group.Name
 	})
 	return out
+}
+
+// ruleEnabled is the rule's enabled, and whose it is when a repository's
+// toggle set it.
+func ruleEnabled(r *rules.Rule) string {
+	if r.EnabledBy != "" && r.EnabledBy != r.Source {
+		return fmt.Sprintf("%t (%s)", r.IsEnabled(), r.EnabledBy)
+	}
+	return fmt.Sprintf("%t", r.IsEnabled())
 }
 
 func ruleGroup(r *rules.Rule) string {

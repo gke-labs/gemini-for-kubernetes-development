@@ -37,6 +37,7 @@ func Builtin() (Set, error) {
 		if r.Name != name {
 			return nil, fmt.Errorf("%s: the rule is named %s; a rule's file is named after it", e.Name(), r.Name)
 		}
+		r.Source = SourceFactory
 		set = append(set, r)
 	}
 	sort.Slice(set, func(i, j int) bool { return set[i].Name < set[j].Name })

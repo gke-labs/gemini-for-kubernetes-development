@@ -349,9 +349,28 @@ repository's recipes:
   `spec.rules.disabled: [review]`, or `enabled: [fix, ci, comments]`;
   `issueMode: disabled` becomes turning off the rules on issues.
 - **A repository's rule replaces the built-in of its name**
-  (`.agents/rules/ci.yaml` with a different give-up), or turns it off
-  (`enabled: false`), or adds a rule of a new name. Rules are read from
-  the default branch only, as repository recipes are.
+  (`.agents/rules/ci.yaml` with a different give-up), or adds a rule of
+  a new name. Rules are read from the default branch only, as repository
+  recipes are.
+- **On or off at every source.** A rule is on unless something turns it
+  off, and three places can, each overriding the one before:
+  1. **factory's file** says the default (`enabled: false` on `inactive`
+     and `stop`, as today's watch has them off);
+  2. **the repository's file** of the same name, with nothing but its
+     name and `enabled`, turns factory's rule off - or on - in code,
+     keeping the rest of it; a repository's owner flips a rule in a
+     reviewed change, without copying it:
+     ```yaml
+     # .agents/rules/review.yaml
+     name: review
+     enabled: false
+     ```
+  3. **the Overseer** (`spec.rules.disabled`, and the engine's modes
+     below), the operator's, has the last word over both.
+
+  `factory watch rules --dir <checkout>` shows the result for a local
+  checkout: whose each rule is (SOURCE) and whose its enabled is
+  ("false (repo)").
 - **A repository's rule can run** only recipes (its own or built-in) and
   the closed set of actions; it cannot add a predicate, an action or a
   source of a new kind.
@@ -600,11 +619,6 @@ the read turned up, saves quota and wasted runs, and makes today's
 give-ups sturdier.
 
 ## Open questions
-
-- **Replacing a built-in:** a repository's recipe may not take a
-  built-in's name; a repository's rule may, above, because changing the
-  overseer's behaviour per repository is the point. Should replacing be
-  allowed outright, or only `enabled: false` plus a rule of a new name?
 
 - **A repository's rules and the bot pool:** a rule runs as a role of
   the overseer's bots. Does a repository get to say which, or only the

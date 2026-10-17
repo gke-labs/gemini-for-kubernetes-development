@@ -3,6 +3,8 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,7 +26,7 @@ func runWatchRules(t *testing.T, args ...string) string {
 func TestWatchRulesTable(t *testing.T) {
 	out := runWatchRules(t)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON GROUP RUN AS POLICY ENABLED" {
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON GROUP RUN AS POLICY SOURCE ENABLED" {
 		t.Fatalf("header = %v", got)
 	}
 	var names []string
@@ -76,5 +78,50 @@ func TestWatchRulesUnknownOutput(t *testing.T) {
 	cmd.SetArgs([]string{"-o", "xml"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "want yaml or json") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// --dir lays a checkout's .agents/rules/ over factory's: the repository
+// turns review off and inactive on with a name and enabled each, and the
+// table says whose each rule and enabled is.
+func TestWatchRulesDirLaysTheRepositorysRulesOver(t *testing.T) {
+	checkout := t.TempDir()
+	dir := filepath.Join(checkout, ".agents", "rules")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"review.yaml":   "name: review\nenabled: false\n",
+		"inactive.yaml": "name: inactive\nenabled: true\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := map[string][]string{}
+	for _, l := range strings.Split(strings.TrimSpace(runWatchRules(t, "--dir", checkout)), "\n")[1:] {
+		f := strings.Fields(l)
+		rows[f[0]] = f
+	}
+	tail := func(name string) string {
+		f := rows[name]
+		if len(f) > 3 && strings.HasPrefix(f[len(f)-1], "(") {
+			return strings.Join(f[len(f)-3:], " ")
+		}
+		return strings.Join(f[len(f)-2:], " ")
+	}
+	for name, want := range map[string]string{
+		"review":   "factory false (repo)",
+		"inactive": "factory true (repo)",
+		"fix":      "factory true",
+	} {
+		if got := tail(name); got != want {
+			t.Errorf("%s: SOURCE ENABLED = %q, want %q", name, got, want)
+		}
+	}
+
+	// A checkout with no rules of its own lists factory's.
+	if out := runWatchRules(t, "--dir", t.TempDir()); strings.Contains(out, "(repo)") {
+		t.Errorf("a checkout without .agents/rules changed a rule:\n%s", out)
 	}
 }

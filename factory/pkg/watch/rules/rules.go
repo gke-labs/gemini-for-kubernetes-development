@@ -53,7 +53,9 @@ type Rule struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// On is what the rule looks at: OnIssue, OnPR, OnSchedule or OnEvent.
 	On string `yaml:"on" json:"on"`
-	// Enabled turns the rule off when false; unset is on.
+	// Enabled turns the rule off when false; unset is on. A rule's own
+	// file sets it, and a repository's file of the same name with only a
+	// name and enabled turns factory's rule on or off (IsToggle, Overlay).
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Group makes the rule one of an ordered, exclusive set on an item.
 	Group *Group `yaml:"group,omitempty" json:"group,omitempty"`
@@ -70,6 +72,12 @@ type Rule struct {
 	// Expect are the facts a queued task is checked against before it
 	// starts (preconditions): head, open, no-linked-pr.
 	Expect []string `yaml:"expect,omitempty" json:"expect,omitempty"`
+
+	// Source is whose rule it is, SourceFactory or SourceRepo, and
+	// EnabledBy whose its Enabled is when a repository's toggle set it;
+	// neither is written in a rule file.
+	Source    string `yaml:"-" json:"source,omitempty"`
+	EnabledBy string `yaml:"-" json:"enabledBy,omitempty"`
 }
 
 // IsEnabled reports whether the rule is on.
