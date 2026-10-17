@@ -240,6 +240,14 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"name":  "FACTORY_GITHUB_CACHE_DIR",
 			"value": "/workspaces/.cache/factory-github",
 		},
+		// The shared scan's snapshot, beside the cache for the same reason:
+		// it only needs to outlive the restarts, which the volume does, and
+		// in the queue directory it would be pushed to the repository's
+		// state branch on every cycle (a megabyte on KCC).
+		map[string]interface{}{
+			"name":  "WATCH_SCAN_STATE",
+			"value": "/workspaces/.cache/factory-watch/scan_state.json",
+		},
 
 		map[string]interface{}{
 			"name":  "POLL_INTERVAL",

@@ -79,6 +79,11 @@ type Flags struct {
 	// incremental set of listings, persisted in the queue directory
 	// (package scan), instead of each listing for itself.
 	SharedScan bool
+	// ScanState is the file the shared scan's snapshot persists in. Empty
+	// keeps it in the queue directory (scan_state.json); the overseer puts
+	// it on its volume outside the queue directory, which run.sh pushes to
+	// a branch of the repository on every cycle.
+	ScanState string
 	// GraphQLPRDetails makes the PR scanner read the details of the pull
 	// requests it evaluates in GraphQL batches (prs.Config.GraphQLPRDetails).
 	GraphQLPRDetails bool
