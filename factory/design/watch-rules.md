@@ -615,7 +615,8 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 - 2a: the model and the prebaked rules (2a-1, #1996); the model's gaps
   closed and the files exact (2a-2a: `from`, `any-of`, `closes`,
   `last-run`, `fanout-held`, resets, placeholders; adoption folded into
-  fix); the evaluator (2a-2b); replay tests (2a-3). In all:
+  fix, #1999); the evaluator (2a-2b: `Set.Decide` over an `Item` of facts
+  and an `Env`, no calls); replay tests (2a-3). In all:
   the engine, the predicates and groups, and the built-in rules as
   prebaked files (`factory/pkg/watch/rules/*.yaml`, embedded), read
   from the start, so there is no rules-in-Go stage to move off later;
