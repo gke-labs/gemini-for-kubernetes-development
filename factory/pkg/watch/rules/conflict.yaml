@@ -8,6 +8,7 @@ on: pr
 group: {name: pr-care, order: 20}
 from: [labelled, assigned]
 when:
+  author: pool
   mergeable: false
 run:
   recipe: care-rebase

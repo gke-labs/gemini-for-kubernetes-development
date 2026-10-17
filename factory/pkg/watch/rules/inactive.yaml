@@ -9,6 +9,7 @@ on: pr
 enabled: false
 from: [labelled, assigned]
 when:
+  author: pool
   inactive-for: "{{pr-inactivity-timeout}}"
   stopped: false
 run:

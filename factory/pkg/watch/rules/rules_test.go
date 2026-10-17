@@ -13,7 +13,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 		t.Fatalf("Builtin: %v", err)
 	}
 	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
-		"inherit-labels", "nudge", "ready", "review", "stop", "workflow"}
+		"inherit-labels", "nudge", "ready", "ready-unreview", "review", "stop", "workflow"}
 	var got []string
 	for _, r := range set {
 		got = append(got, r.Name)
@@ -40,7 +40,7 @@ func TestBuiltinPRCareGroupOrder(t *testing.T) {
 	for _, r := range set.Groups()["pr-care"] {
 		got = append(got, r.Name)
 	}
-	if want := "comments conflict ci review ready"; strings.Join(got, " ") != want {
+	if want := "comments conflict ci review ready ready-unreview"; strings.Join(got, " ") != want {
 		t.Errorf("pr-care = %v, want %s", got, want)
 	}
 }

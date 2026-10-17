@@ -106,6 +106,8 @@ spec:
                       type: array
                   type: object
                 type: object
+              rulesRecord:
+                type: boolean
               sandboxCPULimit:
                 type: string
               sandboxCPURequest:

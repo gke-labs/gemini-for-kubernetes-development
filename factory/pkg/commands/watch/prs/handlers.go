@@ -12,6 +12,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/common"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 // maxInvestigations is how many times CI failures on the same revision are
@@ -79,6 +80,7 @@ func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return
 	} else if running {
+		s.rec.Gated("its sandbox is busy")
 		klog.Infof("Skipping PR #%d rebase because there is an in-flight sandbox %s.", num, sandboxName)
 		return
 	}
@@ -112,6 +114,7 @@ func (s *Scanner) handlePRIterate(ctx context.Context, pc *prContext) {
 	state.lastIteratedSHA = pc.headSHA
 	state.lastIteratedTime = time.Now()
 	s.state.set(num, state)
+	s.rec.Decided("conflict", rules.OutcomeRun)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue rebase task for PR #%d: %v", num, err)
 	}
@@ -201,6 +204,7 @@ func (s *Scanner) handlePRInvestigate(
 				klog.Errorf("Failed to add stop label '%s' to PR #%d: %v", stopLabel, num, err)
 			}
 		}
+		s.rec.Decided("ci", rules.OutcomeGiveUp)
 		klog.Infof("Skipping PR #%d investigate because it has reached the maximum retry limit (%d attempts since last update) and applying stop label '%s'.", num, maxInvestigations, stopLabel)
 		return true
 	}
@@ -218,6 +222,7 @@ func (s *Scanner) handlePRInvestigate(
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return false
 	} else if running {
+		s.rec.Gated("its sandbox is busy")
 		klog.Infof("Skipping PR #%d investigate because there is an in-flight sandbox %s.", num, sandboxName)
 		return false
 	}
@@ -256,6 +261,7 @@ func (s *Scanner) handlePRInvestigate(
 	state.lastInvestigatedSHA = pc.headSHA
 	state.lastInvestigatedTime = time.Now()
 	s.state.set(num, state)
+	s.rec.Decided("ci", rules.OutcomeRun)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue investigate task for PR #%d: %v", num, err)
 		return false
@@ -331,6 +337,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 					}
 					s.comment(ctx, num, fmt.Sprintf("🤖 AI Factory has attempted to address review feedback for this pull request %d times since the last commit or update without success. To prevent infinite loops, I am pausing automated feedback addressing and attaching the `%s` label.\n\nTo request another attempt or resume automated processing, please remove the `%s` label from this pull request (and/or push a new commit or leave a comment).", maxCommentRetries, stopLabel, stopLabel))
 				}
+				s.rec.Decided("comments", rules.OutcomeGiveUp)
 				klog.Infof("Skipping PR #%d address-comments retry because it has reached the maximum retry limit (%d retries) for SHA %s and applying stop label '%s'.", num, maxCommentRetries, pc.headSHA, stopLabel)
 				return true
 			}
@@ -363,6 +370,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return false
 	} else if running {
+		s.rec.Gated("its sandbox is busy")
 		klog.Infof("Skipping PR #%d address-comments because there is an in-flight sandbox %s.", num, sandboxName)
 		return false
 	}
@@ -385,6 +393,7 @@ func (s *Scanner) handlePRComments(ctx context.Context, pc *prContext, commentAn
 		return true
 	}
 	fmt.Printf("Queueing address-comments task for PR #%d...\n", num)
+	s.rec.Decided("comments", rules.OutcomeRun)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue address-comments task for PR #%d: %v", num, err)
 		return false
@@ -430,6 +439,7 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return false
 	} else if running {
+		s.rec.Gated("its sandbox is busy")
 		klog.Infof("Skipping PR #%d review because there is an in-flight sandbox %s.", num, sandboxName)
 		return false
 	}
@@ -482,6 +492,7 @@ func (s *Scanner) handlePRReview(ctx context.Context, pc *prContext, checkRuns [
 	fmt.Printf("Queueing review task for PR #%d (Instructions: %d)...\n", num, len(instructions))
 	state.lastReviewedSHA = pc.headSHA
 	s.state.set(num, state)
+	s.rec.Decided("review", rules.OutcomeRun)
 	if err := s.queue.Enqueue(filename, task); err != nil {
 		klog.Errorf("Failed to queue review task for PR #%d: %v", num, err)
 		return false

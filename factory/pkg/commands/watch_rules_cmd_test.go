@@ -34,12 +34,12 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs (ungrouped, then pr-care in order), then the rest.
-	want := "fix stop workflow adopt-pr inactive inherit-labels comments conflict ci review ready chore nudge"
+	want := "fix stop workflow adopt-pr inactive inherit-labels comments conflict ci review ready ready-unreview chore nudge"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
 	for _, sub := range []string{
-		"pr-care/10", "pr-care/last",
+		"pr-care/10", "pr-care/50",
 		"care-comments → post-replies", "fix → open-pr",
 		"dedupe=item cooldown=10m/20m phase=3",
 		"give-up=3/head",
@@ -59,7 +59,7 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 13 || len(fromJSON) != 13 {
+	if len(fromYAML) != 14 || len(fromJSON) != 14 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
 	if fromYAML[0]["name"] != "fix" || fromJSON[0]["name"] != "fix" {
@@ -130,5 +130,30 @@ func TestWatchRulesDirLaysTheRepositorysRulesOver(t *testing.T) {
 	// A checkout with no rules of its own lists factory's.
 	if out := runWatchRules(t, "--dir", t.TempDir()); strings.Contains(out, "(repo)") {
 		t.Errorf("a checkout without .agents/rules changed a rule:\n%s", out)
+	}
+}
+
+// replay runs the rules on recorded decisions and lists where they differ.
+func TestWatchRulesReplay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "decisions.jsonl")
+	env := `"env":{"Trigger":"overseer","Prefixes":["overseer"],"Pool":["bot"]}`
+	item := `"item":{"Kind":"issue","Number":7,"Labels":["overseer"],"UpdatedAt":"2026-10-17T10:00:00Z"}`
+	lines := `{"at":"2026-10-17T12:00:00Z","scanner":"issues",` + env + `,` + item + `,"decided":["fix run"]}
+{"at":"2026-10-17T12:00:00Z","scanner":"issues",` + env + `,` + item + `}
+{"at":"2026-10-17T12:00:00Z","scanner":"issues",` + env + `,` + item + `,"gate":"its sandbox is busy"}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runWatchRules(t, "replay", path)
+	for _, sub := range []string{"2 decisions compared, 1 agree, 1 differ; 1 held back", "fix", "issue#7", "fix run"} {
+		if !strings.Contains(out, sub) {
+			t.Errorf("replay lacks %q:\n%s", sub, out)
+		}
+	}
+	var res struct{ Compared, Gated int }
+	if err := json.Unmarshal([]byte(runWatchRules(t, "replay", path, "-o", "json")), &res); err != nil || res.Compared != 2 || res.Gated != 1 {
+		t.Errorf("json = %+v, %v", res, err)
 	}
 }

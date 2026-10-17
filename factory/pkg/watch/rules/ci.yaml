@@ -11,6 +11,7 @@ on: pr
 group: {name: pr-care, order: 30}
 from: [labelled, assigned]
 when:
+  author: pool
   checks: failing
   attempts: {since: [head, human, pause], max: 3}
 run:

@@ -369,6 +369,14 @@ func newOverseerSandboxFromOverseer(o *overseerv1alpha1.Overseer, name, namespac
 			"value": "true",
 		})
 	}
+	if o.Spec.RulesRecord {
+		// Beside the scan's snapshot, on the volume: it outlives restarts
+		// and stays out of the queue directory run.sh pushes.
+		env = append(env, map[string]interface{}{
+			"name":  "WATCH_RULES_RECORD",
+			"value": "/workspaces/.cache/factory-watch/decisions.jsonl",
+		})
+	}
 	if o.Spec.GraphQLPRDetails {
 		env = append(env, map[string]interface{}{
 			"name":  "WATCH_GRAPHQL_PR_DETAILS",

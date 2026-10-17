@@ -21,6 +21,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/warmworkspace"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/config"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 	githubv39 "github.com/google/go-github/v39/github"
 )
 
@@ -87,6 +88,11 @@ type Flags struct {
 	// GraphQLPRDetails makes the PR scanner read the details of the pull
 	// requests it evaluates in GraphQL batches (prs.Config.GraphQLPRDetails).
 	GraphQLPRDetails bool
+	// RulesRecord is the file the issue and PR scanners record each
+	// decision in, with the facts it was made on, for the watch rules'
+	// replay (`factory watch rules replay`); empty records nothing. What
+	// they decide is unchanged.
+	RulesRecord string
 }
 
 type Watcher struct {
@@ -123,7 +129,9 @@ type Watcher struct {
 	sandboxLocks     *concurrency.SandboxLockRegistry
 	entityCache      *concurrency.EntityStateCache
 	// sharedScan is the listings both scanners read when SharedScan is on.
-	sharedScan    *scan.Store
+	sharedScan *scan.Store
+	// rulesRecorder records the scanners' decisions when RulesRecord is set.
+	rulesRecorder *rules.Recorder
 	sandboxes     *sandbox.Service
 	dispatcher    *dispatcher.Dispatcher
 	reconciler    *sandbox.Reconciler
@@ -177,6 +185,7 @@ func (w *Watcher) initComponents() {
 	w.reconciler = w.newReconciler()
 	w.chores = w.newChoreScheduler()
 	w.sharedScan = w.newSharedScan()
+	w.rulesRecorder = rules.NewRecorder(w.RulesRecord, rules.DefaultRecordBytes)
 	w.issueScanner = w.newIssueScanner()
 	w.prScanner = w.newPRScanner()
 }

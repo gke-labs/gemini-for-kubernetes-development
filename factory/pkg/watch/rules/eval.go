@@ -47,9 +47,12 @@ type Item struct {
 	// NewTrustedFeedback is a trusted human's feedback the overseer has not
 	// answered yet.
 	NewTrustedFeedback bool
-	ReviewedAtHead     bool
-	Approved           bool
-	MergeQueue         bool
+	// ReviewedAtHead is an automated review of the head;
+	// ChangesRequested, that it asked for changes.
+	ReviewedAtHead   bool
+	ChangesRequested bool
+	Approved         bool
+	MergeQueue       bool
 	// LastTrustedActivity is the last time a trusted human acted on it.
 	LastTrustedActivity time.Time
 	Closes              []Closing
@@ -62,6 +65,9 @@ type Item struct {
 	// TaskActive is a task of the item queued or running: a group decides
 	// nothing while one is.
 	TaskActive bool
+	// Queued are the rules whose task for the item is queued or running:
+	// none of them decides again until it ends.
+	Queued []string
 	// Runs are the runs of the item's tasks that ended, by rule.
 	Runs []PastRun
 	// HeadChangedAt, HumanSpokeAt and PausedAt are when the PR's head last
@@ -176,6 +182,11 @@ func (s Set) Decide(it Item, env Env) []Decision {
 			return nil
 		}
 	}
+	// A PR in the merge queue is out of the overseer's hands: a push now
+	// would only knock it back out.
+	if it.Kind == OnPR && it.MergeQueue {
+		return nil
+	}
 	var mine Set
 	for _, r := range s {
 		if r.On == it.Kind && r.IsEnabled() && fromListing(r, it, env) {
@@ -196,12 +207,24 @@ func (s Set) Decide(it Item, env Env) []Decision {
 		}
 	}
 	it.Labels = labels
+	// A label a rule before the groups wrote may stop the item (the stop
+	// label inherited from a closing issue).
+	if hasLabel(labels, env.Prefixes, "*/stop") {
+		return out
+	}
+	stopped := false
 	for _, r := range mine {
 		if r.Group == nil && r.Policy.Before == "" {
 			if d, ok := decide(r, it, env); ok {
 				out = append(out, d)
+				stopped = stopped || d.Writes.Stop
 			}
 		}
+	}
+	// A rule that stopped the item (inactive) leaves the groups nothing to
+	// do.
+	if stopped {
+		return out
 	}
 	groups := mine.Groups()
 	names := make([]string, 0, len(groups))
@@ -250,6 +273,9 @@ func fromListing(r *Rule, it Item, env Env) bool {
 
 // decide is one rule's decision for the item, if it makes one.
 func decide(r *Rule, it Item, env Env) (Decision, bool) {
+	if slices.Contains(it.Queued, r.Name) {
+		return Decision{}, false
+	}
 	runs := rulesRuns(r.Name, it.Runs)
 	// The give-up is decided on the rest of the condition: a rule that
 	// would run, but has run its attempts out.
@@ -412,7 +438,7 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		want *bool
 		got  bool
 	}{
-		{w.ReviewedAtHead, it.ReviewedAtHead}, {w.Approved, it.Approved},
+		{w.ReviewedAtHead, it.ReviewedAtHead}, {w.ChangesRequested, it.ChangesRequested}, {w.Approved, it.Approved},
 		{w.Draft, it.Draft}, {w.MergeQueue, it.MergeQueue}, {w.Due, it.Due},
 	} {
 		if b.want != nil && *b.want != b.got {

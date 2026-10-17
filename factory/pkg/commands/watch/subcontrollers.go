@@ -211,6 +211,7 @@ func (w *Watcher) newIssueScanner() *issues.Scanner {
 		Users:     watcherUserSelector{w: w},
 		Listings:  w.issueListings(),
 		Paused:    w.draining,
+		Recorder:  w.rulesRecorder,
 	})
 }
 
@@ -298,6 +299,7 @@ func (w *Watcher) newPRScanner() *prs.Scanner {
 		Sandboxes: w.sandboxes,
 		Listings:  w.prListings(),
 		Paused:    w.draining,
+		Recorder:  w.rulesRecorder,
 	})
 }
 

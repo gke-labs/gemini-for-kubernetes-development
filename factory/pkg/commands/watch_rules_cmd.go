@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -64,10 +65,115 @@ Policy floors: give-up and attempts at most 10, a cooldown at least 1m.`,
 			return printWatchRules(c.OutOrStdout(), set, output)
 		},
 	}
+	cmd.AddCommand(newWatchRulesReplayCommand())
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: yaml or json (the whole rules)")
 	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
 	cmd.Flags().StringVar(&repoURL, "url", "", "A repository URL (its own rules come later; factory's are listed)")
 	return cmd
+}
+
+// newWatchRulesReplayCommand runs the rules on what today's scanners
+// recorded (the watch's --rules-record) and lists where they decide
+// differently.
+func newWatchRulesReplayCommand() *cobra.Command {
+	var dir, output string
+	var show int
+	cmd := &cobra.Command{
+		Use:   "replay <decisions.jsonl>...",
+		Short: "Replay recorded scanner decisions through the rules and list the differences",
+		Long: `Replay the decisions today's issue and PR scanners recorded (factory watch
+--rules-record, the Overseer's spec.rulesRecord: decisions.jsonl on the
+overseer's volume) through the rules: each record is the facts an item was
+decided on and what the scanner did; the rules decide on the same facts,
+and every record where they do something else is listed. A record a gate
+outside the rules held back (a busy sandbox, one needing a person) is
+counted, not compared.
+
+--dir lays a checkout's .agents/rules/ over factory's rules first, as
+'factory watch rules --dir' does.`,
+		Example: `  kubectl exec -n overseer-kcc overseer-kcc -- cat /workspaces/.cache/factory-watch/decisions.jsonl > decisions.jsonl
+  factory watch rules replay decisions.jsonl
+  factory watch rules replay decisions.jsonl -o json`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			set, err := rules.Builtin()
+			if err != nil {
+				return err
+			}
+			if dir != "" {
+				if set, err = overlayRepoRules(set, dir); err != nil {
+					return err
+				}
+			}
+			total := rules.ReplayResult{ByRule: map[string]int{}}
+			for _, path := range args {
+				f, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				res, err := set.Replay(f)
+				f.Close()
+				if err != nil {
+					return fmt.Errorf("%s: %w", path, err)
+				}
+				total.Compared += res.Compared
+				total.Gated += res.Gated
+				total.Diffs = append(total.Diffs, res.Diffs...)
+				for r, n := range res.ByRule {
+					total.ByRule[r] += n
+				}
+			}
+			return printReplay(c.OutOrStdout(), total, output, show)
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", "", "A local checkout whose .agents/rules/ to lay over factory's rules")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format: json (every difference, with its record)")
+	cmd.Flags().IntVar(&show, "show", 20, "How many differences to list")
+	return cmd
+}
+
+// printReplay writes the replay's summary, the differences by rule and the
+// first differences, or all of it as JSON.
+func printReplay(out io.Writer, res rules.ReplayResult, output string, show int) error {
+	switch output {
+	case "json":
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	case "":
+	default:
+		return fmt.Errorf("unknown output format %q (want json)", output)
+	}
+	fmt.Fprintf(out, "%d decisions compared, %d agree, %d differ; %d held back by a gate outside the rules.\n",
+		res.Compared, res.Compared-len(res.Diffs), len(res.Diffs), res.Gated)
+	if len(res.Diffs) == 0 {
+		return nil
+	}
+	ruleNames := make([]string, 0, len(res.ByRule))
+	for r := range res.ByRule {
+		ruleNames = append(ruleNames, r)
+	}
+	sort.Slice(ruleNames, func(i, j int) bool {
+		if res.ByRule[ruleNames[i]] != res.ByRule[ruleNames[j]] {
+			return res.ByRule[ruleNames[i]] > res.ByRule[ruleNames[j]]
+		}
+		return ruleNames[i] < ruleNames[j]
+	})
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "\nRULE\tDIFFERS")
+	for _, r := range ruleNames {
+		fmt.Fprintf(w, "%s\t%d\n", r, res.ByRule[r])
+	}
+	fmt.Fprintln(w, "\nAT\tITEM\tRULES\tSCANNER")
+	for i, d := range res.Diffs {
+		if i == show {
+			fmt.Fprintf(w, "… %d more (-o json for all)\t\t\t\n", len(res.Diffs)-show)
+			break
+		}
+		fmt.Fprintf(w, "%s\t%s#%d\t%s\t%s\n", d.Record.At.UTC().Format(time.RFC3339), d.Record.Item.Kind, d.Record.Item.Number,
+			orDash(strings.Join(d.Engine, ", ")), orDash(strings.Join(d.Scanner, ", ")))
+	}
+	return w.Flush()
 }
 
 // overlayRepoRules lays the rules in a checkout's .agents/rules/ over set.

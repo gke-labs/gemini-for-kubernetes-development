@@ -26,6 +26,7 @@ import (
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/api"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/commands/watch/conventions"
 	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/github"
+	"github.com/gke-labs/gemini-for-kubernetes-development/factory/pkg/watch/rules"
 )
 
 const (
@@ -168,6 +169,9 @@ type Deps struct {
 	// Listings, when set, is the shared scan the scanner reads its lists
 	// from; nil lists for itself, as before.
 	Listings Listings
+	// Recorder, when set, records each decision with the facts it was made
+	// on, for the watch rules' replay (rules.Record); nil records nothing.
+	Recorder *rules.Recorder
 	// Paused reports whether scanning must be held off, which is how the
 	// watcher propagates drain mode. It is deliberately a plain read-only
 	// signal: the scanner can observe that the queue is draining but has no way
@@ -194,6 +198,10 @@ type Scanner struct {
 	users     UserSelector
 	listings  Listings
 	paused    func() bool
+	recorder  *rules.Recorder
+	// rec is the record of the issue queueTask is deciding about, nil when
+	// not recording.
+	rec *rules.Recording
 
 	// processed records when each issue was last queued or completed, read from
 	// the processed queue directory on first use.
@@ -222,6 +230,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		users:     deps.Users,
 		listings:  deps.Listings,
 		paused:    deps.Paused,
+		recorder:  deps.Recorder,
 	}
 }
 
@@ -363,6 +372,8 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	if s.cfg.MinNumber > 0 && num < s.cfg.MinNumber {
 		return
 	}
+	s.rec = s.startRecording(issue)
+	defer func() { s.rec.Finish(); s.rec = nil }()
 	if conventions.HasStopLabel(issue.Labels, s.cfg.TriggerLabel) {
 		klog.Infof("Skipping issue #%d because it has the stop label ('overseer/stop' or '%s/stop')", num, s.cfg.TriggerLabel)
 		_ = s.queue.RemovePendingTasksForNumber(num)
@@ -373,6 +384,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		return
 	}
 	if refIssues[num] {
+		s.rec.Fill(func(it *rules.Item) { it.LinkedPR = "open" })
 		klog.Infof("Skipping issue #%d because there is already a PR referencing it.", num)
 		return
 	}
@@ -381,8 +393,15 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	// runs that definition instead of the standard fix.
 	workflowPath, workflowName := resolveWorkflow(ctx, s.gh, issue)
 	filename := issueTaskFilename(num, workflowName)
+	rule := "fix"
+	if workflowName != "" {
+		rule = "workflow"
+	}
+	s.rec.Fill(func(it *rules.Item) { it.Workflow = workflowName })
+	s.recordRuns(rule, filename)
 
 	if s.queue.TaskExists(filename) {
+		s.rec.Fill(func(it *rules.Item) { it.Queued = append(it.Queued, rule) })
 		return
 	}
 
@@ -421,9 +440,11 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		}
 		linked, err := s.gh.HasLinkedPRWithTimeline(ctx, num, verifiedTimeline)
 		if err != nil {
+			s.rec.Gated("checking the linked PR failed")
 			klog.Errorf("Failed to check linked PR for issue #%d: %v", num, err)
 			return
 		} else if linked {
+			s.rec.Fill(func(it *rules.Item) { it.LinkedPR = "open" })
 			klog.Infof("Skipping issue #%d because it has a linked PR according to the Timeline API.", num)
 			return
 		}
@@ -435,18 +456,22 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	}
 
 	if reason, err := s.sandboxes.RequiresHuman(ctx, sandboxName); err != nil {
+		s.rec.Gated("checking the sandbox failed")
 		klog.Errorf("Failed to check whether sandbox %s needs a person: %v", sandboxName, err)
 		return
 	} else if reason != "" {
+		s.rec.Gated("its sandbox needs a person")
 		klog.Infof("Skipping issue #%d because sandbox %s needs a person: %s", num, sandboxName, reason)
 		return
 	}
 
 	running, err := s.sandboxes.IsTaskRunning(ctx, sandboxName)
 	if err != nil {
+		s.rec.Gated("checking the sandbox failed")
 		klog.Errorf("Failed to check if sandbox %s is running: %v", sandboxName, err)
 		return
 	} else if running {
+		s.rec.Gated("its sandbox is busy")
 		klog.Infof("Skipping issue #%d because there is an in-flight sandbox %s.", num, sandboxName)
 		return
 	}
@@ -494,6 +519,7 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		task.Expect = []string{api.ExpectNoLinkedPR}
 	}
 
+	s.rec.Decided(rule, rules.OutcomeRun)
 	if s.cfg.DryRun {
 		if workflowName != "" {
 			fmt.Printf("[DRYRUN] Would queue workflow task %s for issue #%d: %s\n", workflowName, num, task.URL)
@@ -535,6 +561,9 @@ func (s *Scanner) inCooldown(ctx context.Context, issue *githubv39.Issue, filena
 	cooldown := failedCooldown
 	if last.Status != api.StatusFailed {
 		cooldown = common.GetWorkflowCooldown(ctx, s.gh, workflowPath)
+		if workflowName != "" {
+			s.rec.Fill(func(it *rules.Item) { it.WorkflowCooldown = cooldown })
+		}
 	}
 	until := last.CompletedAt.Add(cooldown)
 	if !time.Now().Before(until) {
