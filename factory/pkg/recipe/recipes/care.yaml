@@ -156,7 +156,8 @@ start:
 
         Rules:
         - inReplyTo is the number of a review comment or a comment you
-          answer, from its heading in the comments above (not a review's).
+          answer, from its heading in the comments above; a review's
+          number is answered with a comment quoting the review.
           One reply per comment you answer; none if you answered none.
         - rerun lists the failed checks to run again because they failed
           through no fault of this change (a flaky test, an outage), and
