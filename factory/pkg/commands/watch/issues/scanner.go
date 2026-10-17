@@ -172,6 +172,10 @@ type Deps struct {
 	// Recorder, when set, records each decision with the facts it was made
 	// on, for the watch rules' replay (rules.Record); nil records nothing.
 	Recorder *rules.Recorder
+	// Rules is the operator's say over the rules: those disabled, which
+	// the scanner does not act on, and those the engine decides for it.
+	// nil: the scanner alone, every rule on.
+	Rules *rules.Control
 	// Paused reports whether scanning must be held off, which is how the
 	// watcher propagates drain mode. It is deliberately a plain read-only
 	// signal: the scanner can observe that the queue is draining but has no way
@@ -199,6 +203,7 @@ type Scanner struct {
 	listings  Listings
 	paused    func() bool
 	recorder  *rules.Recorder
+	rules     *rules.Control
 	// rec is the record of the issue queueTask is deciding about, nil when
 	// not recording.
 	rec *rules.Recording
@@ -231,6 +236,7 @@ func New(cfg Config, deps Deps) *Scanner {
 		listings:  deps.Listings,
 		paused:    deps.Paused,
 		recorder:  deps.Recorder,
+		rules:     deps.Rules,
 	}
 }
 
@@ -399,6 +405,10 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 	}
 	s.rec.Fill(func(it *rules.Item) { it.Workflow = workflowName })
 	s.recordRuns(rule, filename)
+	if s.rules.Off(rule) {
+		klog.V(2).Infof("Skipping issue #%d: the %s rule is disabled", num, rule)
+		return
+	}
 
 	if s.queue.TaskExists(filename) {
 		s.rec.Fill(func(it *rules.Item) { it.Queued = append(it.Queued, rule) })
@@ -519,6 +529,15 @@ func (s *Scanner) queueTask(ctx context.Context, issue *githubv39.Issue, refIssu
 		task.Expect = []string{api.ExpectNoLinkedPR}
 	}
 
+	// A rule the engine decides for the scanner is queued only when the
+	// engine, on the facts gathered above, decides it too: it confirms
+	// the scanner's decision (the facts are gathered cheapest first, and
+	// stop at the first that says no).
+	if s.rec != nil && s.rules.Takes(rule, labelNames(issue.Labels)) &&
+		!rules.Decided(s.rules.Decide(*s.rec.Item, s.rulesEnv()), rule) {
+		klog.Infof("Skipping issue #%d: the rules engine does not decide %s", num, rule)
+		return
+	}
 	s.rec.Decided(rule, rules.OutcomeRun)
 	if s.cfg.DryRun {
 		if workflowName != "" {

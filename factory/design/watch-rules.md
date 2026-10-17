@@ -637,6 +637,19 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 first, then all items; staging, then production), cheapest to get wrong
 first:
 
+The switches are in (the Overseer's `spec.rules`, all off by default):
+`engine: on` with `use: {<rule>: engine}` has the engine decide that rule
+for the scanners, on items with `canaryLabel` when one is set;
+`disabled: [<rule>]` keeps the watch from acting on a rule at all, through
+the scanners or the engine. A rule the engine decides takes the scanner's
+step (a pr-care case, the label sync, the inactivity pause, readiness) on
+the engine's decision, and the scanner's handler still builds and queues
+the task, with its outside gates (a busy sandbox). For issues the engine
+confirms: the issue scanner gathers its facts cheapest first and stops at
+the first that says no, so the engine can hold a fix or a workflow step
+back but not start one the scanner would not; deciding issues outright
+waits for the facts gathered up front.
+
 1. `conflict`: rare, and a rebase is easy to check.
 2. `ci`, then `review`: replies and pending reviews.
 3. `comments`.

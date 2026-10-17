@@ -1226,6 +1226,8 @@ type testOpts struct {
 	MinNumber int
 	// Recorder records the evaluations for the rules' replay.
 	Recorder *rules.Recorder
+	// Rules is the operator's say over the rules.
+	Rules *rules.Control
 }
 
 // newTestScanner builds a Scanner over a real queue manager rooted at tempDir,
@@ -1276,6 +1278,7 @@ func newTestScanner(t *testing.T, tempDir string, opts testOpts) (*Scanner, *con
 		Entities:  concurrency.NewEntityStateCache(),
 		Sandboxes: sandboxes,
 		Recorder:  opts.Recorder,
+		Rules:     opts.Rules,
 	})
 
 	return scanner, queue
