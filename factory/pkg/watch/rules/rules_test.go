@@ -12,7 +12,7 @@ func TestBuiltinRulesParseAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin: %v", err)
 	}
-	want := []string{"adopt-issue", "adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
+	want := []string{"adopt-pr", "chore", "ci", "comments", "conflict", "fix", "inactive",
 		"inherit-labels", "nudge", "ready", "review", "stop", "workflow"}
 	var got []string
 	for _, r := range set {
@@ -106,6 +106,30 @@ func TestValidateErrors(t *testing.T) {
 		{"group order and last", base + "group: {name: g, order: 1, last: true}\n", "give an order above 0 or last"},
 		{"group neither", base + "group: {name: g}\n", "give an order above 0 or last"},
 		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\nas: agent\n", "needs when.event"},
+
+		// from: the listings, which narrow by themselves.
+		{"from narrows", strings.Replace(base, "when:\n  labels: {any: [overseer]}\n", "from: [labelled, assigned]\nwhen:\n  checks: failing\n", 1), ""},
+		{"from of issues on pr", strings.Replace(base, "when:", "from: [opened-by-watcher]\nwhen:", 1), `from: "opened-by-watcher" is not a listing of rules on pr`},
+
+		// any-of: one level, two sets or more, each narrowing unless from does.
+		{"any-of", strings.Replace(base, "labels: {any: [overseer]}", "any-of:\n    - labels: {any: [a]}\n    - assignee: pool", 1), ""},
+		{"any-of of one", strings.Replace(base, "labels: {any: [overseer]}", "any-of:\n    - labels: {any: [a]}", 1), "give two sets or more"},
+		{"any-of nested", strings.Replace(base, "when:\n", "when:\n  any-of:\n    - {checks: failing}\n    - any-of: [{checks: pending}, {checks: green}]\n", 1), "has no any-of of its own"},
+		{"any-of predicate of another kind", strings.Replace(base, "when:\n", "when:\n  any-of: [{checks: failing}, {linked-pr: none}]\n", 1), "when.any-of[1].linked-pr is not a predicate of a rule on pr"},
+		{"any-of does not narrow", strings.Replace(base, "labels: {any: [overseer]}", "any-of: [{labels: {any: [a]}}, {checks: failing}]", 1), "give from, or a predicate"},
+		{"closes without labels", strings.Replace(base, "when:\n", "when:\n  closes: {}\n", 1), "closes needs labels"},
+
+		// The counts' resets, the cooldown's reset and skip.
+		{"since a list", strings.Replace(base, "when:\n", "when:\n  attempts: {since: [head, human, pause], max: 3}\n", 1), ""},
+		{"since unknown", strings.Replace(base, "when:\n", "when:\n  attempts: {since: [head, moon], max: 3}\n", 1), `since: "moon"`},
+		{"reset-on head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "policy:\n  cooldown: {success: 1h, reset-on: [head]}\n", "reset-on: head is a PR's"},
+		{"skip-when beyond assignee", base + "policy:\n  cooldown: {success: 1h, skip-when: {checks: failing}}\n", "skip-when says assignee, and only that"},
+
+		// Placeholders and named durations are the engine's closed set.
+		{"unknown placeholder", strings.Replace(base, "[overseer]", `["{{nope}}"]`, 1), "{{nope}} is not one of {{trigger}}"},
+		{"pr placeholder on issue", "name: r\non: issue\nwhen: {labels: {any: [x]}}\nrun: {label: [\"{{closing-issue-labels}}\"]}\n", "{{closing-issue-labels}} is not one of"},
+		{"unknown duration name", base + "policy:\n  cooldown: {success: \"{{soon}}\"}\n", "is not a duration factory reads"},
+		{"named duration", base + "policy:\n  cooldown: {success: \"{{workflow-cooldown}}\"}\n", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, err := Parse([]byte(tc.yaml))
@@ -149,6 +173,9 @@ func TestSetValidate(t *testing.T) {
 		{"two last", Set{member("a", "group: {name: g, last: true}\n"), member("b", "group: {name: g, last: true}\n")}, "a and b are both last"},
 		{"mixed kinds", Set{member("a", "group: {name: g, order: 1}\n"), mustParse(t, "name: b\non: issue\ngroup: {name: g, order: 2}\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n")}, "holds rules on pr and on issue"},
 		{"invalid member", Set{member("a", "group: {name: g}\n")}, "rule a: group g: give an order above 0 or last"},
+		{"before a group", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "policy: {before: g}\n")}, ""},
+		{"before no group", Set{member("b", "policy: {before: g}\n")}, "there is no group g"},
+		{"before from a group", Set{member("a", "group: {name: g, order: 1}\n"), member("b", "group: {name: h, order: 1}\npolicy: {before: g}\n")}, "a rule in a group is ordered by it"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.set.Validate()

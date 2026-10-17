@@ -1,33 +1,31 @@
 # Mirrors prs/handlers.go handlePRInvestigate: a PR whose checks fail is
 # investigated and fixed by its author (care-ci --apply --action
-# post-replies, api/recipe.go): again on a new head, after a failed run,
-# or 2h after the last. After 3 attempts since the last commit, human
-# comment or pause it gives up with the stop label. Third in the pr-care
-# group (prs/scanner.go evaluate).
-#
-# Not captured: "since the last commit, human comment or pause" is three
-# resets; since: head and since: human are one each, so the rule counts
-# from the human. A new head runs again at once, inside the 2h cooldown:
-# the cooldown has no "until the head changes", so this rule waits.
-# A PR explicitly assigned to the bot skips the cooldown too.
+# post-replies, api/recipe.go). It runs again on a new head, after a
+# failed run, on a PR assigned to the pool explicitly, or 2h after the
+# last. After 3 attempts since the last commit, trusted human comment or
+# pause it gives up with the stop label (investigationAttempts). Third in
+# the pr-care group (prs/scanner.go evaluate).
 name: ci
 description: Investigate and fix failing checks
 on: pr
 group: {name: pr-care, order: 30}
+from: [labelled, assigned]
 when:
-  labels: {any: ["{{trigger}}"]}
   checks: failing
-  attempts: {since: human, max: 3}
+  attempts: {since: [head, human, pause], max: 3}
 run:
   recipe: care-ci
   apply: post-replies
 as: author
 policy:
   dedupe: item
-  cooldown: {success: 2h}
+  cooldown:
+    success: 2h
+    reset-on: [head]
+    skip-when: {assignee: pool}
   give-up:
     attempts: 3
-    since: human
+    since: [head, human, pause]
     then: stop
     comment: Pausing after 3 attempts to fix the failing checks.
   phase: 3

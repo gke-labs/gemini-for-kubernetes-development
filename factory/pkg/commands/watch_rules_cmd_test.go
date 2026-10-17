@@ -26,7 +26,7 @@ func runWatchRules(t *testing.T, args ...string) string {
 func TestWatchRulesTable(t *testing.T) {
 	out := runWatchRules(t)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON GROUP RUN AS POLICY SOURCE ENABLED" {
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON FROM GROUP RUN AS POLICY SOURCE ENABLED" {
 		t.Fatalf("header = %v", got)
 	}
 	var names []string
@@ -34,7 +34,7 @@ func TestWatchRulesTable(t *testing.T) {
 		names = append(names, strings.Fields(l)[0])
 	}
 	// Issues, then PRs (ungrouped, then pr-care in order), then the rest.
-	want := "adopt-issue fix stop workflow adopt-pr inactive inherit-labels comments conflict ci review ready chore nudge"
+	want := "fix stop workflow adopt-pr inactive inherit-labels comments conflict ci review ready chore nudge"
 	if strings.Join(names, " ") != want {
 		t.Errorf("rows = %v, want %s", names, want)
 	}
@@ -59,15 +59,22 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(runWatchRules(t, "-o", "json", "--url", "https://github.com/o/r")), &fromJSON); err != nil {
 		t.Fatal(err)
 	}
-	if len(fromYAML) != 14 || len(fromJSON) != 14 {
+	if len(fromYAML) != 13 || len(fromJSON) != 13 {
 		t.Fatalf("yaml %d rules, json %d", len(fromYAML), len(fromJSON))
 	}
-	if fromYAML[1]["name"] != "fix" || fromJSON[1]["name"] != "fix" {
-		t.Errorf("second rule = %v / %v", fromYAML[1]["name"], fromJSON[1]["name"])
+	if fromYAML[0]["name"] != "fix" || fromJSON[0]["name"] != "fix" {
+		t.Errorf("first rule = %v / %v", fromYAML[0]["name"], fromJSON[0]["name"])
 	}
-	policy := fromJSON[1]["policy"].(map[string]any)
+	policy := fromJSON[0]["policy"].(map[string]any)
 	if cd := policy["cooldown"].(map[string]any); cd["success"] != "10m" {
 		t.Errorf("cooldown = %v", cd)
+	}
+	// A named duration and a list of resets read back as written.
+	out := runWatchRules(t, "-o", "yaml")
+	for _, sub := range []string{`success: '{{workflow-cooldown}}'`, "- pause", "from:\n    - labelled"} {
+		if !strings.Contains(out, sub) {
+			t.Errorf("yaml lacks %q", sub)
+		}
 	}
 }
 

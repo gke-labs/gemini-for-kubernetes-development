@@ -1,26 +1,35 @@
-# Mirrors prs/scanner.go reconcileReadiness: an open PR, not a draft,
-# that merges, is green, has no pending feedback, no task and no review
-# asking for changes is handed to the humans: */ready-for-human added,
-# */review dropped, the closing issues' human assignees assigned and the
-# bot unassigned. Last in the pr-care group: it holds when no care rule
-# does (prs/scanner.go evaluate).
+# Mirrors prs/scanner.go reconcileReadiness (with prs/labels.go
+# shouldAutoReviewPR): an open PR, not a draft, not stopped, that merges,
+# is green, has no pending trusted feedback and whose review is satisfied
+# is handed to the humans: */ready-for-human added, */review dropped, the
+# closing issues' human assignees assigned and the pool's bot unassigned.
+# The review is satisfied when the automated reviewer reviewed the head,
+# or no review is wanted: */review on neither the PR nor an issue it
+# closes, or the PR already ready-for-human without */review of its own.
+# Last in the pr-care group: it holds when no care rule does, and a task
+# of the PR running holds it back (prs/scanner.go evaluate).
 #
-# Not captured: "no pending feedback" and "no review asking for changes"
-# have no predicate of their own; the group's exclusivity (comments
-# first) covers the first, approved does not cover the second. Readiness
-# is also taken back when a PR stops being ready; the model has no undo.
+# Readiness is never taken back: a ready PR that stops being ready keeps
+# the label (prs/labels_test.go, "Not ready with label never removes").
 name: ready
 description: Hand a ready PR to the humans
 on: pr
 group: {name: pr-care, last: true}
+from: [labelled, assigned]
 when:
-  labels: {any: ["{{trigger}}"]}
   draft: false
+  stopped: false
   mergeable: true
   checks: green
+  feedback: none
+  any-of:
+    - reviewed-at-head: true
+    - labels: {none: ["*/review"]}
+      closes: {labels: {none: ["*/review"]}}
+    - labels: {all: ["*/ready-for-human"], none: ["*/review"]}
 run:
   label: ["*/ready-for-human"]
   unlabel: ["*/review"]
-  assign: "{{issue-assignees}}"
-  unassign: "{{bot}}"
+  assign: "{{closing-issue-assignees}}"
+  unassign: "{{pool}}"
 as: watcher

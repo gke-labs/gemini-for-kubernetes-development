@@ -2,15 +2,14 @@
 # activity for the overseer's prInactivityTimeout is paused, once: a
 # comment and the stop label.
 #
-# Off, as today: prInactivityTimeout defaults to 0 (never). The timeout
-# is the overseer's setting; 168h stands for it here.
+# Off, as today: prInactivityTimeout defaults to 0 (never).
 name: inactive
 description: Pause a PR nobody has looked at
 on: pr
 enabled: false
+from: [labelled, assigned]
 when:
-  labels: {any: ["{{trigger}}"]}
-  inactive-for: 168h
+  inactive-for: "{{pr-inactivity-timeout}}"
   stopped: false
 run:
   stop:
