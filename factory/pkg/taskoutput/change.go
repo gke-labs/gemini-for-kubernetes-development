@@ -642,30 +642,71 @@ func postReply(ctx context.Context, gh *githubv39.Client, doc *Document, owner, 
 	case resp == nil || resp.StatusCode != http.StatusNotFound:
 		return err
 	}
-	ic, _, err := gh.Issues.GetComment(ctx, owner, repo, r.InReplyTo)
-	if err != nil {
-		return fmt.Errorf("it is neither a review comment nor a comment on %s: %w", doc.Target.URL, err)
+	ic, resp, err := gh.Issues.GetComment(ctx, owner, repo, r.InReplyTo)
+	switch {
+	case err == nil:
+		if !strings.HasSuffix(ic.GetIssueURL(), fmt.Sprintf("/issues/%d", num)) {
+			return fmt.Errorf("it is not on %s", doc.Target.URL)
+		}
+		return postAnswer(ctx, gh, doc, owner, repo, num, r, mark, ic.GetHTMLURL(), quoteComment(ic), dryRun, out)
+	case resp == nil || resp.StatusCode != http.StatusNotFound:
+		return err
 	}
-	if !strings.HasSuffix(ic.GetIssueURL(), fmt.Sprintf("/issues/%d", num)) {
-		return fmt.Errorf("it is not on %s", doc.Target.URL)
+	// Not a comment: a review's own id, which the agent reads beside the
+	// comments, has no thread to reply in; it is answered with a comment
+	// quoting the review. Anything else is answered with a plain comment
+	// rather than failing the whole apply, whose agent run is long over.
+	rv, resp, err := gh.PullRequests.GetReview(ctx, owner, repo, num, r.InReplyTo)
+	switch {
+	case err == nil:
+		return postAnswer(ctx, gh, doc, owner, repo, num, r, mark, rv.GetHTMLURL(), quoteReview(rv), dryRun, out)
+	case resp == nil || resp.StatusCode != http.StatusNotFound:
+		return err
 	}
+	fmt.Fprintf(out, "Warning: %d is neither a review comment, a comment nor a review on %s; answering it with a plain comment\n", r.InReplyTo, doc.Target.URL)
+	return postAnswer(ctx, gh, doc, owner, repo, num, r, mark, doc.Target.URL, "", dryRun, out)
+}
+
+// postAnswer answers with a conversation comment on PR num: quote (the
+// start of what it answers, with a link to it) and the reply. A reply its
+// task already posted, found by its marker, is not posted again.
+func postAnswer(ctx context.Context, gh *githubv39.Client, doc *Document, owner, repo string, num int, r Reply, mark, url, quote string, dryRun bool, out io.Writer) error {
 	if mark != "" {
 		posted, err := hasComment(ctx, gh, owner, repo, num, mark)
 		if err != nil {
 			return err
 		}
 		if posted {
-			fmt.Fprintf(out, "Task %s's reply to %s is already posted; not posting it again\n", doc.Source.Task, ic.GetHTMLURL())
+			fmt.Fprintf(out, "Task %s's reply to %s is already posted; not posting it again\n", doc.Source.Task, url)
 			return nil
 		}
 	}
-	fmt.Fprintf(out, "%s %s with a comment on %s:\n%s\n", doing(dryRun, "Answering", "answer"), ic.GetHTMLURL(), doc.Target.URL, indent(r.Body))
+	fmt.Fprintf(out, "%s %s with a comment on %s:\n%s\n", doing(dryRun, "Answering", "answer"), url, doc.Target.URL, indent(r.Body))
 	if dryRun {
 		return nil
 	}
-	body := quoteComment(ic) + withSessionHint(ctx, r.Body) + mark
-	_, _, err = gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body})
+	body := quote + withSessionHint(ctx, r.Body) + mark
+	_, _, err := gh.Issues.CreateComment(ctx, owner, repo, num, &githubv39.IssueComment{Body: &body})
 	return err
+}
+
+// quoteReview heads a reply to a review: the start of its body (or its
+// verdict, when it has none), quoted, and a link to it.
+func quoteReview(rv *githubv39.PullRequestReview) string {
+	body := strings.TrimSpace(rv.GetBody())
+	if body == "" {
+		body = strings.ToLower(strings.ReplaceAll(rv.GetState(), "_", " "))
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) > 3 {
+		lines = append(lines[:3], "…")
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString("> " + l + "\n")
+	}
+	fmt.Fprintf(&b, "\n[In reply to @%s's review](%s)\n\n", rv.GetUser().GetLogin(), rv.GetHTMLURL())
+	return b.String()
 }
 
 // quoteComment heads a reply to a conversation comment: the start of the

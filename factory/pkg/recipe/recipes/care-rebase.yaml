@@ -118,8 +118,8 @@ start:
 
         Rules:
         - inReplyTo is the number of a review comment or a comment you
-          answer, from its heading in the comments you were given (not a
-          review's).
+          answer, from its heading in the comments you were given; a
+          review's number is answered with a comment quoting the review.
           One reply per comment you answer; none if you answered none.
         - Leave out report if there is nothing to report, and write
           `change: {}` if there is nothing at all.

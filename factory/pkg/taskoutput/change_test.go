@@ -353,6 +353,9 @@ func (f *fakeThreads) mux() *http.ServeMux {
 	mux.HandleFunc("/repos/o/r/issues/comments/200", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"id":200,"issue_url":"https://api.github.com/repos/o/r/issues/12","html_url":"https://github.com/o/r/pull/12#issuecomment-200","body":"Why not reuse ensureForkRemote?\nIt does this.","user":{"login":"rev"}}`)
 	})
+	mux.HandleFunc("/repos/o/r/pulls/12/reviews/500", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"id":500,"state":"COMMENTED","html_url":"https://github.com/o/r/pull/12#pullrequestreview-500","body":"Why did the HTTP logs not change?","user":{"login":"rev"}}`)
+	})
 	mux.HandleFunc("/repos/o/r/pulls/12/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req map[string]any
@@ -444,10 +447,41 @@ func TestPostReplies(t *testing.T) {
 		}
 	})
 
+	// A review's own id (the agent reads reviews beside the comments) has
+	// no thread: it is answered with a comment quoting the review. An id
+	// that is nothing on the PR is answered with a plain comment, and the
+	// apply goes on. Both once.
+	t.Run("a review and an unknown id are answered with comments, once", func(t *testing.T) {
+		doc := prChange(t, "change:\n  replies:\n    - inReplyTo: 500\n      body: The logs were already aligned.\n    - inReplyTo: 400\n      body: Addressed.\n")
+		f := &fakeThreads{}
+		var out bytes.Buffer
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if len(f.review) != 0 || len(f.issue) != 2 {
+			t.Fatalf("posted %d review and %d issue comments:\n%s", len(f.review), len(f.issue), out.String())
+		}
+		quoted := f.issue[0]["body"].(string)
+		if !strings.HasPrefix(quoted, "> Why did the HTTP logs not change?\n\n[In reply to @rev's review](https://github.com/o/r/pull/12#pullrequestreview-500)\n\nThe logs were already aligned.") || !strings.Contains(quoted, "reply=500") {
+			t.Errorf("review reply = %q", quoted)
+		}
+		if plain := f.issue[1]["body"].(string); !strings.HasPrefix(plain, "Addressed.") || !strings.Contains(plain, "reply=400") {
+			t.Errorf("plain reply = %q", plain)
+		}
+		if !strings.Contains(out.String(), "Warning: 400 is neither") {
+			t.Errorf("no warning for the unknown id:\n%s", out.String())
+		}
+		if err := ApplyAction(ctx, f.client(t), doc, "post-replies", false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.issue) != 2 {
+			t.Errorf("posted again: %d issue comments", len(f.issue))
+		}
+	})
+
 	t.Run("refused", func(t *testing.T) {
 		for name, doc := range map[string]*Document{
 			"another PR's comment": prChange(t, "change:\n  replies:\n    - inReplyTo: 300\n      body: x\n"),
-			"no such comment":      prChange(t, "change:\n  replies:\n    - inReplyTo: 400\n      body: x\n"),
 		} {
 			f := &fakeThreads{}
 			var out bytes.Buffer
