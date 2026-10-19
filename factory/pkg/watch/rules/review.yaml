@@ -24,7 +24,6 @@ when:
 run:
   recipe: review
   apply: submit-review
-as: reviewer
 policy:
   dedupe: head
   phase: 1

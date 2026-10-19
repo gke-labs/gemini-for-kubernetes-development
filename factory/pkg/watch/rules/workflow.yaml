@@ -16,7 +16,6 @@ when:
   workflow: any
 run:
   recipe: workflow
-as: agent
 policy:
   dedupe: item
   cooldown: {success: "{{workflow-cooldown}}", failure: 20m}

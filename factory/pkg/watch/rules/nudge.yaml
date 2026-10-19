@@ -10,6 +10,5 @@ when:
   event: linked-issue-closed
 run:
   recipe: workflow
-as: agent
 policy:
   skip-cooldown: true

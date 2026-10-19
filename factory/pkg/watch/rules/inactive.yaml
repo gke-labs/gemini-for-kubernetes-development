@@ -16,4 +16,3 @@ when:
 run:
   stop:
     comment: Pausing this PR after a period without activity.
-as: watcher

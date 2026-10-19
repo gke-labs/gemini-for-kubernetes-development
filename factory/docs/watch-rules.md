@@ -59,7 +59,6 @@ run:                         # the action
   inputs:
     draft: "false"
     labels: "{{pr-labels}}"  #   the trigger, the configuration's labels and the issue's
-as: coder                    # the bot role it runs as
 policy:
   dedupe: item               # one queued task per item
   cooldown: {success: 10m, failure: 20m}   # how long after a run, by its outcome
@@ -70,8 +69,8 @@ expect: [open, no-linked-pr] # checked again when the task is about to start
 Read aloud: *for an issue the overseer tracks (see [Which items a rule
 sees](#which-items-a-rule-sees)); not held back by a fan-out; with no open
 PR; naming no workflow; and changed since the last fix that succeeded - once
-the last fix is 10 minutes old (20 after a failure), queue the fix recipe as
-a coder bot, open the PR with the issue's labels when it ends, and drop the
+the last fix is 10 minutes old (20 after a failure), queue the fix recipe (a coder
+bot runs it), open the PR with the issue's labels when it ends, and drop the
 task if the issue closes or a PR appears before it starts.*
 
 ---
@@ -88,7 +87,6 @@ task if the issue closes or a PR appears before it starts.*
 | `exclusive` | `true`, `false`; unset: a recipe rule `true`, GitHub writes `false` | Whether the rule takes the item: of the rules that do, only the first that holds is decided. See [Order](#order). |
 | `when` | predicates | The condition. See [`when`](#when-the-predicates). |
 | `run` | a recipe, or GitHub writes | The action. See [`run`](#run-the-action). |
-| `as` | `coder`, `agent`, `reviewer`, `author`, `watcher` | The role the action runs as. A recipe runs as `coder`, `agent`, `reviewer` or `author` (the PR's own bot, from the pool); GitHub writes are the `watcher`'s (its own token), and `as` may be left out for them. |
 | `policy` | see below | Dedupe, cooldown, give-up and ordering. See [`policy`](#policy). |
 | `expect` | `open`; `head` (PRs); `no-linked-pr` (issues) | Facts the queued task is checked against when the dispatcher is about to start it: the item still open, the PR's head unchanged, still no linked PR. A task whose facts no longer hold is dropped, and a drop is not an attempt. |
 
@@ -211,7 +209,20 @@ A rule runs a recipe or makes GitHub writes, not both.
 | `apply` | the action its task output is applied with when the run ends (`open-pr`, `post-replies`, `submit-review`); none leaves the output for a person |
 | `inputs` | the recipe's inputs, by name; values may use `{{trigger}}`, and on issues `{{pr-labels}}` |
 
-The task is queued, and runs in the item's sandbox as the role `as` names.
+The task is queued and runs in the item's sandbox. A rule does not say
+which bot runs it: that is the recipe's and the overseer's (see [Who runs
+it](#who-runs-it)).
+
+### Who runs it
+
+The bot a task runs as follows from what it runs, not from the rule: the
+overseer maps task types to roles (`roles.<role>.tasks` in its
+configuration), and without a mapping fix runs as a coder, review as a
+reviewer, a workflow or chore as an agent, and PR care as the PR's own
+role (agent if its author is in the agent pool, else coder). Within the
+role, the bot already pinned to the item's sandbox, then a pool bot
+assigned to it, goes first. A repository's rule cannot pick another bot.
+GitHub writes are always the watcher's own.
 
 ### GitHub writes
 
@@ -393,7 +404,6 @@ when:
 run:
   recipe: review
   apply: submit-review
-as: reviewer
 policy:
   dedupe: head
 expect: [open, head]
@@ -404,8 +414,6 @@ Rules are checked strictly when they load:
 - an unknown field, a predicate of another kind of item (`checks` on an
   issue rule), or a value outside a predicate's (`checks: red`) is an error;
 - `run` is a built-in recipe or GitHub writes, not both, and not neither;
-- a recipe runs as `coder`, `agent`, `reviewer` or `author`; writes are the
-  watcher's;
 - the floors: `attempts.max` and `give-up.attempts` at most 10, a cooldown
   at least 1m - a rule cannot loop on an item;
 - a placeholder the engine does not fill in where it is used is an error;

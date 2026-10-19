@@ -26,7 +26,7 @@ func runWatchRules(t *testing.T, args ...string) string {
 func TestWatchRulesTable(t *testing.T) {
 	out := runWatchRules(t)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON ORDER RUN AS POLICY SOURCE ENABLED" {
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON ORDER RUN POLICY SOURCE ENABLED" {
 		t.Fatalf("header = %v", got)
 	}
 	var names []string

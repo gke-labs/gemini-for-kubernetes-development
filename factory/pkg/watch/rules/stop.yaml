@@ -15,4 +15,3 @@ when:
   labels: {any: ["*/stop"]}
 run:
   drop: true
-as: watcher

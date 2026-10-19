@@ -29,7 +29,6 @@ run:
   inputs:
     draft: "false"
     labels: "{{pr-labels}}"
-as: coder
 policy:
   dedupe: item
   cooldown: {success: 10m, failure: 20m}

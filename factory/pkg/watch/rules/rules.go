@@ -73,10 +73,6 @@ type Rule struct {
 	When When `yaml:"when" json:"when"`
 	// Run is the action.
 	Run Run `yaml:"run" json:"run"`
-	// As is the role the action runs as: coder, agent, reviewer, author
-	// (the PR's author, from the pool) or watcher (the watcher's own
-	// token, for GitHub writes).
-	As string `yaml:"as,omitempty" json:"as,omitempty"`
 	// Policy is the rule's dedupe, cooldown, give-up and ordering.
 	Policy Policy `yaml:"policy,omitempty" json:"policy,omitzero"`
 	// Expect are the facts a queued task is checked against before it
@@ -427,7 +423,6 @@ var enums = map[string][]string{
 	"last-run":  {"failed"},
 	"reset-on":  {"head"},
 	"event":     {"linked-issue-closed"},
-	"as":        {"coder", "agent", "reviewer", "author", "watcher"},
 	"dedupe":    {"item", "head"},
 	"since":     {"head", "human", "pause"},
 	"then":      {"stop"},
@@ -578,10 +573,8 @@ func (r *Rule) Validate() error {
 	if err := r.When.validate(r.On, false); err != nil {
 		return fail("when%v", err)
 	}
-	for field, value := range map[string]string{"as": r.As, "dedupe": r.Policy.Dedupe} {
-		if err := checkEnum(field, value); err != nil {
-			return fail("%v", err)
-		}
+	if err := checkEnum("dedupe", r.Policy.Dedupe); err != nil {
+		return fail("%v", err)
 	}
 	if r.On == OnEvent && r.When.Event == "" {
 		return fail("a rule on events needs when.event")
@@ -599,11 +592,6 @@ func (r *Rule) Validate() error {
 		if !slices.Contains(recipe.BuiltinNames(), r.Run.Recipe) {
 			return fail("run.recipe %q is not one of factory's recipes", r.Run.Recipe)
 		}
-		if r.As == "" || r.As == "watcher" {
-			return fail("a recipe runs as coder, agent, reviewer or author")
-		}
-	case r.As != "" && r.As != "watcher":
-		return fail("GitHub writes are the watcher's: as is watcher or unset")
 	}
 
 	if c := r.Policy.Cooldown; c != nil {

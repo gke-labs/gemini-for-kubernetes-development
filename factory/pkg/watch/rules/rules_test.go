@@ -89,7 +89,6 @@ when:
 run:
   recipe: care-ci
   apply: post-replies
-as: author
 `
 
 func TestValidateErrors(t *testing.T) {
@@ -97,6 +96,7 @@ func TestValidateErrors(t *testing.T) {
 		name, yaml, want string
 	}{
 		{"unknown field", base + "colour: red\n", "field colour not found"},
+		{"as", base + "as: author\n", "field as not found"},
 		{"unknown predicate field", strings.Replace(base, "labels:", "labelz:", 1), "field labelz not found"},
 		{"valid", base, ""},
 		{"issue predicate on pr", strings.Replace(base, "when:\n", "when:\n  linked-pr: none\n", 1), "when.linked-pr is not a predicate of a rule on pr"},
@@ -104,10 +104,7 @@ func TestValidateErrors(t *testing.T) {
 		{"bad on", strings.Replace(base, "on: pr", "on: tuesday", 1), `on: "tuesday"`},
 		{"bad enum", strings.Replace(base, "when:\n", "when:\n  checks: red\n", 1), `checks: "red" is not one of`},
 		{"unknown recipe", strings.Replace(base, "care-ci", "care-nope", 1), `run.recipe "care-nope" is not one of factory's recipes`},
-		{"recipe as watcher", strings.Replace(base, "as: author", "as: watcher", 1), "a recipe runs as"},
-		{"recipe without as", strings.Replace(base, "as: author\n", "", 1), "a recipe runs as"},
-		{"writes as coder", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\nas: coder\n", "GitHub writes are the watcher's"},
-		{"recipe and writes", base[:strings.Index(base, "as:")] + "  label: [x]\nas: author\n", "not both"},
+		{"recipe and writes", base + "  label: [x]\n", "not both"},
 		{"no action", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {}\n", "run needs a recipe or a GitHub write"},
 		{"give-up over the floor", base + "policy:\n  give-up: {attempts: 11}\n", "give-up.attempts 11: want 1 to 10"},
 		{"attempts over the floor", strings.Replace(base, "when:\n", "when:\n  attempts: {max: 50}\n", 1), "when.attempts.max 50: want 1 to 10"},
@@ -119,8 +116,8 @@ func TestValidateErrors(t *testing.T) {
 		{"writes without order", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", ""},
 		{"exclusive writes without order", "name: r\non: pr\nexclusive: true\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", "needs an order"},
 		{"negative order", strings.Replace(base, "order: 1", "order: -1", 1), "want above 0"},
-		{"order on event", "name: r\non: event\norder: 1\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\nas: agent\n", "order and exclusive are for rules on issue or pr"},
-		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\nas: agent\n", "needs when.event"},
+		{"order on event", "name: r\non: event\norder: 1\nwhen: {event: linked-issue-closed}\nrun: {recipe: workflow}\n", "order and exclusive are for rules on issue or pr"},
+		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\n", "needs when.event"},
 
 		// from: gone; on and when say which items a rule takes.
 		{"from", strings.Replace(base, "when:", "from: [labelled, assigned]\nwhen:", 1), "field from not found"},
@@ -234,9 +231,9 @@ func TestOverlay(t *testing.T) {
 		"review.yaml":   {Data: []byte("name: review\nenabled: false\n")},
 		"inactive.yaml": {Data: []byte("name: inactive\nenabled: true\n")},
 		"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
-			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci}\nas: author\n" +
+			"when: {labels: {any: [\"{{trigger}}\"]}, checks: failing}\nrun: {recipe: care-ci}\n" +
 			"policy: {give-up: {attempts: 5}}\n")},
-		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\nas: coder\n")},
+		"docs.yaml": {Data: []byte("name: docs\non: issue\norder: 30\nwhen: {labels: {any: [docs]}}\nrun: {recipe: fix}\n")},
 		"README.md": {Data: []byte("not a rule")},
 	})
 	if err != nil {
@@ -275,7 +272,7 @@ func TestOverlay(t *testing.T) {
 	for name, files := range map[string]fstest.MapFS{
 		"toggle of a rule factory lacks": {"nope.yaml": {Data: []byte("name: nope\nenabled: false\n")}},
 		"a replacement under the floor": {"ci.yaml": {Data: []byte("name: ci\non: pr\norder: 30\n" +
-			"when: {labels: {any: [x]}}\nrun: {recipe: care-ci}\nas: author\npolicy: {give-up: {attempts: 50}}\n")}},
+			"when: {labels: {any: [x]}}\nrun: {recipe: care-ci}\npolicy: {give-up: {attempts: 50}}\n")}},
 		"a name only, no enabled": {"review.yaml": {Data: []byte("name: review\n")}},
 	} {
 		repo, err := Load(files)
