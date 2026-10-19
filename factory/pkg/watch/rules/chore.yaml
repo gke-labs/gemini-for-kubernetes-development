@@ -13,5 +13,3 @@ when:
   due: true
 run:
   recipe: agent
-policy:
-  dedupe: item

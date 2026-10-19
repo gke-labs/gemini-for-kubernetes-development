@@ -301,9 +301,6 @@ func rulePolicy(r *rules.Rule) string {
 		}
 		parts = append(parts, gu)
 	}
-	if p.SkipCooldown {
-		parts = append(parts, "skip-cooldown")
-	}
 	if p.Phase != 0 {
 		parts = append(parts, fmt.Sprintf("phase=%d", p.Phase))
 	}

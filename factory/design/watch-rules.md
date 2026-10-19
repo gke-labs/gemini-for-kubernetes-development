@@ -276,15 +276,20 @@ as `--pr-labels`). A duration may name the overseer's
 
 **`when` is the item, `policy` the overseer's pacing.** `when` says
 what the item is and what has happened to it; how often the overseer
-acts and when it stops trying is `policy`: `dedupe` (`item`, `head`, or
-`update`: once per change to the item), `cooldown` and `give-up`. A
+acts and when it stops trying is `policy`: `dedupe` (`head`, or
+`update`: once per change to the item; one queued task per rule and item
+is every rule's), `cooldown` and `give-up`. A
 predicate about the overseer's own runs is in `when` only as a reason to
 run (`last-run: failed`), never a limit. 2a had `attempts` in `when`
 (which every rule using it duplicated in its give-up, checked first),
 `updated-since-run` (now `dedupe: update`), and `stopped` and
 `merge-queue` (engine gates already), all gone; and `author: trusted`
 and `assignee: owner`, which no scanner recorded, are refused until one
-does.
+does. 2a's `dedupe: item` (what every rule gets anyway), `identity-pin`
+(nothing read it; a task always stays with the bot that owns the item's
+sandbox, or a follow-up could not push) and `skip-cooldown` (an event is
+a reason to act now: a rule `on: event` is not held back by another
+rule's cooldown on the same task) are gone too.
 
 `give-up` replaces counting the bot's own comments: the engine records
 each run of a rule on an item (the queue's processed tasks already do)
@@ -324,7 +329,7 @@ Every rule has defaults, overridable per rule:
 
 ```yaml
 policy:
-  dedupe: item          # one task per item and rule; head (once per head SHA); update (once per change)
+  dedupe: head          # once per head SHA; or update (once per change); one queued task per rule always
   cooldown:
     success: 10m
     failure: 20m
@@ -332,8 +337,6 @@ policy:
     skip-when: {assignee: pool}   # not for a PR assigned to the pool explicitly (ci)
   give-up: {attempts: 3, since: [head, human, pause]}   # the stop label and a comment
   phase: 3              # ordering after the priority label
-  identity-pin: true
-  skip-cooldown: true   # queued inside its task's cooldown (nudge)
 ```
 
 `run: {drop: true}` drops an item's queued tasks; the stop label does it

@@ -231,21 +231,17 @@ func (r Run) writes() bool {
 	return len(r.Label) > 0 || len(r.Unlabel) > 0 || r.Comment != "" || r.Assign != "" || r.Unassign != "" || r.Stop != nil || r.Drop
 }
 
-// Policy is a rule's dedupe, cooldown, give-up and ordering.
+// Policy is a rule's dedupe, cooldown, give-up and ordering. A rule
+// whose task for the item is queued or running decides nothing until it
+// ends, whatever its policy.
 type Policy struct {
-	// Dedupe is item (one task per item and rule) or head (once per PR
-	// head).
+	// Dedupe narrows that further: head (once per PR head) or update
+	// (once per change to the item); a failed run does not count.
 	Dedupe   string    `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Cooldown *Cooldown `yaml:"cooldown,omitempty" json:"cooldown,omitempty"`
 	GiveUp   *GiveUp   `yaml:"give-up,omitempty" json:"give-up,omitempty"`
 	// Phase orders the rule's tasks after the priority label: lower first.
 	Phase int `yaml:"phase,omitempty" json:"phase,omitempty"`
-	// IdentityPin pins the run to the bot that owns the item's sandbox;
-	// unset is on.
-	IdentityPin *bool `yaml:"identity-pin,omitempty" json:"identity-pin,omitempty"`
-	// SkipCooldown queues the rule's task inside the cooldown of the rule
-	// whose task it is (nudge stepping a workflow at once).
-	SkipCooldown bool `yaml:"skip-cooldown,omitempty" json:"skip-cooldown,omitempty"`
 }
 
 // Cooldown is how long after a run, by its outcome, the rule waits before
@@ -406,7 +402,7 @@ var enums = map[string][]string{
 	"last-run":  {"failed"},
 	"reset-on":  {"head"},
 	"event":     {"linked-issue-closed"},
-	"dedupe":    {"item", "head", "update"},
+	"dedupe":    {"head", "update"},
 	"since":     {"head", "human", "pause"},
 }
 

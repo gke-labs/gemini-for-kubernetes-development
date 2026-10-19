@@ -16,7 +16,6 @@ run:
   recipe: care-ci
   apply: post-replies
 policy:
-  dedupe: item
   cooldown:
     success: 2h
     reset-on: [head]
