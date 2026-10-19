@@ -111,17 +111,9 @@ type Labels struct {
 	None []string `yaml:"none,omitempty" json:"none,omitempty"`
 }
 
-// Attempts holds while the rule's runs on the item since Since are fewer
-// than Max.
-type Attempts struct {
-	Rule  string `yaml:"rule,omitempty" json:"rule,omitempty"`
-	Since Since  `yaml:"since,omitempty" json:"since,omitempty"`
-	Max   int    `yaml:"max" json:"max"`
-}
-
 // Since is what resets a count: the latest of its events (head: the PR's
-// head changed; human: a trusted human commented; pause: the stop label
-// was taken off). One event or a list of them; none counts every run.
+// head changed; human: a trusted human commented; pause: the watcher
+// last put the item on hold). One event or a list of them; none counts every run.
 type Since []string
 
 // UnmarshalYAML reads one event or a list.
@@ -172,12 +164,9 @@ type When struct {
 	AnyOf []When `yaml:"any-of,omitempty" json:"anyOf,omitempty"`
 
 	// Any item.
-	Labels          *Labels   `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Assignee        string    `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | not-pool | none | owner
-	Author          string    `yaml:"author,omitempty" json:"author,omitempty"`     // pool | trusted
-	Stopped         *bool     `yaml:"stopped,omitempty" json:"stopped,omitempty"`
-	UpdatedSinceRun *bool     `yaml:"updated-since-run,omitempty" json:"updated-since-run,omitempty"`
-	Attempts        *Attempts `yaml:"attempts,omitempty" json:"attempts,omitempty"`
+	Labels   *Labels `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Assignee string  `yaml:"assignee,omitempty" json:"assignee,omitempty"` // pool | not-pool | none | owner
+	Author   string  `yaml:"author,omitempty" json:"author,omitempty"`     // pool | trusted
 	// LastRun is the outcome of the rule's last run on the item, and on a
 	// PR on its current head: failed.
 	LastRun string `yaml:"last-run,omitempty" json:"last-run,omitempty"`
@@ -203,7 +192,6 @@ type When struct {
 	ChangesRequested *bool    `yaml:"changes-requested,omitempty" json:"changes-requested,omitempty"`
 	Approved         *bool    `yaml:"approved,omitempty" json:"approved,omitempty"`
 	Draft            *bool    `yaml:"draft,omitempty" json:"draft,omitempty"`
-	MergeQueue       *bool    `yaml:"merge-queue,omitempty" json:"merge-queue,omitempty"`
 	InactiveFor      Duration `yaml:"inactive-for,omitempty" json:"inactive-for,omitzero"`
 
 	// Schedules: the agent definition's schedule is due.
@@ -272,12 +260,11 @@ type Cooldown struct {
 	SkipWhen *When `yaml:"skip-when,omitempty" json:"skip-when,omitempty"`
 }
 
-// GiveUp stops the rule on an item after Attempts runs since Since, with
-// Then (stop: the stop label and a comment).
+// GiveUp stops the rule on an item after Attempts runs since Since: the
+// stop label, and Comment saying why.
 type GiveUp struct {
 	Attempts int    `yaml:"attempts" json:"attempts"`
 	Since    Since  `yaml:"since,omitempty" json:"since,omitempty"`
-	Then     string `yaml:"then,omitempty" json:"then,omitempty"`
 	Comment  string `yaml:"comment,omitempty" json:"comment,omitempty"`
 }
 
@@ -367,9 +354,9 @@ func Parse(data []byte) (*Rule, error) {
 
 // predicates are the When fields each kind of rule may set, by YAML name.
 var predicates = map[string][]string{
-	"*":        {"any-of", "labels", "assignee", "author", "stopped", "updated-since-run", "attempts", "last-run"},
+	"*":        {"any-of", "labels", "assignee", "author", "last-run"},
 	OnIssue:    {"linked-pr", "workflow", "opened-by", "fanout", "fanout-held"},
-	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "merge-queue", "inactive-for"},
+	OnPR:       {"checks", "mergeable", "feedback", "closes", "reviewed-at-head", "changes-requested", "approved", "draft", "inactive-for"},
 	OnSchedule: {"due"},
 	OnEvent:    {"event"},
 }
@@ -386,9 +373,6 @@ func (w When) set() []string {
 	add("labels", w.Labels != nil)
 	add("assignee", w.Assignee != "")
 	add("author", w.Author != "")
-	add("stopped", w.Stopped != nil)
-	add("updated-since-run", w.UpdatedSinceRun != nil)
-	add("attempts", w.Attempts != nil)
 	add("last-run", w.LastRun != "")
 	add("linked-pr", w.LinkedPR != "")
 	add("workflow", w.Workflow != "")
@@ -403,7 +387,6 @@ func (w When) set() []string {
 	add("changes-requested", w.ChangesRequested != nil)
 	add("approved", w.Approved != nil)
 	add("draft", w.Draft != nil)
-	add("merge-queue", w.MergeQueue != nil)
 	add("inactive-for", w.InactiveFor.IsSet())
 	add("due", w.Due != nil)
 	add("event", w.Event != "")
@@ -412,8 +395,8 @@ func (w When) set() []string {
 
 // enums are the values a string predicate or field may take.
 var enums = map[string][]string{
-	"assignee":  {"pool", "not-pool", "none", "owner"},
-	"author":    {"pool", "trusted"},
+	"assignee":  {"pool", "not-pool", "none"},
+	"author":    {"pool"},
 	"linked-pr": {"none", "open"},
 	"workflow":  {"none", "any"},
 	"opened-by": {"watcher"},
@@ -423,9 +406,8 @@ var enums = map[string][]string{
 	"last-run":  {"failed"},
 	"reset-on":  {"head"},
 	"event":     {"linked-issue-closed"},
-	"dedupe":    {"item", "head"},
+	"dedupe":    {"item", "head", "update"},
 	"since":     {"head", "human", "pause"},
-	"then":      {"stop"},
 }
 
 func checkEnum(field, value string) error {
@@ -461,14 +443,6 @@ func (w When) validate(on string, nested bool) error {
 	} {
 		if err := checkEnum(field, value); err != nil {
 			return fmt.Errorf(".%v", err)
-		}
-	}
-	if a := w.Attempts; a != nil {
-		if a.Max < 1 || a.Max > MaxAttempts {
-			return fmt.Errorf(".attempts.max %d: want 1 to %d", a.Max, MaxAttempts)
-		}
-		if err := checkSince(a.Since); err != nil {
-			return fmt.Errorf(".attempts: %v", err)
 		}
 	}
 	if c := w.Closes; c != nil && c.Labels == nil {
@@ -622,9 +596,6 @@ func (r *Rule) Validate() error {
 			return fail("policy.give-up.attempts %d: want 1 to %d", g.Attempts, MaxAttempts)
 		}
 		if err := checkSince(g.Since); err != nil {
-			return fail("policy.give-up: %v", err)
-		}
-		if err := checkEnum("then", g.Then); err != nil {
 			return fail("policy.give-up: %v", err)
 		}
 	}

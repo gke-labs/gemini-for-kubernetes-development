@@ -22,7 +22,6 @@ when:
   fanout-held: false
   linked-pr: none
   workflow: none
-  updated-since-run: true
 run:
   recipe: fix
   apply: open-pr
@@ -30,7 +29,7 @@ run:
     draft: "false"
     labels: "{{pr-labels}}"
 policy:
-  dedupe: item
+  dedupe: update
   cooldown: {success: 10m, failure: 20m}
   phase: 3
 expect: [open, no-linked-pr]

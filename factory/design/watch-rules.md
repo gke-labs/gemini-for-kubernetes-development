@@ -116,9 +116,8 @@ when:
   labels: {any: ["{{trigger}}"]}
   linked-pr: none
   workflow: none
-  updated-since-run: true
 run: {recipe: fix, apply: open-pr, inputs: {draft: "false"}}
-policy: {cooldown: {success: 10m, failure: 20m}, phase: 3}
+policy: {dedupe: update, cooldown: {success: 10m, failure: 20m}, phase: 3}
 ```
 
 **Order** makes the rules on one kind of item one list, and some of
@@ -140,7 +139,7 @@ on: pr
 order: 30      # inherit-labels 5, inactive 7, comments 10, conflict 20, ci 30, review 40, ready 50
 when: {checks: failing}
 run: {recipe: care-ci, apply: post-replies}
-policy: {dedupe: head, give-up: {attempts: 3, since: human, then: stop}}
+policy: {dedupe: head, give-up: {attempts: 3, since: human}}
 ```
 
 **Sources** are what is listed and how often. A rule does not name one:
@@ -240,11 +239,11 @@ the engine does not offer. From today's rules:
 
 | on | predicates |
 |---|---|
-| any item | `labels: {any, all, none}`; `author: pool\|trusted`; `assignee: pool\|not-pool\|none\|owner`; `updated-since-run`; `stopped` (the stop label); `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
+| any item | `labels: {any, all, none}`; `author: pool`; `assignee: pool\|not-pool\|none`; `last-run: failed` (the rule's last run on the item, on its head when deduped by head) |
 | issue | `linked-pr: none\|open`; `workflow: none\|any`; `opened-by: watcher`; `fanout: none\|parent\|child`; `fanout-held` (a parent, or a child the fan-out has not labelled) |
-| PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `merge-queue`; `inactive-for: <duration>` |
+| PR | `checks: failing\|pending\|green`; `mergeable`; `feedback: new-trusted\|none`; `closes: {labels}` (the labels of the issues it closes, between them); `reviewed-at-head`; `approved`; `draft`; `inactive-for: <duration>` |
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
-| any | `attempts: {rule, since: [head, human, pause], max}`; `any-of: [<predicates>, …]` |
+| any | `any-of: [<predicates>, …]` |
 
 **No `from`.** Which items a rule sees is `on` (the kind) and `when`
 (which of them), nothing else. The watch tracks a fixed set, from the
@@ -275,10 +274,23 @@ as `--pr-labels`). A duration may name the overseer's
 `{{pr-inactivity-timeout}}` or the workflow definition's
 `{{workflow-cooldown}}`. Any other name is an error when the rule loads.
 
-`attempts` replaces counting the bot's own comments: the engine records
-each run of a rule on an item (the queue's processed tasks already do),
-and the predicate counts them since the head changed or a trusted human
-last spoke. The board's auto rules (repo-agent design
+**`when` is the item, `policy` the overseer's pacing.** `when` says
+what the item is and what has happened to it; how often the overseer
+acts and when it stops trying is `policy`: `dedupe` (`item`, `head`, or
+`update`: once per change to the item), `cooldown` and `give-up`. A
+predicate about the overseer's own runs is in `when` only as a reason to
+run (`last-run: failed`), never a limit. 2a had `attempts` in `when`
+(which every rule using it duplicated in its give-up, checked first),
+`updated-since-run` (now `dedupe: update`), and `stopped` and
+`merge-queue` (engine gates already), all gone; and `author: trusted`
+and `assignee: owner`, which no scanner recorded, are refused until one
+does.
+
+`give-up` replaces counting the bot's own comments: the engine records
+each run of a rule on an item (the queue's processed tasks already do)
+and counts them since the head changed, a trusted human last spoke or
+the watcher last put the item on hold (its comment attaching the stop
+label, whatever its wording). The board's auto rules (repo-agent design
 generic-board-recipes.md, step 7) use the same vocabulary for their
 `when`: `unclaimed`, `assignedToOwner`, `reviewRequestedFromOwner`,
 `labels`.
@@ -312,13 +324,13 @@ Every rule has defaults, overridable per rule:
 
 ```yaml
 policy:
-  dedupe: item          # one task per item and rule; or head (once per head SHA)
+  dedupe: item          # one task per item and rule; head (once per head SHA); update (once per change)
   cooldown:
     success: 10m
     failure: 20m
     reset-on: [head]          # a new head ends it early (ci)
     skip-when: {assignee: pool}   # not for a PR assigned to the pool explicitly (ci)
-  give-up: {attempts: 3, since: [head, human, pause], then: stop}
+  give-up: {attempts: 3, since: [head, human, pause]}   # the stop label and a comment
   phase: 3              # ordering after the priority label
   identity-pin: true
   skip-cooldown: true   # queued inside its task's cooldown (nudge)
@@ -510,8 +522,8 @@ auto rules and a click, so a trigger is the runner's, not the recipe's.
   rule carries its retry count on the queue's processed task. Reactions
   carry meaning too: the watcher's 👀 means taken, 👍 done, 😕 failed,
   and a human's 🚀 asks for it again. A rules engine needs these as
-  named predicates backed by a state store (`attempts: {rule: ci, since:
-  human, max: 3}`, `feedback: new-trusted`), not text matching. The
+  named facts backed by a state store (`give-up: {attempts: 3, since:
+  human}`, `feedback: new-trusted`), not text matching. The
   reactions can stay as what the engine writes for people to see, but
   not as what it reads to decide.
 - **Workflows have no triggering event.** A workflow issue re-runs every
@@ -696,7 +708,7 @@ give-ups sturdier.
   operator. A rule names no role (No `as`, under Actions); the
   overseer's `roles` maps task types to bots.
 - **Workflows on a timer:** a workflow issue re-runs every cooldown. As
-  a rule, is that `updated-since-run: false` plus a cooldown, or a
+  a rule, is that a cooldown without `dedupe: update`, or a
   `schedule` on the rule?
 - **Events:** sources are listings. GitHub's events or a webhook would
   let rules fire on `labeled`, `review_requested`, `check_run.completed`,

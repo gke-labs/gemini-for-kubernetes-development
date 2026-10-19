@@ -22,11 +22,9 @@ type Item struct {
 
 	Labels    []string
 	Assignees []string
-	// Author opened the item; AuthorTrusted is whether they are trusted
-	// (a repository member, or a trusted login).
-	Author        string
-	AuthorTrusted bool
-	UpdatedAt     time.Time
+	// Author opened the item.
+	Author    string
+	UpdatedAt time.Time
 
 	// Issues.
 	// LinkedPR is "open" when an open PR closes or is linked to the issue.
@@ -71,8 +69,10 @@ type Item struct {
 	// Runs are the runs of the item's tasks that ended, by rule.
 	Runs []PastRun
 	// HeadChangedAt, HumanSpokeAt and PausedAt are when the PR's head last
-	// changed, a trusted human last commented and the stop label was last
-	// taken off: what a count since head, human or pause starts from.
+	// changed, a trusted human last commented and the watcher last put it
+	// on hold (its comment attaching the stop label): what a count since
+	// head, human or pause starts from. A count since a pause is of the
+	// runs after the hold was lifted, since none runs while it is on.
 	HeadChangedAt time.Time
 	HumanSpokeAt  time.Time
 	PausedAt      time.Time
@@ -106,8 +106,6 @@ type Env struct {
 	// Watcher is the watcher's own login; Pool the bots it runs as.
 	Watcher string
 	Pool    []string
-	// Owner is the login assignee: owner means.
-	Owner string
 	// PRLabels are the labels the configuration adds to a PR a fix opens,
 	// besides the trigger and the issue's ({{pr-labels}}).
 	PRLabels []string
@@ -229,24 +227,13 @@ func decide(r *Rule, it Item, env Env) (Decision, bool) {
 	runs := rulesRuns(r.Name, it.Runs)
 	// The give-up is decided on the rest of the condition: a rule that
 	// would run, but has run its attempts out.
-	rest := r.When
-	rest.Attempts = nil
-	if !rest.holds(r, it, env, runs) {
+	if !r.When.holds(r, it, env, runs) {
 		return Decision{}, false
 	}
 	if g := r.Policy.GiveUp; g != nil && countSince(runs, since(g.Since, it)) >= g.Attempts {
 		d := Decision{Rule: r.Name, Kind: it.Kind, Number: it.Number, Outcome: OutcomeGiveUp}
 		d.Writes = Writes{Stop: true, Comment: g.Comment}
 		return d, true
-	}
-	if a := r.When.Attempts; a != nil {
-		counted := runs
-		if a.Rule != "" {
-			counted = rulesRuns(a.Rule, it.Runs)
-		}
-		if countSince(counted, since(a.Since, it)) >= a.Max {
-			return Decision{}, false
-		}
 	}
 	if !policyAllows(r, it, env, runs) {
 		return Decision{}, false
@@ -287,33 +274,10 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		if len(it.Assignees) > 0 {
 			return false
 		}
-	case "owner":
-		if env.Owner == "" || !anyIn(it.Assignees, []string{env.Owner}) {
-			return false
-		}
 	}
 	switch w.Author {
 	case "pool":
 		if !anyIn([]string{it.Author}, env.Pool) {
-			return false
-		}
-	case "trusted":
-		if !it.AuthorTrusted {
-			return false
-		}
-	}
-	if w.Stopped != nil && hasLabel(it.Labels, env.Prefixes, "*/stop") != *w.Stopped {
-		return false
-	}
-	if w.UpdatedSinceRun != nil {
-		// Since the last run that succeeded: a failed run says nothing
-		// about the item, and retries once its cooldown is over (the issue
-		// scanner's processed times leave failed tasks out).
-		updated := true
-		if last, ok := lastRun(slices.DeleteFunc(slices.Clone(runs), func(r PastRun) bool { return r.Failed })); ok {
-			updated = it.UpdatedAt.After(last.EndedAt)
-		}
-		if updated != *w.UpdatedSinceRun {
 			return false
 		}
 	}
@@ -389,7 +353,7 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 		got  bool
 	}{
 		{w.ReviewedAtHead, it.ReviewedAtHead}, {w.ChangesRequested, it.ChangesRequested}, {w.Approved, it.Approved},
-		{w.Draft, it.Draft}, {w.MergeQueue, it.MergeQueue}, {w.Due, it.Due},
+		{w.Draft, it.Draft}, {w.Due, it.Due},
 	} {
 		if b.want != nil && *b.want != b.got {
 			return false
@@ -424,6 +388,15 @@ func policyAllows(r *Rule, it Item, env Env, runs []PastRun) bool {
 	}
 	if r.Policy.Dedupe == "head" && it.Head != "" && last.Head == it.Head && !last.Failed {
 		return false
+	}
+	// Once per update: not again until the item changed after the last run
+	// that succeeded; a failed run says nothing about the item, and retries
+	// once its cooldown is over (the issue scanner's processed times leave
+	// failed tasks out).
+	if r.Policy.Dedupe == "update" {
+		if good, ok := lastRun(slices.DeleteFunc(slices.Clone(runs), func(r PastRun) bool { return r.Failed })); ok && !it.UpdatedAt.After(good.EndedAt) {
+			return false
+		}
 	}
 	c := r.Policy.Cooldown
 	if c == nil {

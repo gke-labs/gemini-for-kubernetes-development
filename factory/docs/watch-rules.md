@@ -52,7 +52,6 @@ when:                        # the condition: every predicate set must hold
   fanout-held: false         #   no fan-out holds it back
   linked-pr: none            #   no open PR closes it or is linked to it
   workflow: none             #   its body names no workflow (the workflow rule's)
-  updated-since-run: true    #   changed since this rule's last run that succeeded
 run:                         # the action
   recipe: fix                #   run the fix recipe in the issue's sandbox
   apply: open-pr             #   and apply its result with open-pr when it ends
@@ -60,7 +59,7 @@ run:                         # the action
     draft: "false"
     labels: "{{pr-labels}}"  #   the trigger, the configuration's labels and the issue's
 policy:
-  dedupe: item               # one queued task per item
+  dedupe: update             # once per change: not again until the issue changes after a fix that succeeded
   cooldown: {success: 10m, failure: 20m}   # how long after a run, by its outcome
   phase: 3                   # its tasks' order in the queue, after the priority label
 expect: [open, no-linked-pr] # checked again when the task is about to start
@@ -119,21 +118,17 @@ Every predicate set must hold. A predicate left out is not checked.
 | predicate | values | holds when |
 |---|---|---|
 | `labels` | `{any: [...], all: [...], none: [...]}` | the item has any of `any`, all of `all` and none of `none`. `{{trigger}}` is the trigger label; `*/name` is `name` under any of the overseer's prefixes (`overseer/review`, `kcc/review`). Case-insensitive. |
-| `assignee` | `pool`, `not-pool`, `none`, `owner` | a bot of the pool is assigned; none is; nobody is; the owner is |
-| `author` | `pool`, `trusted` | a bot of the pool opened it; a trusted account did (a member, or a trusted login) |
-| `stopped` | `true`, `false` | it has the stop label (`*/stop`) |
-| `updated-since-run` | `true`, `false` | it was updated after this rule's last run that succeeded; a failed run is left out, so a failure retries after its cooldown |
-| `attempts` | `{max: <n>, since: <events>, rule: <name>}` | the rule's runs on the item (or `rule`'s) since the latest of `since` are fewer than `max` (1-10) |
+| `assignee` | `pool`, `not-pool`, `none` | a bot of the pool is assigned; none is; nobody is |
+| `author` | `pool` | a bot of the pool opened it |
 | `last-run` | `failed` | the rule's last run on the item failed; on a PR, on its current head |
 | `any-of` | a list of predicate sets | at least one set holds (see [`any-of`](#any-of)) |
 
-`since` is one event or a list, and the count starts at the latest of them:
-
-| event | when |
-|---|---|
-| `head` | the PR's head last changed |
-| `human` | a trusted human last commented |
-| `pause` | the stop label was last taken off |
+`when` is about the item: what it is and what has happened to it. How
+often the overseer acts on it, and when it stops trying, is `policy`'s
+(dedupe, cooldown, give-up). A predicate about the overseer's own runs is
+in `when` only when it is a reason to run (`last-run: failed`), never a
+limit. There is no `stopped` or `merge-queue`: a stopped item and a PR in
+the merge queue get nothing from any rule.
 
 ### Issues
 
@@ -152,7 +147,6 @@ Every predicate set must hold. A predicate left out is not checked.
 | `checks` | `failing`, `pending`, `green` | its head's checks |
 | `mergeable` | `true`, `false` | GitHub says it merges (unknown while GitHub computes it: neither) |
 | `draft` | `true`, `false` | it is a draft |
-| `merge-queue` | `true`, `false` | it is in the merge queue |
 | `feedback` | `new-trusted`, `none` | a trusted human's feedback is waiting for an answer; none is |
 | `closes` | `{labels: {any, all, none}}` | the labels of the issues it closes, between them, match |
 | `reviewed-at-head` | `true`, `false` | the automated reviewer reviewed its head |
@@ -179,7 +173,6 @@ when:
   any-of:
     - feedback: new-trusted        # new trusted feedback,
     - last-run: failed             # or the last run on this head failed
-  attempts: {since: head, max: 3}
 ```
 
 A set may hold several predicates, all of which must hold for it:
@@ -260,7 +253,7 @@ engine does not fill in there is an error when the rule loads.
 
 | field | values | meaning |
 |---|---|---|
-| `dedupe` | `item`, `head` | `item`: one task per item and rule at a time. `head`: once per PR head; a run on the head that failed may run again. |
+| `dedupe` | `item`, `head`, `update` | `item`: one task per item and rule at a time (every rule has that much). `head`: once per PR head. `update`: once per change to the item, not again until it is updated after the run. A failed run does not count for `head` or `update`, so it retries after its cooldown. |
 | `cooldown` | see below | how long after its last run the rule waits before it runs on the item again |
 | `give-up` | see below | when the rule stops trying and stops the item |
 | `phase` | a number | its tasks' order in the queue, after the priority label: lower first |
@@ -286,14 +279,22 @@ A duration is Go's (`10m`, `2h`), at least `1m`, or a named one
 give-up:
   attempts: 3                     # 1-10
   since: [head, human, pause]     # counted since the latest of these
-  then: stop                      # the stop label
   comment: Pausing after 3 attempts to fix the failing checks.
 ```
 
-When the rule's other conditions hold but it has run `attempts` times since
-`since`, it gives up instead of running: the stop label and the comment.
-The stop label then keeps every rule off the item until a person takes it
-off (which is a `pause` event, and resets the counts that name it).
+`since` is one event or a list, and the count starts at the latest of them:
+
+| event | when |
+|---|---|
+| `head` | the PR's head last changed |
+| `human` | a trusted human last commented |
+| `pause` | the watcher last put the item on hold (its comment attaching the stop label) |
+
+When the rule's `when` holds but it has run `attempts` times since `since`,
+it gives up instead of running: the stop label and the comment. The stop
+label then keeps every rule off the item until a person takes it off; no
+run happens while it is on, so a count since `pause` starts again from
+zero.
 
 ---
 
@@ -351,8 +352,8 @@ A single rule decides:
 - nothing while its own task for the item is queued or running;
 - nothing unless `when` holds;
 - to **give up**, when `give-up`'s count is reached;
-- nothing while `attempts` is used up, the head is already done (`dedupe:
-  head`), or the cooldown holds (unless `reset-on` or `skip-when` lifts it);
+- nothing while the head is already done (`dedupe: head`), the item has not
+  changed since (`dedupe: update`), or the cooldown holds (unless `reset-on` or `skip-when` lifts it);
 - otherwise to **run**: queue the recipe, or make the writes (if they change
   something).
 
@@ -414,7 +415,7 @@ Rules are checked strictly when they load:
 - an unknown field, a predicate of another kind of item (`checks` on an
   issue rule), or a value outside a predicate's (`checks: red`) is an error;
 - `run` is a built-in recipe or GitHub writes, not both, and not neither;
-- the floors: `attempts.max` and `give-up.attempts` at most 10, a cooldown
+- the floors: `give-up.attempts` at most 10, a cooldown
   at least 1m - a rule cannot loop on an item;
 - a placeholder the engine does not fill in where it is used is an error;
 - a rule that takes the item has an `order`; `order` and `exclusive` are

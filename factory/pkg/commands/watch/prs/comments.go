@@ -203,6 +203,41 @@ func investigationResetTime(comments []*githubv39.IssueComment, lastCommitTime t
 	return lastResetTime
 }
 
+// humanSpokeAt is when a trusted human last commented on the pull request
+// (the comments investigationResetTime counts as human), zero if none has.
+func humanSpokeAt(comments []*githubv39.IssueComment, allBotUsers []string, githubLogin string, bots, trustedLogins []string, triggerLabel string) time.Time {
+	var t time.Time
+	for _, c := range comments {
+		isHuman := !isPoolBot(c.GetUser(), allBotUsers) && !conventions.ShouldIgnoreUser(c.GetUser(), githubLogin, bots) &&
+			conventions.IsTrustedAuthor(c.GetUser(), c.GetAuthorAssociation(), trustedLogins)
+		if isHuman && !conventions.HasIgnorePrefix(c.GetBody(), triggerLabel) && c.GetCreatedAt().After(t) {
+			t = c.GetCreatedAt()
+		}
+	}
+	return t
+}
+
+// pausedAt is when the watcher last put the pull request on hold: its
+// latest comment, or a pool bot's, that attaches the stop label (every
+// give-up and the inactivity pause name the label they attach), zero if
+// none has. Unlike investigationResetTime's pause it does not hang on one
+// give-up's wording.
+func pausedAt(comments []*githubv39.IssueComment, allBotUsers []string, githubLogin, triggerLabel string) time.Time {
+	var t time.Time
+	for _, c := range comments {
+		u := c.GetUser()
+		if !strings.EqualFold(u.GetLogin(), githubLogin) && !isPoolBot(u, allBotUsers) {
+			continue
+		}
+		for _, l := range conventions.StopLabels(triggerLabel) {
+			if strings.Contains(c.GetBody(), "`"+l+"`") && c.GetCreatedAt().After(t) {
+				t = c.GetCreatedAt()
+			}
+		}
+	}
+	return t
+}
+
 // getInvestigationCount counts the watcher's "started investigating" comments
 // since its patience last reset (investigationResetTime): how many times it
 // has investigated CI failures, as told by what it posted.
