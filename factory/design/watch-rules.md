@@ -742,7 +742,7 @@ item's tasks (`ShouldCancelTask`) and a task whose preconditions no
 longer hold, then runs the recipe and its apply.
 
 **Inside `Set.Decide`:** the stop label or the merge queue decides
-nothing; then the enabled rules of the item's kind and listings; the
+nothing; then the enabled rules of the item's kind; the
 `policy.before` rules first, their label writes applied and the stop
 label checked again; the rules of no group each on their own, a stop
 written by one (inactive) skipping the groups; then each group's first
