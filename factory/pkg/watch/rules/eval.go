@@ -33,8 +33,8 @@ type Item struct {
 	Workflow string
 	// WorkflowCooldown is that definition's cooldown, 0 for its default.
 	WorkflowCooldown time.Duration
-	FanoutParent     bool
-	FanoutChild      bool
+	// FanoutParent is whether the issue carries the fanout label.
+	FanoutParent bool
 
 	// PRs.
 	Head      string
@@ -301,23 +301,8 @@ func (w When) holds(r *Rule, it Item, env Env, runs []PastRun) bool {
 	if w.OpenedBy == "watcher" && (env.Watcher == "" || !strings.EqualFold(it.Author, env.Watcher)) {
 		return false
 	}
-	if w.Fanout != "" {
-		got := "none"
-		switch {
-		case it.FanoutParent:
-			got = "parent"
-		case it.FanoutChild:
-			got = "child"
-		}
-		if got != w.Fanout {
-			return false
-		}
-	}
-	if w.FanoutHeld != nil {
-		held := it.FanoutParent || (it.FanoutChild && !hasLabel(it.Labels, env.Prefixes, env.Trigger))
-		if held != *w.FanoutHeld {
-			return false
-		}
+	if w.Fanout != nil && it.FanoutParent != *w.Fanout {
+		return false
 	}
 
 	if w.Checks != "" && w.Checks != it.Checks {

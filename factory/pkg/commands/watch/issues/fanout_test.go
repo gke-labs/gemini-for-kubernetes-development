@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,10 +25,11 @@ func fanoutIssue(n int, body string, labels ...string) *githubv39.Issue {
 
 const childBody = "Do a.\n\nPart of #100.\n\n<!-- factory:fanout parent=100 items=a -->\n"
 
-// TestAdoptCreatedIssues_LeavesFanoutsAlone pins that the issues a fan-out
-// files as the operator are not adopted: adopting would label every child at
-// once, defeating the window, and start work on the parent itself.
-func TestAdoptCreatedIssues_LeavesFanoutsAlone(t *testing.T) {
+// TestAdoptCreatedIssues_LeavesFanoutParentsAlone pins that a fan-out's
+// parent, filed as the operator, is not adopted: work would start on the
+// parent itself. Its children are created when they are to be worked on
+// (create: lazy), so they are adopted like any issue the operator files.
+func TestAdoptCreatedIssues_LeavesFanoutParentsAlone(t *testing.T) {
 	s, _, _ := newScanner(t, Config{DryRun: true}, Deps{})
 
 	adopted := s.adoptCreatedIssues(context.Background(), []*githubv39.Issue{
@@ -41,16 +43,15 @@ func TestAdoptCreatedIssues_LeavesFanoutsAlone(t *testing.T) {
 	for _, issue := range adopted {
 		got = append(got, issue.GetNumber())
 	}
-	if len(got) != 2 || got[0] != 102 || got[1] != 103 {
-		t.Errorf("adopted %v, want [102 103]: the started child and the plain issue", got)
+	if len(got) != 3 || got[0] != 101 || got[1] != 102 || got[2] != 103 {
+		t.Errorf("adopted %v, want [101 102 103]: both children and the plain issue", got)
 	}
 }
 
-// TestQueueTasks_SkipsFanoutParentsAndWaitingChildren pins that a parent is
-// never worked on, and that a child reaching the queue unlabelled - assigned to
-// a bot by hand - waits for the fan-out to label it instead of being labelled
-// here, out of turn.
-func TestQueueTasks_SkipsFanoutParentsAndWaitingChildren(t *testing.T) {
+// TestQueueTasks_SkipsFanoutParents pins that a parent is never worked on,
+// and that a child is fixed like any issue, labelled or not (one created
+// without triage access carries no label).
+func TestQueueTasks_SkipsFanoutParents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -77,7 +78,8 @@ func TestQueueTasks_SkipsFanoutParentsAndWaitingChildren(t *testing.T) {
 	for name := range queue.enqueued {
 		got = append(got, name)
 	}
-	if len(got) != 1 || got[0] != "task-issue-102.yaml" {
-		t.Errorf("queued %v, want only the started child, task-issue-102.yaml", got)
+	slices.Sort(got)
+	if len(got) != 2 || got[0] != "task-issue-101.yaml" || got[1] != "task-issue-102.yaml" {
+		t.Errorf("queued %v, want both children, task-issue-101.yaml and task-issue-102.yaml", got)
 	}
 }

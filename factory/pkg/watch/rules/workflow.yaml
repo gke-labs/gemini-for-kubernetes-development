@@ -12,7 +12,7 @@ description: Take a workflow's next step on the issue that names it
 on: issue
 order: 10
 when:
-  fanout-held: false
+  fanout: false
   workflow: any
 run:
   recipe: workflow
