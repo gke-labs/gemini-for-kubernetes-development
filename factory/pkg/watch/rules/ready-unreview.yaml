@@ -22,4 +22,3 @@ when:
   changes-requested: false
 run:
   unlabel: ["*/review"]
-as: watcher

@@ -16,7 +16,6 @@ when:
 run:
   recipe: care-ci
   apply: post-replies
-as: author
 policy:
   dedupe: item
   cooldown:

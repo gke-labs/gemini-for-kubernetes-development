@@ -11,4 +11,3 @@ when:
   labels: {none: ["*/ready-for-human"]}
 run:
   label: ["{{closing-issue-labels}}"]
-as: watcher

@@ -12,7 +12,6 @@ when:
 run:
   recipe: care-rebase
   apply: post-replies
-as: author
 policy:
   dedupe: head
   phase: 2

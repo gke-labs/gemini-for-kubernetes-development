@@ -118,7 +118,6 @@ when:
   workflow: none
   updated-since-run: true
 run: {recipe: fix, apply: open-pr, inputs: {draft: "false"}}
-as: {role: coder}
 policy: {cooldown: {success: 10m, failure: 20m}, phase: 3}
 ```
 
@@ -141,7 +140,6 @@ on: pr
 order: 30      # inherit-labels 5, inactive 7, comments 10, conflict 20, ci 30, review 40, ready 50
 when: {checks: failing}
 run: {recipe: care-ci, apply: post-replies}
-as: {role: author}
 policy: {dedupe: head, give-up: {attempts: 3, since: human, then: stop}}
 ```
 
@@ -298,9 +296,15 @@ generic-board-recipes.md, step 7) use the same vocabulary for their
   every give-up ends today.
 - **Cluster:** `delete`, `suspend`, `harvest` on sandboxes (GC).
 
-`as` names a role. Pinning (the bot that owns the item's sandbox, then
-the assignee, then any) and "a PR's tasks run as its author" are the
-engine's, for every rule.
+**No `as`.** A rule does not name the bot it runs as. The role follows
+from what runs: the recipe's task type, mapped by the overseer's `roles`
+configuration (fix a coder, review a reviewer, a workflow an agent, PR
+care the PR's own), and GitHub writes are the watcher's. Pinning (the
+bot that owns the item's sandbox, then the assignee, then any) is the
+engine's, for every rule. 2a-1 had an `as` per rule; nothing read it
+(the scanners' `selectUserForTask` decides), two rules running one
+recipe as different roles would be a mistake, and the operator, not a
+repository, decides which bot does what, so it is gone.
 
 ### Policies
 
@@ -688,9 +692,9 @@ give-ups sturdier.
 
 ## Open questions
 
-- **A repository's rules and the bot pool:** a rule runs as a role of
-  the overseer's bots. Does a repository get to say which, or only the
-  overseer's operator?
+- ~~**A repository's rules and the bot pool:**~~ decided: only the
+  operator. A rule names no role (No `as`, under Actions); the
+  overseer's `roles` maps task types to bots.
 - **Workflows on a timer:** a workflow issue re-runs every cooldown. As
   a rule, is that `updated-since-run: false` plus a cooldown, or a
   `schedule` on the rule?

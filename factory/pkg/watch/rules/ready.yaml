@@ -35,4 +35,3 @@ run:
   unlabel: ["*/review"]
   assign: "{{closing-issue-assignees}}"
   unassign: "{{pool}}"
-as: watcher

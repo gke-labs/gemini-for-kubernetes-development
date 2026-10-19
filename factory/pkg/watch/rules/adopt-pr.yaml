@@ -18,4 +18,3 @@ when:
   closes: {labels: {any: ["{{trigger}}"]}}
 run:
   label: ["{{closing-issue-labels}}"]
-as: watcher

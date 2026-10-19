@@ -18,7 +18,6 @@ when:
 run:
   recipe: care-comments
   apply: post-replies
-as: author
 policy:
   dedupe: item
   give-up:
