@@ -322,8 +322,9 @@ func (v view) checkpointComment(done int) string {
 
 // createAndLabel labels the next children in the window: the existing ones
 // not yet started, rewritten if out of date, and new ones for the next items
-// without a child, a group of them each. With create: all, it creates and
-// rewrites the rest unlabelled.
+// without a child, a group of them each. A child not labelled (one made
+// without triage access, or one a person unlabelled) is rewritten if out
+// of date.
 func (v view) createAndLabel(p *Plan) {
 	spec := v.in.Spec
 	active := 0
@@ -359,8 +360,6 @@ func (v view) createAndLabel(p *Plan) {
 			case slots > 0:
 				group = []Item{it}
 				slots--
-			case spec.Settings.Create == CreateAll:
-				p.Create = append(p.Create, newChild([]Item{it}, nil))
 			}
 			if len(group) >= size {
 				flush()

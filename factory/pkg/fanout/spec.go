@@ -54,7 +54,8 @@ type Settings struct {
 	Title string
 	// Labels go on every child, besides the trigger label.
 	Labels []string
-	// Create is CreateAll or CreateLazy.
+	// Create is CreateLazy, the one way: a child is created when it is
+	// labelled.
 	Create string
 	// Group is how many items a child is made with, and how far it grows.
 	Group  Window
@@ -103,9 +104,10 @@ func (w *Window) UnmarshalYAML(n *yaml.Node) error {
 }
 
 const (
-	// CreateAll creates every child at the start, unlabelled.
-	CreateAll = "all"
-	// CreateLazy creates a child only when it is labelled.
+	// CreateLazy creates a child only when it is labelled. It is the only
+	// value: creating every child at the start, unlabelled (all), cost the
+	// groups and a rewrite of every child at each spec fix, for issues
+	// nobody worked on yet.
 	CreateLazy = "lazy"
 
 	defaultTitle       = "{{.item.name}}: {{.parent.title}}"
@@ -324,13 +326,9 @@ func parseSettings(section string) (Settings, error) {
 	switch s.Create {
 	case "":
 		s.Create = CreateLazy
-	case CreateAll:
-		if grouped {
-			return Settings{}, fmt.Errorf("## Fan-out: create: all with group above 1: a group is made when its child is labelled, so use create: lazy")
-		}
 	case CreateLazy:
 	default:
-		return Settings{}, fmt.Errorf("## Fan-out: create is %q, want %q or %q", s.Create, CreateAll, CreateLazy)
+		return Settings{}, fmt.Errorf("## Fan-out: create is %q, want %q (a child is created when it is labelled)", s.Create, CreateLazy)
 	}
 	if s.Window.Start == 0 {
 		s.Window.Start = defaultWindowStart

@@ -13,7 +13,7 @@ const kmsSpec = SpecMarker + `
 ` + "```yaml" + `
 title: "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef"
 labels: []
-create: all
+create: lazy
 window: {start: 2, max: 8}
 checkpoints: [2]
 ` + "```" + `
@@ -48,7 +48,7 @@ func TestParse(t *testing.T) {
 		Settings: Settings{
 			Title:       "Migrate {{.item.name}} to kmsv1beta1.KMSCryptoKeyRef",
 			Labels:      []string{},
-			Create:      CreateAll,
+			Create:      CreateLazy,
 			Group:       Window{Start: 1, Max: 1},
 			Window:      Window{Start: 2, Max: 8},
 			Checkpoints: []int{2},
@@ -83,9 +83,9 @@ func TestParseDefaults(t *testing.T) {
 			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 10, Max: 10}, Checkpoints: []int{10}},
 		},
 		{
-			name: "no checkpoints, every child at the start",
-			yaml: "create: all\ncheckpoints: []",
-			want: Settings{Title: defaultTitle, Create: CreateAll, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
+			name: "no checkpoints",
+			yaml: "create: lazy\ncheckpoints: []",
+			want: Settings{Title: defaultTitle, Create: CreateLazy, Group: Window{Start: 1, Max: 1}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{}},
 		},
 	}
 	for _, tc := range tests {

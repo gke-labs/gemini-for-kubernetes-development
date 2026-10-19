@@ -136,7 +136,7 @@ func TestItemsSourceErrors(t *testing.T) {
 	tests := []struct{ name, md, want string }{
 		{"both a checklist and a file", fmtSpec("", "x") + "## Items\n- [ ] a\n", "both"},
 		{"items without from", "## Fan-out\nitems: {select: .a}\n## Task\nx\n", "no from"},
-		{"neither", "## Task\nx\n## Fan-out\ncreate: all\n", "items.from"},
+		{"neither", "## Task\nx\n## Fan-out\ncreate: lazy\n", "items.from"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

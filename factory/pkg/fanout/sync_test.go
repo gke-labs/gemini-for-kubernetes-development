@@ -153,7 +153,7 @@ func (f *fakeGitHub) removeLabel(n int, label string) {
 
 func TestSyncFanOut(t *testing.T) {
 	ctx := context.Background()
-	body := "## Fan-out\ncreate: all\n\n## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
+	body := "## Fan-out\ncreate: lazy\n\n## Task\nDo {{.item.name}}.\n\n## Items\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n\n## Finally\nClean up.\n"
 	gh := newFake(body, "overseer/fanout")
 	opts := SyncOptions{Issue: parent, TriggerLabel: "overseer", BotLogin: "bot"}
 	sync := func() SyncResult {
@@ -175,15 +175,16 @@ func TestSyncFanOut(t *testing.T) {
 		t.Fatalf("dry run wrote: %d issues, %d comments", gh.next-parent-1, len(gh.comments[parent]))
 	}
 
-	// First pass: every child, the first two labelled, and the progress.
+	// First pass: the first window's two children, labelled, and the
+	// progress.
 	sync()
 	if got, want := gh.labelled("overseer"), []int{101, 102}; !slices.Equal(got, want) {
 		t.Fatalf("labelled %v, want %v", got, want)
 	}
-	if gh.next != 105 || len(gh.comments[parent]) != 1 {
-		t.Fatalf("got %d children and %d comments, want 4 and 1", gh.next-parent-1, len(gh.comments[parent]))
+	if gh.next != 103 || len(gh.comments[parent]) != 1 {
+		t.Fatalf("got %d children and %d comments, want 2 and 1", gh.next-parent-1, len(gh.comments[parent]))
 	}
-	if got, want := gh.subIssues[parent], []int{101, 102, 103, 104}; !slices.Equal(got, want) {
+	if got, want := gh.subIssues[parent], []int{101, 102}; !slices.Equal(got, want) {
 		t.Fatalf("sub-issues %v, want %v", got, want)
 	}
 
@@ -191,8 +192,8 @@ func TestSyncFanOut(t *testing.T) {
 	gh.hideTimeline = true
 	sync()
 	gh.hideTimeline = false
-	if gh.next != 105 {
-		t.Fatalf("a lagging timeline made %d more children", gh.next-105)
+	if gh.next != 103 {
+		t.Fatalf("a lagging timeline made %d more children", gh.next-103)
 	}
 
 	// Two done: the checkpoint stops the fan-out.
@@ -205,27 +206,33 @@ func TestSyncFanOut(t *testing.T) {
 	if got := gh.labelled("overseer"); len(got) != 2 {
 		t.Fatalf("labelled %v at a checkpoint", got)
 	}
+	stoppedAt := gh.next
 
-	// Stopped, the spec is edited: nothing changes until the stop label goes.
+	// Stopped, the spec is edited: nothing is created until the stop label
+	// goes.
 	gh.issues[parent].Body = strings.Replace(body, "Do {{.item.name}}.", "Do {{.item.name}}, carefully.", 1)
 	sync()
-	if strings.Contains(gh.issues[103].Body, "carefully") {
-		t.Fatal("a child was rewritten while stopped")
+	if gh.next != stoppedAt {
+		t.Fatalf("%d children created while stopped", gh.next-stoppedAt)
 	}
 
-	// Resumed: the waiting children are rewritten and labelled (window 4).
+	// Resumed: the rest are created from the edited spec and labelled
+	// (window 4).
 	gh.removeLabel(parent, "overseer/stop")
 	sync()
-	if !strings.Contains(gh.issues[103].Body, "carefully") || !strings.Contains(gh.issues[104].Body, "carefully") {
-		t.Fatal("the waiting children were not rewritten")
+	children := gh.labelled("overseer")
+	if len(children) != 4 {
+		t.Fatalf("labelled %v, want all four", children)
 	}
-	if got := gh.labelled("overseer"); len(got) != 4 {
-		t.Fatalf("labelled %v, want all four", got)
+	for _, n := range children[2:] {
+		if !strings.Contains(gh.issues[n].Body, "carefully") {
+			t.Fatalf("#%d was not made from the edited spec", n)
+		}
 	}
 
 	// Every item done: the final child, then the parent closes.
-	gh.closeChild(103)
-	gh.closeChild(104)
+	gh.closeChild(children[2])
+	gh.closeChild(children[3])
 	sync()
 	final := gh.next - 1
 	if _, _, isFinal, _ := ParseMarker(gh.issues[final].Body); !isFinal || !slices.Contains(gh.issues[final].Labels, "overseer") {
