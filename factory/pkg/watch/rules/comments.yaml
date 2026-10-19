@@ -9,7 +9,6 @@ name: comments
 description: Answer new trusted feedback on the PR
 on: pr
 group: {name: pr-care, order: 10}
-from: [labelled, assigned]
 when:
   author: pool
   any-of:

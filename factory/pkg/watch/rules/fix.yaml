@@ -12,11 +12,11 @@
 # (applyTriggerLabel), and the coder the dispatcher picks is assigned when
 # the task starts (the claim, which unassigns the watcher). Adoption wrote
 # the same two things earlier - the label, and the watcher as a parking
-# assignee - so it is this rule's third listing rather than a rule.
+# assignee - so an issue the watcher opened is tracked like a labelled
+# one and is this rule's, rather than a rule of its own.
 name: fix
 description: Fix an issue the overseer is pointed at and open the PR
 on: issue
-from: [labelled, assigned, opened-by-watcher]
 when:
   fanout-held: false
   linked-pr: none

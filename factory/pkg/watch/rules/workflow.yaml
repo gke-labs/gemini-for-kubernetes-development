@@ -10,7 +10,6 @@
 name: workflow
 description: Take a workflow's next step on the issue that names it
 on: issue
-from: [labelled, assigned, opened-by-watcher]
 when:
   fanout-held: false
   workflow: any

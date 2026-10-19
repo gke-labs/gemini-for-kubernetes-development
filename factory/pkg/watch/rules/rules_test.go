@@ -98,9 +98,6 @@ func TestValidateErrors(t *testing.T) {
 		{"writes as coder", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\nas: coder\n", "GitHub writes are the watcher's"},
 		{"recipe and writes", base[:strings.Index(base, "as:")] + "  label: [x]\nas: author\n", "not both"},
 		{"no action", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {}\n", "run needs a recipe or a GitHub write"},
-		{"no narrowing", strings.Replace(base, "labels: {any: [overseer]}", "checks: failing", 1), "a predicate a listing can narrow on"},
-		{"labels none does not narrow", strings.Replace(base, "any: [overseer]", "none: [overseer]", 1), "a predicate a listing can narrow on"},
-		{"assignee none does not narrow", strings.Replace(base, "labels: {any: [overseer]}", "assignee: none", 1), "a predicate a listing can narrow on"},
 		{"give-up over the floor", base + "policy:\n  give-up: {attempts: 11}\n", "give-up.attempts 11: want 1 to 10"},
 		{"attempts over the floor", strings.Replace(base, "when:\n", "when:\n  attempts: {max: 50}\n", 1), "when.attempts.max 50: want 1 to 10"},
 		{"cooldown under the floor", base + "policy:\n  cooldown: {failure: 30s}\n", "policy.cooldown 30s is under the floor of 1m"},
@@ -110,16 +107,14 @@ func TestValidateErrors(t *testing.T) {
 		{"group neither", base + "group: {name: g}\n", "give an order above 0 or last"},
 		{"event without event", "name: r\non: event\nwhen: {}\nrun: {recipe: workflow}\nas: agent\n", "needs when.event"},
 
-		// from: the listings, which narrow by themselves.
-		{"from narrows", strings.Replace(base, "when:\n  labels: {any: [overseer]}\n", "from: [labelled, assigned]\nwhen:\n  checks: failing\n", 1), ""},
-		{"from of issues on pr", strings.Replace(base, "when:", "from: [opened-by-watcher]\nwhen:", 1), `from: "opened-by-watcher" is not a listing of rules on pr`},
+		// from: gone; on and when say which items a rule takes.
+		{"from", strings.Replace(base, "when:", "from: [labelled, assigned]\nwhen:", 1), "field from not found"},
 
-		// any-of: one level, two sets or more, each narrowing unless from does.
+		// any-of: one level, two sets or more.
 		{"any-of", strings.Replace(base, "labels: {any: [overseer]}", "any-of:\n    - labels: {any: [a]}\n    - assignee: pool", 1), ""},
 		{"any-of of one", strings.Replace(base, "labels: {any: [overseer]}", "any-of:\n    - labels: {any: [a]}", 1), "give two sets or more"},
 		{"any-of nested", strings.Replace(base, "when:\n", "when:\n  any-of:\n    - {checks: failing}\n    - any-of: [{checks: pending}, {checks: green}]\n", 1), "has no any-of of its own"},
 		{"any-of predicate of another kind", strings.Replace(base, "when:\n", "when:\n  any-of: [{checks: failing}, {linked-pr: none}]\n", 1), "when.any-of[1].linked-pr is not a predicate of a rule on pr"},
-		{"any-of does not narrow", strings.Replace(base, "labels: {any: [overseer]}", "any-of: [{labels: {any: [a]}}, {checks: failing}]", 1), "give from, or a predicate"},
 		{"closes without labels", strings.Replace(base, "when:\n", "when:\n  closes: {}\n", 1), "closes needs labels"},
 
 		// The counts' resets, the cooldown's reset and skip.

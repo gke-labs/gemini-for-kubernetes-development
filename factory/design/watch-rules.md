@@ -242,14 +242,21 @@ the engine does not offer. From today's rules:
 | sandbox | `item: closed`; `age: <duration>`; `idle: <duration>`; `requires-human` |
 | any | `attempts: {rule, since: [head, human, pause], max}`; `any-of: [<predicates>, …]` |
 
-**`from`** names the listings a rule's items come from, any of them:
-`labelled` (the trigger label), `assigned` (a bot of the pool) and, on
-issues, `opened-by-watcher`. They are the overseer's ways of being
-pointed at an item, and what the one scan lists; a rule without `from`
-must narrow the listing with a predicate (labels, a pool or owner
-assignee, an author). Adoption is not a rule: an issue the watcher
-opened is fix's third listing, and the label and assignee adoption wrote
-are fix's own (the label when queued, the coder at the claim).
+**No `from`.** Which items a rule sees is `on` (the kind) and `when`
+(which of them), nothing else. The watch tracks a fixed set, from the
+overseer's settings: open items with the trigger label, assigned to a
+bot of the pool, or (issues) opened by the watcher's own login; a rule
+sees every tracked item of its kind and narrows with `labels`,
+`assignee`, `author`, `opened-by`. 2a-2a had a `from: [labelled,
+assigned, opened-by-watcher]` naming the listings, but every prebaked
+rule named its kind's whole tracked set, so it said nothing, and it was
+a second, source-level way of saying what `when` says; it is gone. When
+repository rules want items outside the tracked set (Phase 5), the
+sources are derived from `on` and `when` (`labels: {any: [x]}` lists
+label `x`), and a rule that narrows nothing is refused then. Adoption
+is not a rule: an issue the watcher opened is tracked like a labelled
+one, and the label and assignee adoption wrote are fix's own (the label
+when queued, the coder at the claim).
 
 **`any-of`** holds when one of its predicate sets does, beside the rest:
 comments runs on new trusted feedback or a failed last run; ready's
@@ -616,7 +623,7 @@ KCC, calls per pass drop and the tasks enqueued match a week before.
 **Phase 2, the engine in shadow:**
 
 - 2a: the model and the prebaked rules (2a-1, #1996); the model's gaps
-  closed and the files exact (2a-2a: `from`, `any-of`, `closes`,
+  closed and the files exact (2a-2a: `from` (since removed), `any-of`, `closes`,
   `last-run`, `fanout-held`, resets, placeholders; adoption folded into
   fix, #1999); the evaluator (2a-2b: `Set.Decide` over an `Item` of facts
   and an `Env`, no calls, #2000); replay (2a-3: the scanners record each

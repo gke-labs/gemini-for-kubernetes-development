@@ -26,7 +26,7 @@ func runWatchRules(t *testing.T, args ...string) string {
 func TestWatchRulesTable(t *testing.T) {
 	out := runWatchRules(t)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON FROM GROUP RUN AS POLICY SOURCE ENABLED" {
+	if got := strings.Fields(lines[0]); strings.Join(got, " ") != "NAME ON GROUP RUN AS POLICY SOURCE ENABLED" {
 		t.Fatalf("header = %v", got)
 	}
 	var names []string
@@ -71,7 +71,7 @@ func TestWatchRulesYAMLAndJSON(t *testing.T) {
 	}
 	// A named duration and a list of resets read back as written.
 	out := runWatchRules(t, "-o", "yaml")
-	for _, sub := range []string{`success: '{{workflow-cooldown}}'`, "- pause", "from:\n    - labelled"} {
+	for _, sub := range []string{`success: '{{workflow-cooldown}}'`, "- pause"} {
 		if !strings.Contains(out, sub) {
 			t.Errorf("yaml lacks %q", sub)
 		}

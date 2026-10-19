@@ -9,7 +9,6 @@
 name: ready-unreview
 description: Take */review off a PR already handed to the humans
 on: pr
-from: [labelled, assigned]
 group: {name: pr-care, order: 60}
 when:
   author: pool
