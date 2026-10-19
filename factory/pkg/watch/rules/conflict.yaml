@@ -15,4 +15,3 @@ run:
 policy:
   dedupe: head
   phase: 2
-expect: [open, head]

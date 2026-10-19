@@ -120,7 +120,7 @@ func TestValidateErrors(t *testing.T) {
 		{"skip-cooldown", base + "policy:\n  skip-cooldown: true\n", "field skip-cooldown not found"},
 		{"cooldown under the floor", base + "policy:\n  cooldown: {failure: 30s}\n", "policy.cooldown 30s is under the floor of 1m"},
 		{"bad duration", base + "policy:\n  cooldown: {success: soon}\n", `"soon" is not a duration`},
-		{"head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "expect: [head]\n", `expect "head"`},
+		{"expect", base + "expect: [head]\n", "field expect not found"},
 		{"group", base + "group: {name: g, order: 1}\n", "field group not found"},
 		{"exclusive without order", strings.Replace(base, "order: 1\n", "", 1), "a rule that takes the item needs an order"},
 		{"writes without order", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {label: [y]}\n", ""},

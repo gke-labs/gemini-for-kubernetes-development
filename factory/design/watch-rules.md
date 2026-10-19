@@ -360,19 +360,16 @@ at the new head once it ends.
 **Preconditions.** A task records the facts it was decided on, and the
 dispatcher checks them before it starts it, as it already checks the
 stop label and whether the item is closed (one call, nearly free with
-the HTTP cache):
+the HTTP cache). Which facts follow from the task, not from the rule
+(2a's `expect:` was never read, and its comments value was wrong): the
+scanners set them (`prs/task.go` expectFor, the issue scanner):
 
-```yaml
-# rules/ci.yaml
-expect: [head]          # recorded when queued, checked before start
-```
-
-| rule | expect | why |
+| task | checked | why |
 |---|---|---|
-| ci, conflict, review | `head` | the failure, conflict or diff was of that commit |
-| comments | `open` | a commit does not address feedback; reactions track that |
-| fix, workflow | `open`, `no-linked-pr` | someone opened a PR by hand while it waited |
-| chores | — | no item |
+| ci, conflict, review | the head | the failure, conflict or diff was of that commit |
+| comments | — | a commit does not address feedback; reactions track that |
+| fix | no linked PR | someone opened a PR by hand while it waited |
+| workflow, chores | — | |
 
 - **A failed check drops the task,** with the reason in the journal
   (`Dropped: head moved A→B`) and in the overseer's view, as the
@@ -385,6 +382,18 @@ expect: [head]          # recorded when queued, checked before start
 - **An item evaluated again while its task is queued** (dedupe keeps it
   to one) refreshes the task's recorded facts, so it is not dropped for
   a change it already reflects.
+
+**Phase 4: decide again at start.** Preconditions check a few facts; once
+the engine can build an item's facts on its own (the shared scan and a
+fact builder out of the scanners), the dispatcher asks it instead:
+would it still decide this rule on this item now? That catches what the
+head check cannot: feedback that arrived while a ci task waited (comments,
+earlier in the order, now wins), CI re-run and now pending or green, the
+PR approved and ready. It decides as if the task were not there: not
+`Queued`, its own run not counted toward give-up or cooldown. A "no" drops
+the task as a failed precondition does: not an attempt, no cooldown, the
+next scan deciding anew. It costs one decision per task started, not per
+item scanned. The preconditions go with it.
 
 Pushes are already safe (the push step leases against the head it last
 pushed); preconditions save the wasted run. With them, one task per

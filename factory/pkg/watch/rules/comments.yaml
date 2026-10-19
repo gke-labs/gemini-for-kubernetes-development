@@ -23,4 +23,3 @@ policy:
     since: head
     comment: Pausing after 3 attempts to address the feedback on this commit.
   phase: 1
-expect: [open, head]

@@ -32,4 +32,3 @@ policy:
   dedupe: update
   cooldown: {success: 10m, failure: 20m}
   phase: 3
-expect: [open, no-linked-pr]

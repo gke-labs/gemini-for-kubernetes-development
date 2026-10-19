@@ -25,4 +25,3 @@ policy:
     since: [head, human, pause]
     comment: Pausing after 3 attempts to fix the failing checks.
   phase: 3
-expect: [open, head]
