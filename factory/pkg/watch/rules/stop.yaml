@@ -6,7 +6,7 @@
 # Off as a rule: the stop label is a gate of the engine on every rule
 # (no rule runs on a stopped item, and its queued tasks drop), not one
 # rule among others; this file names it and what it does. Its label is
-# what give-up's then: stop adds.
+# what a give-up adds.
 name: stop
 description: The stop label drops an item's queued tasks
 on: issue

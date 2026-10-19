@@ -106,15 +106,15 @@ func (s *Scanner) recordHistory(pr *githubv39.PullRequest, history *prHistory, h
 	}
 	review := s.automatedReviewOfHead(history.reviews, headSHA, history.lastCommitTime)
 	activity := getLastPRActivityTime(pr, history.comments, history.reviews, history.revCommentsMap, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
-	reset := investigationResetTime(history.comments, history.lastCommitTime, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	human := humanSpokeAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.AllowlistedBots, s.cfg.TrustedLogins, s.cfg.TriggerLabel)
+	paused := pausedAt(history.comments, s.cfg.BotUsers, s.cfg.GitHubLogin, s.cfg.TriggerLabel)
 	s.rec.Fill(func(it *rules.Item) {
 		it.ReviewedAtHead = review != nil
 		it.ChangesRequested = review != nil && review.GetState() == "CHANGES_REQUESTED"
 		it.LastTrustedActivity = activity
 		it.HeadChangedAt = history.lastCommitTime
-		// investigationResetTime is the latest of the head, a trusted human
-		// and a pause; the rules take the latest of the ones they name.
-		it.HumanSpokeAt = reset
+		it.HumanSpokeAt = human
+		it.PausedAt = paused
 	})
 }
 

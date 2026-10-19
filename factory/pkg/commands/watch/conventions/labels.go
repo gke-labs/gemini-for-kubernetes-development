@@ -36,6 +36,12 @@ func StopLabel(triggerLabel string) string {
 	return defaultPrefix + "/stop"
 }
 
+// StopLabels are the stop label's spellings: 'overseer/stop' always, and
+// the trigger's own.
+func StopLabels(triggerLabel string) []string {
+	return namespaced(triggerLabel, "stop")
+}
+
 // HasStopLabel reports whether an issue or pull request carries a label asking
 // the watcher to leave it alone.
 //

@@ -133,6 +133,10 @@ func TestDecidePRs(t *testing.T) {
 			it.Checks, it.HumanSpokeAt = "failing", ago(20*time.Minute)
 			it.Runs = []PastRun{ciRun(150*time.Minute, "h2", false), ciRun(100*time.Minute, "h2", false), ciRun(50*time.Minute, "h2", false)}
 		}), "ci run"},
+		{"ci 3 times, put on hold and let go since", pr(func(it *Item) {
+			it.Checks, it.PausedAt = "failing", ago(30*time.Minute)
+			it.Runs = []PastRun{ciRun(150*time.Minute, "h2", false), ciRun(100*time.Minute, "h2", false), ciRun(50*time.Minute, "h2", false)}
+		}), "ci run"},
 		{"ci 1h ago on this head, unassigned: cooldown", pr(func(it *Item) {
 			it.Checks, it.Assignees = "failing", nil
 			it.Runs = []PastRun{ciRun(70*time.Minute, "h2", false)}

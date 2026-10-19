@@ -14,7 +14,6 @@ when:
   author: pool
   labels: {all: ["*/ready-for-human", "*/review"]}
   draft: false
-  stopped: false
   mergeable: true
   checks: green
   feedback: none

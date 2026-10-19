@@ -14,7 +14,6 @@ when:
   any-of:
     - feedback: new-trusted
     - last-run: failed
-  attempts: {since: head, max: 3}
 run:
   recipe: care-comments
   apply: post-replies
@@ -23,7 +22,6 @@ policy:
   give-up:
     attempts: 3
     since: head
-    then: stop
     comment: Pausing after 3 attempts to address the feedback on this commit.
   phase: 1
 expect: [open, head]

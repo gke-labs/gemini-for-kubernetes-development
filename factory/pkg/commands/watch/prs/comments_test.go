@@ -524,3 +524,27 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// The rules' human and pause are apart: a trusted human's comment is the
+// one, the watcher's comment attaching the stop label the other, whatever
+// the give-up says.
+func TestHumanSpokeAtAndPausedAt(t *testing.T) {
+	now := time.Now()
+	at := func(d time.Duration) *time.Time { return timePtr(now.Add(-d)) }
+	member := "MEMBER"
+	comments := []*githubv39.IssueComment{
+		{User: &githubv39.User{Login: stringPtr("alice")}, AuthorAssociation: &member, Body: stringPtr("try the other flag"), CreatedAt: at(3 * time.Hour)},
+		{User: &githubv39.User{Login: stringPtr("watcher")}, Body: stringPtr("Pausing after 3 attempts to fix the failing checks. I have applied the `overseer/stop` label."), CreatedAt: at(2 * time.Hour)},
+		{User: &githubv39.User{Login: stringPtr("pool-bot")}, Body: stringPtr("🤖 AI Factory started investigating CI check failures"), CreatedAt: at(time.Hour)},
+		{User: &githubv39.User{Login: stringPtr("mallory")}, Body: stringPtr("adding `overseer/stop` myself"), CreatedAt: at(30 * time.Minute)},
+	}
+	if got := humanSpokeAt(comments, []string{"pool-bot"}, "watcher", nil, nil, "overseer"); !got.Equal(*at(3 * time.Hour)) {
+		t.Errorf("humanSpokeAt = %v, want alice's comment", got)
+	}
+	if got := pausedAt(comments, []string{"pool-bot"}, "watcher", "overseer"); !got.Equal(*at(2 * time.Hour)) {
+		t.Errorf("pausedAt = %v, want the watcher's hold", got)
+	}
+	if got := pausedAt(comments[:1], []string{"pool-bot"}, "watcher", "overseer"); !got.IsZero() {
+		t.Errorf("pausedAt with no hold = %v, want zero", got)
+	}
+}

@@ -107,7 +107,14 @@ func TestValidateErrors(t *testing.T) {
 		{"recipe and writes", base + "  label: [x]\n", "not both"},
 		{"no action", "name: r\non: pr\nwhen: {labels: {any: [x]}}\nrun: {}\n", "run needs a recipe or a GitHub write"},
 		{"give-up over the floor", base + "policy:\n  give-up: {attempts: 11}\n", "give-up.attempts 11: want 1 to 10"},
-		{"attempts over the floor", strings.Replace(base, "when:\n", "when:\n  attempts: {max: 50}\n", 1), "when.attempts.max 50: want 1 to 10"},
+		{"attempts in when", strings.Replace(base, "when:\n", "when:\n  attempts: {max: 3}\n", 1), "field attempts not found"},
+		{"updated-since-run in when", strings.Replace(base, "when:\n", "when:\n  updated-since-run: true\n", 1), "field updated-since-run not found"},
+		{"stopped", strings.Replace(base, "when:\n", "when:\n  stopped: false\n", 1), "field stopped not found"},
+		{"merge-queue", strings.Replace(base, "when:\n", "when:\n  merge-queue: false\n", 1), "field merge-queue not found"},
+		{"author trusted", strings.Replace(base, "when:\n", "when:\n  author: trusted\n", 1), `author: "trusted" is not one of`},
+		{"assignee owner", strings.Replace(base, "when:\n", "when:\n  assignee: owner\n", 1), `assignee: "owner" is not one of`},
+		{"give-up then", base + "policy:\n  give-up: {attempts: 3, then: stop}\n", "field then not found"},
+		{"dedupe update", base + "policy:\n  dedupe: update\n", ""},
 		{"cooldown under the floor", base + "policy:\n  cooldown: {failure: 30s}\n", "policy.cooldown 30s is under the floor of 1m"},
 		{"bad duration", base + "policy:\n  cooldown: {success: soon}\n", `"soon" is not a duration`},
 		{"head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "expect: [head]\n", `expect "head"`},
@@ -130,8 +137,8 @@ func TestValidateErrors(t *testing.T) {
 		{"closes without labels", strings.Replace(base, "when:\n", "when:\n  closes: {}\n", 1), "closes needs labels"},
 
 		// The counts' resets, the cooldown's reset and skip.
-		{"since a list", strings.Replace(base, "when:\n", "when:\n  attempts: {since: [head, human, pause], max: 3}\n", 1), ""},
-		{"since unknown", strings.Replace(base, "when:\n", "when:\n  attempts: {since: [head, moon], max: 3}\n", 1), `since: "moon"`},
+		{"since a list", base + "policy:\n  give-up: {attempts: 3, since: [head, human, pause]}\n", ""},
+		{"since unknown", base + "policy:\n  give-up: {attempts: 3, since: [head, moon]}\n", `since: "moon"`},
 		{"reset-on head on issue", strings.Replace(base, "on: pr", "on: issue", 1) + "policy:\n  cooldown: {success: 1h, reset-on: [head]}\n", "reset-on: head is a PR's"},
 		{"skip-when beyond assignee", base + "policy:\n  cooldown: {success: 1h, skip-when: {checks: failing}}\n", "skip-when says assignee, and only that"},
 

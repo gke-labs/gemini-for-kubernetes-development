@@ -12,7 +12,6 @@ order: 7
 when:
   author: pool
   inactive-for: "{{pr-inactivity-timeout}}"
-  stopped: false
 run:
   stop:
     comment: Pausing this PR after a period without activity.
