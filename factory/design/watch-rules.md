@@ -1,6 +1,9 @@
 # The watch loop as rules
 
-Status: draft, being refined.
+Status: draft, being refined. Phases 0 and 1 are done; 2a (the model,
+the prebaked rules, the evaluator, record and replay) is merged. The rule
+files' reference - every field, and how a rule is evaluated - is the
+[watch rules guide](../docs/watch-rules.md).
 
 `factory watch` (the overseer) decides what to run by code: an issue
 scanner, a PR scanner, a fan-out controller, a chores scheduler, a
