@@ -82,8 +82,7 @@ func summarize(p Plan) summary {
 }
 
 func TestDecide(t *testing.T) {
-	spec := testSpec(t, "create: all")
-	lazy := testSpec(t, "")
+	spec := testSpec(t, "")
 	noFinally := spec
 	noFinally.Finally = ""
 	stale := func(c *Child) { c.Body = "old task" }
@@ -94,13 +93,8 @@ func TestDecide(t *testing.T) {
 		want summary
 	}{
 		{
-			name: "start: create all, label the first window",
+			name: "start: only the window is created, labelled",
 			in:   input(spec, nil),
-			want: summary{Window: 2, Create: []string{"a*", "b*", "c", "d"}},
-		},
-		{
-			name: "start, create lazy (the default): only the window",
-			in:   input(lazy, nil),
 			want: summary{Window: 2, Create: []string{"a*", "b*"}},
 		},
 		{
@@ -133,7 +127,7 @@ func TestDecide(t *testing.T) {
 			name: "labelled children are not rewritten",
 			in: input(spec, &State{Window: 2},
 				child(spec, 1, "a", labelled, stale), child(spec, 2, "b", labelled), child(spec, 3, "c", stale)),
-			want: summary{Window: 2, Rewrite: []int{3}, Create: []string{"d"}},
+			want: summary{Window: 2, Rewrite: []int{3}},
 		},
 		{
 			name: "a PR closed unmerged halves the window",
@@ -146,7 +140,7 @@ func TestDecide(t *testing.T) {
 			name: "the window never drops below one",
 			in: input(spec, &State{Window: 1},
 				child(spec, 1, "a", labelled, withPR(11, false, false))),
-			want: summary{Window: 1, Counted: []int{11}, Create: []string{"b", "c", "d"}},
+			want: summary{Window: 1, Counted: []int{11}},
 		},
 		{
 			name: "the window stops at max",
@@ -195,7 +189,7 @@ func TestDecide(t *testing.T) {
 			name: "a child for an item removed from the spec is left alone",
 			in: input(spec, &State{Window: 2},
 				child(spec, 1, "a", labelled), Child{Number: 9, Keys: []string{"gone"}, Open: true}),
-			want: summary{Window: 2, Label: nil, Create: []string{"b*", "c", "d"}},
+			want: summary{Window: 2, Label: nil, Create: []string{"b*"}},
 		},
 	}
 	for _, tc := range tests {

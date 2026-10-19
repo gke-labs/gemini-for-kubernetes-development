@@ -80,7 +80,7 @@ An item's name is its bold text if it has any, otherwise the line up to the firs
 # ## Fan-out
 title: "{{.item.name}}: {{.parent.title}}"  # child issue title, a template
 labels: [direct-migration]    # labels for every child, besides the trigger label
-create: lazy                  # the default; all: create every child at the start (group 1 only)
+create: lazy                  # the only value: a child is created when it is labelled
 group: 1                      # items per child; {start: 1, max: 5} grows (see *Groups*)
 window: {start: 2, max: 8}    # children in flight: the slow start (below)
 checkpoints: [2]              # stop when this many items are done; any number of them; [] never
@@ -283,7 +283,7 @@ Checkpoints reached are recorded in the progress comment's state (below), so rem
 3. **Report:** update the progress comment. This runs on every pass, stopped or not.
 4. If the parent has the stop label, stop here.
 5. **Checkpoint:** if the number of items done has reached a checkpoint not yet passed, add the stop label, comment, record the checkpoint, and stop here.
-6. **Create.** With `create: lazy` (the default), create children only as they are labelled, each for the next `group` items without a child. With `create: all`, create every missing child at once, unlabelled. Creation is idempotent by the marker's `items=` keys. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
+6. **Create.** Create children only as they are labelled, each for the next `group` items without a child (`create: lazy`, the only value). Creation is idempotent by the marker's `items=` keys. Children not yet labelled whose text is out of date with the spec are rewritten (see *Changing the spec*).
 7. **Label.** `active` is the children that are open and carry the trigger label. Label the next `window − active` children, in item order (existing children not yet started, and new ones), with the trigger label plus the spec's `labels`. From then on the existing scanner owns them, as it owns any labelled issue. The daemon's `--max-pending` still caps how many run at once, so the window decides which children are eligible, not how fast they run.
 8. **Final.** Once every item's child is closed, create the `Finally` child (labelled at once). When that one closes as completed, or straight away if there is no `Finally` section, close the parent. If the bot cannot close it, it comments instead.
 
@@ -327,11 +327,11 @@ With the settings above:
 | … | 5 each | 3 | |
 
 - **Units.** The window counts children (PRs in flight). Everything else counts items: checkpoints, the progress comment, and what `Finally` waits for. A child closed as completed counts all its items done; closed as not planned, all of them skipped.
-- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. So `group.max` above 1 needs `create: lazy` (the default, and a spec with it and `create: all` is an error), and children not yet labelled do not exist. The progress comment still lists every item from the start.
+- **A group is made when its child is labelled**: the next `group` items without a child, in order. A child keeps the items it was made with; a group that grows only changes the next child. Children not yet labelled do not exist, except one made without triage access or unlabelled by a person. The progress comment still lists every item from the start.
 - **Default checkpoint**: the items of the first batch, `group.start × window.start`.
 - `group: 1`, the default, is the one-item-per-child fan-out described above.
 
-`create: lazy` is the value called `batch` before groups; renamed so "batch" does not mean two things.
+`create: lazy` is the value called `batch` before groups; renamed so "batch" does not mean two things. `create: all` (every child at the start, unlabelled) is gone: it could not group, made every spec fix a rewrite of every waiting child, and opened issues nobody was working on; the progress comment already lists every item. A spec that still says it is refused.
 
 ### Changing the spec
 
@@ -340,12 +340,12 @@ The controller re-reads the spec every pass, so a change takes effect on the nex
 | Change | Effect |
 |---|---|
 | Item added | A new child, labelled when its turn in the window comes |
-| Item removed | Its child is not labelled. A child that already exists is left as it is; the controller closes nothing. With `create: lazy`, an item without a child just drops out |
+| Item removed | Its child is not labelled. A child that already exists is left as it is; the controller closes nothing. An item without a child just drops out |
 | Task or title changed | Children **not yet labelled** are rewritten with the new text. Labelled ones, being worked on, are left alone |
 | `Finally` changed | Used when the final child is created |
 | Window, group or checkpoints changed | Apply from the next pass. Lowering the window labels nothing new and unlabels nothing; a new group size applies to the next child made |
 
-Rewriting children that have not been labelled is what makes the slow start useful. The first few PRs are where a task's description shows its gaps. With `create: all`, the remaining children already exist, so without the rewrite a fixed spec would only reach children created afterwards. Children not yet labelled have not been started, so nothing changes under a bot that is working.
+The slow start is useful because the first few PRs are where a task's description shows its gaps; children are made from the spec as it is when their turn comes, so a fix reaches every child not yet made. The few children that exist unlabelled (made without triage access, or unlabelled by a person) are rewritten, and have not been started, so nothing changes under a bot that is working.
 
 ### State on GitHub
 

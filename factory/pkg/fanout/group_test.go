@@ -26,7 +26,7 @@ func TestParseGroup(t *testing.T) {
 			yaml: "group: 5\ncreate: lazy",
 			want: Settings{Title: defaultGroupTitle, Create: CreateLazy, Group: Window{Start: 5, Max: 5}, Window: Window{Start: 2, Max: 8}, Checkpoints: []int{10}},
 		},
-		{name: "create: all", yaml: "group: {start: 1, max: 5}\ncreate: all", wantErr: "create: lazy"},
+		{name: "create: all is gone", yaml: "create: all", wantErr: `create is "all", want "lazy"`},
 		{name: "start above max", yaml: "group: {start: 4, max: 2}", wantErr: "group"},
 	}
 	for _, tc := range tests {

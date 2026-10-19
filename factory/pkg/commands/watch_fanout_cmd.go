@@ -37,10 +37,9 @@ kept in the progress comment, then:
     window.max; a PR closed unmerged halves the window, then the group
   - does nothing more while the parent has the stop label
   - stops at a checkpoint: adds the stop label, and comments what is done
-  - creates the children (create: all) and rewrites the ones not yet
-    labelled from the spec
-  - labels the next children in the window with the trigger label and the
-    spec's labels
+  - creates and labels the next children in the window (the trigger label
+    and the spec's labels), and rewrites the ones not yet labelled from
+    the spec
   - once every item is done, creates the Finally child, and when that one
     is closed (or there is none), closes the parent
   - updates the progress comment
