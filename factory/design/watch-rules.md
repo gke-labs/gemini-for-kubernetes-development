@@ -694,7 +694,7 @@ The engine decides on that Item alone and never calls GitHub:
                                             lastTrustedActivity, humanSpokeAt
  decides("inactive") ─► pause (stop label + comment), return
  legacy conditions                    Fill: newTrustedFeedback, checks, approved
- engine takes any pr-care rule here? ─► engineCare = Set.Decide(Item)
+ engine takes any care rule here? ─► engineCare = Set.Decide(Item)
  first that holds:
    picks("comments") → handlePRComments
    picks("conflict") → handlePRIterate
@@ -742,13 +742,14 @@ item's tasks (`ShouldCancelTask`) and a task whose preconditions no
 longer hold, then runs the recipe and its apply.
 
 **Inside `Set.Decide`:** the stop label or the merge queue decides
-nothing; then the enabled rules of the item's kind; the
-`policy.before` rules first, their label writes applied and the stop
-label checked again; the rules of no group each on their own, a stop
-written by one (inactive) skipping the groups; then each group's first
-rule that holds (predicates, cooldown, dedupe by head), none while a
-task is active, a rule past its attempts deciding its give-up. The stop
-gate is code, not a rule: `stop.yaml` ships disabled and only names it,
+nothing; then the enabled rules of the item's kind, walked in `order`:
+a rule that takes the item is decided only if none before it was and no
+task of the item is active; any other rule decides on its own, its label
+writes applied for the rules after it, and a stop it writes (inactive,
+or one inherited by inherit-labels) ends the walk. A rule holds on its
+predicates and policy (cooldown, dedupe by head); one past its attempts
+decides its give-up. The stop gate is code, not a rule: `stop.yaml`
+ships disabled and only names it,
 so `disabled: [stop]` changes nothing.
 
 **What this means for the move:**
